@@ -23,26 +23,33 @@ const (
 )
 
 type waveformAnalysis struct {
-	channels      int
-	bucketFrames  int64
-	bucketCount   int
-	bucketMinimum [][]float32
-	bucketMaximum [][]float32
-	minimum       [][]float32
-	maximum       [][]float32
-	seen          []bool
+	channels        int
+	bucketFrames    int64
+	bucketCount     int
+	bucketMinimum   [][]float32
+	bucketMaximum   [][]float32
+	bucketClipFirst [][]int64
+	bucketClipLast  [][]int64
+	minimum         [][]float32
+	maximum         [][]float32
+	clipped         [][]bool
+	seen            []bool
 }
 
 func newWaveformAnalysis(channels int) *waveformAnalysis {
 	analysis := &waveformAnalysis{
-		channels:      channels,
-		bucketFrames:  1,
-		bucketMinimum: make([][]float32, channels),
-		bucketMaximum: make([][]float32, channels),
+		channels:        channels,
+		bucketFrames:    1,
+		bucketMinimum:   make([][]float32, channels),
+		bucketMaximum:   make([][]float32, channels),
+		bucketClipFirst: make([][]int64, channels),
+		bucketClipLast:  make([][]int64, channels),
 	}
 	for channel := range channels {
 		analysis.bucketMinimum[channel] = make([]float32, waveformBucketCapacity)
 		analysis.bucketMaximum[channel] = make([]float32, waveformBucketCapacity)
+		analysis.bucketClipFirst[channel] = make([]int64, waveformBucketCapacity)
+		analysis.bucketClipLast[channel] = make([]int64, waveformBucketCapacity)
 	}
 	return analysis
 }
@@ -56,12 +63,20 @@ func (a *waveformAnalysis) add(frame int64, samples []float32) {
 		for channel := range a.channels {
 			a.bucketMinimum[channel][a.bucketCount] = float32(math.Inf(1))
 			a.bucketMaximum[channel][a.bucketCount] = float32(math.Inf(-1))
+			a.bucketClipFirst[channel][a.bucketCount] = -1
+			a.bucketClipLast[channel][a.bucketCount] = -1
 		}
 		a.bucketCount++
 	}
 	for channel, sample := range samples {
 		a.bucketMinimum[channel][bucket] = min(a.bucketMinimum[channel][bucket], sample)
 		a.bucketMaximum[channel][bucket] = max(a.bucketMaximum[channel][bucket], sample)
+		if sample <= -1 || sample >= 1 {
+			if a.bucketClipFirst[channel][bucket] < 0 {
+				a.bucketClipFirst[channel][bucket] = frame
+			}
+			a.bucketClipLast[channel][bucket] = frame
+		}
 	}
 }
 
@@ -73,6 +88,16 @@ func (a *waveformAnalysis) compact() {
 			right := min(left+1, a.bucketCount-1)
 			a.bucketMinimum[channel][destination] = min(a.bucketMinimum[channel][left], a.bucketMinimum[channel][right])
 			a.bucketMaximum[channel][destination] = max(a.bucketMaximum[channel][left], a.bucketMaximum[channel][right])
+			first := a.bucketClipFirst[channel][left]
+			if first < 0 {
+				first = a.bucketClipFirst[channel][right]
+			}
+			a.bucketClipFirst[channel][destination] = first
+			last := a.bucketClipLast[channel][right]
+			if last < 0 {
+				last = a.bucketClipLast[channel][left]
+			}
+			a.bucketClipLast[channel][destination] = last
 		}
 	}
 	a.bucketCount = compacted
@@ -83,10 +108,12 @@ func (a *waveformAnalysis) finish(total int64) {
 	total = max(total, 1)
 	a.minimum = make([][]float32, a.channels)
 	a.maximum = make([][]float32, a.channels)
+	a.clipped = make([][]bool, a.channels)
 	a.seen = make([]bool, waveformPlotWidth)
 	for channel := range a.channels {
 		a.minimum[channel] = make([]float32, waveformPlotWidth)
 		a.maximum[channel] = make([]float32, waveformPlotWidth)
+		a.clipped[channel] = make([]bool, waveformPlotWidth)
 		for column := range waveformPlotWidth {
 			a.minimum[channel][column] = float32(math.Inf(1))
 			a.maximum[channel][column] = float32(math.Inf(-1))
@@ -107,6 +134,20 @@ func (a *waveformAnalysis) finish(total int64) {
 				a.maximum[channel][column] = max(a.maximum[channel][column], a.bucketMaximum[channel][bucket])
 			}
 		}
+		for channel := range a.channels {
+			first := a.bucketClipFirst[channel][bucket]
+			if first < 0 {
+				continue
+			}
+			last := a.bucketClipLast[channel][bucket]
+			// A compacted bucket spans at most half a pixel, so clipped
+			// samples in it can reach only adjacent output columns.
+			clipStart := min(int(first*waveformPlotWidth/total), waveformPlotWidth-1)
+			clipEnd := min(int(((last+1)*waveformPlotWidth+total-1)/total)-1, waveformPlotWidth-1)
+			for column := clipStart; column <= clipEnd; column++ {
+				a.clipped[channel][column] = true
+			}
+		}
 	}
 	for column := range waveformPlotWidth {
 		if a.seen[column] {
@@ -119,6 +160,8 @@ func (a *waveformAnalysis) finish(total int64) {
 	}
 	a.bucketMinimum = nil
 	a.bucketMaximum = nil
+	a.bucketClipFirst = nil
+	a.bucketClipLast = nil
 }
 
 type spectrogramAnalysis struct {

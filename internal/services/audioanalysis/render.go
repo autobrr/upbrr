@@ -84,7 +84,7 @@ func renderWaveform(analysis *waveformAnalysis, sampleRate int, frames int64, la
 			yTop := waveformAmplitudeY(center, maximum)
 			yBottom := waveformAmplitudeY(center, minimum)
 			drawVertical(canvas, column, min(yTop, yBottom), max(yTop, yBottom), waveBlue)
-			if analysis.minimum[channel][column] <= -1 || analysis.maximum[channel][column] >= 1 {
+			if analysis.clipped[channel][column] {
 				drawVertical(canvas, column, top, top+waveformPanelHeight-1, clipRed)
 			}
 		}

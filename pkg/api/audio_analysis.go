@@ -12,7 +12,7 @@ import (
 )
 
 // AudioAnalysisProfileVersion identifies the fixed numerical and raster profile.
-const AudioAnalysisProfileVersion = "audio-analysis-v2"
+const AudioAnalysisProfileVersion = "audio-analysis-v3"
 
 const (
 	// AudioAnalysisStatsMaxBytes bounds the retained amplitude report.
@@ -271,13 +271,18 @@ func (r AudioAnalysisResult) Validate() error {
 	if strings.TrimSpace(r.ResourceID) == "" || strings.TrimSpace(r.ManifestFingerprint) == "" || strings.TrimSpace(r.AttemptID) == "" {
 		return errors.New("audio analysis requires resource, manifest, and attempt identity")
 	}
+	profileVersion := r.ProfileVersion
+	if strings.TrimSpace(profileVersion) == "audio-analysis-v2" {
+		// Saved v2 results remain valid, but new instructions require v3.
+		profileVersion = AudioAnalysisProfileVersion
+	}
 	if _, err := (AudioAnalysisInstructions{
 		Release:        r.Release,
 		ResourceID:     r.ResourceID,
 		Selection:      r.Selection,
 		TrackIDs:       r.TrackIDs,
 		Variants:       r.Variants,
-		ProfileVersion: r.ProfileVersion,
+		ProfileVersion: profileVersion,
 		ResourceLimits: r.ResourceLimits,
 	}).Normalize(); err != nil {
 		return fmt.Errorf("audio analysis selection: %w", err)

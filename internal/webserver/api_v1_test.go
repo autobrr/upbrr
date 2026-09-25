@@ -690,7 +690,7 @@ func TestAPIV1CommandRoutesDecodeSharedWorkflowRequests(t *testing.T) {
 		want     any
 	}{
 		{"invalidate", http.MethodPost, []string{"workflow-1", "trackers", "invalidate"}, `{"trackerIds":["EXAMPLE"]}`, releaseworkflow.InvalidateTrackersCommand{}},
-		{"analyze audio", http.MethodPost, []string{"workflow-1", "audio-analysis"}, `{"instructions":{"release":{"sourcePath":"Example.Release.2026.mkv","generation":1},"resourceId":"resource-1","selection":"primary","trackIds":["track-1"],"variants":["waveform"],"profileVersion":"audio-analysis-v2"}}`, releaseworkflow.AnalyzeAudioCommand{}},
+		{"analyze audio", http.MethodPost, []string{"workflow-1", "audio-analysis"}, `{"instructions":{"release":{"sourcePath":"Example.Release.2026.mkv","generation":1},"resourceId":"resource-1","selection":"primary","trackIds":["track-1"],"variants":["waveform"],"profileVersion":"audio-analysis-v3"}}`, releaseworkflow.AnalyzeAudioCommand{}},
 		{"disable audio analysis", http.MethodPut, []string{"workflow-1", "audio-analysis", "enabled"}, `{"enabled":false}`, releaseworkflow.SetAudioAnalysisEnabledCommand{}},
 		{"select media", http.MethodPut, []string{"workflow-1", "media", "media-1", "selection"}, `{"media":{"revision":1},"artifactIds":["artifact-1"],"selected":true}`, releaseworkflow.SetMediaSelectionCommand{}},
 		{"delete media", http.MethodPost, []string{"workflow-1", "media", "media-1", "delete"}, `{"media":{"revision":1},"artifactIds":["artifact-1"]}`, releaseworkflow.DeleteMediaArtifactsCommand{}},

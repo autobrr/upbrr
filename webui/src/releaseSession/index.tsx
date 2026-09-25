@@ -2527,7 +2527,7 @@ export function ReleaseSessionProvider({
           selection: input.selection,
           trackIds: [...input.trackIDs],
           variants: [...input.variants],
-          profileVersion: "audio-analysis-v2",
+          profileVersion: "audio-analysis-v3",
           resourceLimits: input.resourceLimits ?? {
             decoderThreads: 2,
           },

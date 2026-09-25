@@ -156,6 +156,32 @@ func TestAudioAnalysisSettingInvalidatesDescriptions(t *testing.T) {
 	}
 }
 
+func TestAudioAnalysisRetryRequiresCurrentProfile(t *testing.T) {
+	release := api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1}
+	instructions := api.AudioAnalysisInstructions{
+		ResourceID:     "resource-1",
+		Selection:      api.AudioAnalysisSelectionPrimary,
+		TrackIDs:       []string{"track-1"},
+		Variants:       []api.AudioAnalysisVariant{api.AudioAnalysisWaveform},
+		ProfileVersion: api.AudioAnalysisProfileVersion,
+	}
+	prior := api.AudioAnalysisResult{
+		Release:        release,
+		ResourceID:     instructions.ResourceID,
+		Selection:      instructions.Selection,
+		TrackIDs:       instructions.TrackIDs,
+		Variants:       instructions.Variants,
+		ProfileVersion: instructions.ProfileVersion,
+	}
+	if !audioAnalysisRetryCompatible(prior, instructions, release) {
+		t.Fatal("current-profile artifact was not reusable")
+	}
+	prior.ProfileVersion = "audio-analysis-v2"
+	if audioAnalysisRetryCompatible(prior, instructions, release) {
+		t.Fatal("old-profile waveform artifact was reusable")
+	}
+}
+
 func TestModuleAudioAnalysisRetriesIncrementallyAndPersistsDisabledIntent(t *testing.T) {
 	t.Parallel()
 

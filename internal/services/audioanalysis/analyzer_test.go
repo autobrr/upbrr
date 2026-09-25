@@ -463,8 +463,42 @@ func TestWaveformMarksFullScaleClippingByChannel(t *testing.T) {
 	if got := canvas.At(0, waveformPanelHeight/2); got != clipRed {
 		t.Fatalf("clipped channel pixel = %v, want %v", got, clipRed)
 	}
+	if got := canvas.At(waveformPlotWidth/2-1, waveformPanelHeight/2); got != clipRed {
+		t.Fatalf("last column of clipped sample = %v, want %v", got, clipRed)
+	}
+	if got := canvas.At(waveformPlotWidth/2, waveformPanelHeight/2); got == clipRed {
+		t.Fatalf("next sample marked as clipped")
+	}
 	if got := canvas.At(0, waveformPanelHeight+waveformPanelHeight/2); got == clipRed {
 		t.Fatalf("unclipped channel marked as clipped")
+	}
+}
+
+func TestWaveformClippingKeepsPixelPositionAfterCompaction(t *testing.T) {
+	const frames = int64(17_000)
+	analysis := newWaveformAnalysis(3)
+	for frame := range frames {
+		samples := []float32{0, 0, 0}
+		if frame == 8 {
+			samples[0], samples[2] = 1, 1
+		}
+		if frame == 11 {
+			samples[1], samples[2] = -1, -1
+		}
+		analysis.add(frame, samples)
+	}
+	analysis.finish(frames)
+	if analysis.bucketFrames != 4 {
+		t.Fatalf("bucket width = %d, want 4-frame compaction", analysis.bucketFrames)
+	}
+	canvas := renderWaveform(analysis, 48_000, frames, "")
+	for channel, want := range [][2]bool{{true, false}, {false, true}, {true, true}} {
+		for column, clipped := range want {
+			got := canvas.At(column, channel*waveformPanelHeight+waveformPanelHeight/2) == clipRed
+			if got != clipped {
+				t.Errorf("channel %d column %d clipped = %t, want %t", channel, column, got, clipped)
+			}
+		}
 	}
 }
 

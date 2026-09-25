@@ -120,6 +120,29 @@ func TestAudioAnalysisResultValidateAcceptsPartialAndRejectsInvalidTerminalShape
 	}
 }
 
+func TestAudioAnalysisResultValidateAcceptsHistoricalProfile(t *testing.T) {
+	result := validAudioAnalysisResultForTest()
+	result.ProfileVersion = "audio-analysis-v2"
+	if err := result.Validate(); err != nil {
+		t.Fatalf("validate saved v2 result: %v", err)
+	}
+	result.ProfileVersion = "audio-analysis-v1"
+	if err := result.Validate(); err == nil {
+		t.Fatal("unsupported result profile was accepted")
+	}
+	request := AudioAnalysisInstructions{
+		Release:        result.Release,
+		ResourceID:     result.ResourceID,
+		Selection:      result.Selection,
+		TrackIDs:       result.TrackIDs,
+		Variants:       result.Variants,
+		ProfileVersion: "audio-analysis-v2",
+	}
+	if _, err := request.Normalize(); err == nil {
+		t.Fatal("new instructions accepted the old profile")
+	}
+}
+
 func TestAudioAnalysisResultValidatesStatisticsArtifact(t *testing.T) {
 	result := validAudioAnalysisResultForTest()
 	result.Variants = []AudioAnalysisVariant{AudioAnalysisStats}

@@ -85,7 +85,7 @@ const resultWithArtifacts = (
   selection: "primary",
   trackIds: ["audio-main"],
   variants: artifacts.map((artifact) => artifact.variant),
-  profileVersion: "audio-analysis-v2",
+  profileVersion: "audio-analysis-v3",
   resourceLimits: { decoderThreads: 2 },
   status: "completed",
   tracks: [
@@ -338,7 +338,7 @@ describe("AudioAnalysisPage", () => {
         selection: "primary",
         trackIds: ["audio-main"],
         variants: ["waveform", "spectrogram"],
-        profileVersion: "audio-analysis-v2",
+        profileVersion: "audio-analysis-v3",
         resourceLimits: { decoderThreads: 2 },
         status: "interrupted",
         tracks: [],

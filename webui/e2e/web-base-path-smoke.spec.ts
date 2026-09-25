@@ -203,7 +203,7 @@ test("audio analysis survives reload and serves owner-bound images and statistic
             selection: "primary",
             trackIds: [primaryTrack!.ID],
             variants: ["stats"],
-            profileVersion: "audio-analysis-v2",
+            profileVersion: "audio-analysis-v3",
           },
         },
       },
@@ -256,7 +256,7 @@ test("audio analysis cancellation publishes terminal status without incomplete P
       timeout: 10_000,
     });
     await expect(page.getByRole("heading", { name: "Results" })).toBeVisible();
-    await expect(page.getByText(/canceled · expires/)).toBeVisible();
+    await expect(page.getByText("canceled", { exact: true })).toBeVisible();
     await expect(page.getByRole("img")).toHaveCount(0);
     await expect(page.getByText("Enabled", { exact: true })).toBeVisible();
   } finally {
