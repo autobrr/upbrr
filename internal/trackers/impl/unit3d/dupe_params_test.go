@@ -83,6 +83,24 @@ func TestBuildUnit3DSearchParamsUsesEMUWTrackerMappings(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DSearchParamsUsesSAMAnimeCategory(t *testing.T) {
+	t.Parallel()
+	meta := api.DuplicateSubject{
+		Identity:    api.ExternalIdentity{TMDBID: 65942, Category: "TV"},
+		Anime:       true,
+		ReleaseName: "Re.ZERO.S03E01.1080p.WEB-DL",
+		SeasonInt:   3,
+		EpisodeInt:  1,
+	}
+	if got := buildDupeSearchParams(meta, "SAM").Get("categories[]"); got != "3" {
+		t.Fatalf("SAM anime upload category is 3, duplicate search used %q", got)
+	}
+	meta.Anime = false
+	if got := buildDupeSearchParams(meta, "SAM").Get("categories[]"); got != "2" {
+		t.Fatalf("SAM non-anime TV category is 2, got %q", got)
+	}
+}
+
 func TestBuildUnit3DSearchParamsUsesEMUWPaired1080Resolution(t *testing.T) {
 	t.Parallel()
 

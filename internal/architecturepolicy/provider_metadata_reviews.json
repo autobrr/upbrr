@@ -1259,6 +1259,10 @@
     "sha256": "06c8b24de8ea7e88995ba0b339cc1fb998eb44a5516294b181e06b927b7962cd",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
+  "internal/trackers/impl/unit3d/dupe_params.go:buildDupeSearchParams": {
+    "sha256": "5feea61faf97d27b6e4d37ea24ff29c6c89c9644db1379405f0cc322451f3222",
+    "reason": "SAM search uses the prepared Anime fact shared with the upload subject and category resolver; manual release corrections take precedence before both projections, not raw provider metadata."
+  },
   "internal/trackers/impl/unit3d/name.go:applyLocalizedAlternateTitle": {
     "sha256": "c00ccda59006f108b3c5567502f054bfc4614083f93864b64ca3cc6f01cee3f3",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
