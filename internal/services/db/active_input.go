@@ -202,6 +202,17 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 			if saved.ID != next.InputID {
 				return api.ErrActiveInputChanged
 			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO input_workflow_associations
+				(canonical_path, owner_id, source_version, workflow_id, audio_analysis_id, updated_at)
+				VALUES (?, ?, ?, ?, '', ?)
+				ON CONFLICT(canonical_path, owner_id) DO UPDATE SET
+					source_version = excluded.source_version,
+					workflow_id = excluded.workflow_id,
+					audio_analysis_id = excluded.audio_analysis_id,
+					updated_at = excluded.updated_at`,
+				saved.CanonicalPath, next.OwnerID, saved.SourceVersion, next.WorkflowID, formatWorkflowStateTime(now)); err != nil {
+				return fmt.Errorf("db associate input workflow: %w", err)
+			}
 		}
 		if workflow != nil {
 			if workflow.OwnerID != next.OwnerID || workflow.WorkflowID != next.WorkflowID || workflow.Revision == 0 {
@@ -411,6 +422,23 @@ func (r *SQLiteRepository) LoadInputRecord(ctx context.Context, canonicalPath st
 	return record, nil
 }
 
+// LoadInputWorkflowAssociation resolves the last workflow for this owner and verified source version.
+func (r *SQLiteRepository) LoadInputWorkflowAssociation(ctx context.Context, canonicalPath, ownerID, sourceVersion string) (
+	api.WorkflowID, api.AudioAnalysisResultID, error,
+) {
+	var workflowID api.WorkflowID
+	var audioID api.AudioAnalysisResultID
+	err := r.historyQuery(ctx).QueryRowContext(ctx, `SELECT workflow_id, audio_analysis_id FROM input_workflow_associations
+		WHERE canonical_path = ? AND owner_id = ? AND source_version = ?`, canonicalPath, ownerID, sourceVersion).Scan(&workflowID, &audioID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("db load input workflow association: %w", err)
+	}
+	return workflowID, audioID, nil
+}
+
 // SaveInputRecord preserves the original opaque ID when the same path is inspected again.
 func (r *SQLiteRepository) SaveInputRecord(ctx context.Context, record api.InputRecord) (api.InputRecord, error) {
 	if record.ID == "" || record.CanonicalPath == "" || record.SourceVersion == "" || len(record.Manifest) == 0 || record.UpdatedAt.IsZero() {
@@ -427,12 +455,14 @@ func (r *SQLiteRepository) SaveInputRecord(ctx context.Context, record api.Input
 func saveInputRecord(ctx context.Context, tx *sql.Tx, record api.InputRecord) (api.InputRecord, error) {
 	_, err := tx.ExecContext(ctx, `INSERT INTO input_records (id, canonical_path, source_version, manifest, updated_at)
 			VALUES (?, ?, ?, ?, ?) ON CONFLICT(canonical_path) DO UPDATE SET
-			source_version = excluded.source_version, manifest = excluded.manifest, updated_at = excluded.updated_at`,
+			source_version = excluded.source_version, manifest = excluded.manifest,
+			updated_at = excluded.updated_at`,
 		record.ID, record.CanonicalPath, record.SourceVersion, record.Manifest, formatWorkflowStateTime(record.UpdatedAt))
 	if err != nil {
 		return api.InputRecord{}, fmt.Errorf("db save input record: %w", err)
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM input_records WHERE canonical_path = ?`, record.CanonicalPath).Scan(&record.ID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM input_records WHERE canonical_path = ?`, record.CanonicalPath).
+		Scan(&record.ID); err != nil {
 		return api.InputRecord{}, fmt.Errorf("db resolve input record: %w", err)
 	}
 	return record, nil

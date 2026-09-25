@@ -66,6 +66,7 @@ type ActiveInputRepository interface {
 	RenewActiveInput(context.Context, string, uint64, time.Time, time.Time) error
 	RelinquishActiveInput(context.Context, string, uint64, time.Time) error
 	LoadInputRecord(context.Context, string) (InputRecord, error)
+	LoadInputWorkflowAssociation(context.Context, string, string, string) (WorkflowID, AudioAnalysisResultID, error)
 	LoadInputRecordByID(context.Context, string) (InputRecord, error)
 	SaveInputRecord(context.Context, InputRecord) (InputRecord, error)
 }

@@ -294,6 +294,18 @@ type AudioAnalysisBuilder interface {
 	) (api.AudioAnalysisResult, RetainedAudioAnalysisResource, error)
 }
 
+// CompatibleAudioAnalysisRestorer copies retained outputs into a fresh
+// workflow without rerunning analysis.
+type CompatibleAudioAnalysisRestorer interface {
+	RestoreCompatible(
+		context.Context,
+		api.ReleaseRef,
+		api.AudioAnalysisResult,
+		RetainedAudioAnalysisResource,
+		string,
+	) (api.AudioAnalysisResult, RetainedAudioAnalysisResource, error)
+}
+
 // IncrementalMediaArtifactBuilder preserves current media and skips already
 // retained requested screenshot indexes during later capture commands.
 type IncrementalMediaArtifactBuilder interface {
@@ -575,12 +587,16 @@ type State struct {
 	TrackerApprovals       map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
 	Media                  map[api.MediaArtifactSetID]api.MediaArtifactSet
 	AudioAnalyses          map[api.AudioAnalysisResultID]api.AudioAnalysisResult
-	Descriptions           map[api.DescriptionSetID]api.DescriptionSet
-	DryRuns                map[api.UploadDryRunResultID]api.UploadDryRunResult
-	UploadResults          map[api.UploadResultID]api.UploadResult
-	Operations             map[api.WorkflowOperationID]api.WorkflowOperationStatus
-	Receipts               map[string]commandReceipt
-	Composite              *compositeUploadSession
+	// PendingAudioAnalysis retains the current result while an active input is
+	// reverified and prepared again. It is restored only for the same release.
+	PendingAudioAnalysis           *api.AudioAnalysisRef
+	PendingAudioAnalysisWorkflowID api.WorkflowID
+	Descriptions                   map[api.DescriptionSetID]api.DescriptionSet
+	DryRuns                        map[api.UploadDryRunResultID]api.UploadDryRunResult
+	UploadResults                  map[api.UploadResultID]api.UploadResult
+	Operations                     map[api.WorkflowOperationID]api.WorkflowOperationStatus
+	Receipts                       map[string]commandReceipt
+	Composite                      *compositeUploadSession
 }
 
 type commandReceipt struct {

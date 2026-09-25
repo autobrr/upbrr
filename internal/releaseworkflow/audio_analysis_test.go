@@ -28,6 +28,8 @@ type audioAnalysisBuilderFake struct {
 	retainOnCancel    bool
 	interrupt         bool
 	failAfterBlock    bool
+	restoreErr        error
+	restores          int
 }
 
 func (b *audioAnalysisBuilderFake) Build(
@@ -100,10 +102,102 @@ func (b *audioAnalysisBuilderFake) retainedResource() RetainedAudioAnalysisResou
 	return audioAnalysisResourceFake{}
 }
 
+func (b *audioAnalysisBuilderFake) RestoreCompatible(
+	_ context.Context,
+	release api.ReleaseRef,
+	prior api.AudioAnalysisResult,
+	_ RetainedAudioAnalysisResource,
+	attemptID string,
+) (api.AudioAnalysisResult, RetainedAudioAnalysisResource, error) {
+	b.mu.Lock()
+	b.restores++
+	b.mu.Unlock()
+	if b.restoreErr != nil {
+		return api.AudioAnalysisResult{}, nil, b.restoreErr
+	}
+	restored := prior
+	restored.Release = release
+	restored.AttemptID = attemptID
+	restored.Tracks = append([]api.AudioAnalysisTrackResult(nil), prior.Tracks...)
+	for i := range restored.Tracks {
+		restored.Tracks[i].Artifacts = append([]api.AudioAnalysisArtifact(nil), prior.Tracks[i].Artifacts...)
+		for j := range restored.Tracks[i].Artifacts {
+			if restored.Tracks[i].Artifacts[j].Status == api.StageStatusCompleted {
+				restored.Tracks[i].Artifacts[j].ID = api.PublicResourceID(attemptID + "-artifact")
+			}
+		}
+	}
+	return restored, audioAnalysisResourceFake{}, nil
+}
+
 func (b *audioAnalysisBuilderFake) counts() (int, int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.builds, b.incrementalBuilds
+}
+
+type failedAudioResourceGetStore struct {
+	PrivateResourceStore
+	err error
+}
+
+func (s failedAudioResourceGetStore) Get(string, api.WorkflowID, string, time.Time) (any, error) {
+	return nil, s.err
+}
+
+func TestRestorePendingAudioAnalysisSkipsDamagedRetainedResource(t *testing.T) {
+	t.Parallel()
+	module, _ := newTestModule(t, audioAnalysisPreparerForTest())
+	release := api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1}
+	result := api.AudioAnalysisResult{
+		ID:             "analysis",
+		Revision:       2,
+		Release:        release,
+		AttemptID:      "attempt",
+		ProfileVersion: api.AudioAnalysisProfileVersion,
+	}
+	for _, failure := range []error{ErrPrivateResourceIntegrity, errors.New("decode retained artifact")} {
+		module.private = failedAudioResourceGetStore{PrivateResourceStore: NewMemoryPrivateResourceStore(), err: failure}
+		state := State{
+			Workflow:                       api.ReleaseWorkflow{ID: "workflow"},
+			AudioAnalyses:                  map[api.AudioAnalysisResultID]api.AudioAnalysisResult{result.ID: result},
+			PendingAudioAnalysis:           &api.AudioAnalysisRef{ID: result.ID, Revision: result.Revision},
+			PendingAudioAnalysisWorkflowID: "workflow",
+		}
+		restored, err := module.restorePendingAudioAnalysis(t.Context(), testOwnerID, &state, release, 3, time.Now().UTC())
+		if err != nil || restored != nil || state.Workflow.AudioAnalysis != nil {
+			t.Fatalf("damaged retained audio restored=%#v workflow=%#v error=%v", restored, state.Workflow.AudioAnalysis, err)
+		}
+	}
+}
+
+func TestRestorePendingAudioAnalysisChecksSameGenerationArtifacts(t *testing.T) {
+	t.Parallel()
+	builder := &audioAnalysisBuilderFake{restoreErr: ErrPrivateResourceUnavailable}
+	module, _ := newTestModule(t, audioAnalysisPreparerForTest(), WithAudioAnalysisBuilder(builder))
+	store := NewMemoryPrivateResourceStore()
+	module.private = store
+	release := api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1}
+	result := api.AudioAnalysisResult{
+		ID:             "analysis",
+		Revision:       2,
+		Release:        release,
+		AttemptID:      "attempt",
+		ProfileVersion: api.AudioAnalysisProfileVersion,
+	}
+	if err := store.PutWithoutExpiry(testOwnerID, "workflow", audioAnalysisPrivateResourceID(result.AttemptID), audioAnalysisResourceFake{}); err != nil {
+		t.Fatal(err)
+	}
+	state := State{
+		Workflow:                       api.ReleaseWorkflow{ID: "workflow"},
+		AudioAnalyses:                  map[api.AudioAnalysisResultID]api.AudioAnalysisResult{result.ID: result},
+		PendingAudioAnalysis:           &api.AudioAnalysisRef{ID: result.ID, Revision: result.Revision},
+		PendingAudioAnalysisWorkflowID: "workflow",
+	}
+	restored, err := module.restorePendingAudioAnalysis(t.Context(), testOwnerID, &state, release, 3, time.Now().UTC())
+	if err != nil || restored != nil || state.Workflow.AudioAnalysis != nil || builder.restores != 1 {
+		t.Fatalf("same-generation restore=%#v workflow=%#v calls=%d error=%v", restored, state.Workflow.AudioAnalysis, builder.restores, err)
+	}
 }
 
 type audioAnalysisResourceFake struct{}

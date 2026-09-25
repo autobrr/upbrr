@@ -244,11 +244,45 @@ func TestWorkflowAudioAnalysisStatisticsRetainReloadReuseAndIntegrity(t *testing
 	if err != nil || filepath.Ext(pathValue) != ".txt" || artifact.Text != report || artifact.ID == "stats-1" {
 		t.Fatalf("cloned statistics artifact=%#v path=%s error=%v", artifact, pathValue, err)
 	}
+	newRelease := release
+	newRelease.Generation++
+	subject.Release = newRelease
+	builder.resolver = audioAnalysisResolverFake{subject: subject}
+	legacy := result
+	legacy.ProfileVersion = "audio-analysis-v2"
+	if _, _, err := builder.RestoreCompatible(t.Context(), newRelease, legacy, restored, "stats-legacy"); !errors.Is(err, releaseworkflow.ErrPrivateResourceUnavailable) {
+		t.Fatalf("legacy audio profile restore error=%v", err)
+	}
+	reopened, reopenedValue, err := builder.RestoreCompatible(t.Context(), newRelease, result, restored, "stats-reopen")
+	if err != nil {
+		t.Fatalf("restore retained report into new workflow: %v", err)
+	}
+	reopenedResource, ok := reopenedValue.(workflowAudioAnalysisResource)
+	if !ok || len(service.calls) != 1 || reopened.Release != newRelease || reopened.AttemptID != "stats-reopen" ||
+		reopened.Tracks[0].Artifacts[0].ID == result.Tracks[0].Artifacts[0].ID {
+		t.Fatalf("restored analysis=%#v resource=%T calls=%d", reopened, reopenedValue, len(service.calls))
+	}
+	subject.ManifestFingerprint = "changed-manifest"
+	builder.resolver = audioAnalysisResolverFake{subject: subject}
+	if _, _, err := builder.RestoreCompatible(t.Context(), newRelease, result, restored, "stats-changed"); !errors.Is(err, releaseworkflow.ErrPrivateResourceUnavailable) {
+		t.Fatalf("changed manifest restore error=%v", err)
+	}
+	subject.ManifestFingerprint = result.ManifestFingerprint
+	builder.resolver = audioAnalysisResolverFake{subject: subject}
+	if err := os.Remove(restored.paths[result.Tracks[0].Artifacts[0].ID]); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := builder.RestoreCompatible(t.Context(), newRelease, result, restored, "stats-missing"); !errors.Is(err, releaseworkflow.ErrPrivateResourceUnavailable) {
+		t.Fatalf("missing retained artifact restore error=%v", err)
+	}
 	if err := retained.Release(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cloned.LocalArtifactPath(retried, artifact.ID); err != nil {
 		t.Fatalf("releasing old attempt affected cloned report: %v", err)
+	}
+	if _, err := reopenedResource.LocalArtifactPath(reopened, reopened.Tracks[0].Artifacts[0].ID); err != nil {
+		t.Fatalf("releasing old attempt affected restored report: %v", err)
 	}
 	if err := os.WriteFile(pathValue, []byte(strings.ReplaceAll(report, "0.000000", "1.000000")), 0o600); err != nil {
 		t.Fatal(err)

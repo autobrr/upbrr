@@ -3491,6 +3491,12 @@ func (m *Module) invalidateWorkflowPrivateResources(
 			preserved = append(preserved, audioAnalysisPrivateResourceID(analysis.AttemptID))
 		}
 	}
+	if state.PendingAudioAnalysis != nil && state.PendingAudioAnalysisWorkflowID == state.Workflow.ID {
+		if analysis, ok := state.AudioAnalyses[state.PendingAudioAnalysis.ID]; ok &&
+			analysis.Revision == state.PendingAudioAnalysis.Revision {
+			preserved = append(preserved, audioAnalysisPrivateResourceID(analysis.AttemptID))
+		}
+	}
 	operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID)
 	if operationID != "" {
 		preserved = append(preserved, operationCommandResourceID(operationID))
@@ -3520,6 +3526,8 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.Media = nil
 	state.Workflow.AudioAnalysis = nil
 	state.Workflow.AudioAnalysisEnabled = false
+	state.PendingAudioAnalysis = nil
+	state.PendingAudioAnalysisWorkflowID = ""
 	state.Workflow.Descriptions = nil
 	state.Workflow.DryRun = nil
 	state.Workflow.UploadResult = nil
@@ -3782,13 +3790,104 @@ func (m *Module) prepareRelease(
 			return CommandResult{}, err
 		}
 	}
+	restoredAudio, err := m.restorePendingAudioAnalysis(ctx, ownerID, state, ref, nextRevision, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
 	state.PreparationInput = &command.Input
 	state.PreparationDemand = command.Input.MetadataRequirements
 	state.PendingCorrectionConfirmation = nil
-	return CommandResult{Release: &snapshot, FactInstructions: &facts}, nil
+	return CommandResult{
+		Release:          &snapshot,
+		FactInstructions: &facts,
+		AudioAnalysis:    restoredAudio,
+	}, nil
+}
+
+func (m *Module) restorePendingAudioAnalysis(
+	ctx context.Context,
+	ownerID string,
+	state *State,
+	release api.ReleaseRef,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+) (*api.AudioAnalysisResult, error) {
+	pending := state.PendingAudioAnalysis
+	sourceWorkflowID := state.PendingAudioAnalysisWorkflowID
+	state.PendingAudioAnalysis = nil
+	state.PendingAudioAnalysisWorkflowID = ""
+	if pending == nil || sourceWorkflowID == "" {
+		return nil, nil
+	}
+	source := state
+	if sourceWorkflowID != state.Workflow.ID {
+		loaded, err := m.repository.Load(ctx, ownerID, sourceWorkflowID)
+		if errors.Is(err, ErrWorkflowNotFound) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("release workflow load reusable audio analysis: %w", err)
+		}
+		source = &loaded
+	}
+	analysis, ok := source.AudioAnalyses[pending.ID]
+	if !ok || analysis.Revision != pending.Revision || analysis.ProfileVersion != api.AudioAnalysisProfileVersion {
+		if sourceWorkflowID == state.Workflow.ID && ok {
+			m.private.Delete(ownerID, sourceWorkflowID, audioAnalysisPrivateResourceID(analysis.AttemptID))
+		}
+		return nil, nil
+	}
+	retained, err := m.private.Get(ownerID, sourceWorkflowID, audioAnalysisPrivateResourceID(analysis.AttemptID), now)
+	if err != nil {
+		if !errors.Is(err, ErrPrivateResourceUnavailable) {
+			m.logger.Warnf("release workflow audio analysis restore skipped workflow=%s state=retained_resource_unavailable", state.Workflow.ID)
+		}
+		return nil, nil
+	}
+	restorer, ok := m.audioAnalysisBuilder.(CompatibleAudioAnalysisRestorer)
+	if !ok {
+		return nil, nil
+	}
+	resource, ok := retained.(RetainedAudioAnalysisResource)
+	if !ok {
+		return nil, nil
+	}
+	attemptID, err := m.newID("audio-attempt")
+	if err != nil {
+		return nil, err
+	}
+	restored, cloned, err := restorer.RestoreCompatible(ctx, release, analysis, resource, attemptID)
+	if errors.Is(err, ErrPrivateResourceUnavailable) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("release workflow restore audio analysis: %w", err)
+	}
+	id, err := m.newID("audio-analysis")
+	if err != nil {
+		releasePrivateResource(cloned)
+		return nil, err
+	}
+	restored.ID = api.AudioAnalysisResultID(id)
+	restored.WorkflowID = state.Workflow.ID
+	restored.Revision = nextRevision
+	restored.CreatedAt = now
+	restored.CompletedAt = &now
+	if err := restored.Validate(); err != nil {
+		releasePrivateResource(cloned)
+		return nil, fmt.Errorf("release workflow validate restored audio analysis: %w", err)
+	}
+	if err := m.private.PutWithoutExpiry(ownerID, state.Workflow.ID, audioAnalysisPrivateResourceID(attemptID), cloned); err != nil {
+		releasePrivateResource(cloned)
+		return nil, fmt.Errorf("release workflow retain restored audio analysis: %w", err)
+	}
+	state.AudioAnalyses[restored.ID] = restored
+	state.Workflow.AudioAnalysis = &api.AudioAnalysisRef{ID: restored.ID, Revision: restored.Revision}
+	state.Workflow.AudioAnalysisEnabled = true
+	return &restored, nil
 }
 
 func pendingCorrectionConfirmation(
@@ -5379,6 +5478,8 @@ func (m *Module) setAudioAnalysisEnabled(state *State, command SetAudioAnalysisE
 	state.Workflow.AudioAnalysisEnabled = command.Enabled
 	if !command.Enabled {
 		state.Workflow.AudioAnalysis = nil
+		state.PendingAudioAnalysis = nil
+		state.PendingAudioAnalysisWorkflowID = ""
 	}
 	if changed {
 		state.Workflow.Descriptions = nil

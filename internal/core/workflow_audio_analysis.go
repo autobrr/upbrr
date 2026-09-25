@@ -119,6 +119,81 @@ func (b workflowAudioAnalysisBuilder) Build(
 	return result, resource, nil
 }
 
+func (b workflowAudioAnalysisBuilder) RestoreCompatible(
+	ctx context.Context,
+	release api.ReleaseRef,
+	prior api.AudioAnalysisResult,
+	retained releaseworkflow.RetainedAudioAnalysisResource,
+	attemptID string,
+) (api.AudioAnalysisResult, releaseworkflow.RetainedAudioAnalysisResource, error) {
+	resource, ok := retained.(workflowAudioAnalysisResource)
+	if !ok || b.resolver == nil || prior.ProfileVersion != api.AudioAnalysisProfileVersion {
+		return api.AudioAnalysisResult{}, nil, releaseworkflow.ErrPrivateResourceUnavailable
+	}
+	instructions := api.AudioAnalysisInstructions{
+		Release:        release,
+		ResourceID:     prior.ResourceID,
+		Selection:      prior.Selection,
+		TrackIDs:       prior.TrackIDs,
+		Variants:       prior.Variants,
+		ProfileVersion: api.AudioAnalysisProfileVersion,
+	}
+	subject, err := b.resolver.ResolveAudioAnalysisSubject(ctx, instructions)
+	if err != nil || subject.Release != release || subject.ResourceID != prior.ResourceID ||
+		subject.ManifestFingerprint != prior.ManifestFingerprint {
+		return api.AudioAnalysisResult{}, nil, releaseworkflow.ErrPrivateResourceUnavailable
+	}
+	attemptRoot, err := audioAnalysisAttemptRoot(b.root, subject, attemptID)
+	if err != nil {
+		return api.AudioAnalysisResult{}, nil, err
+	}
+	if err := os.RemoveAll(attemptRoot); err != nil {
+		return api.AudioAnalysisResult{}, nil, fmt.Errorf("reset restored audio-analysis attempt: %w", err)
+	}
+	paths := make(map[api.PublicResourceID]string)
+	result := prior
+	result.Release = release
+	result.AttemptID = attemptID
+	result.Tracks = make([]api.AudioAnalysisTrackResult, len(prior.Tracks))
+	for trackIndex, track := range prior.Tracks {
+		result.Tracks[trackIndex] = track
+		result.Tracks[trackIndex].Artifacts = append([]api.AudioAnalysisArtifact(nil), track.Artifacts...)
+		for artifactIndex, artifact := range track.Artifacts {
+			if artifact.Status != api.StageStatusCompleted {
+				continue
+			}
+			pathValue, found := resource.paths[artifact.ID]
+			integrity := resource.integrity[artifact.ID]
+			if !found || !validAudioAnalysisArtifact(b.root, pathValue, artifact) ||
+				!validAudioAnalysisIntegrity(pathValue, integrity) {
+				_ = os.RemoveAll(attemptRoot)
+				return api.AudioAnalysisResult{}, nil, releaseworkflow.ErrPrivateResourceUnavailable
+			}
+			cloned, cloneErr := cloneAudioAnalysisArtifact(attemptRoot, attemptID, track.TrackID, artifact, pathValue, integrity)
+			if cloneErr != nil {
+				_ = os.RemoveAll(attemptRoot)
+				return api.AudioAnalysisResult{}, nil, fmt.Errorf("clone retained audio-analysis artifact: %w", cloneErr)
+			}
+			result.Tracks[trackIndex].Artifacts[artifactIndex] = cloned.Public
+			paths[cloned.Public.ID] = cloned.Path
+		}
+	}
+	if len(paths) == 0 {
+		_ = os.RemoveAll(attemptRoot)
+		return api.AudioAnalysisResult{}, nil, releaseworkflow.ErrPrivateResourceUnavailable
+	}
+	if err := b.revalidateSubject(ctx, instructions, subject); err != nil {
+		_ = os.RemoveAll(attemptRoot)
+		return api.AudioAnalysisResult{}, nil, releaseworkflow.ErrPrivateResourceUnavailable
+	}
+	cloned, err := retainWorkflowAudioAnalysisResource(b.root, attemptRoot, paths)
+	if err != nil {
+		_ = os.RemoveAll(attemptRoot)
+		return api.AudioAnalysisResult{}, nil, fmt.Errorf("retain restored audio-analysis artifacts: %w", err)
+	}
+	return result, cloned, nil
+}
+
 func (b workflowAudioAnalysisBuilder) buildTracks(
 	ctx context.Context,
 	subject api.AudioAnalysisSubject,

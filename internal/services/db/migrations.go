@@ -225,6 +225,54 @@ var migrationRegistry = []migrationStep{
 		dependsOn: []string{"2026_07_add_canonical_release_generations"},
 		apply:     migrateAddExternalIdentityDependencies,
 	},
+	{
+		id:        "2026_09_retain_input_workflow",
+		dependsOn: []string{"2026_09_add_active_input", "2026_07_add_release_workflow_states"},
+		apply:     migrateRetainInputWorkflow,
+	},
+}
+
+func migrateRetainInputWorkflow(ctx context.Context, exec migrationExecutor) error {
+	if _, err := exec.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS input_workflow_associations (
+		canonical_path TEXT NOT NULL,
+		owner_id TEXT NOT NULL,
+		source_version TEXT NOT NULL,
+		workflow_id TEXT NOT NULL,
+		audio_analysis_id TEXT NOT NULL DEFAULT '',
+		updated_at TEXT NOT NULL,
+		PRIMARY KEY (canonical_path, owner_id),
+		FOREIGN KEY (canonical_path) REFERENCES input_records (canonical_path) ON DELETE CASCADE
+	)`); err != nil {
+		return fmt.Errorf("db: create input workflow associations: %w", err)
+	}
+	// Historical audio results do not store the sampled-byte source version. A result
+	// predating the latest input verification cannot be bound to that version safely.
+	if _, err := exec.ExecContext(ctx, `INSERT INTO input_workflow_associations
+		(canonical_path, owner_id, source_version, workflow_id, audio_analysis_id, updated_at)
+		SELECT canonical_path, owner_id, source_version, workflow_id, audio_analysis_id, updated_at FROM (
+			SELECT input_records.canonical_path, state.owner_id, input_records.source_version,
+				state.workflow_id, audio.key AS audio_analysis_id, state.updated_at,
+				ROW_NUMBER() OVER (PARTITION BY input_records.canonical_path, state.owner_id
+					ORDER BY julianday(json_extract(audio.value, '$.createdAt')) DESC,
+						CAST(json_extract(audio.value, '$.revision') AS INTEGER) DESC,
+						julianday(state.updated_at) DESC, state.rowid DESC) AS rank
+			FROM input_records
+			JOIN release_workflow_states AS state
+				ON json_extract(state.state_json, '$.SourcePath') = input_records.canonical_path
+			JOIN json_each(state.state_json, '$.AudioAnalyses') AS audio
+			WHERE julianday(json_extract(audio.value, '$.createdAt')) > julianday(input_records.updated_at)
+				AND NOT EXISTS (
+					SELECT 1 FROM json_each(state.state_json, '$.Receipts') AS receipt
+					WHERE substr(receipt.key, 1, length('set_audio_analysis_enabled')) = 'set_audio_analysis_enabled'
+						AND CAST(json_extract(receipt.value, '$.Result.workflow.revision') AS INTEGER) >
+							CAST(json_extract(audio.value, '$.revision') AS INTEGER)
+						AND COALESCE(json_extract(receipt.value, '$.Result.workflow.audioAnalysisEnabled'), 0) = 0
+				)
+		) WHERE rank = 1
+		ON CONFLICT(canonical_path, owner_id) DO NOTHING`); err != nil {
+		return fmt.Errorf("db: backfill owner input workflow associations: %w", err)
+	}
+	return nil
 }
 
 func migrateAddExternalIdentityDependencies(ctx context.Context, exec migrationExecutor) error {
