@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -356,14 +357,19 @@ func TestResetIdleInputOnStartupClearsOnlyForeignIdleInput(t *testing.T) {
 
 func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		running    bool
-		liveWork   bool
-		terminal   bool
-		checkpoint bool
-		maxWait    time.Duration
-		parentWait time.Duration
-		wantErr    error
+		name          string
+		running       bool
+		liveWork      bool
+		terminal      bool
+		checkpoint    bool
+		ordinaryFirst bool
+		failList      bool
+		failTerminal  bool
+		failRestore   bool
+		failClose     bool
+		maxWait       time.Duration
+		parentWait    time.Duration
+		wantErr       error
 	}{
 		{name: "queued without work"},
 		{name: "running with expired work", running: true},
@@ -372,6 +378,20 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			running:  true,
 			liveWork: true,
 		},
+		{
+			name:          "ordinary recovery first with live work lease",
+			running:       true,
+			liveWork:      true,
+			ordinaryFirst: true,
+		},
+		{name: "retry failed operation listing after input restoration", failList: true},
+		{
+			name:         "retry failed interruption after work claim",
+			running:      true,
+			failTerminal: true,
+		},
+		{name: "retry failed committed input restoration", failRestore: true},
+		{name: "retry failed idle input close", failClose: true},
 		{
 			name:     "running beyond startup recovery deadline",
 			running:  true,
@@ -509,7 +529,39 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			restarted := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, clock, "second-coordinator")
+			recoveryRepository := &failOnceStartupRecoveryRepository{PersistentRepository: persistent}
+			recoveryRepository.failList.Store(test.failList)
+			recoveryRepository.failTerminal.Store(test.failTerminal)
+			recoveryInputs := &failOnceStartupActiveInputRepository{ActiveInputRepository: repo}
+			recoveryInputs.failRestore.Store(test.failRestore)
+			recoveryInputs.failClose.Store(test.failClose)
+			restarted := newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, &hashingActiveInputVerifier{}, clock, "second-coordinator")
+			if test.ordinaryFirst {
+				if err := restarted.ensureOperationRecovery(ctx); err != nil {
+					t.Fatalf("ordinary recovery before startup reset: %v", err)
+				}
+			}
+			if test.failList || test.failTerminal || test.failRestore || test.failClose {
+				if err := restarted.ResetIdleInputOnStartup(ctx); err == nil {
+					t.Fatal("startup recovery unexpectedly succeeded before injected failure")
+				}
+				claimed, err := repo.LoadActiveInput(ctx)
+				wantState := api.ActiveInputActive
+				if test.failRestore {
+					wantState = api.ActiveInputRecovering
+				}
+				if err != nil || claimed.State != wantState || claimed.CoordinatorID != "second-coordinator" {
+					t.Fatalf("input after failed startup recovery = %#v, err=%v", claimed, err)
+				}
+				if test.failTerminal {
+					if _, err := repo.RawDB().ExecContext(ctx, `UPDATE release_workflow_work SET lease_expires_at = ? WHERE operation_id = ?`,
+						clock.Now().Add(-time.Second).Format(time.RFC3339Nano), operationID); err != nil {
+						t.Fatalf("expire failed recovery work claim: %v", err)
+					}
+				}
+				restarted = newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, &hashingActiveInputVerifier{}, clock,
+					"second-coordinator", WithCoordinator(restarted.Coordinator))
+			}
 			if test.maxWait > 0 {
 				recoveryCtx := ctx
 				if test.parentWait > 0 {
@@ -835,22 +887,74 @@ func openActiveInputRecoveryRepository(ctx context.Context, t *testing.T) *db.SQ
 	return repo
 }
 
+type failOnceStartupRecoveryRepository struct {
+	*PersistentRepository
+	failList     atomic.Bool
+	failTerminal atomic.Bool
+}
+
+type failOnceStartupActiveInputRepository struct {
+	api.ActiveInputRepository
+	failRestore atomic.Bool
+	failClose   atomic.Bool
+}
+
+func (r *failOnceStartupActiveInputRepository) CompareAndSwapActiveInput(
+	ctx context.Context, expected, next api.ActiveInputRecord, now time.Time,
+) error {
+	if expected.State == api.ActiveInputRecovering && r.failRestore.Swap(false) {
+		return errors.New("synthetic committed input restoration failure")
+	}
+	if err := r.ActiveInputRepository.CompareAndSwapActiveInput(ctx, expected, next, now); err != nil {
+		return fmt.Errorf("persist test input transition: %w", err)
+	}
+	return nil
+}
+
+func (r *failOnceStartupActiveInputRepository) CloseIdleActiveInput(ctx context.Context, expected api.ActiveInputRecord, now time.Time) error {
+	if r.failClose.Swap(false) {
+		return errors.New("synthetic idle input close failure")
+	}
+	if err := r.ActiveInputRepository.CloseIdleActiveInput(ctx, expected, now); err != nil {
+		return fmt.Errorf("close test input: %w", err)
+	}
+	return nil
+}
+
+func (r *failOnceStartupRecoveryRepository) ListActiveOperations(ctx context.Context) ([]api.ReleaseWorkflowOperationRecord, error) {
+	if r.failList.Swap(false) {
+		return nil, errors.New("synthetic startup operation listing failure")
+	}
+	return r.PersistentRepository.ListActiveOperations(ctx)
+}
+
+func (r *failOnceStartupRecoveryRepository) SaveOperation(ctx context.Context, expectedSequence uint64, record api.ReleaseWorkflowOperationRecord) error {
+	if isTerminalProgressStatus(record.Status.Status) && r.failTerminal.Swap(false) {
+		return errors.New("synthetic startup operation publication failure")
+	}
+	return r.PersistentRepository.SaveOperation(ctx, expectedSequence, record)
+}
+
 func newActiveInputRecoveryModule(
 	t *testing.T,
-	persistent *PersistentRepository,
+	persistent Repository,
 	activeInputs api.ActiveInputRepository,
 	verifier *hashingActiveInputVerifier,
 	clock Clock,
 	epoch string,
+	additionalOptions ...Option,
 ) *Module {
 	t.Helper()
+	options := append([]Option{
+		WithActiveInputs(activeInputs, verifier.Verify),
+		WithClock(clock),
+		WithProcessEpoch(epoch),
+	}, additionalOptions...)
 	module, err := New(
 		persistent,
 		NewMemoryPrivateResourceStore(),
 		ReleasePreparerFunc{},
-		WithActiveInputs(activeInputs, verifier.Verify),
-		WithClock(clock),
-		WithProcessEpoch(epoch),
+		options...,
 	)
 	if err != nil {
 		t.Fatal(err)

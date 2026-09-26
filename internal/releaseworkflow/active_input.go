@@ -68,7 +68,7 @@ func (m *Module) OwnsActiveInput(slot api.ActiveInputRecord) bool {
 // for live work leases, preserves completed checkpoints, and retains an active
 // composite workflow for an explicit retry. A live foreign lease is deferred.
 // It does not verify source bytes or start a new workflow.
-func (m *Module) ResetIdleInputOnStartup(ctx context.Context) error {
+func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	if m == nil || m.activeInputs == nil {
 		return nil
 	}
@@ -77,13 +77,44 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) error {
 	}
 	m.activeMu.Lock()
 	defer m.activeMu.Unlock()
+	defer func() {
+		if resetErr == nil {
+			m.startupResetPending = false
+			m.startupResetDone = true
+		}
+	}()
 
 	slot, err := m.activeInputs.LoadActiveInput(ctx)
 	if err != nil {
 		return fmt.Errorf("release workflow load active input for startup reset: %w", err)
 	}
-	if slot.State == api.ActiveInputEmpty || m.OwnsActiveInput(slot) {
+	if slot.State == api.ActiveInputEmpty ||
+		(m.OwnsActiveInput(slot) && m.startupResetDone && !m.startupResetPending && slot.State != api.ActiveInputRecovering) {
 		return nil
+	}
+	recovered := m.startupResetPending && m.OwnsActiveInput(slot)
+	if m.OwnsActiveInput(slot) {
+		recoveryCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
+		switch {
+		case slot.State == api.ActiveInputRecovering:
+			m.startupResetPending = true
+			m.startupResetDone = false
+			slot, err = m.finishActiveInputRecovery(recoveryCtx, slot, slot.OwnerID, true)
+			if err != nil {
+				return fmt.Errorf("release workflow finish input recovery on startup: %w", err)
+			}
+			recovered = true
+		case recovered && slot.State == api.ActiveInputActive:
+			if err := m.discardInterruptedOperations(recoveryCtx); err != nil {
+				return fmt.Errorf("release workflow resume interrupted operation recovery on startup: %w", err)
+			}
+		case slot.State == api.ActiveInputActive:
+			// Ordinary admission can precede an explicit startup reset. Settle
+			// prior-process operations without closing the current input.
+			return m.discardInterruptedOperations(recoveryCtx)
+		default:
+			return api.ErrActiveInputBusy
+		}
 	}
 	m.logger.Debugf(
 		"active input: startup reset state=found input_state=%s revision=%d lease_expired=%t",
@@ -91,9 +122,10 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) error {
 		slot.Revision,
 		!slot.LeaseExpiresAt.After(m.clock.Now()),
 	)
-	recovered := false
-	if !slot.LeaseExpiresAt.After(m.clock.Now()) {
+	if !m.OwnsActiveInput(slot) && !slot.LeaseExpiresAt.After(m.clock.Now()) {
 		m.logger.Debugf("active input: startup reset decision=recover input_state=%s revision=%d", slot.State, slot.Revision)
+		m.startupResetPending = true
+		m.startupResetDone = false
 		slot, err = m.recoverActiveInput(ctx, slot, slot.OwnerID, true)
 		if err != nil {
 			return fmt.Errorf("release workflow recover expired input on startup: %w", err)
@@ -428,6 +460,16 @@ func (m *Module) recoverActiveInput(
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow claim input recovery: %w", err)
 	}
 	m.startActiveInputHeartbeat(ctx, recovering.Fence)
+	return m.finishActiveInputRecovery(ctx, recovering, requestedOwner, discardInterrupted)
+}
+
+// finishActiveInputRecovery restores committed input and settles old work under an already claimed fence.
+func (m *Module) finishActiveInputRecovery(
+	ctx context.Context,
+	recovering api.ActiveInputRecord,
+	requestedOwner string,
+	discardInterrupted bool,
+) (api.ActiveInputRecord, error) {
 	ctx = api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: recovering.Fence})
 	// Restore only the committed input under the new fence before recovery can
 	// claim work. Existing unknown effects still block switching and submission.
@@ -438,7 +480,7 @@ func (m *Module) recoverActiveInput(
 		restored.State = api.ActiveInputEmpty
 	}
 	restored.ReservationID, restored.RequestedPath = "", ""
-	if prior.ReservationID != "" {
+	if recovering.ReservationID != "" {
 		// An abandoned request never committed its idempotency receipt.
 		restored.IdempotencyKey, restored.RequestFingerprint = "", ""
 	}

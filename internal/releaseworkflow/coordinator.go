@@ -25,8 +25,14 @@ type Coordinator struct {
 	operationLocks     map[api.WorkflowOperationID]*sync.Mutex
 	operationWorkersMu sync.Mutex
 	operationWorkers   map[api.WorkflowOperationID]operationWorker
-	operationRecovery  sync.Once
-	recoverError       error
+	// Recovery state is shared across config-scoped modules and guarded by operationRecoveryMu.
+	operationRecoveryMu      sync.Mutex
+	operationRecovered       bool
+	startupRecoveryRequested bool
+	startupRecoveryCompleted bool
+	// Startup reset state is guarded by activeMu so a failed reset can resume.
+	startupResetPending bool
+	startupResetDone    bool
 }
 
 // Shutdown stops the process-owned active-input heartbeat and operation

@@ -1580,56 +1580,70 @@ func (m *Module) discardInterruptedOperations(ctx context.Context) error {
 	return m.recoverOperationsOnce(ctx, true, workflowWorkLeaseTTL+5*time.Second)
 }
 
-// recoverOperationsOnce settles prior-process operations once per module.
+// recoverOperationsOnce settles prior-process operations once after a successful pass.
 // Startup recovery waits within one deadline for live work leases and interrupts unfinished work;
 // ordinary recovery may resume a valid retained command after its lease ends.
 // Completed work checkpoints are published in either mode.
-func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted bool, maxWait time.Duration) error {
-	m.operationRecovery.Do(func() {
-		recoveryCtx := context.WithoutCancel(ctx)
-		if discardInterrupted {
-			var cancel context.CancelFunc
-			recoveryCtx, cancel = context.WithTimeoutCause(ctx, maxWait, api.ErrActiveInputBusy)
-			defer cancel()
+func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted bool, maxWait time.Duration) (recoveryErr error) {
+	m.operationRecoveryMu.Lock()
+	defer m.operationRecoveryMu.Unlock()
+	if discardInterrupted {
+		m.startupRecoveryRequested = true
+	}
+	discardInterrupted = discardInterrupted || m.startupRecoveryRequested
+	if discardInterrupted && maxWait == 0 {
+		maxWait = workflowWorkLeaseTTL + 5*time.Second
+	}
+	if m.operationRecovered && (!discardInterrupted || m.startupRecoveryCompleted) {
+		return nil
+	}
+	previouslyRecovered, previouslyCompleted := m.operationRecovered, m.startupRecoveryCompleted
+	recoveryCtx := context.WithoutCancel(ctx)
+	if discardInterrupted {
+		var cancel context.CancelFunc
+		recoveryCtx, cancel = context.WithTimeoutCause(ctx, maxWait, api.ErrActiveInputBusy)
+		defer cancel()
+	}
+	defer func() {
+		if discardInterrupted && ctx.Err() == nil && errors.Is(context.Cause(recoveryCtx), api.ErrActiveInputBusy) {
+			recoveryErr = fmt.Errorf("release workflow startup recovery deadline: %w", api.ErrActiveInputBusy)
 		}
-		defer func() {
-			if discardInterrupted && ctx.Err() == nil && errors.Is(context.Cause(recoveryCtx), api.ErrActiveInputBusy) {
-				m.recoverError = fmt.Errorf("release workflow startup recovery deadline: %w", api.ErrActiveInputBusy)
-			}
-		}()
-		records, err := m.operations.ListActiveOperations(recoveryCtx)
-		if err != nil {
+		if recoveryErr != nil {
+			m.operationRecovered, m.startupRecoveryCompleted = previouslyRecovered, previouslyCompleted
+		}
+	}()
+	records, err := m.operations.ListActiveOperations(recoveryCtx)
+	if err != nil {
+		if discardInterrupted {
+			m.logger.Debugf("releaseworkflow: startup operation recovery state=failed stage=list cause=%s", logging.SanitizeMessage(err.Error()))
+		}
+		return fmt.Errorf("release workflow recover operations: %w", err)
+	}
+	if discardInterrupted {
+		m.logger.Debugf("releaseworkflow: startup operation recovery state=started active_count=%d", len(records))
+	}
+	for _, record := range records {
+		if record.ProcessEpoch == m.processEpoch {
+			continue
+		}
+		if err := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); err != nil {
 			if discardInterrupted {
-				m.logger.Debugf("releaseworkflow: startup operation recovery state=failed stage=list cause=%s", logging.SanitizeMessage(err.Error()))
+				m.logger.Debugf(
+					"releaseworkflow: startup operation recovery state=failed workflow=%s operation=%s cause=%s",
+					record.WorkflowID,
+					record.OperationID,
+					logging.SanitizeMessage(err.Error()),
+				)
 			}
-			m.recoverError = fmt.Errorf("release workflow recover operations: %w", err)
-			return
+			return err
 		}
-		if discardInterrupted {
-			m.logger.Debugf("releaseworkflow: startup operation recovery state=started active_count=%d", len(records))
-		}
-		for _, record := range records {
-			if record.ProcessEpoch == m.processEpoch {
-				continue
-			}
-			if err := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); err != nil {
-				if discardInterrupted {
-					m.logger.Debugf(
-						"releaseworkflow: startup operation recovery state=failed workflow=%s operation=%s cause=%s",
-						record.WorkflowID,
-						record.OperationID,
-						logging.SanitizeMessage(err.Error()),
-					)
-				}
-				m.recoverError = err
-				return
-			}
-		}
-		if discardInterrupted {
-			m.logger.Debugf("releaseworkflow: startup operation recovery state=completed active_count=%d", len(records))
-		}
-	})
-	return m.recoverError
+	}
+	if discardInterrupted {
+		m.logger.Debugf("releaseworkflow: startup operation recovery state=completed active_count=%d", len(records))
+		m.startupRecoveryCompleted = true
+	}
+	m.operationRecovered = true
+	return nil
 }
 
 func (m *Module) recoverOperationAfterLease(
@@ -1696,6 +1710,11 @@ func (m *Module) recoverOperationAfterLease(
 			timer := time.NewTimer(delay)
 			defer timer.Stop()
 			<-timer.C
+			m.operationRecoveryMu.Lock()
+			defer m.operationRecoveryMu.Unlock()
+			if m.startupRecoveryRequested {
+				return
+			}
 			if recoveryErr := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); recoveryErr != nil {
 				m.logger.Errorf(
 					"releaseworkflow: workflow=%s operation=%s stage=restart_recovery state=failed cause=%s",
