@@ -40,6 +40,8 @@ Tracker adapters normalize duplicate results into a common review surface. A tra
 
 Rule and validation outcomes can block a live upload while still allowing debug preparation so you can inspect later stages. Subjective or incomplete tracker rules remain manual decisions.
 
+Some tracker checks need complete package or per-file media evidence. A warning or successful dry run does not establish compliance with a tracker's current rules; review those rules at the tracker before submission.
+
 Tracker settings can restrict duplicate competition by incoming release group. When a tag matches that tracker's **Duplicate bypass groups** or **Internal groups**, confirmed candidates from other groups coexist and are omitted from slot-capacity decisions. Exact duplicates, same-group candidates, conflicting evidence, and unknown groups keep their normal duplicate result. See [tracker group policy lists](../web-ui/settings/trackers.md#group-policy-lists).
 
 `--skip-dupe-check` and similar bypasses remove safeguards. Use them only when you have manually completed the equivalent tracker checks.
@@ -57,14 +59,6 @@ The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--un
 upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time.
 
 Tracker-specific categories, source/type mappings, descriptions, media selection, questionnaires, and auth flows remain owned by the tracker adapter. A successful mapping does not prove the upload complies with every current site rule.
-
-## SAM upload rules
-
-For SAM, movie torrents require exactly one main video file. TV uploads require one detected season matching the selected season when known; a non-pack TV upload must contain one video file and one episode. Season packs require a current TVDB or TVmaze status of ended, cancelled, or completed (TVDB takes precedence when both report a status). Missing package evidence produces a warning; a missing or ineligible series status blocks a season pack.
-
-When the original language is not Portuguese, each media file must have original-language audio and Portuguese subtitles. Missing language evidence produces a warning; a known mismatch blocks the upload. SAM's generated TV and anime names retain the year when known. A `DUAL` marker is omitted when the resolved audio languages do not include Portuguese.
-
-SAM duplicate comparison uses source, resolution, video codec, audio codec, and channel layout as slot dimensions. A different known audio-language set can coexist; missing languages alone do not establish this exception. The comparison uses audio tracks from Unit3D search MediaInfo when present. Review incomplete or conflicting duplicate evidence rather than assuming it is a separate slot.
 
 ## Image hosts and clients
 
