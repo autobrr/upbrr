@@ -73,6 +73,25 @@ func TestBHDStructuredNamePolicyHonorsManualAndOpaqueAuthority(t *testing.T) {
 	}
 }
 
+func TestBHDSceneUsesGeneratedNamePolicy(t *testing.T) {
+	t.Parallel()
+	subject := bhdGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "WEBDL",
+		Title:      "Example Release",
+		Year:       2026,
+		Resolution: "1080p",
+		Source:     "Web",
+		Tag:        "-GRP",
+	})
+	subject.Identity.Category = api.CanonicalCategoryMovie
+	subject.Scene = true
+	subject.SceneName = "Different.Scene.Name.2026.1080p.WEB-DL-GRP"
+	if got, want := bhdReviewedName(t, subject, nil), "Example Release 2026 1080p WEB-DL-GRP"; got != want {
+		t.Fatalf("BHD scene upload name = %q, want %q", got, want)
+	}
+}
+
 func TestBHDStructuredNamePolicyDVDGroupAndOrder(t *testing.T) {
 	t.Parallel()
 	subject := bhdGeneratedSubject(t, api.ReleaseNameRequest{
@@ -162,7 +181,7 @@ func TestBHDStructuredNamePolicyKeepsTVYearWithoutDisambiguationEvidence(t *test
 
 func TestBHDNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v6" {
+	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v7" {
 		t.Fatalf("BHD naming policy ID = %q", got)
 	}
 }

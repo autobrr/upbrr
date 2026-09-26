@@ -24,8 +24,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:applyCinemaZNameDefaults": {
-    "sha256": "ff3d65d012adecd45d18f81b432471e161f19aceb3b23ab05a5d656edba4aec8",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "839b1b4c81764796725e278916c54bbabff6a332f37450ae66770e0d98458b81",
+    "reason": "Only the CinemaZ policy identifier in the missing-title error changed; provider title selection and manual fact/component precedence remain unchanged."
   },
   "internal/trackers/impl/azfamily/name.go:avistaZEnglishTitle": {
     "sha256": "d11bf897bedcb72edbf4d5f588f03435bc223c64aca77776bfeec942f36dee3d",
@@ -52,8 +52,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:releaseNamePolicy": {
-    "sha256": "4b343b3879778786bd4ee2b6f9afba1b0bc2f33df1641a066e8e428c39e95390",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "602b20b8adcf133c7aefb47772a979f572d419603e155f88267906fb12352611",
+    "reason": "AZ/CZ exact scene names apply only when Scene is true; non-scene releases with SceneName use generated naming defaults. Requested names still take precedence, current-provider and manual fact/component rules remain unchanged, and PHD remains generated."
   },
   "internal/trackers/impl/azfamily/name.go:resolveSearchName": {
     "sha256": "788bfbba6826e2246571f0ce6abf535aef4f78596dc6622feecdcb2b2f5a0a0b",
@@ -376,8 +376,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "sha256": "54d32df04963e91738b80a0e1aae64c89fe2933ca2aca337ed17898da9c335ca",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "106d23ad05fb18047b4a4c966b8899256422a30fcfc7968a647f40d37550e380",
+    "reason": "Only the BHD naming policy identifier changed. Generated BHD names still use current provider evidence with manual title/year precedence; exact manual names bypass defaults."
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {
     "sha256": "0af22e8551c67d676e5b37d02a72c73cde9cf5823ae0dc7a3212bddddcf19fe4",
