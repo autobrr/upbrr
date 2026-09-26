@@ -397,6 +397,11 @@ func TestAZFamilySceneNamingMatchesPreStructuredPolicy(t *testing.T) {
 	for _, site := range []string{"AZ", "CZ", "PHD"} {
 		t.Run(site, func(t *testing.T) {
 			nonSceneName := azFamilyReviewedName(t, site, subject, nil)
+			staleScene := subject
+			staleScene.SceneName = sceneName
+			if got := azFamilyReviewedName(t, site, staleScene, nil); got != nonSceneName {
+				t.Fatalf("%s non-scene name with scene metadata = %q, want %q", site, got, nonSceneName)
+			}
 			scene := subject
 			scene.Scene = true
 			scene.SceneName = sceneName

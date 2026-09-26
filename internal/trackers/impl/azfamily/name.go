@@ -50,7 +50,7 @@ func releaseNamePolicy(site siteDefinition) trackers.ReleaseNamePolicyBinding {
 				return applyNameDefaults(site, editor, meta, trackerConfig)
 			},
 			ExactName: func(meta api.UploadSubject, _ config.TrackerConfig) string {
-				if site.Name == "AZ" || site.Name == "CZ" {
+				if meta.Scene && (site.Name == "AZ" || site.Name == "CZ") {
 					return strings.TrimSpace(meta.SceneName)
 				}
 				return ""

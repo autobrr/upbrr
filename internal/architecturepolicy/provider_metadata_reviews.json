@@ -52,8 +52,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:releaseNamePolicy": {
-    "sha256": "ce5c56607861432cf995784330c4f2081322367dc05b2f097d141451521cee90",
-    "reason": "AZ/CZ exact scene names bypass provider naming defaults as in v0.3.4; requested names still take precedence. Generated names retain the same current-provider and manual fact/component rules, and PHD remains generated."
+    "sha256": "602b20b8adcf133c7aefb47772a979f572d419603e155f88267906fb12352611",
+    "reason": "AZ/CZ exact scene names apply only when Scene is true; non-scene releases with SceneName use generated naming defaults. Requested names still take precedence, current-provider and manual fact/component rules remain unchanged, and PHD remains generated."
   },
   "internal/trackers/impl/azfamily/name.go:resolveSearchName": {
     "sha256": "788bfbba6826e2246571f0ce6abf535aef4f78596dc6622feecdcb2b2f5a0a0b",
