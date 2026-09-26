@@ -285,6 +285,7 @@ config = {
     'DEFAULT': {'tmdb_api': 'test', 'screens': 6},
     'TRACKERS': {
         'default_trackers': 'DIGITALCORE, HDSPACE, RACING4EVERYONE, UNWALLED',
+        'preferred_tracker': 'UNWALLED',
         'DIGITALCORE': {'api_key': 'digitalcore-key'},
         'HDSPACE': {'api_key': 'hdspace-key'},
         'RACING4EVERYONE': {'api_key': 'r4e-key'},
@@ -311,6 +312,12 @@ config = {
 	}
 	if !strings.Contains(strings.Join(warnings, "\n"), "UNWALLED") {
 		t.Fatalf("missing unsupported default tracker warning: %v", warnings)
+	}
+	if got := cfg.Trackers.PreferredTracker; got != "" {
+		t.Fatalf("unsupported preferred tracker: got %q, want empty", got)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "skipped unsupported preferred tracker: UNWALLED") {
+		t.Fatalf("missing unsupported preferred tracker warning: %v", warnings)
 	}
 }
 

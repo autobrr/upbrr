@@ -240,7 +240,13 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 	}
 
 	if pt, ok := legacyTrackers["preferred_tracker"]; ok && pt != nil {
-		out.Trackers.PreferredTracker = canonicalTrackerName(strings.TrimSpace(fmt.Sprintf("%v", pt)))
+		preferred := canonicalTrackerName(strings.TrimSpace(fmt.Sprintf("%v", pt)))
+		if preferred != "" && !knownTrackers[preferred] {
+			out.Trackers.PreferredTracker = ""
+			warnings = append(warnings, "skipped unsupported preferred tracker: "+preferred)
+		} else {
+			out.Trackers.PreferredTracker = preferred
+		}
 	}
 
 	for trackerName, raw := range legacyTrackers {
