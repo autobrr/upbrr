@@ -577,30 +577,42 @@ func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string 
 	return result
 }
 
+// duplicateTarget projects resolved upload facts into local duplicate evidence.
 func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 	return api.TrackerDuplicateTarget{
-		Names:       []string{SourceReleaseName(subject)},
-		Category:    string(subject.Identity.Category),
-		Type:        strings.TrimSpace(subject.Type),
-		Source:      strings.TrimSpace(subject.Source),
-		Provider:    firstProjectionValue(subject.Service, subject.ServiceLongName),
-		Resolution:  strings.TrimSpace(subject.Release.Resolution),
-		Container:   strings.TrimSpace(subject.Container),
-		VideoCodec:  strings.TrimSpace(subject.VideoCodec),
-		VideoEncode: strings.TrimSpace(subject.VideoEncode),
-		HDR:         subject.HDRFacts,
-		Edition:     strings.TrimSpace(subject.Edition),
-		Region:      strings.TrimSpace(subject.Region),
-		ThreeD:      strings.TrimSpace(subject.Is3D),
-		Group:       strings.TrimSpace(subject.Tag),
-		Repack:      strings.TrimSpace(subject.Repack),
-		Season:      subject.SeasonInt,
-		Episode:     subject.EpisodeInt,
-		Date:        strings.TrimSpace(subject.DailyEpisodeDate),
-		Pack:        subject.TVPack,
-		SizeBytes:   subject.SourceSize,
-		FileNames:   append([]string(nil), subject.FileList...),
+		Names:          []string{SourceReleaseName(subject)},
+		Category:       string(subject.Identity.Category),
+		Type:           strings.TrimSpace(subject.Type),
+		Source:         strings.TrimSpace(subject.Source),
+		Provider:       firstProjectionValue(subject.Service, subject.ServiceLongName),
+		Resolution:     strings.TrimSpace(subject.Release.Resolution),
+		Container:      strings.TrimSpace(subject.Container),
+		VideoCodec:     strings.TrimSpace(subject.VideoCodec),
+		VideoEncode:    strings.TrimSpace(subject.VideoEncode),
+		AudioCodecs:    nonEmptyDuplicateValues(subject.Audio),
+		AudioChannels:  nonEmptyDuplicateValues(subject.Channels),
+		AudioLanguages: append([]string(nil), subject.AudioLanguages...),
+		HDR:            subject.HDRFacts,
+		Edition:        strings.TrimSpace(subject.Edition),
+		Region:         strings.TrimSpace(subject.Region),
+		ThreeD:         strings.TrimSpace(subject.Is3D),
+		Group:          strings.TrimSpace(subject.Tag),
+		Repack:         strings.TrimSpace(subject.Repack),
+		Season:         subject.SeasonInt,
+		Episode:        subject.EpisodeInt,
+		Date:           strings.TrimSpace(subject.DailyEpisodeDate),
+		Pack:           subject.TVPack,
+		SizeBytes:      subject.SourceSize,
+		FileNames:      append([]string(nil), subject.FileList...),
 	}
+}
+
+// nonEmptyDuplicateValues preserves one non-empty structured duplicate fact.
+func nonEmptyDuplicateValues(value string) []string {
+	if value = strings.TrimSpace(value); value != "" {
+		return []string{value}
+	}
+	return nil
 }
 
 func firstProjectionValue(values ...string) string {

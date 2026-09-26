@@ -731,6 +731,7 @@ func unit3DTitleHDRFallback(name string, canonicalType string, resolution string
 	return titleHDR
 }
 
+// buildUnit3DSearchEntries projects completed Unit3D search rows into duplicate evidence.
 func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc bool) ([]api.DupeEntry, int) {
 	entries := make([]api.DupeEntry, 0, len(items))
 	wrongWorkCount := 0
@@ -765,20 +766,23 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 		canonicalType := CanonicalUnit3DType(rawType)
 		hdr = unit3DTitleHDRFallback(item.Attributes.Name, canonicalType, item.Attributes.Resolution, hdr)
 		entry := api.DupeEntry{
-			Name:          strings.TrimSpace(item.Attributes.Name),
-			Trumpable:     item.Attributes.Trumpable,
-			Link:          strings.TrimSpace(item.Attributes.DetailsLink),
-			Download:      strings.TrimSpace(item.Attributes.DownloadLink),
-			ID:            strings.TrimSpace(item.ID.String()),
-			Type:          rawType,
-			CanonicalType: canonicalType,
-			Res:           strings.TrimSpace(item.Attributes.Resolution),
-			Codec:         mediafacts.VideoCodecFromMediaInfoText(item.Attributes.MediaInfo),
-			Provider:      strings.TrimSpace(item.Attributes.Provider),
-			Internal:      item.Attributes.Internal,
-			BDInfo:        strings.TrimSpace(item.Attributes.BDInfo),
-			Description:   strings.TrimSpace(item.Attributes.Description),
-			HDR:           hdr,
+			Name:           strings.TrimSpace(item.Attributes.Name),
+			Trumpable:      item.Attributes.Trumpable,
+			Link:           strings.TrimSpace(item.Attributes.DetailsLink),
+			Download:       strings.TrimSpace(item.Attributes.DownloadLink),
+			ID:             strings.TrimSpace(item.ID.String()),
+			Type:           rawType,
+			CanonicalType:  canonicalType,
+			Res:            strings.TrimSpace(item.Attributes.Resolution),
+			Codec:          mediafacts.VideoCodecFromMediaInfoText(item.Attributes.MediaInfo),
+			AudioCodecs:    mediafacts.AudioCodecsFromMediaInfoText(item.Attributes.MediaInfo),
+			AudioChannels:  mediafacts.AudioChannelsFromMediaInfoText(item.Attributes.MediaInfo),
+			AudioLanguages: mediafacts.AudioLanguagesFromMediaInfoText(item.Attributes.MediaInfo),
+			Provider:       strings.TrimSpace(item.Attributes.Provider),
+			Internal:       item.Attributes.Internal,
+			BDInfo:         strings.TrimSpace(item.Attributes.BDInfo),
+			Description:    strings.TrimSpace(item.Attributes.Description),
+			HDR:            hdr,
 		}
 
 		if sizeValue, err := parseNumberToInt64(item.Attributes.Size); err == nil {
@@ -807,6 +811,7 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 	return entries, wrongWorkCount
 }
 
+// buildUnit3DPendingEntries projects pending Unit3D rows into duplicate evidence.
 func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dSearchEndpoint, isDisc bool) ([]api.DupeEntry, int) {
 	entries := make([]api.DupeEntry, 0, len(items))
 	wrongWorkCount := 0
@@ -820,19 +825,22 @@ func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dS
 		canonicalType := CanonicalUnit3DType(rawType)
 		hdr := unit3DTitleHDRFallback(item.Name, canonicalType, item.Resolution, mediafacts.HDRFromMediaInfoText(item.MediaInfo))
 		entry := api.DupeEntry{
-			Name:          strings.TrimSpace(item.Name),
-			Trumpable:     item.Trumpable,
-			Link:          endpoint.pendingWebURL,
-			Download:      strings.TrimSpace(item.DownloadLink),
-			ID:            strings.TrimSpace(item.ID.String()),
-			Type:          rawType,
-			CanonicalType: canonicalType,
-			Res:           strings.TrimSpace(item.Resolution),
-			Codec:         mediafacts.VideoCodecFromMediaInfoText(item.MediaInfo),
-			Internal:      item.Internal,
-			BDInfo:        strings.TrimSpace(item.BDInfo),
-			Description:   strings.TrimSpace(item.Description),
-			HDR:           hdr,
+			Name:           strings.TrimSpace(item.Name),
+			Trumpable:      item.Trumpable,
+			Link:           endpoint.pendingWebURL,
+			Download:       strings.TrimSpace(item.DownloadLink),
+			ID:             strings.TrimSpace(item.ID.String()),
+			Type:           rawType,
+			CanonicalType:  canonicalType,
+			Res:            strings.TrimSpace(item.Resolution),
+			Codec:          mediafacts.VideoCodecFromMediaInfoText(item.MediaInfo),
+			AudioCodecs:    mediafacts.AudioCodecsFromMediaInfoText(item.MediaInfo),
+			AudioChannels:  mediafacts.AudioChannelsFromMediaInfoText(item.MediaInfo),
+			AudioLanguages: mediafacts.AudioLanguagesFromMediaInfoText(item.MediaInfo),
+			Internal:       item.Internal,
+			BDInfo:         strings.TrimSpace(item.BDInfo),
+			Description:    strings.TrimSpace(item.Description),
+			HDR:            hdr,
 		}
 
 		if sizeValue, err := parseNumberToInt64(item.Size); err == nil {
