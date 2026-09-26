@@ -9,6 +9,7 @@ import { setAppRequestHandlerForTests } from "./api/client";
 import type { ApplicationInfo, MetadataPreview, TrackerCatalog } from "./types";
 import { emptyExternalIdentity } from "./utils/canonicalIdentity";
 import { sourcePathHistoryStorageKey } from "./utils/inputHistory";
+import { AppearanceProvider } from "./themes/provider";
 import type { ReleaseWorkflowCurrent } from "./api/generated/release-workflow";
 
 const storedValues = new Map<string, string>();
@@ -199,6 +200,31 @@ describe("App shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Build Release Name" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Dupe Check" })).toBeDisabled());
+  });
+
+  it("returns from Appearance to the main Settings section via the sidebar", async () => {
+    setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetActiveInput") return { state: "empty", revision: 0 };
+      if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
+      if (method === "ListTrackerCatalog") return trackerCatalog();
+      if (method === "GetApplicationInfo") return applicationInfo();
+      throw new Error(`unexpected app request: ${method}`);
+    });
+
+    render(createElement(AppearanceProvider, null, createElement(App)));
+    fireEvent.click(await screen.findByRole("button", { name: "Appearance" }));
+    expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Settings$/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Main$/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+    expect(screen.getByRole("button", { name: /^Settings$/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("opens folders separately from selecting them", async () => {

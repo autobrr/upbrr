@@ -20,6 +20,7 @@ export const routeAccess = (
     const availability = continuation?.availableGoals.find((candidate) => candidate.goal === name);
     return {
       available: availability?.available === true,
+      reasonCode: availability?.reasonCode,
       reason:
         availability?.available === true
           ? ""
@@ -34,9 +35,8 @@ export const routeAccess = (
     input: { available: true, reason: "" },
     trackerData: {
       available: trackerAssessment.available && hasTrackerData,
-      reason: trackerAssessment.available
-        ? "No tracker data is available."
-        : trackerAssessment.reason,
+      reasonCode: hasTrackerData ? trackerAssessment.reasonCode : undefined,
+      reason: hasTrackerData ? trackerAssessment.reason : "No tracker data is available.",
     },
     audioAnalysis: {
       available: hasAudioData,
@@ -45,6 +45,7 @@ export const routeAccess = (
     duplicates: trackerAssessment,
     screenshots: {
       available: media.available && requirements.needsImages,
+      reasonCode: requirements.needsImages ? media.reasonCode : undefined,
       reason: requirements.needsImages
         ? media.reason
         : "Selected trackers do not use shared screenshots.",
@@ -52,12 +53,14 @@ export const routeAccess = (
     menuImages: media,
     uploadedImages: {
       available: media.available && requirements.needsImages,
+      reasonCode: requirements.needsImages ? media.reasonCode : undefined,
       reason: requirements.needsImages
         ? media.reason
         : "Selected trackers do not use shared screenshots.",
     },
     descriptions: {
       available: descriptions.available && requirements.needsDescriptions,
+      reasonCode: requirements.needsDescriptions ? descriptions.reasonCode : undefined,
       reason: requirements.needsDescriptions
         ? descriptions.reason
         : "Selected trackers do not use shared descriptions.",

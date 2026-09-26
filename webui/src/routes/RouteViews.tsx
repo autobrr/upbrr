@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { createContext, lazy, Suspense, useContext } from "react";
+import { createContext, lazy, Suspense, useContext, useRef } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import InputPage from "../pages/input";
 import type { useReleaseSession } from "../releaseSession";
@@ -57,6 +57,18 @@ function GuardedReleaseView({
 }: Readonly<{ route: ReleaseRoute; children: ReactNode }>) {
   const { session, navigateTo } = useRouteViews();
   const access = session.navigation.view.access[route];
+  const workflow = session.workflow.view.current;
+  const lastAvailableWorkflow = useRef<string | null>(null);
+  const workflowID = workflow?.workflow.id ?? null;
+  if (access.available) lastAvailableWorkflow.current = workflowID;
+  else if (access.reasonCode !== "operation_active" || lastAvailableWorkflow.current !== workflowID)
+    lastAvailableWorkflow.current = null;
+  const operationActive =
+    workflow?.operation?.status === "queued" || workflow?.operation?.status === "running";
+  const awaitingWorkflowRefresh =
+    access.reasonCode === "operation_active" &&
+    (operationActive || session.workflow.view.status === "running") &&
+    lastAvailableWorkflow.current === workflowID;
   const uploadView = session.upload.view;
   const hasUploadProgress =
     route === "upload" &&
@@ -64,8 +76,9 @@ function GuardedReleaseView({
       uploadView.uploadStatus !== "idle" ||
       uploadView.dryRunResult !== null ||
       uploadView.result !== null);
-  const workflowComplete = session.workflow.view.current?.workflow.status === "completed";
-  if (access.available || hasUploadProgress || workflowComplete) return children;
+  const workflowComplete = workflow?.workflow.status === "completed";
+  if (access.available || hasUploadProgress || workflowComplete || awaitingWorkflowRefresh)
+    return children;
   return (
     <section className="panel" role="status">
       <h2 className="text-lg font-semibold">View unavailable</h2>

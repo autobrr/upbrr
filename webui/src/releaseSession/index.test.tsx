@@ -793,6 +793,35 @@ describe("tracker workflow capabilities", () => {
     expect(description.descriptions.available).toBe(true);
     expect(description.upload.available).toBe(true);
     expect(description.upload.reason).toBe("");
+
+    const activeOperation: WorkflowContinuation = {
+      ...available(),
+      availableGoals: available().availableGoals.map((goal) => ({
+        ...goal,
+        available: false,
+        reasonCode: "operation_active",
+        reason: "Wait for the active operation to finish.",
+      })),
+    };
+    const duringOperation = routeAccess(activeOperation, true, {
+      needsImages: true,
+      needsDescriptions: true,
+    });
+    expect(duringOperation.duplicates.reasonCode).toBe("operation_active");
+    expect(duringOperation.trackerData.reasonCode).toBe("operation_active");
+    expect(duringOperation.screenshots.reasonCode).toBe("operation_active");
+    expect(duringOperation.descriptions.reasonCode).toBe("operation_active");
+
+    const noLongerApplicable = routeAccess(activeOperation, false, {
+      needsImages: false,
+      needsDescriptions: false,
+    });
+    expect(noLongerApplicable.duplicates.reasonCode).toBe("operation_active");
+    expect(noLongerApplicable.trackerData.reasonCode).toBeUndefined();
+    expect(noLongerApplicable.trackerData.reason).toBe("No tracker data is available.");
+    expect(noLongerApplicable.screenshots.reasonCode).toBeUndefined();
+    expect(noLongerApplicable.uploadedImages.reasonCode).toBeUndefined();
+    expect(noLongerApplicable.descriptions.reasonCode).toBeUndefined();
   });
 });
 

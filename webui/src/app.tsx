@@ -189,7 +189,10 @@ function AppShell() {
     {
       label: "Settings",
       active: activeTab === "settings" && settingsSection !== "appearance",
-      onSelect: () => setActiveTab("settings"),
+      onSelect: () => {
+        if (settingsSection === "appearance") setSettingsSection("main_settings");
+        setActiveTab("settings");
+      },
     },
     { label: "Logging", active: activeTab === "logging", onSelect: () => setActiveTab("logging") },
     {

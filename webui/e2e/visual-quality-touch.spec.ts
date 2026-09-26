@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, test, type Locator, type Page } from "@playwright/test";
-import { createE2EWorkspace, fetchMetadata, startApp } from "./helpers/e2eHarness";
+import { expect, test, type BrowserContext, type Locator, type Page } from "@playwright/test";
+import { createE2EWorkspace, fetchMetadata, startApp, type AppServer } from "./helpers/e2eHarness";
 
 const output = path.resolve("../docs/plans/visual-quality-evidence/touch-reduced-motion");
 
@@ -60,15 +60,17 @@ test("touch controls work on dense mobile routes with reduced motion", async ({ 
     ["swizzin", "dark"],
   ]) {
     const workspace = await createE2EWorkspace();
-    const app = await startApp(workspace);
-    const context = await browser.newContext({
-      viewport: { width: 390, height: 844 },
-      isMobile: true,
-      hasTouch: true,
-      reducedMotion: "reduce",
-    });
-    const page = await context.newPage();
+    let app: AppServer | undefined;
+    let context: BrowserContext | undefined;
     try {
+      app = await startApp(workspace);
+      context = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+        reducedMotion: "reduce",
+      });
+      const page = await context.newPage();
       await fetchMetadata(page, app.url, workspace.sourcePath);
       await page.evaluate(
         ({ theme, mode }) =>
@@ -112,9 +114,15 @@ test("touch controls work on dense mobile routes with reduced motion", async ({ 
       ).toBeLessThanOrEqual(1);
       records.push(await record(page, theme, mode, "logging"));
     } finally {
-      await context.close();
-      await app.stop();
-      await workspace.cleanup();
+      try {
+        await context?.close();
+      } finally {
+        try {
+          await app?.stop();
+        } finally {
+          await workspace.cleanup();
+        }
+      }
     }
   }
   await writeFile(path.join(output, "cells.json"), JSON.stringify(records, null, 2));

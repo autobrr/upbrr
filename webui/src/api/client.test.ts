@@ -329,7 +329,7 @@ describe("web client", () => {
     const unsubscribe = subscribeWebSessionLoss(onSessionLoss);
     initializeWebClient("csrf-token", false);
     await expect(requestAppGet("GetConfig")).rejects.toThrow("login required");
-    expect(onSessionLoss).toHaveBeenCalledOnce();
+    expect(onSessionLoss).toHaveBeenCalledExactlyOnceWith("lost");
     unsubscribe();
   });
 
@@ -348,6 +348,7 @@ describe("web client", () => {
     const unsubscribeEvent = subscribeWebEvent("test:event", vi.fn());
 
     await vi.waitFor(() => expect(onSessionLoss).toHaveBeenCalledOnce());
+    expect(onSessionLoss).toHaveBeenCalledWith("lost");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     unsubscribeEvent();
     unsubscribeLoss();
@@ -369,6 +370,26 @@ describe("web client", () => {
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(onSessionLoss).not.toHaveBeenCalled();
+    unsubscribeEvent();
+    unsubscribeLoss();
+  });
+
+  it("reports a changed session from the event stream without reconnecting", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "session changed" }, { status: 403 }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, csrfToken: "new-csrf" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeWebClient, subscribeWebEvent, subscribeWebSessionLoss } =
+      await import("./client");
+    const onSessionLoss = vi.fn();
+    const unsubscribeLoss = subscribeWebSessionLoss(onSessionLoss);
+    initializeWebClient("old-csrf", false);
+    const unsubscribeEvent = subscribeWebEvent("test:event", vi.fn());
+
+    await vi.waitFor(() => expect(onSessionLoss).toHaveBeenCalledExactlyOnceWith("changed"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     unsubscribeEvent();
     unsubscribeLoss();
   });
@@ -466,8 +487,10 @@ describe("web client", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const { initializeWebClient } = await import("./client");
+    const { initializeWebClient, subscribeWebSessionLoss } = await import("./client");
     const { releaseWorkflowClient } = await import("./app");
+    const onSessionLoss = vi.fn();
+    const unsubscribe = subscribeWebSessionLoss(onSessionLoss);
     initializeWebClient("session-a-csrf", false);
 
     await expect(
@@ -487,7 +510,40 @@ describe("web client", () => {
         },
       }),
     ).rejects.toThrow("Web session changed in another tab");
+    expect(onSessionLoss).toHaveBeenCalledExactlyOnceWith("changed");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("does not adopt a changed session across overlapping auth refreshes", async () => {
+    const resolveStatus: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/auth/status")) {
+        return new Promise<Response>((resolve) => resolveStatus.push(resolve));
+      }
+      return Promise.resolve(jsonResponse({ error: "old session" }, { status: 403 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeWebClient, requestAppGet, subscribeWebSessionLoss } =
+      await import("./client");
+    const onSessionLoss = vi.fn();
+    const unsubscribe = subscribeWebSessionLoss(onSessionLoss);
+    initializeWebClient("old-csrf", false);
+
+    const first = requestAppGet("GetConfig");
+    const second = requestAppGet("GetApplicationInfo");
+    await vi.waitFor(() => expect(resolveStatus).toHaveLength(2));
+
+    resolveStatus[0](jsonResponse({ authenticated: true, csrfToken: "new-csrf" }));
+    await expect(first).rejects.toThrow("Web session changed in another tab");
+    expect(onSessionLoss).toHaveBeenCalledExactlyOnceWith("changed");
+
+    resolveStatus[1](jsonResponse({ authenticated: true, csrfToken: "new-csrf" }));
+    await expect(second).rejects.toThrow("Web session changed in another tab");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(onSessionLoss).toHaveBeenCalledTimes(1);
+    unsubscribe();
   });
 
   it("opens browser events with the initialized session token header", async () => {

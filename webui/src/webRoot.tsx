@@ -9,6 +9,7 @@ const App = lazy(() => import("./app"));
 import {
   authClient,
   initializeWebClient,
+  sessionChangedMessage,
   subscribeWebSessionLoss,
   updateWebCSRFToken,
 } from "./api/client";
@@ -48,6 +49,7 @@ export default function WebRoot() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [settingsDirty, setSettingsDirty] = useState(false);
+  const [sessionChanged, setSessionChanged] = useState(false);
   const logoutApproved = useRef(false);
 
   useEffect(() => {
@@ -69,12 +71,17 @@ export default function WebRoot() {
 
   useEffect(
     () =>
-      subscribeWebSessionLoss(() => {
+      subscribeWebSessionLoss((reason) => {
         updateWebCSRFToken("");
         setPassword("");
         setSettingsDirty(false);
         setStatus(initialStatus);
-        setError("Your session ended. Sign in again; unsaved settings were discarded.");
+        setSessionChanged(reason === "changed");
+        setError(
+          reason === "lost"
+            ? "Your session ended. Sign in again; unsaved settings were discarded."
+            : "",
+        );
       }),
     [],
   );
@@ -94,6 +101,20 @@ export default function WebRoot() {
     return (
       <div className="web-auth-shell">
         <div className="web-auth-card">Loading web UI...</div>
+      </div>
+    );
+  }
+
+  if (sessionChanged) {
+    return (
+      <div className="web-auth-shell">
+        <div className="web-auth-card">
+          <h1>Session changed</h1>
+          <p className="web-auth-card__copy">{sessionChangedMessage}</p>
+          <button type="button" onClick={() => window.location.reload()}>
+            Reload tab
+          </button>
+        </div>
       </div>
     );
   }
