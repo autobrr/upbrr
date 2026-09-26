@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { createContext, lazy, Suspense, useContext, useRef } from "react";
+import { createContext, lazy, Suspense, useContext, useLayoutEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import InputPage from "../pages/input";
 import type { useReleaseSession } from "../releaseSession";
@@ -54,21 +54,26 @@ export function useRouteViews() {
 function GuardedReleaseView({
   route,
   children,
-}: Readonly<{ route: ReleaseRoute; children: ReactNode }>) {
+  completedResultAvailable = false,
+}: Readonly<{ route: ReleaseRoute; children: ReactNode; completedResultAvailable?: boolean }>) {
   const { session, navigateTo } = useRouteViews();
   const access = session.navigation.view.access[route];
   const workflow = session.workflow.view.current;
-  const lastAvailableWorkflow = useRef<string | null>(null);
+  const [lastAvailableWorkflow, setLastAvailableWorkflow] = useState<string | null>(null);
   const workflowID = workflow?.workflow.id ?? null;
-  if (access.available) lastAvailableWorkflow.current = workflowID;
-  else if (access.reasonCode !== "operation_active" || lastAvailableWorkflow.current !== workflowID)
-    lastAvailableWorkflow.current = null;
+  // Only committed access can keep this page visible during operation polling.
+  useLayoutEffect(() => {
+    if (access.available) setLastAvailableWorkflow(workflowID);
+    else if (access.reasonCode !== "operation_active") setLastAvailableWorkflow(null);
+    else setLastAvailableWorkflow((current) => (current === workflowID ? current : null));
+  }, [access.available, access.reasonCode, workflowID]);
   const operationActive =
     workflow?.operation?.status === "queued" || workflow?.operation?.status === "running";
   const awaitingWorkflowRefresh =
     access.reasonCode === "operation_active" &&
     (operationActive || session.workflow.view.status === "running") &&
-    lastAvailableWorkflow.current === workflowID;
+    lastAvailableWorkflow !== null &&
+    lastAvailableWorkflow === workflowID;
   const uploadView = session.upload.view;
   const hasUploadProgress =
     route === "upload" &&
@@ -76,8 +81,12 @@ function GuardedReleaseView({
       uploadView.uploadStatus !== "idle" ||
       uploadView.dryRunResult !== null ||
       uploadView.result !== null);
-  const workflowComplete = workflow?.workflow.status === "completed";
-  if (access.available || hasUploadProgress || workflowComplete || awaitingWorkflowRefresh)
+  if (
+    access.available ||
+    hasUploadProgress ||
+    (access.reasonCode === "workflow_complete" && completedResultAvailable) ||
+    awaitingWorkflowRefresh
+  )
     return children;
   return (
     <section className="panel" role="status">
@@ -129,7 +138,10 @@ function TrackerRoute() {
     trackerIconSrcByName,
   } = useRouteViews();
   return (
-    <GuardedReleaseView route="trackerData">
+    <GuardedReleaseView
+      route="trackerData"
+      completedResultAvailable={session.input.view.trackerData.length > 0}
+    >
       <TrackerDataPage
         facet={session.input}
         setLightboxImage={setLightboxImage}
@@ -181,7 +193,13 @@ function DuplicatesRoute() {
   const { session, trackerUploadItems, useFavicons, faviconOnly, trackerIconSrcByName } =
     useRouteViews();
   return (
-    <GuardedReleaseView route="duplicates">
+    <GuardedReleaseView
+      route="duplicates"
+      completedResultAvailable={
+        Boolean(session.duplicates.view.assessment) ||
+        session.upload.view.submissionExclusions.length > 0
+      }
+    >
       <DupeCheckPage
         facet={session.duplicates}
         sourcePath={session.identity.view.sourcePath}
@@ -199,7 +217,14 @@ function DuplicatesRoute() {
 function ScreenshotsRoute() {
   const { session, setLightboxImage, setLightboxAlt } = useRouteViews();
   return (
-    <GuardedReleaseView route="screenshots">
+    <GuardedReleaseView
+      route="screenshots"
+      completedResultAvailable={
+        session.screenshots.view.artifacts?.artifacts.some(
+          (artifact) => artifact.kind === "screenshot",
+        ) ?? false
+      }
+    >
       <ScreenshotsPage
         facet={session.screenshots}
         setLightboxImage={setLightboxImage}
@@ -219,7 +244,10 @@ function MenuImagesRoute() {
     setLightboxAlt,
   } = useRouteViews();
   return (
-    <GuardedReleaseView route="menuImages">
+    <GuardedReleaseView
+      route="menuImages"
+      completedResultAvailable={session.menuImages.view.images.length > 0}
+    >
       <MenuImagesPage
         facet={session.menuImages}
         currentDiscType={currentDiscType}
@@ -235,7 +263,14 @@ function MenuImagesRoute() {
 function UploadedImagesRoute() {
   const { session, settings, setLightboxImage, setLightboxAlt } = useRouteViews();
   return (
-    <GuardedReleaseView route="uploadedImages">
+    <GuardedReleaseView
+      route="uploadedImages"
+      completedResultAvailable={
+        session.uploadedImages.view.uploaded.length > 0 ||
+        session.uploadedImages.view.failures.length > 0 ||
+        session.uploadedImages.view.candidates.length > 0
+      }
+    >
       <UploadImagesPage
         facet={session.uploadedImages}
         resolveImageHostLabel={settings.resolveImageHostLabel}
@@ -249,7 +284,10 @@ function UploadedImagesRoute() {
 function DescriptionsRoute() {
   const { session, useFavicons, faviconOnly, trackerIconSrcByName } = useRouteViews();
   return (
-    <GuardedReleaseView route="descriptions">
+    <GuardedReleaseView
+      route="descriptions"
+      completedResultAvailable={Boolean(session.descriptions.view.artifact?.descriptions.length)}
+    >
       <DescriptionBuilderPage
         facet={session.descriptions}
         sourcePath={session.identity.view.sourcePath}
