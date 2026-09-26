@@ -339,6 +339,152 @@ func TestStartupReconcilesStoredConfigChanges(t *testing.T) {
 	}
 }
 
+func TestStartupDiscardsUnresolvedWorkflowEffectsBeforeActivation(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		changedConfig bool
+	}{
+		{name: "changed config", changedConfig: true},
+		{name: "unchanged config"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			repoPath := filepath.Join(t.TempDir(), "activation.db")
+			repo, err := db.OpenContext(ctx, repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(ctx); err != nil {
+				t.Fatal(err)
+			}
+			previous := backendConfigTestConfig(repoPath)
+			initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_states (
+				owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", 1, "active", "", "", []byte(`{}`), now, now); err != nil {
+				t.Fatal(err)
+			}
+			for _, effect := range []struct {
+				id     string
+				status api.WorkflowEffectStatus
+			}{
+				{id: "started-effect", status: api.WorkflowEffectStatusStarted},
+				{id: "unknown-effect", status: api.WorkflowEffectStatusUnknown},
+				{id: "succeeded-effect", status: api.WorkflowEffectStatusSucceeded},
+			} {
+				if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
+					owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint,
+					status, started_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", "operation", effect.id,
+					"image_hosting", effect.id, "synthetic", effect.status, now, now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			current := previous
+			if test.changedConfig {
+				current.Metadata.KeepImages = !previous.Metadata.KeepImages
+			}
+			activation, err := InitializeRuntimeConfigActivation(ctx, repo, current, nil)
+			if err != nil {
+				t.Fatalf("startup activation with interrupted effects: %v", err)
+			}
+			wantGeneration := initial.ActiveGeneration
+			if test.changedConfig {
+				wantGeneration++
+			}
+			if activation.ActiveGeneration != wantGeneration {
+				t.Fatalf("activation generation = %d, want %d", activation.ActiveGeneration, wantGeneration)
+			}
+			for _, effect := range []struct {
+				id     string
+				status api.WorkflowEffectStatus
+			}{
+				{id: "started-effect", status: api.WorkflowEffectStatusFailed},
+				{id: "unknown-effect", status: api.WorkflowEffectStatusFailed},
+				{id: "succeeded-effect", status: api.WorkflowEffectStatusSucceeded},
+			} {
+				var status string
+				if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_effects WHERE effect_id = ?`,
+					effect.id).Scan(&status); err != nil || status != string(effect.status) {
+					t.Fatalf("effect %s status = %q, err=%v, want %s", effect.id, status, err, effect.status)
+				}
+			}
+		})
+	}
+}
+
+func TestStartupWaitsForLiveInputBeforeDiscardingUnresolvedEffect(t *testing.T) {
+	ctx := t.Context()
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	repo, err := db.OpenContext(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	previous := backendConfigTestConfig(repoPath)
+	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	formattedNow := now.Format(time.RFC3339Nano)
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_states (
+		owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", 1, "active", "", "", []byte(`{}`),
+		formattedNow, formattedNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
+		owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint,
+		status, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", "operation", "effect",
+		"image_hosting", "synthetic", "synthetic", api.WorkflowEffectStatusUnknown, formattedNow, formattedNow); err != nil {
+		t.Fatal(err)
+	}
+	slot := api.ActiveInputRecord{
+		State:          api.ActiveInputOpening,
+		Revision:       1,
+		Fence:          1,
+		OwnerID:        "owner",
+		CoordinatorID:  "previous-process",
+		LeaseExpiresAt: now.Add(500 * time.Millisecond),
+		ReservationID:  "opening",
+		RequestedPath:  "synthetic-source",
+	}
+	payload, err := json.Marshal(slot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET revision = ?, fence = ?, record_json = ? WHERE singleton = 1`,
+		slot.Revision, slot.Fence, payload); err != nil {
+		t.Fatal(err)
+	}
+	current := previous
+	current.Metadata.KeepImages = !previous.Metadata.KeepImages
+	startupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	activation, err := InitializeRuntimeConfigActivation(startupCtx, repo, current, nil)
+	if err != nil {
+		t.Fatalf("startup activation after input lease expires: %v", err)
+	}
+	if activation.ActiveGeneration != initial.ActiveGeneration+1 {
+		t.Fatalf("activation generation = %d, want %d", activation.ActiveGeneration, initial.ActiveGeneration+1)
+	}
+	var effectStatus string
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_effects WHERE effect_id = 'effect'`).Scan(&effectStatus); err != nil ||
+		effectStatus != string(api.WorkflowEffectStatusFailed) {
+		t.Fatalf("effect after startup = %q, err=%v", effectStatus, err)
+	}
+}
+
 func TestNewBackendRejectsChangedConfigActivationFingerprint(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()

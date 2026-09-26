@@ -551,6 +551,86 @@ func (r *SQLiteRepository) ConfigActivationSafe(ctx context.Context) (bool, erro
 	return false, err
 }
 
+// DiscardUnresolvedWorkflowEffectsOnStartup abandons prior-process effects
+// after all input and work leases expire. It retains failed effect receipts and
+// removes uncertain submission fences so an interrupted attempt can be retried.
+func (r *SQLiteRepository) DiscardUnresolvedWorkflowEffectsOnStartup(ctx context.Context, now time.Time) (int64, int64, error) {
+	if now.IsZero() {
+		return 0, 0, errors.New("db: startup effect discard timestamp is required")
+	}
+	now = now.UTC()
+	var effectCount, fenceCount int64
+	err := r.withWriteTx(ctx, "discard unresolved startup workflow effects", func(tx *sql.Tx) error {
+		effectCount, fenceCount = 0, 0
+		var unresolved int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM release_workflow_effects WHERE status IN ('started', 'unknown')
+		) OR EXISTS (
+			SELECT 1 FROM submission_fences WHERE status IN ('started', 'unknown')
+		)`).Scan(&unresolved); err != nil {
+			return fmt.Errorf("db inspect unresolved startup workflow effects: %w", err)
+		}
+		if unresolved == 0 {
+			return nil
+		}
+		slot, err := loadActiveInput(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("db inspect startup effect input lease: %w", err)
+		}
+		if slot.State != api.ActiveInputEmpty && slot.LeaseExpiresAt.After(now) {
+			return fmt.Errorf("%w: reason=unresolved_effect_input_lease_live state=%s", api.ErrActiveInputBusy, slot.State)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT lease_expires_at FROM release_workflow_work WHERE completed_at IS NULL`)
+		if err != nil {
+			return fmt.Errorf("db inspect startup effect work leases: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var expiry string
+			if err := rows.Scan(&expiry); err != nil {
+				return fmt.Errorf("db read startup effect work lease: %w", err)
+			}
+			leaseExpiry, err := time.Parse(time.RFC3339Nano, expiry)
+			if err != nil {
+				return fmt.Errorf("db parse startup effect work lease: %w", err)
+			}
+			if leaseExpiry.After(now) {
+				return fmt.Errorf("%w: reason=unresolved_effect_work_lease_live", api.ErrActiveInputBusy)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("db iterate startup effect work leases: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("db close startup effect work leases: %w", err)
+		}
+		formattedNow := formatWorkflowStateTime(now)
+		result, err := tx.ExecContext(ctx, `UPDATE release_workflow_effects
+			SET status = ?, updated_at = ?, completed_at = ?
+			WHERE status IN ('started', 'unknown')`, api.WorkflowEffectStatusFailed, formattedNow, formattedNow)
+		if err != nil {
+			return fmt.Errorf("db discard unresolved startup workflow effects: %w", err)
+		}
+		effectCount, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("db count discarded startup workflow effects: %w", err)
+		}
+		result, err = tx.ExecContext(ctx, `DELETE FROM submission_fences WHERE status IN ('started', 'unknown')`)
+		if err != nil {
+			return fmt.Errorf("db discard unresolved startup submission fences: %w", err)
+		}
+		fenceCount, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("db count discarded startup submission fences: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return effectCount, fenceCount, nil
+}
+
 func requireConfigActivationSafe(ctx context.Context, tx *sql.Tx) (api.ActiveInputRecord, error) {
 	return requireConfigActivationSafeForStartup(ctx, tx, false)
 }

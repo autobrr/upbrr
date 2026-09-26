@@ -123,11 +123,12 @@ func (s storedConfigSnapshot) LoadFullConfig(_ context.Context, dest any) error 
 func (s storedConfigSnapshot) DBPath() string { return s.dbPath }
 
 // InitializeRuntimeConfigActivation binds a validated startup config to the
-// durable generation before CLI or WebUI Core admits effects. A changed
-// fingerprint advances the generation only while the stored config matches the
-// caller's runtime and unfinished work can be invalidated safely. A busy input
-// is retried for up to 65 seconds, subject to ctx; other reconciliation errors
-// return immediately. The logger receives sanitized debug progress and may be nil.
+// durable generation before CLI or WebUI Core admits effects. It discards
+// unresolved prior-process effects only after their input and work leases expire.
+// A changed fingerprint advances the generation only while the stored config
+// matches the caller's runtime and unfinished work can be invalidated safely.
+// Busy leases are retried for up to 65 seconds, subject to ctx; other errors
+// return immediately. The logger receives sanitized progress and may be nil.
 func InitializeRuntimeConfigActivation(
 	ctx context.Context, repo *db.SQLiteRepository, runtimeCfg config.Config, logger api.Logger,
 ) (api.ConfigActivation, error) {
@@ -179,57 +180,86 @@ func InitializeRuntimeConfigActivation(
 	if err != nil {
 		return api.ConfigActivation{}, fmt.Errorf("load config activation: %w", err)
 	}
-	if activation.Fingerprint != "" && activation.Fingerprint != fingerprint {
-		started := time.Now()
-		deadline := started.Add(time.Minute + 5*time.Second)
-		attempts := 0
+	changed := activation.Fingerprint != "" && activation.Fingerprint != fingerprint
+	started := time.Now()
+	deadline := started.Add(time.Minute + 5*time.Second)
+	attempts := 0
+	if changed {
 		logger.Debugf("config activation: startup reconcile state=started generation=%d", activation.ActiveGeneration)
-		for {
-			attempts++
-			reconciled, reconcileErr := repo.ReconcileConfigActivation(ctx, snapshot, activation, fingerprint, releaseworkflow.ApplyConfigImpact)
-			if reconcileErr == nil {
-				logger.Debugf(
-					"config activation: startup reconcile state=completed generation=%d attempts=%d elapsed=%s",
-					reconciled.ActiveGeneration,
-					attempts,
-					time.Since(started).Round(time.Second),
-				)
-				return reconciled, nil
-			}
-			busy := errors.Is(reconcileErr, api.ErrActiveInputBusy)
-			if !busy || !time.Now().Before(deadline) {
-				logger.Debugf(
-					"config activation: startup reconcile state=failed attempts=%d elapsed=%s busy=%t cause=%s",
-					attempts,
-					time.Since(started).Round(time.Second),
-					busy,
-					logging.SanitizeMessage(reconcileErr.Error()),
-				)
-				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", reconcileErr)
-			}
-			if attempts == 1 || attempts%10 == 0 {
-				logger.Debugf(
-					"config activation: startup reconcile state=waiting attempts=%d elapsed=%s cause=%s",
-					attempts,
-					time.Since(started).Round(time.Second),
-					logging.SanitizeMessage(reconcileErr.Error()),
+	}
+	for {
+		attempts++
+		stage := "discard_effects"
+		effects, fences, activationErr := repo.DiscardUnresolvedWorkflowEffectsOnStartup(ctx, time.Now().UTC())
+		if activationErr == nil {
+			if effects+fences > 0 {
+				logger.Warnf(
+					"config activation: startup recovery decision=discard_uncertain_effects effect_count=%d fence_count=%d remote_outcome=unverified",
+					effects,
+					fences,
 				)
 			}
-			timer := time.NewTimer(time.Second)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				logger.Debugf("config activation: startup reconcile state=canceled attempts=%d elapsed=%s", attempts, time.Since(started).Round(time.Second))
-				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", ctx.Err())
-			case <-timer.C:
+			var next api.ConfigActivation
+			if changed {
+				stage = "reconcile"
+				next, activationErr = repo.ReconcileConfigActivation(ctx, snapshot, activation, fingerprint, releaseworkflow.ApplyConfigImpact)
+			} else {
+				stage = "initialize"
+				next, activationErr = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
+			}
+			if activationErr == nil {
+				activation = next
+				if changed {
+					logger.Debugf(
+						"config activation: startup reconcile state=completed generation=%d attempts=%d elapsed=%s",
+						activation.ActiveGeneration,
+						attempts,
+						time.Since(started).Round(time.Second),
+					)
+				}
+				return activation, nil
 			}
 		}
+		busy := errors.Is(activationErr, api.ErrActiveInputBusy)
+		if !busy || !time.Now().Before(deadline) {
+			logger.Debugf(
+				"config activation: startup reconcile state=failed stage=%s attempts=%d elapsed=%s busy=%t cause=%s",
+				stage,
+				attempts,
+				time.Since(started).Round(time.Second),
+				busy,
+				logging.SanitizeMessage(activationErr.Error()),
+			)
+			switch stage {
+			case "discard_effects":
+				return api.ConfigActivation{}, fmt.Errorf("discard unresolved startup workflow effects: %w", activationErr)
+			case "initialize":
+				return api.ConfigActivation{}, fmt.Errorf("initialize runtime config activation fingerprint: %w", activationErr)
+			default:
+				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", activationErr)
+			}
+		}
+		if attempts == 1 || attempts%10 == 0 {
+			logger.Debugf(
+				"config activation: startup reconcile state=waiting stage=%s attempts=%d elapsed=%s cause=%s",
+				stage,
+				attempts,
+				time.Since(started).Round(time.Second),
+				logging.SanitizeMessage(activationErr.Error()),
+			)
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			logger.Debugf("config activation: startup reconcile state=canceled attempts=%d elapsed=%s", attempts, time.Since(started).Round(time.Second))
+			if changed {
+				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", ctx.Err())
+			}
+			return api.ConfigActivation{}, fmt.Errorf("discard unresolved startup workflow effects: %w", ctx.Err())
+		case <-timer.C:
+		}
 	}
-	activation, err = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
-	if err != nil {
-		return api.ConfigActivation{}, fmt.Errorf("initialize runtime config activation fingerprint: %w", err)
-	}
-	return activation, nil
 }
 
 func (e *runtimeCookiePersistenceError) Error() string {
