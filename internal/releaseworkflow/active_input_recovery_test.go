@@ -361,6 +361,9 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 		liveWork   bool
 		terminal   bool
 		checkpoint bool
+		maxWait    time.Duration
+		parentWait time.Duration
+		wantErr    error
 	}{
 		{name: "queued without work"},
 		{name: "running with expired work", running: true},
@@ -368,6 +371,21 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			name:     "running with live work lease",
 			running:  true,
 			liveWork: true,
+		},
+		{
+			name:     "running beyond startup recovery deadline",
+			running:  true,
+			liveWork: true,
+			maxWait:  40 * time.Millisecond,
+			wantErr:  api.ErrActiveInputBusy,
+		},
+		{
+			name:       "caller deadline during live work lease",
+			running:    true,
+			liveWork:   true,
+			maxWait:    time.Second,
+			parentWait: 40 * time.Millisecond,
+			wantErr:    context.DeadlineExceeded,
 		},
 		{
 			name:     "terminal operation with live work lease",
@@ -448,6 +466,9 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 				leaseExpiry := started.Add(time.Minute)
 				if test.liveWork {
 					leaseExpiry = time.Now().Add(time.Second)
+					if test.maxWait > 0 {
+						leaseExpiry = time.Now().Add(5 * time.Second)
+					}
 				}
 				work := api.ReleaseWorkflowWorkRecord{
 					OwnerID:        testOwnerID,
@@ -489,6 +510,22 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 				}
 			}
 			restarted := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, clock, "second-coordinator")
+			if test.maxWait > 0 {
+				recoveryCtx := ctx
+				if test.parentWait > 0 {
+					var cancel context.CancelFunc
+					recoveryCtx, cancel = context.WithTimeout(ctx, test.parentWait)
+					defer cancel()
+				}
+				if err := restarted.recoverOperationsOnce(recoveryCtx, true, test.maxWait); !errors.Is(err, test.wantErr) {
+					t.Fatalf("bounded recovery error = %v, want %v", err, test.wantErr)
+				}
+				unsettled, err := repo.LoadReleaseWorkflowOperation(ctx, testOwnerID, opened.WorkflowID, operationID)
+				if err != nil || unsettled.Status.Status != api.StageStatusRunning {
+					t.Fatalf("operation after bounded recovery = %#v, err=%v", unsettled.Status, err)
+				}
+				return
+			}
 			if err := restarted.ResetIdleInputOnStartup(ctx); err != nil {
 				t.Fatal(err)
 			}

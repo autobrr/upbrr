@@ -1573,23 +1573,30 @@ func latestHostedImageAttempts(attempts []api.HostedImageAttempt) []api.HostedIm
 }
 
 func (m *Module) ensureOperationRecovery(ctx context.Context) error {
-	return m.recoverOperationsOnce(ctx, false)
+	return m.recoverOperationsOnce(ctx, false, 0)
 }
 
 func (m *Module) discardInterruptedOperations(ctx context.Context) error {
-	return m.recoverOperationsOnce(ctx, true)
+	return m.recoverOperationsOnce(ctx, true, workflowWorkLeaseTTL+5*time.Second)
 }
 
 // recoverOperationsOnce settles prior-process operations once per module.
-// Startup recovery waits for live work leases and interrupts unfinished work;
+// Startup recovery waits within one deadline for live work leases and interrupts unfinished work;
 // ordinary recovery may resume a valid retained command after its lease ends.
 // Completed work checkpoints are published in either mode.
-func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted bool) error {
+func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted bool, maxWait time.Duration) error {
 	m.operationRecovery.Do(func() {
 		recoveryCtx := context.WithoutCancel(ctx)
 		if discardInterrupted {
-			recoveryCtx = ctx
+			var cancel context.CancelFunc
+			recoveryCtx, cancel = context.WithTimeoutCause(ctx, maxWait, api.ErrActiveInputBusy)
+			defer cancel()
 		}
+		defer func() {
+			if discardInterrupted && ctx.Err() == nil && errors.Is(context.Cause(recoveryCtx), api.ErrActiveInputBusy) {
+				m.recoverError = fmt.Errorf("release workflow startup recovery deadline: %w", api.ErrActiveInputBusy)
+			}
+		}()
 		records, err := m.operations.ListActiveOperations(recoveryCtx)
 		if err != nil {
 			if discardInterrupted {
