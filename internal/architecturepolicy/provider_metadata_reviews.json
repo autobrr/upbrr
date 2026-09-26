@@ -1264,8 +1264,12 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/name.go:applyLocalizedNameDefaults": {
-    "sha256": "cfa1dbff84cec212b964eb4513cbe68f5514e9da2cab28531f5090fe994cdf37",
+    "sha256": "277fd9ba235439b5a11efc248831bed7684d5c36fc6aad85419b582b206a7ce7",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  },
+  "internal/trackers/impl/unit3d/name.go:ApplyLocalizedNameDefaults": {
+    "sha256": "82e109766652173612b4b32ff803a01088c0f7f2a26a9729266d197dc815959e",
+    "reason": "Delegates unchanged localized naming behavior; manual components remain protected by NameEditor and provider evidence remains source-current."
   },
   "internal/trackers/impl/unit3d/name.go:resolveOriginalLanguage": {
     "sha256": "c0f484c64ee813d3882d35287040be5bab3a93127022f3c401d505d216766f95",
@@ -1318,6 +1322,10 @@
   "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
     "sha256": "c98398ea416e840911bddc332143b554bc8df06151df6d2bd0b427e639504c12",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  },
+  "internal/trackers/impl/unit3d/sites/cbr/name.go:applyCBRTVDBDisambiguation": {
+    "sha256": "addb633e43f1ed8bb2327e32c8359bb3ee8ce679ef91332b06844adf21c4ee23",
+    "reason": "Uses only current TVDB collision evidence and refuses to alter manually supplied titles; NameEditor preserves manually specified year and locale components."
   },
   "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
     "sha256": "67b7400f6d66a8d55f1b84880d5ec9af04766463495bcc0c9cd66245ad253c8e",

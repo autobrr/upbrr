@@ -1667,6 +1667,9 @@ type TorrentSubject struct {
 	SourceSize int64
 	FileList   []string
 	DiscType   string
+	// RootName overrides the top-level directory name in a multi-file torrent.
+	// It never changes the source files on disk.
+	RootName string
 	// ClientTorrentPath is reusable metainfo selected by client discovery.
 	ClientTorrentPath string
 	// ClientTorrentInfoHash is the infohash captured with ClientTorrentPath.

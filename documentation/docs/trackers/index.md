@@ -56,6 +56,8 @@ The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--un
 
 upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time.
 
+For CBR TV releases, the localized naming policy omits the alternate (AKA) title and normally omits the year. When current TVDB evidence identifies a title collision, CBR includes the series year after the title, with a locale before the year when TVDB supplies one. This does not rewrite a manually supplied title. For a CBR-only upload from a non-disc multi-file source, the torrent root uses the approved upload name with spaces replaced by dots; source files and folders are not renamed. Uploads shared with other trackers do not use this CBR-specific torrent root.
+
 Tracker-specific categories, source/type mappings, descriptions, media selection, questionnaires, and auth flows remain owned by the tracker adapter. A successful mapping does not prove the upload complies with every current site rule.
 
 ## Image hosts and clients

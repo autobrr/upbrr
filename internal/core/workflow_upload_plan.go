@@ -153,6 +153,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 	return fingerprint, nil
 }
 
+// Build prepares one upload plan and its tracker-specific torrent artifacts.
 func (b workflowUploadPlanBuilder) Build(
 	ctx context.Context,
 	projections api.TrackerReleaseProjectionSet,
@@ -299,6 +300,7 @@ func (b workflowUploadPlanBuilder) Build(
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
 	torrentSubject := workflowSubmissionTorrentSubject(subject)
 	torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
+	torrentSubject.RootName = workflowCBRTorrentRootName(eligible)
 	torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
 	torrentSubject.TorrentOverrides = descriptionInstructions.Torrent
 	var sourceManifest *api.SourceManifest
@@ -618,6 +620,16 @@ func workflowSkipIfRehashTrackers(cfg config.Config, projections []api.TrackerRe
 	return result
 }
 
+// workflowCBRTorrentRootName keeps a CBR-only torrent's root directory aligned
+// with the tracker-approved release name without touching source files.
+func workflowCBRTorrentRootName(eligible []api.TrackerReleaseProjection) string {
+	if len(eligible) != 1 || eligible[0].TrackerID != "CBR" {
+		return ""
+	}
+	return strings.ReplaceAll(strings.TrimSpace(eligible[0].UploadReleaseName), " ", ".")
+}
+
+// RetryClientInjections injects registered tracker torrents into configured clients.
 func (b workflowUploadPlanBuilder) RetryClientInjections(
 	ctx context.Context,
 	authority releaseworkflow.RegisteredArtifactAuthority,
