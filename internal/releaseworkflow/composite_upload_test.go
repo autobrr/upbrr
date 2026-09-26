@@ -532,6 +532,28 @@ func TestCompositeUploadReleaseNameFeedbackPreservesSiblingProjection(t *testing
 	}
 }
 
+func TestCompositeUploadDefersSingleTrackerNameReviewUntilDuplicateCheck(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadNameReviewTestModule(t)
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-single-name-review")
+	request.Trackers.Include = []api.TrackerID{"ALPHA"}
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start single-tracker name review: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	if blocked.Dupes == nil {
+		t.Fatalf("single-tracker name review blocked before duplicate check: %#v", blocked)
+	}
+	if !slices.ContainsFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "ALPHA" &&
+			action.Status == api.RequiredActionStatusPending
+	}) {
+		t.Fatalf("single-tracker name review action = %#v", blocked.Continuation.RequiredActions)
+	}
+}
+
 func TestCompositeUploadTrackerInputRejectsMismatchedTrackerWithoutMutation(t *testing.T) {
 	t.Parallel()
 
@@ -2137,4 +2159,22 @@ func waitCompositeUploadTestOperation(
 	}
 	current.Operation = &operation
 	return current
+}
+
+func TestCompositeUploadResultFallsBackToDuplicateAssessment(t *testing.T) {
+	result := CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-duplicates", Revision: 7},
+		Dupes:    &api.DupeAssessment{ID: "dupes-duplicates", Revision: 6},
+	}
+
+	got := compositeUploadResult(result)
+	if got == nil || got.Kind != api.WorkflowOperationResultDupes || got.RefID != "dupes-duplicates" ||
+		got.RefRevision != 6 || got.WorkflowRevision != 7 {
+		t.Fatalf("duplicate composite result = %#v", got)
+	}
+
+	result.Continuation.RequiredActions = []api.RequiredAction{{Status: api.RequiredActionStatusPending}}
+	if got := compositeUploadResult(result); got != nil {
+		t.Fatalf("blocked duplicate composite result = %#v, want nil", got)
+	}
 }

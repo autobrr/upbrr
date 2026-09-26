@@ -1255,6 +1255,11 @@ func compositeUploadPendingAction(
 		if !session.Confirm && continuationUnattendedSkipsTrackerAction(session.Intent, *action) {
 			continue
 		}
+		if current.Dupes == nil {
+			if _, releaseNameReview := releaseNameConfirmationAction(current.Projections, action.ID); releaseNameReview {
+				continue
+			}
+		}
 		if action.Kind == api.RequiredActionReviewDuplicates {
 			if _, decided := session.Intent.DuplicateDecisions[action.TrackerID]; decided {
 				continue
@@ -1757,6 +1762,13 @@ func compositeUploadResult(result CommandResult) *api.WorkflowOperationResult {
 			RefID:            string(result.DryRun.ID),
 			RefRevision:      result.DryRun.Revision,
 		}
+	case result.Dupes != nil && !hasPendingRequiredAction(result.Continuation.RequiredActions):
+		return &api.WorkflowOperationResult{
+			Kind:             api.WorkflowOperationResultDupes,
+			WorkflowRevision: result.Workflow.Revision,
+			RefID:            string(result.Dupes.ID),
+			RefRevision:      result.Dupes.Revision,
+		}
 	default:
 		return nil
 	}
@@ -2104,7 +2116,7 @@ func (m *Module) applyCompositeUploadFeedback(
 			if _, ok := releaseNameConfirmationAction(projections, action.ID); ok {
 				confirmed := true
 				reviewedName := instruction.UploadReleaseName.Value
-				if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
+				reviewed, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
 					WorkflowID:       command.WorkflowID,
 					ExpectedRevision: command.ExpectedRevision,
 					Answer: api.RequiredActionAnswer{
@@ -2114,9 +2126,17 @@ func (m *Module) applyCompositeUploadFeedback(
 						Confirmed:        &confirmed,
 					},
 					IdempotencyKey: command.IdempotencyKey,
-				}); err != nil {
+				})
+				if err != nil {
 					return CommandResult{}, err
 				}
+				reviewedInstruction, ok := reviewed.ProjectionInstructions.Instructions[command.Response.TrackerID]
+				if !ok {
+					return CommandResult{}, fmt.Errorf("%w: reviewed tracker name instructions are unavailable", ErrInvalidTransition)
+				}
+				instruction.UploadReleaseName = reviewedInstruction.UploadReleaseName
+				instruction.ConfirmedNameFingerprint = reviewedInstruction.ConfirmedNameFingerprint
+				state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = instruction
 				resolvedByCommand = true
 			} else {
 				invalidateTrackerAndDownstream(&state.Workflow)
