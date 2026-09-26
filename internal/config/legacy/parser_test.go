@@ -39,6 +39,18 @@ func TestExtractConfigDict(t *testing.T) {
 			input: `config = {"DEFAULT": {}}`,
 		},
 		{
+			name:  "type annotated assignment",
+			input: `config: dict[str, Any] = {"DEFAULT": {}}`,
+		},
+		{
+			name:  "type annotation with equals literal",
+			input: `config: Literal["="] = {"DEFAULT": {}}`,
+		},
+		{
+			name:  "comment after type annotation",
+			input: "config: Literal[\"=\"] # legacy type\n= {\"DEFAULT\": {}}",
+		},
+		{
 			name:  "with leading comments",
 			input: "# comment\nconfig = {\"DEFAULT\": {}}",
 		},
@@ -277,6 +289,16 @@ config = {
 	qbit := requireMap(t, clients["qbittorrent"])
 	if qbit["qbit_url"] != "http://localhost:8080" {
 		t.Errorf("qbit_url: got %v", qbit["qbit_url"])
+	}
+}
+
+func TestParseLegacyConfigTypeAnnotationWithEquals(t *testing.T) {
+	legacy, err := ParseLegacyConfig([]byte(`config: Literal["="] = {"DEFAULT": {"screens": 6}}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if legacy.Default["screens"] != 6 {
+		t.Fatalf("screens: got %v", legacy.Default["screens"])
 	}
 }
 
