@@ -176,6 +176,58 @@ func TestConvertTorrentClients(t *testing.T) {
 	}
 }
 
+func TestConvertTorrentClientsSkipsIncompleteTemplates(t *testing.T) {
+	input := []byte(`
+config = {
+    'DEFAULT': {
+        'tmdb_api': 'test',
+        'screens': 6,
+        'default_torrent_client': 'qbittorrent',
+    },
+    'TRACKERS': {},
+    'TORRENT_CLIENTS': {
+        'qbittorrent': {
+            'torrent_client': 'qbit',
+            'qbit_url': 'http://localhost:8080',
+            'qbit_user': 'admin',
+            'qbit_pass': 'secret',
+        },
+        'qbittorrent_searching': {
+            'torrent_client': 'qbit',
+            'qbit_url': 'http://localhost:8080',
+        },
+        'watch': {
+            'torrent_client': 'watch',
+        },
+    },
+}
+`)
+
+	cfg, warnings, err := ImportFromContent(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := cfg.TorrentClients["qbittorrent_searching"]; ok {
+		t.Fatal("incomplete qBittorrent template was imported")
+	}
+	if _, ok := cfg.TorrentClients["watch"]; ok {
+		t.Fatal("incomplete watch template was imported")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("converted config should validate: %v", err)
+	}
+	hasWarning := false
+	for _, warning := range warnings {
+		if strings.Contains(warning, "incomplete torrent client") {
+			hasWarning = true
+			break
+		}
+	}
+	if !hasWarning {
+		t.Fatalf("missing incomplete client warning: %v", warnings)
+	}
+}
+
 func TestConvertClientKeyAliases(t *testing.T) {
 	legacy := &Config{
 		Default: map[string]any{
