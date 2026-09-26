@@ -101,7 +101,7 @@ func TestStartupReconcilesNewDefaultsBeforeConfigIsSaved(t *testing.T) {
 		t.Fatal(err)
 	}
 	previous := backendConfigTestConfig(repoPath)
-	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous)
+	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,12 +114,66 @@ func TestStartupReconcilesNewDefaultsBeforeConfigIsSaved(t *testing.T) {
 	if initial.Fingerprint == want {
 		t.Fatal("test defaults did not change fingerprint")
 	}
-	activation, err := InitializeRuntimeConfigActivation(ctx, repo, current)
+	activation, err := InitializeRuntimeConfigActivation(ctx, repo, current, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if activation.ActiveGeneration != 1 || activation.Fingerprint != want {
 		t.Fatalf("default-only upgrade = %#v, want generation=1 fingerprint=%q", activation, want)
+	}
+}
+
+func TestNewBackendReconcilesExpiredOpeningInput(t *testing.T) {
+	ctx := t.Context()
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	repo, err := db.OpenContext(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	previous := backendConfigTestConfig(repoPath)
+	if _, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil); err != nil {
+		t.Fatal(err)
+	}
+	oldSlot := api.ActiveInputRecord{
+		State:          api.ActiveInputOpening,
+		Revision:       1,
+		Fence:          1,
+		OwnerID:        "owner",
+		CoordinatorID:  "previous-process",
+		LeaseExpiresAt: time.Now().UTC().Add(-time.Minute),
+		ReservationID:  "opening",
+		RequestedPath:  "synthetic-source",
+		IdempotencyKey: "open",
+	}
+	payload, err := json.Marshal(oldSlot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET revision = ?, fence = ?, record_json = ? WHERE singleton = 1`,
+		oldSlot.Revision, oldSlot.Fence, payload); err != nil {
+		t.Fatal(err)
+	}
+	current := previous
+	current.Metadata.KeepImages = !previous.Metadata.KeepImages
+	backend, err := NewBackendWithContext(ctx, current, newEventHub())
+	if err != nil {
+		t.Fatalf("start backend after prior-process input: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	activation, err := backend.repo.LoadConfigActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 1 {
+		t.Fatalf("activation generation = %d, want 1", activation.ActiveGeneration)
+	}
+	slot, err := backend.repo.LoadActiveInput(ctx)
+	if err != nil || slot.State != api.ActiveInputEmpty {
+		t.Fatalf("recovered startup input = %#v, err=%v", slot, err)
 	}
 }
 
@@ -267,14 +321,14 @@ func TestStartupReconcilesStoredConfigChanges(t *testing.T) {
 			if want == previousFingerprint {
 				t.Fatal("test config did not change fingerprint")
 			}
-			activation, err := InitializeRuntimeConfigActivation(ctx, repo, *current)
+			activation, err := InitializeRuntimeConfigActivation(ctx, repo, *current, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if activation.ActiveGeneration != 1 || activation.Fingerprint != want {
 				t.Fatalf("reconciled activation = %#v, want generation=1 fingerprint=%q", activation, want)
 			}
-			repeat, err := InitializeRuntimeConfigActivation(ctx, repo, *current)
+			repeat, err := InitializeRuntimeConfigActivation(ctx, repo, *current, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

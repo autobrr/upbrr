@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -255,7 +257,7 @@ func TestActiveInputRecoveryClearsAbandonedSwitchReceiptBeforeRetry(t *testing.T
 	clock.now = clock.now.Add(workflowWorkLeaseTTL + time.Second)
 	secondVerifier := &hashingActiveInputVerifier{}
 	second := newActiveInputRecoveryModule(t, persistent, repo, secondVerifier, clock, "second-coordinator")
-	restored, err := second.recoverActiveInput(ctx, pending, testOwnerID)
+	restored, err := second.recoverActiveInput(ctx, pending, testOwnerID, false)
 	if err != nil {
 		t.Fatalf("recover abandoned switch: %v", err)
 	}
@@ -350,6 +352,391 @@ func TestResetIdleInputOnStartupClearsOnlyForeignIdleInput(t *testing.T) {
 	}
 	if closed.State != api.ActiveInputEmpty || restartedVerifier.calls != 0 {
 		t.Fatalf("foreign startup reset input = %#v hashes=%d", closed, restartedVerifier.calls)
+	}
+}
+
+func TestStartupDiscardsInterruptedOperations(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		running        bool
+		liveWork       bool
+		terminal       bool
+		checkpoint     bool
+		ordinaryFirst  bool
+		failList       bool
+		failTerminal   bool
+		failCompletion bool
+		failRestore    bool
+		failClose      bool
+		maxWait        time.Duration
+		parentWait     time.Duration
+		wantErr        error
+	}{
+		{name: "queued without work"},
+		{name: "running with expired work", running: true},
+		{
+			name:     "running with live work lease",
+			running:  true,
+			liveWork: true,
+		},
+		{
+			name:          "ordinary recovery first with live work lease",
+			running:       true,
+			liveWork:      true,
+			ordinaryFirst: true,
+		},
+		{name: "retry failed operation listing after input restoration", failList: true},
+		{
+			name:         "retry failed interruption after work claim",
+			running:      true,
+			failTerminal: true,
+		},
+		{
+			name:           "retry incomplete work after terminal interruption",
+			running:        true,
+			failCompletion: true,
+		},
+		{name: "retry failed committed input restoration", failRestore: true},
+		{name: "retry failed idle input close", failClose: true},
+		{
+			name:     "running beyond startup recovery deadline",
+			running:  true,
+			liveWork: true,
+			maxWait:  40 * time.Millisecond,
+			wantErr:  api.ErrActiveInputBusy,
+		},
+		{
+			name:       "caller deadline during live work lease",
+			running:    true,
+			liveWork:   true,
+			maxWait:    time.Second,
+			parentWait: 40 * time.Millisecond,
+			wantErr:    context.DeadlineExceeded,
+		},
+		{
+			name:     "terminal operation with live work lease",
+			liveWork: true,
+			terminal: true,
+		},
+		{
+			name:       "completed work checkpoint",
+			running:    true,
+			checkpoint: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			repo := openActiveInputRecoveryRepository(ctx, t)
+			persistent, err := NewPersistentRepository(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous, err := repo.InitializeConfigActivationFingerprint(ctx, "previous")
+			if err != nil {
+				t.Fatal(err)
+			}
+			clock := systemClock{}
+			first := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, clock, "first-coordinator")
+			opened, err := first.OpenInput(ctx, testOwnerID, OpenInputRequest{
+				Input:          api.PrepareInput{SourcePath: writeActiveInputRecoverySource(t, "source.mkv", "source")},
+				IdempotencyKey: "open-first",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := persistent.Load(ctx, testOwnerID, opened.WorkflowID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fingerprint, err := api.CanonicalWorkflowFingerprint(map[string]string{"command": "prepare"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			operationID := api.WorkflowOperationID("interrupted-operation")
+			started := clock.Now().Add(-2 * time.Minute)
+			operation := api.ReleaseWorkflowOperationRecord{
+				OwnerID:            testOwnerID,
+				WorkflowID:         opened.WorkflowID,
+				OperationID:        operationID,
+				ExpectedRevision:   state.Workflow.Revision,
+				CommandFingerprint: fingerprint,
+				ProcessEpoch:       "first-coordinator",
+				Status: api.WorkflowOperationStatus{
+					ID:         operationID,
+					WorkflowID: opened.WorkflowID,
+					Revision:   state.Workflow.Revision,
+					Sequence:   1,
+					Command:    "prepare",
+					Status:     api.StageStatusQueued,
+					StartedAt:  started,
+					UpdatedAt:  started,
+				},
+			}
+			activeCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: opened.CoordinatorID, Fence: opened.Fence})
+			if _, _, err := repo.CreateReleaseWorkflowOperation(activeCtx, operation); err != nil {
+				t.Fatal(err)
+			}
+			if test.running || test.terminal {
+				operation.Status.Sequence++
+				operation.Status.Status = api.StageStatusRunning
+				operation.Status.UpdatedAt = started.Add(time.Second)
+				if test.terminal {
+					completed := started.Add(2 * time.Second)
+					operation.Status.Status = api.StageStatusCompleted
+					operation.Status.UpdatedAt = completed
+					operation.Status.CompletedAt = &completed
+				}
+				if err := repo.SaveReleaseWorkflowOperation(activeCtx, 1, operation); err != nil {
+					t.Fatal(err)
+				}
+				leaseExpiry := started.Add(time.Minute)
+				if test.liveWork {
+					leaseExpiry = time.Now().Add(time.Second)
+					if test.maxWait > 0 {
+						leaseExpiry = time.Now().Add(5 * time.Second)
+					}
+				}
+				work := api.ReleaseWorkflowWorkRecord{
+					OwnerID:        testOwnerID,
+					WorkflowID:     opened.WorkflowID,
+					OperationID:    operationID,
+					LeaseOwner:     "first-coordinator",
+					LeaseExpiresAt: leaseExpiry,
+					Checkpoint:     []byte(`{}`),
+					UpdatedAt:      started,
+				}
+				if err := repo.ClaimReleaseWorkflowWork(activeCtx, work); err != nil {
+					t.Fatal(err)
+				}
+				if test.checkpoint {
+					completed := clock.Now()
+					checkpoint := operation.Status
+					checkpoint.Sequence++
+					checkpoint.Status = api.StageStatusCompleted
+					checkpoint.UpdatedAt = completed
+					checkpoint.CompletedAt = &completed
+					work.Checkpoint, err = json.Marshal(checkpoint)
+					if err != nil {
+						t.Fatal(err)
+					}
+					work.UpdatedAt = completed
+					work.LeaseExpiresAt = completed.Add(time.Minute)
+					work.CompletedAt = &completed
+					if err := repo.CompleteReleaseWorkflowWork(activeCtx, work); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := first.Shutdown(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if !test.liveWork || test.terminal {
+				if _, err := repo.ReconcileConfigActivation(ctx, []byte(`{}`), previous, "current", ApplyConfigImpact); err != nil {
+					t.Fatal(err)
+				}
+			}
+			recoveryRepository := &failOnceStartupRecoveryRepository{PersistentRepository: persistent}
+			recoveryRepository.failList.Store(test.failList)
+			recoveryRepository.failTerminal.Store(test.failTerminal)
+			recoveryRepository.failCompletion.Store(test.failCompletion)
+			if test.failCompletion {
+				if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
+					owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint, status, started_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, testOwnerID, opened.WorkflowID, operationID, "interrupted-effect",
+					"tracker_submission", "ALPHA", "synthetic", api.WorkflowEffectStatusStarted,
+					clock.Now().Format(time.RFC3339Nano), clock.Now().Format(time.RFC3339Nano)); err != nil {
+					t.Fatalf("start interrupted operation effect: %v", err)
+				}
+			}
+			recoveryInputs := &failOnceStartupActiveInputRepository{ActiveInputRepository: repo}
+			recoveryInputs.failRestore.Store(test.failRestore)
+			recoveryInputs.failClose.Store(test.failClose)
+			restarted := newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, &hashingActiveInputVerifier{}, clock, "second-coordinator")
+			if test.ordinaryFirst {
+				if err := restarted.ensureOperationRecovery(ctx); err != nil {
+					t.Fatalf("ordinary recovery before startup reset: %v", err)
+				}
+			}
+			if test.failList || test.failTerminal || test.failCompletion || test.failRestore || test.failClose {
+				if err := restarted.ResetIdleInputOnStartup(ctx); err == nil {
+					t.Fatal("startup recovery unexpectedly succeeded before injected failure")
+				}
+				claimed, err := repo.LoadActiveInput(ctx)
+				wantState := api.ActiveInputActive
+				if test.failRestore {
+					wantState = api.ActiveInputRecovering
+				}
+				if err != nil || claimed.State != wantState || claimed.CoordinatorID != "second-coordinator" {
+					t.Fatalf("input after failed startup recovery = %#v, err=%v", claimed, err)
+				}
+				if test.failCompletion {
+					recoveryCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{
+						CoordinatorID: claimed.CoordinatorID, Fence: claimed.Fence,
+					})
+					if err := restarted.recoverOperationsOnce(recoveryCtx, true, 40*time.Millisecond); !errors.Is(err, api.ErrActiveInputBusy) {
+						t.Fatalf("live interrupted work recovery = %v, want busy", err)
+					}
+					work, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
+					if err != nil || work.CompletedAt != nil {
+						t.Fatalf("live interrupted work changed = %#v, err=%v", work, err)
+					}
+				}
+				if test.failTerminal || test.failCompletion {
+					if _, err := repo.RawDB().ExecContext(ctx, `UPDATE release_workflow_work SET lease_expires_at = ? WHERE operation_id = ?`,
+						clock.Now().Add(-time.Second).Format(time.RFC3339Nano), operationID); err != nil {
+						t.Fatalf("expire failed recovery work claim: %v", err)
+					}
+				}
+				restarted = newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, &hashingActiveInputVerifier{}, clock,
+					"second-coordinator", WithCoordinator(restarted.Coordinator))
+			}
+			if test.maxWait > 0 {
+				recoveryCtx := ctx
+				if test.parentWait > 0 {
+					var cancel context.CancelFunc
+					recoveryCtx, cancel = context.WithTimeout(ctx, test.parentWait)
+					defer cancel()
+				}
+				if err := restarted.recoverOperationsOnce(recoveryCtx, true, test.maxWait); !errors.Is(err, test.wantErr) {
+					t.Fatalf("bounded recovery error = %v, want %v", err, test.wantErr)
+				}
+				unsettled, err := repo.LoadReleaseWorkflowOperation(ctx, testOwnerID, opened.WorkflowID, operationID)
+				if err != nil || unsettled.Status.Status != api.StageStatusRunning {
+					t.Fatalf("operation after bounded recovery = %#v, err=%v", unsettled.Status, err)
+				}
+				return
+			}
+			if err := restarted.ResetIdleInputOnStartup(ctx); err != nil {
+				t.Fatal(err)
+			}
+			settled, err := repo.LoadReleaseWorkflowOperation(ctx, testOwnerID, opened.WorkflowID, operationID)
+			wantStatus := api.StageStatusInterrupted
+			if test.terminal || test.checkpoint {
+				wantStatus = api.StageStatusCompleted
+			}
+			if err != nil || settled.Status.Status != wantStatus {
+				t.Fatalf("settled operation = %#v, err=%v", settled.Status, err)
+			}
+			if test.failCompletion {
+				work, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
+				if err != nil || work.CompletedAt == nil {
+					t.Fatalf("settled interrupted work = %#v, err=%v", work, err)
+				}
+				var effectStatus string
+				if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_effects WHERE effect_id = ?`,
+					"interrupted-effect").Scan(&effectStatus); err != nil || effectStatus != string(api.WorkflowEffectStatusUnknown) {
+					t.Fatalf("fenced interrupted effect status=%q err=%v", effectStatus, err)
+				}
+			}
+			slot, err := repo.LoadActiveInput(ctx)
+			if err != nil || slot.State != api.ActiveInputEmpty {
+				t.Fatalf("input after recovery = %#v, err=%v", slot, err)
+			}
+		})
+	}
+}
+
+func TestStartupInterruptedCompositeCanRetry(t *testing.T) {
+	ctx := t.Context()
+	repo := openActiveInputRecoveryRepository(ctx, t)
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := repo.InitializeConfigActivationFingerprint(ctx, "previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := systemClock{}
+	first := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, clock, "first-coordinator")
+	opened, err := first.OpenInput(ctx, testOwnerID, OpenInputRequest{
+		Input:          api.PrepareInput{SourcePath: writeActiveInputRecoverySource(t, "source.mkv", "source")},
+		IdempotencyKey: "open-first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := persistent.Load(ctx, testOwnerID, opened.WorkflowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationID := api.WorkflowOperationID("interrupted-composite")
+	sessionFingerprint, err := api.CanonicalWorkflowFingerprint(map[string]string{"session": "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := state.Workflow.Revision
+	state.Workflow.Revision++
+	state.Workflow.UpdatedAt = clock.Now()
+	state.Composite = &compositeUploadSession{
+		Version:               compositeUploadSessionVersion,
+		RequestFingerprint:    sessionFingerprint,
+		Goal:                  api.WorkflowGoalUploaded,
+		ActiveOperationID:     operationID,
+		LastOperationID:       operationID,
+		LastCommittedRevision: state.Workflow.Revision,
+	}
+	activeCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: opened.CoordinatorID, Fence: opened.Fence})
+	if err := persistent.Save(activeCtx, testOwnerID, before, state); err != nil {
+		t.Fatal(err)
+	}
+	command := CompositeUploadCommand{
+		WorkflowID:         opened.WorkflowID,
+		ExpectedRevision:   state.Workflow.Revision,
+		SessionFingerprint: sessionFingerprint,
+		Goal:               api.WorkflowGoalUploaded,
+		IdempotencyKey:     "original-composite",
+	}
+	commandFingerprint, err := command.commandFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := clock.Now().Add(-time.Minute)
+	if _, _, err := repo.CreateReleaseWorkflowOperation(activeCtx, api.ReleaseWorkflowOperationRecord{
+		OwnerID:            testOwnerID,
+		WorkflowID:         opened.WorkflowID,
+		OperationID:        operationID,
+		ExpectedRevision:   state.Workflow.Revision,
+		IdempotencyKey:     command.IdempotencyKey,
+		CommandFingerprint: commandFingerprint,
+		ProcessEpoch:       "first-coordinator",
+		Status: api.WorkflowOperationStatus{
+			ID:         operationID,
+			WorkflowID: opened.WorkflowID,
+			Revision:   state.Workflow.Revision,
+			Sequence:   1,
+			Command:    command.commandName(),
+			Operation:  api.OperationKindUploadExecute,
+			Status:     api.StageStatusQueued,
+			StartedAt:  started,
+			UpdatedAt:  started,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ReconcileConfigActivation(ctx, []byte(`{}`), previous, "current", ApplyConfigImpact); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, clock, "second-coordinator")
+	if err := restarted.ResetIdleInputOnStartup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	interrupted, err := repo.LoadReleaseWorkflowOperation(ctx, testOwnerID, opened.WorkflowID, operationID)
+	if err != nil || interrupted.Status.Status != api.StageStatusInterrupted {
+		t.Fatalf("interrupted composite operation = %#v, err=%v", interrupted.Status, err)
+	}
+	current, err := persistent.Load(ctx, testOwnerID, opened.WorkflowID)
+	if err != nil || current.Composite == nil || current.Composite.ActiveOperationID != "" {
+		t.Fatalf("recovered composite session = %#v, err=%v", current.Composite, err)
+	}
+	retry := command
+	retry.ExpectedRevision = current.Workflow.Revision
+	retry.IdempotencyKey = "retry-composite"
+	if _, err := restarted.Start(ctx, testOwnerID, retry); err != nil {
+		t.Fatalf("retry interrupted composite: %v", err)
 	}
 }
 
@@ -539,22 +926,82 @@ func openActiveInputRecoveryRepository(ctx context.Context, t *testing.T) *db.SQ
 	return repo
 }
 
+type failOnceStartupRecoveryRepository struct {
+	*PersistentRepository
+	failList       atomic.Bool
+	failTerminal   atomic.Bool
+	failCompletion atomic.Bool
+}
+
+type failOnceStartupActiveInputRepository struct {
+	api.ActiveInputRepository
+	failRestore atomic.Bool
+	failClose   atomic.Bool
+}
+
+func (r *failOnceStartupActiveInputRepository) CompareAndSwapActiveInput(
+	ctx context.Context, expected, next api.ActiveInputRecord, now time.Time,
+) error {
+	if expected.State == api.ActiveInputRecovering && r.failRestore.Swap(false) {
+		return errors.New("synthetic committed input restoration failure")
+	}
+	if err := r.ActiveInputRepository.CompareAndSwapActiveInput(ctx, expected, next, now); err != nil {
+		return fmt.Errorf("persist test input transition: %w", err)
+	}
+	return nil
+}
+
+func (r *failOnceStartupActiveInputRepository) CloseIdleActiveInput(ctx context.Context, expected api.ActiveInputRecord, now time.Time) error {
+	if r.failClose.Swap(false) {
+		return errors.New("synthetic idle input close failure")
+	}
+	if err := r.ActiveInputRepository.CloseIdleActiveInput(ctx, expected, now); err != nil {
+		return fmt.Errorf("close test input: %w", err)
+	}
+	return nil
+}
+
+func (r *failOnceStartupRecoveryRepository) ListActiveOperations(ctx context.Context) ([]api.ReleaseWorkflowOperationRecord, error) {
+	if r.failList.Swap(false) {
+		return nil, errors.New("synthetic startup operation listing failure")
+	}
+	return r.PersistentRepository.ListActiveOperations(ctx)
+}
+
+func (r *failOnceStartupRecoveryRepository) SaveOperation(ctx context.Context, expectedSequence uint64, record api.ReleaseWorkflowOperationRecord) error {
+	if isTerminalProgressStatus(record.Status.Status) && r.failTerminal.Swap(false) {
+		return errors.New("synthetic startup operation publication failure")
+	}
+	return r.PersistentRepository.SaveOperation(ctx, expectedSequence, record)
+}
+
+func (r *failOnceStartupRecoveryRepository) CompleteWork(ctx context.Context, record api.ReleaseWorkflowWorkRecord) error {
+	if r.failCompletion.Swap(false) {
+		return errors.New("synthetic interrupted work completion failure")
+	}
+	return r.PersistentRepository.CompleteWork(ctx, record)
+}
+
 func newActiveInputRecoveryModule(
 	t *testing.T,
-	persistent *PersistentRepository,
+	persistent Repository,
 	activeInputs api.ActiveInputRepository,
 	verifier *hashingActiveInputVerifier,
 	clock Clock,
 	epoch string,
+	additionalOptions ...Option,
 ) *Module {
 	t.Helper()
+	options := append([]Option{
+		WithActiveInputs(activeInputs, verifier.Verify),
+		WithClock(clock),
+		WithProcessEpoch(epoch),
+	}, additionalOptions...)
 	module, err := New(
 		persistent,
 		NewMemoryPrivateResourceStore(),
 		ReleasePreparerFunc{},
-		WithActiveInputs(activeInputs, verifier.Verify),
-		WithClock(clock),
-		WithProcessEpoch(epoch),
+		options...,
 	)
 	if err != nil {
 		t.Fatal(err)

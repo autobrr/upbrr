@@ -63,10 +63,12 @@ func (m *Module) OwnsActiveInput(slot api.ActiveInputRecord) bool {
 	return m != nil && slot.State != api.ActiveInputEmpty && slot.Fence != 0 && slot.CoordinatorID == m.processEpoch
 }
 
-// ResetIdleInputOnStartup clears a previous process's idle input unless a
-// non-terminal composite workflow still requires an explicit continuation.
-// It never verifies source bytes, resumes workflow work, or claims recovery.
-func (m *Module) ResetIdleInputOnStartup(ctx context.Context) error {
+// ResetIdleInputOnStartup claims an expired foreign input, settles interrupted
+// prior-process operations, and closes the slot when it becomes idle. It waits
+// for live work leases, preserves completed checkpoints, and retains an active
+// composite workflow for an explicit retry. A live foreign lease is deferred.
+// It does not verify source bytes or start a new workflow.
+func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	if m == nil || m.activeInputs == nil {
 		return nil
 	}
@@ -75,13 +77,64 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) error {
 	}
 	m.activeMu.Lock()
 	defer m.activeMu.Unlock()
+	defer func() {
+		if resetErr == nil {
+			m.startupResetPending = false
+			m.startupResetDone = true
+		}
+	}()
 
 	slot, err := m.activeInputs.LoadActiveInput(ctx)
 	if err != nil {
 		return fmt.Errorf("release workflow load active input for startup reset: %w", err)
 	}
-	if slot.State == api.ActiveInputEmpty || m.OwnsActiveInput(slot) {
+	if slot.State == api.ActiveInputEmpty ||
+		(m.OwnsActiveInput(slot) && m.startupResetDone && !m.startupResetPending && slot.State != api.ActiveInputRecovering) {
 		return nil
+	}
+	recovered := m.startupResetPending && m.OwnsActiveInput(slot)
+	if m.OwnsActiveInput(slot) {
+		recoveryCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
+		switch {
+		case slot.State == api.ActiveInputRecovering:
+			m.startupResetPending = true
+			m.startupResetDone = false
+			slot, err = m.finishActiveInputRecovery(recoveryCtx, slot, slot.OwnerID, true)
+			if err != nil {
+				return fmt.Errorf("release workflow finish input recovery on startup: %w", err)
+			}
+			recovered = true
+		case recovered && slot.State == api.ActiveInputActive:
+			if err := m.discardInterruptedOperations(recoveryCtx); err != nil {
+				return fmt.Errorf("release workflow resume interrupted operation recovery on startup: %w", err)
+			}
+		case slot.State == api.ActiveInputActive:
+			// Ordinary admission can precede an explicit startup reset. Settle
+			// prior-process operations without closing the current input.
+			return m.discardInterruptedOperations(recoveryCtx)
+		default:
+			return api.ErrActiveInputBusy
+		}
+	}
+	m.logger.Debugf(
+		"active input: startup reset state=found input_state=%s revision=%d lease_expired=%t",
+		slot.State,
+		slot.Revision,
+		!slot.LeaseExpiresAt.After(m.clock.Now()),
+	)
+	if !m.OwnsActiveInput(slot) && !slot.LeaseExpiresAt.After(m.clock.Now()) {
+		m.logger.Debugf("active input: startup reset decision=recover input_state=%s revision=%d", slot.State, slot.Revision)
+		m.startupResetPending = true
+		m.startupResetDone = false
+		slot, err = m.recoverActiveInput(ctx, slot, slot.OwnerID, true)
+		if err != nil {
+			return fmt.Errorf("release workflow recover expired input on startup: %w", err)
+		}
+		recovered = true
+		m.logger.Debugf("active input: startup reset decision=recovered input_state=%s revision=%d", slot.State, slot.Revision)
+		if slot.State == api.ActiveInputEmpty {
+			return nil
+		}
 	}
 	if slot.State != api.ActiveInputActive {
 		m.logger.Debugf("active input: startup reset decision=defer state=%s revision=%d", slot.State, slot.Revision)
@@ -91,6 +144,23 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("release workflow load active workflow for startup reset: %w", err)
 	}
+	if recovered && sourceState.Composite != nil && sourceState.Composite.ActiveOperationID != "" {
+		operationID := sourceState.Composite.ActiveOperationID
+		operation, loadErr := m.operations.LoadOperation(ctx, slot.OwnerID, slot.WorkflowID, operationID)
+		if loadErr != nil {
+			return fmt.Errorf("release workflow load composite operation for startup reset: %w", loadErr)
+		}
+		if isTerminalProgressStatus(operation.Status.Status) {
+			authorityCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
+			if err := m.finishCompositeSession(authorityCtx, slot.OwnerID, slot.WorkflowID, operationID, "interrupted_by_restart"); err != nil {
+				return fmt.Errorf("release workflow settle composite session on startup: %w", err)
+			}
+			sourceState, err = m.repository.Load(ctx, slot.OwnerID, slot.WorkflowID)
+			if err != nil {
+				return fmt.Errorf("release workflow reload composite session on startup: %w", err)
+			}
+		}
+	}
 	if sourceState.Composite != nil {
 		if sourceState.Workflow.Status != api.WorkflowStatusCompleted && sourceState.Workflow.Status != api.WorkflowStatusCanceled &&
 			sourceState.Workflow.Status != api.WorkflowStatusFailed {
@@ -98,12 +168,34 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) error {
 			return nil
 		}
 	}
-	if err := m.activeInputs.CloseIdleActiveInput(ctx, slot, m.clock.Now().UTC()); err != nil {
-		if errors.Is(err, api.ErrActiveInputBusy) || errors.Is(err, api.ErrActiveInputChanged) {
-			m.logger.Debugf("active input: startup reset decision=defer state=%s revision=%d", slot.State, slot.Revision)
-			return nil
+	deadline := time.Now().Add(workflowWorkLeaseTTL + 5*time.Second)
+	waitingForIdle := false
+	for {
+		if err := m.activeInputs.CloseIdleActiveInput(ctx, slot, m.clock.Now().UTC()); err != nil {
+			if recovered && errors.Is(err, api.ErrActiveInputBusy) && time.Now().Before(deadline) {
+				if !waitingForIdle {
+					m.logger.Debugf("active input: startup reset decision=wait_idle revision=%d", slot.Revision)
+					waitingForIdle = true
+				}
+				timer := time.NewTimer(250 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return fmt.Errorf("release workflow wait for idle input cleanup: %w", ctx.Err())
+				case <-timer.C:
+					continue
+				}
+			}
+			if !recovered && (errors.Is(err, api.ErrActiveInputBusy) || errors.Is(err, api.ErrActiveInputChanged)) {
+				m.logger.Debugf("active input: startup reset decision=defer state=%s revision=%d", slot.State, slot.Revision)
+				return nil
+			}
+			return fmt.Errorf("release workflow reset idle input on startup: %w", err)
 		}
-		return fmt.Errorf("release workflow reset idle input on startup: %w", err)
+		break
+	}
+	if m.activeCancel != nil {
+		m.activeCancel()
 	}
 	m.logger.Debugf("active input: startup reset decision=closed state=%s revision=%d", slot.State, slot.Revision)
 	return nil
@@ -136,7 +228,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	m.logger.Debugf("active input: open admission decision=check state=%s revision=%d", prior.State, prior.Revision)
 	if prior.State != api.ActiveInputEmpty && !prior.LeaseExpiresAt.After(m.clock.Now()) {
 		foreignOwner := prior.OwnerID != owner
-		prior, err = m.recoverActiveInput(ctx, prior, owner)
+		prior, err = m.recoverActiveInput(ctx, prior, owner, false)
 		if err != nil {
 			// Foreign callers may release a safely recovered expired slot, but
 			// must not learn whether the prior owner has unresolved effects or
@@ -351,7 +443,15 @@ func (m *Module) cancelPriorInputWork(ctx context.Context, owner string, workflo
 	return nil
 }
 
-func (m *Module) recoverActiveInput(ctx context.Context, prior api.ActiveInputRecord, requestedOwner string) (api.ActiveInputRecord, error) {
+// recoverActiveInput fences an expired slot and restores its committed input.
+// Startup recovery discards interrupted operations; ordinary admission may
+// resume retained work. A different requested owner releases the restored slot.
+func (m *Module) recoverActiveInput(
+	ctx context.Context,
+	prior api.ActiveInputRecord,
+	requestedOwner string,
+	discardInterrupted bool,
+) (api.ActiveInputRecord, error) {
 	now := m.clock.Now()
 	recovering := prior
 	recovering.State, recovering.Revision, recovering.Fence = api.ActiveInputRecovering, prior.Revision+1, prior.Fence+1
@@ -360,6 +460,16 @@ func (m *Module) recoverActiveInput(ctx context.Context, prior api.ActiveInputRe
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow claim input recovery: %w", err)
 	}
 	m.startActiveInputHeartbeat(ctx, recovering.Fence)
+	return m.finishActiveInputRecovery(ctx, recovering, requestedOwner, discardInterrupted)
+}
+
+// finishActiveInputRecovery restores committed input and settles old work under an already claimed fence.
+func (m *Module) finishActiveInputRecovery(
+	ctx context.Context,
+	recovering api.ActiveInputRecord,
+	requestedOwner string,
+	discardInterrupted bool,
+) (api.ActiveInputRecord, error) {
 	ctx = api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: recovering.Fence})
 	// Restore only the committed input under the new fence before recovery can
 	// claim work. Existing unknown effects still block switching and submission.
@@ -370,15 +480,21 @@ func (m *Module) recoverActiveInput(ctx context.Context, prior api.ActiveInputRe
 		restored.State = api.ActiveInputEmpty
 	}
 	restored.ReservationID, restored.RequestedPath = "", ""
-	if prior.ReservationID != "" {
+	if recovering.ReservationID != "" {
 		// An abandoned request never committed its idempotency receipt.
 		restored.IdempotencyKey, restored.RequestFingerprint = "", ""
 	}
 	if err := m.activeInputs.CompareAndSwapActiveInput(ctx, recovering, restored, m.clock.Now()); err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow restore committed input: %w", err)
 	}
-	if err := m.ensureOperationRecovery(ctx); err != nil {
-		return api.ActiveInputRecord{}, err
+	var recoveryErr error
+	if discardInterrupted {
+		recoveryErr = m.discardInterruptedOperations(ctx)
+	} else {
+		recoveryErr = m.ensureOperationRecovery(ctx)
+	}
+	if recoveryErr != nil {
+		return api.ActiveInputRecord{}, recoveryErr
 	}
 	if restored.OwnerID != requestedOwner && restored.State == api.ActiveInputActive {
 		empty := api.ActiveInputRecord{
@@ -527,7 +643,7 @@ func (m *Module) activeMutationContext(ctx context.Context, owner string, workfl
 			return ctx, api.ErrActiveInputBusy
 		}
 		if slot.State != api.ActiveInputEmpty && !slot.LeaseExpiresAt.After(m.clock.Now()) {
-			slot, err = m.recoverActiveInput(ctx, slot, owner)
+			slot, err = m.recoverActiveInput(ctx, slot, owner, false)
 			if err != nil {
 				return ctx, err
 			}

@@ -170,6 +170,17 @@ func (r *PersistentRepository) ListActiveOperations(ctx context.Context) ([]api.
 	return records, nil
 }
 
+// ListInterruptedOperationsWithIncompleteWork finds interrupted operations whose work still needs completion.
+func (r *PersistentRepository) ListInterruptedOperationsWithIncompleteWork(
+	ctx context.Context, ownerID string, workflowID api.WorkflowID,
+) ([]api.ReleaseWorkflowOperationRecord, error) {
+	records, err := r.operations.ListInterruptedReleaseWorkflowOperationsWithIncompleteWork(ctx, ownerID, workflowID)
+	if err != nil {
+		return nil, mapPersistentRepositoryError(err)
+	}
+	return records, nil
+}
+
 // AcceptIntent persists one exact desired-state request.
 func (r *PersistentRepository) AcceptIntent(
 	ctx context.Context,
