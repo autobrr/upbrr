@@ -947,15 +947,17 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 		Intent: api.WorkflowIntent{
 			TrackerIDs:             []api.TrackerID{"ALPHA"},
 			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			SkipImageHostUpload:    true,
 		},
 	}
 	command, stage := planContinuationCommand(request, current, now)
 	upload, ok := command.(UploadMediaImagesCommand)
-	if !ok || stage != "prepare-image-requirements" || upload.Host != "" || upload.Media.ID != current.Media.ID {
+	if !ok || stage != "prepare-image-requirements" || upload.Host != "" || upload.Media.ID != current.Media.ID || !upload.SkipUpload {
 		t.Fatalf("planned image barrier: stage=%q command=%#v", stage, command)
 	}
 
 	current.Media.ImageRequirementsPrepared = true
+	current.Media.ImageHostUploadSkipped = true
 	current.Media.Artifacts = append(current.Media.Artifacts, api.MediaArtifact{
 		ID:       "hosted-screen-plan",
 		Kind:     api.MediaArtifactHostedImage,
@@ -963,6 +965,13 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 		Selected: true,
 		Source:   "screen-plan",
 	})
+	request.Intent.SkipImageHostUpload = false
+	command, stage = planContinuationCommand(request, current, now)
+	upload, ok = command.(UploadMediaImagesCommand)
+	if !ok || stage != "prepare-image-requirements" || upload.SkipUpload {
+		t.Fatalf("planned image hosting after skip mode changed: stage=%q command=%#v", stage, command)
+	}
+	current.Media.ImageHostUploadSkipped = false
 	request.Intent.Descriptions = &api.DescriptionInstructions{TemplateVersion: "workflow-v1"}
 	command, stage = planContinuationCommand(request, current, now)
 	if _, ok := command.(GenerateDescriptionsCommand); !ok || stage != "generate-descriptions" {
