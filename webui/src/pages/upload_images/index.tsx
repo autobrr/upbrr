@@ -84,7 +84,7 @@ export default function UploadImagesPage({
         </div>
         {uploading ? (
           <div className="grid gap-2" aria-live="polite">
-            <p className="m-0 text-center text-sm text-[var(--muted)]">
+            <p className="m-0 text-center text-sm text-muted-foreground">
               {progressTotal > 0
                 ? `${progressCurrent} of ${progressTotal} image-host uploads processed across ${attempts.length} ${attempts.length === 1 ? "host" : "hosts"}.`
                 : "Resolving required image hosts..."}
@@ -104,7 +104,7 @@ export default function UploadImagesPage({
                         : `${attempt.completed}/${attempt.total} processed`;
                   return (
                     <div
-                      className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 px-3 py-2 text-sm"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-muted px-3 py-2 text-sm text-foreground"
                       key={attempt.attemptID}
                     >
                       <div>
@@ -160,13 +160,13 @@ export default function UploadImagesPage({
                   >
                     <img src={item.contentURL} alt="" />
                   </button>
-                  <label className="flex items-center gap-2 text-sm">
+                  <label className="flex min-h-9 cursor-pointer items-center gap-2 text-sm">
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={(event) => facet.select(artifactID, event.target.checked)}
                     />
-                    Include
+                    Include image {index + 1}
                   </label>
                 </article>
               );
@@ -184,11 +184,11 @@ export default function UploadImagesPage({
         </div>
         {view.uploaded.length ? (
           <div className="grid gap-2">
-            {view.uploaded.map((item) => {
+            {view.uploaded.map((item, index) => {
               const url = item.url;
               return (
                 <article
-                  className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-muted p-2 text-foreground"
                   key={`${item.host}-${item.artifactID}`}
                 >
                   <div className="min-w-0">
@@ -211,6 +211,7 @@ export default function UploadImagesPage({
                   <button
                     className="danger"
                     type="button"
+                    aria-label={`Remove published image ${index + 1} from ${resolveImageHostLabel(item.host)}`}
                     disabled={busy}
                     onClick={() => void facet.remove(item.artifactID, item.host)}
                   >

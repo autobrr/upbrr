@@ -2,10 +2,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
-import App from "./app";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Checkbox } from "./components/ui/checkbox";
-import { authClient, initializeWebClient, updateWebCSRFToken } from "./api/client";
+
+const App = lazy(() => import("./app"));
+import {
+  authClient,
+  initializeWebClient,
+  sessionChangedMessage,
+  subscribeWebSessionLoss,
+  updateWebCSRFToken,
+} from "./api/client";
 
 type AuthStatus = {
   authenticated: boolean;
@@ -41,6 +48,9 @@ export default function WebRoot() {
   const [allowUnrestrictedBrowse, setAllowUnrestrictedBrowse] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  const [sessionChanged, setSessionChanged] = useState(false);
+  const logoutApproved = useRef(false);
 
   useEffect(() => {
     authClient
@@ -59,10 +69,52 @@ export default function WebRoot() {
       });
   }, []);
 
+  useEffect(
+    () =>
+      subscribeWebSessionLoss((reason) => {
+        updateWebCSRFToken("");
+        setPassword("");
+        setSettingsDirty(false);
+        setStatus(initialStatus);
+        setSessionChanged(reason === "changed");
+        setError(
+          reason === "lost"
+            ? "Your session ended. Sign in again; unsaved settings were discarded."
+            : "",
+        );
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!status?.authenticated || !settingsDirty) return;
+    const warnOnDeparture = (event: BeforeUnloadEvent) => {
+      if (logoutApproved.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnOnDeparture);
+    return () => window.removeEventListener("beforeunload", warnOnDeparture);
+  }, [settingsDirty, status?.authenticated]);
+
   if (status === null) {
     return (
       <div className="web-auth-shell">
         <div className="web-auth-card">Loading web UI...</div>
+      </div>
+    );
+  }
+
+  if (sessionChanged) {
+    return (
+      <div className="web-auth-shell">
+        <div className="web-auth-card">
+          <h1>Session changed</h1>
+          <p className="web-auth-card__copy">{sessionChangedMessage}</p>
+          <button type="button" onClick={() => window.location.reload()}>
+            Reload tab
+          </button>
+        </div>
       </div>
     );
   }
@@ -160,15 +212,26 @@ export default function WebRoot() {
             type="button"
             className="auth-logout"
             onClick={async () => {
-              await authClient.logout();
-              updateWebCSRFToken("");
-              window.location.reload();
+              if (settingsDirty && !window.confirm("Discard unsaved settings and sign out?")) {
+                return;
+              }
+              logoutApproved.current = true;
+              try {
+                await authClient.logout();
+                updateWebCSRFToken("");
+                window.location.reload();
+              } catch (err) {
+                logoutApproved.current = false;
+                setError(String(err));
+              }
             }}
           >
             Logout
           </button>
         </div>
-        <App />
+        <Suspense fallback={<p role="status">Loading workspace…</p>}>
+          <App onSettingsDirtyChange={setSettingsDirty} />
+        </Suspense>
       </div>
     );
   }
@@ -186,6 +249,7 @@ export default function WebRoot() {
         : await authClient.login(username, password, retainLogin);
       const next = { ...initialStatus, ...(payload as Partial<AuthStatus>) };
       setStatus(next);
+      setPassword("");
       setBrowseRoot(next.browseRoot || "");
       setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
       updateWebCSRFToken(next.csrfToken || "", !!next.caseInsensitivePaths);

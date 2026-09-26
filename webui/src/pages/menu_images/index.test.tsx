@@ -37,6 +37,18 @@ const renderPage = (menuFacet: MenuImagesFacet) =>
   );
 
 describe("MenuImagesPage", () => {
+  it("names and removes pending files independently", () => {
+    renderPage(facet());
+    const files = [new File(["first"], "menu-one.png"), new File(["second"], "menu-two.png")];
+    fireEvent.change(screen.getByLabelText("Menu image files"), { target: { files } });
+
+    expect(screen.getByRole("button", { name: "Remove file 1: menu-one.png" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove file 2: menu-two.png" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Remove file 2: menu-two.png" }));
+    expect(screen.queryByText("menu-two.png")).not.toBeInTheDocument();
+    expect(screen.getByText("menu-one.png")).toBeInTheDocument();
+  });
+
   it("forwards capture intent through the facet", async () => {
     const capture = vi.fn(async () => true);
     renderPage(facet({ capture }));

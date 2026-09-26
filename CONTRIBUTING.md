@@ -23,7 +23,7 @@ Install the following on your machine:
 
 - [Git](https://git-scm.com/)
 - [Go](https://golang.org/dl/) — see [go.mod](./go.mod) for the required version
-- [Node.js](https://nodejs.org) (`^20.19.0`, `^22.13.0`, or `>=24` for the frontend; `>=24` for public documentation)
+- [Node.js](https://nodejs.org) (`>=24` for the frontend and public documentation)
 - [pnpm](https://pnpm.io/installation) (10 or newer — version is pinned in `webui/package.json` via `packageManager`)
 - [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
 - [golangci-lint](https://golangci-lint.run/) — use the version pinned in the [CI workflow](./.github/workflows/golangci-lint.yml) for hooks and local checks
@@ -48,7 +48,7 @@ Notes:
 - **Fork and clone:** [Fork the upbrr repository](https://github.com/autobrr/upbrr/fork) and clone it to start working on your changes.
 - **Branching:** Create a descriptively named branch.
   - Example: `git checkout -b fix/bt-dupe-check` or `git checkout -b feat/playlist-selection`
-- **Coding:** Keep changes narrow and match the surrounding style. For Go, follow the rules in [`AGENTS.md`](./AGENTS.md) and let `golangci-lint` drive. For frontend work, also see [`webui/AGENTS.md`](./webui/AGENTS.md) and let the Lefthook Prettier + ESLint hooks do the work.
+- **Coding:** Keep changes narrow and match the surrounding style. For Go, follow the rules in [`AGENTS.md`](./AGENTS.md) and let `golangci-lint` drive. For frontend work, see the [Web UI development guide](./webui/README.md) and [`webui/AGENTS.md`](./webui/AGENTS.md), and let the Lefthook Prettier + ESLint hooks do the work.
 - **Commit messages:** We enforce [Conventional Commits](https://www.conventionalcommits.org/) via a repo-local validator. See [Commit message format](#commit-message-format) below.
   - No need to force-push or rebase — we squash on merge.
 - **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes.

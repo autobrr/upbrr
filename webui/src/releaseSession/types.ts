@@ -56,7 +56,7 @@ export type ReleaseRoute =
   | "descriptions"
   | "upload";
 
-export type RouteAccess = Readonly<{ available: boolean; reason: string }>;
+export type RouteAccess = Readonly<{ available: boolean; reason: string; reasonCode?: string }>;
 export type FacetStatus = "idle" | "running" | "ready" | "error";
 
 /** Lifecycle of one correlation-scoped canonical preparation attempt. */

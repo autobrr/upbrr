@@ -81,27 +81,28 @@ export default function TrackerDataPage(props: Props) {
             const hideTrackerName = faviconOnly && useFavicons;
             return (
               <details
-                className="overflow-hidden rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)]"
+                className="overflow-hidden rounded-lg border border-border bg-card"
                 key={trackerKey}
                 open={isPrimary}
               >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
-                  <span
-                    aria-label={hideTrackerName ? item.Tracker || "Unknown" : undefined}
-                    className="flex items-center gap-2 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
-                  >
+                <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2 font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
+                  <span className="flex min-w-0 max-w-full items-center gap-2 [overflow-wrap:anywhere]">
                     <TrackerIconImage
                       tracker={item.Tracker}
                       iconSrc={iconSrc}
                       enabled={useFavicons}
                     />
-                    {hideTrackerName ? null : item.Tracker || "Unknown"}
+                    {hideTrackerName ? (
+                      <span className="sr-only">{item.Tracker || "Unknown"}</span>
+                    ) : (
+                      item.Tracker || "Unknown"
+                    )}
                   </span>
-                  <span className="whitespace-nowrap text-sm font-medium text-[var(--muted)]">
+                  <span className="min-w-0 max-w-full text-sm font-medium text-muted-foreground [overflow-wrap:anywhere]">
                     Torrent ID: {item.TrackerID || "-"}
                   </span>
                 </summary>
-                <div className="grid gap-3 border-t border-white/10 px-3 pb-3 pt-2">
+                <div className="grid gap-3 border-t border-border px-3 pb-3 pt-2">
                   <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2">
                     <div>
                       <p className="label">Tracker</p>
@@ -123,16 +124,17 @@ export default function TrackerDataPage(props: Props) {
                           {hideTrackerName ? null : item.Tracker || "Unknown"}
                         </a>
                       ) : (
-                        <div
-                          aria-label={hideTrackerName ? item.Tracker || "Unknown" : undefined}
-                          className="value flex items-center gap-1.5"
-                        >
+                        <div className="value flex items-center gap-1.5">
                           <TrackerIconImage
                             tracker={item.Tracker}
                             iconSrc={iconSrc}
                             enabled={useFavicons}
                           />
-                          {hideTrackerName ? null : <span>{item.Tracker || "Unknown"}</span>}
+                          {hideTrackerName ? (
+                            <span className="sr-only">{item.Tracker || "Unknown"}</span>
+                          ) : (
+                            <span>{item.Tracker || "Unknown"}</span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -188,6 +190,7 @@ export default function TrackerDataPage(props: Props) {
                         <Button
                           className="h-7 rounded-full px-2 text-xs"
                           type="button"
+                          aria-label={`${isRendered ? "Show raw" : "Render"} ${item.Tracker || "Tracker"} entry ${index + 1}`}
                           onClick={() =>
                             setRenderedDescriptions((prev) => ({
                               ...prev,
@@ -217,6 +220,7 @@ export default function TrackerDataPage(props: Props) {
                           <button
                             className="cursor-pointer border-0 bg-transparent p-0"
                             type="button"
+                            aria-label={`Preview ${item.Tracker || "Tracker"} image ${imageIndex + 1} in entry ${index + 1}`}
                             key={`${url}-${imageIndex}`}
                             onClick={() => {
                               setLightboxImage(url);
@@ -224,7 +228,7 @@ export default function TrackerDataPage(props: Props) {
                             }}
                           >
                             <img
-                              className="w-full rounded-lg border border-white/10"
+                              className="w-full rounded-lg border border-border"
                               src={url}
                               alt="Tracker"
                               loading="lazy"

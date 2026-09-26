@@ -30,7 +30,7 @@ export function Checkbox({
   return (
     <CheckboxPrimitive.Root
       className={cn(
-        "inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border border-white/20 bg-white/10 text-[var(--accent-2)] transition data-[state=checked]:border-[var(--accent-2)] data-[state=checked]:bg-[rgba(53,194,193,0.22)] disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-input bg-card p-0 text-card-foreground transition data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       checked={checked}
@@ -75,14 +75,27 @@ export function PillCheckbox({
   return (
     <CheckboxPrimitive.Root
       className={cn(
-        "tracker-pill inline-flex min-h-6 cursor-pointer select-none items-center justify-center rounded-full border border-white/15 bg-[rgba(12,16,26,0.58)] px-2.5 py-1 text-[0.78rem] font-semibold leading-none text-[var(--muted)] transition data-[state=checked]:border-[var(--accent-2)] data-[state=checked]:bg-[rgba(53,194,193,0.16)] data-[state=checked]:text-[var(--text)] data-[state=checked]:shadow-[0_0_12px_rgba(53,194,193,0.16)]",
+        "tracker-pill inline-flex min-h-10 min-w-0 cursor-pointer select-none items-center justify-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-sm font-medium leading-tight text-card-foreground transition hover:bg-accent hover:text-accent-foreground data-[state=checked]:border-primary data-[state=checked]:bg-accent data-[state=checked]:text-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
         className,
       )}
       checked={checked}
       onCheckedChange={(nextChecked) => onCheckedChange?.(nextChecked === true)}
       {...props}
     >
-      {children}
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-current">
+        <CheckboxPrimitive.Indicator asChild>
+          <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path
+              d="M9.75 3.25 5 8 2.25 5.25"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="1.8"
+            />
+          </svg>
+        </CheckboxPrimitive.Indicator>
+      </span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{children}</span>
     </CheckboxPrimitive.Root>
   );
 }

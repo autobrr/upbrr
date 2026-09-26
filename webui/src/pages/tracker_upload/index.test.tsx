@@ -286,6 +286,29 @@ describe("TrackerUploadPage", () => {
     expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "note", "Synthetic note");
   });
 
+  it("shows a saved questionnaire answer missing from current options", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
+          ],
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    renderPage(
+      uploadFacet({
+        projections,
+        questionnaireAnswers: { EXAMPLE: { edition: "Legacy" } },
+      }),
+    );
+
+    expect(screen.getByRole("combobox", { name: "Edition *" })).toHaveValue("Legacy");
+    expect(screen.getByRole("option", { name: "Legacy (saved)" })).toBeInTheDocument();
+  });
+
   it("shows projection-backed tracker upload names before any dry run", () => {
     const projections = {
       projections: [

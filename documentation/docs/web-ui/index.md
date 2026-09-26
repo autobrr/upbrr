@@ -108,6 +108,8 @@ Saving settings can remain **Pending** until current operations finish safely. W
 
 See the [Settings reference](./settings/index.md) for every section, field behavior, and verification guidance.
 
+Use [Appearance](./settings/appearance.md) to choose a bundled theme and light or dark mode. The change applies immediately in this browser, including the sign-in screen.
+
 ## History
 
 **History** shows retained releases and lets you reopen their overview. Deleting a release from History removes its stored release state; it does not delete the source media.

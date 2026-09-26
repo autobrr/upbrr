@@ -2,7 +2,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { createElement } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as testingRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -10,13 +20,20 @@ import {
   type AppOperationMocks,
 } from "../test/appRequestMock";
 import type { ConfigMap, ConfigValue, TrackerCatalog, TrackerCatalogEntry } from "../types";
+import { createSettingsRenderers } from "../settings/renderers";
+import { TrackerCatalogProvider, useTrackerCatalog } from "../trackerCatalog";
 
 import {
   nextQbitDirectState,
   normalizeTorrentClientForSave,
   normalizeTorrentClientsForSave,
-  useSettingsState,
+  useSettingsState as useRawSettingsState,
 } from "./useSettingsState";
+
+const useSettingsState = (options: Parameters<typeof useRawSettingsState>[0]) => {
+  const state = useRawSettingsState(options);
+  return { ...state, ...createSettingsRenderers(state.editorContext) };
+};
 
 const installAppOperationMocks = (operations: AppOperationMocks) =>
   installRawAppOperationMocks({
@@ -28,6 +45,15 @@ const installAppOperationMocks = (operations: AppOperationMocks) =>
     }),
     ...operations,
   });
+
+const render = (element: ReactElement) =>
+  testingRender(
+    createElement(
+      QueryClientProvider,
+      { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+      element,
+    ),
+  );
 
 afterEach(() => {
   cleanup();
@@ -376,6 +402,65 @@ function PayloadCapture({ value }: { value: string | null }) {
   return null;
 }
 
+function CatalogDefaultHarness() {
+  const settings = useSettingsState({ activeTab: "settings" });
+  const { catalog } = useTrackerCatalog();
+  const defaults = catalog?.entries
+    .filter((entry) => entry.configured && entry.default)
+    .map((entry) => entry.name)
+    .join(",");
+  return createElement(
+    "div",
+    null,
+    createElement("span", { "data-testid": "catalog-defaults" }, defaults),
+    createElement("span", { "data-testid": "save-status" }, settings.settingsSaved),
+    createElement(
+      "button",
+      { type: "button", disabled: settings.settingsLoading, onClick: settings.handleSaveSettings },
+      "Save",
+    ),
+  );
+}
+
+describe("settings catalog invalidation", () => {
+  it("refreshes release defaults after an active settings save", async () => {
+    let activeDefault = "AITHER";
+    const refresh = deferred<TrackerCatalog>();
+    const catalogFor = (defaultName: string) =>
+      trackerCatalog(
+        ...["AITHER", "BLU"].map((name) => ({
+          ...trackerCatalogEntry(name, [["APIKey", "", true]], true),
+          default: name === defaultName,
+        })),
+      );
+    const listCatalog = vi
+      .fn<() => Promise<TrackerCatalog>>()
+      .mockResolvedValueOnce(catalogFor("AITHER"))
+      .mockImplementation(() => refresh.promise);
+    installAppOperationMocks({
+      GetConfig: async () => JSON.stringify({ Trackers: { DefaultTrackers: [activeDefault] } }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      GetImageHostPolicyMetadata: async () => ({}),
+      ListTrackerCatalog: listCatalog,
+      SaveConfig: async () => {
+        activeDefault = "BLU";
+        return { status: "active", activeGeneration: 2, impacts: [], updatedAt: "2026-09-25" };
+      },
+    });
+
+    render(createElement(TrackerCatalogProvider, null, createElement(CatalogDefaultHarness)));
+    await waitFor(() => expect(screen.getByTestId("catalog-defaults")).toHaveTextContent("AITHER"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(listCatalog).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByTestId("save-status")).toHaveTextContent("saved and applied"),
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    await act(async () => refresh.resolve(catalogFor(activeDefault)));
+    await waitFor(() => expect(screen.getByTestId("catalog-defaults")).toHaveTextContent("BLU"));
+  });
+});
+
 /** Parses the latest captured payload for focused assertions outside matcher output. */
 function readPayload<T>() {
   return JSON.parse(latestPayload || "{}") as T;
@@ -491,7 +576,7 @@ describe("renderTorrentClientsSection", () => {
               QbitURL: "http://localhost:8080",
               QbitUser: "user",
               QbitPass: "secret",
-              AutomaticManagementPaths: ["/media"],
+              AutomaticManagementPaths: ["/media", "/archive"],
             },
           },
         }),
@@ -508,15 +593,26 @@ describe("renderTorrentClientsSection", () => {
     const qbitCard = screen.getByText("qbit").closest(".settings-card");
     expect(watchCard).toBeTruthy();
     expect(qbitCard).toBeTruthy();
+    expect(screen.getByRole("group", { name: "watcher" })).toBe(watchCard);
+    expect(screen.getByRole("group", { name: "qbit" })).toBe(qbitCard);
 
     const watchScope = within(watchCard as HTMLElement);
     const qbitScope = within(qbitCard as HTMLElement);
+    expect(watchScope.getByRole("button", { name: "Remove watcher" })).toBeInTheDocument();
+    expect(qbitScope.getByRole("button", { name: "Remove qbit" })).toBeInTheDocument();
 
     expect(watchScope.getByLabelText("Type")).toHaveValue("watch");
     expect(watchScope.getByLabelText("Watch folder")).toHaveValue("/watch");
     expect(watchScope.getByLabelText("Storage directory")).toHaveValue("/storage");
     expect(qbitScope.getByLabelText("qBit URL")).toHaveValue("http://localhost:8080");
     expect(qbitScope.getByLabelText("Automatic management paths 1")).toHaveValue("/media");
+    expect(qbitScope.getByLabelText("Automatic management paths 2")).toHaveValue("/archive");
+    expect(
+      qbitScope.getByRole("button", { name: "Remove Automatic management paths 1" }),
+    ).toBeInTheDocument();
+    expect(
+      qbitScope.getByRole("button", { name: "Remove Automatic management paths 2" }),
+    ).toBeInTheDocument();
     expect(qbitScope.getByRole("button", { name: "Add Linked folder item" })).toBeInTheDocument();
     expect(qbitScope.getByRole("button", { name: "Add Local path item" })).toBeInTheDocument();
     expect(qbitScope.getByRole("button", { name: "Add Remote path item" })).toBeInTheDocument();
@@ -545,7 +641,7 @@ describe("renderTorrentClientsSection", () => {
       QbitURL: "http://localhost:8080",
       QbitUser: "user",
       QbitPass: "secret",
-      AutomaticManagementPaths: ["/media"],
+      AutomaticManagementPaths: ["/media", "/archive"],
     });
   });
 
@@ -591,7 +687,9 @@ describe("renderTorrentClientsSection", () => {
     await waitFor(() => expect(screen.getByText("primary")).toBeInTheDocument());
     const primaryCard = screen.getByText("primary").closest(".settings-card");
     expect(primaryCard).toBeTruthy();
-    fireEvent.click(within(primaryCard as HTMLElement).getByRole("button", { name: "Remove" }));
+    fireEvent.click(
+      within(primaryCard as HTMLElement).getByRole("button", { name: "Remove primary" }),
+    );
 
     await waitFor(() => expect(screen.queryByText("primary")).not.toBeInTheDocument());
     const payload = readPayload<{
@@ -1173,7 +1271,7 @@ describe("Tracker client selectors", () => {
     await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(2));
     await act(async () => activeRefresh.resolve(activeConfig));
 
-    expect(screen.getByTestId("active-anonymous")).toHaveTextContent("true");
+    await waitFor(() => expect(screen.getByTestId("active-anonymous")).toHaveTextContent("true"));
     expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("false");
     expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
     expect(screen.getByTestId("settings-saved")).toBeEmptyDOMElement();
@@ -1841,7 +1939,7 @@ describe("tracker catalog interactions", () => {
     await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(3));
 
     const card = cardName.closest(".settings-card");
-    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Remove BLU" }));
     expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
 
     pendingReload.resolve(config);
@@ -1975,7 +2073,7 @@ describe("tracker catalog interactions", () => {
       selector: ".settings-card__summary-name",
     });
     const card = cardName.closest(".settings-card");
-    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Remove AITHER" }));
 
     await waitFor(() =>
       expect(
@@ -1994,6 +2092,69 @@ describe("tracker catalog interactions", () => {
     expect(payload.Trackers?.DefaultTrackers).toEqual([]);
     expect(payload.Trackers?.PreferredTracker).toBe("");
     expect(payload.Trackers?.Trackers?.AITHER).toEqual({ APIKey: "", Anon: false });
+  });
+
+  it("names tracker actions by their configured or unsupported entry", async () => {
+    const catalog = trackerCatalog(
+      trackerCatalogEntry("AITHER", [["APIKey", "", true]]),
+      trackerCatalogEntry("BTN", [["APIKey", "", true]]),
+    );
+    catalog.unsupported = ["OLD", "LEGACY"];
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: [],
+            Trackers: {
+              AITHER: { APIKey: "token" },
+              BTN: { APIKey: "token" },
+              OLD: {},
+              LEGACY: {},
+            },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => catalog,
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    expect(await screen.findByRole("button", { name: "Remove AITHER" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove BTN" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete OLD" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete LEGACY" })).toBeInTheDocument();
+  });
+
+  it("shows and toggles a saved default tracker regardless of its casing", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: { DefaultTrackers: ["aither"], Trackers: { AITHER: { APIKey: "token" } } },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(trackerCatalogEntry("AITHER", [["APIKey", "", true]])),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await screen.findByText("AITHER", { selector: ".settings-card__summary-name" });
+    await userEvent.click(
+      screen.getByText("Default trackers", { selector: ".tracker-summary-heading span" }),
+    );
+
+    const tracker = screen.getByRole("checkbox", { name: "AITHER" });
+    expect(tracker).toBeChecked();
+    expect(screen.getByText("1/1")).toBeInTheDocument();
+
+    await userEvent.click(tracker);
+    expect(
+      readPayload<{ Trackers: { DefaultTrackers: string[] } }>().Trackers.DefaultTrackers,
+    ).toEqual([]);
+    await userEvent.click(tracker);
+    expect(
+      readPayload<{ Trackers: { DefaultTrackers: string[] } }>().Trackers.DefaultTrackers,
+    ).toEqual(["AITHER"]);
   });
 
   it("separates unsupported entries and deletes them without making them selectable", async () => {
@@ -2021,7 +2182,7 @@ describe("tracker catalog interactions", () => {
       .getByText("OLD", { selector: ".settings-card__summary-name" })
       .closest(".settings-card");
     expect(screen.queryByRole("option", { name: "OLD" })).not.toBeInTheDocument();
-    fireEvent.click(within(oldCard as HTMLElement).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(oldCard as HTMLElement).getByRole("button", { name: "Delete OLD" }));
 
     await waitFor(() =>
       expect(
@@ -2276,6 +2437,22 @@ describe("tracker advanced fields", () => {
 });
 
 describe("Image hosting settings", () => {
+  it("shows a saved host missing from current priority options", async () => {
+    installAppOperationMocks({
+      GetConfig: async () => JSON.stringify({ ImageHosting: { Host1: "lostimg" } }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(ImageHostingHarness));
+
+    const hostOne = await screen.findByRole("combobox", { name: "Host 1" });
+    expect(hostOne).toHaveValue("lostimg");
+    expect(within(hostOne).getByRole("option", { name: "lostimg (saved)" })).toBeInTheDocument();
+    expect(readPayload<{ ImageHosting: { Host1: string } }>().ImageHosting.Host1).toBe("lostimg");
+  });
+
   it("renders Lostimg config and keeps it out of global host priority", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
@@ -2363,5 +2540,27 @@ describe("Image hosting settings", () => {
     expect(payload.ImageHosting?.ReelflixEnabled).toBe(true);
     expect(payload.ImageHosting?.ReelflixAPI === "secret").toBe(true);
     expect(screen.queryByLabelText("Image API")).not.toBeInTheDocument();
+  });
+});
+
+describe("Saved tracker selection", () => {
+  it("shows a preferred tracker absent from the current catalog", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({ Trackers: { PreferredTracker: "LEGACY", Trackers: {} } }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await userEvent.click(await screen.findByText("Preferred tracker data source"));
+
+    const preferred = screen.getByRole("combobox", { name: "Preferred tracker data source" });
+    expect(preferred).toHaveValue("LEGACY");
+    expect(within(preferred).getByRole("option", { name: "LEGACY (saved)" })).toBeInTheDocument();
+    expect(
+      readPayload<{ Trackers: { PreferredTracker: string } }>().Trackers.PreferredTracker,
+    ).toBe("LEGACY");
   });
 });

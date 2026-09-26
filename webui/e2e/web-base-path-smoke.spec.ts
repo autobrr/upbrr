@@ -3,10 +3,12 @@
 
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import {
   createE2EAPIToken,
   createE2EWorkspace,
   fetchMetadata,
+  repoRoot,
   startApp,
   type AppServer,
 } from "./helpers/e2eHarness";
@@ -63,6 +65,7 @@ test("embedded web serves UI, API, assets, manifest, and events under a base pat
     expect(rootAuth.status()).toBe(404);
 
     expect(requestPaths).toContain("/upbrr/api/auth/status");
+    expect(requestPaths).toContain("/upbrr/appearance-bootstrap.js");
     expect(requestPaths).toContain("/upbrr/api/events");
     expect(requestPaths.some((path) => path.startsWith("/upbrr/assets/"))).toBe(true);
     expect(
@@ -74,6 +77,103 @@ test("embedded web serves UI, API, assets, manifest, and events under a base pat
           !path.startsWith("/upbrr/"),
       ),
     ).toEqual([]);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("direct UI routes reload and browser history work at root and under a base path", async ({
+  page,
+  request,
+}) => {
+  const uiRoutes = JSON.parse(
+    await readFile(
+      path.join(repoRoot, "internal", "webserver", "testdata", "ui-route-paths.json"),
+      "utf8",
+    ),
+  ) as string[];
+  for (const baseURL of ["/", "/upbrr/"]) {
+    const workspace = await createE2EWorkspace();
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace, { baseURL });
+      for (const route of uiRoutes) {
+        await page.goto(`${app.url}${route.slice(1)}`);
+        await expect(page).toHaveURL(new RegExp(`${baseURL}${route.slice(1)}$`));
+        await expect(page.getByRole("main")).toBeVisible();
+      }
+      await page.goto(`${app.url}settings`);
+      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+      await page.getByRole("button", { name: "History" }).click();
+      await expect(page).toHaveURL(new RegExp(`${baseURL}history$`));
+      await page.goBack();
+      await expect(page).toHaveURL(new RegExp(`${baseURL}settings$`));
+      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+
+      await page.goto(`${app.url}upload`);
+      await expect(page.getByRole("heading", { name: "View unavailable" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Open Input" })).toBeVisible();
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "View unavailable" })).toBeVisible();
+
+      const origin = new URL(app.url).origin;
+      for (const missing of ["assets/missing.js", "assets/missing.css", "unknown"]) {
+        expect((await request.get(`${origin}${baseURL}${missing}`)).status()).toBe(404);
+      }
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  }
+});
+
+test("authenticated deep link and API remain scoped to the base path across session loss", async ({
+  page,
+  context,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { baseURL: "/upbrr/", devNoAuth: false });
+    const origin = new URL(app.url).origin;
+    await page.goto(`${app.url}settings`);
+    await expect(page.getByRole("heading", { name: "Sign In" })).toBeVisible();
+    await page.getByLabel("Username").fill("e2e-user");
+    await page.getByLabel("Password").fill("synthetic-e2e-password");
+    await page.getByRole("button", { name: "Sign In" }).click();
+    await expect(page.getByRole("heading", { name: "Set Browse Access" })).toBeVisible();
+    await page.getByLabel("Browse root").fill(workspace.root);
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await expect(page).toHaveURL(`${origin}/upbrr/settings`);
+
+    const authStatus = await context.request.get(`${origin}/upbrr/api/auth/status`);
+    expect(authStatus.ok()).toBe(true);
+    const { csrfToken } = (await authStatus.json()) as { csrfToken: string };
+    const config = await context.request.post(`${origin}/upbrr/api/app/GetDefaultConfig`, {
+      data: {},
+      headers: { Origin: origin, "X-CSRF-Token": csrfToken },
+    });
+    expect(config.ok()).toBe(true);
+    expect((await context.request.get(`${origin}/api/auth/status`)).status()).toBe(404);
+
+    const other = await context.newPage();
+    await other.goto(app.url);
+    await other.getByRole("button", { name: "Logout" }).click();
+    await expect(other.getByRole("heading", { name: "Sign In" })).toBeVisible();
+    await other.close();
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Sign In" })).toBeVisible();
+    await expect(page).toHaveURL(`${origin}/upbrr/settings`);
+    const afterLogout = await context.request.post(`${origin}/upbrr/api/app/GetDefaultConfig`, {
+      data: {},
+      headers: { Origin: origin, "X-CSRF-Token": csrfToken },
+    });
+    expect(afterLogout.status()).toBe(401);
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -134,6 +234,13 @@ test("audio analysis survives reload and serves owner-bound images and statistic
 
     await page.setViewportSize({ width: 375, height: 812 });
     await expect(statsBox).toBeVisible();
+    const logoutBox = await page.getByRole("button", { name: "Logout" }).boundingBox();
+    const navigationBox = await page
+      .getByRole("navigation", { name: "Release workflow" })
+      .boundingBox();
+    expect(logoutBox).not.toBeNull();
+    expect(navigationBox).not.toBeNull();
+    expect(logoutBox!.y + logoutBox!.height).toBeLessThanOrEqual(navigationBox!.y);
     const box = await statsBox.boundingBox();
     expect(box?.height).toBeLessThanOrEqual(160);
     expect(box?.width).toBeLessThan(375);

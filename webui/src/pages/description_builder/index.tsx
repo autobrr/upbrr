@@ -121,6 +121,8 @@ export default function DescriptionBuilderPage(props: Props) {
                 <button
                   className="ghost"
                   type="button"
+                  aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
+                  aria-expanded={expanded}
                   onClick={() =>
                     setExpandedGroups((prev) => ({
                       ...prev,
@@ -138,6 +140,7 @@ export default function DescriptionBuilderPage(props: Props) {
                     <button
                       className="ghost"
                       type="button"
+                      aria-label={`${builderLoading ? "Working..." : "Reset group"} ${label}`}
                       onClick={() => void facet.reset(groupKey)}
                       disabled={builderLoading || !sourcePath.trim()}
                     >
@@ -146,6 +149,7 @@ export default function DescriptionBuilderPage(props: Props) {
                     <button
                       className="ghost"
                       type="button"
+                      aria-label={`${builderLoading ? "Working..." : "Render"} ${label}`}
                       onClick={() => void facet.render(groupKey)}
                       disabled={builderLoading}
                     >
@@ -154,6 +158,7 @@ export default function DescriptionBuilderPage(props: Props) {
                     <button
                       className="primary"
                       type="button"
+                      aria-label={`${builderLoading ? "Working..." : "Save group"} ${label}`}
                       onClick={() => void facet.save(groupKey)}
                       disabled={builderLoading || !sourcePath.trim()}
                     >
@@ -170,7 +175,8 @@ export default function DescriptionBuilderPage(props: Props) {
                       </p>
                     </div>
                     <textarea
-                      className="min-h-[170px] w-full resize-y rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[0.95rem] leading-6 text-[var(--text)]"
+                      aria-label={`Raw description for ${label}`}
+                      className="min-h-[170px] w-full resize-y rounded-lg border border-border bg-card px-3 py-2 text-[0.95rem] leading-6 text-foreground"
                       value={raw}
                       onChange={(event) => {
                         const nextValue = event.target.value;

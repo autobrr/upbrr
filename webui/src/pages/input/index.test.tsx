@@ -139,6 +139,49 @@ const inputFacet = (): InputFacet => ({
   selectCandidate: vi.fn(async () => true),
 });
 
+it("shows an unanswered required tracker choice and preserves a saved unknown answer", () => {
+  const base = inputFacet();
+  const readiness = {
+    schemas: [
+      {
+        Tracker: "ANT",
+        Fields: [
+          {
+            Key: "type",
+            Label: "Type",
+            Kind: "select",
+            Options: ["Feature Film", "Short Film"],
+            Value: "",
+            Placeholder: "Select type",
+            Help: "",
+            Required: true,
+          },
+        ],
+      },
+    ],
+  } as unknown as NonNullable<InputFacet["view"]["readiness"]>;
+  const facet: InputFacet = { ...base, view: { ...base.view, readiness } };
+  const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+  fireEvent.click(screen.getByText("Tracker Input", { exact: true }));
+
+  const choice = screen.getByRole("combobox", { name: "ANT Type" });
+  expect(choice).toHaveValue("");
+  expect(within(choice).getByRole("option", { name: "Select type" })).toBeInTheDocument();
+  fireEvent.change(choice, { target: { value: "Feature Film" } });
+  expect(facet.changeTrackerInputAnswer).toHaveBeenCalledWith("ANT", "type", "Feature Film");
+
+  rerender(
+    <InputCorrectionEditor
+      facet={{
+        ...facet,
+        view: { ...facet.view, trackerInputAnswers: { ANT: { type: "Legacy" } } },
+      }}
+    />,
+  );
+  expect(choice).toHaveValue("Legacy");
+  expect(within(choice).getByRole("option", { name: "Legacy (saved)" })).toBeInTheDocument();
+});
+
 const inputPageProps = () => ({
   sourcePathHistory: [],
   handleBrowseFile: vi.fn(),
@@ -309,6 +352,40 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it.each([
+    { faviconOnly: false, useFavicons: true, visibleName: true },
+    { faviconOnly: true, useFavicons: true, visibleName: false },
+    { faviconOnly: true, useFavicons: false, visibleName: true },
+  ])(
+    "keeps tracker choices named with faviconOnly=$faviconOnly and useFavicons=$useFavicons",
+    ({ faviconOnly, useFavicons, visibleName }) => {
+      const base = readyInputFacet(1);
+      const facet: InputFacet = {
+        ...base,
+        view: { ...base.view, selectedTrackers: ["HDS"] },
+      };
+      render(
+        <InputPage
+          facet={facet}
+          {...inputPageProps()}
+          trackerUploadItems={[{ name: "HDS", config: {} }]}
+          faviconOnly={faviconOnly}
+          useFavicons={useFavicons}
+        />,
+      );
+      fireEvent.click(screen.getByText(/Select Trackers/));
+      const choice = screen.getByRole("checkbox", { name: "HDS" });
+      expect(choice).toHaveAttribute("aria-checked", "true");
+      const labels = choice.querySelectorAll("span.flex");
+      const label = labels[labels.length - 1];
+      expect(label).not.toBeNull();
+      expect(
+        [...(label?.childNodes ?? [])].some(
+          (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === "HDS",
+        ),
+      ).toBe(visibleName);
+    },
+  );
   it("offers Blu-ray rescan confirmation only for a confirmation-required failure", () => {
     const base = inputFacet();
     const unknownOutcomeFacet: InputFacet = {

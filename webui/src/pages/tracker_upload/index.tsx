@@ -3,6 +3,7 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/select";
 import type { UploadFacet } from "../../releaseSession/types";
 import { canExecuteUpload } from "../../releaseSession/uploadEligibility";
 import type {
@@ -153,44 +154,50 @@ export default function TrackerUploadPage({ facet }: Props) {
           {questionnaireProjections.map((projection) => (
             <fieldset className="grid gap-3" key={projection.trackerId}>
               <legend className="font-semibold">{projection.displayName}</legend>
-              {projection.questionnaire?.map((field) => (
-                <label className="grid gap-1" key={field.key}>
-                  <span className="label">
-                    {field.label || field.key}
-                    {field.required ? " *" : ""}
-                  </span>
-                  {field.options?.length ? (
-                    <select
-                      value={view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? ""}
-                      onChange={(event) =>
-                        facet.answerQuestionnaire(
-                          projection.trackerId,
-                          field.key,
-                          event.target.value,
-                        )
-                      }
-                    >
-                      <option value="">Select</option>
-                      {field.options.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? ""}
-                      onChange={(event) =>
-                        facet.answerQuestionnaire(
-                          projection.trackerId,
-                          field.key,
-                          event.target.value,
-                        )
-                      }
-                    />
-                  )}
-                </label>
-              ))}
+              {projection.questionnaire?.map((field) => {
+                const answer = view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? "";
+                return (
+                  <label className="grid gap-1" key={field.key}>
+                    <span className="label">
+                      {field.label || field.key}
+                      {field.required ? " *" : ""}
+                    </span>
+                    {field.options?.length ? (
+                      <Select
+                        value={answer}
+                        onChange={(event) =>
+                          facet.answerQuestionnaire(
+                            projection.trackerId,
+                            field.key,
+                            event.target.value,
+                          )
+                        }
+                      >
+                        <option value="">Select</option>
+                        {answer && !field.options.includes(answer) ? (
+                          <option value={answer}>{answer} (saved)</option>
+                        ) : null}
+                        {field.options.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : (
+                      <input
+                        value={answer}
+                        onChange={(event) =>
+                          facet.answerQuestionnaire(
+                            projection.trackerId,
+                            field.key,
+                            event.target.value,
+                          )
+                        }
+                      />
+                    )}
+                  </label>
+                );
+              })}
             </fieldset>
           ))}
         </section>
@@ -205,7 +212,7 @@ export default function TrackerUploadPage({ facet }: Props) {
           <ul className="grid gap-2">
             {view.submissionExclusions.map((exclusion) => (
               <li
-                className="rounded border border-white/10 bg-white/5 p-3"
+                className="rounded border border-border bg-muted p-3 text-foreground"
                 key={exclusion.trackerId}
               >
                 <strong>{exclusion.trackerId}</strong>
@@ -227,7 +234,7 @@ export default function TrackerUploadPage({ facet }: Props) {
       <section className="panel grid gap-3">
         <h2>Run options</h2>
         <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2">
+          <label className="flex min-h-9 cursor-pointer items-center gap-2">
             <input
               type="checkbox"
               checked={view.options.noSeed}
@@ -238,7 +245,7 @@ export default function TrackerUploadPage({ facet }: Props) {
           </label>
           <label className="grid gap-1">
             <span className="label">Log level</span>
-            <select
+            <Select
               value={view.options.runLogLevel}
               onChange={(event) => facet.changeOptions({ runLogLevel: event.target.value })}
             >
@@ -247,7 +254,7 @@ export default function TrackerUploadPage({ facet }: Props) {
                   {level}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
       </section>
@@ -323,7 +330,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             const releaseNameNotices = releaseNameOverrideNotices(projection);
             return (
               <div
-                className="grid gap-2 rounded border border-white/10 bg-white/5 p-3"
+                className="grid gap-2 rounded border border-border bg-muted p-3 text-foreground"
                 key={trackerId}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -356,7 +363,7 @@ export default function TrackerUploadPage({ facet }: Props) {
                 {releaseNameNotices.length ? (
                   <div
                     aria-label={`Tracker naming notices for ${trackerId}`}
-                    className="grid gap-1 rounded border border-amber-300/25 bg-amber-300/5 p-2 text-sm"
+                    className="grid gap-1 rounded border border-[var(--status-warning)] bg-card p-2 text-sm"
                   >
                     {releaseNameNotices.map((notice) => (
                       <p key={releaseNameOverrideKey(notice)}>{notice.message}</p>
@@ -414,7 +421,7 @@ export default function TrackerUploadPage({ facet }: Props) {
           </div>
           {view.result.results.map((result) => (
             <div
-              className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
+              className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-muted p-2 text-foreground"
               key={result.trackerId}
             >
               <span>{result.trackerId}</span>

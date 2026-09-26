@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HistoryEntry, HistoryOverview } from "../../types";
@@ -10,6 +12,15 @@ import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
 import HistoryPage from ".";
 
 afterEach(cleanup);
+
+const renderHistory = (props: ComponentProps<typeof HistoryPage> = {}) => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <HistoryPage {...props} />
+    </QueryClientProvider>,
+  );
+};
 
 const entry = (sourcePath: string, title: string): HistoryEntry => ({
   SourcePath: sourcePath,
@@ -61,7 +72,7 @@ describe("HistoryPage", () => {
       GetHistoryOverview: async () => overview(sourcePath, "Stored Release 2026"),
     });
 
-    render(<HistoryPage onOpenInput={onOpenInput} />);
+    renderHistory({ onOpenInput });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Open input" }));
 
@@ -77,7 +88,7 @@ describe("HistoryPage", () => {
       GetHistoryOverview: async () => overview(sourcePath, "Stored Release 2026"),
     });
 
-    render(<HistoryPage onOpenInput={onOpenInput} />);
+    renderHistory({ onOpenInput });
     const user = userEvent.setup();
     const button = await screen.findByRole("button", { name: "Open input" });
     await user.click(button);
@@ -115,7 +126,7 @@ describe("HistoryPage", () => {
           overview(path, path === firstPath ? "First Release" : "Second Release"),
       });
 
-      render(<HistoryPage onOpenInput={onOpenInput} />);
+      renderHistory({ onOpenInput });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: "Open input" }));
       await user.click(screen.getByRole("button", { name: /Second Release/ }));
@@ -150,7 +161,7 @@ describe("HistoryPage", () => {
       },
     });
 
-    render(<HistoryPage />);
+    renderHistory();
     expect(await screen.findByText("Loading overview...")).toBeInTheDocument();
 
     const user = userEvent.setup();
@@ -180,7 +191,7 @@ describe("HistoryPage", () => {
       },
     });
 
-    render(<HistoryPage />);
+    renderHistory();
     expect(await screen.findByText("Error: stored preparation unavailable")).toBeInTheDocument();
 
     const user = userEvent.setup();
@@ -193,5 +204,34 @@ describe("HistoryPage", () => {
     await user.click(screen.getByRole("button", { name: /Example Release 2026/ }));
     expect(await screen.findByText("Error: stored preparation unavailable")).toBeInTheDocument();
     expect(screen.queryByText(storedPath)).not.toBeInTheDocument();
+  });
+
+  it("refreshes the history cache after deleting a stored release", async () => {
+    const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
+    let stored = [entry(sourcePath, "Stored Release 2026")];
+    const onReleaseDeleted = vi.fn();
+    const list = vi.fn(async () => stored);
+    installAppOperationMocks({
+      ListHistory: list,
+      GetHistoryOverview: async () => overview(sourcePath, "Stored Release 2026"),
+      DeleteHistoryRelease: async () => {
+        stored = [];
+        return {};
+      },
+    });
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+    try {
+      renderHistory({ onReleaseDeleted });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Remove from database" }));
+      expect(await screen.findByText("No stored releases found.")).toBeInTheDocument();
+      expect(onReleaseDeleted).toHaveBeenCalledWith(sourcePath);
+      expect(list).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

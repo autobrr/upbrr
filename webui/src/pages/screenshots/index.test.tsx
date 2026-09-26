@@ -148,8 +148,8 @@ describe("ScreenshotsPage", () => {
       "Load suggestions",
       "Generate screenshots",
       "Delete all",
-      "Unselect",
-      "Delete",
+      "Unselect Screenshot 1",
+      "Delete Screenshot 1",
       "Run preview",
       "Capture preview",
     ]) {
@@ -183,7 +183,13 @@ describe("ScreenshotsPage", () => {
 
     if (!frameDetails) throw new Error("frame selection details missing");
     fireEvent.click(frameSummary);
-    fireEvent.click(within(frameDetails).getByRole("button", { name: "Preview" }));
+    expect(
+      within(frameDetails).getByRole("spinbutton", { name: "Source shot 1 seconds" }),
+    ).toBeVisible();
+    expect(
+      within(frameDetails).getByRole("spinbutton", { name: "Source shot 1 frame" }),
+    ).toBeVisible();
+    fireEvent.click(within(frameDetails).getByRole("button", { name: "Preview Source shot 1" }));
     expect(screenshots.generate).toHaveBeenCalledWith("preview", [
       { Index: 0, TimestampSeconds: 12, Frame: 288, Source: "auto" },
     ]);
@@ -224,6 +230,17 @@ describe("ScreenshotsPage", () => {
               sizeBytes: 1024,
               url: "/api/app/release-workflow-media?artifactId=artifact-1",
             },
+            {
+              id: "artifact-2",
+              kind: "screenshot",
+              purpose: "final",
+              selected: false,
+              order: 1,
+              width: 1920,
+              height: 1080,
+              sizeBytes: 1024,
+              url: "/api/app/release-workflow-media?artifactId=artifact-2",
+            },
           ],
           status: "completed",
           createdAt: "2026-07-21T00:00:00Z",
@@ -243,13 +260,18 @@ describe("ScreenshotsPage", () => {
       "src",
       expect.stringContaining("artifactId=artifact-1"),
     );
-    fireEvent.click(within(gallery).getByRole("button", { name: "Unselect" }));
+    expect(within(gallery).getByRole("button", { name: "Select Screenshot 2" })).toBeVisible();
+    fireEvent.click(within(gallery).getByRole("button", { name: "Unselect Screenshot 1" }));
     expect(screenshots.selectArtifact).toHaveBeenCalledWith("artifact-1", false);
-    fireEvent.click(within(gallery).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(gallery).getByRole("button", { name: "Select Screenshot 2" }));
+    expect(screenshots.selectArtifact).toHaveBeenCalledWith("artifact-2", true);
+    fireEvent.click(within(gallery).getByRole("button", { name: "Delete Screenshot 1" }));
     expect(screenshots.deleteArtifacts).toHaveBeenCalledWith(["artifact-1"]);
+    fireEvent.click(within(gallery).getByRole("button", { name: "Delete Screenshot 2" }));
+    expect(screenshots.deleteArtifacts).toHaveBeenCalledWith(["artifact-2"]);
     fireEvent.click(within(gallery).getByRole("button", { name: "Delete all" }));
     expect(confirm).toHaveBeenCalledOnce();
-    expect(screenshots.deleteArtifacts).toHaveBeenLastCalledWith(["artifact-1"]);
+    expect(screenshots.deleteArtifacts).toHaveBeenLastCalledWith(["artifact-1", "artifact-2"]);
 
     const captureActions = page
       .getByRole("button", { name: "Generate screenshots" })
@@ -260,6 +282,33 @@ describe("ScreenshotsPage", () => {
     );
     expect(frameDetails).not.toHaveAttribute("open");
     vi.unstubAllGlobals();
+  });
+
+  it("identifies each editable frame and preview action when several shots are suggested", () => {
+    const base = facet();
+    const selections = [
+      { Index: 0, TimestampSeconds: 12, Frame: 288, Source: "auto" },
+      { Index: 1, TimestampSeconds: 24, Frame: 576, Source: "auto" },
+    ];
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        plan: { ...plan(), SuggestedSelections: selections },
+        selections,
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByText("Frame Selection · 2 frames"));
+    expect(screen.getByRole("spinbutton", { name: "Source shot 1 seconds" })).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Source shot 2 seconds" })).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Source shot 1 frame" })).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Source shot 2 frame" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Source shot 2" }));
+    expect(screenshots.generate).toHaveBeenCalledWith("preview", [selections[1]]);
   });
 
   it("captures the live preview as a new retained screenshot", () => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useMemo, useState } from "react";
+import { Select } from "../../components/ui/select";
 import type { AudioAnalysisFacet, AudioAnalysisGenerateInput } from "../../releaseSession/types";
 
 type Props = Readonly<{
@@ -102,7 +103,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
         {resourceIDs.length > 1 ? (
           <label className="grid gap-1">
             <span>Prepared resource</span>
-            <select
+            <Select
               value={effectiveResourceID}
               disabled={mutationsBlocked}
               onChange={(event) => {
@@ -115,14 +116,14 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                   Resource {index + 1}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         ) : null}
 
         <fieldset className="grid gap-2" disabled={mutationsBlocked}>
           <legend>Tracks</legend>
           <div className="flex flex-wrap items-center gap-4">
-            <label>
+            <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
                 name="audio-analysis-selection"
@@ -133,7 +134,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               />{" "}
               Primary
             </label>
-            <label>
+            <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
                 name="audio-analysis-selection"
@@ -143,7 +144,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               />{" "}
               All
             </label>
-            <label>
+            <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
                 name="audio-analysis-selection"
@@ -153,10 +154,10 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               />{" "}
               Selected
             </label>
-            <label className="flex items-center gap-2">
+            <label className="flex min-h-9 basis-full items-center gap-2 whitespace-nowrap sm:basis-auto">
               <span>Threads per decoder</span>
-              <select
-                className="w-20"
+              <Select
+                className="max-w-20 min-w-20"
                 value={decoderThreads}
                 onChange={(event) => setDecoderThreads(Number(event.target.value))}
               >
@@ -165,7 +166,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                     {value}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           </div>
           {selection === "selected" && requestedTrackIDs.length === 0 ? (
@@ -211,7 +212,10 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               ["spectrogram", "Spectrogram"],
               ["stats", "Amplitude statistics"],
             ].map(([variant, label]) => (
-              <label key={variant}>
+              <label
+                key={variant}
+                className="inline-flex min-h-9 cursor-pointer items-center gap-2"
+              >
                 <input
                   type="checkbox"
                   checked={variants.includes(variant)}

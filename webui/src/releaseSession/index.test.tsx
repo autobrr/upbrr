@@ -793,6 +793,35 @@ describe("tracker workflow capabilities", () => {
     expect(description.descriptions.available).toBe(true);
     expect(description.upload.available).toBe(true);
     expect(description.upload.reason).toBe("");
+
+    const activeOperation: WorkflowContinuation = {
+      ...available(),
+      availableGoals: available().availableGoals.map((goal) => ({
+        ...goal,
+        available: false,
+        reasonCode: "operation_active",
+        reason: "Wait for the active operation to finish.",
+      })),
+    };
+    const duringOperation = routeAccess(activeOperation, true, {
+      needsImages: true,
+      needsDescriptions: true,
+    });
+    expect(duringOperation.duplicates.reasonCode).toBe("operation_active");
+    expect(duringOperation.trackerData.reasonCode).toBe("operation_active");
+    expect(duringOperation.screenshots.reasonCode).toBe("operation_active");
+    expect(duringOperation.descriptions.reasonCode).toBe("operation_active");
+
+    const noLongerApplicable = routeAccess(activeOperation, false, {
+      needsImages: false,
+      needsDescriptions: false,
+    });
+    expect(noLongerApplicable.duplicates.reasonCode).toBe("operation_active");
+    expect(noLongerApplicable.trackerData.reasonCode).toBeUndefined();
+    expect(noLongerApplicable.trackerData.reason).toBe("No tracker data is available.");
+    expect(noLongerApplicable.screenshots.reasonCode).toBeUndefined();
+    expect(noLongerApplicable.uploadedImages.reasonCode).toBeUndefined();
+    expect(noLongerApplicable.descriptions.reasonCode).toBeUndefined();
   });
 });
 
@@ -1995,6 +2024,106 @@ describe("useReleaseSession", () => {
     } finally {
       unmount();
       vi.useRealTimers();
+    }
+  });
+
+  it("keeps a locally chosen tracker subset when a later focus resync returns the stale backend selection", async () => {
+    const sourcePath = "C:\\media\\Tracker.Choice.2026.mkv";
+    const current = workflowCurrentFromPreview(
+      workflowCurrent("workflow-tracker-choice", 7),
+      preview(sourcePath, 1),
+    );
+    let revision = 0;
+    const get = vi.fn(
+      async (): Promise<ActiveInputSnapshot> => ({
+        state: "active",
+        revision: ++revision,
+        inputId: "input-tracker-choice",
+        sourceVersion: "source-tracker-choice-v1",
+        current,
+      }),
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ activeInput: { get } })),
+    });
+    try {
+      await waitFor(() => expect(result.current.input.view.activeInput.revision).toBe(1));
+      act(() => result.current.input.chooseTrackers(["AITHER"]));
+      expect(result.current.input.view.selectedTrackers).toEqual(["AITHER"]);
+
+      act(() => window.dispatchEvent(new Event("focus")));
+      await waitFor(() => expect(result.current.input.view.activeInput.revision).toBe(2));
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(result.current.input.view.selectedTrackers).toEqual(["AITHER"]);
+    } finally {
+      unmount();
+    }
+  });
+
+  it("replaces a dirty draft when a resync first sees an unfinished different input", async () => {
+    const oldPath = "C:\\media\\Old.Release.2026.mkv";
+    const newPath = "C:\\media\\New.Release.2026.mkv";
+    const newWorkflowID = "workflow-new-input";
+    const operation = {
+      id: "operation-new-input",
+      workflowId: newWorkflowID,
+      revision: 1,
+      sequence: 1,
+      command: "prepare_release",
+      operation: "preparation",
+      status: "running",
+      progress: 0,
+      completed: 0,
+      total: 1,
+      startedAt: "2026-09-25T00:00:00Z",
+      updatedAt: "2026-09-25T00:00:00Z",
+    } as const;
+    let snapshot: ActiveInputSnapshot = {
+      state: "active",
+      revision: 2,
+      inputId: "input-old",
+      sourceVersion: "source-old",
+      current: workflowCurrentFromPreview(
+        workflowCurrent("workflow-old-input", 3),
+        preview(oldPath, 1),
+      ),
+    };
+    const get = vi.fn(async () => snapshot);
+    const completed = workflowCurrentFromPreview(
+      workflowCurrent(newWorkflowID, 2),
+      preview(newPath, 1),
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: { get },
+          workflow: workflowPorts({
+            operation: vi.fn(async () => ({ ...operation, status: "completed" as const })),
+            current: vi.fn(async () => completed),
+          }),
+        }),
+      ),
+    });
+    try {
+      await waitFor(() => expect(result.current.input.view.sourceDraft).toBe(oldPath));
+      act(() => result.current.input.chooseTrackers(["AITHER"]));
+      expect(result.current.input.view.selectedTrackers).toEqual(["AITHER"]);
+      snapshot = {
+        state: "active",
+        revision: 4,
+        inputId: "input-new",
+        sourceVersion: "source-new",
+        current: { ...workflowCurrent(newWorkflowID, 1), operation },
+      };
+      act(() => window.dispatchEvent(new Event("focus")));
+      await waitFor(() => expect(result.current.input.view.sourceDraft).toBe(newPath), {
+        timeout: 5_000,
+      });
+      expect(result.current.input.view.activeInput.inputID).toBe("input-new");
+      expect(result.current.input.view.preparationDirty).toBe(false);
+      expect(result.current.input.view.selectedTrackers).toEqual([]);
+    } finally {
+      unmount();
     }
   });
 

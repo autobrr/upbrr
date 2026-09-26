@@ -38,7 +38,7 @@ import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
 import { formatIMDbID } from "../../utils/providerId";
 
 const compactInputClass =
-  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+  "h-8 rounded-md border border-input bg-card px-2.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
 
 const formatProvider = (value: string) => value.toUpperCase();
 
@@ -1120,10 +1120,10 @@ export default function InputPage(props: Props) {
           </div>
           {playlist.error ? <p className="error">{playlist.error}</p> : null}
           {playlist.candidates.length ? (
-            <div className="overflow-hidden rounded-md border border-white/10">
+            <div className="overflow-hidden rounded-md border border-border">
               {playlistGroups.map((group) => (
                 <section key={group.discID} aria-label={group.discName}>
-                  <h3 className="border-b border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold">
+                  <h3 className="border-b border-border bg-muted px-3 py-2 text-sm font-semibold text-foreground">
                     {group.discName}
                   </h3>
                   {group.candidates.map((candidate) => {
@@ -1135,7 +1135,7 @@ export default function InputPage(props: Props) {
                     return (
                       <div
                         key={candidate.id}
-                        className="grid gap-1 border-b border-white/10 px-3 py-2 last:border-b-0 hover:bg-white/5"
+                        className="grid gap-1 border-b border-border px-3 py-2 last:border-b-0 hover:bg-muted"
                       >
                         <div className="flex select-none items-center gap-2">
                           <Checkbox
@@ -1147,7 +1147,7 @@ export default function InputPage(props: Props) {
                             {candidate.file}
                           </label>
                         </div>
-                        <span className="ml-6 text-xs text-[var(--muted)]">
+                        <span className="ml-6 text-xs text-muted-foreground">
                           {formatPlaylistDuration(candidate.duration)} •{" "}
                           {candidate.items?.length || 0} files • {formatPlaylistBytes(totalSize)} •
                           Score: {candidate.score.toFixed(2)}
@@ -1202,7 +1202,7 @@ export default function InputPage(props: Props) {
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 max-[1100px]:grid-cols-1">
             <div className="grid grid-cols-2 gap-3 max-[900px]:grid-cols-1">
               <label
-                className="grid gap-1.5 text-sm text-[var(--muted)]"
+                className="grid gap-1.5 text-sm text-muted-foreground"
                 htmlFor="source-lookup-url"
               >
                 <span>Site URL override</span>
@@ -1213,12 +1213,15 @@ export default function InputPage(props: Props) {
                   onChange={(event) => setSourceLookupURL(event.target.value)}
                   placeholder="Paste tracker or media URL for ID lookup"
                 />
-                <span className="text-xs leading-tight text-[var(--muted)]">
+                <span className="text-xs leading-tight text-muted-foreground">
                   Metadata ID and tracker description/image lookup.
                 </span>
               </label>
 
-              <div className="grid gap-1.5 text-sm text-[var(--muted)]" ref={sourcePathHistoryRef}>
+              <div
+                className="grid gap-1.5 text-sm text-muted-foreground"
+                ref={sourcePathHistoryRef}
+              >
                 <label htmlFor="source-path">Source path</label>
                 <div className="source-path-input-shell">
                   <input
@@ -1261,7 +1264,7 @@ export default function InputPage(props: Props) {
                     </div>
                   ) : null}
                 </div>
-                <span className="text-xs leading-tight text-[var(--muted)]">
+                <span className="text-xs leading-tight text-muted-foreground">
                   {discHint || "File, disc folder, or Season Pack folder."}
                 </span>
               </div>
@@ -1551,7 +1554,8 @@ export default function InputPage(props: Props) {
                 </span>
               </summary>
               <div className="edit-dropdown__body">
-                <div className="tracker-selection-container">
+                <fieldset className="tracker-selection-container m-0 min-w-0 border-0 p-0">
+                  <legend className="sr-only">Trackers to upload</legend>
                   {trackerUploadItems.length === 0 ? (
                     <p className="muted">No configured tracker entries found.</p>
                   ) : (
@@ -1578,6 +1582,7 @@ export default function InputPage(props: Props) {
                           return (
                             <PillCheckbox
                               aria-label={tracker.name}
+                              className="w-full"
                               key={tracker.name}
                               checked={Boolean(releasePageTrackerSelection[tracker.name])}
                               onCheckedChange={(checked) =>
@@ -1601,7 +1606,7 @@ export default function InputPage(props: Props) {
                       </div>
                     </>
                   )}
-                </div>
+                </fieldset>
               </div>
             </details>
           ) : null}

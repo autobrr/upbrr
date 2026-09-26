@@ -47,7 +47,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={updateConfigValue}
       />,
@@ -58,6 +58,23 @@ describe("LogSettingsPanel", () => {
     await userEvent.selectOptions(screen.getByLabelText("Verbosity"), "debug");
 
     expect(updateConfigValue).toHaveBeenCalledWith(["Logging", "Level"], "debug");
+  });
+
+  it("shows an unrecognized saved log level until the user changes it", () => {
+    installLogAPI();
+
+    render(
+      <LogSettingsPanel
+        configData={{ Logging: { Level: "TRACE_LEGACY" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
+        renderField={(label) => <div key={label}>{label}</div>}
+        updateConfigValue={vi.fn()}
+      />,
+    );
+
+    const level = screen.getByRole("combobox", { name: "Verbosity" });
+    expect(level).toHaveValue("TRACE_LEGACY");
+    expect(screen.getByRole("option", { name: "TRACE_LEGACY (saved)" })).toBeInTheDocument();
   });
 
   it("keeps distinct rows when a restarted log stream reuses IDs", async () => {
@@ -82,7 +99,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,
@@ -90,6 +107,12 @@ describe("LogSettingsPanel", () => {
 
     await waitFor(() => expect(screen.getByText("before restart")).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText("after restart")).toBeInTheDocument());
+    expect(
+      screen.getByRole("button", { name: "Mute INFO message: before restart" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Mute INFO message: after restart" }),
+    ).toBeInTheDocument();
   });
 
   it("dedupes exact recent/live overlap rows", async () => {
@@ -109,7 +132,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,
@@ -125,7 +148,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,
@@ -149,7 +172,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,
