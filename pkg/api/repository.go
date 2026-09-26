@@ -440,6 +440,9 @@ type ReleaseWorkflowOperationRepository interface {
 	LoadLatestReleaseWorkflowOperation(context.Context, string, WorkflowID) (ReleaseWorkflowOperationRecord, error)
 	SaveReleaseWorkflowOperation(context.Context, uint64, ReleaseWorkflowOperationRecord) error
 	ListActiveReleaseWorkflowOperations(context.Context) ([]ReleaseWorkflowOperationRecord, error)
+	// ListInterruptedReleaseWorkflowOperationsWithIncompleteWork returns interrupted
+	// operations with an existing unfinished work row for one owner and workflow.
+	ListInterruptedReleaseWorkflowOperationsWithIncompleteWork(context.Context, string, WorkflowID) ([]ReleaseWorkflowOperationRecord, error)
 	DeleteTerminalReleaseWorkflowOperationsBefore(context.Context, time.Time) (int64, error)
 }
 

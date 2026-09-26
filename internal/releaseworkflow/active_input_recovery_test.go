@@ -357,19 +357,20 @@ func TestResetIdleInputOnStartupClearsOnlyForeignIdleInput(t *testing.T) {
 
 func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 	for _, test := range []struct {
-		name          string
-		running       bool
-		liveWork      bool
-		terminal      bool
-		checkpoint    bool
-		ordinaryFirst bool
-		failList      bool
-		failTerminal  bool
-		failRestore   bool
-		failClose     bool
-		maxWait       time.Duration
-		parentWait    time.Duration
-		wantErr       error
+		name           string
+		running        bool
+		liveWork       bool
+		terminal       bool
+		checkpoint     bool
+		ordinaryFirst  bool
+		failList       bool
+		failTerminal   bool
+		failCompletion bool
+		failRestore    bool
+		failClose      bool
+		maxWait        time.Duration
+		parentWait     time.Duration
+		wantErr        error
 	}{
 		{name: "queued without work"},
 		{name: "running with expired work", running: true},
@@ -389,6 +390,11 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			name:         "retry failed interruption after work claim",
 			running:      true,
 			failTerminal: true,
+		},
+		{
+			name:           "retry incomplete work after terminal interruption",
+			running:        true,
+			failCompletion: true,
 		},
 		{name: "retry failed committed input restoration", failRestore: true},
 		{name: "retry failed idle input close", failClose: true},
@@ -532,6 +538,16 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			recoveryRepository := &failOnceStartupRecoveryRepository{PersistentRepository: persistent}
 			recoveryRepository.failList.Store(test.failList)
 			recoveryRepository.failTerminal.Store(test.failTerminal)
+			recoveryRepository.failCompletion.Store(test.failCompletion)
+			if test.failCompletion {
+				if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
+					owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint, status, started_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, testOwnerID, opened.WorkflowID, operationID, "interrupted-effect",
+					"tracker_submission", "ALPHA", "synthetic", api.WorkflowEffectStatusStarted,
+					clock.Now().Format(time.RFC3339Nano), clock.Now().Format(time.RFC3339Nano)); err != nil {
+					t.Fatalf("start interrupted operation effect: %v", err)
+				}
+			}
 			recoveryInputs := &failOnceStartupActiveInputRepository{ActiveInputRepository: repo}
 			recoveryInputs.failRestore.Store(test.failRestore)
 			recoveryInputs.failClose.Store(test.failClose)
@@ -541,7 +557,7 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 					t.Fatalf("ordinary recovery before startup reset: %v", err)
 				}
 			}
-			if test.failList || test.failTerminal || test.failRestore || test.failClose {
+			if test.failList || test.failTerminal || test.failCompletion || test.failRestore || test.failClose {
 				if err := restarted.ResetIdleInputOnStartup(ctx); err == nil {
 					t.Fatal("startup recovery unexpectedly succeeded before injected failure")
 				}
@@ -553,7 +569,19 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 				if err != nil || claimed.State != wantState || claimed.CoordinatorID != "second-coordinator" {
 					t.Fatalf("input after failed startup recovery = %#v, err=%v", claimed, err)
 				}
-				if test.failTerminal {
+				if test.failCompletion {
+					recoveryCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{
+						CoordinatorID: claimed.CoordinatorID, Fence: claimed.Fence,
+					})
+					if err := restarted.recoverOperationsOnce(recoveryCtx, true, 40*time.Millisecond); !errors.Is(err, api.ErrActiveInputBusy) {
+						t.Fatalf("live interrupted work recovery = %v, want busy", err)
+					}
+					work, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
+					if err != nil || work.CompletedAt != nil {
+						t.Fatalf("live interrupted work changed = %#v, err=%v", work, err)
+					}
+				}
+				if test.failTerminal || test.failCompletion {
 					if _, err := repo.RawDB().ExecContext(ctx, `UPDATE release_workflow_work SET lease_expires_at = ? WHERE operation_id = ?`,
 						clock.Now().Add(-time.Second).Format(time.RFC3339Nano), operationID); err != nil {
 						t.Fatalf("expire failed recovery work claim: %v", err)
@@ -588,6 +616,17 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			}
 			if err != nil || settled.Status.Status != wantStatus {
 				t.Fatalf("settled operation = %#v, err=%v", settled.Status, err)
+			}
+			if test.failCompletion {
+				work, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
+				if err != nil || work.CompletedAt == nil {
+					t.Fatalf("settled interrupted work = %#v, err=%v", work, err)
+				}
+				var effectStatus string
+				if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_effects WHERE effect_id = ?`,
+					"interrupted-effect").Scan(&effectStatus); err != nil || effectStatus != string(api.WorkflowEffectStatusUnknown) {
+					t.Fatalf("fenced interrupted effect status=%q err=%v", effectStatus, err)
+				}
 			}
 			slot, err := repo.LoadActiveInput(ctx)
 			if err != nil || slot.State != api.ActiveInputEmpty {
@@ -889,8 +928,9 @@ func openActiveInputRecoveryRepository(ctx context.Context, t *testing.T) *db.SQ
 
 type failOnceStartupRecoveryRepository struct {
 	*PersistentRepository
-	failList     atomic.Bool
-	failTerminal atomic.Bool
+	failList       atomic.Bool
+	failTerminal   atomic.Bool
+	failCompletion atomic.Bool
 }
 
 type failOnceStartupActiveInputRepository struct {
@@ -933,6 +973,13 @@ func (r *failOnceStartupRecoveryRepository) SaveOperation(ctx context.Context, e
 		return errors.New("synthetic startup operation publication failure")
 	}
 	return r.PersistentRepository.SaveOperation(ctx, expectedSequence, record)
+}
+
+func (r *failOnceStartupRecoveryRepository) CompleteWork(ctx context.Context, record api.ReleaseWorkflowWorkRecord) error {
+	if r.failCompletion.Swap(false) {
+		return errors.New("synthetic interrupted work completion failure")
+	}
+	return r.PersistentRepository.CompleteWork(ctx, record)
 }
 
 func newActiveInputRecoveryModule(

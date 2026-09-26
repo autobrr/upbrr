@@ -1638,11 +1638,80 @@ func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted b
 			return err
 		}
 	}
+	if discardInterrupted && m.activeInputs != nil {
+		slot, err := m.activeInputs.LoadActiveInput(recoveryCtx)
+		if err != nil {
+			return fmt.Errorf("release workflow load startup recovery input: %w", err)
+		}
+		authority, ok := api.ActiveInputAuthorityFromContext(recoveryCtx)
+		if ok && slot.State == api.ActiveInputActive && slot.CoordinatorID == authority.CoordinatorID && slot.Fence == authority.Fence {
+			incomplete, err := m.operations.ListInterruptedOperationsWithIncompleteWork(recoveryCtx, slot.OwnerID, slot.WorkflowID)
+			if err != nil {
+				return fmt.Errorf("release workflow list interrupted incomplete work: %w", err)
+			}
+			for _, record := range incomplete {
+				if err := m.completeInterruptedWorkAfterLease(recoveryCtx, record); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if discardInterrupted {
 		m.logger.Debugf("releaseworkflow: startup operation recovery state=completed active_count=%d", len(records))
 		m.startupRecoveryCompleted = true
 	}
 	m.operationRecovered = true
+	return nil
+}
+
+// completeInterruptedWorkAfterLease settles work left incomplete after its
+// operation was already published as interrupted.
+func (m *Module) completeInterruptedWorkAfterLease(ctx context.Context, record api.ReleaseWorkflowOperationRecord) error {
+	work, err := m.durability.LoadWork(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
+	if err != nil {
+		return fmt.Errorf("release workflow load interrupted incomplete work: %w", err)
+	}
+	if work.CompletedAt != nil {
+		return nil
+	}
+	now := m.clock.Now().UTC()
+	if work.LeaseExpiresAt.After(now) {
+		m.logger.Debugf(
+			"releaseworkflow: startup operation recovery decision=wait_terminal_work_lease workflow=%s operation=%s remaining=%s",
+			record.WorkflowID,
+			record.OperationID,
+			work.LeaseExpiresAt.Sub(now).Round(time.Second),
+		)
+		timer := time.NewTimer(work.LeaseExpiresAt.Sub(now))
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("release workflow wait for interrupted terminal work lease: %w", ctx.Err())
+		case <-timer.C:
+			return m.completeInterruptedWorkAfterLease(ctx, record)
+		}
+	}
+	current, err := m.operations.LoadOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
+	if err != nil {
+		return fmt.Errorf("release workflow reload interrupted terminal operation: %w", err)
+	}
+	if current.Status.Status != api.StageStatusInterrupted {
+		return fmt.Errorf("release workflow interrupted terminal operation changed: %w", ErrOperationConflict)
+	}
+	current.ProcessEpoch = m.processEpoch
+	if err := m.durability.ClaimWork(ctx, workflowWorkRecord(current, current.Status, now, nil)); err != nil {
+		return fmt.Errorf("release workflow claim interrupted terminal work: %w", err)
+	}
+	completedAt := now
+	if err := m.durability.CompleteWork(ctx, workflowWorkRecord(current, current.Status, now, &completedAt)); err != nil {
+		return fmt.Errorf("release workflow complete interrupted terminal work: %w", err)
+	}
+	m.logger.Debugf(
+		"releaseworkflow: startup operation recovery decision=complete_terminal_work workflow=%s operation=%s",
+		record.WorkflowID,
+		record.OperationID,
+	)
+	m.private.Delete(record.OwnerID, record.WorkflowID, operationCommandResourceID(record.OperationID))
 	return nil
 }
 
