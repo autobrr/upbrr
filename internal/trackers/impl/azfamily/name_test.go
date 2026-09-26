@@ -382,6 +382,35 @@ func TestAZFamilyStructuredPolicyPreservesRequestedOpaqueAndManualNames(t *testi
 	}
 }
 
+func TestAZFamilySceneNamingMatchesPreStructuredPolicy(t *testing.T) {
+	t.Parallel()
+	subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "WEBDL",
+		Title:      "Example Film",
+		Year:       2026,
+		Resolution: "1080p",
+		Source:     "WEB-DL",
+		Tag:        "-GRP",
+	})
+	const sceneName = "Different.Scene.Name.2026.1080p.WEB-DL-GRP"
+	for _, site := range []string{"AZ", "CZ", "PHD"} {
+		t.Run(site, func(t *testing.T) {
+			nonSceneName := azFamilyReviewedName(t, site, subject, nil)
+			scene := subject
+			scene.Scene = true
+			scene.SceneName = sceneName
+			want := sceneName
+			if site == "PHD" {
+				want = nonSceneName
+			}
+			if got := azFamilyReviewedName(t, site, scene, nil); got != want {
+				t.Fatalf("%s scene name = %q, want %q", site, got, want)
+			}
+		})
+	}
+}
+
 func TestAZFamilySearchNameUsesFactsNotUploadName(t *testing.T) {
 	t.Parallel()
 	subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
@@ -448,8 +477,8 @@ func TestAZFamilyNamingPolicyVersions(t *testing.T) {
 		site, want string
 		provider   api.IdentityProvider
 	}{
-		{"AZ", "azfamily/az/v3", api.IdentityProviderTMDB},
-		{"CZ", "azfamily/cz/v5", api.IdentityProviderIMDB},
+		{"AZ", "azfamily/az/v4", api.IdentityProviderTMDB},
+		{"CZ", "azfamily/cz/v6", api.IdentityProviderIMDB},
 		{"PHD", "azfamily/phd/v3", api.IdentityProviderTMDB},
 	} {
 		t.Run(test.site, func(t *testing.T) {

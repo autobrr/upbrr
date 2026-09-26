@@ -101,7 +101,7 @@ func TestNameEditorMoveAfterPreservesAuthority(t *testing.T) {
 }
 
 func TestStructuredOpaqueFailureExplainsCause(t *testing.T) {
-	for _, cause := range []string{"requested", "missing", "scene"} {
+	for _, cause := range []string{"requested", "missing"} {
 		t.Run(cause, func(t *testing.T) {
 			subject := structuredSubject()
 			input := ReleaseNameInput{Subject: subject}
@@ -112,10 +112,6 @@ func TestStructuredOpaqueFailureExplainsCause(t *testing.T) {
 			case "missing":
 				input.Subject.GeneratedName = nil
 				want = "components are unavailable; reprepare"
-			case "scene":
-				input.Subject.Scene = true
-				input.Subject.SceneName = "Exact.Scene.Name-GRP"
-				want = "must explicitly support rebuilding scene names"
 			}
 			binding := StructuredReleaseNamePolicy("example/opaque/v1", StructuredNamePolicy{
 				Mandatory: func(editor *NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
@@ -129,6 +125,32 @@ func TestStructuredOpaqueFailureExplainsCause(t *testing.T) {
 				t.Fatalf("opaque %s error = %v", cause, err)
 			}
 		})
+	}
+}
+
+func TestStructuredSceneUsesGeneratedNameAndTrackerDefaults(t *testing.T) {
+	subject := structuredSubject()
+	subject.Scene = true
+	subject.SceneName = "Different.Scene.Name-GRP"
+	defaultName, err := resolveReleaseNames(PreparationInput{Meta: subject}, StructuredReleaseNamePolicy("example/default/v1", StructuredNamePolicy{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultName.Upload != subject.ReleaseName || defaultName.Duplicate != subject.ReleaseName {
+		t.Fatalf("default scene names = %+v, want %q", defaultName, subject.ReleaseName)
+	}
+	binding := StructuredReleaseNamePolicy("example/scene/v1", StructuredNamePolicy{
+		Defaults: func(editor *NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
+			return editor.Set(api.NameRoleSource, "DVDRip")
+		},
+	})
+	resolved, err := resolveReleaseNames(PreparationInput{Meta: subject}, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "The Uncut Signal 2026 AKA Uncut Nights The Uncut Version Uncut 576p DVDRip AC3 2.0 x264-GRP"
+	if resolved.Upload != want || resolved.Duplicate != want {
+		t.Fatalf("scene names = %+v, want %q", resolved, want)
 	}
 }
 
