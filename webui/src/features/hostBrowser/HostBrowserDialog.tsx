@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { hostBrowser as hostBrowserClient } from "../../api/app";
@@ -64,15 +65,17 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
   return (
     <Dialog.Root open={Boolean(mode)} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="host-browser-overlay" />
-        <Dialog.Content className="host-browser-dialog">
-          <div className="host-browser-header">
+        <Dialog.Overlay className="host-browser-overlay fixed inset-0 z-[9000] bg-black/70" />
+        <Dialog.Content className="fixed top-1/2 left-1/2 z-[9001] flex max-h-[min(760px,calc(100vh-48px))] w-[min(900px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-[14px] border border-foreground/10 bg-card p-4 shadow-[var(--shadow)]">
+          <div className="flex items-center justify-between gap-2.5">
             <div>
               <Dialog.Title asChild>
-                <h2 className="label">Host browser</h2>
+                <h2 className={pageStyle.label}>Host browser</h2>
               </Dialog.Title>
               <Dialog.Description asChild>
-                <p className="mono host-browser-path">{directory?.currentPath || "Computer"}</p>
+                <p className="host-browser-path font-mono text-[0.95rem] mt-1 mb-0 text-muted-foreground [overflow-wrap:anywhere]">
+                  {directory?.currentPath || "Computer"}
+                </p>
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -81,7 +84,7 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
               </button>
             </Dialog.Close>
           </div>
-          <div className="host-browser-toolbar">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               className="ghost"
               type="button"
@@ -110,11 +113,14 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
                 Select folder
               </button>
             ) : null}
-            <label className="host-browser-search" htmlFor="host-browser-search">
+            <label
+              className="grid min-w-[min(280px,100%)] flex-1 gap-1 text-[0.82rem] text-muted-foreground"
+              htmlFor="host-browser-search"
+            >
               <span>Search</span>
               <input
                 id="host-browser-search"
-                className="host-browser-search__input"
+                className="h-8 w-full rounded-lg border border-foreground/10 bg-card/45 px-2.5 text-foreground focus-visible:border-chart-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Filter current path"
@@ -123,28 +129,31 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
             </label>
           </div>
           {error ? (
-            <p className="error" role="alert">
+            <p className={pageStyle.error} role="alert">
               {error}
             </p>
           ) : null}
-          {loading ? <p className="muted">Loading host paths...</p> : null}
+          {loading ? <p className="text-muted-foreground">Loading host paths...</p> : null}
           {!loading && directory ? (
-            <div className="host-browser-list">
+            <div className="grid min-h-60 gap-1.5 overflow-auto pr-1">
               {entries.length === 0 ? (
-                <p className="muted host-browser-empty">No matching paths.</p>
+                <p className="text-muted-foreground m-0 px-2.5 py-[18px]">No matching paths.</p>
               ) : (
                 entries.map((entry) => (
-                  <div className="host-browser-entry" key={entry.path}>
-                    <span className="host-browser-entry__name">
+                  <div
+                    className="flex w-full items-center justify-between gap-2.5 rounded-[10px] border border-foreground/10 bg-foreground/[0.04] px-2.5 py-2"
+                    key={entry.path}
+                  >
+                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                       {entry.isDir ? "[DIR] " : ""}
                       {entry.name}
                     </span>
-                    <span className="host-browser-entry__meta">
+                    <span className="text-[0.85rem] whitespace-nowrap text-muted-foreground">
                       {entry.isDir
                         ? "Folder"
                         : `${Math.round(entry.size / 1024).toLocaleString()} KiB`}
                     </span>
-                    <span className="host-browser-entry__actions">
+                    <span className="flex flex-wrap justify-end gap-1.5">
                       {entry.isDir ? (
                         <button
                           className="ghost"

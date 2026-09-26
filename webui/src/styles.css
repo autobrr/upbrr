@@ -1,6 +1,5 @@
 @import "tailwindcss/theme" layer(theme);
 @import "tailwindcss/preflight" layer(base);
-@import "./components.css" layer(components);
 @import "tailwindcss/utilities" layer(utilities);
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -31,6 +30,8 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -85,53 +86,6 @@ body {
   letter-spacing: var(--tracking-normal, normal);
 }
 
-.theme-preview {
-  display: flex;
-  height: 96px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--background);
-  color: var(--foreground);
-}
-
-.theme-preview__sidebar {
-  width: 24%;
-  background: var(--sidebar);
-  border-right: 1px solid var(--sidebar-border);
-}
-
-.theme-preview__content {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 15px;
-}
-
-.theme-preview__heading {
-  width: 58%;
-  height: 9px;
-  border-radius: var(--radius);
-  background: var(--foreground);
-}
-
-.theme-preview__line {
-  width: 88%;
-  height: 7px;
-  border-radius: var(--radius);
-  background: var(--semantic-muted);
-}
-
-.theme-preview__button {
-  width: 43%;
-  height: 16px;
-  margin-top: auto;
-  border-radius: var(--radius);
-  background: var(--primary);
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -139,5 +93,64 @@ body {
     animation-duration: 0.01ms !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@layer base {
+  h1 {
+    font-family: var(--font-sans, system-ui, sans-serif);
+    font-size: clamp(1.875rem, 3vw, 2.75rem);
+    font-weight: 700;
+    margin: 0 0 6px;
+  }
+
+  :where(input:not([type="checkbox"]):not([type="radio"])) {
+    width: 100%;
+    padding: 11px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--control-border);
+    background: var(--card);
+    color: var(--card-foreground);
+    font-size: 1rem;
+  }
+
+  select option {
+    color: var(--popover-foreground);
+    background: var(--popover);
+  }
+
+  :where(button:not([role="checkbox"]):not([role="switch"])) {
+    font-family: var(--font-sans, system-ui, sans-serif);
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    padding: 9px 16px;
+    cursor: pointer;
+    transition:
+      transform 0.2s ease,
+      box-shadow 0.2s ease,
+      opacity 0.2s ease;
+  }
+
+  :where(button:disabled) {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  button.primary {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-weight: 600;
+    box-shadow: var(--shadow);
+  }
+
+  button.ghost {
+    background: transparent;
+    border-color: var(--control-border);
+    color: var(--foreground);
+  }
+
+  h2 {
+    margin: 0 0 12px;
+    font-size: 1.1rem;
   }
 }

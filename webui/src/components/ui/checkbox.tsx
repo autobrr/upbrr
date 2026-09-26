@@ -75,7 +75,7 @@ export function PillCheckbox({
   return (
     <CheckboxPrimitive.Root
       className={cn(
-        "tracker-pill inline-flex min-h-10 min-w-0 cursor-pointer select-none items-center justify-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-sm font-medium leading-tight text-card-foreground transition hover:bg-accent hover:text-accent-foreground data-[state=checked]:border-primary data-[state=checked]:bg-accent data-[state=checked]:text-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        "tracker-pill inline-flex min-h-10 min-w-0 cursor-pointer select-none items-center justify-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-sm font-medium leading-tight tracking-[0.02em] text-card-foreground transition hover:bg-accent hover:text-accent-foreground data-[state=checked]:border-primary data-[state=checked]:bg-accent data-[state=checked]:text-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
         className,
       )}
       checked={checked}

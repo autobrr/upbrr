@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
@@ -10,6 +11,7 @@ import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
 import { InputCorrectionEditor } from "./InputCorrectionEditor";
+import { settingsStyle } from "../../settings/style";
 import type {
   DetailBlock,
   DetailItem,
@@ -39,6 +41,9 @@ import { formatIMDbID } from "../../utils/providerId";
 
 const compactInputClass =
   "h-8 rounded-md border border-input bg-card px-2.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
+const editDropdownClass = "group rounded-[18px] border border-foreground/10 bg-card/80 p-2";
+const editDropdownSummaryClass =
+  "inline-flex min-h-8 w-max max-w-full cursor-pointer list-none items-center gap-[9px] rounded-[10px] bg-primary px-[11px] py-[7px] font-semibold text-primary-foreground shadow-sm transition after:content-['▾'] after:transition-transform group-open:after:rotate-180 hover:-translate-y-px hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden";
 
 const formatProvider = (value: string) => value.toUpperCase();
 
@@ -718,11 +723,13 @@ const renderDetailValue = (item: DetailItem) => {
 const PreviewDetailsList = ({ items }: { items: DetailItem[] }) => {
   if (items.length === 0) return null;
   return (
-    <div className="preview-details">
+    <div className="mt-[14px] grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-x-[14px] gap-y-[9px] border-t border-foreground/10 pt-[9px]">
       {items.map((item) => (
-        <div className="preview-detail" key={item.label}>
-          <p className="label">{item.label}</p>
-          <p className={`value preview-detail__value ${item.mono ? "mono" : ""}`}>
+        <div className="min-w-0" key={item.label}>
+          <p className={pageStyle.label}>{item.label}</p>
+          <p
+            className={`mt-1 mb-0 text-[1.1rem] font-semibold [overflow-wrap:anywhere] ${item.mono ? "font-mono text-[0.95rem]" : ""}`}
+          >
             {renderDetailValue(item)}
           </p>
         </div>
@@ -1101,24 +1108,24 @@ export default function InputPage(props: Props) {
   };
 
   return (
-    <div className="content-stack">
-      <header className="hero">
-        <p className="eyebrow">upbrr</p>
+    <div className="flex flex-col gap-4">
+      <header className="relative z-[1] max-w-[720px]">
+        <p className={pageStyle.eyebrow}>upbrr</p>
         <h1>Build Release Name</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           Build a release name and preview external metadata before you upload.
         </p>
       </header>
 
       {playlist.required ? (
-        <section className="panel mx-auto grid w-full max-w-2xl gap-3">
+        <section className={`${pageStyle.panel} mx-auto grid w-full max-w-2xl gap-3`}>
           <div>
             <h2>Select BDMV Playlists</h2>
-            <p className="muted mt-1 text-sm">
+            <p className="text-muted-foreground mt-1 text-sm">
               Choose playlists for the selected preparation source.
             </p>
           </div>
-          {playlist.error ? <p className="error">{playlist.error}</p> : null}
+          {playlist.error ? <p className={pageStyle.error}>{playlist.error}</p> : null}
           {playlist.candidates.length ? (
             <div className="overflow-hidden rounded-md border border-border">
               {playlistGroups.map((group) => (
@@ -1194,9 +1201,7 @@ export default function InputPage(props: Props) {
       ) : null}
 
       <section
-        className={`panel input-source-panel${
-          sourcePathHistoryOpen ? " input-source-panel--history-open" : ""
-        }`}
+        className={`relative rounded-[var(--radius)] border border-border bg-card p-[14px] text-card-foreground shadow-[var(--shadow)] ${sourcePathHistoryOpen ? "z-40" : "z-[1]"}`}
       >
         <div className="grid gap-3">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 max-[1100px]:grid-cols-1">
@@ -1223,10 +1228,10 @@ export default function InputPage(props: Props) {
                 ref={sourcePathHistoryRef}
               >
                 <label htmlFor="source-path">Source path</label>
-                <div className="source-path-input-shell">
+                <div className="relative">
                   <input
                     id="source-path"
-                    className={`${compactInputClass} source-path-input`}
+                    className={compactInputClass}
                     value={path}
                     onChange={(event) => handleSourcePathChange(event.target.value)}
                     onFocus={openSourcePathHistory}
@@ -1245,20 +1250,20 @@ export default function InputPage(props: Props) {
                   {sourcePathHistoryOpen ? (
                     <div
                       id="source-path-history"
-                      className="source-path-history"
+                      className="absolute top-[calc(100%+5px)] right-0 left-0 z-30 grid max-h-[220px] gap-1 overflow-auto rounded-lg border border-foreground/10 bg-card p-1.5 shadow-[var(--shadow)]"
                       role="listbox"
                       aria-label="Source path history"
                     >
                       {sourcePathHistory.map((entry) => (
                         <button
                           key={entry.path}
-                          className="source-path-history__item"
+                          className="w-full cursor-pointer rounded-md border-0 bg-transparent px-2 py-[7px] text-left text-foreground hover:bg-foreground/10 focus:bg-foreground/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                           type="button"
                           role="option"
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => selectSourcePathHistory(entry)}
                         >
-                          <span className="mono">{entry.path}</span>
+                          <span className="font-mono text-[0.95rem]">{entry.path}</span>
                         </button>
                       ))}
                     </div>
@@ -1299,13 +1304,13 @@ export default function InputPage(props: Props) {
               </Button>
             </div>
             {recovering && !opaqueRecovering ? (
-              <p className="muted col-span-full" role="status">
+              <p className="text-muted-foreground col-span-full" role="status">
                 Resolve the recovery action above before opening or preparing an input.
               </p>
             ) : null}
             {view.activeInput.recoveryWorkflowIDs.length ? (
               <section className="col-span-full grid gap-2" aria-label="Legacy workflow recovery">
-                <p className="muted">
+                <p className="text-muted-foreground">
                   Resolve interrupted external effects before opening another input.
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -1332,27 +1337,27 @@ export default function InputPage(props: Props) {
                       max={verification.totalBytes}
                       value={verification.completedBytes}
                     />
-                    <p className="muted text-sm">
+                    <p className="text-muted-foreground text-sm">
                       {verification.completedBytes.toLocaleString()} of{" "}
                       {verification.totalBytes.toLocaleString()} bytes verified
                     </p>
                   </>
                 ) : (
-                  <p className="muted text-sm">Calculating source size…</p>
+                  <p className="text-muted-foreground text-sm">Calculating source size…</p>
                 )}
               </div>
             ) : null}
           </div>
         </div>
         {view.source.discCount > 0 ? (
-          <p className="muted" role="status">
+          <p className="text-muted-foreground" role="status">
             Prepared source: {view.source.discCount} {view.source.discType || "optical"} disc
             {view.source.discCount === 1 ? "" : "s"}
           </p>
         ) : null}
         {error ? (
           <div className="flex flex-wrap items-center gap-2">
-            <p className="error">{error}</p>
+            <p className={`error ${pageStyle.error}`}>{error}</p>
             {view.failure?.Code === "confirmation_required" &&
             view.failure.Recovery === "confirm" ? (
               <Button
@@ -1369,48 +1374,50 @@ export default function InputPage(props: Props) {
         {(preview.Diagnostics || [])
           .filter((diagnostic) => diagnostic.Severity === "warning")
           .map((diagnostic) => (
-            <p key={`${diagnostic.Code}-${diagnostic.Message}`} className="muted">
+            <p key={`${diagnostic.Code}-${diagnostic.Message}`} className="text-muted-foreground">
               {diagnostic.Message}
             </p>
           ))}
       </section>
 
-      <section className="results">
+      <section className="relative z-[1] flex flex-col gap-[19px]">
         {hasPreview ? (
-          <div className="summary">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 rounded-2xl border border-foreground/10 bg-card/80 p-4">
             <div>
-              <p className="label">Tracker used</p>
-              <p className="value">{preview.TrackerName || "No tracker used"}</p>
+              <p className={pageStyle.label}>Tracker used</p>
+              <p className={pageStyle.value}>{preview.TrackerName || "No tracker used"}</p>
             </div>
             <div>
-              <p className="label">Release name</p>
-              <p className="value">{preview.ReleaseName || "No release name yet"}</p>
+              <p className={pageStyle.label}>Release name</p>
+              <p className={pageStyle.value}>{preview.ReleaseName || "No release name yet"}</p>
             </div>
           </div>
         ) : null}
 
         {hasPreview && showExternalIDInputUI && !hasResolvedPrimaryExternalID ? (
-          <div className="panel">
-            <div className="settings-subgroup">
-              <div className="settings-subgroup__title">External ID candidates</div>
-              <p className="muted path-helper">
+          <div className={pageStyle.panel}>
+            <div className={settingsStyle.subgroup}>
+              <div className={settingsStyle.title}>External ID candidates</div>
+              <p className="text-muted-foreground path-helper">
                 Select a candidate to copy it into ID overrides, then refresh metadata.
               </p>
               {tmdbCandidates.length === 0 && imdbCandidates.length === 0 ? (
-                <p className="muted">No TMDB/IMDB candidates available for this search.</p>
+                <p className="text-muted-foreground">
+                  No TMDB/IMDB candidates available for this search.
+                </p>
               ) : (
-                <div className="settings-grid">
+                <div className={settingsStyle.grid}>
                   <div>
-                    <p className="label">TMDB</p>
+                    <p className={pageStyle.label}>TMDB</p>
                     {tmdbCandidates.length === 0 ? (
-                      <p className="muted">No TMDB candidates</p>
+                      <p className="text-muted-foreground">No TMDB candidates</p>
                     ) : (
-                      <div className="tracker-pills">
+                      <div className="flex flex-wrap gap-2">
                         {tmdbCandidates.slice(0, 5).map((candidate) => (
                           <button
                             key={`tmdb-${candidate.ID}`}
                             type="button"
-                            className={`ghost candidate-selector ${selectedCandidateID("tmdb") === candidate.ID ? "active" : ""}`}
+                            className={`ghost ${selectedCandidateID("tmdb") === candidate.ID ? "border-ring bg-accent ring-2 ring-ring/20" : ""}`}
                             onClick={() => applyCandidateID("tmdb", candidate)}
                           >
                             {candidate.Title || "(Untitled)"}
@@ -1423,17 +1430,17 @@ export default function InputPage(props: Props) {
                       </div>
                     )}
                     {candidatePreview?.provider === "tmdb" ? (
-                      <div className="settings-subgroup candidate-preview">
-                        <p className="label">Selected TMDB candidate</p>
-                        <div className="candidate-preview__header">
-                          <div className="candidate-preview__text">
-                            <p className="value">
+                      <div className={settingsStyle.subgroup}>
+                        <p className={pageStyle.label}>Selected TMDB candidate</p>
+                        <div className="flex items-start justify-between gap-3 max-[960px]:items-center">
+                          <div className="min-w-0 flex-1">
+                            <p className={pageStyle.value}>
                               {candidatePreview.candidate.Title || "(Untitled)"}
                               {candidatePreview.candidate.Year
                                 ? ` (${candidatePreview.candidate.Year})`
                                 : ""}
                             </p>
-                            <p className="muted">
+                            <p className="text-muted-foreground">
                               {candidatePreview.candidate.Category || "Unknown category"}
                               {formatSimilarity(candidatePreview.candidate.Similarity)
                                 ? ` • ${formatSimilarity(candidatePreview.candidate.Similarity)}`
@@ -1442,7 +1449,7 @@ export default function InputPage(props: Props) {
                           </div>
                           {candidatePreview.candidate.PosterURL ? (
                             <button
-                              className="candidate-preview__poster-button"
+                              className="cursor-pointer rounded-[10px] border-0 bg-transparent p-0 leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-chart-2"
                               type="button"
                               onClick={() => {
                                 setLightboxImage(candidatePreview.candidate.PosterURL);
@@ -1450,7 +1457,7 @@ export default function InputPage(props: Props) {
                               }}
                             >
                               <img
-                                className="candidate-preview__poster"
+                                className="h-[84px] w-14 min-w-14 rounded-lg border border-foreground/10 object-cover"
                                 src={candidatePreview.candidate.PosterURL}
                                 alt="TMDB candidate poster"
                                 loading="lazy"
@@ -1458,23 +1465,23 @@ export default function InputPage(props: Props) {
                             </button>
                           ) : null}
                         </div>
-                        <p className="muted">
+                        <p className="text-muted-foreground">
                           {candidatePreview.candidate.Overview || "No overview available."}
                         </p>
                       </div>
                     ) : null}
                   </div>
                   <div>
-                    <p className="label">IMDB</p>
+                    <p className={pageStyle.label}>IMDB</p>
                     {imdbCandidates.length === 0 ? (
-                      <p className="muted">No IMDB candidates</p>
+                      <p className="text-muted-foreground">No IMDB candidates</p>
                     ) : (
-                      <div className="tracker-pills">
+                      <div className="flex flex-wrap gap-2">
                         {imdbCandidates.slice(0, 5).map((candidate) => (
                           <button
                             key={`imdb-${candidate.ID}`}
                             type="button"
-                            className={`ghost candidate-selector ${selectedCandidateID("imdb") === candidate.ID ? "active" : ""}`}
+                            className={`ghost ${selectedCandidateID("imdb") === candidate.ID ? "border-ring bg-accent ring-2 ring-ring/20" : ""}`}
                             onClick={() => applyCandidateID("imdb", candidate)}
                           >
                             {candidate.Title || "(Untitled)"}
@@ -1487,17 +1494,17 @@ export default function InputPage(props: Props) {
                       </div>
                     )}
                     {candidatePreview?.provider === "imdb" ? (
-                      <div className="settings-subgroup candidate-preview">
-                        <p className="label">Selected IMDB candidate</p>
-                        <div className="candidate-preview__header">
-                          <div className="candidate-preview__text">
-                            <p className="value">
+                      <div className={settingsStyle.subgroup}>
+                        <p className={pageStyle.label}>Selected IMDB candidate</p>
+                        <div className="flex items-start justify-between gap-3 max-[960px]:items-center">
+                          <div className="min-w-0 flex-1">
+                            <p className={pageStyle.value}>
                               {candidatePreview.candidate.Title || "(Untitled)"}
                               {candidatePreview.candidate.Year
                                 ? ` (${candidatePreview.candidate.Year})`
                                 : ""}
                             </p>
-                            <p className="muted">
+                            <p className="text-muted-foreground">
                               {candidatePreview.candidate.Category || "Unknown category"}
                               {formatSimilarity(candidatePreview.candidate.Similarity)
                                 ? ` • ${formatSimilarity(candidatePreview.candidate.Similarity)}`
@@ -1506,7 +1513,7 @@ export default function InputPage(props: Props) {
                           </div>
                           {candidatePreview.candidate.PosterURL ? (
                             <button
-                              className="candidate-preview__poster-button"
+                              className="cursor-pointer rounded-[10px] border-0 bg-transparent p-0 leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-chart-2"
                               type="button"
                               onClick={() => {
                                 setLightboxImage(candidatePreview.candidate.PosterURL);
@@ -1514,7 +1521,7 @@ export default function InputPage(props: Props) {
                               }}
                             >
                               <img
-                                className="candidate-preview__poster"
+                                className="h-[84px] w-14 min-w-14 rounded-lg border border-foreground/10 object-cover"
                                 src={candidatePreview.candidate.PosterURL}
                                 alt="IMDB candidate poster"
                                 loading="lazy"
@@ -1522,7 +1529,7 @@ export default function InputPage(props: Props) {
                             </button>
                           ) : null}
                         </div>
-                        <p className="muted">
+                        <p className="text-muted-foreground">
                           {candidatePreview.candidate.Overview || "No overview available."}
                         </p>
                       </div>
@@ -1530,7 +1537,7 @@ export default function InputPage(props: Props) {
                   </div>
                 </div>
               )}
-              <div className="edit-actions">
+              <div className="flex justify-end">
                 <button
                   className="primary"
                   type="button"
@@ -1544,20 +1551,20 @@ export default function InputPage(props: Props) {
           </div>
         ) : null}
 
-        <div className="edit-controls">
+        <div className="grid gap-[9px]">
           {hasPreview ? (
-            <details className="edit-dropdown tracker-dropdown">
-              <summary>
+            <details className={`tracker-dropdown ${editDropdownClass}`}>
+              <summary className={editDropdownSummaryClass}>
                 <span>Select Trackers</span>
-                <span className="tracker-summary-count">
+                <span className="tracker-summary-count inline-flex min-w-12 items-center justify-center rounded-full border border-current px-2 py-0.5 text-[0.76rem] font-bold tracking-[0.03em] text-inherit">
                   {selectedTrackerCount}/{trackerUploadItems.length}
                 </span>
               </summary>
-              <div className="edit-dropdown__body">
-                <fieldset className="tracker-selection-container m-0 min-w-0 border-0 p-0">
+              <div className="mt-3 grid gap-[9px]">
+                <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
                   <legend className="sr-only">Trackers to upload</legend>
                   {trackerUploadItems.length === 0 ? (
-                    <p className="muted">No configured tracker entries found.</p>
+                    <p className="text-muted-foreground">No configured tracker entries found.</p>
                   ) : (
                     <>
                       <div className="mb-2 flex flex-wrap gap-2">
@@ -1576,7 +1583,7 @@ export default function InputPage(props: Props) {
                           Deselect all
                         </Button>
                       </div>
-                      <div className="tracker-pills">
+                      <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-2">
                         {trackerUploadItems.map((tracker) => {
                           const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
                           return (
@@ -1611,16 +1618,16 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
           {showReleaseDetails ? (
-            <p className="helper edit-helper">
+            <p className="helper max-w-[720px]">
               Review release facts, source options, and selected tracker input.
             </p>
           ) : null}
           {showReleaseDetails ? (
-            <details className="edit-dropdown">
-              <summary>Edit Release Details</summary>
-              <div className="edit-dropdown__body">
+            <details className={editDropdownClass}>
+              <summary className={editDropdownSummaryClass}>Edit Release Details</summary>
+              <div className="mt-3 grid gap-[9px]">
                 <InputCorrectionEditor facet={facet} />
-                <div className="edit-actions">
+                <div className="flex justify-end">
                   {hasPreview ? (
                     <button
                       className="ghost"
@@ -1651,29 +1658,33 @@ export default function InputPage(props: Props) {
           ) : null}
         </div>
 
-        <div className={`details ${hasPreview ? "loaded" : ""}`}>
-          <div className="id-list">
+        <div
+          className={`grid grid-cols-[minmax(260px,320px)_minmax(0,1fr)] gap-[19px] transition-[opacity,transform] duration-500 max-[960px]:grid-cols-1 ${hasPreview ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0"}`}
+        >
+          <div className="rounded-[18px] border border-foreground/10 bg-card/80 p-4">
             <h2>External IDs</h2>
             {orderedIdentityProviders.length === 0 ? (
-              <p className="muted">No external metadata details found.</p>
+              <p className="text-muted-foreground">No external metadata details found.</p>
             ) : (
               orderedIdentityProviders.map((item) => (
                 <button
                   key={item.Provider}
-                  className={`id-card ${selectedProvider === item.Provider ? "active" : ""}`}
+                  className={`mb-[9px] grid w-full gap-[5px] rounded-[14px] border bg-card/90 p-[11px] text-left text-foreground ${selectedProvider === item.Provider ? "active border-ring ring-2 ring-ring/20" : "border-transparent"}`}
                   type="button"
                   onClick={() => selectProvider(item.Provider)}
                 >
-                  <span className="id-label">{formatProvider(item.Provider)}</span>
-                  <span className="id-value">{item.DisplayID}</span>
-                  <span className="id-source">Source: {item.Source}</span>
+                  <span className="text-xs tracking-[0.1em] text-muted-foreground uppercase">
+                    {formatProvider(item.Provider)}
+                  </span>
+                  <span className={pageStyle.value}>{item.DisplayID}</span>
+                  <span className="text-[0.8rem] text-muted-foreground">Source: {item.Source}</span>
                 </button>
               ))
             )}
           </div>
 
-          <div className="preview-panel">
-            <div className="preview-header">
+          <div className="rounded-[18px] border border-foreground/10 bg-card/80 p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <h2>Preview</h2>
               </div>
@@ -1697,16 +1708,20 @@ export default function InputPage(props: Props) {
               ) : null}
             </div>
             {selectedPreview ? (
-              <div className="preview-content">
-                <div className="preview-text">
-                  <p className="title">{selectedPreviewTitle || "Untitled"}</p>
-                  <p className="meta">
+              <div className="grid grid-cols-[minmax(0,1fr)_240px] gap-4 max-[960px]:grid-cols-1">
+                <div>
+                  <p className="mb-1.5 text-[1.4rem] font-semibold">
+                    {selectedPreviewTitle || "Untitled"}
+                  </p>
+                  <p className="mb-3 text-primary-text">
                     {selectedPreview.Summary.Year ? `${selectedPreview.Summary.Year}` : ""}
                   </p>
-                  <p className="overview">{selectedPreviewOverview || "No overview available."}</p>
+                  <p className="text-muted-foreground leading-[1.6]">
+                    {selectedPreviewOverview || "No overview available."}
+                  </p>
                   <PreviewDetailsList items={previewDetails} />
                 </div>
-                <div className="preview-images">
+                <div className="grid gap-[9px] [&>img]:w-full [&>img]:rounded-[14px] [&>img]:border [&>img]:border-foreground/10">
                   {selectedPreview.Summary.PosterURL ? (
                     <img src={selectedPreview.Summary.PosterURL} alt="Poster" loading="lazy" />
                   ) : null}
@@ -1716,7 +1731,7 @@ export default function InputPage(props: Props) {
                 </div>
               </div>
             ) : (
-              <p className="muted">Select an external ID to preview.</p>
+              <p className="text-muted-foreground">Select an external ID to preview.</p>
             )}
           </div>
         </div>

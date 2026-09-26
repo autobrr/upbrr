@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "./components/ui/pageStyle";
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import type { ReactElement } from "react";
 import { routeComponents } from "./routes/RouteViews";
@@ -116,7 +117,7 @@ export function createAppRouter(shell: () => ReactElement) {
     routeTree,
     basepath: window.__UPBRR_BASE_URL__ || "/",
     defaultErrorComponent: ({ reset }) => (
-      <section className="panel" role="alert">
+      <section className={pageStyle.panel} role="alert">
         <h2>View could not be loaded</h2>
         <p>Try opening this page again.</p>
         <button type="button" className="ghost" onClick={reset}>

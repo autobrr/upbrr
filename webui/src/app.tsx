@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "./components/ui/pageStyle";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -234,7 +235,7 @@ function AppShell() {
         utilityNavigation={utilityNavigation}
       >
         {applicationInfo?.testRuntime?.mode === "live_test" ? (
-          <div className="panel mb-4 border-amber-500 p-4" role="status">
+          <div className={`${pageStyle.panel} mb-4 border-amber-500 p-4`} role="status">
             <strong>Live testing active</strong>
             <p>
               Tracker submission and torrent-client writes are disabled. Run a dry run to test
@@ -243,16 +244,16 @@ function AppShell() {
             <p className="break-all">Run: {applicationInfo.testRuntime.runId}</p>
           </div>
         ) : runtimeInfoError ? (
-          <p className="error" role="alert">
+          <p className={pageStyle.error} role="alert">
             Runtime capabilities could not be loaded. Uploads are disabled; reload to try again.
           </p>
         ) : !applicationInfo ? (
-          <p className="muted" role="status">
+          <p className="text-muted-foreground" role="status">
             Checking runtime capabilities…
           </p>
         ) : null}
         {navigationNotice ? (
-          <p className="muted" role="status">
+          <p className="text-muted-foreground" role="status">
             {navigationNotice}
           </p>
         ) : null}

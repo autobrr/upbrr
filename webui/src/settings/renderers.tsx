@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../components/ui/pageStyle";
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../components/ui/button";
@@ -8,6 +9,7 @@ import { PillCheckbox } from "../components/ui/checkbox";
 import { Select } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { trackerFieldPresentation } from "./trackerFields";
+import { settingsStyle } from "./style";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 import {
   nextQbitDirectState,
@@ -154,9 +156,9 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     const newItemValue = options.find((option) => option.value !== "")?.value ?? "";
 
     return (
-      <div className="settings-array">
+      <div className={settingsStyle.map}>
         {value.map((entry, index) => (
-          <div className="settings-array-row" key={`${path.join(".")}-${index}`}>
+          <div className={settingsStyle.header} key={`${path.join(".")}-${index}`}>
             {options.length > 0 ? (
               <Select
                 aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
@@ -217,7 +219,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     if (Array.isArray(value)) {
       if (meta?.commaSeparated) {
         return (
-          <label className="settings-field" key={path.join(".")}>
+          <label className={settingsStyle.field} key={path.join(".")}>
             <span>{displayLabel}</span>
             <CommaSeparatedInput
               label={displayLabel}
@@ -229,7 +231,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         );
       }
       return (
-        <div className="settings-field" key={path.join(".")}>
+        <div className={settingsStyle.field} key={path.join(".")}>
           <span>{displayLabel}</span>
           {renderArrayEditor(value, path, meta, displayLabel)}
         </div>
@@ -241,7 +243,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         ? meta.options
         : [...meta.options, { value: selectedValue, label: selectedValue }];
       return (
-        <label className="settings-field" key={path.join(".")}>
+        <label className={settingsStyle.field} key={path.join(".")}>
           <span>{displayLabel}</span>
           <Select
             value={selectedValue}
@@ -258,7 +260,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     }
     if (typeHint === "boolean" || typeof value === "boolean") {
       return (
-        <label className="settings-field settings-field--switch" key={path.join(".")}>
+        <label className={`${settingsStyle.field} cursor-pointer`} key={path.join(".")}>
           <span>{displayLabel}</span>
           <Switch
             aria-label={displayLabel}
@@ -271,7 +273,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     if (typeHint === "number" || typeof value === "number") {
       const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
       return (
-        <label className="settings-field" key={path.join(".")}>
+        <label className={settingsStyle.field} key={path.join(".")}>
           <span>{displayLabel}</span>
           <input
             className={settingsInputClass}
@@ -284,9 +286,9 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     }
     if (value && typeof value === "object") {
       return (
-        <div className="settings-subgroup" key={path.join(".")}>
-          <div className="settings-subgroup__title">{displayLabel}</div>
-          <div className="settings-grid">
+        <div className={settingsStyle.subgroup} key={path.join(".")}>
+          <div className={settingsStyle.title}>{displayLabel}</div>
+          <div className={settingsStyle.grid}>
             {Object.entries(value).map(([childKey, childValue]) =>
               renderField(childKey, childValue, [...path, childKey]),
             )}
@@ -296,7 +298,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     }
 
     return (
-      <label className="settings-field" key={path.join(".")}>
+      <label className={settingsStyle.field} key={path.join(".")}>
         <span>{displayLabel}</span>
         <input
           className={settingsInputClass}
@@ -328,10 +330,10 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     const advancedOpen = options?.advancedOpen ?? false;
 
     return (
-      <div className="settings-map">
+      <div className={settingsStyle.map}>
         {defaultKey ? (
-          <div className="settings-subgroup">
-            <div className="settings-subgroup__title">{formatLabel(defaultKey)}</div>
+          <div className={settingsStyle.subgroup}>
+            <div className={settingsStyle.title}>{formatLabel(defaultKey)}</div>
             {renderField(defaultKey, sectionValue[defaultKey] as ConfigValue, [
               sectionKey,
               defaultKey,
@@ -339,8 +341,8 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           </div>
         ) : null}
 
-        <div className="settings-map__header">
-          <p className="label">Entries</p>
+        <div className={settingsStyle.header}>
+          <p className={pageStyle.label}>Entries</p>
           <Button
             type="button"
             onClick={() => {
@@ -357,14 +359,14 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           </Button>
         </div>
 
-        <div className="settings-map__grid">
+        <div className={settingsStyle.map}>
           {entries.length === 0 ? (
-            <p className="muted">No entries yet.</p>
+            <p className="text-muted-foreground">No entries yet.</p>
           ) : (
             entries.map(([key, value]) => (
-              <div className="settings-card" key={`${sectionKey}-${key}`}>
-                <div className="settings-card__header">
-                  <p className="value">{key}</p>
+              <div className={settingsStyle.card} key={`${sectionKey}-${key}`}>
+                <div className={settingsStyle.header}>
+                  <p className={pageStyle.value}>{key}</p>
                   <Button
                     type="button"
                     onClick={() => {
@@ -378,7 +380,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                     Remove
                   </Button>
                 </div>
-                <div className="settings-grid">
+                <div className={settingsStyle.grid}>
                   {Object.entries(value)
                     .filter(([childKey]) => {
                       const meta = fieldMeta[childKey];
@@ -464,9 +466,9 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     };
 
     return (
-      <div className="settings-map">
-        <div className="settings-map__header">
-          <p className="label">Entries</p>
+      <div className={settingsStyle.map}>
+        <div className={settingsStyle.header}>
+          <p className={pageStyle.label}>Entries</p>
           <Button
             type="button"
             onClick={() => {
@@ -479,9 +481,9 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           </Button>
         </div>
 
-        <div className="settings-map__grid">
+        <div className={settingsStyle.map}>
           {clients.length === 0 ? (
-            <p className="muted">No entries yet.</p>
+            <p className="text-muted-foreground">No entries yet.</p>
           ) : (
             clients.map(([name, client]) => {
               const clientType = normalizeTorrentClientType(client);
@@ -489,13 +491,16 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
               const directEnabled = !watchClient && hasDirectConfig(client);
               return (
                 <div
-                  className="settings-card"
+                  className={settingsStyle.card}
                   key={`TorrentClients-${name}`}
                   role="group"
                   aria-labelledby={`torrent-client-${encodeURIComponent(name)}`}
                 >
-                  <div className="settings-card__header">
-                    <p className="value" id={`torrent-client-${encodeURIComponent(name)}`}>
+                  <div className={settingsStyle.header}>
+                    <p
+                      className={pageStyle.value}
+                      id={`torrent-client-${encodeURIComponent(name)}`}
+                    >
                       {name}
                     </p>
                     <Button
@@ -506,7 +511,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       Remove
                     </Button>
                   </div>
-                  <div className="settings-grid">
+                  <div className={settingsStyle.grid}>
                     {renderField(
                       "Type",
                       valueFor(client, "Type", "TorrentClient") ?? "qbit",
@@ -587,7 +592,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       : null}
                     {!watchClient ? (
                       <label
-                        className="settings-switch-row"
+                        className={settingsStyle.switchRow}
                         key={`TorrentClients-${name}-AllowFallback`}
                       >
                         <span>Allow link fallback</span>
@@ -646,7 +651,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                   </div>
 
                   {!watchClient ? (
-                    <label className="settings-switch-row">
+                    <label className={settingsStyle.switchRow}>
                       <span>qBit direct</span>
                       <Switch
                         aria-label="qBit direct"
@@ -657,7 +662,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                   ) : null}
 
                   {!watchClient && directEnabled ? (
-                    <div className="settings-grid">
+                    <div className={settingsStyle.grid}>
                       {renderField(
                         "QbitURL",
                         valueFor(client, "QbitURL", "URL") ?? "",
@@ -791,28 +796,30 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
       };
 
       return (
-        <div className="settings-map">
+        <div className={settingsStyle.map}>
           <details
-            className="settings-subgroup settings-subgroup--collapsible"
+            className={settingsStyle.collapsible}
             open={defaultTrackersPanelOpen}
             onToggle={(event) => {
               const target = event.currentTarget as HTMLDetailsElement;
               setDefaultTrackersPanelOpen(target.open);
             }}
           >
-            <summary className="settings-subgroup__title tracker-summary-heading">
+            <summary
+              className={`tracker-summary-heading ${settingsStyle.summary} px-2.5 py-2 text-sm`}
+            >
               <span>Default trackers</span>
-              <span className="tracker-summary-count">
+              <span className="tracker-summary-count inline-flex min-w-12 items-center justify-center rounded-full border border-current px-2 py-0.5 text-[0.76rem] font-bold tracking-[0.03em] text-inherit">
                 {selectedDefaultTrackerCount}/{trackerNames.length}
               </span>
             </summary>
-            <div className="tracker-defaults-body">
+            <div className="pt-0">
               {trackerNames.length === 0 ? (
-                <p className="muted">Add tracker entries to select defaults.</p>
+                <p className="text-muted-foreground">Add tracker entries to select defaults.</p>
               ) : (
-                <fieldset className="tracker-selection-container m-0 min-w-0 border-0 p-0">
+                <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
                   <legend className="sr-only">Default trackers</legend>
-                  <div className="tracker-pills">
+                  <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-2">
                     {trackerNames.map((tracker) => (
                       <PillCheckbox
                         key={tracker}
@@ -828,10 +835,10 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             </div>
           </details>
 
-          <details className="settings-subgroup settings-subgroup--collapsible">
-            <summary className="settings-subgroup__title">Preferred tracker data source</summary>
+          <details className={settingsStyle.collapsible}>
+            <summary className={settingsStyle.title}>Preferred tracker data source</summary>
             <div style={{ paddingTop: "0.5rem" }}>
-              <div className="settings-map__controls">
+              <div className={settingsStyle.mapControls}>
                 <Select
                   aria-label="Preferred tracker data source"
                   value={preferredTracker}
@@ -855,16 +862,16 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                   Clear
                 </Button>
               </div>
-              <p className="muted" style={{ marginTop: "0.5rem" }}>
+              <p className="text-muted-foreground" style={{ marginTop: "0.5rem" }}>
                 Moves the selected tracker to the top of tracker-data lookup and qBit tracker
                 priority when present.
               </p>
             </div>
           </details>
 
-          <div className="settings-map__header">
-            <p className="label">Entries</p>
-            <div className="settings-map__controls">
+          <div className={`settings-map__header ${settingsStyle.header}`}>
+            <p className={pageStyle.label}>Entries</p>
+            <div className={settingsStyle.mapControls}>
               <Select
                 aria-label="Add tracker entry"
                 value={trackerAddSelection}
@@ -899,16 +906,16 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             </div>
           </div>
 
-          <div className="settings-map__grid">
+          <div className={settingsStyle.map}>
             {visibleEntries.length === 0 ? (
-              <p className="muted">No configured entries yet.</p>
+              <p className="text-muted-foreground">No configured entries yet.</p>
             ) : (
               visibleEntries.map(({ entry, value }) => {
                 const key = entry.name;
                 const schema = trackerSchemaFor(entry);
                 return (
                   <details
-                    className="settings-card settings-card--collapsible"
+                    className={settingsStyle.collapsibleCard}
                     key={`Trackers-${key}`}
                     open={settingsTrackerPanels[key] ?? false}
                     onToggle={(event) => {
@@ -916,8 +923,8 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       setSettingsTrackerPanels((prev) => ({ ...prev, [key]: target.open }));
                     }}
                   >
-                    <summary className="settings-card__summary">
-                      <span className="settings-card__summary-name">{key}</span>
+                    <summary className={settingsStyle.summary}>
+                      <span className="settings-card__summary-name min-w-0 truncate">{key}</span>
                       <Button
                         type="button"
                         aria-label={`Remove ${key}`}
@@ -947,8 +954,8 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                         Remove
                       </Button>
                     </summary>
-                    <div className="settings-card__body">
-                      <div className="settings-grid">
+                    <div className={settingsStyle.body}>
+                      <div className={settingsStyle.grid}>
                         {schema
                           .filter((meta) => !(meta.advanced && !advancedOpen))
                           .map((meta) =>
@@ -970,16 +977,16 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           </div>
 
           {(trackerCatalog?.unsupported.length ?? 0) > 0 ? (
-            <div className="settings-subgroup">
-              <div className="settings-subgroup__title">Unsupported tracker entries</div>
-              <p className="muted">
+            <div className={settingsStyle.subgroup}>
+              <div className={settingsStyle.title}>Unsupported tracker entries</div>
+              <p className="text-muted-foreground">
                 Preserved config has no matching tracker implementation and cannot be used.
               </p>
-              <div className="settings-map__grid">
+              <div className={settingsStyle.map}>
                 {trackerCatalog?.unsupported.map((name) => (
-                  <div className="settings-card" key={`unsupported-${name}`}>
-                    <div className="settings-card__summary">
-                      <span className="settings-card__summary-name">{name}</span>
+                  <div className={settingsStyle.card} key={`unsupported-${name}`}>
+                    <div className={settingsStyle.summary}>
+                      <span className="settings-card__summary-name min-w-0 truncate">{name}</span>
                       <Button
                         type="button"
                         aria-label={`Delete ${name}`}
@@ -999,7 +1006,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         </div>
       );
     } catch (err) {
-      return <p className="error">Unable to render tracker settings: {String(err)}</p>;
+      return <p className={pageStyle.error}>Unable to render tracker settings: {String(err)}</p>;
     }
   };
 
@@ -1025,14 +1032,14 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     });
 
     return (
-      <div className="settings-form">
-        <div className="settings-subgroup">
-          <div className="settings-subgroup__title">Host Priority</div>
-          <div className="settings-grid">
+      <div className={settingsStyle.form}>
+        <div className={settingsStyle.subgroup}>
+          <div className={settingsStyle.title}>Host Priority</div>
+          <div className={settingsStyle.grid}>
             {hostFields.map((field, index) => {
               const selected = String(imageCfg[field] ?? "");
               return (
-                <label className="settings-field" key={field}>
+                <label className={settingsStyle.field} key={field}>
                   <span>{`Host ${index + 1}`}</span>
                   <Select
                     value={selected}
@@ -1055,12 +1062,12 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           </div>
         </div>
 
-        <div className="settings-subgroup">
-          <div className="settings-subgroup__title">API Keys</div>
+        <div className={settingsStyle.subgroup}>
+          <div className={settingsStyle.title}>API Keys</div>
           {requiredKeys.size === 0 ? (
-            <p className="muted">Select an image host to edit its API keys.</p>
+            <p className="text-muted-foreground">Select an image host to edit its API keys.</p>
           ) : (
-            <div className="settings-grid">
+            <div className={settingsStyle.grid}>
               {Array.from(requiredKeys).map((key) =>
                 renderField(key, imageCfg[key] as ConfigValue, ["ImageHosting", key]),
               )}
@@ -1068,10 +1075,10 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           )}
         </div>
 
-        <div className="settings-subgroup">
-          <div className="settings-subgroup__title">Additional Hosts</div>
-          <div className="settings-grid">
-            <label className="settings-switch-row">
+        <div className={settingsStyle.subgroup}>
+          <div className={settingsStyle.title}>Additional Hosts</div>
+          <div className={settingsStyle.grid}>
+            <label className={settingsStyle.switchRow}>
               <span>Lostimg enabled</span>
               <Switch
                 aria-label="Lostimg enabled"
@@ -1087,7 +1094,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
               ["ImageHosting", "LostimgAPI"],
               sectionFieldMeta.ImageHosting.LostimgAPI,
             )}
-            <label className="settings-switch-row">
+            <label className={settingsStyle.switchRow}>
               <span>ReelFliX enabled</span>
               <Switch
                 aria-label="ReelFliX enabled"
@@ -1103,7 +1110,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
               ["ImageHosting", "ReelflixAPI"],
               sectionFieldMeta.ImageHosting.ReelflixAPI,
             )}
-            <label className="settings-switch-row">
+            <label className={settingsStyle.switchRow}>
               <span>Samaritano enabled</span>
               <Switch
                 aria-label="Samaritano enabled"

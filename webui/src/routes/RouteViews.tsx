@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../components/ui/pageStyle";
 import { createContext, lazy, Suspense, useContext, useLayoutEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import InputPage from "../pages/input";
@@ -89,7 +90,7 @@ function GuardedReleaseView({
   )
     return children;
   return (
-    <section className="panel" role="status">
+    <section className={pageStyle.panel} role="status">
       <h2 className="text-lg font-semibold">View unavailable</h2>
       <p>{access.reason || "This view is not available for the active release."}</p>
       <button className="ghost" type="button" onClick={() => navigateTo("input")}>
@@ -158,7 +159,7 @@ function BlurayRoute() {
   const { session, setLightboxImage, setLightboxAlt, navigateTo } = useRouteViews();
   if (!session.identity.view.preview?.Bluray)
     return (
-      <section className="panel" role="status">
+      <section className={pageStyle.panel} role="status">
         <h2 className="text-lg font-semibold">View unavailable</h2>
         <p>Blu-ray candidates are available after preparing a Blu-ray source.</p>
         <button className="ghost" type="button" onClick={() => navigateTo("input")}>
@@ -336,7 +337,7 @@ function withLoading(Component: () => ReactNode) {
     return (
       <Suspense
         fallback={
-          <p className="muted" role="status">
+          <p className="text-muted-foreground" role="status">
             Loading view…
           </p>
         }

@@ -6,9 +6,13 @@ package description
 import (
 	"regexp"
 	"strings"
+
+	xhtml "golang.org/x/net/html"
 )
 
-var htmlTagPattern = regexp.MustCompile(`(?i)<[a-z][^>]*>`)
+var bbcodeTagPattern = regexp.MustCompile(
+	`(?i)\[(?:b|i|u|s|color|size|font|url|img|spoiler|hide|quote|list|li|left|right|center|align|comparison|mediainfo|code|pre)(?:[\]=\s])`,
+)
 
 // Render converts BBCode, MediaInfo blocks, or existing HTML into HTML that has
 // passed the package's element, attribute, class, style, and URL allowlists.
@@ -21,12 +25,40 @@ func Render(raw string) string {
 	if rendered, ok := renderBBCodeWithMediaInfo(trimmed); ok {
 		return sanitizeHTML(rendered)
 	}
-	if looksLikeHTML(trimmed) {
+	text, hasHTML := textOutsideHTMLTags(trimmed)
+	if hasHTML && !bbcodeTagPattern.MatchString(text) {
 		return sanitizeHTML(trimmed)
 	}
 	return sanitizeHTML(renderBBCode(trimmed))
 }
 
-func looksLikeHTML(value string) bool {
-	return htmlTagPattern.MatchString(value)
+func textOutsideHTMLTags(value string) (string, bool) {
+	var text strings.Builder
+	tokenizer := xhtml.NewTokenizer(strings.NewReader(value))
+	hasHTML := false
+	literalTags := make([]string, 0)
+	for kind := tokenizer.Next(); kind != xhtml.ErrorToken; kind = tokenizer.Next() {
+		switch kind {
+		case xhtml.StartTagToken:
+			hasHTML = true
+			name, _ := tokenizer.TagName()
+			if tag := strings.ToLower(string(name)); tag == "script" || tag == "style" || tag == "pre" || tag == "code" {
+				literalTags = append(literalTags, tag)
+			}
+		case xhtml.EndTagToken:
+			hasHTML = true
+			name, _ := tokenizer.TagName()
+			if len(literalTags) > 0 && strings.EqualFold(string(name), literalTags[len(literalTags)-1]) {
+				literalTags = literalTags[:len(literalTags)-1]
+			}
+		case xhtml.SelfClosingTagToken:
+			hasHTML = true
+		case xhtml.TextToken:
+			if len(literalTags) == 0 {
+				text.Write(tokenizer.Raw())
+			}
+		case xhtml.CommentToken, xhtml.DoctypeToken, xhtml.ErrorToken:
+		}
+	}
+	return text.String(), hasHTML
 }

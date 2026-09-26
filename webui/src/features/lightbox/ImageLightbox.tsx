@@ -23,8 +23,8 @@ export function ImageLightbox({
   return (
     <Dialog.Root open={Boolean(image)} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="lightbox-content">
+        <Dialog.Overlay className="fixed inset-0 z-[9999] bg-black/70" />
+        <Dialog.Content className="fixed top-1/2 left-1/2 z-[10000] flex max-h-[calc(100vh-38px)] max-w-[calc(100vw-38px)] -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center gap-[9px] overflow-auto rounded-[18px] border border-foreground/10 bg-card/90 p-3">
           <Dialog.Title className="sr-only">{alt || "Image preview"}</Dialog.Title>
           <Dialog.Description className="sr-only">
             Expanded release image preview.

@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "./ui/pageStyle";
 import type { Operation as WorkflowOperationStatus } from "../api/generated/release-workflow";
 
 const visibleStatuses = new Set(["queued", "running", "blocked", "failed", "interrupted"]);
@@ -50,10 +51,10 @@ export function WorkflowOperationProgress({
   );
 
   return (
-    <section className="panel mb-3 grid gap-2 py-3" role="status" aria-live="polite">
+    <section className={`${pageStyle.panel} mb-3 grid gap-2 py-3`} role="status" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="label">Release workflow</p>
+          <p className={pageStyle.label}>Release workflow</p>
           <p className="font-semibold text-foreground">
             {(events.length ? rootEvent?.message : failureMessage) ||
               operation.message ||
@@ -61,7 +62,7 @@ export function WorkflowOperationProgress({
               operation.command}
           </p>
         </div>
-        <span className="muted text-sm">
+        <span className="text-muted-foreground text-sm">
           {operation.total > 0 ? `${completed}/${operation.total} complete` : `${progress}%`}
         </span>
       </div>
@@ -78,7 +79,7 @@ export function WorkflowOperationProgress({
           style={{ width: `${progress}%` }}
         />
       </div>
-      {recovery ? <p className="muted text-sm">{recovery}</p> : null}
+      {recovery ? <p className="text-muted-foreground text-sm">{recovery}</p> : null}
       {scopedEvents.length ? (
         <div className="grid gap-1 text-sm">
           {scopedEvents.map((event) => (
@@ -97,7 +98,7 @@ export function WorkflowOperationProgress({
                     ? "text-destructive-text"
                     : event.severity === "warn"
                       ? "text-[var(--status-warning)]"
-                      : "muted"
+                      : "text-muted-foreground"
                 }
               >
                 {event.message || event.state}
@@ -114,7 +115,11 @@ export function WorkflowOperationProgress({
               key={`${item.kind}-${item.id}`}
             >
               <span className="font-semibold">{item.label || item.id}</span>
-              <span className={item.status === "failed" ? "text-destructive-text" : "muted"}>
+              <span
+                className={
+                  item.status === "failed" ? "text-destructive-text" : "text-muted-foreground"
+                }
+              >
                 {item.message || item.status}
               </span>
             </div>

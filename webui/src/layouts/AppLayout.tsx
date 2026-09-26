@@ -57,7 +57,7 @@ export function AppLayout({
   const versionLabel = applicationInfo ? formatApplicationVersion(applicationInfo) : "";
 
   return (
-    <div className="app-shell">
+    <div className="app-shell relative block overflow-hidden p-0">
       <a
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[2000] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground"
         href="#main-content"
@@ -126,7 +126,11 @@ export function AppLayout({
             </div>
           </div>
         </aside>
-        <main id="main-content" className="content" tabIndex={-1}>
+        <main
+          id="main-content"
+          className="content flex max-h-screen flex-col gap-4 overflow-y-auto px-[clamp(14px,3vw,44px)] pt-[25px] pb-[37px] max-[960px]:max-h-none max-[960px]:overflow-visible max-[960px]:px-4 max-[960px]:pb-10"
+          tabIndex={-1}
+        >
           {children}
         </main>
       </div>

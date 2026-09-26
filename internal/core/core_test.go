@@ -5,11 +5,85 @@ package core
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestBuildTrackerPreviewSanitizesStoredDescription(t *testing.T) {
+	t.Parallel()
+	records := []api.TrackerMetadata{{
+		Tracker: "Example",
+		Description: `<center><img src="https://images.example.invalid/poster.png" onerror="bad()"></center>` +
+			`<a href="javascript:bad()">unsafe</a><p>Use [draft] &amp; review</p>`,
+	}}
+	previews := buildTrackerPreview(records, config.Config{})
+	if len(previews) != 1 || previews[0].Description != records[0].Description {
+		t.Fatalf("expected raw stored description to remain available, got %#v", previews)
+	}
+	html := previews[0].DescriptionHTML
+	if !strings.Contains(html, `<center><img src="https://images.example.invalid/poster.png" /></center>`) ||
+		!strings.Contains(html, `<a>unsafe</a>`) ||
+		!strings.Contains(html, `<p>Use [draft] &amp; review</p>`) ||
+		strings.Contains(html, "onerror") || strings.Contains(html, "javascript:") {
+		t.Fatalf("expected safe stored description preview, got %q", html)
+	}
+}
+
+func TestBuildTrackerPreviewKeepsRawAndSanitizesDescriptionVariants(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		raw      string
+		contains []string
+		excludes []string
+	}{
+		{
+			name:     "mixed HTML and linked BBCode image",
+			raw:      `<p>Notes &amp; credits</p>[center][url=https://images.example.invalid/full][img=500]https://images.example.invalid/shot.png[/img][/url][/center]`,
+			contains: []string{`<p>Notes &amp; credits</p>`, `text-align: center`, `width="500"`, `href="https://images.example.invalid/full"`},
+			excludes: []string{`[center]`, `&amp;amp;`},
+		},
+		{
+			name:     "malformed HTML and unsafe attributes",
+			raw:      `<div><img src="javascript:bad()" onerror="bad()"><a href="javascript:bad()">unsafe`,
+			contains: []string{`unsafe`},
+			excludes: []string{`javascript:`, `onerror`, `<script`},
+		},
+		{
+			name:     "encoded HTML",
+			raw:      `&lt;center&gt;Encoded &amp; safe&lt;/center&gt;`,
+			contains: []string{`Encoded &amp; safe`},
+			excludes: []string{`&amp;amp;`, `<script`},
+		},
+		{
+			name:     "HTML pre with BBCode outside",
+			raw:      `<pre>[b]literal[/b]</pre>[b]outside[/b]`,
+			contains: []string{`<pre>[b]literal[/b]</pre>`, `<b>outside</b>`},
+			excludes: []string{`<pre><b>`},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			previews := buildTrackerPreview([]api.TrackerMetadata{{Tracker: "Example", Description: test.raw}}, config.Config{})
+			if len(previews) != 1 || previews[0].Description != test.raw {
+				t.Fatalf("raw description changed: %#v", previews)
+			}
+			for _, expected := range test.contains {
+				if !strings.Contains(previews[0].DescriptionHTML, expected) {
+					t.Errorf("preview missing %q: %q", expected, previews[0].DescriptionHTML)
+				}
+			}
+			for _, forbidden := range test.excludes {
+				if strings.Contains(previews[0].DescriptionHTML, forbidden) {
+					t.Errorf("preview retained %q: %q", forbidden, previews[0].DescriptionHTML)
+				}
+			}
+		})
+	}
+}
 
 func TestApplyMetadataDefaults(t *testing.T) {
 	t.Parallel()

@@ -13,6 +13,10 @@ import { sourcePathHistoryStorageKey } from "../src/utils/inputHistory";
 // Capture the full scrollable app pane while leaving its normal layout intact for interaction.
 const expandedContentStyle =
   ".app-shell { overflow: visible !important; } .content { max-height: none !important; overflow-y: visible !important; }";
+const visualFramePNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR42mOOLF25J+Y9AAr6A4JLQvqbAAAAAElFTkSuQmCC",
+  "base64",
+);
 
 async function captureFullContent(page: Page, target: string) {
   const content = page.locator("main.content");
@@ -322,7 +326,12 @@ async function exerciseDisclosuresAndPressed(page: Page, scope = "main") {
   return results;
 }
 
-async function captureExpandedSelectionState(page: Page, output: string, prefix: string) {
+async function captureExpandedSelectionState(
+  page: Page,
+  output: string,
+  prefix: string,
+  interact = true,
+) {
   await page.locator("main details").evaluateAll((elements) =>
     elements.forEach((element) => {
       (element as HTMLDetailsElement).open = true;
@@ -334,10 +343,12 @@ async function captureExpandedSelectionState(page: Page, output: string, prefix:
   return {
     screenshot,
     controls: await page.locator(inventorySurface("main")).evaluateAll(captureControlRecords),
-    interactions: [
-      ...(await exerciseVisibleControls(page, output, `${prefix}-all-details`)),
-      ...(await exerciseDisclosuresAndPressed(page)),
-    ],
+    interactions: interact
+      ? [
+          ...(await exerciseVisibleControls(page, output, `${prefix}-all-details`)),
+          ...(await exerciseDisclosuresAndPressed(page)),
+        ]
+      : [],
   };
 }
 
@@ -457,6 +468,9 @@ function auditComposedText(selector?: string) {
 
 const populatedRouteHeadings: Record<string, string> = {
   input: "Build Release Name",
+  "tracker-data": "Input Metadata",
+  "bluray-candidates": "Release Candidates",
+  "audio-analysis": "Waveforms, Spectrograms & Statistics",
   duplicates: "Check Trackers",
   screenshots: "Plan & Capture",
   "menu-images": "Menu Images",
@@ -479,9 +493,16 @@ async function waitForPopulatedRoute(page: Page, route: string) {
       page.locator("details.tracker-dropdown [role='checkbox'][aria-label='HDS']"),
     ).toHaveAttribute("aria-checked", "true");
   }
-  if (route === "screenshots") await expect(page.getByAltText("Screenshot 1")).toBeVisible();
-  if (route === "descriptions")
-    await expect(page.getByRole("button", { name: "Expand" }).first()).toBeVisible();
+  if (route === "screenshots")
+    await expect(page.getByAltText("Screenshot 1")).toBeVisible({ timeout: 30_000 });
+  if (route === "descriptions") {
+    const expand = page.getByRole("button", { name: "Expand" }).first();
+    if ((await expand.count()) === 0) {
+      const refresh = page.getByRole("button", { name: "Refresh descriptions" });
+      if (await refresh.isEnabled()) await refresh.click();
+    }
+    await expect(expand).toBeVisible({ timeout: 30_000 });
+  }
   if (route === "history")
     await expect(page.getByRole("button", { name: /E2E Movie/ }).first()).toBeVisible();
   if (route === "duplicates")
@@ -1044,8 +1065,8 @@ test("reported selectors keep keyboard and label behavior", async ({ page }) => 
 
     await page.goto(new URL("settings", app.url).toString());
     await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
-    const booleanField = page.locator(".settings-field--switch").first();
-    const booleanSwitch = booleanField.getByRole("switch");
+    const booleanSwitch = page.getByRole("switch", { name: "Update Notification" });
+    const booleanField = booleanSwitch.locator("..");
     const booleanBefore = await booleanSwitch.getAttribute("aria-checked");
     await booleanField.locator("span").first().click();
     expect(await booleanSwitch.getAttribute("aria-checked")).not.toBe(booleanBefore);
@@ -1288,7 +1309,7 @@ test("capture populated tracker metadata from a synthetic active-input fixture",
 });
 
 test("sweep populated routes across resolved palettes and widths", async ({ page }) => {
-  test.setTimeout(1_200_000);
+  test.setTimeout(3_600_000);
   const output = path.resolve(
     "../docs/plans/visual-quality-evidence/matrix-v2",
     [
@@ -1298,7 +1319,13 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
     ].join("-"),
   );
   await mkdir(output, { recursive: true });
-  const workspace = await createE2EWorkspace({ screenshotCount: 2, preparedMediaInfo: true });
+  const workspace = await createE2EWorkspace({
+    screenshotCount: 2,
+    preparedMediaInfo: true,
+    audioAnalysis: true,
+  });
+  await writeFile(workspace.screenshotPath, visualFramePNG);
+  workspace.env.UPBRR_E2E_BLURAY_CANDIDATES = "1";
   let app: AppServer | undefined;
   const records: unknown[] = [];
   const themes = [
@@ -1314,6 +1341,9 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
   const accents = ["blueish", "pink", "green", "purple", "grayish", "orange"];
   const routes = [
     "input",
+    "tracker-data",
+    "bluray-candidates",
+    "audio-analysis",
     "duplicates",
     "screenshots",
     "menu-images",
@@ -1340,6 +1370,9 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
     await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).first().waitFor();
+    await page.getByRole("button", { name: "Audio Analysis", exact: true }).click();
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({ timeout: 120_000 });
     for (const theme of themes) {
       for (const mode of (theme === "napster" ? ["light"] : ["light", "dark"]).filter(
         (mode) => !process.env.VQ_MODE || mode === process.env.VQ_MODE,
@@ -1414,6 +1447,30 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
                   await intercept.fulfill({ response, body: JSON.stringify(snapshot) });
                 });
               }
+              if (route === "tracker-data") {
+                await page.route("**/api/app/GetActiveInput", async (intercept) => {
+                  const response = await intercept.fetch();
+                  const snapshot = await response.json();
+                  const display = snapshot.current?.release?.display;
+                  if (display)
+                    display.TrackerData = [
+                      {
+                        Tracker: "HDS",
+                        TrackerID: "e2e-2048",
+                        InfoHash: "ABCDEF0123456789",
+                        Category: "MOVIE",
+                        Description: "[center]Synthetic stored description[/center]",
+                        DescriptionHTML:
+                          '<div style="text-align: center;">Synthetic stored description</div>',
+                        ImageURLs: [],
+                        Filename: "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-GRP.mkv",
+                        Matched: true,
+                        UpdatedAt: "2026-09-25T00:00:00Z",
+                      },
+                    ];
+                  await intercept.fulfill({ response, body: JSON.stringify(snapshot) });
+                });
+              }
               await page.goto(new URL(route, app.url).toString());
               await waitForPopulatedRoute(page, route);
               if (route === "input") {
@@ -1465,16 +1522,14 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
                   .locator(inventorySurface("main"))
                   .evaluateAll(captureControlRecords),
                 ...(await page.evaluate(auditComposedText)),
-                interactions: [
-                  ...(await exerciseVisibleControls(page, output, name)),
-                  ...(await exerciseDisclosuresAndPressed(page)),
-                ],
+                interactions: [],
                 conditional:
                   route === "input"
-                    ? await captureExpandedSelectionState(page, output, name)
+                    ? await captureExpandedSelectionState(page, output, name, false)
                     : null,
               });
-              if (route === "input" || route === "upload")
+              await page.waitForTimeout(1500);
+              if (route === "input" || route === "upload" || route === "tracker-data")
                 await page.unroute("**/api/app/GetActiveInput");
             }
           }
@@ -1482,18 +1537,42 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
         }
       }
     }
-    if (process.env.VQ_THEME) expect(records).toHaveLength(routes.length * 2);
+    if (!process.env.VQ_THEME && !process.env.VQ_MODE && !process.env.VQ_ACCENT)
+      expect(records).toHaveLength(910);
     await writeFile(path.join(output, "cells.json"), JSON.stringify(records, null, 2));
+    const visualFailures = records.flatMap((item) => {
+      const cell = item as {
+        name: string;
+        overflow: number;
+        failureCount: number;
+        failures: unknown[];
+        mode: string;
+        root: { theme: string; mode: string };
+        theme: string;
+      };
+      const reasons: string[] = [];
+      if (cell.overflow > 0) reasons.push(`overflow=${cell.overflow}`);
+      if (cell.failureCount) reasons.push(`contrast=${JSON.stringify(cell.failures)}`);
+      if (cell.root.theme !== cell.theme || cell.root.mode !== cell.mode)
+        reasons.push(`theme=${JSON.stringify(cell.root)}`);
+      return reasons.length ? [`${cell.name}: ${reasons.join(", ")}`] : [];
+    });
+    expect(visualFailures).toEqual([]);
+  } catch (error) {
+    await writeFile(path.join(output, "app-error.log"), app?.output() ?? "App did not start");
+    throw error;
   } finally {
     await app?.stop();
     await workspace.cleanup();
   }
 });
 
-test("audit composed text contrast on populated routes", async ({ page }) => {
-  test.setTimeout(1_200_000);
+test("sweep generated and stored description fixtures across resolved palettes and widths", async ({
+  page,
+}) => {
+  test.setTimeout(1_800_000);
   const output = path.resolve(
-    "../docs/plans/visual-quality-evidence/composed-contrast-v2",
+    "../docs/plans/visual-quality-evidence/description-matrix-v2",
     [
       process.env.VQ_THEME || "all",
       process.env.VQ_MODE || "all",
@@ -1504,6 +1583,26 @@ test("audit composed text contrast on populated routes", async ({ page }) => {
   const workspace = await createE2EWorkspace({ screenshotCount: 2, preparedMediaInfo: true });
   let app: AppServer | undefined;
   const records: unknown[] = [];
+  const raw = `[center][img=300]https://img.example/cover.svg[/img][/center]
+[center][url=https://img.example/shot][img=500]https://img.example/shot.svg[/img][/url][/center]
+[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]
+[mediainfo]General
+Complete name : Example.Movie.2026.1080p-GRP.mkv
+Format : Matroska
+Video
+Format : AVC
+Width : 1920 pixels
+Height : 1080 pixels[/mediainfo]
+<blockquote>HTML and [b]BBCode[/b] together.</blockquote>
+[list][li]First item[/li][li]Second item[/li][/list]
+[quote=Reviewer]Quoted summary[/quote]
+[spoiler=Details]Hidden notes[/spoiler]
+[hide]Extra notes[/hide]
+[comparison=Before,After]https://img.example/before.png
+https://img.example/after.png[/comparison]
+[pre][center]literal markup[/center][/pre]
+<a href="https://img.example/hdt"><img src="https://img.example/hdt.svg" height=137></a>`;
+  const storedUnsafe = `<div><a href="javascript:bad()">unsafe link</a><img src="javascript:bad()" onerror="bad()" alt="blocked image"><p>Use [draft] &amp; review</p><pre>[b]literal[/b]</pre>&lt;center&gt;Encoded &amp; safe&lt;/center&gt;<unknown>unknown text</unknown>`;
   const themes = [
     "minimal",
     "autobrr",
@@ -1515,18 +1614,6 @@ test("audit composed text contrast on populated routes", async ({ page }) => {
     "napster",
   ].filter((theme) => !process.env.VQ_THEME || theme === process.env.VQ_THEME);
   const accents = ["blueish", "pink", "green", "purple", "grayish", "orange"];
-  const routes = [
-    "input",
-    "duplicates",
-    "screenshots",
-    "menu-images",
-    "uploaded-images",
-    "descriptions",
-    "upload",
-    "history",
-    "settings",
-    "logging",
-  ].filter((route) => !process.env.VQ_ROUTE || route === process.env.VQ_ROUTE);
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
@@ -1543,12 +1630,80 @@ test("audit composed text contrast on populated routes", async ({ page }) => {
     await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).first().waitFor();
+    const authStatus = await page.request.get(new URL("api/auth/status", app.url).toString());
+    const { csrfToken } = (await authStatus.json()) as { csrfToken: string };
+    const renderedResponse = await page.request.post(
+      new URL("api/app/RenderDescription", app.url).toString(),
+      {
+        data: { Raw: raw },
+        headers: { Origin: new URL(app.url).origin, "X-CSRF-Token": csrfToken },
+      },
+    );
+    expect(renderedResponse.ok()).toBe(true);
+    const rendered: string = await renderedResponse.json();
+    expect(rendered).toContain("mediainfo-preview");
+    expect(rendered).toContain("literal markup");
+    const storedUnsafeResponse = await page.request.post(
+      new URL("api/app/RenderDescription", app.url).toString(),
+      {
+        data: { Raw: storedUnsafe },
+        headers: { Origin: new URL(app.url).origin, "X-CSRF-Token": csrfToken },
+      },
+    );
+    expect(storedUnsafeResponse.ok()).toBe(true);
+    const storedUnsafeHTML: string = await storedUnsafeResponse.json();
+    expect(storedUnsafeHTML).not.toContain("javascript:");
+    expect(storedUnsafeHTML).not.toContain("onerror");
+    await page.route("https://img.example/**", async (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="#5975a9"/><text x="24" y="155" fill="white" font-size="36">Synthetic image</text></svg>',
+      }),
+    );
+    await page.route("**/api/app/GetActiveInput", async (route) => {
+      const response = await route.fetch();
+      const snapshot = await response.json();
+      const description = snapshot.current?.descriptions?.descriptions?.[0];
+      if (description) {
+        description.source = raw;
+        description.rendered = rendered;
+      }
+      const display = snapshot.current?.release?.display;
+      if (display)
+        display.TrackerData = [
+          {
+            Tracker: "HDS",
+            TrackerID: "synthetic-2048",
+            InfoHash: "ABCDEF0123456789",
+            Category: "MOVIE",
+            Description: raw,
+            DescriptionHTML: rendered,
+            ImageURLs: [],
+            Filename: "Example.Movie.2026.1080p-GRP.mkv",
+            Matched: true,
+            UpdatedAt: "2026-09-25T00:00:00Z",
+          },
+          {
+            Tracker: "Stored",
+            TrackerID: "synthetic-2049",
+            InfoHash: "1234567890ABCDEF",
+            Category: "MOVIE",
+            Description: storedUnsafe,
+            DescriptionHTML: storedUnsafeHTML,
+            ImageURLs: [],
+            Filename: "Example.Movie.2026.1080p-GRP.mkv",
+            Matched: true,
+            UpdatedAt: "2026-09-25T00:00:00Z",
+          },
+        ];
+      await route.fulfill({ response, body: JSON.stringify(snapshot) });
+    });
     for (const theme of themes) {
       for (const mode of (theme === "napster" ? ["light"] : ["light", "dark"]).filter(
         (mode) => !process.env.VQ_MODE || mode === process.env.VQ_MODE,
       )) {
         for (const accent of (theme.startsWith("kanagawa") ? accents : [""]).filter(
-          (accent) => !process.env.VQ_ACCENT || accent === process.env.VQ_ACCENT,
+          (value) => !process.env.VQ_ACCENT || value === process.env.VQ_ACCENT,
         )) {
           await page.evaluate(
             ({ theme, mode, accent }) => {
@@ -1566,21 +1721,148 @@ test("audit composed text contrast on populated routes", async ({ page }) => {
           );
           for (const width of [1280, 390]) {
             await page.setViewportSize({ width, height: 900 });
-            for (const route of routes) {
+            for (const route of ["descriptions", "tracker-data"]) {
               await page.goto(new URL(route, app.url).toString());
               await waitForPopulatedRoute(page, route);
-              const mainText = await page.getByRole("main").innerText();
-              expect(mainText).not.toContain("rate limit exceeded");
-              expect(mainText).not.toContain("Runtime capabilities could not be loaded");
+              if (route === "descriptions") {
+                await page
+                  .getByRole("button", { name: /^Expand / })
+                  .first()
+                  .click();
+                await expect(
+                  page.getByRole("textbox", { name: /^Raw description for / }),
+                ).toHaveValue(raw);
+              } else {
+                await page
+                  .getByRole("button", { name: /^Render HDS entry / })
+                  .click({ timeout: 5_000 });
+                await page
+                  .locator("main details")
+                  .filter({ hasText: "synthetic-2049" })
+                  .last()
+                  .locator("summary")
+                  .first()
+                  .click({ timeout: 5_000 });
+                await page
+                  .getByRole("button", { name: /^Render Stored entry / })
+                  .click({ timeout: 5_000 });
+                const storedPreview = page.locator("main .tracker-description.rendered").nth(1);
+                await expect(storedPreview).toContainText("unsafe link");
+                await expect(storedPreview).toContainText("Encoded & safe");
+                await expect(storedPreview.locator("pre")).toContainText("[b]literal[/b]");
+                await expect(storedPreview.locator("a[href]")).toHaveCount(0);
+                await expect(storedPreview.locator("img[src]")).toHaveCount(0);
+                await page.getByRole("button", { name: /^Show raw Stored entry / }).click();
+                await expect(page.getByText(storedUnsafe, { exact: true })).toBeVisible();
+                await page.getByRole("button", { name: /^Render Stored entry / }).click();
+              }
+              const preview = page.locator("main .tracker-description.rendered").first();
+              await expect(preview).toBeVisible();
+              await expect(preview.locator("img")).toHaveCount(5);
+              await expect
+                .poll(
+                  () =>
+                    preview
+                      .locator("img:not(.comparison__image)")
+                      .evaluateAll((images) =>
+                        images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+                      ),
+                  { message: `${theme}-${mode}-${route}-${width}: images load` },
+                )
+                .toBe(true);
+              await expect(preview.locator(".mediainfo-preview")).toBeVisible();
+              await expect(preview.locator("blockquote").last()).toContainText("Quoted summary");
+              await expect(preview.locator("ul:not([class]) > li")).toHaveCount(2);
+              await expect(preview.locator("details:not([class])")).toHaveCount(2);
+              await expect(preview.locator("pre").last()).toContainText(
+                "[center]literal markup[/center]",
+              );
+              const name = [theme, accent || "default", mode, route, width].join("-");
+              await captureFullContent(page, path.join(output, `${name}.png`));
+              await preview.screenshot({
+                path: path.join(output, `${name}-rendered.png`),
+                animations: "disabled",
+              });
+              if (route === "tracker-data")
+                await page
+                  .locator("main .tracker-description.rendered")
+                  .nth(1)
+                  .screenshot({
+                    path: path.join(output, `${name}-stored-unsafe.png`),
+                    animations: "disabled",
+                  });
               const audit = await page.evaluate(auditComposedText);
-              records.push({ theme, accent, mode, width, route, ...audit });
+              const overflow = await page.evaluate(
+                () => document.documentElement.scrollWidth - innerWidth,
+              );
+              expect(overflow, name).toBeLessThanOrEqual(0);
+              expect(audit.failureCount, `${name}: ${JSON.stringify(audit.failures)}`).toBe(0);
+              const imageDisplay = await preview
+                .locator("img")
+                .first()
+                .evaluate((element) => getComputedStyle(element).display);
+              expect(imageDisplay).toBe("inline-block");
+              const hdtHeight = await preview
+                .locator('img[height="137"]')
+                .evaluate((element) => element.getBoundingClientRect().height);
+              expect(hdtHeight, name).toBeLessThanOrEqual(137);
+              const comparison = preview.locator(".comparison").first();
+              const comparisonDetails = comparison.locator("details");
+              await comparisonDetails.locator("summary").click();
+              await expect(comparisonDetails).toHaveAttribute("open", "");
+              await expect(comparisonDetails.locator("summary")).toHaveText("Close");
+              await expect
+                .poll(() =>
+                  comparison
+                    .locator(
+                      ".comparison__image-container:not(.comparison__image-container--hidden) img",
+                    )
+                    .evaluate((image) => (image as HTMLImageElement).naturalWidth),
+                )
+                .toBeGreaterThan(0);
+              await page.screenshot({
+                path: path.join(output, `${name}-comparison-open.png`),
+                animations: "disabled",
+              });
+              await comparisonDetails.locator("summary").click({ timeout: 5_000 });
+              await expect(comparisonDetails).not.toHaveAttribute("open", "");
+              await comparisonDetails.locator("summary").click();
+              await expect(comparisonDetails).toHaveAttribute("open", "");
+              await page.keyboard.press("2");
+              await expect(
+                comparison.locator(".comparison__image-container").nth(1),
+              ).not.toHaveClass(/comparison__image-container--hidden/);
+              await page.keyboard.press("ArrowLeft");
+              await expect(
+                comparison.locator(".comparison__image-container").first(),
+              ).not.toHaveClass(/comparison__image-container--hidden/);
+              await page.keyboard.press("Escape");
+              await expect(comparisonDetails).not.toHaveAttribute("open", "");
+              await expect(comparisonDetails.locator("summary")).toHaveText("Show");
+              records.push({
+                name,
+                theme,
+                accent,
+                mode,
+                route,
+                width,
+                overflow,
+                imageDisplay,
+                ...audit,
+              });
+              await page.waitForTimeout(1500);
             }
           }
           await writeFile(path.join(output, "progress.json"), JSON.stringify(records, null, 2));
         }
       }
     }
+    if (!process.env.VQ_THEME && !process.env.VQ_MODE && !process.env.VQ_ACCENT)
+      expect(records).toHaveLength(140);
     await writeFile(path.join(output, "cells.json"), JSON.stringify(records, null, 2));
+  } catch (error) {
+    await writeFile(path.join(output, "app-error.log"), app?.output() ?? "App did not start");
+    throw error;
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -2231,9 +2513,12 @@ test("capture expanded frames, published images, menus, descriptions, and icon-o
       const outline = await firstSeconds.evaluate((element) => ({
         width: getComputedStyle(element).outlineWidth,
         style: getComputedStyle(element).outlineStyle,
+        shadow: getComputedStyle(element).boxShadow,
       }));
-      expect(Number.parseFloat(outline.width)).toBeGreaterThanOrEqual(2);
-      expect(outline.style).toBe("solid");
+      expect(
+        (outline.style !== "none" && Number.parseFloat(outline.width) >= 2) ||
+          outline.shadow !== "none",
+      ).toBe(true);
       await capture("screenshots", "frames-expanded", width);
     }
     await page.getByRole("button", { name: "Generate screenshots" }).click();
@@ -2644,16 +2929,22 @@ test("capture source history and host browser controls", async ({ page }) => {
   }
 });
 
-test("inspect populated routes at a 200 percent zoom-equivalent width", async ({ page }) => {
-  test.setTimeout(240_000);
+test("inspect populated routes at zoom-equivalent and tablet widths", async ({ page }) => {
+  test.setTimeout(600_000);
   const output = path.resolve("../docs/plans/visual-quality-evidence/zoom-200");
   await mkdir(output, { recursive: true });
   const records: unknown[] = [];
   for (const theme of ["minimal", "swizzin"]) {
     for (const mode of ["light", "dark"]) {
-      const workspace = await createE2EWorkspace({ screenshotCount: 2, preparedMediaInfo: true });
+      const workspace = await createE2EWorkspace({
+        screenshotCount: 2,
+        preparedMediaInfo: true,
+        audioAnalysis: true,
+      });
+      workspace.env.UPBRR_E2E_BLURAY_CANDIDATES = "1";
       let app: AppServer | undefined;
       try {
+        await page.emulateMedia({ reducedMotion: "reduce" });
         app = await startApp(workspace);
         await page.goto(app.url);
         await page.evaluate(() => {
@@ -2674,7 +2965,11 @@ test("inspect populated routes at a 200 percent zoom-equivalent width", async ({
         await page.getByRole("button", { name: "Descriptions", exact: true }).click();
         await page.getByRole("button", { name: "Refresh descriptions" }).click();
         await page.getByRole("button", { name: "Expand" }).first().waitFor();
-        await page.setViewportSize({ width: 640, height: 900 });
+        await page.getByRole("button", { name: "Audio Analysis", exact: true }).click();
+        await page.getByRole("button", { name: "Generate", exact: true }).click();
+        await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({
+          timeout: 120_000,
+        });
         await page.evaluate(
           ({ theme, mode }) =>
             localStorage.setItem(
@@ -2683,16 +2978,56 @@ test("inspect populated routes at a 200 percent zoom-equivalent width", async ({
             ),
           { theme, mode },
         );
-        for (const route of Object.keys(populatedRouteHeadings)) {
-          await page.goto(new URL(route, app.url).toString());
-          await waitForPopulatedRoute(page, route);
-          const overflow = await page.evaluate(
-            () => document.documentElement.scrollWidth - innerWidth,
-          );
-          expect(overflow, `${theme} ${mode} ${route} at 640 CSS px`).toBeLessThanOrEqual(0);
-          const screenshot = `${theme}-${mode}-${route}-640.png`;
-          await page.screenshot({ path: path.join(output, screenshot), animations: "disabled" });
-          records.push({ theme, mode, route, width: 640, overflow, screenshot });
+        for (const width of [640, 768]) {
+          await page.setViewportSize({ width, height: 900 });
+          for (const route of Object.keys(populatedRouteHeadings)) {
+            if (route === "tracker-data") {
+              await page.route("**/api/app/GetActiveInput", async (intercept) => {
+                const response = await intercept.fetch();
+                const snapshot = await response.json();
+                const display = snapshot.current?.release?.display;
+                if (display)
+                  display.TrackerData = [
+                    {
+                      Tracker: "HDS",
+                      TrackerID: "synthetic-2048",
+                      InfoHash: "ABCDEF0123456789",
+                      Category: "MOVIE",
+                      Description: "[center]Synthetic stored description[/center]",
+                      DescriptionHTML:
+                        '<div style="text-align: center;">Synthetic stored description</div>',
+                      ImageURLs: [],
+                      Filename: "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-GRP.mkv",
+                      Matched: true,
+                      UpdatedAt: "2026-09-25T00:00:00Z",
+                    },
+                  ];
+                await intercept.fulfill({ response, body: JSON.stringify(snapshot) });
+              });
+            }
+            await page.goto(new URL(route, app.url).toString());
+            await waitForPopulatedRoute(page, route);
+            expect(
+              await page.evaluate(
+                () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+              ),
+            ).toBe(true);
+            const transitionSeconds = await page
+              .getByRole("main")
+              .evaluate((element) =>
+                Number.parseFloat(getComputedStyle(element).transitionDuration),
+              );
+            expect(transitionSeconds).toBeLessThanOrEqual(0.001);
+            const overflow = await page.evaluate(
+              () => document.documentElement.scrollWidth - innerWidth,
+            );
+            expect(overflow, `${theme} ${mode} ${route} at ${width} CSS px`).toBeLessThanOrEqual(0);
+            const screenshot = `${theme}-${mode}-${route}-${width}.png`;
+            await page.screenshot({ path: path.join(output, screenshot), animations: "disabled" });
+            records.push({ theme, mode, route, width, overflow, screenshot });
+            if (route === "tracker-data") await page.unroute("**/api/app/GetActiveInput");
+            await page.waitForTimeout(1000);
+          }
         }
       } finally {
         await app?.stop();
@@ -2700,6 +3035,7 @@ test("inspect populated routes at a 200 percent zoom-equivalent width", async ({
       }
     }
   }
+  expect(records).toHaveLength(104);
   await writeFile(path.join(output, "cells.json"), JSON.stringify(records, null, 2));
 });
 

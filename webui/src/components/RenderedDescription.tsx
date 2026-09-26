@@ -3,6 +3,7 @@
 
 import { type MouseEvent as ReactMouseEvent, useEffect, useRef } from "react";
 import { handleExternalLinkClick } from "../utils/externalLinks";
+import "./rendered-description.css";
 
 type Props = {
   html: string;
@@ -94,6 +95,7 @@ export default function RenderedDescription({ html }: Props) {
           event.preventDefault();
           details.open = false;
           comparison.classList.remove("comparison--open");
+          if (summary) summary.textContent = "Show";
           return;
         }
         const digit = Number.parseInt(event.key, 10);
@@ -115,35 +117,23 @@ export default function RenderedDescription({ html }: Props) {
         applyColumn(Math.min(maxColumns, Math.max(1, Math.ceil(ratio * maxColumns))));
       };
 
-      const handleToggle = () => {
-        if (details.open || comparison.classList.contains("comparison--open")) {
-          applyColumn(current);
-          globalThis.addEventListener("keydown", handleKeyDown);
-          globalThis.addEventListener("mousemove", handleMouseMove);
-        } else {
-          globalThis.removeEventListener("keydown", handleKeyDown);
-          globalThis.removeEventListener("mousemove", handleMouseMove);
-        }
-      };
-
       const handleSummaryClick = (event: MouseEvent) => {
         event.preventDefault();
         details.open = !details.open;
         comparison.classList.toggle("comparison--open", details.open);
-        handleToggle();
+        if (summary) summary.textContent = details.open ? "Close" : "Show";
+        if (details.open) applyColumn(current);
       };
 
-      details.addEventListener("toggle", handleToggle);
       if (summary) {
         summary.addEventListener("click", handleSummaryClick);
+        summary.textContent = details.open ? "Close" : "Show";
       }
+      globalThis.addEventListener("keydown", handleKeyDown);
+      globalThis.addEventListener("mousemove", handleMouseMove);
       applyColumn(1);
-      if (details.open) {
-        handleToggle();
-      }
 
       cleanups.push(() => {
-        details.removeEventListener("toggle", handleToggle);
         if (summary) {
           summary.removeEventListener("click", handleSummaryClick);
         }
@@ -160,7 +150,7 @@ export default function RenderedDescription({ html }: Props) {
   return (
     <div
       ref={rootRef}
-      className="tracker-description rendered"
+      className="tracker-description rendered whitespace-pre-wrap text-muted-foreground leading-relaxed"
       onAuxClick={handleRenderedDescriptionLinkClick}
       onClick={handleRenderedDescriptionLinkClick}
       dangerouslySetInnerHTML={{ __html: html }}

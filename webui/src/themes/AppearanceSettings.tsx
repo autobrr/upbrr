@@ -41,7 +41,7 @@ export function AppearanceSettings() {
             />
             <span className="block rounded-lg border border-border bg-card p-2 text-left text-card-foreground transition-colors hover:border-primary peer-checked:border-primary peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
               <span
-                className={`theme-preview ${theme.id !== "napster" && previewMode === "dark" ? "dark" : ""}`}
+                className={`theme-preview flex h-24 overflow-hidden rounded-lg border border-border bg-background text-foreground ${theme.id !== "napster" && previewMode === "dark" ? "dark" : ""}`}
                 data-theme={theme.id}
                 data-accent={
                   supportsAccents(theme.id)
@@ -50,11 +50,11 @@ export function AppearanceSettings() {
                 }
                 aria-hidden="true"
               >
-                <span className="theme-preview__sidebar" />
-                <span className="theme-preview__content">
-                  <span className="theme-preview__heading" />
-                  <span className="theme-preview__line" />
-                  <span className="theme-preview__button" />
+                <span className="w-[24%] border-r border-sidebar-border bg-sidebar" />
+                <span className="flex min-w-0 flex-1 flex-col items-start gap-[9px] p-[15px]">
+                  <span className="h-[9px] w-[58%] rounded-lg bg-foreground" />
+                  <span className="h-[7px] w-[88%] rounded-lg bg-muted" />
+                  <span className="mt-auto h-4 w-[43%] rounded-lg bg-primary" />
                 </span>
               </span>
               <span className="mt-2 flex items-center justify-between gap-2 text-sm font-medium">

@@ -99,6 +99,7 @@ func readProductionMigrationSources(t *testing.T, root string) map[string]string
 		relative = filepath.ToSlash(relative)
 		if strings.HasSuffix(relative, "_test.go") || strings.HasSuffix(relative, ".test.ts") || strings.HasSuffix(relative, ".test.tsx") ||
 			strings.HasPrefix(relative, "internal/architecturepolicy/") || strings.HasPrefix(relative, "webui/src/test/") ||
+			strings.HasPrefix(relative, "webui/e2e/") || strings.HasPrefix(relative, "docs/plans/") ||
 			strings.Contains(relative, "/generated/") {
 			return nil
 		}

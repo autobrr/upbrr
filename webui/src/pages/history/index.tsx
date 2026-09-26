@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { historyClient } from "../../api/app";
@@ -188,22 +189,24 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     (overviewQuery.error ? String(overviewQuery.error) : "");
 
   return (
-    <div className="content-stack">
-      <header className="hero">
-        <p className="eyebrow">upbrr</p>
+    <div className="flex flex-col gap-4">
+      <header className="relative z-[1] max-w-[720px]">
+        <p className={pageStyle.eyebrow}>upbrr</p>
         <h1>History</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           Review previously processed releases stored in SQLite and inspect full stored details.
         </p>
       </header>
 
-      <section className="panel grid min-h-[560px] gap-3 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
+      <section
+        className={`${pageStyle.panel} grid min-h-[560px] gap-3 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]`}
+      >
         <aside className="rounded-lg border border-border bg-card p-3">
           <div className="mb-2">
-            <p className="label">Stored releases</p>
+            <p className={pageStyle.label}>Stored releases</p>
             <p className="helper">Most recently updated first</p>
             <label className="mt-2 grid gap-1.5">
-              <span className="label">Search by title</span>
+              <span className={pageStyle.label}>Search by title</span>
               <input
                 type="text"
                 value={searchQuery}
@@ -213,12 +216,12 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
             </label>
           </div>
 
-          {loading ? <p className="muted">Loading history...</p> : null}
+          {loading ? <p className="text-muted-foreground">Loading history...</p> : null}
           {!loading && entries.length === 0 ? (
-            <p className="muted">No stored releases found.</p>
+            <p className="text-muted-foreground">No stored releases found.</p>
           ) : null}
           {!loading && entries.length > 0 && filteredEntries.length === 0 ? (
-            <p className="muted">No releases match the current title filter.</p>
+            <p className="text-muted-foreground">No releases match the current title filter.</p>
           ) : null}
 
           <div className="grid max-h-[520px] gap-1.5 overflow-y-auto">
@@ -247,10 +250,10 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
         </aside>
 
         <div className="overflow-y-auto rounded-lg border border-border bg-card p-3">
-          {detailLoading ? <p className="muted">Loading overview...</p> : null}
+          {detailLoading ? <p className="text-muted-foreground">Loading overview...</p> : null}
 
           {!detailLoading && !overview ? (
-            <p className="muted">Select a stored release to view details.</p>
+            <p className="text-muted-foreground">Select a stored release to view details.</p>
           ) : null}
 
           {overview ? (
@@ -276,26 +279,26 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                 </button>
               </div>
 
-              <div className="summary">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 rounded-2xl border border-foreground/10 bg-card/80 p-4">
                 <div>
-                  <p className="label">Release</p>
-                  <p className="value">
+                  <p className={pageStyle.label}>Release</p>
+                  <p className={pageStyle.value}>
                     {selectedEntry
                       ? releaseLabel(selectedEntry)
                       : releaseLabelFromOverview(overview)}
                   </p>
                 </div>
                 <div>
-                  <p className="label">Status</p>
-                  <p className="value">{overview.StatusLabel || "Stored"}</p>
+                  <p className={pageStyle.label}>Status</p>
+                  <p className={pageStyle.value}>{overview.StatusLabel || "Stored"}</p>
                 </div>
                 <div>
-                  <p className="label">Metadata Updated</p>
-                  <p className="value">{formatDate(overview.MetadataUpdatedAt)}</p>
+                  <p className={pageStyle.label}>Metadata Updated</p>
+                  <p className={pageStyle.value}>{formatDate(overview.MetadataUpdatedAt)}</p>
                 </div>
                 <div>
-                  <p className="label">Last Upload</p>
-                  <p className="value">
+                  <p className={pageStyle.label}>Last Upload</p>
+                  <p className={pageStyle.value}>
                     {formatLastUpload(
                       overview.LatestUploadStatus,
                       overview.StatusLabel,
@@ -308,7 +311,9 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
               <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2 [&_h3]:mb-2 [&_h3]:mt-0 [&_h3]:text-sm">
                 <article className="rounded-lg border border-border bg-muted p-2.5 text-foreground">
                   <h3>Path</h3>
-                  <p className="mono [overflow-wrap:anywhere]">{overview.SourcePath}</p>
+                  <p className="font-mono text-[0.95rem] [overflow-wrap:anywhere]">
+                    {overview.SourcePath}
+                  </p>
                 </article>
 
                 <article className="rounded-lg border border-border bg-muted p-2.5 text-foreground [&_p]:mb-1 [&_p]:mt-0">
@@ -369,7 +374,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                       })}
                     </ul>
                   ) : (
-                    <p className="muted">(none)</p>
+                    <p className="text-muted-foreground">(none)</p>
                   )}
                 </article>
 
@@ -385,7 +390,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                       ))}
                     </ul>
                   ) : (
-                    <p className="muted">No upload records.</p>
+                    <p className="text-muted-foreground">No upload records.</p>
                   )}
                 </article>
 
@@ -404,7 +409,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                       ))}
                     </ul>
                   ) : (
-                    <p className="muted">No tracker rule results stored.</p>
+                    <p className="text-muted-foreground">No tracker rule results stored.</p>
                   )}
                 </article>
 
@@ -432,7 +437,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
             </div>
           ) : null}
 
-          {displayedError ? <p className="error">{displayedError}</p> : null}
+          {displayedError ? <p className={pageStyle.error}>{displayedError}</p> : null}
         </div>
       </section>
     </div>

@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
@@ -11,6 +12,7 @@ import {
   type CreatedAPIToken,
 } from "../../api/app";
 import { Button } from "../../components/ui/button";
+import { confirmationDialogStyle, settingsStyle } from "../../settings/style";
 
 const supportedScopes: ReadonlyArray<Readonly<{ value: APITokenScope; label: string }>> = [
   { value: "workflow:read", label: "Read workflows" },
@@ -98,13 +100,13 @@ export default function APITokensSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <section className="settings-subgroup">
+      <section className={settingsStyle.subgroup}>
         <div>
           <h2 className="m-0 text-base font-semibold text-foreground">Generate API token</h2>
           <p className="helper">Token hashes persist in web-auth.json; plaintext is shown once.</p>
         </div>
-        <div className="settings-grid">
-          <label className="settings-field">
+        <div className={settingsStyle.grid}>
+          <label className={settingsStyle.field}>
             <span>Name</span>
             <input
               className={inputClass}
@@ -114,7 +116,7 @@ export default function APITokensSettings() {
               placeholder="Automation"
             />
           </label>
-          <label className="settings-field">
+          <label className={settingsStyle.field}>
             <span>Owner</span>
             <input
               className={inputClass}
@@ -173,11 +175,11 @@ export default function APITokensSettings() {
           </div>
         ) : null}
         {error || tokenQuery.error ? (
-          <p className="error m-0">{error || String(tokenQuery.error)}</p>
+          <p className={`${pageStyle.error} m-0`}>{error || String(tokenQuery.error)}</p>
         ) : null}
       </section>
 
-      <section className="settings-subgroup">
+      <section className={settingsStyle.subgroup}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="m-0 text-base font-semibold text-foreground">API tokens</h2>
@@ -188,7 +190,7 @@ export default function APITokensSettings() {
           </Button>
         </div>
         {!loading && !tokenQuery.isError && records.length === 0 ? (
-          <p className="muted">No API tokens configured.</p>
+          <p className="text-muted-foreground">No API tokens configured.</p>
         ) : null}
         <div className="grid gap-2">
           {records.map((record) => {
@@ -203,7 +205,9 @@ export default function APITokensSettings() {
                     <p className="m-0 font-semibold text-card-foreground">{record.name}</p>
                     <p className="helper m-0 font-mono">{record.id}</p>
                   </div>
-                  <span className={`settings-auth-badge ${revoked ? "is-idle" : "is-ready"}`}>
+                  <span
+                    className={`${settingsStyle.authBadge} ${revoked ? settingsStyle.authIdle : settingsStyle.authReady}`}
+                  >
                     {revoked ? "Revoked" : "Active"}
                   </span>
                 </div>
@@ -237,15 +241,13 @@ export default function APITokensSettings() {
         }}
       >
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="import-confirm-overlay" />
-          <AlertDialog.Content className="import-confirm-dialog">
-            <AlertDialog.Title className="import-confirm-dialog__title">
-              Revoke {revokeTarget?.name}?
-            </AlertDialog.Title>
-            <AlertDialog.Description className="import-confirm-dialog__message">
+          <AlertDialog.Overlay className={confirmationDialogStyle.overlay} />
+          <AlertDialog.Content className={confirmationDialogStyle.content}>
+            <AlertDialog.Title className="m-0">Revoke {revokeTarget?.name}?</AlertDialog.Title>
+            <AlertDialog.Description className="m-0">
               Requests using this token will be rejected immediately. This cannot be undone.
             </AlertDialog.Description>
-            <div className="import-confirm-dialog__actions">
+            <div className={confirmationDialogStyle.actions}>
               <AlertDialog.Cancel asChild>
                 <Button type="button" disabled={revoking}>
                   Cancel

@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "./ui/pageStyle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { Checkbox } from "./ui/checkbox";
@@ -10,6 +11,7 @@ import { loggingClient } from "../api/app";
 import { subscribeWebEvent } from "../api/client";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../types";
 import { cn } from "../utils/cn";
+import { settingsStyle } from "../settings/style";
 
 type LogEntry = {
   ID: number;
@@ -320,20 +322,20 @@ export default function LogSettingsPanel({
 
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(260px,360px)_minmax(0,1fr)]">
-      <div className="panel grid gap-3">
+      <div className={`${pageStyle.panel} grid gap-3`}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="label">Logging</p>
+            <p className={pageStyle.label}>Logging</p>
             <p className="helper">Adjust log verbosity and file rotation.</p>
           </div>
         </div>
-        <div className="settings-grid">
+        <div className={settingsStyle.grid}>
           {["Level", "FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => {
             const meta = fieldMeta[key];
             if (key === "Level") {
               const label = meta?.label ?? "Level";
               return (
-                <label className="settings-field" key="Logging.Level">
+                <label className={settingsStyle.field} key="Logging.Level">
                   <span>{label}</span>
                   <Select
                     value={levelValue}
@@ -364,7 +366,7 @@ export default function LogSettingsPanel({
         </div>
       </div>
 
-      <div className="panel grid gap-3">
+      <div className={`${pageStyle.panel} grid gap-3`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 font-semibold">
             <span
@@ -424,7 +426,7 @@ export default function LogSettingsPanel({
           />
         </div>
 
-        {bufferWarning ? <p className="warning">{bufferWarning}</p> : null}
+        {bufferWarning ? <p className="font-semibold text-primary-text">{bufferWarning}</p> : null}
 
         <div
           className="grid max-h-[328px] gap-1.5 overflow-y-auto rounded-lg border border-border bg-card p-2 font-mono text-[0.82rem]"
@@ -432,7 +434,7 @@ export default function LogSettingsPanel({
           ref={logStreamRef}
         >
           {filteredEntries.length === 0 ? (
-            <p className="muted">No log entries yet.</p>
+            <p className="text-muted-foreground">No log entries yet.</p>
           ) : (
             filteredEntries.map((entry) => (
               <div
@@ -463,7 +465,7 @@ export default function LogSettingsPanel({
 
         <div className="grid gap-2">
           <div>
-            <p className="label">Muted patterns</p>
+            <p className={pageStyle.label}>Muted patterns</p>
             <p className="helper">Mute exact message matches.</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -481,7 +483,7 @@ export default function LogSettingsPanel({
             </button>
           </div>
           {mutedPatterns.length === 0 ? (
-            <p className="muted">No muted patterns.</p>
+            <p className="text-muted-foreground">No muted patterns.</p>
           ) : (
             <div className="grid gap-1.5">
               {mutedPatterns.map((pattern) => (

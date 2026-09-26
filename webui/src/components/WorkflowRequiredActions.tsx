@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "./ui/pageStyle";
 import type { RequiredAction, WorkflowContinuation } from "../api/generated/release-workflow";
 import type { ReleaseRoute } from "../releaseSession/types";
 
@@ -49,9 +50,9 @@ export function WorkflowRequiredActions({
   if (!actions.length) return null;
 
   return (
-    <section className="panel mb-3 grid gap-3 py-3" aria-live="polite">
+    <section className={`${pageStyle.panel} mb-3 grid gap-3 py-3`} aria-live="polite">
       <div>
-        <p className="label">Action required</p>
+        <p className={pageStyle.label}>Action required</p>
         <h2>Release workflow needs input</h2>
       </div>
       <div className="grid gap-2">
@@ -64,9 +65,11 @@ export function WorkflowRequiredActions({
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <p className="font-semibold text-foreground">{action.prompt}</p>
-                <span className="muted text-sm">{actionScope(action)}</span>
+                <span className="text-muted-foreground text-sm">{actionScope(action)}</span>
               </div>
-              <p className="muted text-xs">Action: {action.kind.replaceAll("_", " ")}</p>
+              <p className="text-muted-foreground text-xs">
+                Action: {action.kind.replaceAll("_", " ")}
+              </p>
               {action.kind === "authorize_rules" ? (
                 <div>
                   <button className="ghost" type="button" onClick={() => onConfirm(action, true)}>
@@ -98,7 +101,9 @@ export function WorkflowRequiredActions({
                   </button>
                 </div>
               ) : (
-                <p className="muted text-sm">Continue from the relevant workflow page.</p>
+                <p className="text-muted-foreground text-sm">
+                  Continue from the relevant workflow page.
+                </p>
               )}
             </article>
           );
