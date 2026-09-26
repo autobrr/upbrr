@@ -279,6 +279,48 @@ func TestConvertTrackers(t *testing.T) {
 	}
 }
 
+func TestConvertTrackersMapsLegacyTrackerAliases(t *testing.T) {
+	input := []byte(`
+config = {
+    'DEFAULT': {'tmdb_api': 'test', 'screens': 6},
+    'TRACKERS': {
+        'default_trackers': 'DIGITALCORE, HDSPACE, RACING4EVERYONE, UNWALLED',
+        'preferred_tracker': 'UNWALLED',
+        'DIGITALCORE': {'api_key': 'digitalcore-key'},
+        'HDSPACE': {'api_key': 'hdspace-key'},
+        'RACING4EVERYONE': {'api_key': 'r4e-key'},
+    },
+    'TORRENT_CLIENTS': {},
+}
+`)
+
+	cfg, warnings, err := ImportFromContent(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.Trackers.DefaultTrackers; len(got) != 3 || strings.Join(got, ",") != "DC,HDS,R4E" {
+		t.Fatalf("DefaultTrackers: got %v, want [DC HDS R4E]", got)
+	}
+	if got := cfg.Trackers.Trackers["DC"].APIKey; got != "digitalcore-key" {
+		t.Fatalf("DC.APIKey: *** %q", got)
+	}
+	if got := cfg.Trackers.Trackers["HDS"].APIKey; got != "hdspace-key" {
+		t.Fatalf("HDS.APIKey: *** %q", got)
+	}
+	if got := cfg.Trackers.Trackers["R4E"].APIKey; got != "r4e-key" {
+		t.Fatalf("R4E.APIKey: *** %q", got)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "UNWALLED") {
+		t.Fatalf("missing unsupported default tracker warning: %v", warnings)
+	}
+	if got := cfg.Trackers.PreferredTracker; got != "" {
+		t.Fatalf("unsupported preferred tracker: got %q, want empty", got)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "skipped unsupported preferred tracker: UNWALLED") {
+		t.Fatalf("missing unsupported preferred tracker warning: %v", warnings)
+	}
+}
+
 func TestConvertTrackersPreferredTrackerNil(t *testing.T) {
 	input := []byte(`
 config = {
