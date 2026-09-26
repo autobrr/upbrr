@@ -131,7 +131,7 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 		coreInitErr = err
 		logger.Warnf("web: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
-		activation, activationErr := InitializeRuntimeConfigActivation(ctx, repo, cfg)
+		activation, activationErr := InitializeRuntimeConfigActivation(ctx, repo, cfg, logger)
 		if activationErr != nil {
 			_ = repo.Close()
 			_ = logger.Close()

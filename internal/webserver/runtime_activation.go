@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
@@ -124,12 +125,17 @@ func (s storedConfigSnapshot) DBPath() string { return s.dbPath }
 // InitializeRuntimeConfigActivation binds a validated startup config to the
 // durable generation before CLI or WebUI Core admits effects. A changed
 // fingerprint advances the generation only while the stored config matches the
-// caller's runtime and unfinished work can be invalidated safely.
+// caller's runtime and unfinished work can be invalidated safely. A busy input
+// is retried for up to 65 seconds, subject to ctx; other reconciliation errors
+// return immediately. The logger receives sanitized debug progress and may be nil.
 func InitializeRuntimeConfigActivation(
-	ctx context.Context, repo *db.SQLiteRepository, runtimeCfg config.Config,
+	ctx context.Context, repo *db.SQLiteRepository, runtimeCfg config.Config, logger api.Logger,
 ) (api.ConfigActivation, error) {
 	if repo == nil {
 		return api.ConfigActivation{}, errors.New("runtime activation: repository is required")
+	}
+	if logger == nil {
+		logger = api.NopLogger{}
 	}
 	if err := runtimeCfg.Validate(); err != nil {
 		return api.ConfigActivation{}, fmt.Errorf("validate runtime config: %w", err)
@@ -174,11 +180,50 @@ func InitializeRuntimeConfigActivation(
 		return api.ConfigActivation{}, fmt.Errorf("load config activation: %w", err)
 	}
 	if activation.Fingerprint != "" && activation.Fingerprint != fingerprint {
-		reconciled, reconcileErr := repo.ReconcileConfigActivation(ctx, snapshot, activation, fingerprint, releaseworkflow.ApplyConfigImpact)
-		if reconcileErr != nil {
-			return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", reconcileErr)
+		started := time.Now()
+		deadline := started.Add(time.Minute + 5*time.Second)
+		attempts := 0
+		logger.Debugf("config activation: startup reconcile state=started generation=%d", activation.ActiveGeneration)
+		for {
+			attempts++
+			reconciled, reconcileErr := repo.ReconcileConfigActivation(ctx, snapshot, activation, fingerprint, releaseworkflow.ApplyConfigImpact)
+			if reconcileErr == nil {
+				logger.Debugf(
+					"config activation: startup reconcile state=completed generation=%d attempts=%d elapsed=%s",
+					reconciled.ActiveGeneration,
+					attempts,
+					time.Since(started).Round(time.Second),
+				)
+				return reconciled, nil
+			}
+			busy := errors.Is(reconcileErr, api.ErrActiveInputBusy)
+			if !busy || !time.Now().Before(deadline) {
+				logger.Debugf(
+					"config activation: startup reconcile state=failed attempts=%d elapsed=%s busy=%t cause=%s",
+					attempts,
+					time.Since(started).Round(time.Second),
+					busy,
+					logging.SanitizeMessage(reconcileErr.Error()),
+				)
+				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", reconcileErr)
+			}
+			if attempts == 1 || attempts%10 == 0 {
+				logger.Debugf(
+					"config activation: startup reconcile state=waiting attempts=%d elapsed=%s cause=%s",
+					attempts,
+					time.Since(started).Round(time.Second),
+					logging.SanitizeMessage(reconcileErr.Error()),
+				)
+			}
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				logger.Debugf("config activation: startup reconcile state=canceled attempts=%d elapsed=%s", attempts, time.Since(started).Round(time.Second))
+				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", ctx.Err())
+			case <-timer.C:
+			}
 		}
-		return reconciled, nil
 	}
 	activation, err = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
 	if err != nil {

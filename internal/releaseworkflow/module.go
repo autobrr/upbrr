@@ -1573,21 +1573,53 @@ func latestHostedImageAttempts(attempts []api.HostedImageAttempt) []api.HostedIm
 }
 
 func (m *Module) ensureOperationRecovery(ctx context.Context) error {
+	return m.recoverOperationsOnce(ctx, false)
+}
+
+func (m *Module) discardInterruptedOperations(ctx context.Context) error {
+	return m.recoverOperationsOnce(ctx, true)
+}
+
+// recoverOperationsOnce settles prior-process operations once per module.
+// Startup recovery waits for live work leases and interrupts unfinished work;
+// ordinary recovery may resume a valid retained command after its lease ends.
+// Completed work checkpoints are published in either mode.
+func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted bool) error {
 	m.operationRecovery.Do(func() {
 		recoveryCtx := context.WithoutCancel(ctx)
+		if discardInterrupted {
+			recoveryCtx = ctx
+		}
 		records, err := m.operations.ListActiveOperations(recoveryCtx)
 		if err != nil {
+			if discardInterrupted {
+				m.logger.Debugf("releaseworkflow: startup operation recovery state=failed stage=list cause=%s", logging.SanitizeMessage(err.Error()))
+			}
 			m.recoverError = fmt.Errorf("release workflow recover operations: %w", err)
 			return
+		}
+		if discardInterrupted {
+			m.logger.Debugf("releaseworkflow: startup operation recovery state=started active_count=%d", len(records))
 		}
 		for _, record := range records {
 			if record.ProcessEpoch == m.processEpoch {
 				continue
 			}
-			if err := m.recoverOperationAfterLease(recoveryCtx, record); err != nil {
+			if err := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); err != nil {
+				if discardInterrupted {
+					m.logger.Debugf(
+						"releaseworkflow: startup operation recovery state=failed workflow=%s operation=%s cause=%s",
+						record.WorkflowID,
+						record.OperationID,
+						logging.SanitizeMessage(err.Error()),
+					)
+				}
 				m.recoverError = err
 				return
 			}
+		}
+		if discardInterrupted {
+			m.logger.Debugf("releaseworkflow: startup operation recovery state=completed active_count=%d", len(records))
 		}
 	})
 	return m.recoverError
@@ -1596,10 +1628,18 @@ func (m *Module) ensureOperationRecovery(ctx context.Context) error {
 func (m *Module) recoverOperationAfterLease(
 	ctx context.Context,
 	record api.ReleaseWorkflowOperationRecord,
+	discardInterrupted bool,
 ) error {
 	work, err := m.durability.LoadWork(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
 	if err != nil {
 		if errors.Is(err, ErrWorkflowNotFound) {
+			if discardInterrupted {
+				m.logger.Debugf(
+					"releaseworkflow: startup operation recovery decision=interrupt reason=missing_work workflow=%s operation=%s",
+					record.WorkflowID,
+					record.OperationID,
+				)
+			}
 			return m.interruptRecoveredOperation(ctx, record, "Operation command predates durable restart recovery.")
 		}
 		return fmt.Errorf("release workflow load interrupted work lease: %w", err)
@@ -1607,19 +1647,49 @@ func (m *Module) recoverOperationAfterLease(
 	if work.CompletedAt != nil {
 		checkpoint, checkpointErr := completedOperationCheckpoint(record, work)
 		if checkpointErr != nil {
+			if discardInterrupted {
+				m.logger.Debugf(
+					"releaseworkflow: startup operation recovery decision=interrupt reason=invalid_checkpoint workflow=%s operation=%s",
+					record.WorkflowID,
+					record.OperationID,
+				)
+			}
 			return m.interruptRecoveredOperation(ctx, record, "The completed operation checkpoint failed its integrity check.")
+		}
+		if discardInterrupted {
+			m.logger.Debugf(
+				"releaseworkflow: startup operation recovery decision=publish_checkpoint workflow=%s operation=%s",
+				record.WorkflowID,
+				record.OperationID,
+			)
 		}
 		return m.publishCompletedOperationCheckpoint(ctx, record, checkpoint)
 	}
 	now := m.clock.Now().UTC()
 	if work.LeaseExpiresAt.After(now) {
 		delay := work.LeaseExpiresAt.Sub(now)
+		if discardInterrupted {
+			m.logger.Debugf(
+				"releaseworkflow: startup operation recovery decision=wait_work_lease workflow=%s operation=%s remaining=%s",
+				record.WorkflowID,
+				record.OperationID,
+				delay.Round(time.Second),
+			)
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("release workflow wait for interrupted work lease: %w", ctx.Err())
+			case <-timer.C:
+				return m.recoverOperationAfterLease(ctx, record, true)
+			}
+		}
 		recoveryCtx := context.WithoutCancel(ctx)
 		go func() {
 			timer := time.NewTimer(delay)
 			defer timer.Stop()
 			<-timer.C
-			if recoveryErr := m.recoverOperationAfterLease(recoveryCtx, record); recoveryErr != nil {
+			if recoveryErr := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); recoveryErr != nil {
 				m.logger.Errorf(
 					"releaseworkflow: workflow=%s operation=%s stage=restart_recovery state=failed cause=%s",
 					record.WorkflowID,
@@ -1647,6 +1717,14 @@ func (m *Module) recoverOperationAfterLease(
 			return nil
 		}
 		return fmt.Errorf("release workflow claim interrupted work: %w", err)
+	}
+	if discardInterrupted {
+		m.logger.Debugf(
+			"releaseworkflow: startup operation recovery decision=interrupt reason=expired_work workflow=%s operation=%s",
+			current.WorkflowID,
+			current.OperationID,
+		)
+		return m.interruptRecoveredOperation(ctx, current, "Operation interrupted by process restart.")
 	}
 	value, err := m.private.Get(
 		current.OwnerID,
