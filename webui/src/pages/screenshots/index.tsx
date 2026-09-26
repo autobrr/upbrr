@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Select } from "../../components/ui/select";
 import type { ScreenshotsFacet } from "../../releaseSession/types";
 import type { ScreenshotSelection } from "../../types";
 
@@ -208,6 +209,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                             <span>Seconds</span>
                             <input
                               type="number"
+                              aria-label={`${disc.DiscName || "Source"} shot ${selection.Index + 1} seconds`}
                               step="0.1"
                               value={selection.TimestampSeconds}
                               onChange={(event) =>
@@ -221,6 +223,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                             <span>Frame</span>
                             <input
                               type="number"
+                              aria-label={`${disc.DiscName || "Source"} shot ${selection.Index + 1} frame`}
                               step="1"
                               value={selection.Frame}
                               onChange={(event) =>
@@ -233,6 +236,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                           <button
                             className="ghost"
                             type="button"
+                            aria-label={`Preview ${disc.DiscName || "Source"} shot ${selection.Index + 1}`}
                             disabled={mutationsBlocked}
                             onClick={() => void facet.generate("preview", [selection])}
                           >
@@ -320,6 +324,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                           <button
                             className="ghost"
                             type="button"
+                            aria-label={`${artifact.selected ? "Unselect" : "Select"} ${imageLabel}`}
                             disabled={mutationsBlocked}
                             onClick={() =>
                               void facet.selectArtifact(artifact.id, !artifact.selected)
@@ -330,6 +335,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                           <button
                             className="screens-thumb-delete"
                             type="button"
+                            aria-label={`Delete ${imageLabel}`}
                             disabled={mutationsBlocked}
                             onClick={() => void facet.deleteArtifacts([artifact.id])}
                           >
@@ -379,7 +385,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
               {discPlans.length > 1 ? (
                 <label className="screens-field">
                   <span>Disc</span>
-                  <select
+                  <Select
                     aria-label="Preview disc"
                     value={livePreviewDisc?.DiscID || ""}
                     onChange={(event) => {
@@ -392,7 +398,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                         {disc.DiscName}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
               ) : null}
               <label className="screens-field">

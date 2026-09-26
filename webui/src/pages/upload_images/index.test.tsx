@@ -9,6 +9,57 @@ import UploadImagesPage from "./index";
 afterEach(cleanup);
 
 describe("UploadImagesPage", () => {
+  it("names published image removals and forwards the corresponding artifact IDs", () => {
+    const remove = vi.fn(async () => true);
+    const base: UploadedImagesFacet["view"] = {
+      revision: 1,
+      status: "ready",
+      candidates: [],
+      uploaded: [
+        {
+          artifactID: "artifact-1",
+          host: "imgbb",
+          url: "https://example.invalid/one",
+          sizeBytes: 1,
+          uploadedAt: "2026-09-25T00:00:00Z",
+        },
+        {
+          artifactID: "artifact-2",
+          host: "imgbb",
+          url: "https://example.invalid/two",
+          sizeBytes: 1,
+          uploadedAt: "2026-09-25T00:00:00Z",
+        },
+      ],
+      selectedArtifactIDs: [],
+      failures: [],
+      progress: { correlationID: "", attempts: [] },
+      staleReason: "",
+      error: "",
+    };
+    const facet: UploadedImagesFacet = {
+      view: base,
+      load: vi.fn(async () => true),
+      select: vi.fn(),
+      selectAll: vi.fn(),
+      upload: vi.fn(async () => true),
+      remove,
+    };
+    render(
+      <UploadImagesPage
+        facet={facet}
+        resolveImageHostLabel={() => "ImgBB"}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove published image 1 from ImgBB" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove published image 2 from ImgBB" }));
+    expect(remove).toHaveBeenNthCalledWith(1, "artifact-1", "imgbb");
+    expect(remove).toHaveBeenNthCalledWith(2, "artifact-2", "imgbb");
+  });
+
   it("loads stale candidates so the session can default-select every image", async () => {
     const load = vi.fn(async () => true);
     const facet: UploadedImagesFacet = {
@@ -83,6 +134,7 @@ describe("UploadImagesPage", () => {
         setLightboxAlt={vi.fn()}
       />,
     );
+    expect(screen.getByRole("checkbox", { name: "Include image 1" })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Prepare required hosts (1)" }));
     expect(upload).toHaveBeenCalledOnce();
   });

@@ -130,12 +130,14 @@ export const hostBrowser = {
 
 /** Application build and runtime capability information. */
 export const applicationClient = {
-  getInfo: () => requestApp<ApplicationInfo>("GetApplicationInfo"),
+  getInfo: (signal?: AbortSignal) =>
+    requestApp<ApplicationInfo>("GetApplicationInfo", undefined, { signal }),
 };
 
 /** Persistent public API bearer-token management for authenticated WebUI operators. */
 export const apiTokenClient = {
-  list: () => requestApp<APITokenRecord[]>("ListAPITokens"),
+  list: (signal?: AbortSignal) =>
+    requestApp<APITokenRecord[]>("ListAPITokens", undefined, { signal }),
   create: (name: string, ownerId: string, scopes: APITokenScope[]) =>
     requestApp<CreatedAPIToken>("CreateAPIToken", { name, ownerId, scopes }),
   revoke: (id: string) => requestApp<void>("RevokeAPIToken", { id }),
@@ -268,7 +270,7 @@ export const descriptionClient = {
 
 /** Config persistence plus browser-native import and download behavior. */
 export const configClient = {
-  get: () => requestApp<string>("GetConfig"),
+  get: (signal?: AbortSignal) => requestApp<string>("GetConfig", undefined, { signal }),
   getDefault: () => requestApp<string>("GetDefaultConfig"),
   /** Reads activation status without exposing the pending configuration. */
   getActivation: () => requestApp<ConfigActivation>("GetConfigActivation"),
@@ -309,9 +311,10 @@ export const loggingClient = {
 
 /** Tracker catalog and image-host policy metadata. */
 export const trackerCatalogClient = {
-  list: () => requestApp<TrackerCatalog>("ListTrackerCatalog"),
-  getImageHostPolicyMetadata: () =>
-    requestApp<ImageHostPolicyMetadata>("GetImageHostPolicyMetadata"),
+  list: (signal?: AbortSignal) =>
+    requestApp<TrackerCatalog>("ListTrackerCatalog", undefined, { signal }),
+  getImageHostPolicyMetadata: (signal?: AbortSignal) =>
+    requestApp<ImageHostPolicyMetadata>("GetImageHostPolicyMetadata", undefined, { signal }),
   getIcon: (domain: string, url: string) =>
     requestApp<string>("GetTrackerIcon", { Domain: domain, URL: url }),
 };
@@ -379,9 +382,9 @@ export const trackerAuthClient = {
 
 /** Persisted release history operations. */
 export const historyClient = {
-  list: () => requestApp<HistoryEntry[]>("ListHistory"),
-  getOverview: (sourcePath: string) =>
-    requestApp<HistoryOverview>("GetHistoryOverview", { SourcePath: sourcePath }),
+  list: (signal?: AbortSignal) => requestApp<HistoryEntry[]>("ListHistory", undefined, { signal }),
+  getOverview: (sourcePath: string, signal?: AbortSignal) =>
+    requestApp<HistoryOverview>("GetHistoryOverview", { SourcePath: sourcePath }, { signal }),
   removeRelease: (sourcePath: string) =>
     requestApp<void>("DeleteHistoryRelease", { SourcePath: sourcePath }),
 };

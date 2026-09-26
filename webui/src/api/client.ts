@@ -23,6 +23,7 @@ declare global {
 
 const callbacks = new Map<string, Set<EventCallback>>();
 const eventConnectionCallbacks = new Set<EventConnectionCallback>();
+const sessionLossCallbacks = new Set<() => void>();
 let eventStreamController: AbortController | null = null;
 let eventStreamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let csrfToken = "";
@@ -31,6 +32,10 @@ let testAppRequestHandler: AppRequestHandler | null = null;
 
 const sessionChangedMessage =
   "Web session changed in another tab. Reload this tab to continue with the active login.";
+
+class SessionChangedError extends Error {}
+
+const notifySessionLoss = () => sessionLossCallbacks.forEach((callback) => callback());
 
 const parseJSONResponse = async <T>(response: Response): Promise<T | null> => {
   const text = await response.text();
@@ -82,16 +87,22 @@ const refreshAuthState = async () => {
       caseInsensitivePaths?: boolean;
     }
   >(response);
-  if (!response.ok || !payload?.authenticated) return false;
+  if (!response.ok) {
+    throw new Error(`Authentication status refresh failed (${response.status}).`);
+  }
+  if (payload?.authenticated === false) return false;
+  if (payload?.authenticated !== true || !payload.csrfToken) {
+    throw new Error("Authentication status response is incomplete.");
+  }
 
   const nextCSRFToken = String(payload.csrfToken || "");
   if (csrfToken && nextCSRFToken && nextCSRFToken !== csrfToken) {
-    throw new Error(sessionChangedMessage);
+    throw new SessionChangedError(sessionChangedMessage);
   }
   csrfToken = nextCSRFToken;
   setPathCaseSensitivity(payload.caseInsensitivePaths);
   recreateEventStream();
-  return csrfToken !== "";
+  return true;
 };
 
 const closeEventStream = () => {
@@ -148,7 +159,15 @@ const runEventStream = async (controller: AbortController) => {
     });
     if (!response.ok) {
       if (isAuthFailureStatus(response.status)) {
-        reconnect = await refreshAuthState().catch(() => false);
+        let sessionLost = false;
+        try {
+          reconnect = await refreshAuthState();
+          sessionLost = !reconnect;
+        } catch (error) {
+          sessionLost = error instanceof SessionChangedError;
+          reconnect = !sessionLost;
+        }
+        if (sessionLost && !controller.signal.aborted) notifySessionLoss();
       }
       return;
     }
@@ -204,9 +223,24 @@ const requestJSON = async <T>(path: string, requestInit: () => RequestInit): Pro
   let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
     response,
   );
-  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
-    response = await fetch(withBasePath(path), requestInit());
-    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
+  if (!response.ok && isAuthFailureStatus(response.status)) {
+    let refreshed = false;
+    try {
+      refreshed = await refreshAuthState();
+    } catch (error) {
+      if (error instanceof SessionChangedError && path.startsWith("/api/app/")) {
+        notifySessionLoss();
+      }
+      throw error;
+    }
+    if (refreshed) {
+      response = await fetch(withBasePath(path), requestInit());
+      payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
+        response,
+      );
+    } else if (path.startsWith("/api/app/")) {
+      notifySessionLoss();
+    }
   }
   if (!response.ok) {
     if (payload?.failure) throw new OperationFailureError(payload.failure);
@@ -273,6 +307,14 @@ export const updateWebCSRFToken = (token: string, hostCaseInsensitivePaths?: boo
   csrfToken = token;
   setPathCaseSensitivity(hostCaseInsensitivePaths);
   recreateEventStream();
+};
+
+/** Signals that an application request can no longer use the current Web session. */
+export const subscribeWebSessionLoss = (callback: () => void) => {
+  sessionLossCallbacks.add(callback);
+  return () => {
+    sessionLossCallbacks.delete(callback);
+  };
 };
 
 /** Reports whether the WebUI host compares filesystem paths case-insensitively. */

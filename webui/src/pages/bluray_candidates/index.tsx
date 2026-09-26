@@ -69,7 +69,7 @@ export default function BlurayCandidatesPage(props: Props) {
               </a>
             ) : null}
             {!selectedID && bluray.SelectionReason ? (
-              <p className="m-0 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-[0.82rem] text-amber-100">
+              <p className="m-0 rounded-md border border-[var(--status-warning)] bg-card px-2 py-1 text-[0.82rem] text-foreground">
                 {bluray.SelectionReason}
               </p>
             ) : null}
@@ -81,12 +81,13 @@ export default function BlurayCandidatesPage(props: Props) {
             </section>
           ) : (
             <div className="grid gap-3">
-              {candidates.map((candidate) => {
+              {candidates.map((candidate, index) => {
                 const selected = candidate.ReleaseID === selectedID || candidate.Accepted;
                 const hasReleaseID = Boolean(candidate.ReleaseID);
+                const candidateLabel = `candidate ${index + 1}: ${candidate.Title || "Untitled release"}`;
                 return (
                   <section
-                    className={`panel grid gap-3 ${selected ? "border-[var(--sidebar-active-border)]" : ""}`}
+                    className={`panel grid gap-3 ${selected ? "border-sidebar-ring" : ""}`}
                     key={candidate.ReleaseID || candidate.URL}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -99,6 +100,7 @@ export default function BlurayCandidatesPage(props: Props) {
                       <button
                         className={selected ? "primary" : "ghost"}
                         type="button"
+                        aria-label={`${selected ? "Selected" : selecting ? "Selecting..." : "Select"} ${candidateLabel}`}
                         disabled={selecting || selected || !hasReleaseID}
                         onClick={() => {
                           if (hasReleaseID) void facet.selectCandidate(candidate.ReleaseID);
@@ -178,10 +180,11 @@ export default function BlurayCandidatesPage(props: Props) {
 
                     {candidate.CoverImages?.length ? (
                       <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,160px))] gap-2">
-                        {candidate.CoverImages.map((image) => (
+                        {candidate.CoverImages.map((image, imageIndex) => (
                           <button
                             className="cursor-pointer border-0 bg-transparent p-0"
                             type="button"
+                            aria-label={`Preview ${candidateLabel} ${image.Kind || "cover"} image ${imageIndex + 1}`}
                             key={`${candidate.ReleaseID}-${image.Kind}-${image.URL}`}
                             onClick={() => {
                               setLightboxImage(image.URL);
@@ -189,7 +192,7 @@ export default function BlurayCandidatesPage(props: Props) {
                             }}
                           >
                             <img
-                              className="w-full rounded-md border border-white/10"
+                              className="w-full rounded-md border border-border"
                               src={image.URL}
                               alt={image.Kind || "Blu-ray cover"}
                               loading="lazy"

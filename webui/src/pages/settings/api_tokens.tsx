@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import {
   apiTokenClient,
@@ -18,12 +19,18 @@ const supportedScopes: ReadonlyArray<Readonly<{ value: APITokenScope; label: str
 ];
 
 const inputClass =
-  "h-8 w-full rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+  "h-8 w-full rounded-md border border-input bg-card px-2.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
+const apiTokensKey = ["api-tokens"] as const;
 
 /** Manages persistent public API tokens without exposing stored hashes or revoked secrets. */
 export default function APITokensSettings() {
-  const [records, setRecords] = useState<APITokenRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const tokenQuery = useQuery({
+    queryKey: apiTokensKey,
+    queryFn: ({ signal }) => apiTokenClient.list(signal),
+  });
+  const records = tokenQuery.data ?? [];
+  const loading = tokenQuery.isPending || tokenQuery.isFetching;
   const [error, setError] = useState("");
   const [name, setName] = useState("Automation");
   const [ownerId, setOwnerId] = useState("default");
@@ -34,37 +41,10 @@ export default function APITokensSettings() {
   const [revokeTarget, setRevokeTarget] = useState<APITokenRecord | null>(null);
   const [revoking, setRevoking] = useState(false);
 
-  const loadRecords = async () => {
-    setLoading(true);
+  const loadRecords = () => {
     setError("");
-    try {
-      setRecords(await apiTokenClient.list());
-    } catch (loadError) {
-      setError(String(loadError));
-    } finally {
-      setLoading(false);
-    }
+    void tokenQuery.refetch();
   };
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setError("");
-    void apiTokenClient
-      .list()
-      .then((nextRecords) => {
-        if (active) setRecords(nextRecords);
-      })
-      .catch((loadError) => {
-        if (active) setError(String(loadError));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const toggleScope = (scope: APITokenScope) => {
     setScopes((current) =>
@@ -80,7 +60,10 @@ export default function APITokensSettings() {
     try {
       const result = await apiTokenClient.create(name, ownerId, scopes);
       setCreated(result);
-      setRecords((current) => [result.record, ...current]);
+      queryClient.setQueryData<APITokenRecord[]>(apiTokensKey, (current) => [
+        result.record,
+        ...(current ?? []),
+      ]);
     } catch (createError) {
       setError(String(createError));
     } finally {
@@ -105,7 +88,7 @@ export default function APITokensSettings() {
     try {
       await apiTokenClient.revoke(revokeTarget.id);
       setRevokeTarget(null);
-      await loadRecords();
+      await queryClient.invalidateQueries({ queryKey: apiTokensKey });
     } catch (revokeError) {
       setError(String(revokeError));
     } finally {
@@ -117,7 +100,7 @@ export default function APITokensSettings() {
     <div className="flex flex-col gap-3">
       <section className="settings-subgroup">
         <div>
-          <h2 className="m-0 text-base font-semibold text-[var(--text)]">Generate API token</h2>
+          <h2 className="m-0 text-base font-semibold text-foreground">Generate API token</h2>
           <p className="helper">Token hashes persist in web-auth.json; plaintext is shown once.</p>
         </div>
         <div className="settings-grid">
@@ -144,11 +127,11 @@ export default function APITokensSettings() {
           </label>
         </div>
         <fieldset className="m-0 grid gap-2 border-0 p-0">
-          <legend className="mb-1 text-sm font-medium text-[var(--muted)]">Scopes</legend>
+          <legend className="mb-1 text-sm font-medium text-muted-foreground">Scopes</legend>
           {supportedScopes.map((scope) => (
             <label
               key={scope.value}
-              className="flex min-h-9 items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-3 text-sm text-[var(--text)]"
+              className="flex min-h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm text-card-foreground"
             >
               <input
                 type="checkbox"
@@ -156,7 +139,7 @@ export default function APITokensSettings() {
                 onChange={() => toggleScope(scope.value)}
               />
               <span>{scope.label}</span>
-              <code className="ml-auto text-xs text-[var(--muted)]">{scope.value}</code>
+              <code className="ml-auto text-xs text-muted-foreground">{scope.value}</code>
             </label>
           ))}
         </fieldset>
@@ -171,8 +154,8 @@ export default function APITokensSettings() {
           </Button>
         </div>
         {created ? (
-          <div className="grid gap-2 rounded-lg border border-amber-400/35 bg-amber-400/10 p-3">
-            <p className="m-0 text-sm font-semibold text-[var(--text)]">
+          <div className="grid gap-2 rounded-lg border border-[var(--status-warning)] bg-card p-3">
+            <p className="m-0 text-sm font-semibold text-card-foreground">
               Copy this token now. It cannot be shown again.
             </p>
             <div className="flex min-w-0 flex-wrap gap-2">
@@ -189,20 +172,22 @@ export default function APITokensSettings() {
             </div>
           </div>
         ) : null}
-        {error ? <p className="error m-0">{error}</p> : null}
+        {error || tokenQuery.error ? (
+          <p className="error m-0">{error || String(tokenQuery.error)}</p>
+        ) : null}
       </section>
 
       <section className="settings-subgroup">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="m-0 text-base font-semibold text-[var(--text)]">API tokens</h2>
+            <h2 className="m-0 text-base font-semibold text-foreground">API tokens</h2>
             <p className="helper">Revocation takes effect on the next API request.</p>
           </div>
           <Button type="button" disabled={loading} onClick={() => void loadRecords()}>
             {loading ? "Loading..." : "Reload"}
           </Button>
         </div>
-        {!loading && records.length === 0 ? (
+        {!loading && !tokenQuery.isError && records.length === 0 ? (
           <p className="muted">No API tokens configured.</p>
         ) : null}
         <div className="grid gap-2">
@@ -211,11 +196,11 @@ export default function APITokensSettings() {
             return (
               <article
                 key={record.id}
-                className="grid gap-2 rounded-lg border border-white/10 bg-slate-950/25 p-3"
+                className="grid gap-2 rounded-lg border border-border bg-card p-3"
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="m-0 font-semibold text-[var(--text)]">{record.name}</p>
+                    <p className="m-0 font-semibold text-card-foreground">{record.name}</p>
                     <p className="helper m-0 font-mono">{record.id}</p>
                   </div>
                   <span className={`settings-auth-badge ${revoked ? "is-idle" : "is-ready"}`}>
@@ -231,7 +216,8 @@ export default function APITokensSettings() {
                   <div>
                     <Button
                       type="button"
-                      className="border-red-400/30 text-red-300 hover:bg-red-400/10"
+                      aria-label={`Revoke ${record.name} (${record.id})`}
+                      className="border-destructive text-destructive-text hover:bg-destructive/10"
                       onClick={() => setRevokeTarget(record)}
                     >
                       Revoke
@@ -268,7 +254,7 @@ export default function APITokensSettings() {
               <AlertDialog.Action asChild>
                 <Button
                   type="button"
-                  className="border-red-400/30 text-red-300 hover:bg-red-400/10"
+                  className="border-destructive text-destructive-text hover:bg-destructive/10"
                   disabled={revoking}
                   onClick={(event) => {
                     event.preventDefault();

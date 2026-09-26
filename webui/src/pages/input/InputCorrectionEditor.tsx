@@ -14,6 +14,7 @@ import type {
 import type { InputFacet } from "../../releaseSession/types";
 import type { PreparedRelease } from "../../types";
 import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/select";
 
 const hasOwn = (value: object, key: PropertyKey) =>
   Object.prototype.hasOwnProperty.call(value, key);
@@ -159,7 +160,7 @@ function CorrectionRow({
         ) : null}
       </div>
       <div className="min-w-0 [&_input]:w-full">{children}</div>
-      <span className="text-xs text-[var(--muted)]">
+      <span className="text-xs text-muted-foreground">
         {manual ? "Manual value" : "Automatic value"}
         {stale && !readOnly ? " · Saved value needs confirmation" : ""}
       </span>
@@ -195,7 +196,7 @@ function TriStateField({
   return (
     <div className="settings-field" data-correction-field={field}>
       <label htmlFor={id}>{label}</label>
-      <select
+      <Select
         id={id}
         aria-label={label}
         value={value === undefined || value === null ? "auto" : value ? "yes" : "no"}
@@ -207,8 +208,8 @@ function TriStateField({
         <option value="auto">Auto</option>
         <option value="yes">Yes</option>
         <option value="no">No</option>
-      </select>
-      <span className="text-xs text-[var(--muted)]">
+      </Select>
+      <span className="text-xs text-muted-foreground">
         {value === undefined || value === null
           ? `Automatic${automatic === undefined ? "" : automatic ? ": Yes" : ": No"}`
           : "Manual value"}
@@ -492,20 +493,29 @@ function TrackerInputField({
         {field.Required ? " *" : ""}
       </label>
       {field.Kind === "select" ? (
-        <select {...shared}>
+        <Select {...shared}>
+          {!field.Options.includes("") ? (
+            <option value="">{field.Placeholder || "Select"}</option>
+          ) : null}
+          {value === "auto" && !field.Options.includes("auto") ? (
+            <option value="auto">Auto</option>
+          ) : null}
+          {value && value !== "auto" && !field.Options.includes(value) ? (
+            <option value={value}>{optionLabel(value)} (saved)</option>
+          ) : null}
           {field.Options.map((option) => (
             <option key={option} value={option}>
               {optionLabel(option)}
             </option>
           ))}
-        </select>
+        </Select>
       ) : field.Kind === "textarea" ? (
         <textarea {...shared} placeholder={field.Placeholder} />
       ) : (
         <input {...shared} placeholder={field.Placeholder} />
       )}
       {field.Help ? (
-        <span id={helpID} className="text-xs text-[var(--muted)]">
+        <span id={helpID} className="text-xs text-muted-foreground">
           {field.Help}
         </span>
       ) : null}
@@ -784,7 +794,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                       });
                     }}
                   />
-                  <span className="text-xs text-[var(--muted)]">
+                  <span className="text-xs text-muted-foreground">
                     Track ID: {track.ID} · Resource: {track.ResourceID || "unknown"} · Detected:{" "}
                     {listText(track.DetectedLanguages) || "unknown"}
                   </span>

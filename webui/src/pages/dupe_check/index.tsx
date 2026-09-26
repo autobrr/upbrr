@@ -181,7 +181,7 @@ function CandidateList({ matches }: Readonly<{ matches: readonly DupeMatchProjec
         const facts = candidateFacts(match);
         return (
           <div
-            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-[var(--border)] bg-black/10 px-2 py-1.5 text-sm"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
             key={`${match.id || ""}-${match.name}-${match.relation || ""}`}
           >
             <Badge tone={relationTone(match.relation)}>{relationLabel(match.relation)}</Badge>
@@ -319,7 +319,7 @@ function WorkflowDupeAssessmentView({
             ) : null}
 
             {ruleOverride ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300/25 bg-amber-300/5 p-2 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--status-warning)] bg-card p-2 text-sm">
                 <p>{ruleOverride.prompt}</p>
                 <Button
                   aria-label={`Upload to ${trackerID} anyway`}
@@ -339,7 +339,7 @@ function WorkflowDupeAssessmentView({
               >
                 {namesModified ? (
                   <p className="muted">
-                    <span className="font-semibold text-[var(--text)]">Canonical:</span>{" "}
+                    <span className="font-semibold text-foreground">Canonical:</span>{" "}
                     {canonicalName}
                   </p>
                 ) : null}
@@ -354,7 +354,7 @@ function WorkflowDupeAssessmentView({
                 {releaseNameNotices.length ? (
                   <div
                     aria-label={`Tracker naming notices for ${trackerID}`}
-                    className="grid gap-1 rounded border border-amber-300/25 bg-amber-300/5 p-2"
+                    className="grid gap-1 rounded border border-[var(--status-warning)] bg-card p-2"
                   >
                     {releaseNameNotices.map((notice) => (
                       <p key={releaseNameOverrideKey(notice)}>{notice.message}</p>
@@ -369,7 +369,7 @@ function WorkflowDupeAssessmentView({
             {!strictBlocked && (nameConfirmation.pending || nameConfirmation.confirmed) ? (
               <div
                 aria-label={`Tracker naming for ${trackerID}`}
-                className="grid gap-2 rounded border border-[var(--border)] bg-black/10 p-2"
+                className="grid gap-2 rounded border border-border bg-muted p-2 text-foreground"
               >
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold">Tracker release name</span>
@@ -445,7 +445,6 @@ export default function DupeCheckPage({
   const selectedTrackers = new Set(view.selectedTrackers);
   const trackerSelectionRequired = selectedTrackers.size === 0;
   const dupeLoading = view.status === "running";
-  const hideTrackerNames = faviconOnly && useFavicons;
   const excludedTrackerIDs = new Set(submissionExclusions.map((exclusion) => exclusion.trackerId));
   const allSelectedTrackersAlreadyUploaded =
     workflowComplete &&
@@ -473,7 +472,8 @@ export default function DupeCheckPage({
           </span>
         </div>
         {trackerUploadItems.length ? (
-          <div className="tracker-pills">
+          <fieldset className="tracker-pills m-0 min-w-0 border-0 p-0">
+            <legend className="sr-only">Trackers for duplicate check</legend>
             {trackerUploadItems.map((tracker) => {
               const normalized = tracker.name.trim().toUpperCase();
               return (
@@ -495,12 +495,12 @@ export default function DupeCheckPage({
                       iconSrc={trackerIconFor(trackerIconSrcByName, tracker.name)}
                       enabled={useFavicons}
                     />
-                    {hideTrackerNames ? null : tracker.name}
+                    {faviconOnly && useFavicons ? null : tracker.name}
                   </span>
                 </PillCheckbox>
               );
             })}
-          </div>
+          </fieldset>
         ) : (
           <p className="muted">No configured tracker entries found.</p>
         )}
@@ -529,7 +529,7 @@ export default function DupeCheckPage({
           <ul className="grid gap-2">
             {submissionExclusions.map((exclusion) => (
               <li
-                className="rounded border border-white/10 bg-white/5 p-3"
+                className="rounded border border-border bg-muted p-3 text-foreground"
                 key={exclusion.trackerId}
               >
                 <strong>{exclusion.trackerId}</strong>

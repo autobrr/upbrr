@@ -3,6 +3,7 @@
 
 import type { ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { trackerCatalogClient } from "../api/app";
 import type { TrackerCatalog } from "../types";
 
@@ -15,6 +16,7 @@ type TrackerCatalogState = Readonly<{
 }>;
 
 const TrackerCatalogContext = createContext<TrackerCatalogState | null>(null);
+export const trackerCatalogKey = ["tracker-catalog"] as const;
 
 const useTrackerCatalogOwner = (enabled: boolean): TrackerCatalogState => {
   const [catalog, setCatalog] = useState<TrackerCatalog | null>(null);
@@ -68,7 +70,38 @@ const useTrackerCatalogOwner = (enabled: boolean): TrackerCatalogState => {
 
 /** Owns the single production tracker-catalog request shared across app workflows. */
 export function TrackerCatalogProvider({ children }: Readonly<{ children: ReactNode }>) {
-  const state = useTrackerCatalogOwner(true);
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: trackerCatalogKey,
+    queryFn: async ({ signal }) => {
+      const result = await trackerCatalogClient.list(signal);
+      if (!result || !Array.isArray(result.entries) || !Array.isArray(result.unsupported)) {
+        throw new Error("Tracker catalog response is invalid.");
+      }
+      return result;
+    },
+    staleTime: Infinity,
+  });
+  const removeUnsupported = useCallback(
+    (name: string) => {
+      queryClient.setQueryData<TrackerCatalog>(trackerCatalogKey, (current) =>
+        current
+          ? { ...current, unsupported: current.unsupported.filter((entry) => entry !== name) }
+          : current,
+      );
+    },
+    [queryClient],
+  );
+  const state = useMemo<TrackerCatalogState>(
+    () => ({
+      catalog: query.data ?? null,
+      loading: query.isPending,
+      loaded: !query.isPending,
+      error: query.error ? String(query.error) : "",
+      removeUnsupported,
+    }),
+    [query.data, query.error, query.isPending, removeUnsupported],
+  );
   return <TrackerCatalogContext.Provider value={state}>{children}</TrackerCatalogContext.Provider>;
 }
 

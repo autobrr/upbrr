@@ -59,11 +59,11 @@ export function WorkflowRequiredActions({
           const route = actionRoutes[action.kind];
           return (
             <article
-              className="grid gap-2 rounded border border-amber-300/25 bg-amber-300/5 p-3"
+              className="grid gap-2 rounded border border-[var(--status-warning)] bg-card p-3"
               key={action.id}
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <p className="font-semibold text-[var(--text)]">{action.prompt}</p>
+                <p className="font-semibold text-foreground">{action.prompt}</p>
                 <span className="muted text-sm">{actionScope(action)}</span>
               </div>
               <p className="muted text-xs">Action: {action.kind.replaceAll("_", " ")}</p>

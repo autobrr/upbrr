@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { ReactElement } from "react";
 import LogSettingsPanel from "../../components/LogSettingsPanel";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../../types";
 
@@ -12,7 +13,12 @@ type Props = Readonly<{
   settingsError: string;
   loadSettings: () => void;
   handleSaveSettings: () => void;
-  renderField: (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => JSX.Element;
+  renderField: (
+    label: string,
+    value: ConfigValue,
+    path: string[],
+    meta?: FieldMeta,
+  ) => ReactElement;
   updateConfigValue: (path: string[], value: ConfigValue) => void;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
 }>;
@@ -49,7 +55,11 @@ export default function LoggingPage(props: Props) {
             <button
               className="ghost"
               type="button"
-              onClick={loadSettings}
+              onClick={() => {
+                if (!settingsDirty || window.confirm("Discard unsaved settings and reload?")) {
+                  loadSettings();
+                }
+              }}
               disabled={settingsLoading}
             >
               Reload

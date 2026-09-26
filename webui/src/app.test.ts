@@ -24,6 +24,7 @@ const localStorageStub: Storage = {
 };
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/");
   Object.defineProperty(document.defaultView, "localStorage", {
     configurable: true,
     value: localStorageStub,
@@ -159,6 +160,7 @@ describe("App shell", () => {
       throw new Error(`unexpected app request: ${method}`);
     });
     render(createElement(App));
+    await screen.findByRole("heading", { name: "Build Release Name" });
     await waitFor(() =>
       expect(screen.queryByText("Checking runtime capabilities…")).not.toBeInTheDocument(),
     );
@@ -195,7 +197,7 @@ describe("App shell", () => {
 
     render(createElement(App));
 
-    expect(screen.getByRole("heading", { name: "Build Release Name" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Build Release Name" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Dupe Check" })).toBeDisabled());
   });
 
@@ -225,7 +227,7 @@ describe("App shell", () => {
     });
 
     render(createElement(App));
-    screen.getByRole("button", { name: "Browse folder" }).click();
+    (await screen.findByRole("button", { name: "Browse folder" })).click();
 
     expect(await screen.findByRole("dialog", { name: "Host browser" })).toBeInTheDocument();
     await waitFor(() => expect(browse).toHaveBeenCalledWith(""));
@@ -258,7 +260,7 @@ describe("App shell", () => {
 
     render(createElement(App));
 
-    const sourceInput = screen.getByLabelText("Source path");
+    const sourceInput = await screen.findByLabelText("Source path");
     fireEvent.focus(sourceInput);
     expect(await screen.findByText("C:\\media\\Previously.Used.mkv")).toBeInTheDocument();
     expect(sourceInput).toHaveValue("");
@@ -389,7 +391,7 @@ describe("App shell", () => {
     await waitFor(() =>
       expect(screen.queryByText("Checking runtime capabilities…")).not.toBeInTheDocument(),
     );
-    const sourceInput = screen.getByLabelText("Source path");
+    const sourceInput = await screen.findByLabelText("Source path");
     fireEvent.change(sourceInput, { target: { value: "C:\\media\\Example.Release.2026.mkv" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 

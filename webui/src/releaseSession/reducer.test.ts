@@ -649,6 +649,70 @@ describe("sessionReducer active input snapshots", () => {
     expect(state.correctionDirty).toBe(false);
   });
 
+  it("keeps locally chosen trackers during same-input resync and clears them for a new source version", () => {
+    const sourcePath = "C:\\media\\Tracker.Choice.2026.mkv";
+    const initial = initialSessionState();
+    let state = sessionReducer(initial, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 1,
+        inputId: "input-trackers",
+        sourceVersion: "source-trackers-v1",
+        current: current("workflow-trackers", 1),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+      selectedTrackers: ["HDS"],
+    });
+    state = sessionReducer(state, {
+      type: "trackers_chosen",
+      trackers: ["AITHER", "HDS"],
+    });
+    expect(state.preparationDirty).toBe(true);
+    const editRevision = state.inputEditRevision;
+
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 2,
+        inputId: "input-trackers",
+        sourceVersion: "source-trackers-v1",
+        current: current("workflow-trackers", 2),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: editRevision,
+      selectedTrackers: ["HDS"],
+      preserveInputDraft: true,
+    });
+    expect(state.selectedTrackers).toEqual(["AITHER", "HDS"]);
+    expect(state.trackerSelectionTouched).toBe(true);
+
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 3,
+        inputId: "input-trackers",
+        sourceVersion: "source-trackers-v2",
+        current: current("workflow-trackers-v2", 1),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 2),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: state.inputEditRevision,
+      selectedTrackers: ["HDS"],
+      preserveInputDraft: true,
+    });
+    expect(state.selectedTrackers).toEqual(["HDS"]);
+    expect(state.trackerSelectionTouched).toBe(false);
+  });
+
   it("rejects an older active-slot response after a newer source wins", () => {
     const initial = initialSessionState();
     const newer = sessionReducer(initial, {

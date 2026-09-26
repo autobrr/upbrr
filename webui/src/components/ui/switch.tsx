@@ -23,7 +23,7 @@ export function Switch({ className, onChange, onCheckedChange, ...props }: Reado
   return (
     <SwitchPrimitive.Root
       className={cn(
-        "inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full border border-white/20 bg-white/10 p-0 transition data-[state=checked]:border-[var(--accent-2)] data-[state=checked]:bg-[rgba(53,194,193,0.35)] disabled:cursor-not-allowed disabled:opacity-50 hover:![transform:none]",
+        "inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-input bg-muted p-0 transition data-[state=checked]:border-primary data-[state=checked]:bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50 hover:![transform:none]",
         className,
       )}
       onCheckedChange={(checked) => {
@@ -32,7 +32,7 @@ export function Switch({ className, onChange, onCheckedChange, ...props }: Reado
       }}
       {...props}
     >
-      <SwitchPrimitive.Thumb className="pointer-events-none block h-3 w-3 rounded-full bg-white/60 [transform:translateX(2px)] transition-transform data-[state=checked]:bg-[var(--accent-2)] data-[state=checked]:[transform:translateX(18px)]" />
+      <SwitchPrimitive.Thumb className="pointer-events-none block h-5 w-5 rounded-full bg-foreground [transform:translateX(2px)] transition-transform data-[state=checked]:bg-primary-foreground data-[state=checked]:[transform:translateX(20px)]" />
     </SwitchPrimitive.Root>
   );
 }

@@ -158,15 +158,16 @@ export default function MenuImagesPage({
         </div>
         {menuFiles.length > 0 ? (
           <ul className="m-0 grid list-none gap-1 p-0">
-            {menuFiles.map((file) => (
+            {menuFiles.map((file, index) => (
               <li
-                className="flex items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
+                className="flex items-center justify-between gap-2 rounded border border-border bg-muted p-2 text-foreground"
                 key={`${file.name}-${file.size}-${file.lastModified}`}
               >
                 <span className="min-w-0 break-all">{file.name}</span>
                 <button
                   className="ghost"
                   type="button"
+                  aria-label={`Remove file ${index + 1}: ${file.name}`}
                   onClick={() =>
                     setMenuFiles((previous) => previous.filter((item) => item !== file))
                   }

@@ -316,6 +316,82 @@ describe("web client", () => {
     );
   });
 
+  it("notifies session loss when an app request cannot refresh authentication", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "login required" }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: false }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeWebClient, requestAppGet, subscribeWebSessionLoss } =
+      await import("./client");
+    const onSessionLoss = vi.fn();
+    const unsubscribe = subscribeWebSessionLoss(onSessionLoss);
+    initializeWebClient("csrf-token", false);
+    await expect(requestAppGet("GetConfig")).rejects.toThrow("login required");
+    expect(onSessionLoss).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
+
+  it("notifies session loss when the event stream loses authentication", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "login required" }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: false }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeWebClient, subscribeWebEvent, subscribeWebSessionLoss } =
+      await import("./client");
+    const onSessionLoss = vi.fn();
+    const unsubscribeLoss = subscribeWebSessionLoss(onSessionLoss);
+    initializeWebClient("csrf-token", false);
+    const unsubscribeEvent = subscribeWebEvent("test:event", vi.fn());
+
+    await vi.waitFor(() => expect(onSessionLoss).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    unsubscribeEvent();
+    unsubscribeLoss();
+  });
+
+  it("preserves the session when the event stream cannot verify authentication", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "login required" }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ error: "temporary failure" }, { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeWebClient, subscribeWebEvent, subscribeWebSessionLoss } =
+      await import("./client");
+    const onSessionLoss = vi.fn();
+    const unsubscribeLoss = subscribeWebSessionLoss(onSessionLoss);
+    initializeWebClient("csrf-token", false);
+    const unsubscribeEvent = subscribeWebEvent("test:event", vi.fn());
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(onSessionLoss).not.toHaveBeenCalled();
+    unsubscribeEvent();
+    unsubscribeLoss();
+  });
+
+  it("preserves the session when an app request cannot verify authentication", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "login required" }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ error: "temporary failure" }, { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeWebClient, requestAppGet, subscribeWebSessionLoss } =
+      await import("./client");
+    const onSessionLoss = vi.fn();
+    const unsubscribeLoss = subscribeWebSessionLoss(onSessionLoss);
+    initializeWebClient("csrf-token", false);
+    await expect(requestAppGet("GetConfig")).rejects.toThrow(
+      "Authentication status refresh failed (500).",
+    );
+    expect(onSessionLoss).not.toHaveBeenCalled();
+    unsubscribeLoss();
+  });
+
   it.each(["GET", "JSON", "form"] as const)(
     "preserves %s transport and structured failures across an auth retry",
     async (kind) => {

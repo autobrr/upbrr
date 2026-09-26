@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactElement, SetStateAction } from "react";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
-import { applicationClient, trackerAuthClient } from "../../api/app";
+import { trackerAuthClient } from "../../api/app";
 import { cn } from "../../utils/cn";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 import type {
@@ -19,12 +19,18 @@ import type {
 } from "../../types";
 import { formatApplicationVersion } from "../../utils/applicationInfo";
 import APITokensSettings from "./api_tokens";
+import { AppearanceSettings } from "../../themes/AppearanceSettings";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
 
 const applicationDetailsSection = {
   key: "application_details",
   label: "Application Details",
+};
+
+const appearanceSection = {
+  key: "appearance",
+  label: "Appearance",
 };
 
 const trackerAuthSection = {
@@ -38,12 +44,12 @@ const apiTokensSection = {
 };
 
 const settingsInputClass =
-  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+  "h-8 rounded-md border border-input bg-card px-2.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
 // Tracker-supplied auth kinds can be long adapter descriptors; keep chips
 // wrapped inside the auth card on narrow screens.
 const trackerAuthChipClass =
-  "max-w-full whitespace-normal rounded-full border border-slate-400/20 bg-slate-950/35 px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-[var(--muted)] [overflow-wrap:anywhere]";
-const trackerAuthMetaClass = "m-0 text-[0.8rem] text-[var(--muted)]";
+  "max-w-full whitespace-normal rounded-full border border-border bg-muted px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-muted-foreground [overflow-wrap:anywhere]";
+const trackerAuthMetaClass = "m-0 text-[0.8rem] text-muted-foreground";
 
 /** Builds the case-insensitive key shared by main tracker config and tracker auth rows. */
 const trackerNameKey = (name: string) => name.trim().toLowerCase();
@@ -83,6 +89,10 @@ type ConfigOpStatus = {
 } | null;
 
 type Props = {
+  applicationInfo: ApplicationInfo | null;
+  applicationInfoFetchedAt: number | null;
+  applicationInfoLoading: boolean;
+  applicationInfoError: string;
   configData: ConfigMap | null;
   settingsLoading: boolean;
   settingsExporting: boolean;
@@ -107,10 +117,15 @@ type Props = {
   handleImportConfigConfirm: () => void | Promise<void>;
   handleImportConfigCancel: () => void;
   handleSaveSettings: () => void | Promise<void>;
-  renderImageHostingSection: () => JSX.Element | null;
-  renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
-  renderTorrentClientsSection: (advancedOpen: boolean) => JSX.Element | null;
-  renderField: (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => JSX.Element;
+  renderImageHostingSection: () => ReactElement | null;
+  renderTrackerSection: (advancedOpen: boolean) => ReactElement | null;
+  renderTorrentClientsSection: (advancedOpen: boolean) => ReactElement | null;
+  renderField: (
+    label: string,
+    value: ConfigValue,
+    path: string[],
+    meta?: FieldMeta,
+  ) => ReactElement;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
 };
 
@@ -121,6 +136,10 @@ type Props = {
  */
 export default function SettingsPage(props: Props) {
   const {
+    applicationInfo,
+    applicationInfoFetchedAt,
+    applicationInfoLoading,
+    applicationInfoError,
     configData,
     settingsLoading,
     settingsExporting,
@@ -152,10 +171,6 @@ export default function SettingsPage(props: Props) {
   } = props;
 
   const [warningsExpanded, setWarningsExpanded] = useState(false);
-  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
-  const [applicationInfoError, setApplicationInfoError] = useState("");
-  const [applicationInfoLoading, setApplicationInfoLoading] = useState(false);
-  const [applicationInfoFetchedAt, setApplicationInfoFetchedAt] = useState<number | null>(null);
   const [uptimeTick, setUptimeTick] = useState(() => Date.now());
   const [trackerAuthCapabilities, setTrackerAuthCapabilities] = useState<TrackerAuthCapability[]>(
     [],
@@ -195,36 +210,6 @@ export default function SettingsPage(props: Props) {
       setTrackerAuthActionErrors({});
     }
   }, [invalidateTrackerAuthStatusVersions, settingsSection]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setApplicationInfoLoading(true);
-    setApplicationInfoError("");
-    void applicationClient
-      .getInfo()
-      .then((info) => {
-        if (cancelled) {
-          return;
-        }
-        setApplicationInfo(info);
-        setApplicationInfoFetchedAt(Date.now());
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setApplicationInfoError(String(error));
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setApplicationInfoLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!applicationInfo) {
@@ -507,6 +492,7 @@ export default function SettingsPage(props: Props) {
                 {status?.needs2FA ? (
                   <div className="flex flex-wrap items-center gap-[0.6rem]">
                     <input
+                      aria-label={`${capability.displayName || capability.trackerID} 2FA code`}
                       className={`${settingsInputClass} w-36`}
                       value={code}
                       inputMode="numeric"
@@ -521,6 +507,7 @@ export default function SettingsPage(props: Props) {
                     />
                     <Button
                       type="button"
+                      aria-label={`Submit 2FA — ${capability.displayName || capability.trackerID}`}
                       disabled={!status.challengeID || !code.trim()}
                       onClick={() =>
                         runTrackerAuthAction(capability.trackerID, "2fa", () =>
@@ -536,6 +523,7 @@ export default function SettingsPage(props: Props) {
                   {capability.supportsCookieFile ? (
                     <Button
                       type="button"
+                      aria-label={`Import Cookies — ${capability.displayName || capability.trackerID}`}
                       disabled={Boolean(busy)}
                       onClick={() =>
                         runTrackerAuthAction(capability.trackerID, "import", () =>
@@ -549,6 +537,7 @@ export default function SettingsPage(props: Props) {
                   {canTestAuth ? (
                     <Button
                       type="button"
+                      aria-label={`Check Auth — ${capability.displayName || capability.trackerID}`}
                       disabled={Boolean(busy)}
                       onClick={() =>
                         runTrackerAuthAction(capability.trackerID, "test", () =>
@@ -561,6 +550,7 @@ export default function SettingsPage(props: Props) {
                   ) : null}
                   <Button
                     type="button"
+                    aria-label={`Delete Auth — ${capability.displayName || capability.trackerID}`}
                     disabled={Boolean(busy)}
                     onClick={() =>
                       runTrackerAuthAction(capability.trackerID, "delete", () =>
@@ -664,7 +654,7 @@ export default function SettingsPage(props: Props) {
                 <div className="mt-2 grid">
                   {applicationInfo.dependencies.map((dependency) => (
                     <div
-                      className="grid gap-1 border-t border-white/10 py-2 first:border-t-0 first:pt-0 last:pb-0 min-[720px]:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] min-[720px]:items-baseline"
+                      className="grid gap-1 border-t border-border py-2 first:border-t-0 first:pt-0 last:pb-0 min-[720px]:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] min-[720px]:items-baseline"
                       key={dependency.path}
                     >
                       <p className="settings-detail-card__value mono" title={dependency.path}>
@@ -703,7 +693,15 @@ export default function SettingsPage(props: Props) {
             <p className="helper">Invalid changes will be rejected with a validation error.</p>
           </div>
           <div className="settings-actions">
-            <Button type="button" onClick={loadSettings} disabled={settingsLoading}>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!settingsDirty || window.confirm("Discard unsaved settings and reload?")) {
+                  loadSettings();
+                }
+              }}
+              disabled={settingsLoading}
+            >
               Reload
             </Button>
             <Button
@@ -822,73 +820,42 @@ export default function SettingsPage(props: Props) {
         ) : null}
 
         <div className="settings-shell">
-          <div className="settings-tags">
-            {settingsSections.map((section) => (
+          <nav className="settings-tags" aria-label="Settings sections">
+            {[
+              ...settingsSections,
+              appearanceSection,
+              applicationDetailsSection,
+              apiTokensSection,
+              trackerAuthSection,
+            ].map((section) => (
               <button
                 key={section.key}
                 type="button"
+                aria-pressed={settingsSection === section.key}
                 className={cn(
-                  "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                  "flex min-h-9 w-auto shrink-0 items-center rounded-md px-3 text-left text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-[961px]:w-full",
                   settingsSection === section.key
-                    ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                    : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 )}
                 onClick={() => setSettingsSection(section.key)}
               >
                 {section.label}
               </button>
             ))}
-            <button
-              key={applicationDetailsSection.key}
-              type="button"
-              className={cn(
-                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
-                settingsSection === applicationDetailsSection.key
-                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
-              )}
-              onClick={() => setSettingsSection(applicationDetailsSection.key)}
-            >
-              {applicationDetailsSection.label}
-            </button>
-            <button
-              key={apiTokensSection.key}
-              type="button"
-              className={cn(
-                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
-                settingsSection === apiTokensSection.key
-                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
-              )}
-              onClick={() => setSettingsSection(apiTokensSection.key)}
-            >
-              {apiTokensSection.label}
-            </button>
-            <button
-              key={trackerAuthSection.key}
-              type="button"
-              className={cn(
-                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
-                settingsSection === trackerAuthSection.key
-                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
-              )}
-              onClick={() => setSettingsSection(trackerAuthSection.key)}
-            >
-              {trackerAuthSection.label}
-            </button>
-          </div>
-
+          </nav>
           <div className="settings-body">
+            {settingsSection === appearanceSection.key ? <AppearanceSettings /> : null}
             {settingsSection === applicationDetailsSection.key ? applicationDetailsPanel : null}
             {settingsSection === apiTokensSection.key ? <APITokensSettings /> : null}
             {settingsSection === trackerAuthSection.key ? trackerAuthPanel : null}
-            {settingsSection === applicationDetailsSection.key ||
+            {settingsSection === appearanceSection.key ||
+            settingsSection === applicationDetailsSection.key ||
             settingsSection === apiTokensSection.key ||
             settingsSection === trackerAuthSection.key ? null : configData ? (
               <div className="settings-form">
                 {showAdvancedToggle ? (
-                  <div className="settings-switch-row">
+                  <label className="settings-switch-row">
                     <span>Show advanced</span>
                     <Switch
                       aria-label="Show advanced"
@@ -900,7 +867,7 @@ export default function SettingsPage(props: Props) {
                         }))
                       }
                     />
-                  </div>
+                  </label>
                 ) : null}
                 {settingsSection === "image_hosting" ? (
                   renderImageHostingSection()

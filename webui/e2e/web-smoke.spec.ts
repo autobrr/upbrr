@@ -67,6 +67,264 @@ test("embedded web boots with dev auth, navigates core pages, and reports invali
   }
 });
 
+test("authenticated appearance is applied before login paint and stays in sync across tabs", async ({
+  page,
+  context,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { devNoAuth: false });
+    await page.addInitScript(() => {
+      if (!sessionStorage.getItem("appearance-e2e-seeded")) {
+        localStorage.setItem(
+          "upbrr:appearance:v1",
+          JSON.stringify({ version: 1, theme: "kanagawa-wave", mode: "dark", accents: {} }),
+        );
+        sessionStorage.setItem("appearance-e2e-seeded", "1");
+      }
+      const observer = new MutationObserver(() => {
+        if (!document.body) return;
+        (window as Window & { __themeAtBody?: string }).__themeAtBody =
+          document.documentElement.dataset.theme;
+        observer.disconnect();
+      });
+      observer.observe(document, { childList: true, subtree: true });
+    });
+
+    await page.goto(app.url);
+    await expect(page.getByRole("heading", { name: "Sign In" })).toBeVisible();
+    expect(
+      await page.evaluate(() => (window as Window & { __themeAtBody?: string }).__themeAtBody),
+    ).toBe("kanagawa-wave");
+    expect(await page.locator("html").getAttribute("class")).toContain("dark");
+    await page.getByLabel("Username").fill("e2e-user");
+    await page.getByLabel("Password").fill("synthetic-e2e-password");
+    await page.getByRole("button", { name: "Sign In" }).click();
+    await expect(page.getByRole("heading", { name: "Set Browse Access" })).toBeVisible();
+    await page.getByLabel("Browse root").fill(workspace.root);
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
+    expect(await page.locator("html").getAttribute("data-theme")).toBe("kanagawa-wave");
+
+    await page.getByRole("button", { name: "Appearance" }).click();
+    await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
+    for (const mode of ["Dark", "Light"] as const) {
+      await page.getByRole("radio", { name: mode }).click();
+      for (const [name, id] of [
+        ["Minimal", "minimal"],
+        ["autobrr", "autobrr"],
+        ["Kanagawa Dragon", "kanagawa-dragon"],
+        ["Kanagawa Wave", "kanagawa-wave"],
+        ["The Kyle", "the-kyle"],
+        ["Napster", "napster"],
+        ["Nightwalker", "nightwalker"],
+        ["Swizzin", "swizzin"],
+      ] as const) {
+        await page.getByRole("radio", { name }).locator("..").click();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", id);
+        const contrast = await page.evaluate(() => {
+          const style = getComputedStyle(document.documentElement);
+          const canvas = document.createElement("canvas");
+          canvas.width = canvas.height = 1;
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          if (!context) throw new Error("Canvas color sampling is unavailable");
+          const luminance = (token: string) => {
+            context.clearRect(0, 0, 1, 1);
+            context.fillStyle = style.getPropertyValue(token).trim();
+            context.fillRect(0, 0, 1, 1);
+            const channels = context.getImageData(0, 0, 1, 1).data;
+            const linear = [channels[0], channels[1], channels[2]].map((channel) => {
+              const value = channel / 255;
+              return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+            });
+            return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+          };
+          const ratio = (foreground: string, background: string) => {
+            const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+            return (values[0] + 0.05) / (values[1] + 0.05);
+          };
+          return {
+            body: ratio("--foreground", "--background"),
+            card: ratio("--card-foreground", "--card"),
+            button: ratio("--primary-foreground", "--primary"),
+            sidebar: ratio("--sidebar-foreground", "--sidebar"),
+          };
+        });
+        for (const [surface, ratio] of Object.entries(contrast)) {
+          expect.soft(ratio, `${name} ${mode} ${surface} contrast`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+      for (const theme of ["Kanagawa Dragon", "Kanagawa Wave"] as const) {
+        await page.getByRole("radio", { name: theme }).locator("..").click();
+        for (const accent of ["blueish", "pink", "green", "purple", "grayish", "orange"]) {
+          await page.getByRole("button", { name: accent, exact: true }).click();
+          await expect(page.locator("html")).toHaveAttribute("data-accent", accent);
+          const contrast = await page.evaluate(() => {
+            const style = getComputedStyle(document.documentElement);
+            const canvas = document.createElement("canvas");
+            canvas.width = canvas.height = 1;
+            const context = canvas.getContext("2d", { willReadFrequently: true });
+            if (!context) throw new Error("Canvas color sampling is unavailable");
+            const luminance = (token: string) => {
+              context.clearRect(0, 0, 1, 1);
+              context.fillStyle = style.getPropertyValue(token).trim();
+              context.fillRect(0, 0, 1, 1);
+              const channels = context.getImageData(0, 0, 1, 1).data;
+              const linear = [channels[0], channels[1], channels[2]].map((channel) => {
+                const value = channel / 255;
+                return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+              });
+              return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+            };
+            const values = [luminance("--primary"), luminance("--primary-foreground")].sort(
+              (a, b) => b - a,
+            );
+            return (values[0] + 0.05) / (values[1] + 0.05);
+          });
+          expect.soft(contrast, `${theme} ${mode} ${accent} contrast`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+    await page.getByRole("radio", { name: "Minimal" }).locator("..").click();
+    await page.getByRole("radio", { name: "Light" }).click();
+    await expect(page.locator("html")).toHaveClass(/light/);
+    await page.getByRole("radio", { name: "Dark" }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await page.getByRole("radio", { name: "Napster" }).locator("..").click();
+    await expect(page.locator("html")).toHaveClass(/light/);
+    await page.getByRole("radio", { name: "Swizzin" }).locator("..").click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await page.getByRole("radio", { name: "Napster" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("radio", { name: "Nightwalker" })).toBeChecked();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "nightwalker");
+    await page.getByRole("radio", { name: "Swizzin" }).locator("..").click();
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "swizzin");
+
+    const other = await context.newPage();
+    await other.goto(app.url);
+    await other.getByRole("button", { name: "Appearance" }).click();
+    await other.getByRole("radio", { name: "Minimal" }).locator("..").click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "minimal");
+    await other.close();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("dirty settings survive navigation and require confirmation before logout or reload", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { devNoAuth: false });
+    await page.goto(app.url);
+    await page.getByLabel("Username").fill("e2e-user");
+    await page.getByLabel("Password").fill("synthetic-e2e-password");
+    await page.getByRole("button", { name: "Sign In" }).click();
+    await page.getByRole("heading", { name: "Set Browse Access" }).waitFor();
+    await page.getByLabel("Browse root").fill(workspace.root);
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
+
+    await page.getByRole("button", { name: "Logging" }).click();
+    const level = page.getByRole("combobox", { name: "Level" });
+    await expect(level).toBeVisible();
+    const originalLevel = await level.inputValue();
+    const changedLevel = originalLevel === "debug" ? "trace" : "debug";
+    await level.selectOption(changedLevel);
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "History" }).click();
+    await page.goBack();
+    await expect(level).toHaveValue(changedLevel);
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.type()).toBe("confirm");
+      expect(dialog.message()).toContain("Discard unsaved settings and reload");
+      await dialog.dismiss();
+    });
+    await page.getByRole("button", { name: "Reload" }).click();
+    await expect(level).toHaveValue(changedLevel);
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.type()).toBe("confirm");
+      expect(dialog.message()).toContain("Discard unsaved settings");
+      await dialog.dismiss();
+    });
+    await page.getByRole("button", { name: "Logout" }).click();
+    await expect(level).toHaveValue(changedLevel);
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.type()).toBe("beforeunload");
+      await dialog.dismiss();
+    });
+    await page.evaluate(() => window.location.reload());
+    await expect(level).toHaveValue(changedLevel);
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.type()).toBe("confirm");
+      await dialog.accept();
+    });
+    await page.getByRole("button", { name: "Logout" }).click();
+    await expect(page.getByRole("heading", { name: "Sign In" })).toBeVisible();
+    await expect(page.getByLabel("Password")).toHaveValue("");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("session loss in another tab discards private drafts and cached data", async ({
+  page,
+  context,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { devNoAuth: false });
+    await page.goto(app.url);
+    await page.getByLabel("Username").fill("e2e-user");
+    await page.getByLabel("Password").fill("synthetic-e2e-password");
+    await page.getByRole("button", { name: "Sign In" }).click();
+    await page.getByRole("heading", { name: "Set Browse Access" }).waitFor();
+    await page.getByLabel("Browse root").fill(workspace.root);
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
+
+    await page.getByRole("button", { name: "Logging" }).click();
+    const level = page.getByRole("combobox", { name: "Level" });
+    const originalLevel = await level.inputValue();
+    await level.selectOption(originalLevel === "debug" ? "trace" : "debug");
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+
+    const other = await context.newPage();
+    await other.goto(app.url);
+    await other.getByRole("button", { name: "Logout" }).click();
+    await expect(other.getByRole("heading", { name: "Sign In" })).toBeVisible();
+    await other.close();
+
+    await page.getByRole("button", { name: "History" }).click();
+    await expect(page.getByRole("heading", { name: "Sign In" })).toBeVisible();
+    await expect(
+      page.getByText("Your session ended. Sign in again; unsaved settings were discarded."),
+    ).toBeVisible();
+    await expect(page.getByLabel("Password")).toHaveValue("");
+
+    await page.getByLabel("Password").fill("synthetic-e2e-password");
+    await page.getByRole("button", { name: "Sign In" }).click();
+    await page.getByRole("heading", { name: "History" }).waitFor();
+    await page.getByRole("button", { name: "Logging" }).click();
+    await expect(page.getByRole("combobox", { name: "Level" })).toHaveValue(originalLevel);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded settings generates and revokes a persistent API token", async ({ page }) => {
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
@@ -104,7 +362,7 @@ test("embedded settings generates and revokes a persistent API token", async ({ 
       failure: { Code: "invalid_source" },
     });
 
-    await page.getByRole("button", { name: "Revoke", exact: true }).click();
+    await page.getByRole("button", { name: /^Revoke WebUI automation \(.+\)$/ }).click();
     await page.getByRole("button", { name: "Revoke token" }).click();
     await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
 

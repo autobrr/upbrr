@@ -54,7 +54,7 @@ export function WorkflowOperationProgress({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="label">Release workflow</p>
-          <p className="font-semibold text-[var(--text)]">
+          <p className="font-semibold text-foreground">
             {(events.length ? rootEvent?.message : failureMessage) ||
               operation.message ||
               operation.phase ||
@@ -70,11 +70,11 @@ export function WorkflowOperationProgress({
         aria-valuemax={100}
         aria-valuemin={0}
         aria-valuenow={progress}
-        className="h-2 w-full overflow-hidden rounded-full bg-white/10"
+        className="h-2 w-full overflow-hidden rounded-full bg-secondary"
         role="progressbar"
       >
         <div
-          className="h-full rounded-full bg-[var(--accent-2)] transition-[width]"
+          className="h-full rounded-full bg-primary transition-[width]"
           style={{ width: `${progress}%` }}
         />
       </div>
@@ -83,7 +83,7 @@ export function WorkflowOperationProgress({
         <div className="grid gap-1 text-sm">
           {scopedEvents.map((event) => (
             <div
-              className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 px-2 py-1.5"
+              className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-card px-2 py-1.5"
               key={`${event.sequence}-${event.scope}-${event.scopeId || "workflow"}`}
             >
               <span className="font-semibold">
@@ -94,9 +94,9 @@ export function WorkflowOperationProgress({
               <span
                 className={
                   event.severity === "error"
-                    ? "text-[var(--danger)]"
+                    ? "text-destructive-text"
                     : event.severity === "warn"
-                      ? "text-amber-300"
+                      ? "text-[var(--status-warning)]"
                       : "muted"
                 }
               >
@@ -110,11 +110,11 @@ export function WorkflowOperationProgress({
         <div className="grid gap-1 text-sm">
           {activeItems.map((item) => (
             <div
-              className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 px-2 py-1.5"
+              className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-card px-2 py-1.5"
               key={`${item.kind}-${item.id}`}
             >
               <span className="font-semibold">{item.label || item.id}</span>
-              <span className={item.status === "failed" ? "text-[var(--danger)]" : "muted"}>
+              <span className={item.status === "failed" ? "text-destructive-text" : "muted"}>
                 {item.message || item.status}
               </span>
             </div>
