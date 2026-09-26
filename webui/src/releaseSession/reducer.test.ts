@@ -79,6 +79,55 @@ describe("sessionReducer upload intent", () => {
     expect(state.releaseNameOverrides).toEqual({});
   });
 
+  it("clears the previous workflow when selecting a different source", () => {
+    const previousSource = "C:\\media\\Previous.Release.2026-GRP.mkv";
+    const nextSource = "C:\\media\\Next.Release.2026-GRP.mkv";
+    const initial = initialSessionState();
+    const previousCurrent = current("workflow-previous", 3);
+    const active = sessionReducer(initial, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 1,
+        inputId: "input-previous",
+        sourceVersion: "source-previous-v1",
+        current: {
+          ...previousCurrent,
+          workflow: { ...previousCurrent.workflow, status: "completed" },
+        },
+      },
+      status: "ready",
+      preview: preview(previousSource, 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+    });
+    const failed = sessionReducer(active, {
+      type: "workflow_view_failed",
+      error: "Previous workflow failed.",
+      failure: {
+        Code: "invalid_source",
+        Operation: "preparation",
+        Message: "Previous workflow failed.",
+        Recovery: "edit_input",
+      },
+    });
+
+    expect(
+      sessionReducer(failed, { type: "source_selected", sourcePath: previousSource }).workflowView,
+    ).toBe(failed.workflowView);
+
+    const switched = sessionReducer(failed, { type: "source_selected", sourcePath: nextSource });
+    expect(switched.workflowView).toEqual({
+      status: "idle",
+      current: null,
+      error: "",
+      failure: null,
+    });
+    expect(switched.preview).toBeNull();
+    expect(switched.release).toBeNull();
+    expect(switched.screenshots.staleReason).toBe("Source changed.");
+  });
+
   it("selects newly published media without reselecting known cleared candidates", () => {
     const candidate = (artifactID: string, purpose: "final" | "menu") => ({
       image: {
