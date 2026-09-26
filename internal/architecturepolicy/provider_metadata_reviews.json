@@ -1259,6 +1259,10 @@
     "sha256": "06c8b24de8ea7e88995ba0b339cc1fb998eb44a5516294b181e06b927b7962cd",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
+  "internal/trackers/impl/unit3d/dupe_params.go:buildDupeSearchParams": {
+    "sha256": "16bbf9ca9ce2586173a993910ca503cb31d2a876d06a7dadc0013bae157a44a1",
+    "reason": "CBR search uses the prepared Anime fact shared with the upload subject and category resolver; manual release corrections take precedence before both projections, not raw provider metadata."
+  },
   "internal/trackers/impl/unit3d/name.go:applyLocalizedAlternateTitle": {
     "sha256": "c00ccda59006f108b3c5567502f054bfc4614083f93864b64ca3cc6f01cee3f3",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."

@@ -27,6 +27,9 @@ func buildDupeSearchParams(meta api.DuplicateSubject, tracker string) url.Values
 	}
 	category := strings.ToUpper(string(categoryValue))
 	categoryID := resolveUnit3DDupeCategoryID(tracker, category)
+	if strings.EqualFold(tracker, "CBR") && category == "TV" && meta.Anime {
+		categoryID = "4" // Match CBR's anime upload category.
+	}
 	if categoryID == "" {
 		return nil
 	}
