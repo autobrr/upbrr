@@ -5,6 +5,7 @@ package metadata
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate
 	if meta.ProviderMetadata.Bluray != nil {
 		selectedID = strings.TrimSpace(meta.ProviderMetadata.Bluray.SelectedReleaseID)
 	}
-	if cached := s.reusableBlurayMetadata(meta, imdbID); cached != nil {
+	if cached := s.reusableBlurayMetadata(meta, imdbID, bdinfo); cached != nil {
 		if selectedID != "" {
 			cached.SelectCandidate(selectedID, false, "manual")
 		}
@@ -114,13 +115,20 @@ func (s *Service) blurayLookupEnabled() bool {
 	return s.cfg.Metadata.GetBlurayInfo || s.cfg.Description.AddBlurayLink || s.cfg.Description.UseBlurayImages
 }
 
-func (s *Service) reusableBlurayMetadata(meta preparationstate.State, imdbID int) *api.BlurayMetadata {
+func (s *Service) reusableBlurayMetadata(meta preparationstate.State, imdbID int, bdinfo *discparse.BDInfo) *api.BlurayMetadata {
 	if meta.ProviderMetadata.Bluray == nil {
 		return nil
 	}
 	bluray := *meta.ProviderMetadata.Bluray
 	if bluray.IMDBID != imdbID || len(bluray.Candidates) == 0 {
 		return nil
+	}
+	if bdinfo != nil {
+		for _, candidate := range bluray.Candidates {
+			if slices.Contains(candidate.MatchNotes, "local BDInfo unavailable (-15)") {
+				return nil
+			}
+		}
 	}
 	bluray.Candidates = append([]api.BlurayReleaseCandidate(nil), bluray.Candidates...)
 	return &bluray

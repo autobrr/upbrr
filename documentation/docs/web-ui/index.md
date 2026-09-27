@@ -46,7 +46,7 @@ Navigation guards prevent later operations from silently using missing or stale 
 
 On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
 
-After a source preview is prepared, open **MediaInfo Preview** below **Edit Release Details** to inspect its technical report and expand **Raw MediaInfo** for the original text. If no report is available, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo only when that tracker includes it.
+After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
 
 ### Generate audio analysis
 

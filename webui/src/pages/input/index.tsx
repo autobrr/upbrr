@@ -816,6 +816,7 @@ export default function InputPage(props: Props) {
   const metadataResetting = loading;
   const error = view.error;
   const preview = view.preview || emptyMetadataPreview;
+  const isBlurayDisc = (view.release?.Disc?.Type || view.source.discType) === "BDMV";
   const [providerSelection, setProviderSelection] = useState<ProviderSelection>({
     sourcePath: "",
     generation: 0,
@@ -1665,10 +1666,20 @@ export default function InputPage(props: Props) {
             <summary
               className={`${disclosureSummaryClass} border border-foreground/20 bg-card text-foreground`}
             >
-              MediaInfo Preview
+              {isBlurayDisc ? "BDInfo Preview" : "MediaInfo Preview"}
             </summary>
             <div className="mt-3 min-w-0">
-              {preview.Display.MediaInfoHTML ? (
+              {isBlurayDisc ? (
+                view.release?.Disc.Summary ? (
+                  <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-words text-sm text-foreground">
+                    {view.release.Disc.Summary}
+                  </pre>
+                ) : (
+                  <p className="text-muted-foreground">
+                    No BDInfo summary is available for this source.
+                  </p>
+                )
+              ) : preview.Display.MediaInfoHTML ? (
                 <RenderedDescription html={preview.Display.MediaInfoHTML} />
               ) : (
                 <p className="text-muted-foreground">

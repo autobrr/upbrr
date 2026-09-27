@@ -1309,6 +1309,29 @@ test("embedded web tracks BDMV playlist preparation and opens duplicate checking
     await page.getByRole("button", { name: "Confirm Selection" }).click();
 
     await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL")).toBeVisible();
+    const bdInfoPanel = page.getByText("BDInfo Preview", { exact: true }).locator("..");
+    await bdInfoPanel.locator("summary").first().click();
+    await expect(bdInfoPanel.locator("pre")).toContainText("Disc 1");
+    await expect(bdInfoPanel.locator("pre")).toContainText("Disc 2");
+    await expect(bdInfoPanel).not.toContainText("MediaInfo");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => {
+      const next = JSON.stringify({ version: 1, theme: "swizzin", mode: "dark", accents: {} });
+      localStorage.setItem("upbrr:appearance:v1", next);
+      dispatchEvent(
+        new StorageEvent("storage", {
+          key: "upbrr:appearance:v1",
+          newValue: next,
+          storageArea: localStorage,
+        }),
+      );
+    });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "swizzin");
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+    ).toBeLessThanOrEqual(0);
+    await page.setViewportSize({ width: 1280, height: 720 });
     await expect(page.getByText("Blu-ray analysis complete.")).toHaveCount(0);
     await page.getByRole("button", { name: "Dupe Check" }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();

@@ -408,6 +408,52 @@ describe("InputPage", () => {
     expect(screen.getByText("Matroska")).toBeVisible();
   });
 
+  it("shows the prepared BDInfo summary instead of MediaInfo for Blu-ray discs", () => {
+    const base = readyInputFacet(1);
+    const summary = "Disc Title: Example Movie\nPlaylist: 00001.MPLS\nVideo: <script>HEVC</script>";
+    const release = preparedRelease();
+    release.Disc = {
+      Type: "BDMV",
+      Summary: summary,
+      DurationSeconds: 0,
+      PlaylistCount: 1,
+      DVDVOBSet: "",
+    };
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        source: { discCount: 1, discType: "BDMV" },
+        release,
+        preview: {
+          ...base.view.preview!,
+          Display: {
+            ...base.view.preview!.Display,
+            MediaInfoHTML: "<p>MediaInfo should be hidden</p>",
+          },
+        },
+      },
+    };
+    const { rerender, container } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    const heading = screen.getByText("BDInfo Preview");
+    expect(heading.closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(heading);
+    expect(screen.getByText(/Disc Title: Example Movie/).textContent).toBe(summary);
+    expect(container.querySelector("script")).toBeNull();
+    expect(screen.queryByText("MediaInfo should be hidden")).toBeNull();
+
+    rerender(
+      <InputPage
+        facet={{
+          ...facet,
+          view: { ...facet.view, release: { ...release, Disc: { ...release.Disc, Summary: "" } } },
+        }}
+        {...inputPageProps()}
+      />,
+    );
+    expect(screen.getByText("No BDInfo summary is available for this source.")).toBeVisible();
+  });
+
   it.each([
     { faviconOnly: false, useFavicons: true, visibleName: true },
     { faviconOnly: true, useFavicons: true, visibleName: false },
