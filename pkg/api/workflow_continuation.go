@@ -88,6 +88,7 @@ type WorkflowIntent struct {
 	DuplicateDecisions     map[TrackerID]DupeDecision                  `json:"duplicateDecisions,omitempty"`
 	Media                  *MediaCaptureInstructions                   `json:"media,omitempty"`
 	MediaSelection         *WorkflowMediaSelection                     `json:"mediaSelection,omitempty"`
+	SkipImageHostUpload    bool                                        `json:"skipImageHostUpload,omitempty"`
 	Descriptions           *DescriptionInstructions                    `json:"descriptions,omitempty"`
 	UploadTrackerIDs       []TrackerID                                 `json:"uploadTrackerIds,omitempty"`
 	NoSeed                 bool                                        `json:"noSeed,omitempty"`

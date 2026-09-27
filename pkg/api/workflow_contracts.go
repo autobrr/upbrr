@@ -559,6 +559,7 @@ type MediaArtifactSet struct {
 	HostAttempts              []HostedImageAttempt           `json:"hostAttempts,omitempty"`
 	FailedHosts               []string                       `json:"failedHosts,omitempty"`
 	ImageRequirementsPrepared bool                           `json:"imageRequirementsPrepared"`
+	ImageHostUploadSkipped    bool                           `json:"imageHostUploadSkipped,omitempty"`
 	Status                    StageStatus                    `json:"status"`
 	RequiredActions           []RequiredAction               `json:"requiredActions,omitempty"`
 	Failures                  []WorkflowFailure              `json:"failures,omitempty"`

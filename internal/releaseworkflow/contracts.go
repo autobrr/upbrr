@@ -1078,6 +1078,7 @@ type UploadMediaImagesCommand struct {
 	ArtifactIDs      []api.PublicResourceID
 	Host             string
 	Retry            bool
+	SkipUpload       bool
 	IdempotencyKey   string
 }
 
@@ -1095,7 +1096,8 @@ func (c UploadMediaImagesCommand) commandFingerprint() (api.WorkflowFingerprint,
 		ArtifactIDs      []api.PublicResourceID
 		Host             string
 		Retry            bool
-	}{c.ExpectedRevision, c.Media, c.ArtifactIDs, c.Host, c.Retry})
+		SkipUpload       bool
+	}{c.ExpectedRevision, c.Media, c.ArtifactIDs, c.Host, c.Retry, c.SkipUpload})
 }
 
 // RemoveHostedImagesCommand removes hosted outcomes by opaque artifact ID.
