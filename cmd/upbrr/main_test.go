@@ -154,7 +154,7 @@ func TestCLIConfigActivationRegistersFirstRunSeed(t *testing.T) {
 	if !seeded || resolvedDBPath != dbPath {
 		t.Fatalf("first-run config seeded=%t dbPath=%q", seeded, resolvedDBPath)
 	}
-	generation, fingerprint, err := cliConfigActivation(ctx, cfg, resolvedDBPath)
+	generation, fingerprint, err := cliConfigActivation(ctx, cfg, resolvedDBPath, nil)
 	if err != nil {
 		t.Fatalf("register first-run config activation: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestCLISeededConfigActivationMatchesServeAndLaterCLI(t *testing.T) {
 	if !seeded || resolvedDBPath != dbPath {
 		t.Fatalf("initial CLI config seeded=%t dbPath=%q", seeded, resolvedDBPath)
 	}
-	_, seededFingerprint, err := cliConfigActivation(ctx, seededConfig, resolvedDBPath)
+	_, seededFingerprint, err := cliConfigActivation(ctx, seededConfig, resolvedDBPath, nil)
 	if err != nil {
 		t.Fatalf("register seeded CLI config: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestCLISeededConfigActivationMatchesServeAndLaterCLI(t *testing.T) {
 	if laterSeeded || laterDBPath != dbPath {
 		t.Fatalf("later CLI config seeded=%t dbPath=%q", laterSeeded, laterDBPath)
 	}
-	if _, laterFingerprint, err := cliConfigActivation(ctx, laterCLIConfig, laterDBPath); err != nil {
+	if _, laterFingerprint, err := cliConfigActivation(ctx, laterCLIConfig, laterDBPath, nil); err != nil {
 		t.Fatalf("register later CLI config: %v", err)
 	} else if laterFingerprint != seededFingerprint {
 		t.Fatal("later CLI fingerprint does not match seed")
@@ -284,7 +284,7 @@ func TestCLIConfigActivationReconcilesDurableUpgrade(t *testing.T) {
 	if want == previousFingerprint {
 		t.Fatal("test config did not change fingerprint")
 	}
-	generation, fingerprint, err := cliConfigActivation(ctx, *current, dbPath)
+	generation, fingerprint, err := cliConfigActivation(ctx, *current, dbPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,10 +293,10 @@ func TestCLIConfigActivationReconcilesDurableUpgrade(t *testing.T) {
 	}
 	changed := *current
 	changed.Metadata.OnlyID = !current.Metadata.OnlyID
-	if _, _, err := cliConfigActivation(ctx, changed, dbPath); !errors.Is(err, api.ErrConfigActivationChanged) {
+	if _, _, err := cliConfigActivation(ctx, changed, dbPath, nil); !errors.Is(err, api.ErrConfigActivationChanged) {
 		t.Fatalf("CLI runtime/stored mismatch error = %v", err)
 	}
-	repeatGeneration, repeatFingerprint, err := cliConfigActivation(ctx, *current, dbPath)
+	repeatGeneration, repeatFingerprint, err := cliConfigActivation(ctx, *current, dbPath, nil)
 	if err != nil || repeatGeneration != 1 || repeatFingerprint != want {
 		t.Fatalf("repeated CLI activation = generation %d fingerprint %q err %v", repeatGeneration, repeatFingerprint, err)
 	}

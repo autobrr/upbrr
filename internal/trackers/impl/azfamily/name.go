@@ -34,17 +34,26 @@ var (
 )
 
 func releaseNamePolicy(site siteDefinition) trackers.ReleaseNamePolicyBinding {
-	version := "v3"
+	version := "v4"
 	movieYearProvider := api.IdentityProviderTMDB
-	if site.Name == "CZ" {
-		version = "v5"
+	switch site.Name {
+	case "CZ":
+		version = "v6"
 		movieYearProvider = api.IdentityProviderIMDB
+	case "PHD":
+		version = "v3"
 	}
 	return trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy(
 		fmt.Sprintf("azfamily/%s/%s", strings.ToLower(site.Name), version),
 		trackers.StructuredNamePolicy{
 			Defaults: func(editor *trackers.NameEditor, meta api.UploadSubject, trackerConfig config.TrackerConfig) error {
 				return applyNameDefaults(site, editor, meta, trackerConfig)
+			},
+			ExactName: func(meta api.UploadSubject, _ config.TrackerConfig) string {
+				if meta.Scene && (site.Name == "AZ" || site.Name == "CZ") {
+					return strings.TrimSpace(meta.SceneName)
+				}
+				return ""
 			},
 			Search: func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
 		},
@@ -104,7 +113,7 @@ func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubjec
 	title := cinemaZTitle(meta)
 	if title == "" {
 		return &trackers.NameRuleError{
-			Rule:   "azfamily/cz/v5",
+			Rule:   "azfamily/cz/v6",
 			Role:   api.NameRoleTitle,
 			Reason: "no Latin-safe title is available; set a Latin-safe manual original title and reprepare",
 		}

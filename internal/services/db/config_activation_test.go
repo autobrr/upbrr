@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -459,10 +460,14 @@ func TestReconcileConfigActivationRejectsChangedSnapshotAndBusyInput(t *testing.
 	if _, err := repo.ReconcileConfigActivation(ctx, stale, expected, "current", nil); !errors.Is(err, api.ErrConfigActivationChanged) {
 		t.Fatalf("changed stored config error = %v", err)
 	}
-	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET record_json = ? WHERE singleton = 1`, `{"State":"opening"}`); err != nil {
+	busySlot, err := json.Marshal(api.ActiveInputRecord{State: api.ActiveInputOpening, LeaseExpiresAt: time.Now().Add(time.Minute)})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.ReconcileConfigActivation(ctx, snapshot, expected, "current", nil); !errors.Is(err, api.ErrActiveInputBusy) {
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET record_json = ? WHERE singleton = 1`, busySlot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ReconcileConfigActivation(ctx, snapshot, expected, "current", nil); err == nil || !errors.Is(err, api.ErrActiveInputBusy) || !strings.Contains(err.Error(), "reason=transitional_input_lease_live") {
 		t.Fatalf("busy input error = %v", err)
 	}
 	unchanged, err := repo.LoadConfigActivation(ctx)
@@ -471,6 +476,349 @@ func TestReconcileConfigActivationRejectsChangedSnapshotAndBusyInput(t *testing.
 	}
 	if unchanged.ActiveGeneration != 0 || unchanged.Fingerprint != "previous" {
 		t.Fatalf("rejected upgrade changed activation: %#v", unchanged)
+	}
+}
+
+func TestReconcileConfigActivationAcceptsExpiredOpeningInput(t *testing.T) {
+	ctx := t.Context()
+	repo, snapshot, expected := newConfigActivationUpgradeFixture(t)
+	prior := api.ActiveInputRecord{
+		State:          api.ActiveInputOpening,
+		Revision:       1,
+		Fence:          1,
+		OwnerID:        "owner",
+		CoordinatorID:  "previous-process",
+		LeaseExpiresAt: time.Now().UTC().Add(-time.Minute),
+		ReservationID:  "pending-open",
+		RequestedPath:  "synthetic-source",
+		IdempotencyKey: "open",
+	}
+	payload, err := json.Marshal(prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET revision = ?, fence = ?, record_json = ? WHERE singleton = 1`,
+		prior.Revision, prior.Fence, payload); err != nil {
+		t.Fatal(err)
+	}
+	activation, err := repo.ReconcileConfigActivation(ctx, snapshot, expected, "current", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != expected.ActiveGeneration+1 || activation.Fingerprint != "current" {
+		t.Fatalf("reconciled activation = %#v", activation)
+	}
+	remaining, err := repo.LoadActiveInput(ctx)
+	if err != nil || remaining != prior {
+		t.Fatalf("retained recoverable input = %#v, err=%v", remaining, err)
+	}
+}
+
+func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		workLease      time.Duration
+		legacyRecovery bool
+		unknownEffect  bool
+		wantErr        error
+		wantReason     string
+	}{
+		{name: "expired work", workLease: -time.Minute},
+		{
+			name:           "expired legacy recovery work",
+			workLease:      -time.Minute,
+			legacyRecovery: true,
+		},
+		{
+			name:           "live legacy recovery work",
+			workLease:      time.Minute,
+			legacyRecovery: true,
+			wantErr:        api.ErrActiveInputBusy,
+			wantReason:     "reason=operation_work_lease_live",
+		},
+		{
+			name:       "live work",
+			workLease:  time.Minute,
+			wantErr:    api.ErrActiveInputBusy,
+			wantReason: "reason=operation_work_lease_live",
+		},
+		{
+			name:          "unknown effect",
+			workLease:     -time.Minute,
+			unknownEffect: true,
+			wantErr:       api.ErrReleaseWorkflowEffectOutcomeUnknown,
+			wantReason:    "reason=unresolved_workflow_effect",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			repo, snapshot, expected := newConfigActivationUpgradeFixture(t)
+			now := time.Now().UTC().Truncate(time.Second)
+			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_states (
+				owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				"owner", "workflow", 1, "active", "", "", []byte(`{"safe":"state"}`),
+				formatWorkflowStateTime(now), formatWorkflowStateTime(now)); err != nil {
+				t.Fatal(err)
+			}
+			prior := api.ActiveInputRecord{
+				State:          api.ActiveInputActive,
+				Revision:       5,
+				Fence:          1,
+				OwnerID:        "owner",
+				CoordinatorID:  "previous-process",
+				LeaseExpiresAt: now.Add(-time.Minute),
+				InputID:        "input",
+				SourceVersion:  "version",
+				WorkflowID:     "workflow",
+			}
+			if test.legacyRecovery {
+				prior.State = api.ActiveInputRecovering
+				prior.InputID, prior.SourceVersion = "", ""
+			}
+			payload, err := json.Marshal(prior)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET revision = ?, fence = ?, record_json = ? WHERE singleton = 1`,
+				prior.Revision, prior.Fence, payload); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_operations (
+				owner_id, workflow_id, operation_id, expected_revision, idempotency_key, command_fingerprint,
+				command_name, process_epoch, status, sequence, operation_json, started_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				"owner", "workflow", "operation", 1, "", "fingerprint", "continue", "previous-process", "running", 1,
+				[]byte(`{}`), formatWorkflowStateTime(now), formatWorkflowStateTime(now)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_work (
+				owner_id, workflow_id, operation_id, lease_owner, lease_expires_at, checkpoint_json, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", "operation", "previous-process",
+				formatWorkflowStateTime(now.Add(test.workLease)), []byte(`{}`), formatWorkflowStateTime(now)); err != nil {
+				t.Fatal(err)
+			}
+			if test.unknownEffect {
+				if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
+					owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint, status, started_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					"owner", "workflow", "operation", "effect", "tracker_submission", "TEST", "fingerprint", "unknown",
+					formatWorkflowStateTime(now), formatWorkflowStateTime(now)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			activation, err := repo.ReconcileConfigActivation(ctx, snapshot, expected, "current",
+				func(record api.ReleaseWorkflowStateRecord, _ api.ConfigImpactDetail) (api.ReleaseWorkflowStateRecord, error) {
+					record.Revision++
+					record.UpdatedAt = record.UpdatedAt.Add(time.Nanosecond)
+					record.Payload = []byte(`{"safe":"updated"}`)
+					return record, nil
+				})
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("reconcile error = %v, want %v", err, test.wantErr)
+			}
+			if test.wantReason != "" && !strings.Contains(err.Error(), test.wantReason) {
+				t.Fatalf("reconcile error = %v, want reason %q", err, test.wantReason)
+			}
+			if test.wantErr == nil && (activation.ActiveGeneration != 1 || activation.Fingerprint != "current") {
+				t.Fatalf("reconciled activation = %#v", activation)
+			}
+			var status string
+			if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_operations WHERE operation_id = ?`,
+				"operation").Scan(&status); err != nil || status != "running" {
+				t.Fatalf("retained operation status = %q, err=%v", status, err)
+			}
+		})
+	}
+}
+
+func TestDiscardUnresolvedWorkflowEffectsOnStartupRespectsLeases(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		inputLease time.Duration
+		workLease  time.Duration
+		wantBusy   bool
+	}{
+		{
+			name:       "expired leases",
+			inputLease: -time.Minute,
+			workLease:  -time.Minute,
+		},
+		{
+			name:       "live input lease",
+			inputLease: time.Minute,
+			workLease:  -time.Minute,
+			wantBusy:   true,
+		},
+		{
+			name:       "live work lease",
+			inputLease: -time.Minute,
+			workLease:  time.Minute,
+			wantBusy:   true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			repo, _, _ := newConfigActivationUpgradeFixture(t)
+			now := time.Now().UTC().Truncate(time.Second)
+			formattedNow := formatWorkflowStateTime(now)
+			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_states (
+				owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", 1, "active", "", "", []byte(`{}`),
+				formattedNow, formattedNow); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_operations (
+				owner_id, workflow_id, operation_id, expected_revision, idempotency_key, command_fingerprint,
+				command_name, process_epoch, status, sequence, operation_json, started_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", "operation", 1, "",
+				"synthetic", "continue", "previous-process", "running", 1, []byte(`{}`), formattedNow, formattedNow); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_work (
+				owner_id, workflow_id, operation_id, lease_owner, lease_expires_at, checkpoint_json, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", "operation", "previous-process",
+				formatWorkflowStateTime(now.Add(test.workLease)), []byte(`{}`), formattedNow); err != nil {
+				t.Fatal(err)
+			}
+			slot := api.ActiveInputRecord{
+				State:          api.ActiveInputActive,
+				Revision:       1,
+				Fence:          1,
+				OwnerID:        "owner",
+				CoordinatorID:  "previous-process",
+				LeaseExpiresAt: now.Add(test.inputLease),
+				InputID:        "input",
+				SourceVersion:  "version",
+				WorkflowID:     "workflow",
+			}
+			payload, err := json.Marshal(slot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET revision = ?, fence = ?, record_json = ? WHERE singleton = 1`,
+				slot.Revision, slot.Fence, payload); err != nil {
+				t.Fatal(err)
+			}
+			for _, effect := range []struct {
+				id     string
+				status api.WorkflowEffectStatus
+			}{
+				{id: "started", status: api.WorkflowEffectStatusStarted},
+				{id: "unknown", status: api.WorkflowEffectStatusUnknown},
+				{id: "succeeded", status: api.WorkflowEffectStatusSucceeded},
+			} {
+				if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
+					owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint,
+					status, started_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", "operation", effect.id,
+					"tracker_submission", effect.id, "synthetic", effect.status, formattedNow, formattedNow); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, fence := range []struct {
+				id     string
+				status api.WorkflowEffectStatus
+			}{
+				{id: "unknown", status: api.WorkflowEffectStatusUnknown},
+				{id: "succeeded", status: api.WorkflowEffectStatusSucceeded},
+			} {
+				if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO submission_fences (
+					content_version, content_digest, content_scope, content_json, tracker_site,
+					owner_id, workflow_id, operation_id, effect_id, status, started_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "1", fence.id, "file", []byte(`{}`), "TEST",
+					"owner", "workflow", "operation", fence.id, fence.status, formattedNow, formattedNow); err != nil {
+					t.Fatal(err)
+				}
+			}
+			effects, fences, err := repo.DiscardUnresolvedWorkflowEffectsOnStartup(ctx, now)
+			if test.wantBusy {
+				if !errors.Is(err, api.ErrActiveInputBusy) || effects != 0 || fences != 0 {
+					t.Fatalf("live lease discard = effects %d fences %d err %v, want busy without writes", effects, fences, err)
+				}
+			} else if err != nil || effects != 2 || fences != 1 {
+				t.Fatalf("expired lease discard = effects %d fences %d err %v, want 2/1", effects, fences, err)
+			}
+			wantUnresolved := 0
+			if test.wantBusy {
+				wantUnresolved = 2
+			}
+			var unresolvedEffects, unresolvedFences, succeededEffects, succeededFences int
+			if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM release_workflow_effects
+				WHERE status IN ('started', 'unknown')`).Scan(&unresolvedEffects); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM submission_fences
+				WHERE status IN ('started', 'unknown')`).Scan(&unresolvedFences); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM release_workflow_effects
+				WHERE status = 'succeeded'`).Scan(&succeededEffects); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM submission_fences
+				WHERE status = 'succeeded'`).Scan(&succeededFences); err != nil {
+				t.Fatal(err)
+			}
+			wantFences := 0
+			if test.wantBusy {
+				wantFences = 1
+			}
+			if unresolvedEffects != wantUnresolved || unresolvedFences != wantFences || succeededEffects != 1 || succeededFences != 1 {
+				t.Fatalf("retained effects/fences = unresolved %d/%d succeeded %d/%d", unresolvedEffects,
+					unresolvedFences, succeededEffects, succeededFences)
+			}
+			if !test.wantBusy {
+				effects, fences, err = repo.DiscardUnresolvedWorkflowEffectsOnStartup(ctx, now.Add(time.Second))
+				if err != nil || effects != 0 || fences != 0 {
+					t.Fatalf("repeated discard = effects %d fences %d err %v, want no-op", effects, fences, err)
+				}
+			}
+		})
+	}
+}
+
+func TestDiscardUnresolvedWorkflowEffectsOnStartupRollsBackFailedFenceDelete(t *testing.T) {
+	ctx := t.Context()
+	repo, _, _ := newConfigActivationUpgradeFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	formattedNow := formatWorkflowStateTime(now)
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_states (
+		owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", 1, "active", "", "", []byte(`{}`),
+		formattedNow, formattedNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
+		owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint,
+		status, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", "operation", "effect",
+		"tracker_submission", "TEST", "synthetic", api.WorkflowEffectStatusUnknown, formattedNow, formattedNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO submission_fences (
+		content_version, content_digest, content_scope, content_json, tracker_site,
+		owner_id, workflow_id, operation_id, effect_id, status, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "1", "synthetic", "file", []byte(`{}`), "TEST",
+		"owner", "workflow", "operation", "effect", api.WorkflowEffectStatusUnknown, formattedNow, formattedNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `CREATE TRIGGER fail_uncertain_fence_delete
+		BEFORE DELETE ON submission_fences WHEN OLD.status = 'unknown'
+		BEGIN SELECT RAISE(ABORT, 'synthetic fence delete failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.DiscardUnresolvedWorkflowEffectsOnStartup(ctx, now); err == nil {
+		t.Fatal("startup effect discard succeeded after fence delete failure")
+	}
+	var effectStatus string
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_effects WHERE effect_id = 'effect'`).Scan(&effectStatus); err != nil ||
+		effectStatus != string(api.WorkflowEffectStatusUnknown) {
+		t.Fatalf("effect after failed discard = %q, err=%v", effectStatus, err)
+	}
+	var fenceCount int
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM submission_fences WHERE effect_id = 'effect'`).Scan(&fenceCount); err != nil || fenceCount != 1 {
+		t.Fatalf("fence count after failed discard = %d, err=%v", fenceCount, err)
 	}
 }
 

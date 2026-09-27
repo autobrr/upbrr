@@ -300,7 +300,7 @@ func runUpload(
 	// Phase 1: core init + cleanup + delete-tmp run under cliSetupTimeout.
 	setupCtx, setupCancel := context.WithTimeout(ctx, cliSetupTimeout)
 	defer setupCancel()
-	configGeneration, configFingerprint, err := cliConfigActivation(setupCtx, cfg, dbPath)
+	configGeneration, configFingerprint, err := cliConfigActivation(setupCtx, cfg, dbPath, logger)
 	if err != nil {
 		return exitError(1, err)
 	}
@@ -1023,7 +1023,7 @@ func loadCLIConfigWithSeed(ctx context.Context, configPath string, configProvide
 // configuration. A config file or environment that differs from the stored
 // runtime cannot mutate a workflow.
 func cliConfigActivation(
-	ctx context.Context, cfg config.Config, dbPath string,
+	ctx context.Context, cfg config.Config, dbPath string, logger api.Logger,
 ) (uint64, api.WorkflowFingerprint, error) {
 	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
@@ -1040,7 +1040,7 @@ func cliConfigActivation(
 	if activation.Status != api.ConfigActivationActive && activation.Status != api.ConfigActivationPending {
 		return 0, "", errors.New("active config activation state is invalid")
 	}
-	activation, err = webserver.InitializeRuntimeConfigActivation(ctx, repo, cfg)
+	activation, err = webserver.InitializeRuntimeConfigActivation(ctx, repo, cfg, logger)
 	if err != nil {
 		return 0, "", fmt.Errorf("initialize CLI config activation: %w", err)
 	}

@@ -408,15 +408,11 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 		if err := document.Validate(); err != nil {
 			return ResolvedReleaseNames{}, fmt.Errorf("generated name: %w", err)
 		}
-		opaque = opaque || strings.TrimSpace(subject.ReleaseName) != document.Render().Name ||
-			(subject.Scene && strings.TrimSpace(subject.SceneName) != "")
+		opaque = opaque || strings.TrimSpace(subject.ReleaseName) != document.Render().Name
 	}
 	if opaque {
 		if policy.Mandatory == nil {
 			name := canonicalProjectionName(subject)
-			if subject.Scene && subject.SceneName != "" {
-				name = subject.SceneName
-			}
 			if exactName != "" {
 				name = exactName
 			}
@@ -457,8 +453,6 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 			reason := "opaque name cannot satisfy mandatory component rules; clear the name override and reprepare"
 			if document == nil {
 				reason = "generated name components are unavailable; reprepare the release"
-			} else if input.RequestedName == nil && subject.Scene && strings.TrimSpace(subject.SceneName) != "" {
-				reason = "mandatory component rules cannot preserve this exact scene name; this tracker policy must explicitly support rebuilding scene names"
 			}
 			return ResolvedReleaseNames{}, &NameRuleError{
 				Rule:   binding.ID,

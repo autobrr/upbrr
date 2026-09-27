@@ -337,6 +337,28 @@ func (r *MemoryRepository) ListActiveOperations(ctx context.Context) ([]api.Rele
 	return records, nil
 }
 
+// ListInterruptedOperationsWithIncompleteWork finds interrupted operations whose work still needs completion.
+func (r *MemoryRepository) ListInterruptedOperationsWithIncompleteWork(
+	ctx context.Context, ownerID string, workflowID api.WorkflowID,
+) ([]api.ReleaseWorkflowOperationRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("list interrupted workflow work: %w", err)
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var records []api.ReleaseWorkflowOperationRecord
+	for _, record := range r.operations {
+		if record.OwnerID != ownerID || record.WorkflowID != workflowID || record.Status.Status != api.StageStatusInterrupted {
+			continue
+		}
+		work, ok := r.work[memoryWorkKey(ownerID, workflowID, record.OperationID)]
+		if ok && work.CompletedAt == nil {
+			records = append(records, cloneMemoryOperationRecord(record))
+		}
+	}
+	return records, nil
+}
+
 // AcceptIntent retains one exact desired-state request in memory.
 func (r *MemoryRepository) AcceptIntent(
 	ctx context.Context,

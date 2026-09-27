@@ -14,10 +14,16 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("standalone/is/v2", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("standalone/is/v3", trackers.StructuredNamePolicy{
 		Defaults:  omitNameComponents,
 		Separator: ".",
-		Search:    func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
+		ExactName: func(meta api.UploadSubject, _ config.TrackerConfig) string {
+			if meta.Scene {
+				return strings.TrimSpace(meta.SceneName)
+			}
+			return ""
+		},
+		Search: func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
 	})
 }
 

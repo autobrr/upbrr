@@ -32,5 +32,6 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64
           push: false
+          tags: ghcr.io/${{ github.repository }}:pr${{ github.event.pull_request.number }}
           cache-from: type=gha,scope=docker-pr-amd64
           cache-to: type=gha,scope=docker-pr-amd64,mode=min,ignore-error=true

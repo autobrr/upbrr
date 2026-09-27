@@ -201,6 +201,38 @@ func (r *SQLiteRepository) ListActiveReleaseWorkflowOperations(ctx context.Conte
 	return records, nil
 }
 
+// ListInterruptedReleaseWorkflowOperationsWithIncompleteWork finds terminal
+// interrupted operations that still have a durable work row to settle.
+func (r *SQLiteRepository) ListInterruptedReleaseWorkflowOperationsWithIncompleteWork(
+	ctx context.Context, ownerID string, workflowID api.WorkflowID,
+) ([]api.ReleaseWorkflowOperationRecord, error) {
+	rows, err := r.db.QueryContext(ctx, workflowOperationSelect+`
+		WHERE owner_id = ? AND workflow_id = ? AND status = ?
+			AND EXISTS (SELECT 1 FROM release_workflow_work AS work
+				WHERE work.owner_id = release_workflow_operations.owner_id
+					AND work.workflow_id = release_workflow_operations.workflow_id
+					AND work.operation_id = release_workflow_operations.operation_id
+					AND work.completed_at IS NULL)
+		ORDER BY updated_at, operation_id
+	`, strings.TrimSpace(ownerID), workflowID, api.StageStatusInterrupted)
+	if err != nil {
+		return nil, fmt.Errorf("db list interrupted incomplete release workflow work: %w", err)
+	}
+	defer rows.Close()
+	var records []api.ReleaseWorkflowOperationRecord
+	for rows.Next() {
+		record, scanErr := scanWorkflowOperation(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db iterate interrupted incomplete release workflow work: %w", err)
+	}
+	return records, nil
+}
+
 // DeleteTerminalReleaseWorkflowOperationsBefore removes bounded terminal
 // progress history while retaining queued and running work.
 func (r *SQLiteRepository) DeleteTerminalReleaseWorkflowOperationsBefore(ctx context.Context, before time.Time) (int64, error) {

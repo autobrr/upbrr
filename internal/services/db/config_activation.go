@@ -123,9 +123,12 @@ func (r *SQLiteRepository) InitializeConfigActivationFingerprint(
 	return activation, err
 }
 
-// ReconcileConfigActivation advances an existing fingerprint after a startup
-// config change. It verifies the exact stored config and activation observed by
-// the caller, invalidates unfinished work, and retains a pending candidate.
+// ReconcileConfigActivation advances a changed startup fingerprint only when
+// the stored config and activation still match the caller's snapshot. It permits
+// an expired input and its bound work after their leases expire, but rejects live
+// leases and unresolved external effects. It applies config impact to the
+// committed workflow and retains any pending candidate; operation recovery runs
+// when the Core starts.
 func (r *SQLiteRepository) ReconcileConfigActivation(
 	ctx context.Context, expectedConfig json.RawMessage, expected api.ConfigActivation,
 	nextFingerprint api.WorkflowFingerprint, transform ConfigActivationWorkflowTransform,
@@ -152,12 +155,12 @@ func (r *SQLiteRepository) ReconcileConfigActivation(
 		if err := requireFullConfigUnchanged(ctx, tx, expectedConfig); err != nil {
 			return err
 		}
-		slot, err := requireConfigActivationSafe(ctx, tx)
+		slot, err := requireStartupConfigActivationSafe(ctx, tx)
 		if err != nil {
 			return err
 		}
 		impacts := []api.ConfigImpactDetail{{Kind: api.ConfigImpactProvider}}
-		if slot.State == api.ActiveInputActive {
+		if slot.State == api.ActiveInputActive || (slot.InputID != "" && slot.WorkflowID != "") {
 			if transform == nil {
 				return errors.New("db: config activation workflow transform is required")
 			}
@@ -548,13 +551,111 @@ func (r *SQLiteRepository) ConfigActivationSafe(ctx context.Context) (bool, erro
 	return false, err
 }
 
+// DiscardUnresolvedWorkflowEffectsOnStartup abandons prior-process effects
+// after all input and work leases expire. It retains failed effect receipts and
+// removes uncertain submission fences so an interrupted attempt can be retried.
+func (r *SQLiteRepository) DiscardUnresolvedWorkflowEffectsOnStartup(ctx context.Context, now time.Time) (int64, int64, error) {
+	if now.IsZero() {
+		return 0, 0, errors.New("db: startup effect discard timestamp is required")
+	}
+	now = now.UTC()
+	var effectCount, fenceCount int64
+	err := r.withWriteTx(ctx, "discard unresolved startup workflow effects", func(tx *sql.Tx) error {
+		effectCount, fenceCount = 0, 0
+		var unresolved int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM release_workflow_effects WHERE status IN ('started', 'unknown')
+		) OR EXISTS (
+			SELECT 1 FROM submission_fences WHERE status IN ('started', 'unknown')
+		)`).Scan(&unresolved); err != nil {
+			return fmt.Errorf("db inspect unresolved startup workflow effects: %w", err)
+		}
+		if unresolved == 0 {
+			return nil
+		}
+		slot, err := loadActiveInput(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("db inspect startup effect input lease: %w", err)
+		}
+		if slot.State != api.ActiveInputEmpty && slot.LeaseExpiresAt.After(now) {
+			return fmt.Errorf("%w: reason=unresolved_effect_input_lease_live state=%s", api.ErrActiveInputBusy, slot.State)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT lease_expires_at FROM release_workflow_work WHERE completed_at IS NULL`)
+		if err != nil {
+			return fmt.Errorf("db inspect startup effect work leases: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var expiry string
+			if err := rows.Scan(&expiry); err != nil {
+				return fmt.Errorf("db read startup effect work lease: %w", err)
+			}
+			leaseExpiry, err := time.Parse(time.RFC3339Nano, expiry)
+			if err != nil {
+				return fmt.Errorf("db parse startup effect work lease: %w", err)
+			}
+			if leaseExpiry.After(now) {
+				return fmt.Errorf("%w: reason=unresolved_effect_work_lease_live", api.ErrActiveInputBusy)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("db iterate startup effect work leases: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("db close startup effect work leases: %w", err)
+		}
+		formattedNow := formatWorkflowStateTime(now)
+		result, err := tx.ExecContext(ctx, `UPDATE release_workflow_effects
+			SET status = ?, updated_at = ?, completed_at = ?
+			WHERE status IN ('started', 'unknown')`, api.WorkflowEffectStatusFailed, formattedNow, formattedNow)
+		if err != nil {
+			return fmt.Errorf("db discard unresolved startup workflow effects: %w", err)
+		}
+		effectCount, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("db count discarded startup workflow effects: %w", err)
+		}
+		result, err = tx.ExecContext(ctx, `DELETE FROM submission_fences WHERE status IN ('started', 'unknown')`)
+		if err != nil {
+			return fmt.Errorf("db discard unresolved startup submission fences: %w", err)
+		}
+		fenceCount, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("db count discarded startup submission fences: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return effectCount, fenceCount, nil
+}
+
 func requireConfigActivationSafe(ctx context.Context, tx *sql.Tx) (api.ActiveInputRecord, error) {
+	return requireConfigActivationSafeForStartup(ctx, tx, false)
+}
+
+// requireStartupConfigActivationSafe permits expired transitional input and
+// bound unfinished operations for startup reconciliation. Live leases and
+// unresolved effects still block it; normal settings activation requires idle
+// input and no active work.
+func requireStartupConfigActivationSafe(ctx context.Context, tx *sql.Tx) (api.ActiveInputRecord, error) {
+	return requireConfigActivationSafeForStartup(ctx, tx, true)
+}
+
+func requireConfigActivationSafeForStartup(ctx context.Context, tx *sql.Tx, startup bool) (api.ActiveInputRecord, error) {
 	slot, err := loadActiveInput(ctx, tx)
 	if err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("db inspect config activation active input: %w", err)
 	}
+	now := time.Now().UTC()
 	if slot.State != api.ActiveInputEmpty && slot.State != api.ActiveInputActive {
-		return api.ActiveInputRecord{}, api.ErrActiveInputBusy
+		if !startup || slot.LeaseExpiresAt.After(now) {
+			if startup {
+				return api.ActiveInputRecord{}, fmt.Errorf("%w: reason=transitional_input_lease_live state=%s", api.ErrActiveInputBusy, slot.State)
+			}
+			return api.ActiveInputRecord{}, api.ErrActiveInputBusy
+		}
 	}
 	var running int
 	if err := tx.QueryRowContext(
@@ -566,7 +667,53 @@ func requireConfigActivationSafe(ctx context.Context, tx *sql.Tx) (api.ActiveInp
 		return api.ActiveInputRecord{}, fmt.Errorf("db inspect config activation work: %w", err)
 	}
 	if running != 0 {
-		return api.ActiveInputRecord{}, api.ErrActiveInputBusy
+		legacyRecovery := slot.State == api.ActiveInputRecovering && slot.InputID == "" && slot.SourceVersion == "" &&
+			slot.WorkflowID != "" && slot.ReservationID == "" && slot.RequestedPath == ""
+		if !startup || (slot.InputID == "" && !legacyRecovery) || slot.WorkflowID == "" || slot.LeaseExpiresAt.After(now) {
+			if startup {
+				reason := "operation_input_lease_live"
+				if (slot.InputID == "" && !legacyRecovery) || slot.WorkflowID == "" {
+					reason = "operation_input_missing"
+				}
+				return api.ActiveInputRecord{}, fmt.Errorf("%w: reason=%s state=%s", api.ErrActiveInputBusy, reason, slot.State)
+			}
+			return api.ActiveInputRecord{}, api.ErrActiveInputBusy
+		}
+		var foreign int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM release_workflow_operations WHERE status IN ('queued', 'running')
+				AND (owner_id != ? OR workflow_id != ?)
+		)`, slot.OwnerID, slot.WorkflowID).Scan(&foreign); err != nil {
+			return api.ActiveInputRecord{}, fmt.Errorf("db inspect config activation operation ownership: %w", err)
+		}
+		if foreign != 0 {
+			return api.ActiveInputRecord{}, fmt.Errorf("%w: reason=operation_owner_mismatch", api.ErrActiveInputBusy)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT work.lease_expires_at
+			FROM release_workflow_operations AS operation
+			JOIN release_workflow_work AS work ON work.owner_id = operation.owner_id
+				AND work.workflow_id = operation.workflow_id AND work.operation_id = operation.operation_id
+			WHERE operation.status IN ('queued', 'running') AND work.completed_at IS NULL`)
+		if err != nil {
+			return api.ActiveInputRecord{}, fmt.Errorf("db inspect config activation work leases: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var expiry string
+			if err := rows.Scan(&expiry); err != nil {
+				return api.ActiveInputRecord{}, fmt.Errorf("db read config activation work lease: %w", err)
+			}
+			leaseExpiry, err := time.Parse(time.RFC3339Nano, expiry)
+			if err != nil {
+				return api.ActiveInputRecord{}, fmt.Errorf("db parse config activation work lease: %w", err)
+			}
+			if leaseExpiry.After(now) {
+				return api.ActiveInputRecord{}, fmt.Errorf("%w: reason=operation_work_lease_live", api.ErrActiveInputBusy)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return api.ActiveInputRecord{}, fmt.Errorf("db iterate config activation work leases: %w", err)
+		}
 	}
 	var unresolved int
 	if err := tx.QueryRowContext(
@@ -578,7 +725,20 @@ func requireConfigActivationSafe(ctx context.Context, tx *sql.Tx) (api.ActiveInp
 		return api.ActiveInputRecord{}, fmt.Errorf("db inspect config activation effects: %w", err)
 	}
 	if unresolved != 0 {
+		if startup {
+			return api.ActiveInputRecord{}, fmt.Errorf("%w: reason=unresolved_workflow_effect", api.ErrReleaseWorkflowEffectOutcomeUnknown)
+		}
 		return api.ActiveInputRecord{}, api.ErrReleaseWorkflowEffectOutcomeUnknown
+	}
+	if startup {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM submission_fences WHERE status IN ('started', 'unknown')
+		)`).Scan(&unresolved); err != nil {
+			return api.ActiveInputRecord{}, fmt.Errorf("db inspect config activation submission fences: %w", err)
+		}
+		if unresolved != 0 {
+			return api.ActiveInputRecord{}, fmt.Errorf("%w: reason=unresolved_submission_fence", api.ErrReleaseWorkflowEffectOutcomeUnknown)
+		}
 	}
 	return slot, nil
 }

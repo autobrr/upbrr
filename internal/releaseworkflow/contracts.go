@@ -500,6 +500,7 @@ type OperationRepository interface {
 	LoadLatestOperation(context.Context, string, api.WorkflowID) (api.ReleaseWorkflowOperationRecord, error)
 	SaveOperation(context.Context, uint64, api.ReleaseWorkflowOperationRecord) error
 	ListActiveOperations(context.Context) ([]api.ReleaseWorkflowOperationRecord, error)
+	ListInterruptedOperationsWithIncompleteWork(context.Context, string, api.WorkflowID) ([]api.ReleaseWorkflowOperationRecord, error)
 }
 
 // DurabilityRepository persists accepted intents, immutable events,
