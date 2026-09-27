@@ -44,6 +44,10 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
+
+After a source preview is prepared, open **MediaInfo Preview** below **Edit Release Details** to inspect its technical report and expand **Raw MediaInfo** for the original text. If no report is available, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo only when that tracker includes it.
+
 ### Generate audio analysis
 
 **Audio Analysis** appears after Input has produced authoritative audio-track facts. Opening the page does not start FFmpeg. Choose the primary track, all tracks, or specific tracks; select waveform, spectrogram, or both; then click **Generate**.

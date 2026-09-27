@@ -32,3 +32,9 @@ The router is mounted inside the authenticated release provider so changing page
 Each browser route must also be listed in the Go host's UI fallback allowlist. Test direct links and reloads at `/` and a configured prefix such as `/upbrr/`; the host rewrites Vite's relative entry assets for nested routes. Never treat missing assets as UI routes.
 
 Theme palettes are static free assets. Appearance is browser local, applies before React mounts, and does not add a server configuration field. Add a theme through the catalog, palette, bootstrap, and theme tests together.
+
+## Styling and description previews
+
+Use Tailwind utilities and shared UI components for page layout. `src/styles.css` owns the theme token mapping and shared shell styles; `src/themes/palettes.css` owns bundled palette values. Keep generated tracker markup within `src/components/rendered-description.css`, which scopes its rules to `RenderedDescription`. The Go `internal/description` package converts mixed BBCode and HTML to sanitized preview HTML; the browser displays that result rather than parsing tracker markup. Input's source MediaInfo preview uses the same renderer, while tracker descriptions retain only the technical blocks each tracker includes.
+
+The standard `make e2e` suite checks representative theme contrast and mobile overflow, source MediaInfo, and mixed BBCode/HTML description previews and recovery. For a wider visual change, build the embedded app with `make e2e-build`, then run the relevant Playwright project. The separate `visual-quality.config.ts` and `visual-quality-touch.config.ts` suites sweep more palette, description, page, and touch states; they are not part of `make e2e`. See `e2e/AGENTS.md` for commands and generated evidence paths.

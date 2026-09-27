@@ -109,6 +109,7 @@ test("authenticated appearance is applied before login paint and stays in sync a
 
     await page.getByRole("button", { name: "Appearance" }).click();
     await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
     for (const mode of ["Dark", "Light"] as const) {
       await page.getByRole("radio", { name: mode }).click();
       for (const [name, id] of [
@@ -123,6 +124,17 @@ test("authenticated appearance is applied before login paint and stays in sync a
       ] as const) {
         await page.getByRole("radio", { name }).locator("..").click();
         await expect(page.locator("html")).toHaveAttribute("data-theme", id);
+        const layout = await page.evaluate(() => ({
+          colorScheme: getComputedStyle(document.documentElement).colorScheme,
+          scrollWidth: document.documentElement.scrollWidth,
+          viewportWidth: innerWidth,
+        }));
+        expect(layout.colorScheme, `${name} ${mode} color scheme`).toBe(
+          id === "napster" ? "light" : mode.toLowerCase(),
+        );
+        expect(layout.scrollWidth, `${name} ${mode} mobile overflow`).toBeLessThanOrEqual(
+          layout.viewportWidth,
+        );
         const contrast = await page.evaluate(() => {
           const style = getComputedStyle(document.documentElement);
           const canvas = document.createElement("canvas");

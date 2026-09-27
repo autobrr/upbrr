@@ -24,7 +24,7 @@ Install the following on your machine:
 - [Git](https://git-scm.com/)
 - [Go](https://golang.org/dl/) — see [go.mod](./go.mod) for the required version
 - [Node.js](https://nodejs.org) (`>=24` for the frontend and public documentation)
-- [pnpm](https://pnpm.io/installation) (10 or newer — version is pinned in `webui/package.json` via `packageManager`)
+- [pnpm](https://pnpm.io/installation) — use the version pinned in `webui/package.json` and `documentation/package.json` via `packageManager`
 - [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
 - [golangci-lint](https://golangci-lint.run/) — use the version pinned in the [CI workflow](./.github/workflows/golangci-lint.yml) for hooks and local checks
 - [Lefthook](https://github.com/evilmartians/lefthook) — git hooks runner (see [Git hooks](#git-hooks-lefthook))
@@ -162,6 +162,8 @@ pwsh -NoProfile -File ./scripts/build.ps1
 Use `http://localhost:7480` for Playwright or browser automation. Avoid `5173` for embedded parity checks; stale embedded assets can otherwise hide or misrepresent frontend changes.
 
 Stop the embedded server after inspection so later runs do not reuse an old process.
+
+For theme, page layout, and rendered-description changes, check the embedded UI at desktop and mobile widths in the supported light and dark modes. `make e2e` covers representative theme, MediaInfo, and description states; the separate visual suites sweep more routes and palette combinations. The [Web UI development guide](./webui/README.md) describes the styling and rendering owners, and [Playwright guidance](./webui/e2e/AGENTS.md) lists the visual commands.
 
 ### Backend
 

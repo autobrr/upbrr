@@ -264,6 +264,25 @@ test("embedded web reload restores the authoritative prepared workflow", async (
     const mediaInfoPanel = page.getByText("MediaInfo Preview", { exact: true }).locator("..");
     await mediaInfoPanel.locator("summary").first().click();
     await expect(mediaInfoPanel.locator(".mediainfo__video")).toContainText("AVC");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => {
+      const next = JSON.stringify({ version: 1, theme: "swizzin", mode: "dark", accents: {} });
+      localStorage.setItem("upbrr:appearance:v1", next);
+      dispatchEvent(
+        new StorageEvent("storage", {
+          key: "upbrr:appearance:v1",
+          newValue: next,
+          storageArea: localStorage,
+        }),
+      );
+    });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "swizzin");
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await mediaInfoPanel.locator(".mediainfo__raw > summary").click();
+    await expect(mediaInfoPanel.locator(".mediainfo__raw pre")).toContainText("Unique ID");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+    ).toBeLessThanOrEqual(0);
     const counters = { ...workspace.fake.counters };
     const restored = waitForAppMethod(page, "GetActiveInput");
     await page.reload();
@@ -272,6 +291,7 @@ test("embedded web reload restores the authoritative prepared workflow", async (
     expect(snapshot.inputId).toBe(opened.inputId);
     expect(snapshot.sourceVersion).toBe(opened.sourceVersion);
     await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "swizzin");
     await mediaInfoPanel.locator("summary").first().click();
     await expect(mediaInfoPanel.locator(".mediainfo__video")).toContainText("AVC");
     await expect(page.getByRole("button", { name: "Dupe Check" })).toBeEnabled();
@@ -1072,8 +1092,65 @@ test("embedded web restores edited descriptions after reopening an input", async
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
-    const editedDescription = "Retained description with [b]custom notes[/b].";
+    await page.route("https://img.example/**", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="#5975a9"/></svg>',
+      }),
+    );
+    const editedDescription = `[center][img=300]https://img.example/cover.svg[/img][/center]
+[center][url=https://img.example/shot][img=500]https://img.example/shot.svg[/img][/url][/center]
+<blockquote>HTML and [b]custom notes[/b] together.</blockquote>
+[right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]`;
     await page.getByRole("textbox").fill(editedDescription);
+    await page.getByRole("button", { name: "Render" }).click();
+    const renderedPreview = page
+      .getByRole("heading", { name: "Rendered Raw Preview" })
+      .locator("../..")
+      .locator(".tracker-description.rendered");
+    await expect(renderedPreview.locator('[style*="text-align: center"] img')).toHaveCount(2);
+    await expect(renderedPreview.locator("blockquote b")).toHaveText("custom notes");
+    await expect(renderedPreview.locator('[style*="text-align: right"]')).toContainText(
+      "Uploaded by upbrr",
+    );
+    await expect
+      .poll(() =>
+        renderedPreview
+          .locator("img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+          ),
+      )
+      .toBe(true);
+    for (const [theme, mode] of [
+      ["minimal", "light"],
+      ["swizzin", "dark"],
+    ] as const) {
+      await page.evaluate(
+        ({ theme, mode }) => {
+          const next = JSON.stringify({ version: 1, theme, mode, accents: {} });
+          localStorage.setItem("upbrr:appearance:v1", next);
+          dispatchEvent(
+            new StorageEvent("storage", {
+              key: "upbrr:appearance:v1",
+              newValue: next,
+              storageArea: localStorage,
+            }),
+          );
+        },
+        { theme, mode },
+      );
+      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+      await expect(page.locator("html")).toHaveClass(new RegExp(mode));
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(renderedPreview.locator("img")).toHaveCount(2);
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+          `${theme} ${mode} ${width} description overflow`,
+        ).toBeLessThanOrEqual(0);
+      }
+    }
     const descriptionSaved = waitForAppMethod(page, "SaveReleaseWorkflowDescriptionOverride");
     await page.getByRole("button", { name: "Save group" }).click();
     expect((await descriptionSaved).ok()).toBe(true);
@@ -1092,6 +1169,12 @@ test("embedded web restores edited descriptions after reopening an input", async
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
+    await expect(
+      page
+        .getByRole("heading", { name: "Rendered Raw Preview" })
+        .locator("../..")
+        .locator("blockquote b"),
+    ).toHaveText("custom notes");
     await page.getByRole("button", { name: "Upload", exact: true }).click();
     await page.getByLabel("Skip client injection").check();
     await page.getByRole("button", { name: "Run dry run" }).click();
