@@ -60,6 +60,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		selected := input.ManualID
 		candidates := make([]Candidate, 0, 1)
 		if cand, err := c.getShow(ctx, selected); err == nil {
+			cand.Backdrop, cand.BackdropLookupAttempted = c.showBackdrop(ctx, selected)
 			candidates = append(candidates, cand)
 			if parsed := metautil.ParseIMDbNumeric(cand.Externals.IMDB); imdbID == 0 && parsed != 0 {
 				imdbID = parsed
@@ -114,6 +115,14 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 
 	candidates := dedupeCandidates(results)
 	selectedID, selectedIMDB, selectedTVDB := selectCandidate(candidates, imdbID, tvdbID, input.ManualDate)
+	if selectedID != 0 {
+		for i := range candidates {
+			if candidates[i].ID == selectedID {
+				candidates[i].Backdrop, candidates[i].BackdropLookupAttempted = c.showBackdrop(ctx, selectedID)
+				break
+			}
+		}
+	}
 	if c.logger != nil && selectedID != 0 {
 		c.logger.Tracef("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
 	}
@@ -294,6 +303,27 @@ func (c *Client) getShow(ctx context.Context, id int) (Candidate, error) {
 	return candidateFromShow(show), nil
 }
 
+func (c *Client) showBackdrop(ctx context.Context, id int) (Image, bool) {
+	endpoint := fmt.Sprintf("%s/shows/%d/images", c.baseURL, id)
+	var images []artworkResponse
+	if err := c.getJSON(ctx, endpoint, nil, &images); err != nil {
+		if c.logger != nil {
+			c.logger.Debugf("tvmaze: show artwork lookup failed id=%d error=%s", id, redaction.RedactValue(err.Error(), nil))
+		}
+		return Image{}, false
+	}
+	for _, image := range images {
+		if image.Type == "background" &&
+			(strings.TrimSpace(image.Resolutions.Original.URL) != "" || strings.TrimSpace(image.Resolutions.Medium.URL) != "") {
+			return Image{
+				Original: strings.TrimSpace(image.Resolutions.Original.URL),
+				Medium:   strings.TrimSpace(image.Resolutions.Medium.URL),
+			}, true
+		}
+	}
+	return Image{}, true
+}
+
 func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values, target any) error {
 	reqURL := endpoint
 	if params != nil {
@@ -443,6 +473,18 @@ func cleanSummary(value string) string {
 
 type searchResponse struct {
 	Show showResponse `json:"show"`
+}
+
+type artworkResponse struct {
+	Type        string `json:"type"`
+	Resolutions struct {
+		Original struct {
+			URL string `json:"url"`
+		} `json:"original"`
+		Medium struct {
+			URL string `json:"url"`
+		} `json:"medium"`
+	} `json:"resolutions"`
 }
 
 type showResponse struct {

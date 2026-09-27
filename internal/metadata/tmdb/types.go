@@ -173,6 +173,7 @@ type MetadataResult struct {
 	Poster              string
 	TMDBPosterPath      string
 	Logo                string
+	LogoLookupAttempted bool
 	TMDBLogo            string
 	Backdrop            string
 	Overview            string

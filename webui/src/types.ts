@@ -434,6 +434,7 @@ export type TMDBMetadata = {
   Poster: string;
   TMDBPosterPath: string;
   Logo: string;
+  LogoLookupAttempted: boolean;
   TMDBLogo: string;
   Backdrop: string;
   TMDBType: string;
@@ -554,6 +555,8 @@ export type TVDBMetadata = {
   HasEnglish: boolean;
   Genres: string;
   Poster: string;
+  PosterThumbnail: string;
+  PosterThumbnailLookupAttempted: boolean;
   Aliases: string[];
   EpisodeSeason: number;
   EpisodeNumber: number;
@@ -609,6 +612,7 @@ export type TVmazeMetadata = {
   PosterMedium: string;
   Backdrop: string;
   BackdropMedium: string;
+  BackdropLookupAttempted: boolean;
   IMDBID: number;
   TVDBID: number;
 };

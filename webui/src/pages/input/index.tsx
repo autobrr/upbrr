@@ -134,6 +134,37 @@ const tmdbLogoBaseURL = "https://image.tmdb.org/t/p/original/";
 const tmdbLogoSize = 64;
 const malAnimeBaseURL = "https://myanimelist.net/anime/";
 
+const tmdbImageURL = (url: string, size: string) =>
+  /\.svg(?:\?|$)/i.test(url)
+    ? url
+    : url.replace(
+        /^https:\/\/image\.tmdb\.org\/t\/p\/(?:original|w\d+(?:_and_h\d+_face)?)\//,
+        `https://image.tmdb.org/t/p/${size}/`,
+      );
+
+const imdbPosterURL = (url: string, width: number) => {
+  if (!url.startsWith("https://m.media-amazon.com/images/M/")) return url;
+  return url.replace(/_V1_[^/.]*\.(jpe?g|png)(\?.*)?$/i, `_V1_QL75_UX${width}_.$1$2`);
+};
+
+const posterPreviewURL = (preview: ProviderDisplay) => {
+  const original = preview.Summary.PosterURL;
+  switch (preview.Provider) {
+    case "tmdb":
+      return tmdbImageURL(original, "w220_and_h330_face");
+    case "imdb":
+      return imdbPosterURL(original, 190);
+    case "tvdb":
+      return preview.Details.TVDB.PosterThumbnail || original;
+    case "tvmaze":
+      return preview.Details.TVmaze.PosterMedium || original;
+    case "mal":
+      return preview.Details.AniList.CoverMedium || original;
+    default:
+      return original;
+  }
+};
+
 const normalizeTMDBLogoURL = (path: string) => {
   const trimmed = path?.trim();
   if (!trimmed) return "";
@@ -1455,13 +1486,18 @@ export default function InputPage(props: Props) {
                               className="cursor-pointer rounded-[10px] border-0 bg-transparent p-0 leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-chart-2"
                               type="button"
                               onClick={() => {
-                                setLightboxImage(candidatePreview.candidate.PosterURL);
+                                setLightboxImage(
+                                  tmdbImageURL(candidatePreview.candidate.PosterURL, "original"),
+                                );
                                 setLightboxAlt("TMDB candidate poster");
                               }}
                             >
                               <img
                                 className="h-[84px] w-14 min-w-14 rounded-lg border border-foreground/10 object-cover"
-                                src={candidatePreview.candidate.PosterURL}
+                                src={tmdbImageURL(
+                                  candidatePreview.candidate.PosterURL,
+                                  "w220_and_h330_face",
+                                )}
                                 alt="TMDB candidate poster"
                                 loading="lazy"
                               />
@@ -1525,7 +1561,7 @@ export default function InputPage(props: Props) {
                             >
                               <img
                                 className="h-[84px] w-14 min-w-14 rounded-lg border border-foreground/10 object-cover"
-                                src={candidatePreview.candidate.PosterURL}
+                                src={imdbPosterURL(candidatePreview.candidate.PosterURL, 190)}
                                 alt="IMDB candidate poster"
                                 loading="lazy"
                               />
@@ -1753,12 +1789,93 @@ export default function InputPage(props: Props) {
                   </p>
                   <PreviewDetailsList items={previewDetails} />
                 </div>
-                <div className="grid gap-[9px] [&>img]:w-full [&>img]:rounded-[14px] [&>img]:border [&>img]:border-foreground/10">
-                  {selectedPreview.Summary.PosterURL ? (
-                    <img src={selectedPreview.Summary.PosterURL} alt="Poster" loading="lazy" />
+                <div className="grid content-start gap-[9px]">
+                  {selectedPreview.URL ? (
+                    <a
+                      className="text-primary-text underline underline-offset-2"
+                      href={selectedPreview.URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open {formatProvider(selectedPreview.Provider)}
+                    </a>
                   ) : null}
-                  {selectedPreview.Summary.BackdropURL ? (
-                    <img src={selectedPreview.Summary.BackdropURL} alt="Backdrop" loading="lazy" />
+                  {selectedPreview.Summary.PosterURL ? (
+                    <button
+                      className="cursor-pointer rounded-[14px] border-0 bg-transparent p-0 leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      type="button"
+                      aria-label={`Expand ${formatProvider(selectedPreview.Provider)} poster`}
+                      onClick={() => {
+                        setLightboxImage(selectedPreview.Summary.PosterURL);
+                        setLightboxAlt(`${formatProvider(selectedPreview.Provider)} poster`);
+                      }}
+                    >
+                      <img
+                        className="h-auto w-full rounded-[14px] border border-foreground/10"
+                        src={posterPreviewURL(selectedPreview)}
+                        srcSet={
+                          selectedPreview.Provider === "imdb"
+                            ? [
+                                `${imdbPosterURL(selectedPreview.Summary.PosterURL, 190)} 190w`,
+                                `${imdbPosterURL(selectedPreview.Summary.PosterURL, 285)} 285w`,
+                                `${imdbPosterURL(selectedPreview.Summary.PosterURL, 380)} 380w`,
+                              ].join(", ")
+                            : undefined
+                        }
+                        sizes={
+                          selectedPreview.Provider === "imdb"
+                            ? "(max-width: 960px) 100vw, 240px"
+                            : undefined
+                        }
+                        alt={`${formatProvider(selectedPreview.Provider)} poster`}
+                        loading="lazy"
+                      />
+                    </button>
+                  ) : null}
+                  {selectedPreview.Summary.BackdropURL &&
+                  (selectedPreview.Provider !== "tvmaze" ||
+                    selectedPreview.Summary.BackdropURL !== selectedPreview.Summary.PosterURL) ? (
+                    <button
+                      className="cursor-pointer rounded-[14px] border-0 bg-transparent p-0 leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      type="button"
+                      aria-label={`Expand ${formatProvider(selectedPreview.Provider)} backdrop`}
+                      onClick={() => {
+                        setLightboxImage(selectedPreview.Summary.BackdropURL);
+                        setLightboxAlt(`${formatProvider(selectedPreview.Provider)} backdrop`);
+                      }}
+                    >
+                      <img
+                        className="w-full rounded-[14px] border border-foreground/10"
+                        src={
+                          selectedPreview.Provider === "tmdb"
+                            ? tmdbImageURL(selectedPreview.Summary.BackdropURL, "w500")
+                            : selectedPreview.Provider === "tvmaze"
+                              ? selectedPreview.Details.TVmaze.BackdropMedium ||
+                                selectedPreview.Summary.BackdropURL
+                              : selectedPreview.Summary.BackdropURL
+                        }
+                        alt={`${formatProvider(selectedPreview.Provider)} backdrop`}
+                        loading="lazy"
+                      />
+                    </button>
+                  ) : null}
+                  {selectedPreview.Provider === "tmdb" && selectedPreview.Details.TMDB.Logo ? (
+                    <button
+                      className="cursor-pointer rounded-[14px] border-0 bg-transparent p-0 leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      type="button"
+                      aria-label="Expand TMDB title logo"
+                      onClick={() => {
+                        setLightboxImage(selectedPreview.Details.TMDB.Logo);
+                        setLightboxAlt("TMDB title logo");
+                      }}
+                    >
+                      <img
+                        className="w-full rounded-[14px] border border-foreground/10"
+                        src={tmdbImageURL(selectedPreview.Details.TMDB.Logo, "w300")}
+                        alt="TMDB title logo"
+                        loading="lazy"
+                      />
+                    </button>
                   ) : null}
                 </div>
               </div>

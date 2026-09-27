@@ -8403,6 +8403,9 @@
           "Logo": {
             "type": "string"
           },
+          "LogoLookupAttempted": {
+            "type": "boolean"
+          },
           "MALID": {
             "type": "integer"
           },
@@ -8498,6 +8501,7 @@
           "Localized",
           "LocalizedTitles",
           "Logo",
+          "LogoLookupAttempted",
           "MALID",
           "MismatchedIMDbID",
           "Networks",
@@ -8662,6 +8666,12 @@
           "Poster": {
             "type": "string"
           },
+          "PosterThumbnail": {
+            "type": "string"
+          },
+          "PosterThumbnailLookupAttempted": {
+            "type": "boolean"
+          },
           "Status": {
             "type": "string"
           },
@@ -8707,6 +8717,8 @@
           "Overview",
           "OverviewEnglish",
           "Poster",
+          "PosterThumbnail",
+          "PosterThumbnailLookupAttempted",
           "Status",
           "TVDBID",
           "Type",
@@ -8767,6 +8779,9 @@
           },
           "Backdrop": {
             "type": "string"
+          },
+          "BackdropLookupAttempted": {
+            "type": "boolean"
           },
           "BackdropMedium": {
             "type": "string"
@@ -8847,6 +8862,7 @@
         "required": [
           "AverageRuntime",
           "Backdrop",
+          "BackdropLookupAttempted",
           "BackdropMedium",
           "Country",
           "Ended",

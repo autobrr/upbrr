@@ -334,7 +334,7 @@ func (s *Service) lookupTrackerData(
 		tracker,
 		record.TrackerID,
 		trackerLookupSubject(meta),
-		trackerLookupFileName(meta, record.TrackerID, s.cfg.Metadata.SkipTrackerFilenameLookup),
+		trackerLookupFileName(meta, s.cfg.Metadata.SkipTrackerFilenameLookup),
 		meta.Policy.OnlyID,
 		meta.Policy.KeepImages,
 	)
@@ -487,7 +487,7 @@ func trackerImageURLsFromResult(_ trackerdata.Result, downloadedImages []string,
 }
 
 func trackerRecordHasPathedData(record api.TrackerMetadata) bool {
-	return record.TrackerID != "" || record.InfoHash != "" || record.Matched
+	return record.TrackerID != "" || record.TorrentURL != "" || record.InfoHash != "" || record.Matched
 }
 
 func trackerRecordHasDescriptionAssets(record api.TrackerMetadata) bool {
@@ -739,6 +739,7 @@ func applyTrackerDataResult(record *api.TrackerMetadata, result trackerdata.Resu
 		return
 	}
 	record.TrackerID = metautil.FirstNonEmptyTrimmed(result.TrackerID, record.TrackerID)
+	record.TorrentURL = strings.TrimSpace(result.TorrentURL)
 	record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
 	record.TMDBID = result.TMDBID
 	record.IMDBID = result.IMDBID
@@ -903,8 +904,8 @@ func searchFileName(meta preparationstate.State) string {
 	return pathutil.Base(base)
 }
 
-func trackerLookupFileName(meta preparationstate.State, trackerID string, skipFilenameLookup bool) string {
-	if skipFilenameLookup || strings.TrimSpace(trackerID) != "" {
+func trackerLookupFileName(meta preparationstate.State, skipFilenameLookup bool) string {
+	if skipFilenameLookup {
 		return ""
 	}
 	return searchFileName(meta)

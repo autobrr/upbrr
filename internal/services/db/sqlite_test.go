@@ -185,6 +185,7 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 		SourcePath:  "/media/file.mkv",
 		Tracker:     "BLU",
 		TrackerID:   "123",
+		TorrentURL:  "https://tracker.example.invalid/torrents/123",
 		InfoHash:    "hash",
 		TMDBID:      1,
 		IMDBID:      2,
@@ -207,7 +208,7 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	if len(trackerData) != 1 {
 		t.Fatalf("expected 1 tracker metadata row, got %d", len(trackerData))
 	}
-	if trackerData[0].TrackerID != "123" || trackerData[0].Tracker != "BLU" {
+	if trackerData[0].TrackerID != "123" || trackerData[0].Tracker != "BLU" || trackerData[0].TorrentURL != "https://tracker.example.invalid/torrents/123" {
 		t.Fatalf("unexpected tracker metadata: %#v", trackerData[0])
 	}
 

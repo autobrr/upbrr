@@ -154,11 +154,11 @@ func TestBuildNameDisambiguationSearchFailureUsesExplicitYearFallback(t *testing
 func TestBuildNameDisambiguationComparesOnlyEnglishCandidateNames(t *testing.T) {
 	results := []SeriesSearchResult{
 		{
-			TVDBID:         987650002,
-			Name:           "Example Series",
+			TVDBID:          987650002,
+			Name:            "Example Series",
 			PrimaryLanguage: "jpn",
-			Year:           "2026",
-			Aliases:        []Alias{{Name: "Example Series"}},
+			Year:            "2026",
+			Aliases:         []Alias{{Name: "Example Series"}},
 		},
 		{
 			TVDBID:      987650003,
@@ -167,10 +167,10 @@ func TestBuildNameDisambiguationComparesOnlyEnglishCandidateNames(t *testing.T) 
 			Year:        "2025",
 		},
 		{
-			TVDBID:         987650004,
-			Name:           "Example Series",
+			TVDBID:          987650004,
+			Name:            "Example Series",
 			PrimaryLanguage: "eng",
-			Year:           "2024",
+			Year:            "2024",
 		},
 	}
 
@@ -186,17 +186,17 @@ func TestBuildNameDisambiguationComparesOnlyEnglishCandidateNames(t *testing.T) 
 func TestBuildNameDisambiguationRejectsContradictoryDuplicateYears(t *testing.T) {
 	results := []SeriesSearchResult{
 		{
-TVDBID: 987650008,
- Name: "Example Series",
- PrimaryLanguage: "eng",
- Year: "2025",
-},
+			TVDBID:          987650008,
+			Name:            "Example Series",
+			PrimaryLanguage: "eng",
+			Year:            "2025",
+		},
 		{
-TVDBID: 987650008,
- Name: "Example Series",
- PrimaryLanguage: "eng",
- Year: "2026",
-},
+			TVDBID:          987650008,
+			Name:            "Example Series",
+			PrimaryLanguage: "eng",
+			Year:            "2026",
+		},
 	}
 	got := buildNameDisambiguation(987650001, "Example Series", 2026, "usa", false, results, nil)
 	if got.Status != api.MetadataEvidenceStatusContradictory {
@@ -1173,6 +1173,32 @@ func TestGetSeriesMetadataWithLanguageDerivesEnglishFromAlias(t *testing.T) {
 	}
 	if !metadata.HasEnglish {
 		t.Fatalf("expected HasEnglish true when english name is populated")
+	}
+}
+
+func TestGetSeriesMetadataUsesSelectedArtworkThumbnail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
+		case "/series/55/extended":
+			_, _ = w.Write([]byte(`{"data":{"id":55,"name":"Example Show","image":"https://img.example/selected.jpg","artworks":[{"type":2,"image":"https://img.example/other.jpg","thumbnail":"https://img.example/other-small.jpg"},{"type":2,"image":"https://img.example/selected.jpg","thumbnail":"https://img.example/selected-small.jpg"}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", "")
+	client.baseURL = server.URL
+	metadata, err := client.GetSeriesMetadata(context.Background(), 55)
+	if err != nil {
+		t.Fatalf("get series metadata: %v", err)
+	}
+	if metadata.Poster != "https://img.example/selected.jpg" ||
+		metadata.PosterThumbnail != "https://img.example/selected-small.jpg" ||
+		!metadata.PosterThumbnailLookupAttempted {
+		t.Fatalf("expected thumbnail for selected full-size poster, got %#v", metadata)
 	}
 }
 

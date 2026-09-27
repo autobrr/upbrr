@@ -1730,12 +1730,13 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 	}
 	_, err := r.execWrite(ctx, "save tracker metadata", `
 		INSERT INTO tracker_metadata (
-			source_path, tracker, tracker_id, info_hash, tmdb_id, imdb_id, tvdb_id, mal_id,
+			source_path, tracker, tracker_id, torrent_url, info_hash, tmdb_id, imdb_id, tvdb_id, mal_id,
 			category, description, image_urls, filename, matched, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path, tracker) DO UPDATE SET
 			tracker_id = excluded.tracker_id,
+			torrent_url = excluded.torrent_url,
 			info_hash = excluded.info_hash,
 			tmdb_id = excluded.tmdb_id,
 			imdb_id = excluded.imdb_id,
@@ -1751,6 +1752,7 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 		metadata.SourcePath,
 		metadata.Tracker,
 		metadata.TrackerID,
+		metadata.TorrentURL,
 		metadata.InfoHash,
 		metadata.TMDBID,
 		metadata.IMDBID,
@@ -1778,7 +1780,7 @@ func (r *SQLiteRepository) ListTrackerMetadataByPath(ctx context.Context, path s
 		return nil, internalerrors.ErrInvalidInput
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT tracker, tracker_id, info_hash, tmdb_id, imdb_id, tvdb_id, mal_id,
+		SELECT tracker, tracker_id, torrent_url, info_hash, tmdb_id, imdb_id, tvdb_id, mal_id,
 			category, description, image_urls, filename, matched, updated_at
 		FROM tracker_metadata
 		WHERE source_path = ?
@@ -1798,6 +1800,7 @@ func (r *SQLiteRepository) ListTrackerMetadataByPath(ctx context.Context, path s
 		if err := rows.Scan(
 			&record.Tracker,
 			&record.TrackerID,
+			&record.TorrentURL,
 			&record.InfoHash,
 			&record.TMDBID,
 			&record.IMDBID,

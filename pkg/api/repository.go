@@ -139,6 +139,7 @@ type TrackerMetadata struct {
 	SourcePath string
 	Tracker    string
 	TrackerID  string
+	TorrentURL string
 	InfoHash   string
 	TMDBID     int
 	IMDBID     int

@@ -10,6 +10,8 @@ import type {
   ProviderDisplay,
   ProviderDisplaySummary,
   TMDBMetadata,
+  TVDBMetadata,
+  TVmazeMetadata,
 } from "../../types";
 import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
 import { InputCorrectionEditor } from "./InputCorrectionEditor";
@@ -806,6 +808,180 @@ describe("InputPage", () => {
     expect(screen.getByText("TMDB generation 2")).toBeVisible();
   });
 
+  it("uses provider preview images while opening full-size artwork in the lightbox", () => {
+    const base = readyInputFacet(1);
+    const preview = base.view.preview!;
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        preview: {
+          ...preview,
+          Identity: {
+            ...preview.Identity,
+            TVDBID: 77,
+            TVmazeID: 55,
+            Provenance: { ...preview.Identity.Provenance, TVDB: "resolver", TVmaze: "resolver" },
+          },
+          Display: {
+            ...preview.Display,
+            Providers: [
+              ...preview.Display.Providers.map((provider) =>
+                provider.Provider === "tmdb"
+                  ? {
+                      ...provider,
+                      URL: `https://metadata.example/tmdb/${provider.ID}`,
+                      Summary: {
+                        ...provider.Summary,
+                        PosterURL: "https://image.tmdb.org/t/p/original/poster.jpg",
+                        BackdropURL: "https://image.tmdb.org/t/p/original/backdrop.jpg",
+                      },
+                      Details: {
+                        TMDB: {
+                          ...provider.Details.TMDB,
+                          Logo: "https://image.tmdb.org/t/p/original/logo.png",
+                        },
+                      },
+                    }
+                  : {
+                      ...provider,
+                      URL: `https://metadata.example/imdb/${provider.ID}`,
+                      Summary: {
+                        ...provider.Summary,
+                        PosterURL: "https://m.media-amazon.com/images/M/MV5BSYNTHETIC@._V1_.jpg",
+                      },
+                    },
+              ),
+              {
+                Provider: "tvdb",
+                ID: 77,
+                DisplayID: "77",
+                URL: "https://metadata.example/tvdb/77",
+                Provenance: "resolver",
+                SummaryAvailable: true,
+                Summary: {
+                  ...providerSummary("TVDB example"),
+                  PosterURL: "https://images.example/tvdb/poster-original.jpg",
+                },
+                Details: {
+                  TVDB: {
+                    PosterThumbnail: "https://images.example/tvdb/poster-small.jpg",
+                  } as TVDBMetadata,
+                },
+              },
+              {
+                Provider: "tvmaze",
+                ID: 55,
+                DisplayID: "55",
+                URL: "https://metadata.example/tvmaze/55",
+                Provenance: "resolver",
+                SummaryAvailable: true,
+                Summary: {
+                  ...providerSummary("TVmaze example"),
+                  PosterURL: "https://images.example/tvmaze/poster-original.jpg",
+                  BackdropURL: "https://images.example/tvmaze/backdrop-original.jpg",
+                },
+                Details: {
+                  TVmaze: {
+                    PosterMedium: "https://images.example/tvmaze/poster-medium.jpg",
+                    BackdropMedium: "https://images.example/tvmaze/backdrop-medium.jpg",
+                  } as TVmazeMetadata,
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const setLightboxImage = vi.fn();
+    const setLightboxAlt = vi.fn();
+    render(
+      <InputPage
+        facet={facet}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={setLightboxImage}
+        setLightboxAlt={setLightboxAlt}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Open TMDB" })).toHaveAttribute(
+      "href",
+      "https://metadata.example/tmdb/101",
+    );
+    expect(screen.getByRole("link", { name: "Open TMDB" })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("img", { name: "TMDB poster" })).toHaveAttribute(
+      "src",
+      "https://image.tmdb.org/t/p/w220_and_h330_face/poster.jpg",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TMDB poster" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://image.tmdb.org/t/p/original/poster.jpg",
+    );
+    expect(setLightboxAlt).toHaveBeenLastCalledWith("TMDB poster");
+    expect(screen.getByRole("img", { name: "TMDB backdrop" })).toHaveAttribute(
+      "src",
+      "https://image.tmdb.org/t/p/w500/backdrop.jpg",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TMDB backdrop" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://image.tmdb.org/t/p/original/backdrop.jpg",
+    );
+    expect(screen.getByRole("img", { name: "TMDB title logo" })).toHaveAttribute(
+      "src",
+      "https://image.tmdb.org/t/p/w300/logo.png",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TMDB title logo" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://image.tmdb.org/t/p/original/logo.png",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^IMDB/ }));
+    expect(screen.getByRole("link", { name: "Open IMDB" })).toHaveAttribute(
+      "href",
+      "https://metadata.example/imdb/1234567",
+    );
+    expect(screen.getByRole("img", { name: "IMDB poster" })).toHaveAttribute(
+      "src",
+      "https://m.media-amazon.com/images/M/MV5BSYNTHETIC@._V1_QL75_UX190_.jpg",
+    );
+    expect(screen.getByRole("img", { name: "IMDB poster" }).getAttribute("srcset")).toContain(
+      "_V1_QL75_UX285_.jpg 285w",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand IMDB poster" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://m.media-amazon.com/images/M/MV5BSYNTHETIC@._V1_.jpg",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^TVDB/ }));
+    expect(screen.getByRole("img", { name: "TVDB poster" })).toHaveAttribute(
+      "src",
+      "https://images.example/tvdb/poster-small.jpg",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TVDB poster" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://images.example/tvdb/poster-original.jpg",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^TVMAZE/ }));
+    expect(screen.getByRole("img", { name: "TVMAZE poster" })).toHaveAttribute(
+      "src",
+      "https://images.example/tvmaze/poster-medium.jpg",
+    );
+    expect(screen.getByRole("img", { name: "TVMAZE backdrop" })).toHaveAttribute(
+      "src",
+      "https://images.example/tvmaze/backdrop-medium.jpg",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TVMAZE backdrop" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://images.example/tvmaze/backdrop-original.jpg",
+    );
+  });
+
   it("forces generated release-name omissions", () => {
     const facet = readyInputFacet(1);
     render(
@@ -1082,11 +1258,13 @@ describe("InputPage", () => {
 
   it.each([
     ["movie", " TV ", true],
+    ["movie", "tV", true],
     ["movie", "television", true],
     ["movie", "series", true],
     ["movie", "episode", true],
     ["tv", "movie", false],
     ["tv", " Film ", false],
+    ["tv", "mOvIe", false],
     ["tv", "", true],
     ["tv", "unknown", true],
   ] as const)(

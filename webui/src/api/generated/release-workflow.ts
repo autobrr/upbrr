@@ -1998,6 +1998,7 @@ export type TMDBMetadata = Readonly<{
   Localized: Readonly<Record<string, TMDBLocalizedData>>;
   LocalizedTitles: Readonly<Record<string, string>>;
   Logo: string;
+  LogoLookupAttempted: boolean;
   MALID: number;
   MismatchedIMDbID: number;
   Networks: readonly TMDBNetwork[];
@@ -2063,6 +2064,8 @@ export type TVDBMetadata = Readonly<{
   Overview: string;
   OverviewEnglish: string;
   Poster: string;
+  PosterThumbnail: string;
+  PosterThumbnailLookupAttempted: boolean;
   Status: string;
   TVDBID: number;
   Type: string;
@@ -2087,6 +2090,7 @@ export type TVDBNameDisambiguation = Readonly<{
 export type TVmazeMetadata = Readonly<{
   AverageRuntime: number;
   Backdrop: string;
+  BackdropLookupAttempted: boolean;
   BackdropMedium: string;
   Country: string;
   Ended: string;

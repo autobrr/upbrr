@@ -600,12 +600,13 @@ func TestResolveExternalIDsExplicitRefreshReconcilesProvidersWithoutRetainedAuth
 	}
 	cachedMetadata := api.SourceScopedMetadata{
 		SourcePath: sourcePath,
-		TMDB:       &api.TMDBMetadata{
-TMDBID: 10,
- Category: "MOVIE",
- Title: "Retained title",
-},
-		IMDB:       &api.IMDBMetadata{IMDBID: 20, Title: "Retained title"},
+		TMDB: &api.TMDBMetadata{
+			TMDBID:              10,
+			Category:            "MOVIE",
+			Title:               "Retained title",
+			LogoLookupAttempted: true,
+		},
+		IMDB: &api.IMDBMetadata{IMDBID: 20, Title: "Retained title"},
 	}
 	base := preparationstate.State{
 		SourcePath:        sourcePath,
@@ -615,11 +616,11 @@ TMDBID: 10,
 		MediaInfoTMDBID:   10,
 		MediaInfoIMDBID:   20,
 		MediaInfoCategory: "MOVIE",
-		Release:           api.ReleaseInfo{
-Category: "MOVIE",
- Title: "Example Movie",
- Year: 2026,
-},
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Title:    "Example Movie",
+			Year:     2026,
+		},
 	}
 
 	retainedTMDB := &stubTMDB{}
@@ -633,15 +634,15 @@ Category: "MOVIE",
 	}
 
 	refreshedTMDB := &stubTMDB{metadata: tmdb.MetadataResult{
-Title: "Current title",
- Year: 2026,
- TMDBType: "Movie",
-}}
+		Title:    "Current title",
+		Year:     2026,
+		TMDBType: "Movie",
+	}}
 	refreshedIMDB := &stubIMDB{info: imdb.Info{
-IMDbID: "tt0000020",
- Title: "Current title",
- Year: 2026,
-}}
+		IMDbID: "tt0000020",
+		Title:  "Current title",
+		Year:   2026,
+	}}
 	service := NewService(&fakeRepo{}, WithTMDBClient(refreshedTMDB), WithIMDBClient(refreshedIMDB))
 	base.ExternalFreshness = api.ExternalFreshnessRefresh
 
@@ -678,19 +679,19 @@ func TestResolveExternalIDsExplicitRefreshDoesNotRetainFailedProviderAuthority(t
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: sourcePath,
-			TMDB:       &api.TMDBMetadata{
-TMDBID: 10,
- Category: "MOVIE",
- Title: "Retained title",
-},
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   10,
+				Category: "MOVIE",
+				Title:    "Retained title",
+			},
 		},
 		MediaInfoTMDBID:   10,
 		MediaInfoCategory: "MOVIE",
-		Release:           api.ReleaseInfo{
-Category: "MOVIE",
- Title: "Example Movie",
- Year: 2026,
-},
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Title:    "Example Movie",
+			Year:     2026,
+		},
 	})
 	if err != nil {
 		t.Fatalf("refresh outage: %v", err)
@@ -718,11 +719,11 @@ func TestResolveExternalIDsExplicitRefreshPropagatesCancellation(t *testing.T) {
 		ExternalFreshness: api.ExternalFreshnessRefresh,
 		MediaInfoTMDBID:   10,
 		MediaInfoCategory: "MOVIE",
-		Release:           api.ReleaseInfo{
-Category: "MOVIE",
- Title: "Example Movie",
- Year: 2026,
-},
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Title:    "Example Movie",
+			Year:     2026,
+		},
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("refresh cancellation error = %v, want context canceled", err)
@@ -1123,9 +1124,10 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "/media/file.mkv",
 			TMDB: &api.TMDBMetadata{
-				TMDBID:   1,
-				Category: "movie",
-				Title:    "Stored TMDB",
+				TMDBID:              1,
+				Category:            "movie",
+				Title:               "Stored TMDB",
+				LogoLookupAttempted: true,
 			},
 			IMDB: &api.IMDBMetadata{IMDBID: 2, Title: "Stored IMDb"},
 			TVDB: &api.TVDBMetadata{TVDBID: 3, Name: "Stored TVDB"},
@@ -1308,7 +1310,7 @@ func TestResolveExternalIDsSearchAndMetadata(t *testing.T) {
 	}
 }
 
-func TestResolveExternalIDsPassesLogoSettingsToTMDB(t *testing.T) {
+func TestResolveExternalIDsFetchesPreviewLogoWithoutDescriptionLogo(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "MOVIE"},
@@ -1319,7 +1321,7 @@ func TestResolveExternalIDsPassesLogoSettingsToTMDB(t *testing.T) {
 		},
 	}
 	svc := NewService(repo,
-		WithConfig(config.Config{Description: config.DescriptionSettingsConfig{AddLogo: true, LogoLanguage: "ja,en"}}),
+		WithConfig(config.Config{Description: config.DescriptionSettingsConfig{AddLogo: false, LogoLanguage: "ja,en"}}),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -1338,7 +1340,7 @@ func TestResolveExternalIDsPassesLogoSettingsToTMDB(t *testing.T) {
 	}
 	input := tmdbClient.metaInputs[0]
 	if !input.AddLogo {
-		t.Fatalf("expected AddLogo to be passed")
+		t.Fatalf("expected title logo lookup for metadata preview")
 	}
 	if strings.Join(input.LogoLanguages, ",") != "ja,en" {
 		t.Fatalf("expected logo languages ja,en, got %#v", input.LogoLanguages)
@@ -1349,15 +1351,16 @@ func TestResolveExternalIDsRefetchesMissingTMDBLogo(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{
 		metadata: tmdb.MetadataResult{
-			Title:    "Example",
-			Year:     2024,
-			TMDBType: "Movie",
-			Logo:     "https://image.tmdb.org/t/p/original/logo.png",
-			TMDBLogo: "logo.png",
+			Title:               "Example",
+			Year:                2024,
+			TMDBType:            "Movie",
+			Logo:                "https://image.tmdb.org/t/p/original/logo.png",
+			TMDBLogo:            "logo.png",
+			LogoLookupAttempted: true,
 		},
 	}
 	svc := NewService(repo,
-		WithConfig(config.Config{Description: config.DescriptionSettingsConfig{AddLogo: true, LogoLanguage: "en"}}),
+		WithConfig(config.Config{Description: config.DescriptionSettingsConfig{AddLogo: false, LogoLanguage: "en"}}),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -1383,7 +1386,7 @@ func TestResolveExternalIDsRefetchesMissingTMDBLogo(t *testing.T) {
 	if tmdbClient.metaCalls != 1 {
 		t.Fatalf("expected one metadata refetch for logo, got %d", tmdbClient.metaCalls)
 	}
-	if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TMDB.Logo == "" {
+	if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TMDB.Logo == "" || !result.ProviderMetadata.TMDB.LogoLookupAttempted {
 		t.Fatalf("expected logo to be refreshed, got %#v", result.ProviderMetadata.TMDB)
 	}
 }
@@ -1527,21 +1530,27 @@ func TestResolveExternalIDsUsesStoredFreshData(t *testing.T) {
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "/media/file.mkv",
 			TMDB: &api.TMDBMetadata{
-				TMDBID:   42,
-				Category: "tv",
-				Title:    "Example",
+				TMDBID:              42,
+				Category:            "tv",
+				Title:               "Example",
+				LogoLookupAttempted: true,
 			},
 			IMDB: &api.IMDBMetadata{IMDBID: 24, Title: "Example"},
 			TVDB: &api.TVDBMetadata{
-				TVDBID: 12,
-				Name:   "Example",
+				TVDBID:                         12,
+				Name:                           "Example",
+				PosterThumbnailLookupAttempted: true,
 				NameDisambiguation: api.TVDBNameDisambiguation{
 					CanonicalName: "Example",
 					Status:        api.MetadataEvidenceStatusPartial,
 					Source:        "test",
 				},
 			},
-			TVmaze: &api.TVmazeMetadata{TVmazeID: 55, Name: "Example"},
+			TVmaze: &api.TVmazeMetadata{
+				TVmazeID:                55,
+				Name:                    "Example",
+				BackdropLookupAttempted: true,
+			},
 		},
 	}
 
@@ -1567,6 +1576,102 @@ func TestResolveExternalIDsUsesStoredFreshData(t *testing.T) {
 	}
 	if tvmazeClient.calls != 0 {
 		t.Fatalf("expected tvmaze lookup skipped, got %d", tvmazeClient.calls)
+	}
+}
+
+func TestResolveExternalIDsRefreshesCachedTVDBPosterThumbnail(t *testing.T) {
+	const sourcePath = "/media/Example.Show.S01E01.1080p-GRP.mkv"
+	tvdbClient := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{
+		TVDBID:                         12,
+		Name:                           "Example Show",
+		Poster:                         "https://artworks.thetvdb.com/original.jpg",
+		PosterThumbnail:                "https://artworks.thetvdb.com/thumbnail.jpg",
+		PosterThumbnailLookupAttempted: true,
+	}}
+	svc := NewService(&fakeRepo{}, WithTVDBClient(tvdbClient))
+	state := preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			TVDBID:     12,
+			Category:   api.CanonicalCategoryTV,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			TVDB: &api.TVDBMetadata{
+				TVDBID: 12,
+				Name:   "Example Show",
+				Poster: "https://artworks.thetvdb.com/original.jpg",
+			},
+		},
+	}
+
+	result, err := svc.resolveExternalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatalf("refresh cached TVDB metadata: %v", err)
+	}
+	if tvdbClient.seriesMetadataCalls != 1 || result.ProviderMetadata.TVDB == nil ||
+		result.ProviderMetadata.TVDB.PosterThumbnail != "https://artworks.thetvdb.com/thumbnail.jpg" ||
+		!result.ProviderMetadata.TVDB.PosterThumbnailLookupAttempted {
+		t.Fatalf("expected one thumbnail refresh, calls=%d metadata=%#v", tvdbClient.seriesMetadataCalls, result.ProviderMetadata.TVDB)
+	}
+	state.ProviderMetadata = result.ProviderMetadata
+	if _, err := svc.resolveExternalIdentity(t.Context(), state); err != nil {
+		t.Fatalf("reuse refreshed TVDB metadata: %v", err)
+	}
+	if tvdbClient.seriesMetadataCalls != 1 {
+		t.Fatalf("expected refreshed TVDB metadata to be reused, got %d calls", tvdbClient.seriesMetadataCalls)
+	}
+}
+
+func TestResolveExternalIDsRefreshesCachedTVmazeBackdrop(t *testing.T) {
+	const sourcePath = "/media/Example.Show.S01E01.1080p-GRP.mkv"
+	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{
+		SelectedID: 55,
+		Candidates: []tvmaze.Candidate{{
+			ID:                      55,
+			Name:                    "Example Show",
+			Image:                   tvmaze.Image{Original: "https://static.tvmaze.com/poster.jpg"},
+			Backdrop:                tvmaze.Image{Original: "https://static.tvmaze.com/background.jpg"},
+			BackdropLookupAttempted: true,
+		}},
+	}}
+	svc := NewService(&fakeRepo{}, WithTVmazeClient(tvmazeClient))
+	state := preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			TVmazeID:   55,
+			Category:   api.CanonicalCategoryTV,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			TVmaze: &api.TVmazeMetadata{
+				TVmazeID: 55,
+				Name:     "Example Show",
+				Poster:   "https://static.tvmaze.com/poster.jpg",
+				Backdrop: "https://static.tvmaze.com/poster.jpg",
+			},
+		},
+	}
+
+	result, err := svc.resolveExternalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatalf("refresh cached TVmaze metadata: %v", err)
+	}
+	if tvmazeClient.calls != 1 || result.ProviderMetadata.TVmaze == nil ||
+		result.ProviderMetadata.TVmaze.Backdrop != "https://static.tvmaze.com/background.jpg" ||
+		!result.ProviderMetadata.TVmaze.BackdropLookupAttempted {
+		t.Fatalf("expected one backdrop refresh, calls=%d metadata=%#v", tvmazeClient.calls, result.ProviderMetadata.TVmaze)
+	}
+	state.ProviderMetadata = result.ProviderMetadata
+	if _, err := svc.resolveExternalIdentity(t.Context(), state); err != nil {
+		t.Fatalf("reuse refreshed TVmaze metadata: %v", err)
+	}
+	if tvmazeClient.calls != 1 {
+		t.Fatalf("expected refreshed TVmaze metadata to be reused, got %d calls", tvmazeClient.calls)
 	}
 }
 
@@ -1675,11 +1780,12 @@ func TestResolveExternalIDsRefreshesTVDBDisambiguationWithoutRefetchingSeries(t 
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: sourcePath,
 			TVDB: &api.TVDBMetadata{
-				TVDBID:          987650001,
-				Name:            "Example Native Series",
-				NameEnglish:     "Example Series",
-				Year:            2026,
-				OriginalCountry: "jpn",
+				TVDBID:                         987650001,
+				Name:                           "Example Native Series",
+				NameEnglish:                    "Example Series",
+				Year:                           2026,
+				OriginalCountry:                "jpn",
+				PosterThumbnailLookupAttempted: true,
 				NameDisambiguation: api.TVDBNameDisambiguation{
 					CanonicalName: "Example Series",
 					SeriesYear:    2026,
@@ -1687,7 +1793,11 @@ func TestResolveExternalIDsRefreshesTVDBDisambiguationWithoutRefetchingSeries(t 
 					Source:        "tvdb_v4_search_unpaged",
 				},
 			},
-			TVmaze: &api.TVmazeMetadata{TVmazeID: 987650002, Name: "Example Series"},
+			TVmaze: &api.TVmazeMetadata{
+				TVmazeID:                987650002,
+				Name:                    "Example Series",
+				BackdropLookupAttempted: true,
+			},
 		},
 	})
 	if err != nil {
@@ -4047,18 +4157,18 @@ func TestResolveExternalIDsClearTMDBRefreshesDerivedTVDB(t *testing.T) {
 				},
 				ProviderMetadata: api.SourceScopedMetadata{
 					SourcePath: sourcePath,
-					TMDB:       &api.TMDBMetadata{
-TMDBID: 401001,
- TVDBID: 401004,
- Title: "Different Series",
- Category: "TV",
-},
-					IMDB:       &api.IMDBMetadata{
-IMDBID: 401002,
- Title: "Example Series",
- Type: "tvSeries",
-},
-					TVDB:       &api.TVDBMetadata{TVDBID: 401004, Name: "Different Series"},
+					TMDB: &api.TMDBMetadata{
+						TMDBID:   401001,
+						TVDBID:   401004,
+						Title:    "Different Series",
+						Category: "TV",
+					},
+					IMDB: &api.IMDBMetadata{
+						IMDBID: 401002,
+						Title:  "Example Series",
+						Type:   "tvSeries",
+					},
+					TVDB: &api.TVDBMetadata{TVDBID: 401004, Name: "Different Series"},
 				},
 				ExternalIDOverrides: api.ExternalIDOverrides{TMDBID: new(0)},
 			})
@@ -4428,7 +4538,11 @@ func TestMapTVmazeMetadataIncludesRichFields(t *testing.T) {
 				Original: "https://img.example/poster.jpg",
 				Medium:   "https://img.example/poster-medium.jpg",
 			},
-			Externals: tvmaze.Externals{IMDB: "tt1234567", TVDB: 9988},
+			Backdrop: tvmaze.Image{
+				Original: "https://img.example/backdrop.jpg",
+			},
+			BackdropLookupAttempted: true,
+			Externals:               tvmaze.Externals{IMDB: "tt1234567", TVDB: 9988},
 		}},
 	}
 
@@ -4445,7 +4559,9 @@ func TestMapTVmazeMetadataIncludesRichFields(t *testing.T) {
 	if mapped.Genres != "Drama, Mystery" {
 		t.Fatalf("expected joined genres, got %q", mapped.Genres)
 	}
-	if mapped.Poster == "" || mapped.Backdrop == "" || mapped.NetworkLogo == "" || mapped.WebLogo == "" {
+	if mapped.Poster != "https://img.example/poster.jpg" || mapped.PosterMedium != "https://img.example/poster-medium.jpg" ||
+		mapped.Backdrop != "https://img.example/backdrop.jpg" || mapped.BackdropMedium != "https://img.example/backdrop.jpg" ||
+		!mapped.BackdropLookupAttempted || mapped.NetworkLogo == "" || mapped.WebLogo == "" {
 		t.Fatalf("expected media/logo fields populated: %#v", mapped)
 	}
 	if mapped.Runtime != 60 || mapped.AverageRuntime != 58 || mapped.Rating != 8.3 || mapped.Weight != 92 {
@@ -6026,11 +6142,12 @@ func TestResolveExternalIDsSkipsSelectedDemandRefreshForCompleteOrManualFacts(t 
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "/media/Example.Movie.2026.1080p-GRP.mkv",
 			TMDB: &api.TMDBMetadata{
-				TMDBID:           42,
-				Category:         "movie",
-				Title:            "Retained Example",
-				OriginCountry:    []string{"US"},
-				OriginalLanguage: "",
+				TMDBID:              42,
+				Category:            "movie",
+				Title:               "Retained Example",
+				OriginCountry:       []string{"US"},
+				OriginalLanguage:    "",
+				LogoLookupAttempted: true,
 			},
 		},
 		MetadataOverrides: api.MetadataOverrides{

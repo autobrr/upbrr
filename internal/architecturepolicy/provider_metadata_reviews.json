@@ -1208,12 +1208,12 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/tvc/definition.go:prepareDescription": {
-    "sha256": "4359b0de03575a9af36c79fefe53338683b642a02ea6e961259607ea6e31c931",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "7a5986b34d8658f225088923860a4123d998df756540b848fc4693681cc2d0ff",
+    "reason": "Passes the runtime AddLogo setting into the reviewed TVC description builder; finalized upload facts and manual precedence are unchanged."
   },
   "internal/trackers/impl/standalone/tvc/description.go:buildDescription": {
-    "sha256": "0ab08db401ed9846c3f3f6d9bccefe8e96b30f497ebb9d6bc286197e0a4d26da",
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+    "sha256": "015239e4170bc1843d42708f6a8015d0067bf23b8195880fd244e05fceb86885",
+    "reason": "Only the provider title logo is gated by AddLogo; episode text and other finalized facts retain their existing manual precedence."
   },
   "internal/trackers/impl/standalone/tvc/description.go:genresText": {
     "sha256": "6c40c69a16ef1a281261dd99b061e1fb5cda33989ef618c0983da4f65e711498",
@@ -1240,8 +1240,8 @@
     "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
   },
   "internal/trackers/impl/standalone/tvc/upload.go:prepareUploadState": {
-    "sha256": "dae56050443fd89240689b3984e943c61ad2ff2018e8fc481d52b91a6cd7e118",
-    "reason": "Calls reviewed provider consumers; personal and internal payload fields consume tracker-scoped effective policy values without selecting provider metadata."
+    "sha256": "0949ecb1168e582bba70d311049bf8557638ea04915a06179a5e5b761df8a197",
+    "reason": "Passes the runtime AddLogo setting into the reviewed TVC description builder; payload facts and manual precedence are unchanged."
   },
   "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
     "sha256": "3cb6528c302ff7db23f8e708d342e5faa21909cad10a4f6ca9cd74cb0df54d90",

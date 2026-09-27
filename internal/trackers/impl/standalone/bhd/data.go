@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -60,11 +61,19 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 			return trackers.DataLookupResult{}, nil
 		}
 	}
-	first, err := l.requestFirst(ctx, endpoint, payload)
+	first, single, err := l.requestFirst(ctx, endpoint, payload)
 	if err != nil || len(first) == 0 {
 		return trackers.DataLookupResult{}, err
 	}
-	result := trackers.DataLookupResult{TrackerID: req.TrackerID, IMDBID: bhdIMDBInt(first["imdb_id"])}
+	responseID := bhdString(first["id"])
+	requestedID := strings.TrimSpace(req.TrackerID)
+	result := trackers.DataLookupResult{TrackerID: requestedID, IMDBID: bhdIMDBInt(first["imdb_id"])}
+	if result.TrackerID == "" {
+		result.TrackerID = responseID
+	}
+	if result.TrackerID != "" && (requestedID == "" && single || requestedID != "" && (responseID == "" || responseID == requestedID)) {
+		result.TorrentURL = "https://beyond-hd.me/details/" + url.PathEscape(result.TrackerID)
+	}
 	result.Category, result.TMDBID = parseTMDB(first["tmdb_id"])
 	description := ""
 	if bhdString(first["description"]) == "1" {
@@ -90,23 +99,20 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	if req.KeepImages {
 		result.Images = report.Images
 	}
-	if strings.TrimSpace(result.TrackerID) == "" {
-		result.TrackerID = bhdString(first["id"])
-	}
 	return result, nil
 }
 
-func (l *dataLookup) requestFirst(ctx context.Context, endpoint string, payload map[string]any) (map[string]any, error) {
+func (l *dataLookup) requestFirst(ctx context.Context, endpoint string, payload map[string]any) (map[string]any, bool, error) {
 	body, err := l.request(ctx, endpoint, payload)
 	if err != nil || len(body) == 0 {
-		return nil, err
+		return nil, false, err
 	}
 	if items, ok := body["results"].([]any); ok && len(items) > 0 {
 		item, _ := items[0].(map[string]any)
-		return item, nil
+		return item, len(items) == 1, nil
 	}
 	item, _ := body["result"].(map[string]any)
-	return item, nil
+	return item, true, nil
 }
 
 func (l *dataLookup) request(ctx context.Context, endpoint string, payload map[string]any) (map[string]any, error) {
