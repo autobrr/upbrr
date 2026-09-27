@@ -36,7 +36,16 @@ describe("BlurayCandidatesPage", () => {
                 Publisher: "Example Publisher",
                 URL: "https://example.com/releases/accepted-candidate",
                 CoverImages: [
-                  { Kind: "Front", URL: "https://example.com/images/accepted-cover.jpg" },
+                  {
+                    Kind: "Front",
+                    URL: "https://example.com/images/accepted-cover.jpg",
+                    PreviewURL: "https://example.com/images/accepted-cover-preview.jpg",
+                  },
+                  {
+                    Kind: "Back",
+                    URL: "https://example.com/images/accepted-back.jpg",
+                    PreviewURL: "",
+                  },
                 ],
               },
               {
@@ -96,6 +105,15 @@ describe("BlurayCandidatesPage", () => {
     );
     expect(selectCandidate).toHaveBeenCalledWith("alternate-candidate");
 
+    expect(screen.getByAltText("Front")).toHaveAttribute(
+      "src",
+      "https://example.com/images/accepted-cover-preview.jpg",
+    );
+    expect(screen.getByAltText("Back")).toHaveAttribute(
+      "src",
+      "https://example.com/images/accepted-back.jpg",
+    );
+
     fireEvent.click(
       screen.getByRole("button", {
         name: "Preview candidate 1: Example Release 2026 Collector Edition Front image 1",
@@ -103,5 +121,14 @@ describe("BlurayCandidatesPage", () => {
     );
     expect(setLightboxImage).toHaveBeenCalledWith("https://example.com/images/accepted-cover.jpg");
     expect(setLightboxAlt).toHaveBeenCalledWith("Example Release 2026 Collector Edition Front");
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Preview candidate 1: Example Release 2026 Collector Edition Back image 2",
+      }),
+    );
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://example.com/images/accepted-back.jpg",
+    );
   });
 });

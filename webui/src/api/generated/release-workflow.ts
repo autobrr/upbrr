@@ -191,6 +191,7 @@ export type BlurayDiscSpec = Readonly<{
 
 export type BlurayImage = Readonly<{
   Kind: string;
+  PreviewURL: string;
   URL: string;
 }>;
 

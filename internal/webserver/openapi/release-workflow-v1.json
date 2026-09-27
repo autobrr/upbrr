@@ -818,12 +818,16 @@
           "Kind": {
             "type": "string"
           },
+          "PreviewURL": {
+            "type": "string"
+          },
           "URL": {
             "type": "string"
           }
         },
         "required": [
           "Kind",
+          "PreviewURL",
           "URL"
         ]
       },

@@ -881,6 +881,7 @@ export type PreparedReleaseDisplay = {
 export type BlurayImage = {
   Kind: string;
   URL: string;
+  PreviewURL: string;
 };
 
 export type BluraySpecs = {

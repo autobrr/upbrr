@@ -1959,8 +1959,9 @@ type BlurayPlaybackSpec struct {
 }
 
 type BlurayImage struct {
-	Kind string
-	URL  string
+	Kind       string
+	URL        string
+	PreviewURL string
 }
 
 func (m *BlurayMetadata) CandidateByID(releaseID string) *BlurayReleaseCandidate {

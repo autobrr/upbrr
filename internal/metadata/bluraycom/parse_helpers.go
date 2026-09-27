@@ -347,6 +347,12 @@ func dedupeReleases(input []api.BlurayReleaseCandidate) []api.BlurayReleaseCandi
 
 func extractCoverImages(htmlText string, root *html.Node) []api.BlurayImage {
 	byKind := make(map[string]string)
+	previews := make(map[string]string)
+	for _, img := range findAll(root, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && n.Data == "img" && strings.HasSuffix(attr(n, "id"), "image_overlay")
+	}) {
+		addCoverImage(previews, strings.TrimSuffix(attr(img, "id"), "_overlay"), attr(img, "src"))
+	}
 	for _, match := range appendImagePattern.FindAllStringSubmatch(htmlText, -1) {
 		if len(match) < 2 {
 			continue
@@ -380,12 +386,20 @@ func extractCoverImages(htmlText string, root *html.Node) []api.BlurayImage {
 	out := make([]api.BlurayImage, 0, len(byKind))
 	for _, kind := range order {
 		if imageURL := byKind[kind]; imageURL != "" {
-			out = append(out, api.BlurayImage{Kind: kind, URL: imageURL})
+			out = append(out, api.BlurayImage{
+				Kind:       kind,
+				URL:        imageURL,
+				PreviewURL: previews[kind],
+			})
 			delete(byKind, kind)
 		}
 	}
 	for kind, imageURL := range byKind {
-		out = append(out, api.BlurayImage{Kind: kind, URL: imageURL})
+		out = append(out, api.BlurayImage{
+			Kind:       kind,
+			URL:        imageURL,
+			PreviewURL: previews[kind],
+		})
 	}
 	return out
 }
