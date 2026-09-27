@@ -537,6 +537,24 @@ func TestRenderMediaInfoSanitizesPreviewHTML(t *testing.T) {
 	}
 }
 
+func TestRenderMediaInfoSourcePreview(t *testing.T) {
+	t.Parallel()
+	rendered := RenderMediaInfo(sampleMediaInfoText() + "\nTitle : <script>alert(1)</script> Safe")
+	if !strings.Contains(rendered, `class="mediainfo-preview"`) || !strings.Contains(rendered, `class="mediainfo__raw"`) {
+		t.Fatalf("expected structured MediaInfo and raw report, got %q", rendered)
+	}
+	if strings.Contains(rendered, "<script") {
+		t.Fatalf("expected escaped source text, got %q", rendered)
+	}
+	if got := RenderMediaInfo("  "); got != "" {
+		t.Fatalf("blank report rendered as %q", got)
+	}
+	fallback := RenderMediaInfo("Unrecognized <script>text</script>")
+	if !strings.Contains(fallback, "<pre><code>") || strings.Contains(fallback, "<script") {
+		t.Fatalf("expected sanitized raw fallback, got %q", fallback)
+	}
+}
+
 func sampleMediaInfoText() string {
 	return `General
 Complete name : C:\Media\Movie.2024.1080p.mkv

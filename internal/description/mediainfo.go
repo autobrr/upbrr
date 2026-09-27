@@ -257,6 +257,17 @@ func renderMediaInfoBlock(label string, raw string) (string, bool) {
 	return builder.String(), true
 }
 
+// RenderMediaInfo returns sanitized HTML for a source-level MediaInfo preview.
+func RenderMediaInfo(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	if rendered, ok := renderMediaInfoBlock("MediaInfo", raw); ok {
+		return sanitizeHTML(rendered)
+	}
+	return sanitizeHTML("<pre><code>" + escapeHTML(raw) + "</code></pre>")
+}
+
 func parseMediaInfoSummary(label string, raw string) (mediaInfoSummary, bool) {
 	cleaned := strings.TrimSpace(strings.ReplaceAll(raw, "\u00a0", " "))
 	if cleaned == "" {

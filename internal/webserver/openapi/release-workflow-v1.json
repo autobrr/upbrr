@@ -4477,6 +4477,9 @@
       "PreparedReleaseDisplay": {
         "type": "object",
         "properties": {
+          "MediaInfoHTML": {
+            "type": "string"
+          },
           "Providers": {
             "type": "array",
             "items": {

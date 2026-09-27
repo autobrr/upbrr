@@ -1567,6 +1567,106 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
   }
 });
 
+test("render input MediaInfo preview across supported palettes and modes", async ({ page }) => {
+  test.setTimeout(900_000);
+  const output = path.resolve("../docs/plans/visual-quality-evidence/input-mediainfo-preview");
+  await mkdir(output, { recursive: true });
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
+  let app: AppServer | undefined;
+  const records: unknown[] = [];
+  const themes = [
+    "minimal",
+    "autobrr",
+    "the-kyle",
+    "nightwalker",
+    "swizzin",
+    "kanagawa-dragon",
+    "kanagawa-wave",
+    "napster",
+  ].filter((theme) => !process.env.VQ_THEME || theme === process.env.VQ_THEME);
+  const accents = ["blueish", "pink", "green", "purple", "grayish", "orange"];
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const panel = page.getByText("MediaInfo Preview", { exact: true }).locator("..");
+    await expect(panel).not.toHaveAttribute("open", "");
+    await panel.locator("summary").first().click();
+    await expect(panel.locator(".mediainfo-preview")).toBeVisible();
+    await expect(panel.locator(".mediainfo__video")).toContainText("AVC");
+    await expect(panel.locator(".mediainfo__raw > summary")).toHaveText("Raw MediaInfo");
+    await panel.locator(".mediainfo__raw > summary").click();
+    await expect(panel.locator(".mediainfo__raw pre")).toContainText("Unique ID");
+    for (const theme of themes) {
+      for (const mode of (theme === "napster" ? ["light"] : ["light", "dark"]).filter(
+        (value) => !process.env.VQ_MODE || value === process.env.VQ_MODE,
+      )) {
+        for (const accent of (theme.startsWith("kanagawa") ? accents : [""]).filter(
+          (value) => !process.env.VQ_ACCENT || value === process.env.VQ_ACCENT,
+        )) {
+          await page.evaluate(
+            ({ theme, mode, accent }) => {
+              const next = JSON.stringify({
+                version: 1,
+                theme,
+                mode,
+                accents: theme.startsWith("kanagawa") ? { [theme]: accent } : {},
+              });
+              localStorage.setItem("upbrr:appearance:v1", next);
+              dispatchEvent(
+                new StorageEvent("storage", {
+                  key: "upbrr:appearance:v1",
+                  newValue: next,
+                  storageArea: localStorage,
+                }),
+              );
+            },
+            { theme, mode, accent },
+          );
+          await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+          await expect
+            .poll(() =>
+              page
+                .locator("html")
+                .evaluate((element) => (element.classList.contains("dark") ? "dark" : "light")),
+            )
+            .toBe(mode);
+          for (const width of [1280, 390]) {
+            await page.setViewportSize({ width, height: 900 });
+            const root = await page.locator("html").evaluate((element) => ({
+              theme: element.getAttribute("data-theme"),
+              accent: element.getAttribute("data-accent"),
+              mode: element.classList.contains("dark") ? "dark" : "light",
+              colorScheme: getComputedStyle(element).colorScheme,
+            }));
+            const name = [theme, accent || "default", mode, width].join("-");
+            expect(root.theme, name).toBe(theme);
+            expect(root.mode, name).toBe(mode);
+            expect(root.colorScheme, name).toBe(mode);
+            if (accent) expect(root.accent, name).toBe(accent);
+            const overflow = await page.evaluate(
+              () => document.documentElement.scrollWidth - innerWidth,
+            );
+            expect(overflow, name).toBeLessThanOrEqual(0);
+            const audit = await page.evaluate(auditComposedText, "main [data-mediainfo-preview] *");
+            expect(audit.failureCount, `${name}: ${JSON.stringify(audit.failures)}`).toBe(0);
+            await panel.screenshot({
+              path: path.join(output, `${name}.png`),
+              animations: "disabled",
+            });
+            records.push({ name, ...root, overflow, ...audit });
+          }
+        }
+      }
+    }
+    if (!process.env.VQ_THEME && !process.env.VQ_MODE && !process.env.VQ_ACCENT)
+      expect(records).toHaveLength(70);
+    await writeFile(path.join(output, "cells.json"), JSON.stringify(records, null, 2));
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("sweep generated and stored description fixtures across resolved palettes and widths", async ({
   page,
 }) => {

@@ -20,6 +20,32 @@ func workflowTestFingerprint(t *testing.T, value any) WorkflowFingerprint {
 	return fingerprint
 }
 
+func TestMediaInfoDisplayPreservesLegacySnapshotFingerprint(t *testing.T) {
+	t.Parallel()
+	legacy := struct {
+		ReleaseName string
+		Providers   []ProviderDisplay
+		TrackerData []TrackerPreview
+	}{ReleaseName: "Example.Release.2026-GRP"}
+	display := PreparedReleaseDisplay{ReleaseName: legacy.ReleaseName}
+	legacyJSON, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	displayJSON, err := json.Marshal(display)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(displayJSON) != string(legacyJSON) {
+		t.Fatalf("empty preview changed legacy display JSON: %s != %s", displayJSON, legacyJSON)
+	}
+	withPreview := display
+	withPreview.MediaInfoHTML = "<p>MediaInfo</p>"
+	if workflowTestFingerprint(t, display) == workflowTestFingerprint(t, withPreview) {
+		t.Fatal("MediaInfo preview did not contribute to display fingerprint")
+	}
+}
+
 func TestReleaseFactInstructionSnapshotFingerprintAndClonePreserveTriState(t *testing.T) {
 	t.Parallel()
 

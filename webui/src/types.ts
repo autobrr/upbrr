@@ -871,6 +871,7 @@ export type PreparedReleaseDisplay = {
   ReleaseName: string;
   Providers: ProviderDisplay[];
   TrackerData?: TrackerPreview[];
+  MediaInfoHTML?: string;
 };
 
 export type BlurayImage = {

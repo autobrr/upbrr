@@ -7,6 +7,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import { Checkbox, PillCheckbox } from "../../components/ui/checkbox";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
+import RenderedDescription from "../../components/RenderedDescription";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
@@ -42,8 +43,9 @@ import { formatIMDbID } from "../../utils/providerId";
 const compactInputClass =
   "h-8 rounded-md border border-input bg-card px-2.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
 const editDropdownClass = "group rounded-[18px] border border-foreground/10 bg-card/80 p-2";
-const editDropdownSummaryClass =
-  "inline-flex min-h-8 w-max max-w-full cursor-pointer list-none items-center gap-[9px] rounded-[10px] bg-primary px-[11px] py-[7px] font-semibold text-primary-foreground shadow-sm transition after:content-['▾'] after:transition-transform group-open:after:rotate-180 hover:-translate-y-px hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden";
+const disclosureSummaryClass =
+  "inline-flex min-h-8 w-max max-w-full cursor-pointer list-none items-center gap-[9px] rounded-[10px] px-[11px] py-[7px] font-semibold shadow-sm transition after:content-['▾'] after:transition-transform group-open:after:rotate-180 hover:-translate-y-px hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden";
+const editDropdownSummaryClass = `${disclosureSummaryClass} bg-primary text-primary-foreground`;
 
 const formatProvider = (value: string) => value.toUpperCase();
 
@@ -1657,6 +1659,25 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
         </div>
+
+        {view.preview ? (
+          <details className={editDropdownClass} data-mediainfo-preview>
+            <summary
+              className={`${disclosureSummaryClass} border border-foreground/20 bg-card text-foreground`}
+            >
+              MediaInfo Preview
+            </summary>
+            <div className="mt-3 min-w-0">
+              {preview.Display.MediaInfoHTML ? (
+                <RenderedDescription html={preview.Display.MediaInfoHTML} />
+              ) : (
+                <p className="text-muted-foreground">
+                  No MediaInfo report is available for this source.
+                </p>
+              )}
+            </div>
+          </details>
+        ) : null}
 
         <div
           className={`grid grid-cols-[minmax(260px,320px)_minmax(0,1fr)] gap-[19px] transition-[opacity,transform] duration-500 max-[960px]:grid-cols-1 ${hasPreview ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0"}`}

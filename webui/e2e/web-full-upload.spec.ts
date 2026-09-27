@@ -256,11 +256,14 @@ for (const tracker of ["ANT", "BTN"] as const) {
 }
 
 test("embedded web reload restores the authoritative prepared workflow", async ({ page }) => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
   let app: AppServer | undefined;
   try {
     app = await startApp(workspace);
     const opened = await fetchMetadata(page, app.url, workspace.sourcePath);
+    const mediaInfoPanel = page.getByText("MediaInfo Preview", { exact: true }).locator("..");
+    await mediaInfoPanel.locator("summary").first().click();
+    await expect(mediaInfoPanel.locator(".mediainfo__video")).toContainText("AVC");
     const counters = { ...workspace.fake.counters };
     const restored = waitForAppMethod(page, "GetActiveInput");
     await page.reload();
@@ -269,6 +272,8 @@ test("embedded web reload restores the authoritative prepared workflow", async (
     expect(snapshot.inputId).toBe(opened.inputId);
     expect(snapshot.sourceVersion).toBe(opened.sourceVersion);
     await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL")).toBeVisible();
+    await mediaInfoPanel.locator("summary").first().click();
+    await expect(mediaInfoPanel.locator(".mediainfo__video")).toContainText("AVC");
     await expect(page.getByRole("button", { name: "Dupe Check" })).toBeEnabled();
     expect(workspace.fake.counters).toEqual(counters);
   } finally {

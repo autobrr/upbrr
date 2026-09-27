@@ -1154,6 +1154,7 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
   TrackerData: readonly TrackerPreview[];

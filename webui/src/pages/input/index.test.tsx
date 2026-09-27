@@ -352,6 +352,62 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it("shows source MediaInfo between release details and external IDs", () => {
+    const base = readyInputFacet(1);
+    const preview = base.view.preview!;
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        preview: {
+          ...preview,
+          Display: {
+            ...preview.Display,
+            MediaInfoHTML:
+              '<div class="mediainfo-preview"><section class="mediainfo"><h3>General</h3><p>Matroska</p></section></div>',
+          },
+        },
+      },
+    };
+    const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    const summary = screen.getByText("MediaInfo Preview");
+    const panel = summary.closest("details");
+    expect(panel).not.toBeNull();
+    expect(panel).not.toHaveAttribute("open");
+    expect(screen.getByText("Edit Release Details").compareDocumentPosition(summary)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(
+      summary.compareDocumentPosition(screen.getByRole("heading", { name: "External IDs" })),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    fireEvent.click(summary);
+    expect(panel).toHaveAttribute("open");
+    expect(screen.getByText("Matroska")).toBeVisible();
+
+    rerender(<InputPage facet={base} {...inputPageProps()} />);
+    expect(screen.getByText("No MediaInfo report is available for this source.")).toBeVisible();
+
+    const unnamed: InputFacet = {
+      ...facet,
+      view: {
+        ...facet.view,
+        preview: {
+          ...facet.view.preview!,
+          ReleaseName: "",
+          Identity: emptyExternalIdentity(),
+          Display: {
+            ReleaseName: "",
+            Providers: [],
+            MediaInfoHTML: facet.view.preview!.Display.MediaInfoHTML,
+          },
+        },
+      },
+    };
+    rerender(<InputPage facet={unnamed} {...inputPageProps()} />);
+    expect(screen.getByText("MediaInfo Preview")).toBeVisible();
+    expect(screen.getByText("Matroska")).toBeVisible();
+  });
+
   it.each([
     { faviconOnly: false, useFavicons: true, visibleName: true },
     { faviconOnly: true, useFavicons: true, visibleName: false },
