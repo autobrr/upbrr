@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -30,8 +31,9 @@ const (
 	trackerLookupWorkers   = 4
 )
 
-// collectTrackerEvidence skips fresh stored snapshots and cooling-down trackers,
-// then persists accepted lookup records and timestamps. Explicit IDs or a
+// collectTrackerEvidence reuses matching stored tracker IDs for fresh sources,
+// looks up missing IDs while respecting tracker cooldowns, then persists
+// accepted lookup records and timestamps. Explicit IDs or a
 // preferred tracker force configured priority order; otherwise at most four
 // lookups race and the first result with IDs wins. Lookup failures are soft,
 // while cancellation and persistence failures discard the result.
@@ -48,19 +50,12 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return preparationstate.State{}, internalerrors.ErrInvalidInput
 	}
-	if meta.StoredDataFresh {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: skipping tracker lookup, stored metadata snapshot is fresh for %s", meta.SourcePath)
-		}
-		return meta, nil
-	}
-
-	candidates := resolveTrackerCandidates(meta)
+	candidates := normalizeTrackers(resolveTrackerCandidates(meta))
 	if len(candidates) == 0 {
 		return meta, nil
 	}
 
-	trackers := normalizeTrackers(candidates)
+	trackers := candidates
 	if s.logger != nil {
 		configured, missing := configuredTrackers(s.cfg, s.registry)
 		s.logger.Debugf("metadata: tracker candidates %v", trackers)
@@ -88,6 +83,50 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 	if s.logger != nil {
 		s.logger.Debugf("metadata: using trackers %v", trackers)
 	}
+	var cached api.TrackerMetadata
+	cachedIndex := -1
+	if meta.StoredDataFresh {
+		stored, err := s.repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
+		if err != nil {
+			return preparationstate.State{}, fmt.Errorf("metadata: load stored tracker metadata: %w", err)
+		}
+		for index, tracker := range trackers {
+			for _, record := range stored {
+				if !strings.EqualFold(record.Tracker, tracker) || !hasTrackerMetadataIDs(record) {
+					continue
+				}
+				currentID := trackerIDFor(meta, tracker)
+				if currentID != "" {
+					if currentID != strings.TrimSpace(record.TrackerID) {
+						continue
+					}
+				} else if meta.InfoHash == "" || record.InfoHash == "" {
+					continue
+				}
+				if meta.InfoHash != "" && record.InfoHash != "" && !strings.EqualFold(meta.InfoHash, record.InfoHash) {
+					continue
+				}
+				cached = record
+				cachedIndex = index
+				break
+			}
+			if cachedIndex >= 0 {
+				break
+			}
+		}
+		if cachedIndex == 0 || cachedIndex > 0 && !shouldUseStrictPriorityLookup(meta, trackers, s.cfg.Trackers.PreferredTracker) {
+			meta.TrackerData = append(meta.TrackerData, cached)
+			if s.logger != nil {
+				s.logger.Debugf("metadata: reusing matching stored tracker IDs tracker=%s for %s", cached.Tracker, meta.SourcePath)
+			}
+			return meta, nil
+		}
+		if cachedIndex > 0 {
+			trackers = trackers[:cachedIndex]
+		} else if s.logger != nil {
+			s.logger.Debugf("metadata: stored source snapshot has no matching tracker IDs; checking trackers for %s", meta.SourcePath)
+		}
+	}
 
 	now := time.Now().UTC()
 	meta.TrackerData = append([]api.TrackerMetadata{}, meta.TrackerData...)
@@ -104,7 +143,21 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 		eligible = append(eligible, tracker)
 	}
 	if len(eligible) == 0 {
+		if cachedIndex >= 0 {
+			meta.TrackerData = append(meta.TrackerData, cached)
+		}
 		return meta, nil
+	}
+	if cachedIndex >= 0 {
+		result, err := s.enrichTrackerDataPriority(ctx, meta, eligible, now)
+		if err != nil {
+			return preparationstate.State{}, err
+		}
+		if slices.ContainsFunc(result.TrackerData, hasTrackerMetadataIDs) {
+			return result, nil
+		}
+		result.TrackerData = append(result.TrackerData, cached)
+		return result, nil
 	}
 
 	if !shouldUseStrictPriorityLookup(meta, eligible, s.cfg.Trackers.PreferredTracker) {

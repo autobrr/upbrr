@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +27,8 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/imdb"
+	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -648,33 +651,222 @@ func TestFetchBTNClaimedTitlesRequiresExistingSessionWithoutLogin(t *testing.T) 
 	}
 }
 
-func TestEnrichTrackerDataSkipsLookupWhenStoredFresh(t *testing.T) {
-	repo := &fakeRepo{}
-	lookup := &stubTrackerLookup{}
-	cfg := config.Config{
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"ANT": {APIKey: "ant-key"},
-			},
+func TestFreshSnapshotUsesTrackerIDsBeforeProviderNameSearch(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP")
+	const trackerID = "1234"
+	const infoHash = "abc123"
+	for _, test := range []struct {
+		name        string
+		stored      []api.TrackerMetadata
+		wantLookups int
+	}{
+		{
+			name: "matching saved tracker IDs",
+			stored: []api.TrackerMetadata{{
+				SourcePath: sourcePath,
+				Tracker:    "ANT",
+				TrackerID:  trackerID,
+				InfoHash:   infoHash,
+				TMDBID:     42,
+				IMDBID:     24,
+			}},
 		},
-	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+		{name: "missing saved tracker IDs", wantLookups: 1},
+		{
+			name: "saved tracker record without metadata IDs",
+			stored: []api.TrackerMetadata{{
+				SourcePath: sourcePath,
+				Tracker:    "ANT",
+				TrackerID:  trackerID,
+				InfoHash:   infoHash,
+			}},
+			wantLookups: 1,
+		},
+		{
+			name: "saved tracker record for another torrent",
+			stored: []api.TrackerMetadata{{
+				SourcePath: sourcePath,
+				Tracker:    "ANT",
+				TrackerID:  "old",
+				InfoHash:   "old",
+				TMDBID:     99,
+				IMDBID:     99,
+			}},
+			wantLookups: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &fakeRepo{trackerMetadata: test.stored}
+			lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+				"ANT": {
+					TrackerID: trackerID,
+					TMDBID:    42,
+					IMDBID:    24,
+				},
+			}}
+			tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Example Movie", Year: 2026}}
+			imdbClient := &stubIMDB{info: imdb.Info{
+				IMDbID: "tt0000024",
+				Title:  "Example Movie",
+				Year:   2026,
+			}}
+			svc := NewService(repo,
+				WithConfig(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"ANT": {APIKey: "ant-key"},
+				}}}),
+				WithTrackerDataLookup(lookup),
+				WithTrackerRegistry(trackerDataTestRegistry(t)),
+				WithTMDBClient(tmdbClient),
+				WithIMDBClient(imdbClient),
+			)
+			state := preparationstate.State{
+				SourcePath:        sourcePath,
+				StoredDataFresh:   true,
+				InfoHash:          infoHash,
+				TrackerIDs:        map[string]string{"ant": trackerID},
+				EvidenceTrackers:  []string{"ANT"},
+				ExternalFreshness: api.ExternalFreshnessRefresh,
+				MediaInfoCategory: "MOVIE",
+				Release: api.ReleaseInfo{
+					Category: "MOVIE",
+					Title:    "Example Movie",
+					Year:     2026,
+				},
+			}
 
-	meta := preparationstate.State{
-		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
-		StoredDataFresh:  true,
-		EvidenceTrackers: []string{"ANT"},
+			state, err := svc.collectTrackerEvidence(t.Context(), state)
+			if err != nil {
+				t.Fatalf("collect tracker evidence: %v", err)
+			}
+			if got := len(lookup.Calls()); got != test.wantLookups {
+				t.Fatalf("tracker lookups = %d, want %d", got, test.wantLookups)
+			}
+			state, err = svc.collectExternalIdentityEvidence(t.Context(), state)
+			if err != nil {
+				t.Fatalf("collect external identity: %v", err)
+			}
+			if state.Identity.TMDBID != 42 || state.Identity.IMDBID != 24 ||
+				state.Identity.Provenance.TMDB != api.IdentityProvenanceTracker ||
+				state.Identity.Provenance.IMDB != api.IdentityProvenanceTracker {
+				t.Fatalf("external identity did not use tracker IDs: %#v", state.Identity)
+			}
+			if tmdbClient.searchCalls != 0 || imdbClient.searchCalls != 0 {
+				t.Fatalf("name searches: tmdb=%d imdb=%d", tmdbClient.searchCalls, imdbClient.searchCalls)
+			}
+		})
 	}
+}
 
-	result, err := svc.collectTrackerEvidence(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("enrich: %v", err)
+func TestFreshSnapshotPreservesPreferredTrackerIDPriority(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP")
+	const infoHash = "abc123"
+	cachedANT := api.TrackerMetadata{
+		SourcePath: sourcePath,
+		Tracker:    "ANT",
+		TrackerID:  "101",
+		InfoHash:   infoHash,
+		TMDBID:     42,
+		IMDBID:     24,
 	}
-	if len(lookup.Calls()) != 0 {
-		t.Fatalf("expected no tracker lookups, got %v", lookup.Calls())
+	cachedHDB := api.TrackerMetadata{
+		SourcePath: sourcePath,
+		Tracker:    "HDB",
+		TrackerID:  "202",
+		InfoHash:   infoHash,
+		TMDBID:     84,
+		IMDBID:     48,
 	}
-	if len(result.TrackerData) != 0 {
-		t.Fatalf("expected no tracker data changes, got %d records", len(result.TrackerData))
+	for _, test := range []struct {
+		name        string
+		stored      []api.TrackerMetadata
+		hdbResult   trackerdata.Result
+		wantTMDBID  int
+		wantIMDBID  int
+		wantLookups []string
+	}{
+		{
+			name:       "preferred record cached after lower-priority record",
+			stored:     []api.TrackerMetadata{cachedANT, cachedHDB},
+			wantTMDBID: 84,
+			wantIMDBID: 48,
+		},
+		{
+			name:   "preferred record missing and lookup has IDs",
+			stored: []api.TrackerMetadata{cachedANT},
+			hdbResult: trackerdata.Result{
+				TrackerID: "202",
+				TMDBID:    84,
+				IMDBID:    48,
+			},
+			wantTMDBID:  84,
+			wantIMDBID:  48,
+			wantLookups: []string{"HDB"},
+		},
+		{
+			name:        "preferred lookup has no IDs and lower-priority record is cached",
+			stored:      []api.TrackerMetadata{cachedANT},
+			wantTMDBID:  42,
+			wantIMDBID:  24,
+			wantLookups: []string{"HDB"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &fakeRepo{trackerMetadata: test.stored}
+			lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{"HDB": test.hdbResult}}
+			tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Example Movie", Year: 2026}}
+			imdbClient := &stubIMDB{infoFn: func(id string) imdb.Info {
+				return imdb.Info{
+					IMDbID: id,
+					Title:  "Example Movie",
+					Year:   2026,
+				}
+			}}
+			svc := NewService(repo,
+				WithConfig(config.Config{Trackers: config.TrackersConfig{
+					PreferredTracker: "HDB",
+					Trackers: map[string]config.TrackerConfig{
+						"ANT": {APIKey: "ant-key"},
+						"HDB": {Username: "user", Passkey: "pass"},
+					},
+				}}),
+				WithTrackerDataLookup(lookup),
+				WithTrackerRegistry(trackerDataTestRegistry(t)),
+				WithTMDBClient(tmdbClient),
+				WithIMDBClient(imdbClient),
+			)
+			state := preparationstate.State{
+				SourcePath:        sourcePath,
+				StoredDataFresh:   true,
+				InfoHash:          infoHash,
+				TrackerIDs:        map[string]string{"ant": "101", "hdb": "202"},
+				ExternalFreshness: api.ExternalFreshnessRefresh,
+				MediaInfoCategory: "MOVIE",
+				Release: api.ReleaseInfo{
+					Category: "MOVIE",
+					Title:    "Example Movie",
+					Year:     2026,
+				},
+			}
+			state, err := svc.collectTrackerEvidence(t.Context(), state)
+			if err != nil {
+				t.Fatalf("collect tracker evidence: %v", err)
+			}
+			if got := lookup.Calls(); !slices.Equal(got, test.wantLookups) {
+				t.Fatalf("tracker lookups = %v, want %v", got, test.wantLookups)
+			}
+			state, err = svc.collectExternalIdentityEvidence(t.Context(), state)
+			if err != nil {
+				t.Fatalf("collect external identity: %v", err)
+			}
+			if state.Identity.TMDBID != test.wantTMDBID || state.Identity.IMDBID != test.wantIMDBID ||
+				state.Identity.Provenance.TMDB != api.IdentityProvenanceTracker ||
+				state.Identity.Provenance.IMDB != api.IdentityProvenanceTracker {
+				t.Fatalf("external identity did not use preferred tracker IDs: %#v", state.Identity)
+			}
+			if tmdbClient.searchCalls != 0 || imdbClient.searchCalls != 0 {
+				t.Fatalf("name searches: tmdb=%d imdb=%d", tmdbClient.searchCalls, imdbClient.searchCalls)
+			}
+		})
 	}
 }
 

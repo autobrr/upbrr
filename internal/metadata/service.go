@@ -72,6 +72,7 @@ type repository interface {
 	GetTrackerTimestamp(context.Context, string) (time.Time, error)
 	SaveTrackerTimestamp(context.Context, api.TrackerTimestamp) error
 	SaveTrackerMetadata(context.Context, api.TrackerMetadata) error
+	ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error)
 	SaveTrackerRuleFailures(context.Context, string, string, []api.TrackerRuleFailure) error
 }
 
