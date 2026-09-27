@@ -226,8 +226,14 @@ func (f *fakeRepo) SaveTrackerMetadata(_ context.Context, metadata api.TrackerMe
 	return nil
 }
 
-func (f *fakeRepo) ListTrackerMetadataByPath(_ context.Context, _ string) ([]api.TrackerMetadata, error) {
-	return nil, nil
+func (f *fakeRepo) ListTrackerMetadataByPath(_ context.Context, path string) ([]api.TrackerMetadata, error) {
+	var records []api.TrackerMetadata
+	for _, record := range f.trackerMetadata {
+		if record.SourcePath == path {
+			records = append(records, record)
+		}
+	}
+	return records, nil
 }
 
 func (f *fakeRepo) SaveScreenshot(_ context.Context, _ api.Screenshot) error {
