@@ -667,10 +667,12 @@ func requireConfigActivationSafeForStartup(ctx context.Context, tx *sql.Tx, star
 		return api.ActiveInputRecord{}, fmt.Errorf("db inspect config activation work: %w", err)
 	}
 	if running != 0 {
-		if !startup || slot.InputID == "" || slot.WorkflowID == "" || slot.LeaseExpiresAt.After(now) {
+		legacyRecovery := slot.State == api.ActiveInputRecovering && slot.InputID == "" && slot.SourceVersion == "" &&
+			slot.WorkflowID != "" && slot.ReservationID == "" && slot.RequestedPath == ""
+		if !startup || (slot.InputID == "" && !legacyRecovery) || slot.WorkflowID == "" || slot.LeaseExpiresAt.After(now) {
 			if startup {
 				reason := "operation_input_lease_live"
-				if slot.InputID == "" || slot.WorkflowID == "" {
+				if (slot.InputID == "" && !legacyRecovery) || slot.WorkflowID == "" {
 					reason = "operation_input_missing"
 				}
 				return api.ActiveInputRecord{}, fmt.Errorf("%w: reason=%s state=%s", api.ErrActiveInputBusy, reason, slot.State)

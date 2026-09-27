@@ -516,13 +516,26 @@ func TestReconcileConfigActivationAcceptsExpiredOpeningInput(t *testing.T) {
 
 func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
 	for _, test := range []struct {
-		name          string
-		workLease     time.Duration
-		unknownEffect bool
-		wantErr       error
-		wantReason    string
+		name           string
+		workLease      time.Duration
+		legacyRecovery bool
+		unknownEffect  bool
+		wantErr        error
+		wantReason     string
 	}{
 		{name: "expired work", workLease: -time.Minute},
+		{
+			name:           "expired legacy recovery work",
+			workLease:      -time.Minute,
+			legacyRecovery: true,
+		},
+		{
+			name:           "live legacy recovery work",
+			workLease:      time.Minute,
+			legacyRecovery: true,
+			wantErr:        api.ErrActiveInputBusy,
+			wantReason:     "reason=operation_work_lease_live",
+		},
 		{
 			name:       "live work",
 			workLease:  time.Minute,
@@ -558,6 +571,10 @@ func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
 				InputID:        "input",
 				SourceVersion:  "version",
 				WorkflowID:     "workflow",
+			}
+			if test.legacyRecovery {
+				prior.State = api.ActiveInputRecovering
+				prior.InputID, prior.SourceVersion = "", ""
 			}
 			payload, err := json.Marshal(prior)
 			if err != nil {

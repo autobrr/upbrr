@@ -1644,7 +1644,8 @@ func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted b
 			return fmt.Errorf("release workflow load startup recovery input: %w", err)
 		}
 		authority, ok := api.ActiveInputAuthorityFromContext(recoveryCtx)
-		if ok && slot.State == api.ActiveInputActive && slot.CoordinatorID == authority.CoordinatorID && slot.Fence == authority.Fence {
+		if ok && (slot.State == api.ActiveInputActive || IsLegacyRecoverySlot(slot)) &&
+			slot.CoordinatorID == authority.CoordinatorID && slot.Fence == authority.Fence {
 			incomplete, err := m.operations.ListInterruptedOperationsWithIncompleteWork(recoveryCtx, slot.OwnerID, slot.WorkflowID)
 			if err != nil {
 				return fmt.Errorf("release workflow list interrupted incomplete work: %w", err)

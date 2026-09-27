@@ -73,6 +73,7 @@ func (r *SQLiteRepository) LoadReleaseWorkflowWork(
 }
 
 // ClaimReleaseWorkflowWork acquires one operation lease before worker dispatch.
+// It also lets a fenced legacy recovery slot reclaim old work for settlement.
 func (r *SQLiteRepository) ClaimReleaseWorkflowWork(
 	ctx context.Context,
 	record api.ReleaseWorkflowWorkRecord,
@@ -82,7 +83,9 @@ func (r *SQLiteRepository) ClaimReleaseWorkflowWork(
 	}
 	return r.withWriteTx(ctx, "claim release workflow work", func(tx *sql.Tx) error {
 		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, false); err != nil {
-			return err
+			if legacyErr := requireLegacyInputRecovery(ctx, tx, record.OwnerID, record.WorkflowID); legacyErr != nil {
+				return err
+			}
 		}
 		var leaseOwner string
 		var leaseExpiresAt string

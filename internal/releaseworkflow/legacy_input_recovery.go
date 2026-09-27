@@ -169,6 +169,8 @@ func (m *Module) publishLegacyRecoveryActions(
 		trackerID := api.TrackerID("")
 		if effect.Kind == string(api.WorkflowExternalEffectTrackerSubmission) {
 			trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(effect.ScopeID)))
+		} else if effect.Kind == string(api.WorkflowExternalEffectClientInjection) && strings.HasPrefix(effect.ScopeID, "upload:") {
+			trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(strings.TrimPrefix(effect.ScopeID, "upload:"))))
 		}
 		action, actionErr := m.newReconcileAction(
 			nextRevision,
@@ -240,14 +242,9 @@ func (m *Module) finishLegacyInputRecovery(ctx context.Context, ownerID string, 
 	return m.finishLegacyInputRecoveryLocked(ctx, ownerID, workflowID)
 }
 
+// finishLegacyInputRecoveryLocked closes a legacy slot only after its effects
+// and operations have been settled.
 func (m *Module) finishLegacyInputRecoveryLocked(ctx context.Context, ownerID string, workflowID api.WorkflowID) error {
-	effects, err := m.durability.RecoverLegacyEffects(ctx, ownerID, workflowID, m.clock.Now().UTC())
-	if err != nil {
-		return fmt.Errorf("release workflow inspect legacy recovery effects: %w", err)
-	}
-	if len(effects) != 0 {
-		return nil
-	}
 	operations, err := m.operations.ListActiveOperations(ctx)
 	if err != nil {
 		return fmt.Errorf("release workflow inspect legacy recovery operations: %w", err)
@@ -256,6 +253,10 @@ func (m *Module) finishLegacyInputRecoveryLocked(ctx context.Context, ownerID st
 		return operation.OwnerID == ownerID && operation.WorkflowID == workflowID
 	}) {
 		return nil
+	}
+	settled, err := m.settleRecoveryActions(ctx, ownerID, workflowID)
+	if err != nil || !settled {
+		return err
 	}
 	slot, err := m.activeInputs.LoadActiveInput(ctx)
 	if err != nil {
@@ -279,4 +280,100 @@ func (m *Module) finishLegacyInputRecoveryLocked(ctx context.Context, ownerID st
 		m.activeCancel()
 	}
 	return nil
+}
+
+// settleRecoveryActions removes pending reconciliation actions only when no
+// unresolved external effect remains for this workflow.
+func (m *Module) settleRecoveryActions(ctx context.Context, ownerID string, workflowID api.WorkflowID) (bool, error) {
+	workflowIDs, err := m.durability.ListLegacyRecoveryWorkflowIDs(ctx, ownerID)
+	if err != nil {
+		return false, fmt.Errorf("release workflow inspect recovery effects: %w", err)
+	}
+	if slices.Contains(workflowIDs, workflowID) {
+		m.logger.Debugf("releaseworkflow: startup recovery decision=retain_actions reason=unresolved_effect workflow=%s", workflowID)
+		return false, nil
+	}
+	state, err := m.repository.Load(ctx, ownerID, workflowID)
+	if err != nil {
+		return false, fmt.Errorf("release workflow load completed recovery: %w", err)
+	}
+	pending := slices.Clone(state.Workflow.RequiredActions)
+	nextRevision := state.Workflow.Revision + 1
+	now := m.clock.Now().UTC()
+	settledCount := 0
+	for _, action := range pending {
+		if action.Kind != api.RequiredActionReconcileSubmission || action.Status != api.RequiredActionStatusPending {
+			continue
+		}
+		settledCount++
+		switch {
+		case action.EffectKind == api.WorkflowExternalEffectImageHosting:
+			finishUnavailableImageHostingReconciliation(&state.Workflow, action)
+		case action.EffectKind == api.WorkflowExternalEffectClientInjection &&
+			strings.HasPrefix(action.EffectScopeID, "upload:") && state.Workflow.UploadResult != nil:
+			priorRef := *state.Workflow.UploadResult
+			prior, ok := state.UploadResults[priorRef.ID]
+			if !ok || prior.Revision != priorRef.Revision {
+				invalidateUploadPlan(&state.Workflow)
+				break
+			}
+			for _, result := range prior.Results {
+				if !slices.ContainsFunc(result.Failures, func(failure api.WorkflowFailure) bool {
+					return failure.Failure.Code == api.OperationFailureUnknownOutcome &&
+						failure.Failure.Operation == api.OperationKindClientInjection && failure.Resource == action.EffectScopeID
+				}) {
+					continue
+				}
+				action.TrackerID = result.TrackerID
+				if _, err := m.reconcileClientInjectionResult(ownerID, &state, nextRevision, now, action); err != nil {
+					return false, fmt.Errorf("release workflow settle discarded client injection: %w", err)
+				}
+				break
+			}
+		default:
+			if state.Workflow.DryRun != nil {
+				m.private.Delete(ownerID, workflowID, uploadPlanPrivateResourceID(state.Workflow.DryRun.ID))
+			}
+			invalidateUploadPlan(&state.Workflow)
+		}
+		state.Workflow.Failures = slices.DeleteFunc(state.Workflow.Failures, func(failure api.WorkflowFailure) bool {
+			if failure.Failure.Code != api.OperationFailureUnknownOutcome {
+				return false
+			}
+			switch action.EffectKind {
+			case api.WorkflowExternalEffectClientInjection, api.WorkflowExternalEffectImageHosting:
+				return failure.Resource == action.EffectScopeID
+			case api.WorkflowExternalEffectTrackerSubmission:
+				return failure.TrackerID == action.TrackerID && failure.Failure.Operation == api.OperationKindUploadExecute
+			default:
+				return false
+			}
+		})
+		state.Workflow.RequiredActions = slices.DeleteFunc(state.Workflow.RequiredActions, func(candidate api.RequiredAction) bool {
+			return candidate.ID == action.ID
+		})
+	}
+	if settledCount != 0 {
+		state.Workflow.Revision = nextRevision
+		state.Workflow.UpdatedAt = now
+		for index := range state.Workflow.RequiredActions {
+			state.Workflow.RequiredActions[index].WorkflowRevision = state.Workflow.Revision
+		}
+		if state.Workflow.Status == api.WorkflowStatusBlocked && !hasPendingRequiredAction(state.Workflow.RequiredActions) {
+			if state.Workflow.UploadResult != nil {
+				state.Workflow.Status = api.WorkflowStatusCompleted
+			} else {
+				state.Workflow.Status = api.WorkflowStatusActive
+			}
+		}
+		state.ProcessEpoch = m.processEpoch
+		if err := state.Workflow.Validate(); err != nil {
+			return false, fmt.Errorf("release workflow validate completed recovery: %w", err)
+		}
+		if err := m.repository.Save(ctx, ownerID, state.Workflow.Revision-1, state); err != nil {
+			return false, fmt.Errorf("release workflow save completed recovery: %w", err)
+		}
+		m.logger.Debugf("releaseworkflow: startup recovery decision=discard_actions workflow=%s count=%d", workflowID, settledCount)
+	}
+	return true, nil
 }

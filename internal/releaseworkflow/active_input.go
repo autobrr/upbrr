@@ -66,7 +66,8 @@ func (m *Module) OwnsActiveInput(slot api.ActiveInputRecord) bool {
 // ResetIdleInputOnStartup claims an expired foreign input, settles interrupted
 // prior-process operations, and closes the slot when it becomes idle. It waits
 // for live work leases, preserves completed checkpoints, and retains an active
-// composite workflow for an explicit retry. A live foreign lease is deferred.
+// composite workflow for an explicit retry. It waits for a foreign recovery
+// lease within a bounded deadline; other live foreign leases are deferred.
 // It does not verify source bytes or start a new workflow.
 func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	if m == nil || m.activeInputs == nil {
@@ -91,6 +92,34 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	if slot.State == api.ActiveInputEmpty ||
 		(m.OwnsActiveInput(slot) && m.startupResetDone && !m.startupResetPending && slot.State != api.ActiveInputRecovering) {
 		return nil
+	}
+	if slot.State == api.ActiveInputRecovering && !m.OwnsActiveInput(slot) {
+		waitCtx, cancel := context.WithTimeoutCause(ctx, workflowWorkLeaseTTL+5*time.Second, api.ErrActiveInputBusy)
+		defer cancel()
+		for slot.State == api.ActiveInputRecovering && !m.OwnsActiveInput(slot) && slot.LeaseExpiresAt.After(m.clock.Now()) {
+			delay := slot.LeaseExpiresAt.Sub(m.clock.Now())
+			m.logger.Debugf("active input: startup reset decision=wait_recovery_lease revision=%d remaining=%s", slot.Revision, delay.Round(time.Second))
+			timer := time.NewTimer(delay)
+			select {
+			case <-waitCtx.Done():
+				timer.Stop()
+				return fmt.Errorf("release workflow wait for prior recovery lease: %w", context.Cause(waitCtx))
+			case <-timer.C:
+			}
+			if waitCtx.Err() != nil {
+				return fmt.Errorf("release workflow wait for prior recovery lease: %w", context.Cause(waitCtx))
+			}
+			slot, err = m.activeInputs.LoadActiveInput(waitCtx)
+			if err != nil {
+				if waitCtx.Err() != nil {
+					return fmt.Errorf("release workflow wait for prior recovery lease: %w", context.Cause(waitCtx))
+				}
+				return fmt.Errorf("release workflow reload active input after recovery lease: %w", err)
+			}
+		}
+		if slot.State == api.ActiveInputEmpty {
+			return nil
+		}
 	}
 	recovered := m.startupResetPending && m.OwnsActiveInput(slot)
 	if m.OwnsActiveInput(slot) {
@@ -139,6 +168,12 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	if slot.State != api.ActiveInputActive {
 		m.logger.Debugf("active input: startup reset decision=defer state=%s revision=%d", slot.State, slot.Revision)
 		return nil
+	}
+	if recovered {
+		recoveryCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
+		if _, err := m.settleRecoveryActions(recoveryCtx, slot.OwnerID, slot.WorkflowID); err != nil {
+			return fmt.Errorf("release workflow settle discarded input actions on startup: %w", err)
+		}
 	}
 	sourceState, err := m.repository.Load(ctx, slot.OwnerID, slot.WorkflowID)
 	if err != nil {
@@ -463,7 +498,8 @@ func (m *Module) recoverActiveInput(
 	return m.finishActiveInputRecovery(ctx, recovering, requestedOwner, discardInterrupted)
 }
 
-// finishActiveInputRecovery restores committed input and settles old work under an already claimed fence.
+// finishActiveInputRecovery settles old work under an already claimed fence.
+// It restores committed input or closes a legacy recovery slot once it is idle.
 func (m *Module) finishActiveInputRecovery(
 	ctx context.Context,
 	recovering api.ActiveInputRecord,
@@ -471,6 +507,25 @@ func (m *Module) finishActiveInputRecovery(
 	discardInterrupted bool,
 ) (api.ActiveInputRecord, error) {
 	ctx = api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: recovering.Fence})
+	if IsLegacyRecoverySlot(recovering) {
+		var err error
+		if discardInterrupted {
+			err = m.discardInterruptedOperations(ctx)
+		} else {
+			err = m.ensureOperationRecovery(ctx)
+		}
+		if err != nil {
+			return api.ActiveInputRecord{}, err
+		}
+		if err := m.finishLegacyInputRecoveryLocked(ctx, recovering.OwnerID, recovering.WorkflowID); err != nil {
+			return api.ActiveInputRecord{}, fmt.Errorf("release workflow finish legacy input recovery: %w", err)
+		}
+		slot, err := m.activeInputs.LoadActiveInput(ctx)
+		if err != nil {
+			return api.ActiveInputRecord{}, fmt.Errorf("release workflow read legacy recovery input: %w", err)
+		}
+		return slot, nil
+	}
 	// Restore only the committed input under the new fence before recovery can
 	// claim work. Existing unknown effects still block switching and submission.
 	restored := recovering
