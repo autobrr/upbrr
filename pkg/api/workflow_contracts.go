@@ -537,6 +537,8 @@ type MediaCaptureInstructions struct {
 	ScreenshotCount int                   `json:"screenshotCount"`
 	Purpose         ScreenshotPurpose     `json:"purpose"`
 	Selections      []ScreenshotSelection `json:"selections,omitempty"`
+	// SavedImagePlanID binds an explicit saved-image import to its reviewed plan.
+	SavedImagePlanID MediaPlanID `json:"savedImagePlanId,omitempty"`
 	// ManualFrames applies the same raw frame numbers to every prepared disc.
 	ManualFrames    []int `json:"manualFrames,omitempty"`
 	CaptureDVDMenus bool  `json:"captureDvdMenus"`
@@ -554,6 +556,7 @@ type MediaArtifactSet struct {
 	ProjectionSet             TrackerReleaseProjectionSetRef `json:"projectionSet"`
 	TrackerApproval           *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
 	CaptureFingerprint        WorkflowFingerprint            `json:"captureFingerprint"`
+	SavedImagePlanID          MediaPlanID                    `json:"savedImagePlanId,omitempty"`
 	RequirementsFingerprint   WorkflowFingerprint            `json:"requirementsFingerprint"`
 	Artifacts                 []MediaArtifact                `json:"artifacts"`
 	HostAttempts              []HostedImageAttempt           `json:"hostAttempts,omitempty"`

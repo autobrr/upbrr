@@ -88,6 +88,109 @@ const facet = (): ScreenshotsFacet => {
 };
 
 describe("ScreenshotsPage", () => {
+  it("requires a frame selection for Generate screenshots", () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: { ...base.view, selections: [] },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: "Generate screenshots" })).toBeDisabled();
+  });
+
+  it("shows saved tracker images and prepares them without capturing suggested frames", () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        plan: {
+          ...plan(),
+          SavedTrackerImages: [
+            { TrackerID: "AITHER", Host: "imgbb", URL: "https://images.example.invalid/one.png" },
+            { TrackerID: "AITHER", Host: "imgbb", URL: "https://images.example.invalid/two.png" },
+          ],
+        },
+        artifacts: null,
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    expect(screen.getByAltText("Saved screenshot 1 from AITHER")).toHaveAttribute(
+      "src",
+      "https://images.example.invalid/one.png",
+    );
+    expect(screen.getByAltText("Saved screenshot 2 from AITHER")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
+    expect(screenshots.generate).toHaveBeenCalledWith("final", []);
+  });
+
+  it("lets a saved-image-only plan prepare screenshots without frame suggestions", () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        plan: {
+          ...plan(),
+          SuggestedSelections: [],
+          RequiresManualFrames: true,
+          SavedTrackerImages: [
+            { TrackerID: "AITHER", Host: "imgbb", URL: "https://images.example.invalid/one.png" },
+          ],
+        },
+        selections: [],
+        artifacts: null,
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: "Generate screenshots" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
+    expect(screenshots.generate).toHaveBeenCalledWith("final", []);
+  });
+
+  it("shows saved screenshots without a disc assignment beside planned discs", () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        plan: {
+          ...plan(),
+          Discs: [
+            {
+              DiscID: "disc-one",
+              DiscName: "Disc 1",
+              DurationSeconds: 120,
+              FrameRate: 24,
+              SuggestedSelections: [],
+            },
+          ],
+        },
+        artifacts: {
+          ...base.view.artifacts!,
+          artifacts: [
+            {
+              ...base.view.artifacts!.artifacts[0],
+              id: "saved-image",
+              source: "tracker",
+            },
+          ],
+        },
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    expect(screen.getByRole("heading", { name: "Saved images" })).toBeVisible();
+    expect(screen.getByAltText("Screenshot 1")).toBeVisible();
+  });
+
   it("loads frame suggestions when an authoritative workflow first opens the page", async () => {
     const base = facet();
     const screenshots: ScreenshotsFacet = {

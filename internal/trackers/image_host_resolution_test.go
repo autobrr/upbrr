@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -34,6 +35,204 @@ func TestDescriptionSlotImageNameUsesURLIdentity(t *testing.T) {
 	}
 	if buildDescriptionSlotImageName(firstURL, 0) != first {
 		t.Fatalf("same image URL did not reuse cache identity %q", first)
+	}
+}
+
+func TestExactMediaForTrackerHostKeepsCompatibleSavedScreenshots(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	for _, target := range []struct {
+		name string
+		host string
+	}{
+		{name: "ALPHA", host: "pixhost"},
+		{name: "BETA", host: "imgbb"},
+	} {
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:       target.name,
+			Definition: stubDefinition{name: target.name},
+			ImageHost:  &ImageHostPolicy{AllowedHosts: []string{target.host}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	exact := &api.ExactMediaAssets{}
+	for index, host := range []string{"pixhost", "pixhost", "imgbb", "imgbb"} {
+		pathValue := filepath.Join(root, fmt.Sprintf("image-%d.png", index))
+		url := fmt.Sprintf("https://%s.example.invalid/image-%d.png", host, index)
+		exact.Screenshots = append(exact.Screenshots, api.ScreenshotImage{Path: pathValue, Purpose: api.ScreenshotPurposeFinal})
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  pathValue,
+			Host:       host,
+			UsageScope: "global",
+			RawURL:     url,
+		})
+	}
+	for _, target := range []struct {
+		name string
+		host string
+	}{
+		{name: "ALPHA", host: "pixhost"},
+		{name: "BETA", host: "imgbb"},
+	} {
+		filtered, err := exactMediaForTrackerHost(target.name, api.UploadSubject{ExactMedia: exact}, config.Config{}, config.TrackerConfig{}, registry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(filtered.Screenshots) != 2 || len(filtered.ScreenshotUploads) != 2 {
+			t.Fatalf("%s exact media = %#v", target.name, filtered)
+		}
+		for _, link := range filtered.ScreenshotUploads {
+			if link.Host != target.host {
+				t.Fatalf("%s received incompatible upload %#v", target.name, link)
+			}
+		}
+		preloaded, err := preloadDescriptionAssetData(t.Context(), api.UploadSubject{ExactMedia: filtered}, nil, registry)
+		if err != nil || len(preloaded.screenshotSlots) != 2 {
+			t.Fatalf("%s screenshot slots = %#v err=%v", target.name, preloaded, err)
+		}
+	}
+}
+
+func TestExactMediaForTrackerHostKeepsAllowedExistingHost(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		tracker string
+		host    string
+		allowed []string
+	}{
+		{
+			tracker: "BHD",
+			host:    "imgbb",
+			allowed: []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"},
+		},
+		{
+			tracker: "BHD",
+			host:    "bhd",
+			allowed: []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"},
+		},
+		{
+			tracker: "DC",
+			host:    "postimg",
+			allowed: []string{"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
+		},
+	} {
+		t.Run(test.tracker+"-"+test.host, func(t *testing.T) {
+			t.Parallel()
+			registry := NewRegistry()
+			if err := registry.RegisterDescriptor(Descriptor{
+				Name:       test.tracker,
+				Definition: stubDefinition{name: test.tracker},
+				ImageHost:  &ImageHostPolicy{AllowedHosts: test.allowed},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			allowed, err := ReusableImageHostAllowedWithRegistry(registry, config.Config{}, test.tracker, test.host, api.ImageHostOverrides{})
+			if err != nil || !allowed {
+				t.Fatalf("existing %s host accepted = %t err=%v", test.host, allowed, err)
+			}
+			pathValue := filepath.Join(t.TempDir(), "saved.png")
+			exact := &api.ExactMediaAssets{
+				Screenshots: []api.ScreenshotImage{{Path: pathValue, Purpose: api.ScreenshotPurposeFinal}},
+				ScreenshotUploads: []api.UploadedImageLink{{
+					ImagePath:  pathValue,
+					Host:       test.host,
+					UsageScope: "global",
+					RawURL:     "https://images.example.invalid/saved.png",
+				}},
+			}
+			filtered, err := exactMediaForTrackerHost(test.tracker, api.UploadSubject{ExactMedia: exact}, config.Config{}, config.TrackerConfig{}, registry)
+			if err != nil || len(filtered.Screenshots) != 1 || len(filtered.ScreenshotUploads) != 1 {
+				t.Fatalf("existing %s exact media = %#v err=%v", test.host, filtered, err)
+			}
+		})
+	}
+}
+
+func TestExactMediaForOptionalTrackerExcludesAnotherTrackersOwnedHost(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	for _, descriptor := range []Descriptor{
+		{Name: "ALPHA", Definition: stubDefinition{name: "ALPHA"}},
+		{
+			Name:       "LST",
+			Definition: stubDefinition{name: "LST"},
+			ImageHost:  &ImageHostPolicy{OwnedHosts: []string{"lostimg"}},
+		},
+	} {
+		if err := registry.RegisterDescriptor(descriptor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	globalPath := filepath.Join(root, "global.png")
+	ownedPath := filepath.Join(root, "owned.png")
+	exact := &api.ExactMediaAssets{
+		Screenshots: []api.ScreenshotImage{
+			{Path: globalPath, Purpose: api.ScreenshotPurposeFinal},
+			{Path: ownedPath, Purpose: api.ScreenshotPurposeFinal},
+		},
+		ScreenshotUploads: []api.UploadedImageLink{
+			{
+				ImagePath:  globalPath,
+				Host:       "imgbb",
+				UsageScope: "global",
+				RawURL:     "https://i.ibb.co/global.png",
+			},
+			{
+				ImagePath:  ownedPath,
+				Host:       "lostimg",
+				UsageScope: "tracker:LST",
+				RawURL:     "https://lostimg.example.invalid/owned.png",
+			},
+		},
+	}
+	filtered, err := exactMediaForTrackerHost("ALPHA", api.UploadSubject{ExactMedia: exact}, config.Config{}, config.TrackerConfig{}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Screenshots) != 1 || filtered.Screenshots[0].Path != globalPath ||
+		len(filtered.ScreenshotUploads) != 1 || filtered.ScreenshotUploads[0].Host != "imgbb" {
+		t.Fatalf("optional tracker received another tracker's owned image: %#v", filtered)
+	}
+}
+
+func TestExactMediaForRequiredTrackerDropsUnusableHostedLinks(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	for _, descriptor := range []Descriptor{
+		{
+			Name:       "ALPHA",
+			Definition: stubDefinition{name: "ALPHA"},
+			ImageHost:  &ImageHostPolicy{AllowedHosts: []string{"imgbb"}},
+		},
+		{
+			Name:       "LST",
+			Definition: stubDefinition{name: "LST"},
+			ImageHost:  &ImageHostPolicy{OwnedHosts: []string{"lostimg"}},
+		},
+	} {
+		if err := registry.RegisterDescriptor(descriptor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pathValue := filepath.Join(t.TempDir(), "owned.png")
+	exact := &api.ExactMediaAssets{
+		Screenshots: []api.ScreenshotImage{{Path: pathValue, Purpose: api.ScreenshotPurposeFinal}},
+		ScreenshotUploads: []api.UploadedImageLink{{
+			ImagePath:  pathValue,
+			Host:       "lostimg",
+			UsageScope: "tracker:LST",
+			RawURL:     "https://lostimg.example.invalid/owned.png",
+		}},
+	}
+	filtered, err := exactMediaForTrackerHost("ALPHA", api.UploadSubject{ExactMedia: exact}, config.Config{}, config.TrackerConfig{}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Screenshots) != 1 || len(filtered.ScreenshotUploads) != 0 {
+		t.Fatalf("required tracker retained unusable hosted link: %#v", filtered)
 	}
 }
 

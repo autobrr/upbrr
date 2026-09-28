@@ -10,7 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/png" // register PNG decoder for screenshot metadata loading
+	_ "image/jpeg" // register JPEG decoder for imported tracker images
+	_ "image/png"  // register PNG decoder for screenshot metadata loading
 	"io/fs"
 	"net/url"
 	"os"
@@ -23,6 +24,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	_ "golang.org/x/image/webp" // register WebP decoder for imported tracker images
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -1731,7 +1734,7 @@ func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, regist
 				continue
 			}
 			for _, fullPath := range trackerImageArtifactPaths(tmpDir, trackerDir, trimmed, index) {
-				if info, err := os.Stat(fullPath); err == nil && !info.IsDir() && info.Size() > 0 {
+				if validTrackerImageArtifact(fullPath) {
 					host := imagehost.ExtractHost(trimmed)
 					results = append(results, api.ScreenshotLinkedImage{
 						Tracker: tracker,
@@ -1745,6 +1748,26 @@ func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, regist
 		}
 	}
 	return results
+}
+
+func validTrackerImageArtifact(pathValue string) bool {
+	file, err := os.Open(pathValue)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	configuration, _, err := image.DecodeConfig(file)
+	return err == nil && configuration.Width > 0 && configuration.Height > 0
+}
+
+// ReusableTrackerImageLinks returns saved tracker images with decodable local
+// artifacts for the prepared source.
+func (s *Service) ReusableTrackerImageLinks(ctx context.Context, sourcePath string, release api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error) {
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, sourcePath, release)
+	if err != nil {
+		return nil, fmt.Errorf("screenshots: reusable tracker images: %w", err)
+	}
+	return buildTrackerImageLinks(s.loadTrackerMetadata(ctx, sourcePath), tmpDir, s.registry), nil
 }
 
 func buildTrackerImageFilename(rawURL string, index int) string {

@@ -1337,6 +1337,75 @@ func TestBuildPreparationGroupsExactMatchingUnit3DDescriptions(t *testing.T) {
 	}
 }
 
+func TestBuildPreparationUsesTrackerCompatibleExactImageSets(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	for _, target := range []struct {
+		name string
+		host string
+	}{
+		{name: "ALPHA", host: "pixhost"},
+		{name: "BETA", host: "imgbb"},
+	} {
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:       target.name,
+			Definition: hostAwareDescriptionDefinition{name: target.name, group: "shared"},
+			ImageHost:  &ImageHostPolicy{AllowedHosts: []string{target.host}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026-GRP.mkv")
+	exact := &api.ExactMediaAssets{}
+	for index, host := range []string{"pixhost", "pixhost", "imgbb", "imgbb"} {
+		pathValue := filepath.Join(root, fmt.Sprintf("image-%d.png", index))
+		url := fmt.Sprintf("https://%s.example.invalid/image-%d.png", host, index)
+		exact.Screenshots = append(exact.Screenshots, api.ScreenshotImage{Path: pathValue, Purpose: api.ScreenshotPurposeFinal})
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  pathValue,
+			Host:       host,
+			UsageScope: "global",
+			RawURL:     url,
+		})
+	}
+	skipUpload := true
+	meta := api.UploadSubject{
+		MediaBinding: trackerTestMediaBinding(sourcePath),
+		SourcePath:   sourcePath,
+		ExactMedia:   exact,
+		ImageHostOverrides: api.ImageHostOverrides{
+			SkipUpload: &skipUpload,
+		},
+	}
+	svc := NewServiceWithRegistry(config.Config{}, nil, &stubRepo{}, registry)
+	preview, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{"ALPHA", "BETA"})
+	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 2 {
+		t.Fatalf("mixed-host preparation = %#v err=%v", preview, err)
+	}
+	for _, entry := range preview.Descriptions {
+		if entry.ImageHost.SelectedHost == "" || !strings.Contains(entry.RawDescription, entry.ImageHost.SelectedHost) {
+			t.Fatalf("host-specific description = %#v", entry)
+		}
+	}
+	if preflight := svc.preflightDescriptionImageHosts(t.Context(), meta, []string{"ALPHA", "BETA"}); len(preflight) != 0 {
+		t.Fatalf("exact media upload preflight must resolve per tracker: %#v", preflight)
+	}
+	for _, target := range []struct {
+		name string
+		host string
+	}{
+		{name: "ALPHA", host: "pixhost"},
+		{name: "BETA", host: "imgbb"},
+	} {
+		content := svc.prepareUploadContent(t.Context(), target.name, meta, config.TrackerConfig{}, nil, nil)
+		if content.State != preparedUploadContentReady || content.ImageHost.SelectedHost != target.host ||
+			content.Assets == nil || len(content.Assets.Screenshots) != 2 {
+			t.Fatalf("host-specific upload content tracker=%s content=%#v", target.name, content)
+		}
+	}
+}
+
 func TestBuildPreparationSplitsSameGroupWhenDescriptionDiffers(t *testing.T) {
 	t.Parallel()
 

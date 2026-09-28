@@ -826,6 +826,7 @@ export type MediaArtifactSet = Readonly<{
   requiredActions?: readonly RequiredAction[];
   requirementsFingerprint: WorkflowFingerprint;
   revision: WorkflowRevision;
+  savedImagePlanId?: MediaPlanID;
   status: StageStatus;
   trackerApproval?: TrackerApprovalSnapshotRef | null;
   workflowId: WorkflowID;
@@ -851,6 +852,7 @@ export type MediaCaptureInstructions = Readonly<{
   manualFrames?: readonly number[];
   maxDvdMenuItems?: number;
   purpose: ScreenshotPurpose;
+  savedImagePlanId?: MediaPlanID;
   screenshotCount: number;
   selections?: readonly ScreenshotSelection[];
 }>;
@@ -925,11 +927,18 @@ export type MediaPlan = Readonly<{
   release: ReleaseSnapshotRef;
   requirements?: readonly MediaCaptureRequirement[];
   revision: WorkflowRevision;
+  savedTrackerImages?: readonly MediaPlanSavedImage[];
   suggestedSelections?: readonly ScreenshotSelection[];
   workflowId: WorkflowID;
 }>;
 
 export type MediaPlanID = string;
+
+export type MediaPlanSavedImage = Readonly<{
+  host: string;
+  trackerId: TrackerID;
+  url: string;
+}>;
 
 export type MediaTrackFacts = Readonly<{
   ChannelLayout: string;

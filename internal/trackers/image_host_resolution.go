@@ -37,6 +37,115 @@ type descriptionImageHostResolution struct {
 	blocking    bool
 }
 
+// exactMediaForTrackerHost keeps only screenshots on a reusable host accepted
+// by this tracker. The prepared workflow may contain other trackers' images.
+func exactMediaForTrackerHost(
+	tracker string,
+	meta api.UploadSubject,
+	appCfg config.Config,
+	trackerCfg config.TrackerConfig,
+	registry *Registry,
+	preferredHosts ...string,
+) (*api.ExactMediaAssets, error) {
+	exact := meta.ExactMedia.Clone()
+	if exact == nil || len(exact.Screenshots) == 0 || len(exact.ScreenshotUploads) == 0 {
+		return exact, nil
+	}
+	policy, err := resolveImageHostPolicyForMetadataWithRegistry(registry, tracker, appCfg, trackerCfg, meta.ImageHostOverrides)
+	if err != nil {
+		return nil, err
+	}
+	if !policy.required {
+		foreignPaths := make(map[string]struct{})
+		compatiblePaths := make(map[string]struct{})
+		uploads := make([]api.UploadedImageLink, 0, len(exact.ScreenshotUploads))
+		for _, upload := range exact.ScreenshotUploads {
+			pathValue := strings.TrimSpace(upload.ImagePath)
+			host := strings.ToLower(strings.TrimSpace(upload.Host))
+			scope := normalizeUsageScope(upload.UsageScope)
+			if owner := trackerForOwnedHost(registry, host); owner != "" && !strings.EqualFold(owner, tracker) ||
+				scope != globalImageUsageScope && scope != trackerImageUsageScope(tracker) {
+				foreignPaths[pathValue] = struct{}{}
+				continue
+			}
+			uploads = append(uploads, upload)
+			compatiblePaths[pathValue] = struct{}{}
+		}
+		if len(foreignPaths) > 0 {
+			images := make([]api.ScreenshotImage, 0, len(exact.Screenshots))
+			for _, image := range exact.Screenshots {
+				pathValue := strings.TrimSpace(image.Path)
+				if _, foreign := foreignPaths[pathValue]; foreign {
+					if _, compatible := compatiblePaths[pathValue]; !compatible {
+						continue
+					}
+				}
+				images = append(images, image)
+			}
+			exact.Screenshots = images
+			exact.ScreenshotUploads = uploads
+		}
+		return exact, nil
+	}
+	selectionPolicy := reusableImageHostSelectionPolicy(policy, preferredHosts...)
+	availablePaths := make(map[string]struct{}, len(exact.Screenshots))
+	for _, image := range exact.Screenshots {
+		availablePaths[strings.TrimSpace(image.Path)] = struct{}{}
+	}
+	pathsByHost := make(map[string]map[string]struct{})
+	orderedHosts := make([]string, 0)
+	for _, upload := range exact.ScreenshotUploads {
+		host := strings.ToLower(strings.TrimSpace(upload.Host))
+		pathValue := strings.TrimSpace(upload.ImagePath)
+		if _, selected := availablePaths[pathValue]; !selected || pathValue == "" || host == "" ||
+			hostInList(host, selectionPolicy.failed) ||
+			len(selectionPolicy.allowed) > 0 && !hostAllowed(host, selectionPolicy.allowed) ||
+			!reusableSelectionMatchesPolicy(host, selectionPolicy) {
+			continue
+		}
+		if owner := trackerForOwnedHost(registry, host); owner != "" && !strings.EqualFold(owner, tracker) {
+			continue
+		}
+		scope := normalizeUsageScope(upload.UsageScope)
+		if scope != globalImageUsageScope && scope != trackerImageUsageScope(tracker) {
+			continue
+		}
+		if pathsByHost[host] == nil {
+			pathsByHost[host] = make(map[string]struct{})
+			orderedHosts = append(orderedHosts, host)
+		}
+		pathsByHost[host][pathValue] = struct{}{}
+	}
+	selectedHost := ""
+	for _, host := range orderedHosts {
+		if selectedHost == "" || len(pathsByHost[host]) > len(pathsByHost[selectedHost]) {
+			selectedHost = host
+		}
+	}
+	if selectedHost == "" {
+		exact.ScreenshotUploads = nil
+		return exact, nil
+	}
+	selected := pathsByHost[selectedHost]
+	filteredImages := make([]api.ScreenshotImage, 0, len(selected))
+	for _, image := range exact.Screenshots {
+		if _, ok := selected[strings.TrimSpace(image.Path)]; ok {
+			filteredImages = append(filteredImages, image)
+		}
+	}
+	filteredUploads := make([]api.UploadedImageLink, 0, len(selected))
+	for _, upload := range exact.ScreenshotUploads {
+		if strings.EqualFold(strings.TrimSpace(upload.Host), selectedHost) {
+			if _, ok := selected[strings.TrimSpace(upload.ImagePath)]; ok {
+				filteredUploads = append(filteredUploads, upload)
+			}
+		}
+	}
+	exact.Screenshots = filteredImages
+	exact.ScreenshotUploads = filteredUploads
+	return exact, nil
+}
+
 const (
 	descriptionSlotImageTimeout  = 30 * time.Second
 	descriptionSlotImageMaxBytes = 25 * 1024 * 1024
@@ -665,10 +774,16 @@ func effectiveImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ..
 
 func reusableImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
 	effective := effectiveImageHostSelectionPolicy(policy, preferredHosts...)
-	if !effective.required || effective.fallbackOK || len(effective.preferred) <= 1 {
+	if !effective.required || effective.fallbackOK || len(effective.allowed) > 0 || len(effective.preferred) <= 1 {
 		return effective
 	}
-	effective.preferred = append([]string(nil), effective.preferred[:1]...)
+	preferred := []string{effective.preferred[0]}
+	for _, host := range effective.preferred[1:] {
+		if hostAllowed(host, effective.allowed) && !supportedUploadImageHost(host) {
+			preferred = append(preferred, host)
+		}
+	}
+	effective.preferred = preferred
 	return effective
 }
 
@@ -678,6 +793,9 @@ func reusableSelectionMatchesPolicy(host string, policy imageHostPolicy) bool {
 		return false
 	}
 	if !policy.required || policy.fallbackOK {
+		return true
+	}
+	if len(policy.allowed) > 0 && hostAllowed(normalizedHost, policy.allowed) {
 		return true
 	}
 	preferred := preferredHost(policy)

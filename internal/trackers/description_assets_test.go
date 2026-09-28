@@ -3726,7 +3726,7 @@ func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testi
 	}
 }
 
-func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
+func TestEnsureDescriptionImageHostReusesAllowedHostForRequiredTracker(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
 			{
@@ -3760,23 +3760,24 @@ func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 		},
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
+	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, descriptionAssetsTestRegistry(t))
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resolution.feedback.SelectedHost != "pixhost" {
-		t.Fatalf("expected pixhost host, got %q", resolution.feedback.SelectedHost)
+	if resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb host, got %q", resolution.feedback.SelectedHost)
 	}
-	if !resolution.feedback.Reuploaded {
-		t.Fatal("expected screenshots to be reuploaded")
+	if resolution.feedback.Reuploaded || len(images.calls) != 0 {
+		t.Fatalf("expected existing allowed host to be reused, got feedback=%#v uploads=%v", resolution.feedback, images.calls)
 	}
 	if len(resolution.screenshots) != 2 {
 		t.Fatalf("expected 2 screenshots, got %d", len(resolution.screenshots))
 	}
 	for _, screenshot := range resolution.screenshots {
-		if screenshot.Host != "pixhost" {
-			t.Fatalf("expected all rehosted screenshots to use pixhost, got %#v", resolution.screenshots)
+		if screenshot.Host != "imgbb" {
+			t.Fatalf("expected all reused screenshots to use imgbb, got %#v", resolution.screenshots)
 		}
 	}
 }
@@ -4392,7 +4393,7 @@ func TestEnsureDescriptionImageHostReusesGlobalUploadsInsteadOfOtherTrackerScope
 	}
 }
 
-func TestEnsureDescriptionImageHostSkipsAutomaticUploadWhenDisabled(t *testing.T) {
+func TestEnsureDescriptionImageHostReusesAllowedHostWhenAutomaticUploadDisabled(t *testing.T) {
 	skipUpload := true
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
@@ -4437,17 +4438,14 @@ func TestEnsureDescriptionImageHostSkipsAutomaticUploadWhenDisabled(t *testing.T
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resolution.feedback.Status != "warning" {
-		t.Fatalf("expected warning status, got %#v", resolution.feedback)
+	if resolution.feedback.Status != "reused" || resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb reuse, got %#v", resolution.feedback)
 	}
 	if resolution.feedback.Reuploaded {
 		t.Fatal("expected automatic upload to stay disabled")
 	}
-	if len(resolution.screenshots) != 0 {
-		t.Fatalf("expected no rehosted screenshots, got %#v", resolution.screenshots)
-	}
-	if !strings.Contains(resolution.feedback.Message, "disabled") {
-		t.Fatalf("expected disabled message, got %q", resolution.feedback.Message)
+	if len(resolution.screenshots) != 2 {
+		t.Fatalf("expected two reused screenshots, got %#v", resolution.screenshots)
 	}
 }
 

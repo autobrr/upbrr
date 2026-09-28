@@ -80,6 +80,13 @@ func migrateAddMediaReuseAssociations(ctx context.Context, exec migrationExecuto
 	return nil
 }
 
+func migrateAddReusableMediaOrigin(ctx context.Context, exec migrationExecutor) error {
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE media_reusable_assets ADD COLUMN imported INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("db: add reusable media origin: %w", err)
+	}
+	return nil
+}
+
 func migrateAddReusableMediaCommits(ctx context.Context, exec migrationExecutor) error {
 	_, err := exec.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS media_reusable_commits (
 		source_path TEXT NOT NULL,
@@ -187,8 +194,8 @@ func (r *SQLiteRepository) CommitReusableMedia(
 			INSERT INTO media_reusable_assets (
 				source_path, prepared_media_fingerprint, prepared_generation, compatibility_key,
 				capture_fingerprint, content_sha256, kind, purpose, disc_id, image_path,
-				image_index, timestamp_seconds, width, height, size_bytes, selected, sort_order, captured_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		if err != nil {
 			return fmt.Errorf("db reusable media: prepare asset: %w", err)
@@ -218,7 +225,7 @@ func (r *SQLiteRepository) CommitReusableMedia(
 				ctx, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, compatibilityKey,
 				asset.CaptureFingerprint, strings.ToLower(asset.ContentSHA256), asset.Kind, image.Purpose,
 				strings.TrimSpace(image.DiscID), strings.TrimSpace(image.Path), image.Index, image.TimestampSeconds,
-				image.Width, image.Height, image.SizeBytes, boolToInt(asset.Selected), asset.Order,
+				image.Width, image.Height, image.SizeBytes, boolToInt(asset.Imported), boolToInt(asset.Selected), asset.Order,
 				time.Now().UTC().Format(time.RFC3339Nano),
 			); err != nil {
 				return fmt.Errorf("db reusable media: insert asset: %w", err)
@@ -291,7 +298,7 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT source_path, prepared_media_fingerprint, prepared_generation, capture_fingerprint, content_sha256,
 			kind, purpose, disc_id, image_path, image_index, timestamp_seconds, width, height, size_bytes,
-			selected, sort_order
+			imported, selected, sort_order
 		FROM media_reusable_assets AS asset
 		WHERE compatibility_key = ? AND NOT EXISTS (
 			SELECT 1 FROM media_reusable_tombstones AS tombstone
@@ -310,16 +317,17 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 	seen := make(map[string]struct{})
 	for rows.Next() {
 		var asset api.ReusableMediaAsset
-		var selected int
+		var imported, selected int
 		if err := rows.Scan(
 			&asset.Binding.SourcePath, &asset.Binding.PreparedMediaFingerprint, &asset.Binding.PreparedGeneration,
 			&asset.CaptureFingerprint, &asset.ContentSHA256, &asset.Kind, &asset.Image.Purpose, &asset.Image.DiscID,
 			&asset.Image.Path, &asset.Image.Index, &asset.Image.TimestampSeconds, &asset.Image.Width, &asset.Image.Height,
-			&asset.Image.SizeBytes, &selected, &asset.Order,
+			&asset.Image.SizeBytes, &imported, &selected, &asset.Order,
 		); err != nil {
 			return nil, fmt.Errorf("db reusable media: scan asset: %w", err)
 		}
 		asset.CompatibilityKey = compatibilityKey
+		asset.Imported = imported != 0
 		asset.Selected = selected != 0
 		key := reusableMediaClaimKey(asset.CaptureFingerprint, asset.ContentSHA256)
 		if _, exists := seen[key]; exists {

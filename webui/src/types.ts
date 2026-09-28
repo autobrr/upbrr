@@ -1179,12 +1179,14 @@ export type ScreenshotResult = {
 
 export type ScreenshotPlan = {
   SourcePath: string;
+  SavedImagePlanID?: string;
   DiscType: string;
   /** Independent prepared-disc timelines; absent for legacy single-source plans. */
   Discs?: ScreenshotDiscPlan[];
   DurationSeconds: number;
   FrameRate: number;
   SuggestedSelections: ScreenshotSelection[];
+  SavedTrackerImages?: { TrackerID: string; Host: string; URL: string }[];
   ExistingScreenshots: ScreenshotImage[];
   ExistingTrackerScreenshots: ScreenshotImage[];
   FinalSelections: ScreenshotImage[];

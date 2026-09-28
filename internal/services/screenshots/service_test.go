@@ -6,10 +6,13 @@ package screenshots
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -92,9 +95,7 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	for index, rawURL := range urls {
 		digest := sha256.Sum256([]byte(rawURL))
 		artifactPaths[index] = filepath.Join(trackerDir, fmt.Sprintf("shared_%02d_%x.png", index+1, digest[:6]))
-		if err := os.WriteFile(artifactPaths[index], []byte("synthetic image"), 0o600); err != nil {
-			t.Fatalf("write tracker artifact: %v", err)
-		}
+		writeTrackerTestPNG(t, artifactPaths[index])
 	}
 	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
 	meta := api.ScreenshotSubject{
@@ -108,6 +109,10 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	}
 	if len(plan.TrackerImageLinks) != 2 || len(plan.FinalSelections) != 2 {
 		t.Fatalf("hashed tracker images absent from plan: links=%#v final=%#v", plan.TrackerImageLinks, plan.FinalSelections)
+	}
+	reusable, err := service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
+	if err != nil || len(reusable) != 2 {
+		t.Fatalf("reusable tracker images = %#v err=%v", reusable, err)
 	}
 	if err := service.Delete(t.Context(), meta, artifactPaths[0]); err != nil {
 		t.Fatalf("delete first tracker artifact: %v", err)
@@ -123,6 +128,10 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	if err != nil || len(plan.TrackerImageLinks) != 1 || plan.TrackerImageLinks[0].Path != artifactPaths[1] {
 		t.Fatalf("remaining tracker artifact absent from plan: plan=%#v err=%v", plan, err)
 	}
+	reusable, err = service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
+	if err != nil || len(reusable) != 1 || reusable[0].Path != artifactPaths[1] {
+		t.Fatalf("reusable tracker images after deletion = %#v err=%v", reusable, err)
+	}
 	stored[0].Description = "[spoiler=Comparisons][url=" + urls[1] + "][img]https://two.example/thumb.png[/img][/url][/spoiler]"
 	if err := repo.SaveTrackerMetadata(t.Context(), stored[0]); err != nil {
 		t.Fatalf("save legacy comparison metadata: %v", err)
@@ -130,6 +139,10 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	plan, err = service.Plan(t.Context(), meta, 4)
 	if err != nil || len(plan.TrackerImageLinks) != 0 || len(plan.FinalSelections) != 0 {
 		t.Fatalf("comparison-only tracker artifact entered screenshot plan: plan=%#v err=%v", plan, err)
+	}
+	reusable, err = service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
+	if err != nil || len(reusable) != 0 {
+		t.Fatalf("comparison-only tracker artifact entered reusable inventory: %#v err=%v", reusable, err)
 	}
 }
 
@@ -195,13 +208,15 @@ func TestLoadTrackerMetadataWithholdsUnverifiedImagesAcrossTrackers(t *testing.T
 	if err != nil {
 		t.Fatalf("release temp dir: %v", err)
 	}
+	var verifiedArtifactPath string
 	for _, record := range []api.TrackerMetadata{verified, legacy} {
 		artifactPath := filepath.Join(releaseDir, strings.ToLower(record.Tracker), buildTrackerImageFilename(record.ImageURLs[0], 0))
 		if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
 			t.Fatalf("create tracker artifact dir: %v", err)
 		}
-		if err := os.WriteFile(artifactPath, []byte("synthetic image"), 0o600); err != nil {
-			t.Fatalf("write tracker artifact: %v", err)
+		writeTrackerTestPNG(t, artifactPath)
+		if record.Tracker == "AITHER" {
+			verifiedArtifactPath = artifactPath
 		}
 	}
 	plan, err := service.Plan(t.Context(), api.ScreenshotSubject{
@@ -216,6 +231,57 @@ func TestLoadTrackerMetadataWithholdsUnverifiedImagesAcrossTrackers(t *testing.T
 		len(plan.FinalSelections) != 1 || len(plan.ExistingTrackerScreenshots) != 0 {
 		t.Fatalf("legacy comparison artifact entered screenshot plan: links=%#v final=%#v existing=%#v",
 			plan.TrackerImageLinks, plan.FinalSelections, plan.ExistingTrackerScreenshots)
+	}
+	if err := os.WriteFile(verifiedArtifactPath, []byte("truncated image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	links, err := service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
+	if err != nil || len(links) != 0 {
+		t.Fatalf("corrupt tracker image remains reusable: %#v err=%v", links, err)
+	}
+	plan, err = service.Plan(t.Context(), api.ScreenshotSubject{
+		MediaBinding:      screenshotTestBinding(sourcePath),
+		SourcePath:        sourcePath,
+		MediaInfoJSONPath: mediaInfoPath,
+	}, 4)
+	if err != nil || len(plan.TrackerImageLinks) != 0 {
+		t.Fatalf("corrupt tracker image remains planned: %#v err=%v", plan.TrackerImageLinks, err)
+	}
+}
+
+func writeTrackerTestPNG(t *testing.T, pathValue string) {
+	t.Helper()
+	file, err := os.OpenFile(pathValue, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildTrackerImageLinksRetainsWebP(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	rawURL := "https://images.example.invalid/shot.webp"
+	pathValue := filepath.Join(root, "aither", buildTrackerImageFilename(rawURL, 0))
+	if err := os.MkdirAll(filepath.Dir(pathValue), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := base64.StdEncoding.DecodeString("UklGRhwAAABXRUJQVlA4TA8AAAAvAUAAAAcQ9Y/+ByKi/wEA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pathValue, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	links := buildTrackerImageLinks([]api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{rawURL}}}, root, nil)
+	if len(links) != 1 || links[0].Path != pathValue || links[0].URL != rawURL {
+		t.Fatalf("WebP source image was omitted: %#v", links)
 	}
 }
 

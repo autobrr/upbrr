@@ -247,6 +247,28 @@ func TestImageHostPolicySatisfiedWithRegistry(t *testing.T) {
 	}
 }
 
+func TestReusableImageHostAllowedWithRegistry(t *testing.T) {
+	t.Parallel()
+	registry := imageHostPolicyTestRegistry(t)
+	for _, test := range []struct {
+		name, tracker, host string
+		want                bool
+	}{
+		{"compatible existing host without uploader", "PTP", "pixhost", true},
+		{"incompatible existing host", "PTP", "imgbox", false},
+		{"unrestricted tracker", "AITHER", "example.org", true},
+		{"owned host belongs to another tracker", "AITHER", "hdb", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ReusableImageHostAllowedWithRegistry(registry, config.Config{}, test.tracker, test.host, api.ImageHostOverrides{})
+			if err != nil || got != test.want {
+				t.Fatalf("reusable host allowed = %t, err=%v, want=%t", got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestNeededImageUploadTargetsFallsBackFromTrackerConfiguredHostForUnrestrictedTracker(t *testing.T) {
 	t.Parallel()
 

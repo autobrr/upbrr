@@ -3146,6 +3146,9 @@
           "revision": {
             "$ref": "#/components/schemas/WorkflowRevision"
           },
+          "savedImagePlanId": {
+            "$ref": "#/components/schemas/MediaPlanID"
+          },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
           },
@@ -3238,6 +3241,9 @@
           },
           "purpose": {
             "$ref": "#/components/schemas/ScreenshotPurpose"
+          },
+          "savedImagePlanId": {
+            "$ref": "#/components/schemas/MediaPlanID"
           },
           "screenshotCount": {
             "type": "integer"
@@ -3537,6 +3543,12 @@
           "revision": {
             "$ref": "#/components/schemas/WorkflowRevision"
           },
+          "savedTrackerImages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaPlanSavedImage"
+            }
+          },
           "suggestedSelections": {
             "type": "array",
             "items": {
@@ -3560,6 +3572,25 @@
       },
       "MediaPlanID": {
         "type": "string"
+      },
+      "MediaPlanSavedImage": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "trackerId": {
+            "$ref": "#/components/schemas/TrackerID"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "trackerId",
+          "url"
+        ]
       },
       "MediaTrackFacts": {
         "type": "object",

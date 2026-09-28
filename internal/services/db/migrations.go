@@ -101,6 +101,11 @@ var migrationRegistry = []migrationStep{
 		apply:     migrateAddReusableMediaTombstoneSources,
 	},
 	{
+		id:        "2026_09_add_reusable_media_origin",
+		dependsOn: []string{"2026_09_add_media_reuse_associations"},
+		apply:     migrateAddReusableMediaOrigin,
+	},
+	{
 		id:        "2026_09_add_reusable_descriptions",
 		dependsOn: []string{"2026_09_add_active_input"},
 		apply:     migrateAddReusableDescriptions,

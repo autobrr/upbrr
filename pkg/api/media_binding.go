@@ -34,6 +34,7 @@ type ReusableMediaAsset struct {
 	ContentSHA256      string
 	Kind               MediaArtifactKind
 	Image              ScreenshotImage
+	Imported           bool
 	Selected           bool
 	Order              int
 	HostedLinks        []UploadedImageLink

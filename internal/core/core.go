@@ -408,6 +408,10 @@ func newCoreWithHooks(
 		workflowPrivateVault = vault
 	}
 	e2eOptions := e2eReleaseWorkflowOptions()
+	var reusableImageInventory workflowReusableTrackerImageInventory
+	if inventory, ok := services.Screenshots.(workflowReusableTrackerImageInventory); ok {
+		reusableImageInventory = inventory
+	}
 	workflowOptions := make([]releaseworkflow.Option, 0, 9+len(e2eOptions))
 	workflowOptions = append(
 		workflowOptions,
@@ -420,6 +424,7 @@ func newCoreWithHooks(
 			registry: registry,
 			logger:   logger,
 			banned:   trackers.NewBannedGroupCheckerWithRegistry(cfg.MainSettings.DBPath, registry),
+			images:   reusableImageInventory,
 		}),
 		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes, logger: logger}),
 		releaseworkflow.WithMediaArtifactBuilder(workflowMediaArtifacts),

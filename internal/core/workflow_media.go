@@ -23,6 +23,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -104,7 +105,20 @@ func (b workflowMediaBuilder) Plan(
 		SuggestedSelections: append([]api.ScreenshotSelection(nil), plan.SuggestedSelections...),
 		Discs:               discs,
 		Requirements:        requirements,
+		SavedTrackerImages:  mediaPlanSavedImages(plan),
 	}, nil
+}
+
+func mediaPlanSavedImages(plan api.ScreenshotPlan) []api.MediaPlanSavedImage {
+	images := make([]api.MediaPlanSavedImage, 0, len(plan.TrackerImageLinks))
+	for _, imported := range importedTrackerScreenshots(plan) {
+		images = append(images, api.MediaPlanSavedImage{
+			TrackerID: api.TrackerID(imported.link.Tracker),
+			Host:      imported.link.Host,
+			URL:       imported.link.URL,
+		})
+	}
+	return images
 }
 
 func (b workflowMediaBuilder) PreviewFrame(
@@ -439,7 +453,7 @@ func (b workflowMediaBuilder) Build(
 	release api.ReleaseRef,
 	projections api.TrackerReleaseProjectionSet,
 	instructions api.MediaCaptureInstructions,
-	_ time.Time,
+	now time.Time,
 ) (api.MediaArtifactSet, any, error) {
 	if err := ctx.Err(); err != nil {
 		return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media capture: %w", err)
@@ -554,9 +568,28 @@ func (b workflowMediaBuilder) Build(
 			}
 			return failedMediaSnapshot(snapshot, "Screenshot planning failed. Retry media capture."), privateArtifacts, nil
 		}
+		if instructions.SavedImagePlanID != "" {
+			currentPlanID, planErr := api.MediaPlanContentID(release, projections, plan.SuggestedSelections, mediaPlanSavedImages(plan))
+			if planErr != nil {
+				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media saved image plan fingerprint: %w", planErr)
+			}
+			if currentPlanID != instructions.SavedImagePlanID {
+				return api.MediaArtifactSet{}, nil, errors.New("workflow media saved image plan changed; refresh the screenshot plan")
+			}
+		}
+		importedScreenshots := importedTrackerScreenshots(plan)
+		if len(importedScreenshots) > 0 {
+			snapshot.SavedImagePlanID = instructions.SavedImagePlanID
+		}
 		if len(selections) == 0 {
 			selections = append(selections, plan.SuggestedSelections...)
 			existingScreenshots = append(existingScreenshots, plan.ExistingScreenshots...)
+			if len(importedScreenshots) > 0 && len(instructions.ManualFrames) == 0 && (len(plan.Discs) <= 1 || len(importedScreenshots) >= screenshotCount) {
+				missing := max(0, screenshotCount-len(existingScreenshots)-len(importedScreenshots))
+				if len(selections) > missing {
+					selections = selections[:missing]
+				}
+			}
 		} else {
 			var mergeErr error
 			selections, existingScreenshots, mergeErr = mergeManualSelectionsWithDiscPlan(selections, plan)
@@ -564,8 +597,8 @@ func (b workflowMediaBuilder) Build(
 				return failedMediaSnapshot(snapshot, "Screenshot selections must identify a prepared disc."), privateArtifacts, nil
 			}
 		}
-		captureTotal := max(screenshotCount, len(selections)+len(existingScreenshots))
-		if len(selections) == 0 && len(existingScreenshots) == 0 {
+		captureTotal := max(screenshotCount, len(selections)+len(existingScreenshots)+len(importedScreenshots))
+		if len(selections) == 0 && len(existingScreenshots) == 0 && len(importedScreenshots) == 0 {
 			snapshot.Status = api.StageStatusBlocked
 			snapshot.RequiredActions = []api.RequiredAction{{
 				Kind:   api.RequiredActionProvideTrackerInput,
@@ -596,6 +629,17 @@ func (b workflowMediaBuilder) Build(
 			}
 		}
 		images := mergeWorkflowScreenshotImages(existingScreenshots, capture.Images, plan.Discs, captureTotal)
+		nextIndex := 0
+		for _, image := range images {
+			nextIndex = max(nextIndex, image.Index+1)
+		}
+		importedByPath := make(map[string]api.ScreenshotLinkedImage, len(importedScreenshots))
+		for _, imported := range importedScreenshots {
+			imported.image.Index = nextIndex
+			nextIndex++
+			images = append(images, imported.image)
+			importedByPath[strings.ToLower(normalizedUploadImagePath(imported.image.Path))] = imported.link
+		}
 		privateArtifacts.Screenshots = append(privateArtifacts.Screenshots, images...)
 		captureStatus := api.StageStatusCompleted
 		captureMessage := "Screenshot capture complete."
@@ -614,10 +658,17 @@ func (b workflowMediaBuilder) Build(
 			Message:   captureMessage,
 		})
 		for index, image := range images {
-			snapshot.Artifacts = append(
-				snapshot.Artifacts,
-				publicMediaArtifact(captureFingerprint, "screenshot", index, api.MediaArtifactScreenshot, purpose, image),
-			)
+			artifact := publicMediaArtifact(captureFingerprint, "screenshot", index, api.MediaArtifactScreenshot, purpose, image)
+			link, imported := importedByPath[strings.ToLower(normalizedUploadImagePath(image.Path))]
+			if imported {
+				artifact.Source = "tracker"
+			}
+			snapshot.Artifacts = append(snapshot.Artifacts, artifact)
+			if imported {
+				if err := b.retainImportedScreenshot(&privateArtifacts, &snapshot, artifact, image, link, now); err != nil {
+					return api.MediaArtifactSet{}, nil, err
+				}
+			}
 		}
 	}
 	if dvdMenuCount > 0 {
@@ -724,6 +775,95 @@ func applyWorkflowMediaMinimums(snapshot *api.MediaArtifactSet, requiredScreensh
 		Kind:   api.RequiredActionProvideTrackerInput,
 		Prompt: "Capture or select the required release images before continuing.",
 	})
+}
+
+type importedTrackerScreenshot struct {
+	image api.ScreenshotImage
+	link  api.ScreenshotLinkedImage
+}
+
+func importedTrackerScreenshots(plan api.ScreenshotPlan) []importedTrackerScreenshot {
+	byPath := make(map[string]api.ScreenshotImage, len(plan.FinalSelections))
+	for _, image := range plan.FinalSelections {
+		if image.Purpose == api.ScreenshotPurposeFinal && strings.TrimSpace(image.Path) != "" {
+			byPath[strings.ToLower(normalizedUploadImagePath(image.Path))] = image
+		}
+	}
+	seenURLs := make(map[string]struct{}, len(plan.TrackerImageLinks))
+	imported := make([]importedTrackerScreenshot, 0, len(plan.TrackerImageLinks))
+	for _, link := range plan.TrackerImageLinks {
+		url := strings.TrimSpace(link.URL)
+		if url == "" || strings.TrimSpace(link.Host) == "" {
+			continue
+		}
+		image, ok := byPath[strings.ToLower(normalizedUploadImagePath(link.Path))]
+		if !ok {
+			continue
+		}
+		if _, duplicate := seenURLs[url]; duplicate {
+			continue
+		}
+		seenURLs[url] = struct{}{}
+		image.Host = strings.ToLower(strings.TrimSpace(link.Host))
+		image.ImgURL, image.RawURL, image.WebURL = url, url, url
+		imported = append(imported, importedTrackerScreenshot{image: image, link: link})
+	}
+	return imported
+}
+
+func (b workflowMediaBuilder) retainImportedScreenshot(
+	retained *workflowMediaPrivateArtifacts,
+	snapshot *api.MediaArtifactSet,
+	source api.MediaArtifact,
+	image api.ScreenshotImage,
+	linked api.ScreenshotLinkedImage,
+	now time.Time,
+) error {
+	host := strings.ToLower(strings.TrimSpace(linked.Host))
+	accountScope, err := workflowMediaHostAccountScope(b.config, host)
+	if err != nil {
+		return err
+	}
+	usageScope := "global"
+	if b.media != nil {
+		if owner := trackers.TrackerForOwnedImageHost(b.media.registry, host); owner != "" {
+			usageScope = "tracker:" + owner
+		}
+	}
+	binding := retained.screenshotSubject.MediaBinding
+	link := api.UploadedImageLink{
+		SourcePath:               binding.SourcePath,
+		PreparedMediaFingerprint: binding.PreparedMediaFingerprint,
+		PreparedGeneration:       binding.PreparedGeneration,
+		DiscID:                   image.DiscID,
+		ImagePath:                image.Path,
+		Purpose:                  api.ScreenshotPurposeFinal,
+		Host:                     host,
+		UsageScope:               usageScope,
+		AccountScope:             accountScope,
+		ImgURL:                   linked.URL,
+		RawURL:                   linked.URL,
+		WebURL:                   linked.URL,
+		SizeBytes:                image.SizeBytes,
+		UploadedAt:               now.UTC(),
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s\x00%s", source.ID, linked.URL))
+	id := api.PublicResourceID("hosted_" + hex.EncodeToString(sum[:])[:24])
+	hosted := api.MediaArtifact{
+		ID:        id,
+		Kind:      api.MediaArtifactHostedImage,
+		Purpose:   api.ScreenshotPurposeFinal,
+		Selected:  true,
+		Order:     source.Order,
+		Source:    string(source.ID),
+		SizeBytes: image.SizeBytes,
+		Host:      host,
+		URL:       linked.URL,
+	}
+	snapshot.Artifacts = append(snapshot.Artifacts, hosted)
+	retained.HostedImages[id] = link
+	retained.HostedSources[id] = source.ID
+	return nil
 }
 
 func mergeWorkflowScreenshotImages(
@@ -839,7 +979,7 @@ func (b workflowMediaBuilder) BuildIncremental(
 		requestedScreenshotCount := max(instructions.ScreenshotCount, len(instructions.Selections))
 		indexes := make(map[discFrameKey]struct{})
 		for _, artifact := range existing.Artifacts {
-			if artifact.Kind == api.MediaArtifactScreenshot {
+			if artifact.Kind == api.MediaArtifactScreenshot && !isImportedWorkflowScreenshot(artifact, retained) {
 				indexes[discFrameKey{discID: artifact.DiscID, index: artifact.Index}] = struct{}{}
 			}
 		}
@@ -884,6 +1024,9 @@ func (b workflowMediaBuilder) BuildIncremental(
 	combined := *existing
 	combined.Artifacts = append([]api.MediaArtifact(nil), existing.Artifacts...)
 	combined.HostAttempts = append([]api.HostedImageAttempt(nil), existing.HostAttempts...)
+	for index := range combined.HostAttempts {
+		combined.HostAttempts[index].Results = append([]api.MediaArtifact(nil), existing.HostAttempts[index].Results...)
+	}
 	combined.FailedHosts = append([]string(nil), existing.FailedHosts...)
 	if instructions.CaptureDVDMenus && capturedMenuCount > 0 {
 		removeAutomaticDVDMenuArtifacts(&combined, &retained)
@@ -897,12 +1040,89 @@ func (b workflowMediaBuilder) BuildIncremental(
 		combined.RequiredActions = append([]api.RequiredAction(nil), captured.RequiredActions...)
 	}
 	known := make(map[api.PublicResourceID]struct{}, len(combined.Artifacts))
+	knownImportedPaths := make(map[string]api.PublicResourceID)
+	originalImportedURLs := make(map[api.PublicResourceID]string)
 	maxOrder := -1
 	for _, artifact := range combined.Artifacts {
 		known[artifact.ID] = struct{}{}
 		maxOrder = max(maxOrder, artifact.Order)
+		if artifact.Kind == api.MediaArtifactScreenshot && artifact.Selected {
+			if image, ok := retained.ArtifactImages[artifact.ID]; ok {
+				knownImportedPaths[strings.ToLower(normalizedUploadImagePath(image.Path))] = artifact.ID
+				if isImportedWorkflowScreenshot(artifact, retained) {
+					originalImportedURLs[artifact.ID] = image.RawURL
+				}
+			}
+		}
+	}
+	duplicateImported := make(map[api.PublicResourceID]api.PublicResourceID)
+	usedImportedSources := make(map[api.PublicResourceID]struct{})
+	capturedImportedURLs := make(map[string]struct{}, len(capturedRetained.HostedImages))
+	for _, link := range capturedRetained.HostedImages {
+		capturedImportedURLs[link.RawURL] = struct{}{}
 	}
 	for _, artifact := range captured.Artifacts {
+		if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" {
+			if image, ok := capturedRetained.ArtifactImages[artifact.ID]; ok {
+				pathKey := strings.ToLower(normalizedUploadImagePath(image.Path))
+				existingID := knownImportedPaths[pathKey]
+				if existingID == "" {
+					var matchErr error
+					existingID, matchErr = matchingRestoredImportedScreenshot(
+						ctx, artifact.ID, image, combined.Artifacts, retained, capturedRetained, capturedImportedURLs, usedImportedSources,
+					)
+					if matchErr != nil {
+						return api.MediaArtifactSet{}, nil, matchErr
+					}
+				}
+				if existingID != "" {
+					duplicateImported[artifact.ID] = existingID
+					usedImportedSources[existingID] = struct{}{}
+					if _, imported := originalImportedURLs[existingID]; imported {
+						image.Path = retained.ArtifactImages[existingID].Path
+						retained.ArtifactImages[existingID] = image
+					}
+					continue
+				}
+				knownImportedPaths[pathKey] = artifact.ID
+			}
+		}
+		if artifact.Kind == api.MediaArtifactHostedImage {
+			if existingID := duplicateImported[capturedRetained.HostedSources[artifact.ID]]; existingID != "" {
+				link := capturedRetained.HostedImages[artifact.ID]
+				link.ImagePath = retained.ArtifactImages[existingID].Path
+				matched := false
+				for index := range combined.Artifacts {
+					existingHosted := &combined.Artifacts[index]
+					if existingHosted.Kind != api.MediaArtifactHostedImage || existingHosted.Source != string(existingID) ||
+						(existingHosted.URL != originalImportedURLs[existingID] && !strings.EqualFold(existingHosted.Host, link.Host)) {
+						continue
+					}
+					if existingHosted.URL != link.RawURL || !strings.EqualFold(existingHosted.Host, link.Host) {
+						existingHosted.URL = link.RawURL
+						existingHosted.Host = link.Host
+						retained.HostedImages[existingHosted.ID] = link
+						for attemptIndex := range combined.HostAttempts {
+							for resultIndex := range combined.HostAttempts[attemptIndex].Results {
+								if combined.HostAttempts[attemptIndex].Results[resultIndex].ID == existingHosted.ID {
+									combined.HostAttempts[attemptIndex].Results[resultIndex] = *existingHosted
+								}
+							}
+						}
+					}
+					matched = true
+					break
+				}
+				if matched {
+					continue
+				}
+				artifact.Source = string(existingID)
+				sum := sha256.Sum256(fmt.Appendf(nil, "%s\x00%s", existingID, link.RawURL))
+				artifact.ID = api.PublicResourceID("hosted_" + hex.EncodeToString(sum[:])[:24])
+				capturedRetained.HostedImages[artifact.ID] = link
+				capturedRetained.HostedSources[artifact.ID] = existingID
+			}
+		}
 		if _, duplicate := known[artifact.ID]; duplicate {
 			continue
 		}
@@ -910,14 +1130,23 @@ func (b workflowMediaBuilder) BuildIncremental(
 		artifact.Order = maxOrder
 		combined.Artifacts = append(combined.Artifacts, artifact)
 		known[artifact.ID] = struct{}{}
+		if image, ok := capturedRetained.ArtifactImages[artifact.ID]; ok {
+			retained.ArtifactImages[artifact.ID] = image
+		}
+		if image, ok := capturedRetained.DVDMenuImages[artifact.ID]; ok {
+			retained.DVDMenuImages[artifact.ID] = image
+		}
+		if link, ok := capturedRetained.HostedImages[artifact.ID]; ok {
+			retained.HostedImages[artifact.ID] = link
+			retained.HostedSources[artifact.ID] = capturedRetained.HostedSources[artifact.ID]
+		}
 	}
 	combined.RequirementsFingerprint = captured.RequirementsFingerprint
+	combined.SavedImagePlanID = captured.SavedImagePlanID
 	if !noOp {
 		combined.Status = captured.Status
 	}
 	combined.CaptureFingerprint = captured.CaptureFingerprint
-	maps.Copy(retained.ArtifactImages, capturedRetained.ArtifactImages)
-	maps.Copy(retained.DVDMenuImages, capturedRetained.DVDMenuImages)
 	if len(capturedRetained.Screenshots) > 0 {
 		retained.screenshotService = capturedRetained.screenshotService
 		retained.screenshotSubject = capturedRetained.screenshotSubject
@@ -928,6 +1157,89 @@ func (b workflowMediaBuilder) BuildIncremental(
 	}
 	rebuildWorkflowMediaLocalSlices(&retained, combined)
 	return combined, retained, nil
+}
+
+func matchingRestoredImportedScreenshot(
+	ctx context.Context,
+	capturedID api.PublicResourceID,
+	capturedImage api.ScreenshotImage,
+	artifacts []api.MediaArtifact,
+	retained workflowMediaPrivateArtifacts,
+	captured workflowMediaPrivateArtifacts,
+	capturedURLs map[string]struct{},
+	usedSources map[api.PublicResourceID]struct{},
+) (api.PublicResourceID, error) {
+	var capturedLink api.UploadedImageLink
+	for hostedID, sourceID := range captured.HostedSources {
+		if sourceID == capturedID {
+			capturedLink = captured.HostedImages[hostedID]
+			break
+		}
+	}
+	if capturedLink.Host == "" {
+		return "", nil
+	}
+	var fallbackID api.PublicResourceID
+	for _, requireSameURL := range []bool{true, false} {
+		for _, artifact := range artifacts {
+			if artifact.Kind != api.MediaArtifactScreenshot || !artifact.Selected || !isImportedWorkflowScreenshot(artifact, retained) {
+				continue
+			}
+			if _, used := usedSources[artifact.ID]; used {
+				continue
+			}
+			existingImage, ok := retained.ArtifactImages[artifact.ID]
+			if !ok {
+				continue
+			}
+			for hostedID, sourceID := range retained.HostedSources {
+				if sourceID != artifact.ID {
+					continue
+				}
+				existingLink := retained.HostedImages[hostedID]
+				if !strings.EqualFold(existingLink.Host, capturedLink.Host) ||
+					existingLink.AccountScope != capturedLink.AccountScope || existingLink.UsageScope != capturedLink.UsageScope ||
+					(requireSameURL && existingLink.RawURL != capturedLink.RawURL) {
+					continue
+				}
+				if !requireSameURL {
+					if _, stillPresent := capturedURLs[existingLink.RawURL]; stillPresent {
+						continue
+					}
+				}
+				capturedHash, err := workflowMediaContentSHA256(ctx, capturedImage.Path)
+				if err != nil {
+					return "", fmt.Errorf("workflow media hash imported screenshot: %w", err)
+				}
+				existingHash, err := workflowMediaContentSHA256(ctx, existingImage.Path)
+				if err != nil {
+					return "", fmt.Errorf("workflow media hash restored screenshot: %w", err)
+				}
+				if capturedHash == existingHash {
+					if requireSameURL {
+						return artifact.ID, nil
+					}
+					if fallbackID != "" && fallbackID != artifact.ID {
+						return "", nil
+					}
+					fallbackID = artifact.ID
+				}
+			}
+		}
+	}
+	return fallbackID, nil
+}
+
+func isImportedWorkflowScreenshot(artifact api.MediaArtifact, retained workflowMediaPrivateArtifacts) bool {
+	if artifact.Source == "tracker" {
+		return true
+	}
+	image, ok := retained.ArtifactImages[artifact.ID]
+	return ok && isImportedWorkflowImage(image)
+}
+
+func isImportedWorkflowImage(image api.ScreenshotImage) bool {
+	return strings.TrimSpace(image.Host) != "" && strings.TrimSpace(image.RawURL) != ""
 }
 
 // RestoreCompatible re-materializes a fresh current-generation media snapshot
@@ -1045,6 +1357,8 @@ func (b workflowMediaBuilder) RestoreCompatible(
 			artifact.Selected = asset.Selected
 			if asset.Kind == api.MediaArtifactDVDMenu {
 				artifact.Source = api.ScreenshotSelectionSourceDVDMenu
+			} else if asset.Imported {
+				artifact.Source = "tracker"
 			}
 			snapshot.Artifacts = append(snapshot.Artifacts, artifact)
 			retained.ArtifactImages[artifact.ID] = image
@@ -1162,6 +1476,12 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 		excludedHosts := make([]string, 0)
 		for {
 			targets, err := b.media.resolveImageUploadTargets([]string{tracker}, subject, "", excludedHosts)
+			if err != nil {
+				return nil, false
+			}
+			targets, err = b.preferReusableImageTargets(
+				snapshot, retained, selectedSources, []api.TrackerReleaseProjection{projection}, subject, excludedHosts, targets,
+			)
 			if err != nil || len(targets) == 0 {
 				return nil, false
 			}
@@ -1176,6 +1496,7 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 					retained,
 					selectedSources,
 					selectedArtifactIDs,
+					projection.Artifacts.ScreenshotCount,
 					target.Host,
 					target.UsageScope,
 					target.Trackers,
@@ -1206,6 +1527,7 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 	retained workflowMediaPrivateArtifacts,
 	selectedSources map[api.PublicResourceID]struct{},
 	selectedArtifactIDs []api.PublicResourceID,
+	requiredScreenshots int,
 	host string,
 	usageScope string,
 	trackers []string,
@@ -1227,7 +1549,26 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 		coveredSources[candidate.sourceID] = struct{}{}
 		results = append(results, candidate.artifact)
 	}
-	if len(coveredSources) != len(selectedSources) {
+	coveredScreenshots, selectedMenus, coveredMenus := 0, 0, 0
+	for _, artifact := range snapshot.Artifacts {
+		if _, selected := selectedSources[artifact.ID]; !selected {
+			continue
+		}
+		_, covered := coveredSources[artifact.ID]
+		switch artifact.Kind {
+		case api.MediaArtifactScreenshot:
+			if covered {
+				coveredScreenshots++
+			}
+		case api.MediaArtifactDVDMenu:
+			selectedMenus++
+			if covered {
+				coveredMenus++
+			}
+		case api.MediaArtifactHostedImage:
+		}
+	}
+	if coveredScreenshots < requiredScreenshots || coveredMenus < selectedMenus {
 		return api.HostedImageAttempt{}, false
 	}
 	trackerIDs := make([]api.TrackerID, 0, len(trackers))
@@ -1265,6 +1606,131 @@ type retainedHostedImageCandidate struct {
 	sourceID api.PublicResourceID
 	artifact api.MediaArtifact
 	link     api.UploadedImageLink
+}
+
+func (b workflowMediaBuilder) preferReusableImageTargets(
+	snapshot api.MediaArtifactSet,
+	retained workflowMediaPrivateArtifacts,
+	selected map[api.PublicResourceID]struct{},
+	projections []api.TrackerReleaseProjection,
+	subject api.UploadSubject,
+	excludedHosts []string,
+	targets []trackers.ImageUploadTarget,
+) ([]trackers.ImageUploadTarget, error) {
+	type hostScope struct{ host, scope string }
+	sources := make(map[hostScope]map[api.PublicResourceID]struct{})
+	ordered := make([]hostScope, 0)
+	selectedKinds := make(map[api.PublicResourceID]api.MediaArtifactKind, len(selected))
+	for _, artifact := range snapshot.Artifacts {
+		if _, ok := selected[artifact.ID]; ok {
+			selectedKinds[artifact.ID] = artifact.Kind
+		}
+	}
+	for _, candidate := range b.retainedHostedImageCandidates(snapshot, retained, selected) {
+		host := strings.ToLower(strings.TrimSpace(candidate.link.Host))
+		if slices.Contains(snapshot.FailedHosts, host) || slices.Contains(excludedHosts, host) {
+			continue
+		}
+		image, ok := retained.ArtifactImages[candidate.sourceID]
+		if !ok || !strings.EqualFold(normalizedUploadImagePath(image.Path), normalizedUploadImagePath(candidate.link.ImagePath)) {
+			continue
+		}
+		key := hostScope{host, normalizeImageUploadUsageScope(candidate.link.UsageScope)}
+		if sources[key] == nil {
+			sources[key] = make(map[api.PublicResourceID]struct{})
+			ordered = append(ordered, key)
+		}
+		sources[key][candidate.sourceID] = struct{}{}
+	}
+	selectedMenus := 0
+	for _, kind := range selectedKinds {
+		if kind == api.MediaArtifactDVDMenu {
+			selectedMenus++
+		}
+	}
+	unhostedSelected := false
+	for sourceID, kind := range selectedKinds {
+		if kind != api.MediaArtifactScreenshot && kind != api.MediaArtifactDVDMenu {
+			continue
+		}
+		if !slices.ContainsFunc(ordered, func(key hostScope) bool {
+			_, ok := sources[key][sourceID]
+			return ok
+		}) {
+			unhostedSelected = true
+			break
+		}
+	}
+	preferred := make([]trackers.ImageUploadTarget, 0)
+	assigned := make(map[string]struct{})
+	for _, projection := range projections {
+		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
+		if tracker == "" || projection.Artifacts.ScreenshotCount <= 0 {
+			continue
+		}
+		for _, key := range ordered {
+			coveredScreenshots, coveredMenus := 0, 0
+			for sourceID := range sources[key] {
+				switch selectedKinds[sourceID] {
+				case api.MediaArtifactScreenshot:
+					coveredScreenshots++
+				case api.MediaArtifactDVDMenu:
+					coveredMenus++
+				case api.MediaArtifactHostedImage:
+				}
+			}
+			if coveredScreenshots < projection.Artifacts.ScreenshotCount || coveredMenus < selectedMenus {
+				continue
+			}
+			allowed, err := trackers.ReusableImageHostAllowedWithRegistry(b.media.registry, b.config, tracker, key.host, subject.ImageHostOverrides)
+			if err != nil || !allowed {
+				continue
+			}
+			if unhostedSelected && !imagehostpolicy.IsUploadHost(key.host) {
+				if slices.ContainsFunc(targets, func(target trackers.ImageUploadTarget) bool {
+					return imagehostpolicy.IsUploadHost(target.Host) && slices.ContainsFunc(target.Trackers, func(candidate string) bool {
+						return strings.EqualFold(candidate, tracker)
+					})
+				}) {
+					continue
+				}
+				return nil, fmt.Errorf("workflow image hosting: %s has unhosted screenshots; configure an uploader or use saved images only", tracker)
+			}
+			matched := false
+			for index := range preferred {
+				if preferred[index].Host == key.host && preferred[index].UsageScope == key.scope {
+					preferred[index].Trackers = append(preferred[index].Trackers, tracker)
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				preferred = append(preferred, trackers.ImageUploadTarget{
+					Host:       key.host,
+					UsageScope: key.scope,
+					Trackers:   []string{tracker},
+					ReuseOnly:  !unhostedSelected,
+				})
+			}
+			assigned[tracker] = struct{}{}
+			break
+		}
+	}
+	if len(assigned) == 0 {
+		return targets, nil
+	}
+	for _, target := range targets {
+		remaining := slices.DeleteFunc(append([]string(nil), target.Trackers...), func(tracker string) bool {
+			_, ok := assigned[strings.ToUpper(strings.TrimSpace(tracker))]
+			return ok
+		})
+		if len(target.Trackers) > 0 && len(remaining) == 0 {
+			continue
+		}
+		target.Trackers = remaining
+		preferred = append(preferred, target)
+	}
+	return preferred, nil
 }
 
 func (b workflowMediaBuilder) retainedHostedImageCandidates(
@@ -1671,6 +2137,12 @@ func (b workflowMediaBuilder) UploadImages(
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, nil, err
 	}
+	if host == "" {
+		targets, err = b.preferReusableImageTargets(snapshot, retained, selected, projections.Projections, subject, excludedHosts, targets)
+		if err != nil {
+			return api.MediaArtifactSet{}, nil, nil, err
+		}
+	}
 	retainedLinks, blockedRetainedLinks, retiredHostedArtifacts := b.retainedHostedImageLinks(
 		snapshot,
 		retained,
@@ -1936,6 +2408,7 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 			ContentSHA256:      contentSHA256,
 			Kind:               artifact.Kind,
 			Image:              image,
+			Imported:           isImportedWorkflowScreenshot(artifact, retained),
 			Selected:           artifact.Selected,
 			Order:              artifact.Order,
 		}

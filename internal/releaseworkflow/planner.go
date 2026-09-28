@@ -980,20 +980,6 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 	if desired == nil || current.Media == nil {
 		return desired == nil && current.Media != nil
 	}
-	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
-		retained := make(map[int]struct{}, len(current.Media.Artifacts))
-		for _, artifact := range current.Media.Artifacts {
-			if artifact.Kind == api.MediaArtifactScreenshot {
-				retained[artifact.Index] = struct{}{}
-			}
-		}
-		for _, selection := range desired.Selections {
-			if _, ok := retained[selection.Index]; !ok {
-				return false
-			}
-		}
-		return true
-	}
 	expected, err := api.CanonicalWorkflowFingerprint(struct {
 		Release      api.ReleaseRef
 		ProjectionID api.TrackerReleaseProjectionSetID
@@ -1007,6 +993,34 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		Instructions: *desired,
 		Requirements: current.Media.RequirementsFingerprint,
 	})
+	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil && len(desired.Selections) == 0 {
+		if !stageSucceeded(current.Media.Status) || (desired.SavedImagePlanID == "" && (err != nil || current.Media.CaptureFingerprint != expected)) {
+			return false
+		}
+		return desired.SavedImagePlanID == "" ||
+			(current.Media.SavedImagePlanID == desired.SavedImagePlanID && slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
+				if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" && artifact.Selected {
+					return true
+				}
+				return artifact.Kind == api.MediaArtifactHostedImage && artifact.Selected && slices.ContainsFunc(current.Media.Artifacts, func(source api.MediaArtifact) bool {
+					return source.Kind == api.MediaArtifactScreenshot && source.Selected && string(source.ID) == artifact.Source
+				})
+			}))
+	}
+	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
+		retained := make(map[int]struct{}, len(current.Media.Artifacts))
+		for _, artifact := range current.Media.Artifacts {
+			if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source != "tracker" {
+				retained[artifact.Index] = struct{}{}
+			}
+		}
+		for _, selection := range desired.Selections {
+			if _, ok := retained[selection.Index]; !ok {
+				return false
+			}
+		}
+		return true
+	}
 	if err == nil && current.Media.CaptureFingerprint == expected {
 		return true
 	}
