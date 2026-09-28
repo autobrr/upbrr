@@ -129,6 +129,7 @@ func extractConfigDict(src string) (string, error) {
 func annotationAssignmentIndex(src string) int {
 	var quote byte
 	escaped := false
+	depth := 0
 	for i := 0; i < len(src); i++ {
 		ch := src[i]
 		if quote != 0 {
@@ -145,12 +146,27 @@ func annotationAssignmentIndex(src string) int {
 		switch ch {
 		case '\'', '"':
 			quote = ch
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
 		case '#':
 			for i < len(src) && src[i] != '\n' {
 				i++
 			}
+			if depth == 0 {
+				return -1
+			}
+		case '\n':
+			if depth == 0 {
+				return -1
+			}
 		case '=':
-			return i
+			if depth == 0 {
+				return i
+			}
 		}
 	}
 	return -1

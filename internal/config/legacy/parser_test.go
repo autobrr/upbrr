@@ -47,8 +47,17 @@ func TestExtractConfigDict(t *testing.T) {
 			input: `config: Literal["="] = {"DEFAULT": {}}`,
 		},
 		{
-			name:  "comment after type annotation",
-			input: "config: Literal[\"=\"] # legacy type\n= {\"DEFAULT\": {}}",
+			name:  "type annotation with nested equals",
+			input: `config: Annotated[dict, dict(kind="=")] = {"DEFAULT": {}}`,
+		},
+		{
+			name:    "unassigned type annotation",
+			input:   "config: dict[str, Any]\nother = {\"DEFAULT\": {}}",
+			wantErr: true,
+		},
+		{
+			name:  "multiline type annotation",
+			input: "config: Literal[\n\"=\" # legacy type\n] = {\"DEFAULT\": {}}",
 		},
 		{
 			name:  "with leading comments",
