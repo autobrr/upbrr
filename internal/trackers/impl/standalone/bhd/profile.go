@@ -95,7 +95,8 @@ type Definition struct{ *standalone.Definition }
 // New returns a fresh BHD definition from its tracker-local profile.
 func New() *Definition { return &Definition{Definition: standalone.MustNew(Profile())} }
 
-// DataLookupPolicy marks cached BHD images from older cleaners for a one-time provenance refresh.
+// DataLookupPolicy keeps BHD's lookup cooldown and refreshes legacy cached images
+// once so only images from the current cleaner are treated as reusable assets.
 func (*Definition) DataLookupPolicy() *trackers.DataLookupPolicy {
 	return &trackers.DataLookupPolicy{
 		Cooldown:                        15 * time.Second,

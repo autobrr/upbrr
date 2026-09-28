@@ -18,3 +18,17 @@ func TestBlockRangesIncludesNestedSpoiler(t *testing.T) {
 		t.Fatalf("remaining description = %q", got)
 	}
 }
+
+func TestMapOutsideBlocksPreservesNestedComparison(t *testing.T) {
+	block := "[spoiler=Comparisons][spoiler=Source][img]https://img.example/a.png[/img][/spoiler][/spoiler]"
+	transform := func(value string) string { return "<" + value + ">" }
+	if got, want := MapOutsideBlocks("before"+block+"after", transform), "<before>"+block+"<after>"; got != want {
+		t.Fatalf("mapped description = %q, want %q", got, want)
+	}
+	if got, want := MapOutsideBlocks(block, transform), "<>"+block+"<>"; got != want {
+		t.Fatalf("mapped block = %q, want %q", got, want)
+	}
+	if got := MapOutsideBlocks("plain", transform); got != "<plain>" {
+		t.Fatalf("mapped plain text = %q", got)
+	}
+}

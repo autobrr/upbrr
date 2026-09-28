@@ -11,7 +11,7 @@ import (
 var comparisonTagPattern = regexp.MustCompile(`(?i)\[(?:spoiler(?:\s*=\s*[^\]]*)?|/spoiler|comparison(?:=[^\]]*)?|/comparison)\]`)
 
 // BlockRanges returns complete comparison BBCode blocks, including
-// nested spoiler and comparison tags, as byte ranges in source order.
+// nested spoiler and comparison tags, as half-open byte ranges in source order.
 func BlockRanges(value string) [][2]int {
 	var ranges [][2]int
 	var stack []string
@@ -45,6 +45,25 @@ func BlockRanges(value string) [][2]int {
 		}
 	}
 	return ranges
+}
+
+// MapOutsideBlocks applies transform to the text around complete comparison
+// blocks while retaining each block byte for byte. It also transforms an empty
+// fragment before or after a block, as it does for input without any blocks.
+func MapOutsideBlocks(value string, transform func(string) string) string {
+	blocks := BlockRanges(value)
+	if len(blocks) == 0 {
+		return transform(value)
+	}
+	var result strings.Builder
+	last := 0
+	for _, block := range blocks {
+		result.WriteString(transform(value[last:block[0]]))
+		result.WriteString(value[block[0]:block[1]])
+		last = block[1]
+	}
+	result.WriteString(transform(value[last:]))
+	return result.String()
 }
 
 func isComparisonSpoilerTag(tag string) bool {

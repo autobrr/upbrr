@@ -38,11 +38,12 @@ type MediaPlan struct {
 	DiscType            string                         `json:"discType,omitempty"`
 	SuggestedSelections []ScreenshotSelection          `json:"suggestedSelections,omitempty"`
 	// Discs contains ordered per-disc timing and suggestions.
-	Discs              []MediaDiscPlan           `json:"discs,omitempty"`
-	Requirements       []MediaCaptureRequirement `json:"requirements,omitempty"`
-	SavedTrackerImages []MediaPlanSavedImage     `json:"savedTrackerImages,omitempty"`
-	ExistingArtifacts  []MediaArtifact           `json:"existingArtifacts,omitempty"`
-	CreatedAt          time.Time                 `json:"createdAt" ts_type:"string"`
+	Discs        []MediaDiscPlan           `json:"discs,omitempty"`
+	Requirements []MediaCaptureRequirement `json:"requirements,omitempty"`
+	// SavedTrackerImages lists validated tracker image URLs offered for explicit import.
+	SavedTrackerImages []MediaPlanSavedImage `json:"savedTrackerImages,omitempty"`
+	ExistingArtifacts  []MediaArtifact       `json:"existingArtifacts,omitempty"`
+	CreatedAt          time.Time             `json:"createdAt" ts_type:"string"`
 }
 
 // MediaPlanSavedImage is a validated saved image available for media capture.
@@ -53,7 +54,9 @@ type MediaPlanSavedImage struct {
 	URL       string    `json:"url"`
 }
 
-// MediaPlanContentID binds a screenshot plan to its release, projections, and saved image URLs.
+// MediaPlanContentID binds a screenshot plan to its release, projection revision,
+// suggested selections, and saved image URLs. A changed input yields a new ID
+// so an earlier saved-image import cannot be applied to a different plan.
 func MediaPlanContentID(
 	release ReleaseRef,
 	projections TrackerReleaseProjectionSet,

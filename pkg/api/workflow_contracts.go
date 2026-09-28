@@ -548,24 +548,25 @@ type MediaCaptureInstructions struct {
 
 // MediaArtifactSet retains generation- and projection-bound media results.
 type MediaArtifactSet struct {
-	ID                        MediaArtifactSetID             `json:"id"`
-	WorkflowID                WorkflowID                     `json:"workflowId"`
-	Revision                  WorkflowRevision               `json:"revision"`
-	Release                   ReleaseSnapshotRef             `json:"release"`
-	ReleaseRef                ReleaseRef                     `json:"releaseRef"`
-	ProjectionSet             TrackerReleaseProjectionSetRef `json:"projectionSet"`
-	TrackerApproval           *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
-	CaptureFingerprint        WorkflowFingerprint            `json:"captureFingerprint"`
-	SavedImagePlanID          MediaPlanID                    `json:"savedImagePlanId,omitempty"`
-	RequirementsFingerprint   WorkflowFingerprint            `json:"requirementsFingerprint"`
-	Artifacts                 []MediaArtifact                `json:"artifacts"`
-	HostAttempts              []HostedImageAttempt           `json:"hostAttempts,omitempty"`
-	FailedHosts               []string                       `json:"failedHosts,omitempty"`
-	ImageRequirementsPrepared bool                           `json:"imageRequirementsPrepared"`
-	Status                    StageStatus                    `json:"status"`
-	RequiredActions           []RequiredAction               `json:"requiredActions,omitempty"`
-	Failures                  []WorkflowFailure              `json:"failures,omitempty"`
-	CreatedAt                 time.Time                      `json:"createdAt" ts_type:"string"`
+	ID                 MediaArtifactSetID             `json:"id"`
+	WorkflowID         WorkflowID                     `json:"workflowId"`
+	Revision           WorkflowRevision               `json:"revision"`
+	Release            ReleaseSnapshotRef             `json:"release"`
+	ReleaseRef         ReleaseRef                     `json:"releaseRef"`
+	ProjectionSet      TrackerReleaseProjectionSetRef `json:"projectionSet"`
+	TrackerApproval    *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
+	CaptureFingerprint WorkflowFingerprint            `json:"captureFingerprint"`
+	// SavedImagePlanID retains the reviewed import plan across workflow continuation.
+	SavedImagePlanID          MediaPlanID          `json:"savedImagePlanId,omitempty"`
+	RequirementsFingerprint   WorkflowFingerprint  `json:"requirementsFingerprint"`
+	Artifacts                 []MediaArtifact      `json:"artifacts"`
+	HostAttempts              []HostedImageAttempt `json:"hostAttempts,omitempty"`
+	FailedHosts               []string             `json:"failedHosts,omitempty"`
+	ImageRequirementsPrepared bool                 `json:"imageRequirementsPrepared"`
+	Status                    StageStatus          `json:"status"`
+	RequiredActions           []RequiredAction     `json:"requiredActions,omitempty"`
+	Failures                  []WorkflowFailure    `json:"failures,omitempty"`
+	CreatedAt                 time.Time            `json:"createdAt" ts_type:"string"`
 }
 
 // DescriptionOverrideInput is one explicit user-authored group description.

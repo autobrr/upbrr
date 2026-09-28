@@ -72,7 +72,7 @@ func CleanDescriptionImages(description string, site string) Report {
 }
 
 func normalizeUnit3DDescriptionInput(description string, site string) (string, Report, bool) {
-	desc := mapOutsideUnit3DComparisons(description, func(fragment string) string {
+	desc := comparison.MapOutsideBlocks(description, func(fragment string) string {
 		fragment = normalizeNewlines(fragment)
 		fragment = stripSiteLinks(fragment, site)
 		return replaceSiteHost(fragment, site)
@@ -86,36 +86,8 @@ func normalizeUnit3DDescriptionInput(description string, site string) (string, R
 	return desc, report, true
 }
 
-func mapOutsideUnit3DComparisons(value string, transform func(string) string) string {
-	blocks := comparison.BlockRanges(value)
-	if len(blocks) == 0 {
-		return transform(value)
-	}
-	var result strings.Builder
-	last := 0
-	for _, block := range blocks {
-		result.WriteString(transform(value[last:block[0]]))
-		result.WriteString(value[block[0]:block[1]])
-		last = block[1]
-	}
-	result.WriteString(transform(value[last:]))
-	return result.String()
-}
-
 func cleanUnit3DDescriptionBody(desc string) string {
-	blocks := comparison.BlockRanges(desc)
-	if len(blocks) == 0 {
-		return strings.TrimSpace(cleanUnit3DDescriptionFragment(desc))
-	}
-	var cleaned strings.Builder
-	last := 0
-	for _, block := range blocks {
-		cleaned.WriteString(cleanUnit3DDescriptionFragment(desc[last:block[0]]))
-		cleaned.WriteString(desc[block[0]:block[1]])
-		last = block[1]
-	}
-	cleaned.WriteString(cleanUnit3DDescriptionFragment(desc[last:]))
-	return strings.TrimSpace(cleaned.String())
+	return strings.TrimSpace(comparison.MapOutsideBlocks(desc, cleanUnit3DDescriptionFragment))
 }
 
 func cleanUnit3DDescriptionFragment(desc string) string {

@@ -279,7 +279,7 @@ func resolveDescriptionAssets(
 	if audioBlock != "" && !final {
 		// An edited generated description may already include the previous block.
 		// Replace that owned section while preserving edits to the surrounding text.
-		description = mapOutsideImportedComparisons(description, func(fragment string) string {
+		description = comparison.MapOutsideBlocks(description, func(fragment string) string {
 			return sourceAudioBlockPattern.ReplaceAllString(fragment, "")
 		})
 		description = strings.TrimSpace(strings.Join([]string{description, audioBlock}, "\n\n"))
@@ -557,31 +557,15 @@ func rewriteDescriptionSlotURLs(description string, slots []api.ScreenshotSlot, 
 		}
 		result = replaceOutsideImportedComparisons(result, originalURL, replacement)
 	}
-	return strings.TrimSpace(mapOutsideImportedComparisons(result, func(fragment string) string {
+	return strings.TrimSpace(comparison.MapOutsideBlocks(result, func(fragment string) string {
 		return descriptionSpacingPattern.ReplaceAllString(fragment, "\n\n")
 	}))
 }
 
 func replaceOutsideImportedComparisons(description string, originalURL string, replacement string) string {
-	return mapOutsideImportedComparisons(description, func(fragment string) string {
+	return comparison.MapOutsideBlocks(description, func(fragment string) string {
 		return strings.ReplaceAll(fragment, originalURL, replacement)
 	})
-}
-
-func mapOutsideImportedComparisons(description string, transform func(string) string) string {
-	blocks := comparison.BlockRanges(description)
-	if len(blocks) == 0 {
-		return transform(description)
-	}
-	var result strings.Builder
-	last := 0
-	for _, block := range blocks {
-		result.WriteString(transform(description[last:block[0]]))
-		result.WriteString(description[block[0]:block[1]])
-		last = block[1]
-	}
-	result.WriteString(transform(description[last:]))
-	return result.String()
 }
 
 func resolveTrackerDescription(
@@ -1408,7 +1392,7 @@ func sanitizeTrackerDescription(tracker string, value string, registry *Registry
 	if !ok || !cleanup.UseGenericDescriptionCleanup() {
 		return strings.TrimSpace(value)
 	}
-	cleaned := mapOutsideImportedComparisons(value, func(fragment string) string {
+	cleaned := comparison.MapOutsideBlocks(value, func(fragment string) string {
 		core := strings.TrimSpace(fragment)
 		if core == "" {
 			return fragment

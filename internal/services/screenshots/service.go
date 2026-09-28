@@ -85,7 +85,9 @@ func NewService(cfg config.Config, logger api.Logger, tmpRoot string, runner Run
 }
 
 // NewServiceWithRepo returns a screenshot service that can reuse and persist
-// screenshot, final-selection, and tracker-image records through repo.
+// screenshot, final-selection, and tracker-image records through repo. When
+// supplied, the registry identifies trackers whose legacy images need verified
+// provenance before reuse.
 func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner, repo repository, registries ...*trackers.Registry) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}

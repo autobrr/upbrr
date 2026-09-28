@@ -387,7 +387,7 @@ func stripUnit3DSignature(value string) string {
 	if trimmed == "" {
 		return ""
 	}
-	return strings.TrimSpace(mapOutsideUnit3DComparisons(trimmed, func(fragment string) string {
+	return strings.TrimSpace(comparison.MapOutsideBlocks(trimmed, func(fragment string) string {
 		fragment = unit3DBotSignatureTag.ReplaceAllString(fragment, "")
 		fragment = unit3DEmptyCenterTag.ReplaceAllString(fragment, "")
 		return unit3DUASignatureTag.ReplaceAllString(fragment, "")
@@ -402,21 +402,13 @@ func StripScreenshotBlocks(value string) string {
 	if trimmed == "" {
 		return ""
 	}
-	var cleaned strings.Builder
-	last := 0
-	for _, block := range comparison.BlockRanges(trimmed) {
-		cleaned.WriteString(stripScreenshotBlocksFragment(trimmed[last:block[0]]))
-		cleaned.WriteString(trimmed[block[0]:block[1]])
-		last = block[1]
-	}
-	cleaned.WriteString(stripScreenshotBlocksFragment(trimmed[last:]))
-	return normalizeDescription(cleaned.String())
+	return normalizeDescription(comparison.MapOutsideBlocks(trimmed, stripScreenshotBlocksFragment))
 }
 
 // PrepareSiteText keeps complete comparison blocks unchanged while applying
 // tracker-specific text preparation to the surrounding content.
 func PrepareSiteText(value string, prepare func(string) string) string {
-	return mapOutsideUnit3DComparisons(value, prepare)
+	return comparison.MapOutsideBlocks(value, prepare)
 }
 
 func stripScreenshotBlocksFragment(value string) string {
@@ -437,7 +429,7 @@ func stripUnit3DNFOBlocks(value string) string {
 	if trimmed == "" {
 		return ""
 	}
-	return normalizeDescription(mapOutsideUnit3DComparisons(trimmed, func(fragment string) string {
+	return normalizeDescription(comparison.MapOutsideBlocks(trimmed, func(fragment string) string {
 		return unit3DNFOBlockTag.ReplaceAllString(fragment, "")
 	}))
 }
@@ -617,7 +609,7 @@ func normalizeDescription(value string) string {
 	if trimmed == "" {
 		return ""
 	}
-	cleaned := mapOutsideUnit3DComparisons(trimmed, func(fragment string) string {
+	cleaned := comparison.MapOutsideBlocks(trimmed, func(fragment string) string {
 		return collapseNewlines.ReplaceAllString(fragment, "\n\n")
 	})
 	return strings.TrimSpace(cleaned)
@@ -627,7 +619,7 @@ func finalizeUnit3DDescription(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
 	}
-	value = mapOutsideUnit3DComparisons(value, func(fragment string) string {
+	value = comparison.MapOutsideBlocks(value, func(fragment string) string {
 		fragment = strings.ReplaceAll(fragment, "[hide", "[spoiler")
 		fragment = strings.ReplaceAll(fragment, "[/hide]", "[/spoiler]")
 		fragment = unit3DAlignBlockTag.ReplaceAllStringFunc(fragment, func(match string) string {
