@@ -4,6 +4,7 @@
 package data
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/autobrr/rls"
+	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
@@ -36,10 +38,11 @@ import (
 )
 
 const (
-	imageTimeout     = 15 * time.Second
-	maxImageBytes    = 20 * 1024 * 1024
-	imageConcurrency = 5
-	unit3DUserAgent  = "upbrr"
+	imageTimeout      = 15 * time.Second
+	maxImageBytes     = 20 * 1024 * 1024
+	maxImagePageBytes = 1 * 1024 * 1024
+	imageConcurrency  = 5
+	unit3DUserAgent   = "upbrr"
 )
 
 var unit3DImageBlockedIPRanges = []netip.Prefix{
@@ -333,7 +336,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	imageCount := len(images)
 	validated := []bbcode.Image(nil)
 	if keepImages {
-		validated = validateImages(ctx, c.http, images)
+		validated = PrepareDescriptionImages(ctx, c.http, tracker, c.logger, images)
 		images = validated
 	} else {
 		images = nil
@@ -341,13 +344,19 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	result.Description = cleaned
 	result.Images = images
 	result.Validated = validated
+	validatedCount := 0
+	for _, image := range validated {
+		if image.RawURL != "" {
+			validatedCount++
+		}
+	}
 	c.logger.Debugf(
 		"unit3d: %s description raw=%d cleaned=%d images=%d validated=%d onlyID=%t keepImages=%t",
 		tracker,
 		len(description),
 		cleanedLen,
 		imageCount,
-		len(validated),
+		validatedCount,
 		onlyID,
 		keepImages,
 	)
@@ -358,6 +367,16 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	}
 
 	return result, nil
+}
+
+// PrepareDescriptionImages resolves supported linked originals and validates
+// public image responses while retaining source positions for failed images.
+func PrepareDescriptionImages(ctx context.Context, client *http.Client, tracker string, logger api.Logger, images []bbcode.Image) []bbcode.Image {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+	safeClient := Unit3DImageHTTPClient(client)
+	return validateImages(ctx, safeClient, resolveImgBBImages(ctx, safeClient, tracker, logger, images), tracker, logger)
 }
 
 func convertCleanedUnit3DImages(images []descriptionunit3d.Image) []bbcode.Image {
@@ -374,6 +393,120 @@ func convertCleanedUnit3DImages(images []descriptionunit3d.Image) []bbcode.Image
 		})
 	}
 	return converted
+}
+
+func resolveImgBBImages(ctx context.Context, client *http.Client, tracker string, logger api.Logger, images []bbcode.Image) []bbcode.Image {
+	safeClient := Unit3DImageHTTPClient(client)
+	for index := range images {
+		if !isImgBBPageURL(images[index].WebURL) {
+			continue
+		}
+		pageCtx, cancel := context.WithTimeout(ctx, imageTimeout)
+		fullURL, reason := fetchImgBBFullImageURL(pageCtx, safeClient, images[index].WebURL)
+		cancel()
+		if reason != "" {
+			if isImgBBDirectImageURL(images[index].RawURL) {
+				logger.Debugf(
+					"trackerdata: linked image tracker=%s index=%d host=imgbb full_image_lookup=%s decision=validate_direct_image",
+					tracker, index+1, reason,
+				)
+				continue
+			}
+			logger.Debugf("trackerdata: linked image tracker=%s index=%d host=imgbb full_image_lookup=%s decision=skip_thumbnail", tracker, index+1, reason)
+			images[index] = bbcode.Image{}
+			continue
+		}
+		images[index].RawURL = fullURL
+		logger.Debugf("trackerdata: linked image tracker=%s index=%d host=imgbb full_image_lookup=resolved", tracker, index+1)
+	}
+	return images
+}
+
+func isImgBBPageURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Port() != "" || parsed.User != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "ibb.co" || host == "www.ibb.co"
+}
+
+func isImgBBDirectImageURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Port() != "" || parsed.User != nil ||
+		!strings.EqualFold(parsed.Hostname(), "i.ibb.co") {
+		return false
+	}
+	name := strings.ToLower(path.Base(parsed.Path))
+	return name != "" && name != "." && name != "/" && !strings.Contains(name, "thumb") &&
+		!strings.Contains(strings.ToLower(parsed.Path), "/thumbs/")
+}
+
+func fetchImgBBFullImageURL(ctx context.Context, client *http.Client, webURL string) (string, string) {
+	if err := ValidateUnit3DImageURL(ctx, webURL); err != nil {
+		return "", "invalid_or_nonpublic_page_url"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, webURL, nil)
+	if err != nil {
+		return "", "invalid_page_request"
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "page_request_failed"
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Sprintf("http_status_%d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxImagePageBytes {
+		return "", "page_too_large"
+	}
+	page, err := io.ReadAll(io.LimitReader(resp.Body, maxImagePageBytes+1))
+	if err != nil {
+		return "", "page_read_failed"
+	}
+	if len(page) > maxImagePageBytes {
+		return "", "page_too_large"
+	}
+	fullURL := imgBBFullImageURL(page)
+	if fullURL == "" {
+		return "", "full_image_not_found"
+	}
+	return fullURL, ""
+}
+
+func imgBBFullImageURL(page []byte) string {
+	tokenizer := xhtml.NewTokenizer(bytes.NewReader(page))
+	for {
+		kind := tokenizer.Next()
+		if kind == xhtml.ErrorToken {
+			return ""
+		}
+		if kind != xhtml.StartTagToken && kind != xhtml.SelfClosingTagToken {
+			continue
+		}
+		tag := tokenizer.Token()
+		if !strings.EqualFold(tag.Data, "meta") {
+			continue
+		}
+		property, content := "", ""
+		for _, attr := range tag.Attr {
+			switch strings.ToLower(attr.Key) {
+			case "property":
+				property = attr.Val
+			case "content":
+				content = strings.TrimSpace(attr.Val)
+			}
+		}
+		if !strings.EqualFold(property, "og:image") {
+			continue
+		}
+		parsed, err := url.Parse(content)
+		if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "i.ibb.co") || parsed.Port() != "" || parsed.User != nil {
+			return ""
+		}
+		return content
+	}
 }
 
 // SearchTorrents returns normalized duplicate candidates in provider order.
@@ -926,7 +1059,7 @@ func usesUnit3DPendingSearch(tracker string) bool {
 	return strings.EqualFold(tracker, "CBR")
 }
 
-func validateImages(ctx context.Context, client *http.Client, images []bbcode.Image) []bbcode.Image {
+func validateImages(ctx context.Context, client *http.Client, images []bbcode.Image, tracker string, logger api.Logger) []bbcode.Image {
 	if len(images) == 0 {
 		return nil
 	}
@@ -934,62 +1067,73 @@ func validateImages(ctx context.Context, client *http.Client, images []bbcode.Im
 
 	results := make([]bbcode.Image, len(images))
 	valid := make([]bool, len(images))
+	failures := make([]string, len(images))
 	sem := make(chan struct{}, imageConcurrency)
 	var wg sync.WaitGroup
 
 	for idx, img := range images {
+		if img == (bbcode.Image{}) {
+			continue
+		}
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if checkImage(ctx, client, img.RawURL) {
+			if reason := checkImage(ctx, client, img.RawURL); reason == "" {
 				results[idx] = img
 				valid[idx] = true
+			} else {
+				failures[idx] = reason
 			}
 		})
 	}
 	wg.Wait()
 
-	filtered := make([]bbcode.Image, 0, len(images))
+	validatedCount := 0
 	for idx, ok := range valid {
 		if ok {
-			filtered = append(filtered, results[idx])
+			validatedCount++
+		} else if logger != nil && failures[idx] != "" {
+			logger.Debugf("trackerdata: image validation rejected tracker=%s index=%d reason=%s", tracker, idx+1, failures[idx])
 		}
 	}
-	return filtered
+	if validatedCount == 0 {
+		return nil
+	}
+	return results
 }
 
-func checkImage(ctx context.Context, client *http.Client, rawURL string) bool {
+func checkImage(ctx context.Context, client *http.Client, rawURL string) string {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
-		return false
+		return "empty_url"
 	}
 	if err := ValidateUnit3DImageURL(ctx, trimmed); err != nil {
-		return false
+		return "invalid_or_nonpublic_url"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, trimmed, nil)
 	if err != nil {
-		return false
+		return "invalid_request"
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false
+		return "request_failed"
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false
+		return fmt.Sprintf("http_status_%d", resp.StatusCode)
 	}
 	if resp.ContentLength > 0 && resp.ContentLength > maxImageBytes {
-		return false
+		return "image_too_large"
 	}
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	if contentType != "" && !strings.Contains(contentType, "image") {
-		return false
+		return "non_image_content_type"
 	}
 	limited := io.LimitReader(resp.Body, maxImageBytes)
 	if _, _, err := image.DecodeConfig(limited); err != nil {
-		return false
+		return "image_decode_failed"
 	}
-	return true
+	return ""
 }
 
 // Unit3DImageHTTPClient returns a clone that rejects non-public image redirects and,

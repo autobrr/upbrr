@@ -6,9 +6,11 @@ package metadata
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +27,70 @@ type artifactRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f artifactRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestPersistUnit3DArtifactsLogsDownloadReasonWithoutImageURL(t *testing.T) {
+	previousHTTPClient := newUnit3DArtifactImageHTTPClient
+	newUnit3DArtifactImageHTTPClient = func() *http.Client {
+		return &http.Client{Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("download failed for %s", req.URL.String())
+		})}
+	}
+	t.Cleanup(func() { newUnit3DArtifactImageHTTPClient = previousHTTPClient })
+	logger := &recordingLogger{}
+	tempDir := t.TempDir()
+	svc := &Service{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")}},
+		logger: logger,
+	}
+	imageURL := "https://93.184.216.34/private-image.png?marker=example"
+	successful := svc.persistTrackerArtifacts(t.Context(), preparationstate.State{SourcePath: filepath.Join(tempDir, "source")},
+		"AITHER", trackerdata.Result{Validated: []bbcode.Image{{RawURL: imageURL}}}, true)
+	if len(successful) != 0 || len(logger.warnings) != 1 ||
+		!strings.Contains(logger.warnings[0], "index=1 reason=request_failed") ||
+		strings.Contains(logger.warnings[0], "private-image") || strings.Contains(logger.warnings[0], "marker=example") {
+		t.Fatalf("expected URL-free download failure reason, got warnings=%v successful=%v", logger.warnings, successful)
+	}
+}
+
+func TestPersistUnit3DArtifactsDoesNotReuseDifferentURLWithSameBasename(t *testing.T) {
+	var requests atomic.Int32
+	previousHTTPClient := newUnit3DArtifactImageHTTPClient
+	newUnit3DArtifactImageHTTPClient = func() *http.Client {
+		return &http.Client{Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests.Add(1)
+			payload := trackerDataPNG1x1()
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": []string{"image/png"}},
+				Body:          io.NopCloser(bytes.NewReader(payload)),
+				ContentLength: int64(len(payload)),
+				Request:       req,
+			}, nil
+		})}
+	}
+	t.Cleanup(func() { newUnit3DArtifactImageHTTPClient = previousHTTPClient })
+	tempDir := t.TempDir()
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")}}
+	svc := &Service{cfg: cfg, logger: api.NopLogger{}}
+	meta := preparationstate.State{SourcePath: filepath.Join(tempDir, "source")}
+	oldURL := "https://93.184.216.34/a/shot.png"
+	newURL := "https://93.184.216.34/b/shot.png"
+	if buildImageFilename(oldURL, 0) == buildImageFilename(newURL, 0) {
+		t.Fatal("different image URLs share an artifact filename")
+	}
+	for _, imageURL := range []string{oldURL, newURL} {
+		successful := svc.persistTrackerArtifacts(t.Context(), meta, "AITHER", trackerdata.Result{
+			Validated: []bbcode.Image{{RawURL: imageURL}},
+		}, true)
+		if len(successful) != 1 || successful[0] != imageURL {
+			t.Fatalf("persist %q: successful=%v", imageURL, successful)
+		}
+		assertTrackerArtifactExists(t, cfg, meta.SourcePath, "AITHER", imageURL, 0)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("different URLs fetched %d times, want 2", got)
+	}
 }
 
 func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
@@ -98,7 +164,7 @@ func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 	meta := preparationstate.State{SourcePath: filepath.Join(tempDir, "source")}
 	result := trackerdata.Result{Validated: validated}
 
-	successful := svc.persistUnit3DArtifacts(context.Background(), meta, "BHD", result, true)
+	successful := svc.persistTrackerArtifacts(context.Background(), meta, "BHD", result, true)
 	if len(successful) != imageCount {
 		t.Fatalf("expected %d downloaded images, got %d", imageCount, len(successful))
 	}
@@ -138,7 +204,7 @@ func TestPersistUnit3DArtifactsRejectsPrivateImageURLBeforeDownload(t *testing.T
 	meta := preparationstate.State{SourcePath: filepath.Join(tempDir, "source")}
 	result := trackerdata.Result{Validated: []bbcode.Image{{RawURL: "http://127.0.0.1/private.png"}}}
 
-	successful := svc.persistUnit3DArtifacts(context.Background(), meta, "BHD", result, true)
+	successful := svc.persistTrackerArtifacts(context.Background(), meta, "BHD", result, true)
 	if len(successful) != 0 {
 		t.Fatalf("expected private image not to persist, got %+v", successful)
 	}

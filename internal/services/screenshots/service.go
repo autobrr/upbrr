@@ -6,6 +6,7 @@ package screenshots
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"image"
@@ -31,6 +32,7 @@ import (
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -41,11 +43,12 @@ const sqliteBusyAttempts = 3
 // Service plans, captures, previews, persists, and removes release screenshots
 // beneath a managed temporary root.
 type Service struct {
-	cfg     config.Config
-	logger  api.Logger
-	tmpRoot string
-	runner  Runner
-	repo    repository
+	cfg      config.Config
+	logger   api.Logger
+	tmpRoot  string
+	runner   Runner
+	repo     repository
+	registry *trackers.Registry
 }
 
 type repository interface {
@@ -57,6 +60,8 @@ type repository interface {
 	DeleteFinalSelection(context.Context, api.PreparedMediaBinding, string) error
 	ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error)
 	SaveTrackerMetadata(context.Context, api.TrackerMetadata) error
+	GetTrackerTimestamp(context.Context, string) (time.Time, error)
+	SaveTrackerTimestamp(context.Context, api.TrackerTimestamp) error
 }
 
 // NewService returns a screenshot service without persistence. Nil logger and
@@ -78,20 +83,24 @@ func NewService(cfg config.Config, logger api.Logger, tmpRoot string, runner Run
 
 // NewServiceWithRepo returns a screenshot service that can reuse and persist
 // screenshot, final-selection, and tracker-image records through repo.
-func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner, repo repository) *Service {
+func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner, repo repository, registries ...*trackers.Registry) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
 	if runner == nil {
 		runner = commandRunner{}
 	}
-	return &Service{
+	service := &Service{
 		cfg:     cfg,
 		logger:  logger,
 		tmpRoot: tmpRoot,
 		runner:  runner,
 		repo:    repo,
 	}
+	if len(registries) > 0 {
+		service.registry = registries[0]
+	}
+	return service
 }
 
 // Plan derives frame suggestions from prepared timing data and excludes
@@ -170,11 +179,15 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 		})
 	}
 	if tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release); err == nil {
-		trackerLinks := buildTrackerImageLinks(s.loadTrackerMetadata(ctx, meta.SourcePath), tmpDir)
+		trackerRecords := s.loadTrackerMetadata(ctx, meta.SourcePath)
+		trackerLinks := buildTrackerImageLinks(trackerRecords, tmpDir, s.registry)
 		plan.TrackerImageLinks = trackerLinks
+		plan.FinalSelections = filterProtectedTrackerFinalSelections(plan.FinalSelections, trackerLinks, trackerRecords, s.registry)
 		plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
 			listTrackerScreens(tmpDir, screenshotBaseName(meta)),
 			trackerLinks,
+			trackerRecords,
+			s.registry,
 		)
 		plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, trackerLinks)
 	}
@@ -357,12 +370,15 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
 	stampScreenshotImages(plan.ExistingScreenshots, meta.DiscID, meta.DiscName)
+	trackerRecords := s.loadTrackerMetadata(ctx, meta.SourcePath)
 	if meta.DiscID == "" {
-		plan.TrackerImageLinks = buildTrackerImageLinks(s.loadTrackerMetadata(ctx, meta.SourcePath), tmpDir)
+		plan.TrackerImageLinks = buildTrackerImageLinks(trackerRecords, tmpDir, s.registry)
 	}
 	plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
 		listTrackerScreens(tmpDir, base),
 		plan.TrackerImageLinks,
+		trackerRecords,
+		s.registry,
 	)
 	stampScreenshotImages(plan.ExistingTrackerScreenshots, meta.DiscID, meta.DiscName)
 	plan.FinalSelections = filterScreenshotsMatchingSelections(s.loadFinalSelections(ctx, meta, tmpDir), baselineSelections, plan.FrameRate)
@@ -1058,7 +1074,6 @@ func (s *Service) removeTrackerImageReference(
 	if strings.TrimSpace(tmpDir) == "" || strings.TrimSpace(absTarget) == "" {
 		return nil
 	}
-	fileStem := strings.ToLower(strings.TrimSuffix(filepath.Base(absTarget), filepath.Ext(absTarget)))
 	updateErrs := make([]error, 0, 1)
 	var records []api.TrackerMetadata
 	if strings.TrimSpace(meta.SourcePath) != "" {
@@ -1087,32 +1102,24 @@ func (s *Service) removeTrackerImageReference(
 		filtered := make([]string, 0, len(record.ImageURLs))
 		removed := false
 		for idx, urlValue := range record.ImageURLs {
-			fileName := buildTrackerImageFilename(urlValue, idx)
-			if fileName == "" {
-				continue
+			matched := pathutil.SamePath(filepath.Dir(absTarget), filepath.Join(tmpDir, trackerDir)) &&
+				matchesHashedTrackerImageName(urlValue, filepath.Base(absTarget))
+			for _, fileName := range []string{buildTrackerImageFilename(urlValue, idx), legacyTrackerImageFilename(urlValue, idx)} {
+				if matched {
+					break
+				}
+				candidate := filepath.Join(tmpDir, trackerDir, fileName)
+				candidateAbs, err := filepath.Abs(candidate)
+				if err == nil && pathutil.SamePath(candidateAbs, absTarget) {
+					matched = true
+				}
 			}
-			candidate := filepath.Join(tmpDir, trackerDir, fileName)
-			candidateAbs, err := filepath.Abs(candidate)
-			if err == nil && pathutil.SamePath(candidateAbs, absTarget) {
+			if matched {
 				removed = true
 				if s.logger != nil {
-					s.logger.Tracef("screenshots: tracker image match tracker=%s file=%s", strings.TrimSpace(record.Tracker), candidateAbs)
+					s.logger.Tracef("screenshots: tracker image match tracker=%s file=%s", strings.TrimSpace(record.Tracker), absTarget)
 				}
 				continue
-			}
-			if fileStem != "" {
-				baseStem := strings.ToLower(trackerImageBaseStem(urlValue))
-				if baseStem != "" && (fileStem == baseStem || strings.HasPrefix(fileStem, baseStem+"_")) {
-					removed = true
-					if s.logger != nil {
-						s.logger.Tracef(
-							"screenshots: tracker image stem match tracker=%s url=%s",
-							strings.TrimSpace(record.Tracker),
-							strings.TrimSpace(urlValue),
-						)
-					}
-					continue
-				}
 			}
 			filtered = append(filtered, urlValue)
 		}
@@ -1122,6 +1129,16 @@ func (s *Service) removeTrackerImageReference(
 		record.ImageURLs = filtered
 		if strings.TrimSpace(record.SourcePath) == "" {
 			record.SourcePath = meta.SourcePath
+		}
+		if err := retrySQLiteBusy(ctx, func() error {
+			return s.repo.SaveTrackerTimestamp(ctx, api.TrackerTimestamp{
+				Tracker: trackers.TrackerImageDeletionKey(record), UpdatedAt: time.Now().UTC(),
+			})
+		}); err != nil {
+			s.logger.Warnf("screenshots: failed to record tracker image deletion tracker=%s err=%s",
+				strings.TrimSpace(record.Tracker), redaction.RedactValue(err.Error(), nil))
+			updateErrs = append(updateErrs, fmt.Errorf("record tracker image deletion: %w", err))
+			continue
 		}
 		if err := retrySQLiteBusy(ctx, func() error {
 			return s.repo.SaveTrackerMetadata(ctx, record)
@@ -1152,6 +1169,21 @@ func (s *Service) loadTrackerMetadata(ctx context.Context, sourcePath string) []
 			s.logger.Debugf("screenshots: failed to load tracker metadata: %v", err)
 		}
 		return nil
+	}
+	for index := range records {
+		record := &records[index]
+		if len(record.ImageURLs) == 0 || !trackers.LegacyImageAssetsNeedProvenance(s.registry, record.Tracker) {
+			continue
+		}
+		if _, err := s.repo.GetTrackerTimestamp(ctx, trackers.TrackerAssetProvenanceKey(*record)); err != nil {
+			if !errors.Is(err, internalerrors.ErrNotFound) {
+				s.logger.Warnf("screenshots: failed to check tracker image provenance tracker=%s err=%s",
+					record.Tracker, redaction.RedactValue(err.Error(), nil))
+			} else {
+				s.logger.Tracef("screenshots: withholding unverified legacy tracker images tracker=%s count=%d", record.Tracker, len(record.ImageURLs))
+			}
+			record.ImageURLs = nil
+		}
 	}
 	return records
 }
@@ -1569,8 +1601,13 @@ func selectionSourceLabel(img api.ScreenshotImage) string {
 	return "existing"
 }
 
-func filterUnlinkedTrackerScreens(images []api.ScreenshotImage, links []api.ScreenshotLinkedImage) []api.ScreenshotImage {
-	if len(images) == 0 || len(links) == 0 {
+func filterUnlinkedTrackerScreens(
+	images []api.ScreenshotImage,
+	links []api.ScreenshotLinkedImage,
+	records []api.TrackerMetadata,
+	registry *trackers.Registry,
+) []api.ScreenshotImage {
+	if len(images) == 0 {
 		return images
 	}
 	linked := make(map[string]struct{}, len(links))
@@ -1585,9 +1622,43 @@ func filterUnlinkedTrackerScreens(images []api.ScreenshotImage, links []api.Scre
 		if _, ok := linked[img.Path]; ok {
 			continue
 		}
+		if isProtectedTrackerArtifactPath(img.Path, records, registry) {
+			continue
+		}
 		filtered = append(filtered, img)
 	}
 	return filtered
+}
+
+func filterProtectedTrackerFinalSelections(
+	images []api.ScreenshotImage,
+	links []api.ScreenshotLinkedImage,
+	records []api.TrackerMetadata,
+	registry *trackers.Registry,
+) []api.ScreenshotImage {
+	filtered := make([]api.ScreenshotImage, 0, len(images))
+	for _, img := range images {
+		if isProtectedTrackerArtifactPath(img.Path, records, registry) && !slices.ContainsFunc(links, func(link api.ScreenshotLinkedImage) bool {
+			return pathutil.SamePath(link.Path, img.Path)
+		}) {
+			continue
+		}
+		filtered = append(filtered, img)
+	}
+	return filtered
+}
+
+func isProtectedTrackerArtifactPath(pathValue string, records []api.TrackerMetadata, registry *trackers.Registry) bool {
+	for _, record := range records {
+		if !trackers.LegacyImageAssetsNeedProvenance(registry, record.Tracker) {
+			continue
+		}
+		trackerDir := sanitizeFilename(strings.ToLower(strings.TrimSpace(record.Tracker)))
+		if strings.EqualFold(filepath.Base(filepath.Dir(pathValue)), trackerDir) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeTrackerImagesIntoFinalSelections(finalSelections []api.ScreenshotImage, trackerLinks []api.ScreenshotLinkedImage) []api.ScreenshotImage {
@@ -1630,7 +1701,7 @@ func reindexScreenshotImages(images []api.ScreenshotImage) []api.ScreenshotImage
 	return images
 }
 
-func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string) []api.ScreenshotLinkedImage {
+func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, registry *trackers.Registry) []api.ScreenshotLinkedImage {
 	if strings.TrimSpace(tmpDir) == "" {
 		return nil
 	}
@@ -1647,24 +1718,29 @@ func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string) []api.
 		if trackerDir == "" {
 			trackerDir = "tracker"
 		}
+		allowedURLs := make(map[string]struct{})
+		for _, rawURL := range trackers.ComparisonSafeTrackerImageURLs(record, registry) {
+			allowedURLs[strings.TrimSpace(rawURL)] = struct{}{}
+		}
 		for index, rawURL := range record.ImageURLs {
 			trimmed := strings.TrimSpace(rawURL)
 			if trimmed == "" {
 				continue
 			}
-			fileName := buildTrackerImageFilename(trimmed, index)
-			if fileName == "" {
+			if _, allowed := allowedURLs[trimmed]; !allowed {
 				continue
 			}
-			fullPath := filepath.Join(tmpDir, trackerDir, fileName)
-			if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
-				host := imagehost.ExtractHost(trimmed)
-				results = append(results, api.ScreenshotLinkedImage{
-					Tracker: tracker,
-					URL:     trimmed,
-					Path:    fullPath,
-					Host:    host,
-				})
+			for _, fullPath := range trackerImageArtifactPaths(tmpDir, trackerDir, trimmed, index) {
+				if info, err := os.Stat(fullPath); err == nil && !info.IsDir() && info.Size() > 0 {
+					host := imagehost.ExtractHost(trimmed)
+					results = append(results, api.ScreenshotLinkedImage{
+						Tracker: tracker,
+						URL:     trimmed,
+						Path:    fullPath,
+						Host:    host,
+					})
+					break
+				}
 			}
 		}
 	}
@@ -1672,6 +1748,45 @@ func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string) []api.
 }
 
 func buildTrackerImageFilename(rawURL string, index int) string {
+	legacy := legacyTrackerImageFilename(rawURL, index)
+	ext := path.Ext(legacy)
+	digest := sha256.Sum256([]byte(rawURL))
+	return fmt.Sprintf("%s_%x%s", strings.TrimSuffix(legacy, ext), digest[:6], ext)
+}
+
+func trackerImageArtifactPaths(tmpDir string, trackerDir string, rawURL string, index int) []string {
+	dir := filepath.Join(tmpDir, trackerDir)
+	exact := filepath.Join(dir, buildTrackerImageFilename(rawURL, index))
+	paths := []string{exact}
+	prefix, suffix := hashedTrackerImageNameParts(rawURL)
+	matches, _ := filepath.Glob(filepath.Join(dir, prefix+"*"+suffix))
+	for _, match := range matches {
+		if match != exact && matchesHashedTrackerImageName(rawURL, filepath.Base(match)) {
+			paths = append(paths, match)
+		}
+	}
+	return append(paths, filepath.Join(dir, legacyTrackerImageFilename(rawURL, index)))
+}
+
+func hashedTrackerImageNameParts(rawURL string) (string, string) {
+	legacy := legacyTrackerImageFilename(rawURL, 0)
+	ext := path.Ext(legacy)
+	stem := strings.TrimSuffix(strings.TrimSuffix(legacy, ext), "_01")
+	digest := sha256.Sum256([]byte(rawURL))
+	return stem + "_", fmt.Sprintf("_%x%s", digest[:6], ext)
+}
+
+func matchesHashedTrackerImageName(rawURL string, fileName string) bool {
+	prefix, suffix := hashedTrackerImageNameParts(rawURL)
+	if !strings.HasPrefix(fileName, prefix) || !strings.HasSuffix(fileName, suffix) {
+		return false
+	}
+	indexText := strings.TrimSuffix(strings.TrimPrefix(fileName, prefix), suffix)
+	index, err := strconv.Atoi(indexText)
+	return err == nil && index > 0
+}
+
+func legacyTrackerImageFilename(rawURL string, index int) string {
 	parsed, err := url.Parse(rawURL)
 	base := ""
 	if err == nil {
@@ -1687,24 +1802,6 @@ func buildTrackerImageFilename(rawURL string, index int) string {
 	parts := strings.Split(base, ".")
 	ext := parts[len(parts)-1]
 	return fmt.Sprintf("%s_%02d.%s", strings.TrimSuffix(base, "."+ext), index+1, ext)
-}
-
-func trackerImageBaseStem(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	base := ""
-	if err == nil {
-		base = path.Base(parsed.Path)
-	}
-	if base == "" || base == "." || base == "/" {
-		base = "image"
-	}
-	base = sanitizeFilename(base)
-	if !strings.Contains(base, ".") {
-		return base
-	}
-	parts := strings.Split(base, ".")
-	ext := parts[len(parts)-1]
-	return strings.TrimSuffix(base, "."+ext)
 }
 
 func parseScreenshotIndex(path string, base string) int {

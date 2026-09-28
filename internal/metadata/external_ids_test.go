@@ -212,7 +212,12 @@ func (f *fakeRepo) ListTrackerRuleFailuresByPath(_ context.Context, _ string) ([
 	return nil, nil
 }
 
-func (f *fakeRepo) GetTrackerTimestamp(_ context.Context, _ string) (time.Time, error) {
+func (f *fakeRepo) GetTrackerTimestamp(_ context.Context, tracker string) (time.Time, error) {
+	for _, timestamp := range slices.Backward(f.trackerTimestamps) {
+		if timestamp.Tracker == tracker {
+			return timestamp.UpdatedAt, nil
+		}
+	}
 	return time.Time{}, internalerrors.ErrNotFound
 }
 
@@ -222,6 +227,12 @@ func (f *fakeRepo) SaveTrackerTimestamp(_ context.Context, timestamp api.Tracker
 }
 
 func (f *fakeRepo) SaveTrackerMetadata(_ context.Context, metadata api.TrackerMetadata) error {
+	for index := range f.trackerMetadata {
+		if f.trackerMetadata[index].SourcePath == metadata.SourcePath && f.trackerMetadata[index].Tracker == metadata.Tracker {
+			f.trackerMetadata[index] = metadata
+			return nil
+		}
+	}
 	f.trackerMetadata = append(f.trackerMetadata, metadata)
 	return nil
 }
@@ -606,12 +617,12 @@ func TestResolveExternalIDsExplicitRefreshReconcilesProvidersWithoutRetainedAuth
 	}
 	cachedMetadata := api.SourceScopedMetadata{
 		SourcePath: sourcePath,
-		TMDB:       &api.TMDBMetadata{
-TMDBID: 10,
- Category: "MOVIE",
- Title: "Retained title",
-},
-		IMDB:       &api.IMDBMetadata{IMDBID: 20, Title: "Retained title"},
+		TMDB: &api.TMDBMetadata{
+			TMDBID:   10,
+			Category: "MOVIE",
+			Title:    "Retained title",
+		},
+		IMDB: &api.IMDBMetadata{IMDBID: 20, Title: "Retained title"},
 	}
 	base := preparationstate.State{
 		SourcePath:        sourcePath,
@@ -621,11 +632,11 @@ TMDBID: 10,
 		MediaInfoTMDBID:   10,
 		MediaInfoIMDBID:   20,
 		MediaInfoCategory: "MOVIE",
-		Release:           api.ReleaseInfo{
-Category: "MOVIE",
- Title: "Example Movie",
- Year: 2026,
-},
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Title:    "Example Movie",
+			Year:     2026,
+		},
 	}
 
 	retainedTMDB := &stubTMDB{}
@@ -639,15 +650,15 @@ Category: "MOVIE",
 	}
 
 	refreshedTMDB := &stubTMDB{metadata: tmdb.MetadataResult{
-Title: "Current title",
- Year: 2026,
- TMDBType: "Movie",
-}}
+		Title:    "Current title",
+		Year:     2026,
+		TMDBType: "Movie",
+	}}
 	refreshedIMDB := &stubIMDB{info: imdb.Info{
-IMDbID: "tt0000020",
- Title: "Current title",
- Year: 2026,
-}}
+		IMDbID: "tt0000020",
+		Title:  "Current title",
+		Year:   2026,
+	}}
 	service := NewService(&fakeRepo{}, WithTMDBClient(refreshedTMDB), WithIMDBClient(refreshedIMDB))
 	base.ExternalFreshness = api.ExternalFreshnessRefresh
 
@@ -684,19 +695,19 @@ func TestResolveExternalIDsExplicitRefreshDoesNotRetainFailedProviderAuthority(t
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: sourcePath,
-			TMDB:       &api.TMDBMetadata{
-TMDBID: 10,
- Category: "MOVIE",
- Title: "Retained title",
-},
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   10,
+				Category: "MOVIE",
+				Title:    "Retained title",
+			},
 		},
 		MediaInfoTMDBID:   10,
 		MediaInfoCategory: "MOVIE",
-		Release:           api.ReleaseInfo{
-Category: "MOVIE",
- Title: "Example Movie",
- Year: 2026,
-},
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Title:    "Example Movie",
+			Year:     2026,
+		},
 	})
 	if err != nil {
 		t.Fatalf("refresh outage: %v", err)
@@ -724,11 +735,11 @@ func TestResolveExternalIDsExplicitRefreshPropagatesCancellation(t *testing.T) {
 		ExternalFreshness: api.ExternalFreshnessRefresh,
 		MediaInfoTMDBID:   10,
 		MediaInfoCategory: "MOVIE",
-		Release:           api.ReleaseInfo{
-Category: "MOVIE",
- Title: "Example Movie",
- Year: 2026,
-},
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Title:    "Example Movie",
+			Year:     2026,
+		},
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("refresh cancellation error = %v, want context canceled", err)
@@ -4053,18 +4064,18 @@ func TestResolveExternalIDsClearTMDBRefreshesDerivedTVDB(t *testing.T) {
 				},
 				ProviderMetadata: api.SourceScopedMetadata{
 					SourcePath: sourcePath,
-					TMDB:       &api.TMDBMetadata{
-TMDBID: 401001,
- TVDBID: 401004,
- Title: "Different Series",
- Category: "TV",
-},
-					IMDB:       &api.IMDBMetadata{
-IMDBID: 401002,
- Title: "Example Series",
- Type: "tvSeries",
-},
-					TVDB:       &api.TVDBMetadata{TVDBID: 401004, Name: "Different Series"},
+					TMDB: &api.TMDBMetadata{
+						TMDBID:   401001,
+						TVDBID:   401004,
+						Title:    "Different Series",
+						Category: "TV",
+					},
+					IMDB: &api.IMDBMetadata{
+						IMDBID: 401002,
+						Title:  "Example Series",
+						Type:   "tvSeries",
+					},
+					TVDB: &api.TVDBMetadata{TVDBID: 401004, Name: "Different Series"},
 				},
 				ExternalIDOverrides: api.ExternalIDOverrides{TMDBID: new(0)},
 			})

@@ -246,14 +246,12 @@ func (s *Service) preloadUploadContentData(
 	trackerNames []string,
 ) (*preloadedDescriptionAssetData, error, error) {
 	needsImages := false
-	needsDescription := false
 	for _, tracker := range trackerNames {
 		mode, ok := s.registry.LookupUploadContentMode(tracker)
 		if !ok {
 			continue
 		}
 		needsImages = needsImages || mode.UsesImages()
-		needsDescription = needsDescription || mode.UsesDescription()
 	}
 	if !needsImages {
 		return nil, nil, nil
@@ -261,12 +259,6 @@ func (s *Service) preloadUploadContentData(
 	preloaded, err := preloadScreenshotAssetData(ctx, meta, s.repo, s.registry)
 	if err != nil {
 		return nil, err, err
-	}
-	if !needsDescription {
-		return preloaded, nil, nil
-	}
-	if err := preloadDescriptionFields(ctx, meta, s.repo, preloaded); err != nil {
-		return preloaded, nil, err
 	}
 	return preloaded, nil, nil
 }

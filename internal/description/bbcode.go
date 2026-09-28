@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/frustra/bbcode"
+
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 )
 
 func renderBBCode(value string) string {
@@ -48,6 +50,11 @@ func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 		start = 0
 	default:
 		return trimmed, ""
+	}
+	for _, block := range comparison.BlockRanges(trimmed) {
+		if start >= block[0] && start < block[1] {
+			return trimmed, ""
+		}
 	}
 	block := strings.TrimSpace(trimmed[start:])
 	if !strings.HasSuffix(block, "[/spoiler]") {

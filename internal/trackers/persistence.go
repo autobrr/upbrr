@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"context"
+	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -18,6 +19,8 @@ type UploadPersistence interface {
 	ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error)
 	ListFinalSelections(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotFinalSelection, error)
 	ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error)
+	GetTrackerTimestamp(context.Context, string) (time.Time, error)
+	SaveTrackerTimestamp(context.Context, api.TrackerTimestamp) error
 	ListUploadedImagesByPath(context.Context, api.PreparedMediaBinding) ([]api.UploadedImageLink, error)
 	ListScreenshotSlotsByPath(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotSlot, error)
 	ReplaceScreenshotSlots(context.Context, api.PreparedMediaBinding, []api.ScreenshotSlot) error

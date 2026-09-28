@@ -9,6 +9,21 @@ import (
 	"testing"
 )
 
+func TestSplitTrailingSourceAudioSpoilerPreservesNestedComparison(t *testing.T) {
+	comparison := "[spoiler=Comparisons]\n[spoiler=source_audio]copied audio[/spoiler]\n[/spoiler]"
+	description := "Notes\n\n" + comparison
+	body, audio := SplitTrailingSourceAudioSpoiler(description)
+	if body != description || audio != "" {
+		t.Fatalf("nested comparison changed: body=%q audio=%q", body, audio)
+	}
+
+	generated := "[spoiler=source_audio]generated audio[/spoiler]"
+	body, audio = SplitTrailingSourceAudioSpoiler(description + "\n\n" + generated)
+	if body != description || audio != generated {
+		t.Fatalf("trailing generated audio split incorrectly: body=%q audio=%q", body, audio)
+	}
+}
+
 func TestRenderBBCode(t *testing.T) {
 	rendered := Render("[b]Bold[/b]\n[url=https://example.com]Link[/url]\n[list][*]One[*]Two[/list]")
 	if rendered == "" {

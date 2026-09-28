@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
@@ -49,8 +50,9 @@ func buildDescription(
 	}
 
 	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(descriptionunit3d.StripScreenshotBlocks(keptDescription))
-	base = prepareOEText(base)
-	meta.DescriptionTemplate = oeEvidenceBlockPattern.ReplaceAllString(prepareOEText(descriptionunit3d.StripScreenshotBlocks(meta.DescriptionTemplate)), "")
+	base = descriptionunit3d.PrepareSiteText(base, prepareOEText)
+	meta.DescriptionTemplate = descriptionunit3d.PrepareSiteText(descriptionunit3d.StripScreenshotBlocks(meta.DescriptionTemplate), prepareOEText)
+	meta.DescriptionTemplate = stripOEEvidenceBlocks(meta.DescriptionTemplate)
 	base = appendOEDescriptionEvidence(base, evidence)
 	if audioAnalysis != "" {
 		base = strings.TrimSpace(strings.Join([]string{base, audioAnalysis}, "\n\n"))
@@ -135,6 +137,7 @@ func oeAppendMissingScreenshotLinks(description string, screenshots []api.Screen
 }
 
 func oeHasLinkedScreenshot(description string, screenshot api.ScreenshotImage) bool {
+	description = comparison.RemoveComparisonBlocks(description)
 	linkPrefix := "[url=" + screenshot.WebURL + "][img"
 	for remaining := description; ; {
 		start := strings.Index(remaining, linkPrefix)
@@ -175,13 +178,19 @@ func oeDescriptionEvidence(meta api.UploadSubject) ([]string, error) {
 }
 
 func appendOEDescriptionEvidence(description string, evidence []string) string {
-	description = oeEvidenceBlockPattern.ReplaceAllString(description, "")
+	description = stripOEEvidenceBlocks(description)
 	parts := make([]string, 0, len(evidence)+1)
 	if base := strings.TrimSpace(description); base != "" {
 		parts = append(parts, base)
 	}
 	parts = append(parts, evidence...)
 	return strings.Join(parts, "\n\n")
+}
+
+func stripOEEvidenceBlocks(description string) string {
+	return descriptionunit3d.PrepareSiteText(description, func(fragment string) string {
+		return oeEvidenceBlockPattern.ReplaceAllString(fragment, "")
+	})
 }
 
 func oeDescriptionEvidenceBlock(label string, value string) string {

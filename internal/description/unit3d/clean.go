@@ -4,12 +4,14 @@
 package unit3d
 
 import (
+	"fmt"
 	"html"
 	"net/url"
 	"regexp"
 	"strings"
 	"sync"
 
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 )
 
@@ -29,24 +31,24 @@ var (
 	unit3dSiteLinkCache   sync.Map
 )
 
-// CleanDescription normalizes entities and site-local references, removes all
-// image markup from the body, and returns the first non-poster image set. A
-// leading poster-only set does not prevent a later screenshot set from being
-// selected.
+// CleanDescription normalizes entities and site-local references, preserves
+// comparison blocks, removes other image markup from the body, and returns the
+// first non-poster screenshot set. A leading poster-only set does not prevent
+// a later screenshot set from being selected.
 func CleanDescription(description string, site string) Report {
 	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
 	if !ok {
 		return report
 	}
 
-	report.Images = selectUnit3DFirstImageSet(desc)
+	report.Images, report.Notes = selectUnit3DFirstImageSet(desc)
 	report.Description = cleanUnit3DDescriptionBody(desc)
 	return report
 }
 
 // CleanDescriptionBody applies the same entity and site-reference
-// normalization as [CleanDescription] and removes all image markup without
-// returning extracted images.
+// normalization as [CleanDescription] and removes non-comparison image markup
+// without returning extracted images.
 func CleanDescriptionBody(description string, site string) Report {
 	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
 	if !ok {
@@ -57,32 +59,66 @@ func CleanDescriptionBody(description string, site string) Report {
 	return report
 }
 
-// CleanDescriptionImages returns the first non-poster image set after entity
-// and site-reference normalization without producing a cleaned body.
+// CleanDescriptionImages returns the first non-poster image set outside
+// comparison blocks after normalization, without producing a cleaned body.
 func CleanDescriptionImages(description string, site string) Report {
 	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
 	if !ok {
 		return report
 	}
 
-	report.Images = selectUnit3DFirstImageSet(desc)
+	report.Images, report.Notes = selectUnit3DFirstImageSet(desc)
 	return report
 }
 
 func normalizeUnit3DDescriptionInput(description string, site string) (string, Report, bool) {
-	desc := normalizeNewlines(description)
+	desc := mapOutsideUnit3DComparisons(description, func(fragment string) string {
+		fragment = normalizeNewlines(fragment)
+		fragment = stripSiteLinks(fragment, site)
+		return replaceSiteHost(fragment, site)
+	})
 	report := Report{}
 	if strings.TrimSpace(desc) == "" {
 		report.Notes = append(report.Notes, Note{Kind: "empty", Message: "blank input"})
 		return "", report, false
 	}
 
-	desc = stripSiteLinks(desc, site)
-	desc = replaceSiteHost(desc, site)
 	return desc, report, true
 }
 
+func mapOutsideUnit3DComparisons(value string, transform func(string) string) string {
+	blocks := comparison.BlockRanges(value)
+	if len(blocks) == 0 {
+		return transform(value)
+	}
+	var result strings.Builder
+	last := 0
+	for _, block := range blocks {
+		result.WriteString(transform(value[last:block[0]]))
+		result.WriteString(value[block[0]:block[1]])
+		last = block[1]
+	}
+	result.WriteString(transform(value[last:]))
+	return result.String()
+}
+
 func cleanUnit3DDescriptionBody(desc string) string {
+	blocks := comparison.BlockRanges(desc)
+	if len(blocks) == 0 {
+		return strings.TrimSpace(cleanUnit3DDescriptionFragment(desc))
+	}
+	var cleaned strings.Builder
+	last := 0
+	for _, block := range blocks {
+		cleaned.WriteString(cleanUnit3DDescriptionFragment(desc[last:block[0]]))
+		cleaned.WriteString(desc[block[0]:block[1]])
+		last = block[1]
+	}
+	cleaned.WriteString(cleanUnit3DDescriptionFragment(desc[last:]))
+	return strings.TrimSpace(cleaned.String())
+}
+
+func cleanUnit3DDescriptionFragment(desc string) string {
 	cleaned := unit3dURLImgPattern.ReplaceAllString(desc, "")
 	cleaned = unit3dImgPattern.ReplaceAllString(cleaned, "")
 	cleaned = unit3dTonemapOnlyBlock.ReplaceAllString(cleaned, "")
@@ -90,7 +126,7 @@ func cleanUnit3DDescriptionBody(desc string) string {
 	cleaned = removeUnit3DImageOnlyWrappers(cleaned)
 	cleaned = removeUnit3DEmptyWrappers(cleaned)
 	cleaned = unit3dParagraphSplit.ReplaceAllString(cleaned, "\n\n")
-	return strings.TrimSpace(cleaned)
+	return cleaned
 }
 
 func removeUnit3DEmptySpoilers(value string) string {
@@ -137,28 +173,73 @@ func stripUnit3DWrapperTags(value string) string {
 	return cleaned
 }
 
-func selectUnit3DFirstImageSet(desc string) []Image {
-	segments := unit3dWrapperTag.FindAllString(desc, -1)
-	if len(segments) == 0 {
-		segments = unit3dParagraphSplit.Split(desc, -1)
+func selectUnit3DFirstImageSet(desc string) ([]Image, []Note) {
+	comparisonBlocks := comparison.BlockRanges(desc)
+	var notes []Note
+	if len(comparisonBlocks) > 0 {
+		comparisonImages := 0
+		for _, block := range comparisonBlocks {
+			comparisonImages += len(unit3dImgPattern.FindAllStringIndex(desc[block[0]:block[1]], -1))
+		}
+		notes = append(notes, Note{
+			Kind: "images",
+			Message: fmt.Sprintf(
+				"comparison_blocks=%d image_tags=%d preserved_in_description=true excluded_from_screenshot_import=true",
+				len(comparisonBlocks), comparisonImages,
+			),
+		})
+		desc = comparison.RemoveComparisonBlocks(desc)
 	}
+	wrappers := unit3dWrapperTag.FindAllString(desc, -1)
+	segments := make([]string, 0, len(wrappers)+1)
+	segments = append(segments, wrappers...)
+	segments = append(segments, unit3dParagraphSplit.Split(unit3dWrapperTag.ReplaceAllString(desc, ""), -1)...)
 
-	for _, segment := range segments {
-		images := extractUnit3DImages(segment)
+	for index, segment := range segments {
+		candidates := len(unit3dImgPattern.FindAllStringIndex(segment, -1))
+		if candidates == 0 {
+			continue
+		}
+		images, skipped := extractUnit3DImagesWithStats(segment)
+		source := "wrapper"
+		if index >= len(wrappers) {
+			source = "standalone"
+		}
+		notes = append(notes, Note{
+			Kind: "images",
+			Message: fmt.Sprintf(
+				"block=%d source=%s candidates=%d usable=%d empty=%d blocked=%d unsupported_thumbnails=%d duplicates=%d",
+				index+1, source, candidates, len(images), skipped.empty, skipped.blocked, skipped.thumbnails, skipped.duplicates,
+			),
+		})
 		if len(images) == 0 {
 			continue
 		}
 		if isPosterLikeTopBlock(images) {
+			notes = append(notes, Note{Kind: "images", Message: fmt.Sprintf("block=%d poster-only; checking later blocks", index+1)})
 			continue
 		}
-		return images
+		return images, notes
 	}
 
-	return nil
+	return nil, notes
 }
 
 func extractUnit3DImages(value string) []Image {
+	images, _ := extractUnit3DImagesWithStats(value)
+	return images
+}
+
+type unit3DImageFilterStats struct {
+	empty      int
+	blocked    int
+	thumbnails int
+	duplicates int
+}
+
+func extractUnit3DImagesWithStats(value string) ([]Image, unit3DImageFilterStats) {
 	images := make([]Image, 0)
+	stats := unit3DImageFilterStats{}
 	withoutURLBlocks := unit3dURLImgPattern.ReplaceAllStringFunc(value, func(block string) string {
 		parts := unit3dURLImgPattern.FindStringSubmatch(block)
 		if len(parts) < 3 {
@@ -181,17 +262,24 @@ func extractUnit3DImages(value string) []Image {
 				WebURL: webURL,
 				Host:   host,
 			})
+		} else {
+			stats.empty++
 		}
 		return ""
 	})
 
-	withoutURLBlocks = unit3dImgPattern.ReplaceAllStringFunc(withoutURLBlocks, func(block string) string {
+	for _, block := range unit3dImgPattern.FindAllString(withoutURLBlocks, -1) {
 		parts := unit3dImgPattern.FindStringSubmatch(block)
 		if len(parts) < 2 {
-			return block
+			continue
 		}
 		imgURL := strings.TrimSpace(parts[1])
-		if imgURL != "" && !containsImage(images, imgURL) {
+		switch {
+		case imgURL == "":
+			stats.empty++
+		case containsImage(images, imgURL):
+			stats.duplicates++
+		default:
 			host := imagehost.ExtractHost(imgURL)
 			rawURL := normalizeRawImageURL(imgURL)
 			images = append(images, Image{
@@ -201,11 +289,14 @@ func extractUnit3DImages(value string) []Image {
 				Host:   host,
 			})
 		}
-		return ""
-	})
+	}
 
-	_ = withoutURLBlocks
-	return filterUnit3DImages(images)
+	filtered, filteredStats := filterUnit3DImages(images)
+	stats.empty += filteredStats.empty
+	stats.blocked += filteredStats.blocked
+	stats.thumbnails += filteredStats.thumbnails
+	stats.duplicates += filteredStats.duplicates
+	return filtered, stats
 }
 
 func isPosterLikeTopBlock(images []Image) bool {
@@ -393,7 +484,7 @@ func containsImage(images []Image, targetURL string) bool {
 	return false
 }
 
-func filterUnit3DImages(images []Image) []Image {
+func filterUnit3DImages(images []Image) ([]Image, unit3DImageFilterStats) {
 	banned := map[string]struct{}{
 		"https://blutopia.xyz/favicon.ico":       {},
 		"https://i.ibb.co/2NVWb0c/uploadrr.webp": {},
@@ -404,6 +495,7 @@ func filterUnit3DImages(images []Image) []Image {
 
 	filtered := make([]Image, 0, len(images))
 	seen := make(map[string]struct{}, len(images))
+	stats := unit3DImageFilterStats{}
 	for _, image := range images {
 		rawURL := normalizeRawImageURL(image.RawURL)
 		if rawURL == "" {
@@ -417,21 +509,25 @@ func filterUnit3DImages(images []Image) []Image {
 			selectedURL = strings.TrimSpace(image.ImgURL)
 		}
 		if selectedURL == "" {
+			stats.empty++
 			continue
 		}
 		if _, found := banned[selectedURL]; found {
+			stats.blocked++
 			continue
 		}
 		if strings.Contains(strings.ToLower(selectedURL), "thumbs") {
+			stats.thumbnails++
 			continue
 		}
 		if _, found := seen[selectedURL]; found {
+			stats.duplicates++
 			continue
 		}
 		seen[selectedURL] = struct{}{}
 		filtered = append(filtered, image)
 	}
-	return filtered
+	return filtered, stats
 }
 
 func normalizeNewlines(value string) string {

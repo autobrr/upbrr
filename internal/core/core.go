@@ -266,6 +266,7 @@ func newCoreWithHooks(
 			tmpDir,
 			nil,
 			mediaRepositoryView{TrackerStateRepository: repositories.Trackers(), MediaAssetRepository: repositories.Media()},
+			registry,
 		)
 	}
 	if services.DVDMenus == nil {
@@ -353,6 +354,10 @@ func newCoreWithHooks(
 			records, loadErr := repositories.Trackers().ListTrackerMetadataByPath(ctx, ref.SourcePath)
 			if loadErr != nil && !errors.Is(loadErr, internalerrors.ErrNotFound) {
 				return api.PreparedReleaseDisplay{}, fmt.Errorf("workflow display tracker data: %w", loadErr)
+			}
+			records = trackers.FilterUnverifiedTrackerImages(ctx, repositories.Trackers(), registry, records, logger)
+			for index := range records {
+				records[index].ImageURLs = trackers.ComparisonSafeTrackerImageURLs(records[index], registry)
 			}
 			display.TrackerData = buildTrackerPreview(records, cfg)
 			return display, nil

@@ -14,6 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -23,14 +24,19 @@ type dataLookup struct {
 	cfg     config.Config
 	http    *http.Client
 	baseURL string
+	logger  api.Logger
 }
 
 // NewDataLookup returns a BHD lookup bound to cfg and httpClient.
-func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _ api.Logger) trackers.DataLookup {
+func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, logger api.Logger) trackers.DataLookup {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
 	return &dataLookup{
 		cfg:     cfg,
 		http:    httpClient,
 		baseURL: "https://beyond-hd.me/api/torrents",
+		logger:  logger,
 	}
 }
 
@@ -66,8 +72,16 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	}
 	result := trackers.DataLookupResult{TrackerID: req.TrackerID, IMDBID: bhdIMDBInt(first["imdb_id"])}
 	result.Category, result.TMDBID = parseTMDB(first["tmdb_id"])
+	if strings.TrimSpace(result.TrackerID) == "" {
+		result.TrackerID = bhdString(first["id"])
+	}
+	if req.OnlyID && !req.KeepImages {
+		return result, nil
+	}
 	description := ""
+	descriptionSource := "inline"
 	if bhdString(first["description"]) == "1" {
+		descriptionSource = "separate"
 		torrentID := bhdString(first["id"])
 		if torrentID == "" {
 			torrentID = strings.TrimSpace(req.TrackerID)
@@ -75,23 +89,35 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		if torrentID != "" {
 			if body, requestErr := l.request(ctx, endpoint, map[string]any{"action": "description", "torrent_id": torrentID}); requestErr == nil {
 				description = bhdString(body["result"])
+				if description == "" {
+					l.logger.Debugf("bhd: description lookup empty reason=empty_response")
+				}
+			} else {
+				l.logger.Debugf("bhd: description lookup failed reason=request_failed")
 			}
+		} else {
+			l.logger.Debugf("bhd: description lookup skipped reason=missing_torrent_id")
 		}
 	} else {
 		description = bhdString(first["description"])
-	}
-	if req.OnlyID && !req.KeepImages {
-		return result, nil
 	}
 	report := CleanDescription(description, BBCodeOptions{})
 	if !req.OnlyID {
 		result.Description = strings.TrimSpace(report.Description)
 	}
 	if req.KeepImages {
-		result.Images = report.Images
+		result.Images = trackerdata.PrepareDescriptionImages(ctx, l.http, "BHD", l.logger, report.Images)
 	}
-	if strings.TrimSpace(result.TrackerID) == "" {
-		result.TrackerID = bhdString(first["id"])
+	validatedCount := 0
+	for _, image := range result.Images {
+		if image.RawURL != "" {
+			validatedCount++
+		}
+	}
+	l.logger.Debugf("bhd: description source=%s raw=%d cleaned=%d images=%d validated=%d onlyID=%t keepImages=%t",
+		descriptionSource, len(description), len(result.Description), len(report.Images), validatedCount, req.OnlyID, req.KeepImages)
+	for _, note := range report.Notes {
+		l.logger.Debugf("bhd: description note kind=%s msg=%s", note.Kind, note.Message)
 	}
 	return result, nil
 }

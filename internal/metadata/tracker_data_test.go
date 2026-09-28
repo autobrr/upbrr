@@ -43,14 +43,35 @@ const minTrackerTokenLen = 25
 type stubTrackerLookup struct {
 	results map[string]trackerdata.Result
 	calls   []string
+	ids     map[string]string
 	delays  map[string]time.Duration
 	mu      sync.Mutex
+}
+
+type coolingTrackerRepo struct {
+	*fakeRepo
+	timestamp      time.Time
+	assetTimestamp time.Time
+}
+
+func (r *coolingTrackerRepo) GetTrackerTimestamp(_ context.Context, tracker string) (time.Time, error) {
+	if tracker == trackerAssetTimestampKey("AITHER") {
+		return r.assetTimestamp, nil
+	}
+	return r.timestamp, nil
+}
+
+func (r *coolingTrackerRepo) SaveTrackerTimestamp(ctx context.Context, timestamp api.TrackerTimestamp) error {
+	if timestamp.Tracker == trackerAssetTimestampKey("AITHER") {
+		r.assetTimestamp = timestamp.UpdatedAt
+	}
+	return r.fakeRepo.SaveTrackerTimestamp(ctx, timestamp)
 }
 
 func (s *stubTrackerLookup) Lookup(
 	ctx context.Context,
 	tracker string,
-	_ string,
+	trackerID string,
 	_ api.UploadSubject,
 	_ string,
 	_ bool,
@@ -58,6 +79,10 @@ func (s *stubTrackerLookup) Lookup(
 ) (trackerdata.Result, error) {
 	s.mu.Lock()
 	s.calls = append(s.calls, tracker)
+	if s.ids == nil {
+		s.ids = make(map[string]string)
+	}
+	s.ids[tracker] = trackerID
 	delay := s.delays[tracker]
 	s.mu.Unlock()
 
@@ -81,6 +106,12 @@ func (s *stubTrackerLookup) Calls() []string {
 	cloned := make([]string, len(s.calls))
 	copy(cloned, s.calls)
 	return cloned
+}
+
+func (s *stubTrackerLookup) TrackerIDFor(tracker string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ids[tracker]
 }
 
 func trackerRecordFor(trackerData []api.TrackerMetadata, tracker string) (api.TrackerMetadata, bool) {
@@ -725,6 +756,7 @@ func TestFreshSnapshotUsesTrackerIDsBeforeProviderNameSearch(t *testing.T) {
 				InfoHash:          infoHash,
 				TrackerIDs:        map[string]string{"ant": trackerID},
 				EvidenceTrackers:  []string{"ANT"},
+				Policy:            preparationstate.CollectionPolicy{OnlyID: true},
 				ExternalFreshness: api.ExternalFreshnessRefresh,
 				MediaInfoCategory: "MOVIE",
 				Release: api.ReleaseInfo{
@@ -754,6 +786,563 @@ func TestFreshSnapshotUsesTrackerIDsBeforeProviderNameSearch(t *testing.T) {
 				t.Fatalf("name searches: tmdb=%d imdb=%d", tmdbClient.searchCalls, imdbClient.searchCalls)
 			}
 		})
+	}
+}
+
+func TestFreshAitherSnapshotRefreshesRequestedDescriptionAndImages(t *testing.T) {
+	imageURL, _, cfg, sourcePath, _ := trackerDuplicateImageFixture(t)
+	cfg.Trackers.Trackers["AITHER"] = config.TrackerConfig{APIKey: "aither-key"}
+	stored := api.TrackerMetadata{
+		SourcePath: sourcePath,
+		Tracker:    "AITHER",
+		TrackerID:  "72677",
+		InfoHash:   "example-hash",
+		TMDBID:     42,
+		IMDBID:     24,
+	}
+	for _, test := range []struct {
+		name       string
+		stored     api.TrackerMetadata
+		policy     preparationstate.CollectionPolicy
+		wantLookup bool
+		provenance bool
+	}{
+		{
+			name:   "IDs only",
+			stored: stored,
+			policy: preparationstate.CollectionPolicy{OnlyID: true},
+		},
+		{
+			name:       "description requested",
+			stored:     stored,
+			wantLookup: true,
+		},
+		{
+			name:       "description and images requested",
+			stored:     stored,
+			policy:     preparationstate.CollectionPolicy{KeepImages: true},
+			wantLookup: true,
+		},
+		{
+			name: "images missing from stored description",
+			stored: api.TrackerMetadata{
+				SourcePath:  sourcePath,
+				Tracker:     "AITHER",
+				TrackerID:   "72677",
+				InfoHash:    "example-hash",
+				TMDBID:      42,
+				IMDBID:      24,
+				Description: "stored description",
+			},
+			policy:     preparationstate.CollectionPolicy{KeepImages: true},
+			wantLookup: true,
+		},
+		{
+			name: "complete stored assets",
+			stored: api.TrackerMetadata{
+				SourcePath:  sourcePath,
+				Tracker:     "AITHER",
+				TrackerID:   "72677",
+				InfoHash:    "example-hash",
+				TMDBID:      42,
+				IMDBID:      24,
+				Description: "stored description",
+				ImageURLs:   []string{imageURL},
+			},
+			policy:     preparationstate.CollectionPolicy{KeepImages: true},
+			provenance: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{test.stored}}
+			if test.provenance {
+				repo.trackerTimestamps = append(repo.trackerTimestamps, api.TrackerTimestamp{
+					Tracker:   trackers.TrackerAssetProvenanceKey(test.stored),
+					UpdatedAt: time.Now(),
+				})
+			}
+			lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+				"AITHER": {
+					TrackerID:   "72677",
+					Description: "fetched description",
+					Images:      []bbcode.Image{{RawURL: imageURL}},
+				},
+			}}
+			svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+			result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+				SourcePath:      sourcePath,
+				StoredDataFresh: true,
+				InfoHash:        "example-hash",
+				TrackerIDs:      map[string]string{"aither": "72677"},
+				Policy:          test.policy,
+			})
+			if err != nil {
+				t.Fatalf("collect tracker evidence: %v", err)
+			}
+			if got := len(lookup.Calls()); (got == 1) != test.wantLookup {
+				t.Fatalf("lookup calls = %d, want lookup %t", got, test.wantLookup)
+			}
+			record, found := trackerRecordFor(result.TrackerData, "AITHER")
+			if !found || record.TMDBID != 42 || record.IMDBID != 24 {
+				t.Fatalf("stored IDs were lost: %#v", result.TrackerData)
+			}
+			if test.wantLookup && record.Description != "fetched description" {
+				t.Fatalf("description = %q, want fetched description", record.Description)
+			}
+			if test.policy.KeepImages && (len(record.ImageURLs) != 1 || record.ImageURLs[0] != imageURL) {
+				t.Fatalf("image URLs = %v, want %q", record.ImageURLs, imageURL)
+			}
+		})
+	}
+}
+
+func TestFreshSnapshotRefreshesDescriptionAndImagesForOtherUnit3DAndBHD(t *testing.T) {
+	for _, tracker := range []string{"BLU", "BHD"} {
+		t.Run(tracker, func(t *testing.T) {
+			imageURL, _, cfg, sourcePath, _ := trackerDuplicateImageFixture(t)
+			if tracker == "BLU" {
+				cfg.Trackers.Trackers[tracker] = config.TrackerConfig{APIKey: "blu-key"}
+			}
+			stored := api.TrackerMetadata{
+				SourcePath: sourcePath,
+				Tracker:    tracker,
+				TrackerID:  "72677",
+				InfoHash:   "example-hash",
+				TMDBID:     42,
+			}
+			repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
+			lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+				tracker: {
+					TrackerID:   "72677",
+					Description: "fetched description",
+					Images:      []bbcode.Image{{RawURL: imageURL}},
+				},
+			}}
+			svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+			result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+				SourcePath:      sourcePath,
+				StoredDataFresh: true,
+				InfoHash:        "example-hash",
+				TrackerIDs:      map[string]string{strings.ToLower(tracker): "72677"},
+				Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+			})
+			if err != nil {
+				t.Fatalf("collect tracker evidence: %v", err)
+			}
+			if got := lookup.Calls(); !slices.Equal(got, []string{tracker}) {
+				t.Fatalf("asset refresh calls=%v", got)
+			}
+			record, found := trackerRecordFor(result.TrackerData, tracker)
+			if !found || record.TrackerID != stored.TrackerID || record.Description != "fetched description" ||
+				!slices.Equal(record.ImageURLs, []string{imageURL}) {
+				t.Fatalf("tracker asset refresh incomplete: %#v", result.TrackerData)
+			}
+		})
+	}
+}
+
+func TestFreshLegacyComparisonCacheRefreshesImageProvenance(t *testing.T) {
+	for _, tracker := range []string{"AITHER", "BHD"} {
+		t.Run(tracker, func(t *testing.T) {
+			freshURL, _, cfg, sourcePath, _ := trackerDuplicateImageFixture(t)
+			if tracker == "AITHER" {
+				cfg.Trackers.Trackers[tracker] = config.TrackerConfig{APIKey: "aither-key"}
+			}
+			oldURL := "https://img.example/legacy-comparison.png"
+			legacyDescription := "Legacy notes without image provenance"
+			if tracker == "BHD" {
+				legacyDescription = ""
+			}
+			stored := api.TrackerMetadata{
+				SourcePath:  sourcePath,
+				Tracker:     tracker,
+				TrackerID:   "72677",
+				InfoHash:    "example-hash",
+				TMDBID:      42,
+				Description: legacyDescription,
+				ImageURLs:   []string{oldURL},
+			}
+			repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
+			lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+				tracker: {
+					TrackerID:   stored.TrackerID,
+					Description: "[spoiler=Comparisons][img]" + oldURL + "[/img][/spoiler]\n\nCurrent notes",
+					Images:      []bbcode.Image{{RawURL: freshURL}},
+				},
+			}}
+			svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+			state := preparationstate.State{
+				SourcePath:      sourcePath,
+				StoredDataFresh: true,
+				InfoHash:        stored.InfoHash,
+				TrackerIDs:      map[string]string{strings.ToLower(tracker): stored.TrackerID},
+				Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+			}
+			result, err := svc.collectTrackerEvidence(t.Context(), state)
+			if err != nil {
+				t.Fatalf("refresh legacy assets: %v", err)
+			}
+			record, found := trackerRecordFor(result.TrackerData, tracker)
+			if !found || record.Description != lookup.results[tracker].Description ||
+				!slices.Equal(record.ImageURLs, []string{freshURL}) || !slices.Equal(lookup.Calls(), []string{tracker}) {
+				t.Fatalf("legacy comparison URL was reused: record=%#v calls=%#v", record, lookup.Calls())
+			}
+			if _, err := repo.GetTrackerTimestamp(t.Context(), trackers.TrackerAssetProvenanceKey(record)); err != nil {
+				t.Fatalf("refreshed record has no asset provenance: %v", err)
+			}
+			if _, err := svc.collectTrackerEvidence(t.Context(), state); err != nil || len(lookup.Calls()) != 1 {
+				t.Fatalf("verified assets were refetched: calls=%#v err=%v", lookup.Calls(), err)
+			}
+		})
+	}
+}
+
+func TestLegacyComparisonCacheWithFailedRefreshWithholdsUnverifiedImages(t *testing.T) {
+	_, _, cfg, sourcePath, _ := trackerDuplicateImageFixture(t)
+	stored := api.TrackerMetadata{
+		SourcePath:  sourcePath,
+		Tracker:     "BHD",
+		TrackerID:   "72677",
+		InfoHash:    "example-hash",
+		Description: "Legacy notes",
+		ImageURLs:   []string{"https://img.example/legacy-comparison.png"},
+	}
+	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
+	lookup := &stubTrackerLookup{}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		InfoHash:        stored.InfoHash,
+		TrackerIDs:      map[string]string{"bhd": stored.TrackerID},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("refresh legacy assets: %v", err)
+	}
+	record, found := trackerRecordFor(result.TrackerData, "BHD")
+	if !found || len(record.ImageURLs) != 0 || len(repo.trackerMetadata) != 1 || len(repo.trackerMetadata[0].ImageURLs) != 0 {
+		t.Fatalf("unverified legacy comparison image remained eligible: result=%#v stored=%#v", record, repo.trackerMetadata)
+	}
+}
+
+func TestFreshSnapshotClearsLegacyImagesForEveryStoredTracker(t *testing.T) {
+	_, _, cfg, sourcePath, _ := trackerDuplicateImageFixture(t)
+	cfg.Trackers.Trackers["AITHER"] = config.TrackerConfig{APIKey: "aither-key"}
+	stored := []api.TrackerMetadata{
+		{
+			SourcePath:  sourcePath,
+			Tracker:     "AITHER",
+			TrackerID:   "101",
+			InfoHash:    "example-hash",
+			TMDBID:      42,
+			Description: "Aither notes",
+			ImageURLs:   []string{"https://img.example/old-aither.png"},
+		},
+		{
+			SourcePath:  sourcePath,
+			Tracker:     "BHD",
+			TrackerID:   "202",
+			InfoHash:    "example-hash",
+			TMDBID:      43,
+			Description: "BHD notes",
+			ImageURLs:   []string{"https://img.example/old-bhd.png"},
+		},
+	}
+	repo := &fakeRepo{trackerMetadata: stored}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(&stubTrackerLookup{}), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	_, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		InfoHash:        "example-hash",
+		TrackerIDs:      map[string]string{"aither": "101"},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("collect tracker evidence: %v", err)
+	}
+	for _, record := range repo.trackerMetadata {
+		if len(record.ImageURLs) != 0 {
+			t.Fatalf("legacy images survived for %s: %#v", record.Tracker, record.ImageURLs)
+		}
+	}
+}
+
+func TestFreshSnapshotRespectsDeletedTrackerImages(t *testing.T) {
+	_, _, cfg, sourcePath, _ := trackerDuplicateImageFixture(t)
+	cfg.Trackers.Trackers["AITHER"] = config.TrackerConfig{APIKey: "aither-key"}
+	for _, remaining := range [][]string{{"https://img.example/remaining.png"}, nil} {
+		record := api.TrackerMetadata{
+			SourcePath:  sourcePath,
+			Tracker:     "AITHER",
+			TrackerID:   "101",
+			InfoHash:    "example-hash",
+			TMDBID:      42,
+			Description: "Aither notes",
+			ImageURLs:   remaining,
+		}
+		repo := &fakeRepo{
+			trackerMetadata: []api.TrackerMetadata{record},
+			trackerTimestamps: []api.TrackerTimestamp{
+				{Tracker: trackers.TrackerAssetProvenanceKey(record), UpdatedAt: time.Now()},
+				{Tracker: trackers.TrackerImageDeletionKey(record), UpdatedAt: time.Now()},
+			},
+		}
+		if _, err := repo.GetTrackerTimestamp(t.Context(), trackers.TrackerImageDeletionKey(repo.trackerMetadata[0])); err != nil {
+			t.Fatalf("image deletion marker missing before collection: %v", err)
+		}
+		if _, err := repo.GetTrackerTimestamp(t.Context(), trackers.TrackerAssetProvenanceKey(repo.trackerMetadata[0])); err != nil {
+			t.Fatalf("asset provenance missing before collection: %v", err)
+		}
+		lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+			"AITHER": {
+				TrackerID:   "101",
+				Description: "Aither notes",
+				Images:      []bbcode.Image{{RawURL: "https://img.example/deleted.png"}},
+			},
+		}}
+		svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+		result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+			SourcePath:      sourcePath,
+			StoredDataFresh: true,
+			InfoHash:        "example-hash",
+			TrackerIDs:      map[string]string{"aither": "101"},
+			Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+		})
+		if err != nil {
+			t.Fatalf("collect tracker evidence: %v", err)
+		}
+		if len(lookup.Calls()) != 0 || len(result.TrackerData) != 1 || !slices.Equal(result.TrackerData[0].ImageURLs, remaining) {
+			t.Fatalf("deleted images were refetched: remaining=%v calls=%v records=%#v", remaining, lookup.Calls(), result.TrackerData)
+		}
+	}
+}
+
+func TestFreshAitherSnapshotKeepsStoredIDsWhenRefreshIsEmpty(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP")
+	stored := api.TrackerMetadata{
+		SourcePath:  sourcePath,
+		Tracker:     "AITHER",
+		TrackerID:   "72677",
+		InfoHash:    "example-hash",
+		TMDBID:      42,
+		IMDBID:      24,
+		Description: "stored description",
+	}
+	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
+	lookup := &stubTrackerLookup{}
+	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
+		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		InfoHash:        "example-hash",
+		TrackerIDs:      map[string]string{"aither": "72677"},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("collect tracker evidence: %v", err)
+	}
+	if got := lookup.Calls(); !slices.Equal(got, []string{"AITHER"}) {
+		t.Fatalf("lookup calls = %v, want AITHER refresh", got)
+	}
+	if len(result.TrackerData) != 1 || !reflect.DeepEqual(result.TrackerData[0], stored) {
+		t.Fatalf("expected stored record after empty refresh, got %#v", result.TrackerData)
+	}
+	if len(repo.trackerMetadata) != 1 {
+		t.Fatalf("empty refresh overwrote stored tracker metadata: %#v", repo.trackerMetadata)
+	}
+}
+
+func TestFreshAitherSnapshotDoesNotPairNewDescriptionWithOldImages(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP")
+	stored := api.TrackerMetadata{
+		SourcePath:  sourcePath,
+		Tracker:     "AITHER",
+		TrackerID:   "72677",
+		InfoHash:    "example-hash",
+		TMDBID:      42,
+		Description: "old description",
+		ImageURLs:   []string{"https://images.example/old.png", ""},
+	}
+	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+		"AITHER": {Description: "new description"},
+	}}
+	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
+		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		InfoHash:        "example-hash",
+		TrackerIDs:      map[string]string{"aither": "72677"},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("collect tracker evidence: %v", err)
+	}
+	if len(lookup.Calls()) != 1 || len(result.TrackerData) != 1 ||
+		result.TrackerData[0].Description != "new description" ||
+		len(result.TrackerData[0].ImageURLs) != 0 {
+		t.Fatalf("failed image refresh should keep the new description without old screenshots: %#v", result.TrackerData)
+	}
+}
+
+func TestFreshAitherSnapshotRefreshesByStoredTrackerIDWhenOnlyInfoHashIsPathed(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP")
+	stored := api.TrackerMetadata{
+		SourcePath: sourcePath,
+		Tracker:    "AITHER",
+		TrackerID:  "72677",
+		InfoHash:   "example-hash",
+		TMDBID:     42,
+	}
+	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+		"AITHER": {TMDBID: 42, Description: "fetched description"},
+	}}
+	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
+		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:       sourcePath,
+		StoredDataFresh:  true,
+		InfoHash:         "example-hash",
+		EvidenceTrackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("collect tracker evidence: %v", err)
+	}
+	if got := lookup.TrackerIDFor("AITHER"); got != "72677" {
+		t.Fatalf("tracker lookup ID = %q, want stored Aither ID", got)
+	}
+	if len(result.TrackerData) != 1 || result.TrackerData[0].TrackerID != "72677" || result.TrackerData[0].Description != "fetched description" {
+		t.Fatalf("refreshed tracker record lost identity or description: %#v", result.TrackerData)
+	}
+	if got := repo.trackerMetadata[len(repo.trackerMetadata)-1].TrackerID; got != "72677" {
+		t.Fatalf("stored tracker ID overwritten with %q", got)
+	}
+}
+
+func TestFreshAitherSnapshotCompletesAssetsDuringIDCooldown(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP")
+	repo := &coolingTrackerRepo{
+		fakeRepo: &fakeRepo{trackerMetadata: []api.TrackerMetadata{{
+			SourcePath: sourcePath,
+			Tracker:    "AITHER",
+			TrackerID:  "72677",
+			InfoHash:   "example-hash",
+			TMDBID:     42,
+		}}},
+		timestamp: time.Now().UTC(),
+	}
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+		"AITHER": {TrackerID: "72677", Description: "fetched description"},
+	}}
+	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
+		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		InfoHash:        "example-hash",
+		TrackerIDs:      map[string]string{"aither": "72677"},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("collect tracker evidence: %v", err)
+	}
+	if got := lookup.Calls(); !slices.Equal(got, []string{"AITHER"}) {
+		t.Fatalf("asset completion was blocked by ID cooldown: calls=%v", got)
+	}
+	if len(result.TrackerData) != 1 || result.TrackerData[0].Description != "fetched description" {
+		t.Fatalf("asset completion result = %#v", result.TrackerData)
+	}
+	if repo.assetTimestamp.IsZero() {
+		t.Fatal("asset refresh attempt did not record a separate cooldown")
+	}
+	_, err = svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		InfoHash:        "example-hash",
+		TrackerIDs:      map[string]string{"aither": "72677"},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("collect during asset cooldown: %v", err)
+	}
+	if got := lookup.Calls(); !slices.Equal(got, []string{"AITHER"}) {
+		t.Fatalf("repeated incomplete asset refresh bypassed cooldown: calls=%v", got)
+	}
+}
+
+func TestFreshAitherSnapshotMergesSparseImageRefreshAndStoredHash(t *testing.T) {
+	imageURL, middleURL, cfg, sourcePath, _ := trackerDuplicateImageFixture(t)
+	lastURL := "http://93.184.216.34/last.png"
+	cfg.Trackers.Trackers["AITHER"] = config.TrackerConfig{APIKey: "aither-key"}
+	stored := api.TrackerMetadata{
+		SourcePath: sourcePath,
+		Tracker:    "AITHER",
+		TrackerID:  "72677",
+		InfoHash:   "example-hash",
+		TMDBID:     42,
+		ImageURLs:  []string{"https://images.example/old-1.png", "https://images.example/old-2.png", "https://images.example/old-3.png"},
+	}
+	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+		"AITHER": {
+			Description: "fetched description",
+			Images: []bbcode.Image{
+				{RawURL: imageURL},
+				{},
+				{RawURL: lastURL},
+			},
+		},
+	}}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		TrackerIDs:      map[string]string{"aither": "72677"},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("collect tracker evidence: %v", err)
+	}
+	if len(result.TrackerData) != 1 {
+		t.Fatalf("tracker metadata = %#v", result.TrackerData)
+	}
+	record := result.TrackerData[0]
+	if record.InfoHash != "example-hash" || len(record.ImageURLs) != 3 || record.ImageURLs[0] != imageURL ||
+		record.ImageURLs[1] != "" || record.ImageURLs[2] != lastURL {
+		t.Fatalf("sparse refresh lost stored hash or image position: %#v", record)
+	}
+	repo.trackerMetadata = []api.TrackerMetadata{record}
+	repo.trackerTimestamps = slices.DeleteFunc(repo.trackerTimestamps, func(timestamp api.TrackerTimestamp) bool {
+		return timestamp.Tracker == trackerAssetTimestampKey("AITHER")
+	})
+	lookup.results["AITHER"] = trackerdata.Result{
+		Description: "fetched description",
+		Images: []bbcode.Image{
+			{RawURL: imageURL},
+			{RawURL: middleURL},
+			{RawURL: lastURL},
+		},
+	}
+	retried, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath:      sourcePath,
+		StoredDataFresh: true,
+		TrackerIDs:      map[string]string{"aither": "72677"},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("retry tracker evidence: %v", err)
+	}
+	if len(lookup.Calls()) != 2 || len(retried.TrackerData) != 1 ||
+		!slices.Equal(retried.TrackerData[0].ImageURLs, []string{imageURL, middleURL, lastURL}) {
+		t.Fatalf("later retry did not fill missing middle image: calls=%v data=%#v", lookup.Calls(), retried.TrackerData)
 	}
 }
 
@@ -839,6 +1428,7 @@ func TestFreshSnapshotPreservesPreferredTrackerIDPriority(t *testing.T) {
 				StoredDataFresh:   true,
 				InfoHash:          infoHash,
 				TrackerIDs:        map[string]string{"ant": "101", "hdb": "202"},
+				Policy:            preparationstate.CollectionPolicy{OnlyID: true},
 				ExternalFreshness: api.ExternalFreshnessRefresh,
 				MediaInfoCategory: "MOVIE",
 				Release: api.ReleaseInfo{

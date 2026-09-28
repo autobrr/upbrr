@@ -20,6 +20,58 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestDescriptionSlotImageNameUsesURLIdentity(t *testing.T) {
+	firstURL := "https://host-a.example/shot.png"
+	secondURL := "https://host-b.example/shot.png"
+	first := buildDescriptionSlotImageName(firstURL, 0)
+	second := buildDescriptionSlotImageName(secondURL, 0)
+	if first == second {
+		t.Fatalf("different image URLs share cache file %q", first)
+	}
+	if screenshotSourceMatchKey(first) != screenshotURLMatchKey(firstURL) ||
+		screenshotSourceMatchKey(second) != screenshotURLMatchKey(secondURL) {
+		t.Fatalf("hashed cache files do not match their source URLs: first=%q second=%q", first, second)
+	}
+	if buildDescriptionSlotImageName(firstURL, 0) != first {
+		t.Fatalf("same image URL did not reuse cache identity %q", first)
+	}
+}
+
+func TestDescriptionSlotImageFailureReasonOmitsURLDetails(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		err    error
+		reason string
+	}{
+		{
+			name:   "status",
+			err:    errors.New("status 403"),
+			reason: "http_status_403",
+		},
+		{
+			name:   "content type",
+			err:    errors.New("invalid content-type \"text/html\""),
+			reason: "non_image_content_type",
+		},
+		{
+			name:   "private",
+			err:    errors.New("blocked private image host \"localhost\""),
+			reason: "invalid_or_nonpublic_url",
+		},
+		{
+			name:   "request with secret URL",
+			err:    errors.New("execute request: Get \"https://img.example/secret?token=sample\": refused"),
+			reason: "request_failed",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := descriptionSlotImageFailureReason(testCase.err); got != testCase.reason {
+				t.Fatalf("reason = %q, want %q", got, testCase.reason)
+			}
+		})
+	}
+}
+
 func TestUploadSubjectForDescriptionPreservesPreparedMediaIdentity(t *testing.T) {
 	t.Parallel()
 

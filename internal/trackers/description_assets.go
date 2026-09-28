@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -277,7 +279,9 @@ func resolveDescriptionAssets(
 	if audioBlock != "" && !final {
 		// An edited generated description may already include the previous block.
 		// Replace that owned section while preserving edits to the surrounding text.
-		description = sourceAudioBlockPattern.ReplaceAllString(description, "")
+		description = mapOutsideImportedComparisons(description, func(fragment string) string {
+			return sourceAudioBlockPattern.ReplaceAllString(fragment, "")
+		})
 		description = strings.TrimSpace(strings.Join([]string{description, audioBlock}, "\n\n"))
 	}
 	hasDescription := strings.TrimSpace(description) != ""
@@ -536,7 +540,7 @@ func rewriteDescriptionSlotURLs(description string, slots []api.ScreenshotSlot, 
 		}
 		if !slot.RenderInScreenshots {
 			if !preserveNonRenderable {
-				result = strings.ReplaceAll(result, originalURL, "")
+				result = replaceOutsideImportedComparisons(result, originalURL, "")
 			}
 			continue
 		}
@@ -551,9 +555,33 @@ func rewriteDescriptionSlotURLs(description string, slots []api.ScreenshotSlot, 
 		if replacement == "" {
 			continue
 		}
-		result = strings.ReplaceAll(result, originalURL, replacement)
+		result = replaceOutsideImportedComparisons(result, originalURL, replacement)
 	}
-	return strings.TrimSpace(descriptionSpacingPattern.ReplaceAllString(result, "\n\n"))
+	return strings.TrimSpace(mapOutsideImportedComparisons(result, func(fragment string) string {
+		return descriptionSpacingPattern.ReplaceAllString(fragment, "\n\n")
+	}))
+}
+
+func replaceOutsideImportedComparisons(description string, originalURL string, replacement string) string {
+	return mapOutsideImportedComparisons(description, func(fragment string) string {
+		return strings.ReplaceAll(fragment, originalURL, replacement)
+	})
+}
+
+func mapOutsideImportedComparisons(description string, transform func(string) string) string {
+	blocks := comparison.BlockRanges(description)
+	if len(blocks) == 0 {
+		return transform(description)
+	}
+	var result strings.Builder
+	last := 0
+	for _, block := range blocks {
+		result.WriteString(transform(description[last:block[0]]))
+		result.WriteString(description[block[0]:block[1]])
+		last = block[1]
+	}
+	result.WriteString(transform(description[last:]))
+	return result.String()
 }
 
 func resolveTrackerDescription(
@@ -611,7 +639,7 @@ func resolveTrackerDescription(
 			}
 		}
 	}
-	records, err := trackerMetadataFromSource(ctx, meta, repo, preloaded)
+	records, err := trackerMetadataFromSource(ctx, meta, repo, preloaded, registry)
 	if err != nil {
 		if logger != nil {
 			logger.Debugf("trackers: description assets failed to load tracker metadata: %v", err)
@@ -866,7 +894,7 @@ func resolveDescriptionScreenshots(
 		return slots, nil, nil
 	}
 
-	urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
+	urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry)
 	if logger != nil {
 		logger.Tracef("trackers: description assets screenshots source=tracker_urls tracker=%s urls=%d", strings.TrimSpace(tracker), len(urls))
 	}
@@ -895,7 +923,9 @@ func preloadScreenshotAssetData(
 	repo UploadPersistence,
 	registry *Registry,
 ) (*preloadedDescriptionAssetData, error) {
-	return preloadUploadAssetData(ctx, meta, repo, registry)
+	// Screenshot slot reconciliation uses the effective description, including
+	// saved overrides, even when the target only consumes screenshots.
+	return preloadDescriptionAssetData(ctx, meta, repo, registry)
 }
 
 func preloadUploadAssetData(
@@ -919,7 +949,7 @@ func preloadUploadAssetData(
 		if err != nil {
 			return nil, fmt.Errorf("trackers: %w", err)
 		}
-		preloaded.trackerRecords = trackerRecords
+		preloaded.trackerRecords = FilterUnverifiedTrackerImages(ctx, repo, registry, trackerRecords, nil)
 	}
 	if meta.ExactMedia != nil {
 		if err := meta.ExactMedia.Validate(); err != nil {
@@ -1044,6 +1074,7 @@ func trackerMetadataFromSource(
 	meta api.UploadSubject,
 	repo UploadPersistence,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) ([]api.TrackerMetadata, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: load tracker metadata canceled: %w", err)
@@ -1051,7 +1082,11 @@ func trackerMetadataFromSource(
 	if preloaded != nil {
 		return preloaded.trackerRecords, nil
 	}
-	return wrapTrackerResult(repo.ListTrackerMetadataByPath(ctx, meta.SourcePath))
+	records, err := wrapTrackerResult(repo.ListTrackerMetadataByPath(ctx, meta.SourcePath))
+	if err != nil {
+		return nil, err
+	}
+	return FilterUnverifiedTrackerImages(ctx, repo, registry, records, nil), nil
 }
 
 func finalSelectionsFromSource(
@@ -1097,6 +1132,7 @@ func resolveTrackerImageURLs(
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) []string {
 	if err := ctx.Err(); err != nil {
 		return nil
@@ -1108,7 +1144,7 @@ func resolveTrackerImageURLs(
 		}
 		return nil
 	}
-	records, err := trackerMetadataFromSource(ctx, meta, repo, preloaded)
+	records, err := trackerMetadataFromSource(ctx, meta, repo, preloaded, registry)
 	if err == nil {
 		if len(records) > 0 {
 			if trackerKey != "" {
@@ -1122,13 +1158,13 @@ func resolveTrackerImageURLs(
 							len(filtered),
 						)
 					}
-					return collectImageURLs(filtered)
+					return collectImageURLs(filtered, registry)
 				}
 			}
 			if logger != nil {
 				logger.Tracef("trackers: description assets tracker urls source=db tracker=%s records=%d", trackerKey, len(records))
 			}
-			return collectImageURLs(records)
+			return collectImageURLs(records, registry)
 		}
 	} else if logger != nil {
 		logger.Debugf("trackers: description assets failed to load tracker image urls: %v", err)
@@ -1144,13 +1180,13 @@ func resolveTrackerImageURLs(
 					len(filtered),
 				)
 			}
-			return collectImageURLs(filtered)
+			return collectImageURLs(FilterUnverifiedTrackerImages(ctx, repo, registry, filtered, logger), registry)
 		}
 	}
 	if logger != nil {
 		logger.Tracef("trackers: description assets tracker urls source=meta tracker=%s records=%d", trackerKey, len(meta.TrackerData))
 	}
-	return collectImageURLs(meta.TrackerData)
+	return collectImageURLs(FilterUnverifiedTrackerImages(ctx, repo, registry, meta.TrackerData, logger), registry)
 }
 
 func filterTrackerMetadataByName(records []api.TrackerMetadata, tracker string) []api.TrackerMetadata {
@@ -1229,7 +1265,7 @@ func pickMostCommonHost(counts map[string]int) string {
 	return best
 }
 
-func collectImageURLs(records []api.TrackerMetadata) []string {
+func collectImageURLs(records []api.TrackerMetadata, registry *Registry) []string {
 	if len(records) == 0 {
 		return nil
 	}
@@ -1251,7 +1287,7 @@ func collectImageURLs(records []api.TrackerMetadata) []string {
 	urls := make([]string, 0)
 	seen := make(map[string]struct{})
 	for _, record := range ordered {
-		for _, url := range record.ImageURLs {
+		for _, url := range ComparisonSafeTrackerImageURLs(record, registry) {
 			trimmed := strings.TrimSpace(url)
 			if trimmed == "" {
 				continue
@@ -1267,6 +1303,49 @@ func collectImageURLs(records []api.TrackerMetadata) []string {
 		}
 	}
 	return urls
+}
+
+// FilterImportedComparisonImageURLs excludes cached image URLs that occur only
+// inside imported comparison blocks, including linked full-size originals.
+func FilterImportedComparisonImageURLs(description string, urls []string) []string {
+	blocks := comparison.BlockRanges(description)
+	if len(blocks) == 0 || len(urls) == 0 {
+		return urls
+	}
+	imageURLKeys := func(fragment string) map[string]struct{} {
+		keys := make(map[string]struct{})
+		for _, slot := range parseDescriptionImageSlots("", fragment) {
+			keys[bbcode.NormalizeImageRawURL(slot.OriginalURL)] = struct{}{}
+		}
+		for _, match := range slotURLImgPattern.FindAllStringSubmatch(fragment, -1) {
+			keys[bbcode.NormalizeImageRawURL(match[1])] = struct{}{}
+		}
+		for _, rawURL := range slotComparisonURL.FindAllString(fragment, -1) {
+			keys[bbcode.NormalizeImageRawURL(rawURL)] = struct{}{}
+		}
+		return keys
+	}
+	comparisonURLs := make(map[string]struct{})
+	for _, block := range blocks {
+		for key := range imageURLKeys(description[block[0]:block[1]]) {
+			comparisonURLs[key] = struct{}{}
+		}
+	}
+	if len(comparisonURLs) == 0 {
+		return urls
+	}
+	outsideURLs := imageURLKeys(comparison.RemoveComparisonBlocks(description))
+	filtered := make([]string, 0, len(urls))
+	for _, rawURL := range urls {
+		key := bbcode.NormalizeImageRawURL(rawURL)
+		if _, inComparison := comparisonURLs[key]; inComparison {
+			if _, outside := outsideURLs[key]; !outside {
+				continue
+			}
+		}
+		filtered = append(filtered, rawURL)
+	}
+	return filtered
 }
 
 func isTMDBImageURL(value string) bool {
@@ -1329,9 +1408,17 @@ func sanitizeTrackerDescription(tracker string, value string, registry *Registry
 	if !ok || !cleanup.UseGenericDescriptionCleanup() {
 		return strings.TrimSpace(value)
 	}
-	cleaned := StripDescriptionSignatures(stripEmbeddedNFOBlocks(value))
-	cleaned = emptyCenterPattern.ReplaceAllString(cleaned, "")
-	cleaned = descriptionSpacingPattern.ReplaceAllString(cleaned, "\n\n")
+	cleaned := mapOutsideImportedComparisons(value, func(fragment string) string {
+		core := strings.TrimSpace(fragment)
+		if core == "" {
+			return fragment
+		}
+		start := strings.Index(fragment, core)
+		sanitized := StripDescriptionSignatures(stripEmbeddedNFOBlocks(core))
+		sanitized = emptyCenterPattern.ReplaceAllString(sanitized, "")
+		sanitized = descriptionSpacingPattern.ReplaceAllString(sanitized, "\n\n")
+		return fragment[:start] + sanitized + fragment[start+len(core):]
+	})
 	return strings.TrimSpace(cleaned)
 }
 

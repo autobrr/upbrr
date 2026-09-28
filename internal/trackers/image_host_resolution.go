@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -15,9 +16,11 @@ import (
 	"os"
 	"path" //nolint:depguard // Extracts URL path components from image host URLs.
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
@@ -103,12 +106,15 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		}
 		slots = nil
 	}
+	persistSlots := screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry)
 	var localTrackerImages []api.ScreenshotImage
 	if !skipUpload {
-		localTrackerImages = resolveLocalTrackerScreenshots(meta, appCfg, tracker, logger)
+		localTrackerImages = resolveLocalTrackerScreenshots(ctx, meta, appCfg, tracker, repo, registry, logger)
 		if detachComparisonSourceImagesFromSlots(slots, localTrackerImages) {
-			if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
-				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+			if persistSlots {
+				if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
+					return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+				}
 			}
 			syncSlotsToPreloaded(preloaded, slots)
 		}
@@ -127,7 +133,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 				usageScope:  usageScope,
 			}, nil
 		}
-		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
+		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry)
 		screenshots = resolveTrackerScreenshots(urls)
 		if len(screenshots) > 0 {
 			feedback.SelectedHost = strings.ToLower(strings.TrimSpace(screenshots[0].Host))
@@ -176,8 +182,10 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	if len(sourceImages) == 0 {
 		sourceImages = localTrackerImages
 		if len(sourceImages) > 0 && !slotsContainComparison(slots) && alignRenderableSlotsToSourceImages(slots, sourceImages) {
-			if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
-				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+			if persistSlots {
+				if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
+					return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+				}
 			}
 			syncSlotsToPreloaded(preloaded, slots)
 		}
@@ -199,15 +207,17 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			changed = changed || materializeChanged
 		}
 		if changed {
-			if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
-				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+			if persistSlots {
+				if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
+					return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+				}
 			}
 			syncSlotsToPreloaded(preloaded, slots)
 		}
 		sourceImages = slotSourceImagesForRehost(slots)
 	}
 	if len(sourceImages) == 0 {
-		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
+		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry)
 		if screenshots, host := resolveTrackerScreenshotsForAllowedHost(
 			urls,
 			selectionPolicy,
@@ -327,9 +337,11 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			}
 			continue
 		}
-		if err := upsertScreenshotVariantsFromUploads(ctx, repo, meta.MediaBinding, slots, uploaded); err != nil {
-			cleanupUploadedImages(ctx, repo, meta.MediaBinding, uploaded, logger)
-			return descriptionImageHostResolution{}, err
+		if persistSlots {
+			if err := upsertScreenshotVariantsFromUploads(ctx, repo, meta.MediaBinding, slots, uploaded); err != nil {
+				cleanupUploadedImages(ctx, repo, meta.MediaBinding, uploaded, logger)
+				return descriptionImageHostResolution{}, err
+			}
 		}
 		applyUploadedVariantsToSlots(slots, uploaded)
 		syncSlotVariantsToPreloaded(preloaded, uploaded)
@@ -457,7 +469,8 @@ func screenshotSlotsFromSourceWithoutPersist(
 		return nil, nil
 	}
 	if preloaded != nil && preloaded.screenshotSlotsLoaded {
-		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
+		return reconcileStoredComparisonSlots(ctx, tracker, meta, repo, logger, preloaded, registry,
+			cloneScreenshotSlots(preloaded.screenshotSlots), false)
 	}
 
 	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.MediaBinding)
@@ -479,7 +492,8 @@ func screenshotSlotsFromSourceWithoutPersist(
 		if len(slots) == 0 {
 			return nil, nil
 		}
-		return cloneScreenshotSlots(slots), nil
+		return reconcileStoredComparisonSlots(ctx, tracker, meta, repo, logger, preloaded, registry,
+			cloneScreenshotSlots(slots), false)
 	}
 
 	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded, registry)
@@ -738,7 +752,15 @@ func resolveTrackerScreenshotsForAllowedHost(urls []string, policy imageHostPoli
 	return nil, ""
 }
 
-func resolveLocalTrackerScreenshots(meta api.UploadSubject, appCfg config.Config, tracker string, logger api.Logger) []api.ScreenshotImage {
+func resolveLocalTrackerScreenshots(
+	ctx context.Context,
+	meta api.UploadSubject,
+	appCfg config.Config,
+	tracker string,
+	repo UploadPersistence,
+	registry *Registry,
+	logger api.Logger,
+) []api.ScreenshotImage {
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return nil
 	}
@@ -758,30 +780,35 @@ func resolveLocalTrackerScreenshots(meta api.UploadSubject, appCfg config.Config
 	}
 
 	results := make([]api.ScreenshotImage, 0)
-	for _, record := range prioritizedTrackerRecords(meta, tracker) {
-		trackerDir := sanitizeTrackerArtifactName(strings.ToLower(strings.TrimSpace(record.Tracker)))
+	for _, record := range FilterUnverifiedTrackerImages(ctx, repo, registry, prioritizedTrackerRecords(meta, tracker), logger) {
+		trackerDir := sanitizePersistedTrackerArtifactName(strings.ToLower(strings.TrimSpace(record.Tracker)))
 		if trackerDir == "" {
 			trackerDir = "tracker"
+		}
+		allowedURLs := make(map[string]struct{})
+		for _, rawURL := range ComparisonSafeTrackerImageURLs(record, registry) {
+			allowedURLs[strings.TrimSpace(rawURL)] = struct{}{}
 		}
 		for index, rawURL := range record.ImageURLs {
 			trimmed := strings.TrimSpace(rawURL)
 			if trimmed == "" {
 				continue
 			}
-			fileName := buildTrackerArtifactImageName(trimmed, index)
-			if fileName == "" {
+			if _, allowed := allowedURLs[trimmed]; !allowed {
 				continue
 			}
-			fullPath := filepath.Join(tmpDir, trackerDir, fileName)
-			info, err := os.Stat(fullPath)
-			if err != nil || info.IsDir() {
-				continue
+			for _, fullPath := range localTrackerArtifactPaths(filepath.Join(tmpDir, trackerDir), trimmed, index) {
+				info, err := os.Stat(fullPath)
+				if err != nil || info.IsDir() || info.Size() == 0 {
+					continue
+				}
+				results = append(results, api.ScreenshotImage{
+					Index: freshScreenshotImageIndex(results),
+					Path:  fullPath,
+					Host:  imagehost.ExtractHost(trimmed),
+				})
+				break
 			}
-			results = append(results, api.ScreenshotImage{
-				Index: freshScreenshotImageIndex(results),
-				Path:  fullPath,
-				Host:  imagehost.ExtractHost(trimmed),
-			})
 		}
 		if len(results) > 0 {
 			return results
@@ -859,7 +886,8 @@ func materializeDescriptionSlotImages(
 		}
 		if err := downloadDescriptionSlotImage(ctx, client, originalURL, outPath); err != nil {
 			if logger != nil {
-				logger.Warnf("trackers: description slot image download failed tracker=%s url=%s: %v", tracker, originalURL, err)
+				logger.Warnf("trackers: description slot image download failed tracker=%s slot=%d reason=%s",
+					tracker, slots[idx].SlotOrder+1, descriptionSlotImageFailureReason(err))
 			}
 			continue
 		}
@@ -873,8 +901,44 @@ func materializeDescriptionSlotImages(
 	return results, changed
 }
 
+func descriptionSlotImageFailureReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "request_timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "request_canceled"
+	}
+	message := err.Error()
+	if after, ok := strings.CutPrefix(message, "status "); ok {
+		if status, parseErr := strconv.Atoi(after); parseErr == nil && status >= 100 && status <= 599 {
+			return fmt.Sprintf("http_status_%d", status)
+		}
+	}
+	for _, failure := range []struct{ prefix, reason string }{
+		{"parse url:", "invalid_url"},
+		{"unsupported scheme", "invalid_or_nonpublic_url"},
+		{"missing host", "invalid_or_nonpublic_url"},
+		{"blocked private", "invalid_or_nonpublic_url"},
+		{"host ", "invalid_or_nonpublic_url"},
+		{"resolve host", "dns_lookup_failed"},
+		{"build request:", "invalid_request"},
+		{"invalid content-type", "non_image_content_type"},
+		{"invalid image payload content-type", "non_image_payload"},
+		{"image exceeds max size", "image_too_large"},
+		{"read body:", "body_read_failed"},
+		{"write image:", "local_write_failed"},
+		{"empty image", "empty_image"},
+	} {
+		if strings.HasPrefix(message, failure.prefix) {
+			return failure.reason
+		}
+	}
+	return "request_failed"
+}
+
 func buildDescriptionSlotImageName(rawURL string, slotOrder int) string {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	normalizedURL := bbcode.NormalizeImageRawURL(strings.TrimSpace(rawURL))
+	parsed, err := url.Parse(normalizedURL)
 	base := ""
 	if err == nil {
 		base = path.Base(parsed.Path)
@@ -885,9 +949,11 @@ func buildDescriptionSlotImageName(rawURL string, slotOrder int) string {
 	base = sanitizeTrackerArtifactName(base)
 	ext := path.Ext(base)
 	if ext == "" {
-		return fmt.Sprintf("slot_%03d_%s.png", slotOrder+1, base)
+		ext = ".png"
 	}
-	return fmt.Sprintf("slot_%03d_%s", slotOrder+1, base)
+	stem := strings.TrimSuffix(base, path.Ext(base))
+	digest := sha256.Sum256([]byte(normalizedURL))
+	return fmt.Sprintf("%s_%03d_%x%s", stem, slotOrder+1, digest[:6], ext)
 }
 
 func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawURL string, outPath string) error {
@@ -1085,6 +1151,17 @@ func sanitizeTrackerArtifactName(value string) string {
 	return strings.TrimSpace(replacer.Replace(value))
 }
 
+func sanitizePersistedTrackerArtifactName(value string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-' || r == '_' || r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, strings.TrimSpace(value))
+}
+
 func buildTrackerArtifactImageName(rawURL string, index int) string {
 	parsed, err := url.Parse(rawURL)
 	base := ""
@@ -1094,7 +1171,51 @@ func buildTrackerArtifactImageName(rawURL string, index int) string {
 	if base == "" || base == "." || base == "/" {
 		base = "image"
 	}
-	base = sanitizeTrackerArtifactName(base)
+	base = sanitizePersistedTrackerArtifactName(base)
+	digest := sha256.Sum256([]byte(rawURL))
+	suffix := fmt.Sprintf("_%02d_%x", index+1, digest[:6])
+	if !strings.Contains(base, ".") {
+		return base + suffix
+	}
+	parts := strings.Split(base, ".")
+	ext := parts[len(parts)-1]
+	return strings.TrimSuffix(base, "."+ext) + suffix + "." + ext
+}
+
+func localTrackerArtifactPaths(dir string, rawURL string, index int) []string {
+	exactName := buildTrackerArtifactImageName(rawURL, index)
+	paths := []string{filepath.Join(dir, exactName)}
+	legacy := legacyTrackerArtifactImageName(rawURL, 0)
+	ext := path.Ext(legacy)
+	stem := strings.TrimSuffix(strings.TrimSuffix(legacy, ext), "_01")
+	digest := sha256.Sum256([]byte(rawURL))
+	prefix := stem + "_"
+	suffix := fmt.Sprintf("_%x%s", digest[:6], ext)
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			if name == exactName || entry.IsDir() || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+				continue
+			}
+			indexText := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+			if value, err := strconv.Atoi(indexText); err == nil && value > 0 {
+				paths = append(paths, filepath.Join(dir, name))
+			}
+		}
+	}
+	return append(paths, filepath.Join(dir, legacyTrackerArtifactImageName(rawURL, index)))
+}
+
+func legacyTrackerArtifactImageName(rawURL string, index int) string {
+	parsed, err := url.Parse(rawURL)
+	base := ""
+	if err == nil {
+		base = path.Base(parsed.Path)
+	}
+	if base == "" || base == "." || base == "/" {
+		base = "image"
+	}
+	base = sanitizePersistedTrackerArtifactName(base)
 	if !strings.Contains(base, ".") {
 		return fmt.Sprintf("%s_%02d", base, index+1)
 	}

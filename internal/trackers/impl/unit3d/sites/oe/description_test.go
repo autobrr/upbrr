@@ -14,10 +14,10 @@ import (
 func oeTestScreenshots() []api.ScreenshotImage {
 	return []api.ScreenshotImage{
 		{
-RawURL: "https://images.example/one.png",
- ImgURL: "https://images.example/one-thumb.png",
- WebURL: "https://images.example/one",
-},
+			RawURL: "https://images.example/one.png",
+			ImgURL: "https://images.example/one-thumb.png",
+			WebURL: "https://images.example/one",
+		},
 		{RawURL: "https://images.example/two.png"},
 		{ImgURL: "https://images.example/three.png"},
 	}
@@ -40,10 +40,10 @@ func TestAudioAnalysisFollowsEvidenceAndMenus(t *testing.T) {
 	got, err := buildDescription(t.Context(), oeTestSubject(), config.Config{}, config.TrackerConfig{}, api.NopLogger{},
 		"Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		[]api.ScreenshotImage{{
-RawURL: "https://images.example.invalid/menu.png",
- ImgURL: "https://images.example.invalid/menu.png",
- WebURL: "https://images.example.invalid/menu",
-}},
+			RawURL: "https://images.example.invalid/menu.png",
+			ImgURL: "https://images.example.invalid/menu.png",
+			WebURL: "https://images.example.invalid/menu",
+		}},
 		oeTestScreenshots())
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +95,55 @@ func TestDescriptionOwnsOEMarkupEvidenceAndScreenshots(t *testing.T) {
 	failures, err := checkDescriptionRequirements(t.Context(), api.NewTrackerValidationSubject(meta, "OE"), api.NopLogger{})
 	if err != nil || len(failures) != 0 {
 		t.Fatalf("composed description must pass final validation: %v %v", failures, err)
+	}
+}
+
+func TestDescriptionPreservesImportedComparisonMarkup(t *testing.T) {
+	comparison := "[comparison=Source,Encode]\r\nhttps://images.example/source.png https://images.example/encode.png\r\n[/comparison]"
+	meta := oeTestSubject()
+	meta.TrackerData = []api.TrackerMetadata{{Tracker: "OE", Description: comparison}}
+	got, err := buildDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{},
+		"[pre]Notes[/pre]\n\n"+comparison, nil, oeTestScreenshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, comparison) || !strings.Contains(got, "[code]Notes[/code]") {
+		t.Fatalf("OE changed imported comparison or skipped surrounding cleanup: %q", got)
+	}
+	meta.TrackerData = nil
+	got, err = buildDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{},
+		"[pre]Notes[/pre]\n\n"+comparison, nil, oeTestScreenshots())
+	if err != nil || !strings.Contains(got, comparison) {
+		t.Fatalf("OE changed DB-only comparison: description=%q err=%v", got, err)
+	}
+}
+
+func TestDescriptionPreservesComparisonEvidenceMarkup(t *testing.T) {
+	comparison := "[spoiler=Comparisons]\r\n[b]Source Notes[/b][code]source comparison notes[/code]\r\n[/spoiler]"
+	templateComparison := "[comparison=Source,Encode]\r\n[b]Source Notes[/b][code]template comparison notes[/code]\r\n[/comparison]"
+	meta := oeTestSubject()
+	meta.DescriptionTemplate = strings.Join([]string{"[pre]Template[/pre]", templateComparison}, "\n\n")
+	got, err := buildDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{},
+		comparison+"\n\n[b]Source Notes[/b][code]stale notes[/code]", nil, oeTestScreenshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, comparison) || !strings.Contains(got, templateComparison) ||
+		!strings.Contains(got, "[code]Template[/code]") || strings.Contains(got, "stale notes") ||
+		!strings.Contains(got, "[b]Source Notes[/b]\n[code]Example BluRay source; original HDR10 only[/code]") {
+		t.Fatalf("OE changed comparison evidence or kept stale notes: %q", got)
+	}
+}
+
+func TestAppendMissingScreenshotIgnoresComparisonLink(t *testing.T) {
+	screenshot := api.ScreenshotImage{
+		WebURL: "https://img.example/full",
+		RawURL: "https://img.example/full.png",
+	}
+	comparison := "[spoiler=Comparisons][url=" + screenshot.WebURL + "][img]" + screenshot.RawURL + "[/img][/url][/spoiler]"
+	description := oeAppendMissingScreenshotLinks(comparison, []api.ScreenshotImage{screenshot}, 350)
+	if !strings.Contains(description, comparison) || strings.Count(description, screenshot.RawURL) != 2 {
+		t.Fatalf("comparison link satisfied separately selected screenshot: %q", description)
 	}
 }
 

@@ -969,8 +969,8 @@ func TestBuildUploadDryRunDistinguishesReadyEmptyAndFailedScreenshots(t *testing
 				if inputs[0].Assets == nil || len(inputs[0].Assets.Screenshots) != 0 || strings.TrimSpace(inputs[0].Assets.Description) != "" {
 					t.Fatalf("expected ready empty screenshot assets, got %#v", inputs[0].Assets)
 				}
-				if test.repo.overrideCalls != 0 {
-					t.Fatalf("screenshot mode loaded description overrides %d time(s)", test.repo.overrideCalls)
+				if test.repo.overrideCalls != 1 {
+					t.Fatalf("screenshot mode loaded description overrides %d time(s), want 1", test.repo.overrideCalls)
 				}
 			} else if entries[0].ContentFailure == nil || entries[0].ContentFailure.Code != api.TrackerContentFailureScreenshotPreparation {
 				t.Fatalf("expected structured screenshot failure, got %#v", entries[0].ContentFailure)
@@ -1012,14 +1012,15 @@ func TestBuildUploadDryRunScopesDescriptionPreloadFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build dry run: %v", err)
 	}
-	if len(entries) != 2 || entries[0].Tracker != "IMAGES" || entries[0].Status != "ready" || entries[1].Tracker != "DESCRIPTION" || entries[1].Status != "blocked" {
+	if len(entries) != 2 || entries[0].Tracker != "IMAGES" || entries[0].Status != "blocked" || entries[1].Tracker != "DESCRIPTION" || entries[1].Status != "blocked" {
 		t.Fatalf("unexpected mixed-mode results: %#v", entries)
 	}
-	if len(screenshotInputs) != 1 || len(descriptionInputs) != 0 {
-		t.Fatalf("expected only screenshot adapter invocation, screenshots=%d descriptions=%d", len(screenshotInputs), len(descriptionInputs))
+	if len(screenshotInputs) != 0 || len(descriptionInputs) != 0 {
+		t.Fatalf("failed override read must block both modes, screenshots=%d descriptions=%d", len(screenshotInputs), len(descriptionInputs))
 	}
-	if entries[1].ContentFailure == nil || entries[1].ContentFailure.Code != api.TrackerContentFailureDescriptionPreparation {
-		t.Fatalf("expected structured description failure, got %#v", entries[1].ContentFailure)
+	if entries[0].ContentFailure == nil || entries[0].ContentFailure.Code != api.TrackerContentFailureScreenshotPreparation ||
+		entries[1].ContentFailure == nil || entries[1].ContentFailure.Code != api.TrackerContentFailureDescriptionPreparation {
+		t.Fatalf("expected structured screenshot and description failures, got %#v and %#v", entries[0].ContentFailure, entries[1].ContentFailure)
 	}
 }
 
@@ -2641,8 +2642,8 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	if err := os.MkdirAll(trackerDir, 0o700); err != nil {
 		t.Fatalf("tracker dir: %v", err)
 	}
-	firstPath := filepath.Join(trackerDir, "4m092k_01.png")
-	secondPath := filepath.Join(trackerDir, "7oj122_02.png")
+	firstPath := filepath.Join(trackerDir, buildTrackerArtifactImageName(meta.TrackerData[0].ImageURLs[0], 0))
+	secondPath := filepath.Join(trackerDir, buildTrackerArtifactImageName(meta.TrackerData[0].ImageURLs[1], 1))
 	for _, pathValue := range []string{firstPath, secondPath} {
 		if err := os.WriteFile(pathValue, []byte("png"), 0o600); err != nil {
 			t.Fatalf("write tracker artifact %s: %v", pathValue, err)

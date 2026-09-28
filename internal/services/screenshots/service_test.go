@@ -5,6 +5,7 @@ package screenshots
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,8 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -54,6 +57,187 @@ func TestMergeTrackerImagesIntoFinalSelectionsReindexesSparseIndices(t *testing.
 	}
 	if merged[3].Path != filepath.Join(tmpDir, "d.png") {
 		t.Fatalf("expected new tracker image appended after existing selections, got %#v", merged)
+	}
+}
+
+func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026.mkv")
+	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	mediaInfoPath := filepath.Join(root, "mediainfo.json")
+	if err := os.WriteFile(mediaInfoPath, []byte(`{"media":{"track":[{"@type":"General","Duration":"600"},{"@type":"Video","FrameRate":"24.000"}]}}`), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	repo := openScreenshotTestRepository(t)
+	urls := []string{"https://one.example/shared.png", "https://two.example/shared.png"}
+	if err := repo.SaveTrackerMetadata(t.Context(), api.TrackerMetadata{
+		SourcePath: sourcePath,
+		Tracker:    "AITHER",
+		ImageURLs:  urls,
+	}); err != nil {
+		t.Fatalf("save tracker metadata: %v", err)
+	}
+	tmpRoot := t.TempDir()
+	trackerDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, api.ReleaseInfo{})
+	if err != nil {
+		t.Fatalf("resolve tracker temp dir: %v", err)
+	}
+	trackerDir = filepath.Join(trackerDir, "aither")
+	if err := os.MkdirAll(trackerDir, 0o700); err != nil {
+		t.Fatalf("make tracker temp dir: %v", err)
+	}
+	artifactPaths := make([]string, len(urls))
+	for index, rawURL := range urls {
+		digest := sha256.Sum256([]byte(rawURL))
+		artifactPaths[index] = filepath.Join(trackerDir, fmt.Sprintf("shared_%02d_%x.png", index+1, digest[:6]))
+		if err := os.WriteFile(artifactPaths[index], []byte("synthetic image"), 0o600); err != nil {
+			t.Fatalf("write tracker artifact: %v", err)
+		}
+	}
+	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
+	meta := api.ScreenshotSubject{
+		MediaBinding:      screenshotTestBinding(sourcePath),
+		SourcePath:        sourcePath,
+		MediaInfoJSONPath: mediaInfoPath,
+	}
+	plan, err := service.Plan(t.Context(), meta, 4)
+	if err != nil {
+		t.Fatalf("plan screenshots: %v", err)
+	}
+	if len(plan.TrackerImageLinks) != 2 || len(plan.FinalSelections) != 2 {
+		t.Fatalf("hashed tracker images absent from plan: links=%#v final=%#v", plan.TrackerImageLinks, plan.FinalSelections)
+	}
+	if err := service.Delete(t.Context(), meta, artifactPaths[0]); err != nil {
+		t.Fatalf("delete first tracker artifact: %v", err)
+	}
+	stored, err := repo.ListTrackerMetadataByPath(t.Context(), sourcePath)
+	if err != nil || len(stored) != 1 || !slices.Equal(stored[0].ImageURLs, urls[1:]) {
+		t.Fatalf("deleted artifact removed wrong URL: records=%#v err=%v", stored, err)
+	}
+	if _, err := repo.GetTrackerTimestamp(t.Context(), trackers.TrackerImageDeletionKey(stored[0])); err != nil {
+		t.Fatalf("tracker image deletion was not recorded: %v", err)
+	}
+	plan, err = service.Plan(t.Context(), meta, 4)
+	if err != nil || len(plan.TrackerImageLinks) != 1 || plan.TrackerImageLinks[0].Path != artifactPaths[1] {
+		t.Fatalf("remaining tracker artifact absent from plan: plan=%#v err=%v", plan, err)
+	}
+	stored[0].Description = "[spoiler=Comparisons][url=" + urls[1] + "][img]https://two.example/thumb.png[/img][/url][/spoiler]"
+	if err := repo.SaveTrackerMetadata(t.Context(), stored[0]); err != nil {
+		t.Fatalf("save legacy comparison metadata: %v", err)
+	}
+	plan, err = service.Plan(t.Context(), meta, 4)
+	if err != nil || len(plan.TrackerImageLinks) != 0 || len(plan.FinalSelections) != 0 {
+		t.Fatalf("comparison-only tracker artifact entered screenshot plan: plan=%#v err=%v", plan, err)
+	}
+}
+
+func TestLoadTrackerMetadataWithholdsUnverifiedImagesAcrossTrackers(t *testing.T) {
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	repo := openScreenshotTestRepository(t)
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	verified := api.TrackerMetadata{
+		SourcePath:  sourcePath,
+		Tracker:     "AITHER",
+		TrackerID:   "101",
+		Description: "Verified notes",
+		ImageURLs:   []string{"https://img.example/verified.png"},
+	}
+	legacy := api.TrackerMetadata{
+		SourcePath:  sourcePath,
+		Tracker:     "BHD",
+		TrackerID:   "202",
+		Description: "Legacy notes",
+		ImageURLs:   []string{"https://img.example/legacy-comparison.png"},
+	}
+	for _, record := range []api.TrackerMetadata{verified, legacy} {
+		if err := repo.SaveTrackerMetadata(t.Context(), record); err != nil {
+			t.Fatalf("save tracker record: %v", err)
+		}
+	}
+	if err := repo.SaveTrackerTimestamp(t.Context(), api.TrackerTimestamp{
+		Tracker: trackers.TrackerAssetProvenanceKey(verified), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save verified provenance: %v", err)
+	}
+	tmpRoot := t.TempDir()
+	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo, registry)
+	stored := service.loadTrackerMetadata(t.Context(), sourcePath)
+	if len(stored) != 2 {
+		t.Fatalf("stored tracker records = %d, want 2", len(stored))
+	}
+	for _, record := range stored {
+		switch record.Tracker {
+		case "AITHER":
+			if !slices.Equal(record.ImageURLs, verified.ImageURLs) {
+				t.Fatalf("verified images were withheld: %#v", record.ImageURLs)
+			}
+		case "BHD":
+			if len(record.ImageURLs) != 0 {
+				t.Fatalf("unverified legacy images reached screenshot plan: %#v", record.ImageURLs)
+			}
+		default:
+			t.Fatalf("unexpected tracker %q", record.Tracker)
+		}
+	}
+	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	mediaInfoPath := filepath.Join(t.TempDir(), "mediainfo.json")
+	if err := os.WriteFile(mediaInfoPath, []byte(`{"media":{"track":[{"@type":"General","Duration":"600"},{"@type":"Video","FrameRate":"24.000"}]}}`), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	releaseDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, api.ReleaseInfo{})
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	for _, record := range []api.TrackerMetadata{verified, legacy} {
+		artifactPath := filepath.Join(releaseDir, strings.ToLower(record.Tracker), buildTrackerImageFilename(record.ImageURLs[0], 0))
+		if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+			t.Fatalf("create tracker artifact dir: %v", err)
+		}
+		if err := os.WriteFile(artifactPath, []byte("synthetic image"), 0o600); err != nil {
+			t.Fatalf("write tracker artifact: %v", err)
+		}
+	}
+	plan, err := service.Plan(t.Context(), api.ScreenshotSubject{
+		MediaBinding:      screenshotTestBinding(sourcePath),
+		SourcePath:        sourcePath,
+		MediaInfoJSONPath: mediaInfoPath,
+	}, 4)
+	if err != nil {
+		t.Fatalf("plan screenshots: %v", err)
+	}
+	if len(plan.TrackerImageLinks) != 1 || plan.TrackerImageLinks[0].Tracker != "AITHER" ||
+		len(plan.FinalSelections) != 1 || len(plan.ExistingTrackerScreenshots) != 0 {
+		t.Fatalf("legacy comparison artifact entered screenshot plan: links=%#v final=%#v existing=%#v",
+			plan.TrackerImageLinks, plan.FinalSelections, plan.ExistingTrackerScreenshots)
+	}
+}
+
+func TestFilterProtectedTrackerFinalSelectionsKeepsVerifiedAndOrdinaryImages(t *testing.T) {
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	root := t.TempDir()
+	verifiedPath := filepath.Join(root, "aither", "verified.png")
+	legacyPath := filepath.Join(root, "bhd", "comparison.png")
+	ordinaryPath := filepath.Join(root, "capture.png")
+	images := []api.ScreenshotImage{
+		{Path: legacyPath},
+		{Path: ordinaryPath},
+		{Path: verifiedPath},
+	}
+	links := []api.ScreenshotLinkedImage{{Tracker: "AITHER", Path: verifiedPath}}
+	records := []api.TrackerMetadata{{Tracker: "AITHER"}, {Tracker: "BHD"}}
+	filtered := filterProtectedTrackerFinalSelections(images, links, records, registry)
+	if len(filtered) != 2 || filtered[0].Path != ordinaryPath || filtered[1].Path != verifiedPath {
+		t.Fatalf("saved legacy comparison selection survived: %#v", filtered)
 	}
 }
 

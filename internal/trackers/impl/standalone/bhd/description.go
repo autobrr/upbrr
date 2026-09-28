@@ -29,8 +29,10 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 	})
 
 	descriptionBody := strings.TrimSpace(cleaned.Description)
-	descriptionBody = stripUASignature(descriptionBody)
-	descriptionBody = strings.ReplaceAll(descriptionBody, "[img]", "[img width=300]")
+	maskedDescription, comparisonBlocks := maskBHDComparisonBlocks(descriptionBody)
+	maskedDescription = stripUASignature(maskedDescription)
+	maskedDescription = strings.ReplaceAll(maskedDescription, "[img]", "[img width=300]")
+	descriptionBody = restoreBHDComparisonBlocks(maskedDescription, comparisonBlocks)
 
 	images := assets.Screenshots
 	if len(images) == 0 {
