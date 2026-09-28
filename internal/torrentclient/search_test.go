@@ -1286,6 +1286,32 @@ func TestResolveSearchClientsUsesClientOverride(t *testing.T) {
 	}
 }
 
+func TestResolveSearchClientsPrefersLiteralPaddedName(t *testing.T) {
+	t.Parallel()
+
+	clients := map[string]config.TorrentClientConfig{
+		"selected": {Type: "qbit"},
+	}
+	clients[" selected "] = config.TorrentClientConfig{Type: "qbit"}
+	override := " selected "
+
+	for _, test := range []struct {
+		name      string
+		setup     config.ClientSetupConfig
+		overrides api.ClientOverrides
+	}{
+		{name: "override", overrides: api.ClientOverrides{Client: &override}},
+		{name: "configured list", setup: config.ClientSetupConfig{SearchClients: config.CSVList{" selected "}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, usedFallback := resolveSearchClients(config.Config{ClientSetup: test.setup, TorrentClients: clients}, test.overrides)
+			if usedFallback || len(got) != 1 || got[0] != " selected " {
+				t.Fatalf("expected literal padded client without fallback, got %v (fallback %t)", got, usedFallback)
+			}
+		})
+	}
+}
+
 func TestResolveSearchClientsSkipsFallbackWhenDefaultClientUnknown(t *testing.T) {
 	t.Parallel()
 
