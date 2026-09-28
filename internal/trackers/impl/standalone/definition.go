@@ -91,6 +91,14 @@ func (d *Definition) UploadContentMode() trackers.UploadContentMode {
 	return d.profile.UploadContentMode
 }
 
+// UsesMenuImages reports whether the description consumes selected DVD menus.
+func (d *Definition) UsesMenuImages() bool { return d.profile.UsesMenuImages }
+
+// SourceOnlyImageReusable reports whether this tracker accepts one of its own image links.
+func (d *Definition) SourceOnlyImageReusable(rawURL string, records []api.TrackerMetadata) bool {
+	return d.profile.SourceOnlyImageReusable != nil && d.profile.SourceOnlyImageReusable(rawURL, records)
+}
+
 // ReleaseNamePolicy returns the profile policy or the explicit standalone default.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	if d.profile.ReleaseNamePolicy.Resolver != nil || d.profile.ReleaseNamePolicy.Structured != nil {

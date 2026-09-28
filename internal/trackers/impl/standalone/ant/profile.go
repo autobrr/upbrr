@@ -13,6 +13,7 @@ import (
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		UsesMenuImages:     true,
 		Name:               "ANT",
 		BaseURL:            "https://anthelion.me",
 		DescriptionGroup:   "ant",

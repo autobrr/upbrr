@@ -23,6 +23,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
@@ -665,6 +666,9 @@ func (b workflowMediaBuilder) Build(
 			}
 			snapshot.Artifacts = append(snapshot.Artifacts, artifact)
 			if imported {
+				if imagehost.IsSourceOnlyURL(link.URL) {
+					continue
+				}
 				if err := b.retainImportedScreenshot(&privateArtifacts, &snapshot, artifact, image, link, now); err != nil {
 					return api.MediaArtifactSet{}, nil, err
 				}
@@ -1368,6 +1372,9 @@ func (b workflowMediaBuilder) RestoreCompatible(
 			sourceID = artifact.ID
 		}
 		for linkIndex, link := range asset.HostedLinks {
+			if sourceOnlyHostedImageLink(link) {
+				continue
+			}
 			accountScope, scopeErr := workflowMediaHostAccountScope(b.config, link.Host)
 			if scopeErr != nil || accountScope != link.AccountScope || hostedImageURL(link) == "" {
 				continue
@@ -1744,7 +1751,7 @@ func (b workflowMediaBuilder) retainedHostedImageCandidates(
 			continue
 		}
 		link, ok := retained.HostedImages[artifact.ID]
-		if !ok || strings.TrimSpace(link.Host) == "" || hostedImageURL(link) == "" {
+		if !ok || strings.TrimSpace(link.Host) == "" || hostedImageURL(link) == "" || sourceOnlyHostedImageLink(link) {
 			continue
 		}
 		sourceID := retained.HostedSources[artifact.ID]
@@ -2417,7 +2424,7 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 				continue
 			}
 			link, exists := retained.HostedImages[hostedID]
-			if !exists {
+			if !exists || sourceOnlyHostedImageLink(link) {
 				continue
 			}
 			hosted, active := hostedArtifacts[hostedID]
@@ -2919,6 +2926,10 @@ func hostedImageURL(link api.UploadedImageLink) string {
 		}
 	}
 	return ""
+}
+
+func sourceOnlyHostedImageLink(link api.UploadedImageLink) bool {
+	return imagehost.IsSourceOnlyURL(link.ImgURL) || imagehost.IsSourceOnlyURL(link.RawURL) || imagehost.IsSourceOnlyURL(link.WebURL)
 }
 
 func hostedImageFailure(trackerID api.TrackerID, host string, message string) api.WorkflowFailure {

@@ -1186,7 +1186,7 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 	result := SlotUploadAttachmentResult{}
 	seenUploads := make(map[string]struct{}, len(uploads))
 	for _, upload := range uploads {
-		if upload.Purpose == api.ScreenshotPurposeAudioAnalysis {
+		if upload.Purpose == api.ScreenshotPurposeAudioAnalysis || sourceOnlyUploadedImage(upload) {
 			continue
 		}
 		uploadKey := strings.ToLower(
@@ -1365,7 +1365,8 @@ func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy i
 		return image, host, scope, true
 	}
 
-	if !hostInList(slot.OriginalHost, policy.failed) && (len(policy.allowed) == 0 || hostAllowed(slot.OriginalHost, policy.allowed)) {
+	if reusableSourceImageURL(slot.OriginalURL, policy) && !hostInList(slot.OriginalHost, policy.failed) &&
+		(len(policy.allowed) == 0 || hostAllowed(slot.OriginalHost, policy.allowed)) {
 		originalURL := strings.TrimSpace(slot.OriginalURL)
 		if originalURL != "" {
 			host := strings.TrimSpace(slot.OriginalHost)
@@ -1386,12 +1387,59 @@ func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy i
 	return api.ScreenshotImage{}, "", "", false
 }
 
+func reusableSourceImageURL(rawURL string, policy imageHostPolicy) bool {
+	return !imagehost.IsSourceOnlyURL(rawURL) || policy.sourceOnlyAllowed != nil && policy.sourceOnlyAllowed(rawURL)
+}
+
+func attachNativeSourceURLsToSlots(slots []api.ScreenshotSlot, records []api.TrackerMetadata, policy imageHostPolicy) bool {
+	if policy.sourceOnlyAllowed == nil {
+		return false
+	}
+	changed := false
+	for index := range slots {
+		slot := &slots[index]
+		if slot.OriginalURL != "" || slot.ImagePath == "" {
+			continue
+		}
+		for _, record := range records {
+			trackerDir := sanitizePersistedTrackerArtifactName(strings.ToLower(strings.TrimSpace(record.Tracker)))
+			if trackerDir == "" || !strings.EqualFold(filepath.Base(filepath.Dir(slot.ImagePath)), trackerDir) {
+				continue
+			}
+			for urlIndex, rawURL := range record.ImageURLs {
+				if !imagehost.IsSourceOnlyURL(rawURL) || !policy.sourceOnlyAllowed(rawURL) {
+					continue
+				}
+				for _, candidate := range localTrackerArtifactPaths(filepath.Dir(slot.ImagePath), rawURL, urlIndex) {
+					if pathutil.SamePath(candidate, slot.ImagePath) {
+						slot.OriginalURL = rawURL
+						slot.OriginalHost = imagehost.ExtractHost(rawURL)
+						changed = true
+						break
+					}
+				}
+				if slot.OriginalURL != "" {
+					break
+				}
+			}
+			if slot.OriginalURL != "" {
+				break
+			}
+		}
+	}
+	return changed
+}
+
 func selectVariantForSlot(slot api.ScreenshotSlot, tracker string, policy imageHostPolicy) (api.ScreenshotImage, string, string, bool) {
 	preferredScopes := []string{trackerImageUsageScope(tracker), globalImageUsageScope}
 
 	for _, scope := range preferredScopes {
 		candidates := make([]api.ScreenshotSlotVariant, 0)
 		for _, variant := range slot.Variants {
+			if !reusableSourceImageURL(variant.RawURL, policy) || !reusableSourceImageURL(variant.ImgURL, policy) ||
+				!reusableSourceImageURL(variant.WebURL, policy) {
+				continue
+			}
 			if normalizeUsageScope(variant.UsageScope) != scope {
 				continue
 			}
@@ -1442,6 +1490,10 @@ func allRenderableSlotsHaveEligibleVariant(slots []api.ScreenshotSlot, tracker s
 	for _, slot := range renderable {
 		found := false
 		for _, variant := range slot.Variants {
+			if !reusableSourceImageURL(variant.RawURL, policy) || !reusableSourceImageURL(variant.ImgURL, policy) ||
+				!reusableSourceImageURL(variant.WebURL, policy) {
+				continue
+			}
 			if !uploadEligibleForTracker(variant.UsageScope, tracker) {
 				continue
 			}

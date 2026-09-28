@@ -24,6 +24,8 @@ type Profile struct {
 	DescriptionGroup        string
 	LocalizedMetadataLocale string
 	UploadContentMode       trackers.UploadContentMode
+	UsesMenuImages          bool
+	SourceOnlyImageReusable func(string, []api.TrackerMetadata) bool
 	PrepareDescription      DescriptionPreparer
 	PrepareUpload           trackers.UploadPreparer
 	ReleaseNamePolicy       trackers.ReleaseNamePolicyBinding

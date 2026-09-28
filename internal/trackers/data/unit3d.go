@@ -26,11 +26,13 @@ import (
 	"time"
 
 	"github.com/autobrr/rls"
+	_ "golang.org/x/image/webp" // register WebP decoder for tracker images
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -398,11 +400,18 @@ func convertCleanedUnit3DImages(images []descriptionunit3d.Image) []bbcode.Image
 func resolveImgBBImages(ctx context.Context, client *http.Client, tracker string, logger api.Logger, images []bbcode.Image) []bbcode.Image {
 	safeClient := Unit3DImageHTTPClient(client)
 	for index := range images {
-		if !isImgBBPageURL(images[index].WebURL) {
+		pageURL := images[index].WebURL
+		if !isImgBBPageURL(pageURL) {
+			pageURL = imagehost.WsrvSourceURL(pageURL)
+		}
+		if !isImgBBPageURL(pageURL) {
+			pageURL = imagehost.WsrvSourceURL(images[index].ImgURL)
+		}
+		if !isImgBBPageURL(pageURL) {
 			continue
 		}
 		pageCtx, cancel := context.WithTimeout(ctx, imageTimeout)
-		fullURL, reason := fetchImgBBFullImageURL(pageCtx, safeClient, images[index].WebURL)
+		fullURL, reason := fetchImgBBFullImageURL(pageCtx, safeClient, pageURL)
 		cancel()
 		if reason != "" {
 			if isImgBBDirectImageURL(images[index].RawURL) {
@@ -417,6 +426,7 @@ func resolveImgBBImages(ctx context.Context, client *http.Client, tracker string
 			continue
 		}
 		images[index].RawURL = fullURL
+		images[index].Host = imagehost.ExtractHost(fullURL)
 		logger.Debugf("trackerdata: linked image tracker=%s index=%d host=imgbb full_image_lookup=resolved", tracker, index+1)
 	}
 	return images
@@ -468,44 +478,68 @@ func fetchImgBBFullImageURL(ctx context.Context, client *http.Client, webURL str
 	if len(page) > maxImagePageBytes {
 		return "", "page_too_large"
 	}
-	fullURL := imgBBFullImageURL(page)
+	fullURL := imgBBFullImageURL(page, webURL)
 	if fullURL == "" {
 		return "", "full_image_not_found"
 	}
 	return fullURL, ""
 }
 
-func imgBBFullImageURL(page []byte) string {
+func imgBBFullImageURL(page []byte, viewerURL string) string {
+	viewer, err := url.Parse(viewerURL)
+	if err != nil {
+		return ""
+	}
 	tokenizer := xhtml.NewTokenizer(bytes.NewReader(page))
+	linkedImage := ""
 	for {
 		kind := tokenizer.Next()
 		if kind == xhtml.ErrorToken {
-			return ""
+			return linkedImage
 		}
 		if kind != xhtml.StartTagToken && kind != xhtml.SelfClosingTagToken {
 			continue
 		}
 		tag := tokenizer.Token()
-		if !strings.EqualFold(tag.Data, "meta") {
+		if !strings.EqualFold(tag.Data, "meta") && !strings.EqualFold(tag.Data, "link") {
 			continue
 		}
-		property, content := "", ""
+		property, content, rel, href := "", "", "", ""
 		for _, attr := range tag.Attr {
 			switch strings.ToLower(attr.Key) {
 			case "property":
 				property = attr.Val
 			case "content":
 				content = strings.TrimSpace(attr.Val)
+			case "rel":
+				rel = attr.Val
+			case "href":
+				href = strings.TrimSpace(attr.Val)
 			}
 		}
-		if !strings.EqualFold(property, "og:image") {
+		isOpenGraph := strings.EqualFold(tag.Data, "meta") && strings.EqualFold(property, "og:image")
+		isImageSource := strings.EqualFold(tag.Data, "link") && strings.EqualFold(rel, "image_src")
+		if !isOpenGraph && !isImageSource {
 			continue
 		}
-		parsed, err := url.Parse(content)
-		if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "i.ibb.co") || parsed.Port() != "" || parsed.User != nil {
-			return ""
+		candidate := content
+		if isImageSource {
+			candidate = href
 		}
-		return content
+		parsed, err := url.Parse(candidate)
+		if err != nil {
+			continue
+		}
+		parsed = viewer.ResolveReference(parsed)
+		if parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "i.ibb.co") || parsed.Port() != "" || parsed.User != nil {
+			continue
+		}
+		if isOpenGraph {
+			return parsed.String()
+		}
+		if linkedImage == "" {
+			linkedImage = parsed.String()
+		}
 	}
 }
 

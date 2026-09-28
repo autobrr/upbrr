@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/bbcode/comparison"
@@ -403,6 +404,10 @@ func exactDescriptionMedia(
 	menuImages := make([]api.ScreenshotImage, 0, len(meta.ExactMedia.DVDMenus))
 	for _, menu := range meta.ExactMedia.DVDMenus {
 		image := menu.ScreenshotImage
+		if sourceOnlyScreenshotImage(image) {
+			image.Host, image.ImgURL, image.RawURL, image.WebURL = "", "", "", ""
+			image.UploadedAt = time.Time{}
+		}
 		if upload, ok := exactUploadedVariant(tracker, image.Path, meta.ExactMedia.DVDMenuUploads, ""); ok {
 			image.Host = upload.Host
 			image.ImgURL = upload.ImgURL
@@ -422,7 +427,7 @@ func exactUploadedVariant(tracker string, imagePath string, uploads []api.Upload
 	for _, scope := range preferredScopes {
 		for _, upload := range uploads {
 			if strings.TrimSpace(upload.ImagePath) == imagePath && normalizeUsageScope(upload.UsageScope) == scope &&
-				(host == "" || strings.EqualFold(strings.TrimSpace(upload.Host), host)) {
+				(host == "" || strings.EqualFold(strings.TrimSpace(upload.Host), host)) && !sourceOnlyUploadedImage(upload) {
 				return upload, true
 			}
 		}
@@ -864,7 +869,13 @@ func resolveDescriptionScreenshots(
 	if err != nil {
 		return nil, nil, fmt.Errorf("trackers: load screenshot slots: %w", err)
 	}
-	images, _, _, err := selectScreenshotsFromSlots(tracker, slots, imageHostPolicy{})
+	selectionPolicy := imageHostPolicy{sourceOnlyAllowed: sourceOnlyImageReusePolicy(registry, tracker, meta, preloaded)}
+	records := meta.TrackerData
+	if preloaded != nil && len(preloaded.trackerRecords) > 0 {
+		records = preloaded.trackerRecords
+	}
+	attachNativeSourceURLsToSlots(slots, records, selectionPolicy)
+	images, _, _, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy)
 	if err != nil {
 		return nil, nil, fmt.Errorf("trackers: resolve screenshot slots for %s: %w", strings.TrimSpace(tracker), err)
 	}
@@ -882,7 +893,7 @@ func resolveDescriptionScreenshots(
 	if logger != nil {
 		logger.Tracef("trackers: description assets screenshots source=tracker_urls tracker=%s urls=%d", strings.TrimSpace(tracker), len(urls))
 	}
-	return nil, resolveTrackerScreenshots(urls), nil
+	return nil, resolveTrackerScreenshotsWithPolicy(urls, selectionPolicy), nil
 }
 
 func preloadDescriptionAssetData(
@@ -959,6 +970,8 @@ func preloadUploadAssetData(
 				SourcePath:          meta.SourcePath,
 				SlotOrder:           index,
 				SourceKind:          string(image.Purpose),
+				OriginalURL:         firstNonEmptyScreenshotValue(image.RawURL, image.ImgURL),
+				OriginalHost:        firstNonEmptyScreenshotValue(image.Host, imagehost.ExtractHost(firstNonEmptyScreenshotValue(image.RawURL, image.ImgURL))),
 				ImagePath:           imagePath,
 				RenderInScreenshots: true,
 			})
@@ -970,7 +983,8 @@ func preloadUploadAssetData(
 		}
 		applyUploadedVariantsToSlots(preloaded.screenshotSlots, preloaded.uploads)
 		for index := range preloaded.screenshotSlots {
-			preloaded.screenshotSlots[index].RenderInScreenshots = len(preloaded.screenshotSlots[index].Variants) > 0
+			preloaded.screenshotSlots[index].RenderInScreenshots = len(preloaded.screenshotSlots[index].Variants) > 0 ||
+				preloaded.screenshotSlots[index].OriginalURL != ""
 		}
 		preloaded.screenshotSlotsLoaded = true
 		return preloaded, nil
@@ -1098,15 +1112,23 @@ func uploadedImagesFromSource(
 		return nil, fmt.Errorf("trackers: load uploaded images canceled: %w", err)
 	}
 	if preloaded != nil {
-		return preloaded.uploads, nil
+		return slices.DeleteFunc(append([]api.UploadedImageLink(nil), preloaded.uploads...), sourceOnlyUploadedImage), nil
 	}
 	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return slices.DeleteFunc(uploads, func(upload api.UploadedImageLink) bool {
-		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis
+		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis || sourceOnlyUploadedImage(upload)
 	}), nil
+}
+
+func sourceOnlyUploadedImage(upload api.UploadedImageLink) bool {
+	return imagehost.IsSourceOnlyURL(upload.ImgURL) || imagehost.IsSourceOnlyURL(upload.RawURL) || imagehost.IsSourceOnlyURL(upload.WebURL)
+}
+
+func sourceOnlyScreenshotImage(image api.ScreenshotImage) bool {
+	return imagehost.IsSourceOnlyURL(image.ImgURL) || imagehost.IsSourceOnlyURL(image.RawURL) || imagehost.IsSourceOnlyURL(image.WebURL)
 }
 
 func resolveTrackerImageURLs(
@@ -1189,6 +1211,10 @@ func filterTrackerMetadataByName(records []api.TrackerMetadata, tracker string) 
 }
 
 func resolveTrackerScreenshots(urls []string) []api.ScreenshotImage {
+	return resolveTrackerScreenshotsWithPolicy(urls, imageHostPolicy{})
+}
+
+func resolveTrackerScreenshotsWithPolicy(urls []string, policy imageHostPolicy) []api.ScreenshotImage {
 	if len(urls) == 0 {
 		return nil
 	}
@@ -1198,7 +1224,7 @@ func resolveTrackerScreenshots(urls []string) []api.ScreenshotImage {
 		if trimmed == "" {
 			continue
 		}
-		if isTMDBImageURL(trimmed) {
+		if isTMDBImageURL(trimmed) || !reusableSourceImageURL(trimmed, policy) {
 			continue
 		}
 		host := strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(trimmed)))
@@ -1218,7 +1244,7 @@ func resolveTrackerScreenshots(urls []string) []api.ScreenshotImage {
 		if trimmed == "" {
 			continue
 		}
-		if isTMDBImageURL(trimmed) {
+		if isTMDBImageURL(trimmed) || !reusableSourceImageURL(trimmed, policy) {
 			continue
 		}
 		host := strings.TrimSpace(imagehost.ExtractHost(trimmed))

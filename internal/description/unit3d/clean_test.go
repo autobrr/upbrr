@@ -161,6 +161,51 @@ func TestCleanDescriptionConvertsMixedCasePixhostThumbURL(t *testing.T) {
 	}
 }
 
+func TestCleanDescriptionUsesOnlyImagePageOverBackupThumbnail(t *testing.T) {
+	report := CleanDescription(
+		"[url=https://onlyimage.org/image/Ab12][img]https://file.aither.cc/backup.png[/img][/url]",
+		"https://aither.cc",
+	)
+	if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.onlyimage.org/Ab12.png" ||
+		report.Images[0].WebURL != "https://onlyimage.org/image/Ab12" {
+		t.Fatalf("OnlyImage original not selected: %#v", report.Images)
+	}
+}
+
+func TestCleanDescriptionUsesLinkedWsrvSource(t *testing.T) {
+	report := CleanDescription(
+		"[url=https://wsrv.nl/?url=https%3A%2F%2Fimg.onlyimage.org%2FFull.md.png][img]https://file.aither.cc/backup.png[/img][/url]",
+		"https://aither.cc",
+	)
+	if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.onlyimage.org/Full.png" {
+		t.Fatalf("proxied full-size image not selected: %#v", report.Images)
+	}
+}
+
+func TestCleanDescriptionUsesWsrvSourceHostForUnlinkedImage(t *testing.T) {
+	report := CleanDescription(
+		"[img]https://wsrv.nl/?url=https%3A%2F%2Fimg.onlyimage.org%2FFull.md.png[/img]",
+		"https://aither.cc",
+	)
+	if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.onlyimage.org/Full.png" || report.Images[0].Host != "onlyimage" {
+		t.Fatalf("proxied image host not updated: %#v", report.Images)
+	}
+}
+
+func TestCleanDescriptionKeepsSupportedImageWhenLinkedFormatCannotBeRehosted(t *testing.T) {
+	for _, extension := range []string{"avif", "bmp", "gif"} {
+		t.Run(extension, func(t *testing.T) {
+			report := CleanDescription(
+				"[url=https://img.blutopia.cc/Full."+extension+"][img]https://img.blutopia.cc/Thumb.jpg[/img][/url]",
+				"https://aither.cc",
+			)
+			if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.blutopia.cc/Thumb.jpg" {
+				t.Fatalf("unsupported linked image displaced JPEG: %#v", report.Images)
+			}
+		})
+	}
+}
+
 func TestNormalizeRawImageURLRejectsPixhostSuffixHosts(t *testing.T) {
 	tests := []struct {
 		name string

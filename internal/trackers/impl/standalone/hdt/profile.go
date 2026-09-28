@@ -12,6 +12,7 @@ import (
 // Profile returns HDT identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		UsesMenuImages:      true,
 		Name:                "HDT",
 		BaseURL:             resolveBaseURL(),
 		DescriptionGroup:    "hdt",

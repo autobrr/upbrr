@@ -3399,6 +3399,45 @@ func TestWorkflowMediaBuilderRetainsImportedScreenshotsAndSourceURLs(t *testing.
 	}
 }
 
+func TestWorkflowMediaBuilderKeepsSourceOnlyImagesLocal(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	plan := api.ScreenshotPlan{}
+	for index, rawURL := range []string{
+		"https://wsrv.nl/?url=https%3A%2F%2Fexample.org%2Fshot.png",
+		"https://passthepopcorn.me/static/shot.jpg",
+	} {
+		pathValue := filepath.Join(root, fmt.Sprintf("imported-%d.png", index))
+		plan.FinalSelections = append(plan.FinalSelections, api.ScreenshotImage{
+			Path:    pathValue,
+			Purpose: api.ScreenshotPurposeFinal,
+			Index:   index,
+		})
+		plan.TrackerImageLinks = append(plan.TrackerImageLinks, api.ScreenshotLinkedImage{
+			Tracker: "PTP",
+			URL:     rawURL,
+			Path:    pathValue,
+			Host:    "source",
+		})
+	}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: &workflowScreenshotFake{root: root, plan: &plan}}
+	snapshot, private, err := builder.Build(t.Context(), api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Release.2026-GRP.mkv"), Generation: 1},
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "PTP", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}}}},
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, ScreenshotCount: 2}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, ok := private.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("private imported media = %#v", private)
+	}
+	exact, err := resolveWorkflowExactMedia(retained, snapshot)
+	if err != nil || len(exact.Screenshots) != 2 || len(exact.ScreenshotUploads) != 0 || len(retained.HostedImages) != 0 ||
+		countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactHostedImage) != 0 {
+		t.Fatalf("source-only images were treated as hosted: snapshot=%#v exact=%#v err=%v", snapshot, exact, err)
+	}
+}
+
 func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

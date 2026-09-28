@@ -19,6 +19,7 @@ func Profile() standalone.Profile {
 		BaseURL:            bhdBaseURL,
 		DescriptionGroup:   "bhd",
 		UploadContentMode:  trackers.UploadContentModeDescription,
+		UsesMenuImages:     true,
 		AuthCapability:     authcontract.APIKeyCapability("BHD"),
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,

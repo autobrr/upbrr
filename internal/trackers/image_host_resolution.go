@@ -16,6 +16,7 @@ import (
 	"os"
 	"path" //nolint:depguard // Extracts URL path components from image host URLs.
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,10 @@ func exactMediaForTrackerHost(
 	preferredHosts ...string,
 ) (*api.ExactMediaAssets, error) {
 	exact := meta.ExactMedia.Clone()
+	if exact != nil {
+		exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, sourceOnlyUploadedImage)
+		exact.DVDMenuUploads = slices.DeleteFunc(exact.DVDMenuUploads, sourceOnlyUploadedImage)
+	}
 	if exact == nil || len(exact.Screenshots) == 0 || len(exact.ScreenshotUploads) == 0 {
 		return exact, nil
 	}
@@ -60,6 +65,9 @@ func exactMediaForTrackerHost(
 		compatiblePaths := make(map[string]struct{})
 		uploads := make([]api.UploadedImageLink, 0, len(exact.ScreenshotUploads))
 		for _, upload := range exact.ScreenshotUploads {
+			if sourceOnlyUploadedImage(upload) {
+				continue
+			}
 			pathValue := strings.TrimSpace(upload.ImagePath)
 			host := strings.ToLower(strings.TrimSpace(upload.Host))
 			scope := normalizeUsageScope(upload.UsageScope)
@@ -83,8 +91,8 @@ func exactMediaForTrackerHost(
 				images = append(images, image)
 			}
 			exact.Screenshots = images
-			exact.ScreenshotUploads = uploads
 		}
+		exact.ScreenshotUploads = uploads
 		return exact, nil
 	}
 	selectionPolicy := reusableImageHostSelectionPolicy(policy, preferredHosts...)
@@ -95,6 +103,9 @@ func exactMediaForTrackerHost(
 	pathsByHost := make(map[string]map[string]struct{})
 	orderedHosts := make([]string, 0)
 	for _, upload := range exact.ScreenshotUploads {
+		if sourceOnlyUploadedImage(upload) {
+			continue
+		}
 		host := strings.ToLower(strings.TrimSpace(upload.Host))
 		pathValue := strings.TrimSpace(upload.ImagePath)
 		if _, selected := availablePaths[pathValue]; !selected || pathValue == "" || host == "" ||
@@ -127,14 +138,24 @@ func exactMediaForTrackerHost(
 		return exact, nil
 	}
 	selected := pathsByHost[selectedHost]
+	uploadedPaths := make(map[string]struct{}, len(exact.ScreenshotUploads))
+	for _, upload := range exact.ScreenshotUploads {
+		uploadedPaths[strings.TrimSpace(upload.ImagePath)] = struct{}{}
+	}
 	filteredImages := make([]api.ScreenshotImage, 0, len(selected))
 	for _, image := range exact.Screenshots {
-		if _, ok := selected[strings.TrimSpace(image.Path)]; ok {
+		pathValue := strings.TrimSpace(image.Path)
+		_, hosted := selected[pathValue]
+		_, hasUpload := uploadedPaths[pathValue]
+		if hosted || !hasUpload {
 			filteredImages = append(filteredImages, image)
 		}
 	}
 	filteredUploads := make([]api.UploadedImageLink, 0, len(selected))
 	for _, upload := range exact.ScreenshotUploads {
+		if sourceOnlyUploadedImage(upload) {
+			continue
+		}
 		if strings.EqualFold(strings.TrimSpace(upload.Host), selectedHost) {
 			if _, ok := selected[strings.TrimSpace(upload.ImagePath)]; ok {
 				filteredUploads = append(filteredUploads, upload)
@@ -195,6 +216,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	if err != nil {
 		return descriptionImageHostResolution{}, err
 	}
+	policy.sourceOnlyAllowed = sourceOnlyImageReusePolicy(registry, tracker, meta, preloaded)
 	selectionPolicy := reusableImageHostSelectionPolicy(policy, preferredHosts...)
 	feedback := api.ImageHostFeedback{
 		Status:       "reused",
@@ -214,6 +236,33 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			logger.Debugf("trackers: image host resolution screenshot slots failed tracker=%s: %v", tracker, err)
 		}
 		slots = nil
+	}
+	records := meta.TrackerData
+	if preloaded != nil && len(preloaded.trackerRecords) > 0 {
+		records = preloaded.trackerRecords
+	}
+	if attachNativeSourceURLsToSlots(slots, records, policy) {
+		syncSlotsToPreloaded(preloaded, slots)
+	}
+	if meta.ExactMedia != nil {
+		for index := range slots {
+			if strings.TrimSpace(slots[index].ImagePath) != "" && len(slots[index].Variants) == 0 {
+				slots[index].RenderInScreenshots = true
+			}
+		}
+	}
+	sourceOnlySlots := false
+	needsLocalRehost := false
+	for _, slot := range renderableSlots(slots) {
+		if imagehost.IsSourceOnlyURL(slot.OriginalURL) {
+			sourceOnlySlots = true
+		}
+		if strings.TrimSpace(slot.ImagePath) != "" && len(slot.Variants) == 0 {
+			needsLocalRehost = true
+		}
+	}
+	if (sourceOnlySlots || needsLocalRehost) && meta.ExactMedia != nil {
+		skipUpload = false
 	}
 	persistSlots := screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry)
 	var localTrackerImages []api.ScreenshotImage
@@ -243,19 +292,23 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			}, nil
 		}
 		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry)
-		screenshots = resolveTrackerScreenshots(urls)
+		screenshots = resolveTrackerScreenshotsWithPolicy(urls, selectionPolicy)
 		if len(screenshots) > 0 {
 			feedback.SelectedHost = strings.ToLower(strings.TrimSpace(screenshots[0].Host))
 			feedback.Message = buildReuseMessage(tracker, feedback.SelectedHost, globalImageUsageScope, false)
 		}
-		if len(screenshots) > 0 || preferredHost == "" {
+		if !sourceOnlySlots && !needsLocalRehost && (len(screenshots) > 0 || preferredHost == "") {
 			return descriptionImageHostResolution{
 				screenshots: screenshots,
 				feedback:    feedback,
 				usageScope:  globalImageUsageScope,
 			}, nil
 		}
-		policy = optionalImageHostUploadPolicy(policy, preferredHosts...)
+		if sourceOnlySlots || needsLocalRehost {
+			policy = sourceOnlyImageUploadPolicy(registry, appCfg, tracker, policy, preferredHosts...)
+		} else {
+			policy = optionalImageHostUploadPolicy(policy, preferredHosts...)
+		}
 		selectionPolicy = reusableImageHostSelectionPolicy(policy, preferredHosts...)
 	}
 
@@ -284,7 +337,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			tracker,
 			imageHostRequirementLabel(policy),
 		)
-		return descriptionImageHostResolution{feedback: feedback}, nil
+		return descriptionImageHostResolution{feedback: feedback, blocking: sourceOnlySlots || needsLocalRehost}, nil
 	}
 
 	sourceImages := slotSourceImagesForRehost(slots)
@@ -500,8 +553,9 @@ func firstPreferredDescriptionImageHost(hosts []string) string {
 // image-host reuse without restricting the set of acceptable screenshot hosts.
 func optionalImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
 	return imageHostPolicy{
-		preferred: optionalImageHostPreferredHosts(policy, preferredHosts...),
-		failed:    append([]string(nil), policy.failed...),
+		preferred:         optionalImageHostPreferredHosts(policy, preferredHosts...),
+		failed:            append([]string(nil), policy.failed...),
+		sourceOnlyAllowed: policy.sourceOnlyAllowed,
 	}
 }
 
@@ -518,6 +572,17 @@ func optionalImageHostUploadPolicy(policy imageHostPolicy, preferredHosts ...str
 		return policy
 	}
 	return applyFailedImageHosts(newPreferredImageHostPolicy(hosts[0], hosts[1:]...), policy.failed)
+}
+
+func sourceOnlyImageUploadPolicy(registry *Registry, appCfg config.Config, tracker string, policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
+	for _, host := range imageUploadCandidatesForTracker(registry, appCfg, tracker, configuredImageUploadHosts(registry, appCfg)) {
+		if !imageHostUsableForPolicy(registry, tracker, host, policy) {
+			continue
+		}
+		policy.uploadHosts = appendUniqueHost(policy.uploadHosts, host)
+		policy.preferred = appendUniqueHost(policy.preferred, host)
+	}
+	return optionalImageHostUploadPolicy(policy, preferredHosts...)
 }
 
 // optionalImageHostPreferredHosts returns policy preferences with an explicit
@@ -634,6 +699,9 @@ func reusableUploadedScreenshotsForHost(
 	}
 	byPath := make(map[string]api.UploadedImageLink, len(uploads))
 	for _, upload := range uploads {
+		if sourceOnlyUploadedImage(upload) {
+			continue
+		}
 		if !strings.EqualFold(strings.TrimSpace(upload.Host), strings.TrimSpace(host)) {
 			continue
 		}
@@ -849,7 +917,7 @@ func resolveTrackerScreenshotsForAllowedHost(urls []string, policy imageHostPoli
 		filtered := make([]api.ScreenshotImage, 0, len(urls))
 		for _, rawURL := range urls {
 			trimmed := strings.TrimSpace(rawURL)
-			if trimmed == "" {
+			if trimmed == "" || imagehost.IsSourceOnlyURL(trimmed) {
 				continue
 			}
 			if strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(trimmed))) != host {
@@ -1092,9 +1160,6 @@ func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawU
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
-	if contentType != "" && !isDescriptionSlotImageContentType(contentType) {
-		return fmt.Errorf("invalid content-type %q", contentType)
-	}
 	if resp.ContentLength > descriptionSlotImageMaxBytes {
 		return fmt.Errorf("image exceeds max size (%d bytes)", resp.ContentLength)
 	}
@@ -1109,13 +1174,26 @@ func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawU
 		return fmt.Errorf("image exceeds max size (%d bytes)", len(payload))
 	}
 	detectedContentType := strings.ToLower(http.DetectContentType(payload))
-	if !isDescriptionSlotImageContentType(detectedContentType) {
+	avifPayload := isAVIFImagePayload(payload)
+	headerAllowed := contentType == "" || isDescriptionSlotImageContentType(contentType)
+	if avifPayload && strings.HasPrefix(contentType, "application/octet-stream") {
+		headerAllowed = true
+	}
+	if !headerAllowed {
+		return fmt.Errorf("invalid content-type %q", contentType)
+	}
+	if !isDescriptionSlotImageContentType(detectedContentType) && !avifPayload {
 		return fmt.Errorf("invalid image payload content-type %q", detectedContentType)
 	}
 	if err := os.WriteFile(outPath, payload, 0o600); err != nil {
 		return fmt.Errorf("write image: %w", err)
 	}
 	return nil
+}
+
+func isAVIFImagePayload(payload []byte) bool {
+	return len(payload) >= 12 && string(payload[4:8]) == "ftyp" &&
+		(string(payload[8:12]) == "avif" || string(payload[8:12]) == "avis")
 }
 
 var newDescriptionSlotImageHTTPClient = func() *http.Client {

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
@@ -45,7 +46,7 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 		sections = append(sections, mediaSection)
 	}
 	if strings.TrimSpace(baseDescription) != "" {
-		sections = append(sections, convertDescription(baseDescription))
+		sections = append(sections, comparison.MapOutsideBlocks(baseDescription, convertDescription))
 	}
 	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") && strings.TrimSpace(meta.ServiceLongName) != "" && trackerConfig.AddWebSourceToDesc {
 		sections = append(
@@ -100,6 +101,15 @@ func isPTPImageHost(host string) bool {
 	}
 }
 
+func sourceOnlyImageReusable(rawURL string, _ []api.TrackerMetadata) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "passthepopcorn.me" || strings.HasSuffix(host, ".passthepopcorn.me")
+}
+
 func convertDescription(value string) string {
 	replacer := strings.NewReplacer(
 		"[spoiler", "[hide",
@@ -117,7 +127,7 @@ func convertDescription(value string) string {
 		"[h3]", "[u][b]",
 		"[/h3]", "[/b][/u]",
 	)
-	return replacer.Replace(strings.TrimSpace(value))
+	return replacer.Replace(value)
 }
 
 func rehostPosterToSelectedHost(ctx context.Context, req trackers.PreparationInput, imageURL string) string {

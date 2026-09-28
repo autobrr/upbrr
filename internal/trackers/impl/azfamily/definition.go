@@ -32,6 +32,9 @@ func (d *Definition) Name() string {
 // TrackerFamily identifies the definition as AZ-family-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyAZFamily }
 
+// UsesMenuImages reports that AZ-family descriptions consume selected DVD menus.
+func (d *Definition) UsesMenuImages() bool { return true }
+
 // ReleaseNamePolicy returns the site's versioned structured upload/search naming contract.
 // CinemaZ v5 uses IMDb as movie-year authority; AZ and PHD v3 use TMDB.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {

@@ -14,12 +14,13 @@ import (
 )
 
 type imageHostPolicy struct {
-	allowed     []string
-	uploadHosts []string
-	preferred   []string
-	failed      []string
-	required    bool
-	fallbackOK  bool
+	allowed           []string
+	uploadHosts       []string
+	preferred         []string
+	failed            []string
+	required          bool
+	fallbackOK        bool
+	sourceOnlyAllowed func(string) bool
 }
 
 // ImageUploadTarget identifies one host upload required by a tracker set.

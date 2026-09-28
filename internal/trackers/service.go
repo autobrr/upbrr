@@ -415,6 +415,11 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			continue
 		}
 		applyResolvedDescriptionScreenshots(ctx, tracker, trackerMeta, s.repo, trackerPreloaded, &assets, resolution.screenshots)
+		if err := s.rehostSourceOnlyDescriptionImages(ctx, tracker, trackerMeta, trackerCfg, &assets, trackerPreloaded); err != nil {
+			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
+			contentFailures = append(contentFailures, *failed.Failure)
+			continue
+		}
 		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentDescriptionPreview, tracker, trackerMeta, trackerCfg, &assets))
 		if failure != nil {
 			s.logger.Errorf("trackers: preparation failed for %s: %v", tracker, failure)

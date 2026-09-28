@@ -198,6 +198,196 @@ func TestExactMediaForOptionalTrackerExcludesAnotherTrackersOwnedHost(t *testing
 	}
 }
 
+func TestExactMediaForOptionalTrackerDropsSourceOnlyLegacyUpload(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{Name: "ALPHA", Definition: stubDefinition{name: "ALPHA"}}); err != nil {
+		t.Fatal(err)
+	}
+	imagePath := filepath.Join(t.TempDir(), "local.png")
+	exact := &api.ExactMediaAssets{
+		Screenshots: []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}},
+		ScreenshotUploads: []api.UploadedImageLink{{
+			ImagePath: imagePath,
+			Host:      "imgbb",
+			RawURL:    "https://passthepopcorn.me/static/shot.jpg",
+		}},
+	}
+	filtered, err := exactMediaForTrackerHost("ALPHA", api.UploadSubject{ExactMedia: exact}, config.Config{}, config.TrackerConfig{}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Screenshots) != 1 || len(filtered.ScreenshotUploads) != 0 {
+		t.Fatalf("optional tracker retained source-only legacy upload: %#v", filtered)
+	}
+}
+
+func TestExactMediaForTrackerHostDropsSourceOnlyDVDMenuUpload(t *testing.T) {
+	t.Parallel()
+	menuPath := filepath.Join(t.TempDir(), "menu.png")
+	exact := &api.ExactMediaAssets{
+		DVDMenus: []api.DVDMenuCaptureImage{{
+			Path: menuPath, RawURL: "https://wsrv.nl/?url=https%3A%2F%2Fexample.org%2Fmenu.png"}},
+		DVDMenuUploads: []api.UploadedImageLink{{
+			ImagePath: menuPath,
+			Host:      "imgbox",
+			RawURL:    "https://passthepopcorn.me/static/menu.png",
+		}},
+	}
+	filtered, err := exactMediaForTrackerHost("BTN", api.UploadSubject{ExactMedia: exact}, config.Config{}, config.TrackerConfig{}, nil)
+	if err != nil || len(filtered.DVDMenuUploads) != 0 {
+		t.Fatalf("legacy DVD menu upload = %#v, err=%v", filtered, err)
+	}
+	menus, _ := exactDescriptionMedia("BTN", api.UploadSubject{ExactMedia: filtered}, nil)
+	if len(menus) != 1 || menus[0].RawURL != "" || menus[0].Path != menuPath {
+		t.Fatalf("legacy DVD menu image = %#v", menus)
+	}
+}
+
+func TestOptionalTrackerRehostsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "source.mkv")
+	imagePath := filepath.Join(root, "image.png")
+	if err := os.WriteFile(imagePath, []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := &stubRepo{}
+	images := &stubImageService{repo: repo}
+	skipUpload := true
+	meta := api.UploadSubject{
+		SourcePath:   sourcePath,
+		MediaBinding: trackerTestMediaBinding(sourcePath),
+		ExactMedia: &api.ExactMediaAssets{Screenshots: []api.ScreenshotImage{{
+			Path:    imagePath,
+			Purpose: api.ScreenshotPurposeFinal,
+			RawURL:  "https://passthepopcorn.me/static/shot.png",
+		}}},
+		Options:            api.UploadOptions{KeepImages: true},
+		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: &skipUpload},
+	}
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbox"}}
+	preloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, cfg, config.TrackerConfig{}, repo, images, api.NopLogger{}, registry, preloaded)
+	if err != nil || len(resolution.screenshots) != 1 || len(images.calls) != 1 || images.calls[0] != "imgbox" {
+		t.Fatalf("optional source-only rehost = %#v, calls=%#v, err=%v", resolution, images.calls, err)
+	}
+}
+
+func TestOriginTrackerKeepsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "source.mkv")
+	imagePath := filepath.Join(root, "image.png")
+	if err := os.WriteFile(imagePath, []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const rawURL = "https://wsrv.aither.cc/?url=https%3A%2F%2Fexample.org%2Fshot.png"
+	skipUpload := true
+	meta := api.UploadSubject{
+		SourcePath:   sourcePath,
+		MediaBinding: trackerTestMediaBinding(sourcePath),
+		ExactMedia: &api.ExactMediaAssets{Screenshots: []api.ScreenshotImage{{
+			Path:    imagePath,
+			RawURL:  rawURL,
+			ImgURL:  rawURL,
+			Host:    "wsrv.aither.cc",
+			Purpose: api.ScreenshotPurposeFinal,
+		}}},
+		Options:            api.UploadOptions{KeepImages: true},
+		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: &skipUpload},
+	}
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:       "AITHER",
+		Definition: nativeSourceImageTestDefinition{stubDefinition: stubDefinition{name: "AITHER"}, reusableURL: rawURL},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	repo := &stubRepo{}
+	preloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, registry, preloaded)
+	if err != nil || resolution.blocking || len(resolution.screenshots) != 1 || resolution.screenshots[0].RawURL != rawURL {
+		t.Fatalf("origin screenshot = %#v, err=%v", resolution, err)
+	}
+
+	otherRegistry := NewRegistry()
+	if err := otherRegistry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
+		t.Fatal(err)
+	}
+	otherPreloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, otherRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, otherRegistry, otherPreloaded)
+	if err != nil || len(other.screenshots) != 0 || other.feedback.Status != "warning" {
+		t.Fatalf("cross-tracker source-only screenshot = %#v, err=%v", other, err)
+	}
+}
+
+func TestOriginTrackerMatchesSelectedLocalSourceScreenshot(t *testing.T) {
+	t.Parallel()
+	const rawURL = "https://wsrv.nl/?url=https%3A%2F%2Fexample.org%2Fshot.png"
+	imagePath := localTrackerArtifactPaths(filepath.Join(t.TempDir(), "aither"), rawURL, 0)[0]
+	slots := buildSelectionSlots("source.mkv", []api.ScreenshotFinalSelection{{ImagePath: imagePath}})
+	policy := imageHostPolicy{sourceOnlyAllowed: func(candidate string) bool { return candidate == rawURL }}
+	if !attachNativeSourceURLsToSlots(slots, []api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{rawURL}}}, policy) {
+		t.Fatal("native source URL was not matched to selected local image")
+	}
+	selected, _, _, err := selectScreenshotsFromSlots("AITHER", slots, policy)
+	if err != nil || len(selected) != 1 || selected[0].RawURL != rawURL || selected[0].Path != imagePath {
+		t.Fatalf("selected native screenshot = %#v, err=%v", selected, err)
+	}
+	if _, _, _, err := selectScreenshotsFromSlots("TL", slots, imageHostPolicy{}); err == nil {
+		t.Fatal("another tracker reused AITHER's wsrv.nl link")
+	}
+}
+
+func TestOptionalTrackerRehostsSelectedScreenshotWithLegacySourceOnlyUpload(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "source.mkv")
+	imagePath := filepath.Join(root, "image.png")
+	if err := os.WriteFile(imagePath, []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{{SourcePath: sourcePath, ImagePath: imagePath}},
+		uploads: []api.UploadedImageLink{{
+			SourcePath: sourcePath,
+			ImagePath:  imagePath,
+			Host:       "imgbox",
+			ImgURL:     "https://passthepopcorn.me/static/shot.png",
+			RawURL:     "https://passthepopcorn.me/static/shot.png",
+		}},
+	}
+	images := &stubImageService{repo: repo}
+	meta := api.UploadSubject{
+		SourcePath:   sourcePath,
+		MediaBinding: trackerTestMediaBinding(sourcePath),
+		Options:      api.UploadOptions{KeepImages: true},
+	}
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbox"}}
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, cfg, config.TrackerConfig{}, repo, images, api.NopLogger{}, registry, nil)
+	if err != nil || len(resolution.screenshots) != 1 || len(images.calls) != 1 || images.calls[0] != "imgbox" || resolution.screenshots[0].ImgURL == "https://passthepopcorn.me/static/shot.png" {
+		t.Fatalf("legacy selected screenshot rehost = %#v, calls=%#v, err=%v", resolution, images.calls, err)
+	}
+}
+
 func TestExactMediaForRequiredTrackerDropsUnusableHostedLinks(t *testing.T) {
 	t.Parallel()
 	registry := NewRegistry()
@@ -233,6 +423,77 @@ func TestExactMediaForRequiredTrackerDropsUnusableHostedLinks(t *testing.T) {
 	}
 	if len(filtered.Screenshots) != 1 || len(filtered.ScreenshotUploads) != 0 {
 		t.Fatalf("required tracker retained unusable hosted link: %#v", filtered)
+	}
+}
+
+func TestExactMediaPreservesLocalScreenshotWhenAnotherHasUsableHost(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:       "ALPHA",
+		Definition: stubDefinition{name: "ALPHA"},
+		ImageHost:  &ImageHostPolicy{AllowedHosts: []string{"imgbb"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "source.mkv")
+	first := filepath.Join(root, "first.png")
+	second := filepath.Join(root, "second.png")
+	for _, pathValue := range []string{first, second} {
+		if err := os.WriteFile(pathValue, []byte("image"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, legacyUpload := range []bool{false, true} {
+		name := "local without upload"
+		if legacyUpload {
+			name = "legacy source-only upload"
+		}
+		t.Run(name, func(t *testing.T) {
+			exact := &api.ExactMediaAssets{
+				Screenshots: []api.ScreenshotImage{
+					{Path: first, Purpose: api.ScreenshotPurposeFinal},
+					{Path: second, Purpose: api.ScreenshotPurposeFinal},
+				},
+				ScreenshotUploads: []api.UploadedImageLink{{
+					ImagePath:  first,
+					Host:       "imgbb",
+					UsageScope: "global",
+					ImgURL:     "https://i.ibb.co/first.png",
+					RawURL:     "https://i.ibb.co/first.png",
+				}},
+			}
+			if legacyUpload {
+				exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+					ImagePath:  second,
+					Host:       "imgbb",
+					UsageScope: "global",
+					ImgURL:     "https://passthepopcorn.me/static/second.png",
+					RawURL:     "https://passthepopcorn.me/static/second.png",
+				})
+			}
+			filtered, err := exactMediaForTrackerHost("ALPHA", api.UploadSubject{ExactMedia: exact}, config.Config{}, config.TrackerConfig{}, registry)
+			if err != nil || len(filtered.Screenshots) != 2 || len(filtered.ScreenshotUploads) != 1 {
+				t.Fatalf("partly hosted exact media = %#v, err=%v", filtered, err)
+			}
+			meta := api.UploadSubject{
+				SourcePath:   sourcePath,
+				MediaBinding: trackerTestMediaBinding(sourcePath),
+				ExactMedia:   filtered,
+			}
+			repo := &stubRepo{}
+			preloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			images := &stubImageService{repo: repo}
+			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbb"}}
+			resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "ALPHA", meta, cfg, config.TrackerConfig{}, repo, images, api.NopLogger{}, registry, preloaded)
+			if err != nil || len(resolution.screenshots) != 2 || len(images.calls) != 1 || images.calls[0] != "imgbb" {
+				t.Fatalf("partly hosted screenshot rehost = %#v, calls=%#v, err=%v", resolution, images.calls, err)
+			}
+		})
 	}
 }
 
@@ -570,6 +831,27 @@ func TestDownloadDescriptionSlotImageAcceptsPublicImage(t *testing.T) {
 	}
 	if mode := info.Mode().Perm(); runtime.GOOS != "windows" && mode != 0o600 {
 		t.Fatalf("expected 0600 output mode, got %o", mode)
+	}
+}
+
+func TestDownloadDescriptionSlotImageAcceptsAVIFPayload(t *testing.T) {
+	t.Parallel()
+	payload := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f', 0, 0, 0, 0, 'a', 'v', 'i', 'f'}
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/octet-stream"}},
+			Body:       io.NopCloser(strings.NewReader(string(payload))),
+			Request:    req,
+		}, nil
+	})}
+	outPath := filepath.Join(t.TempDir(), "image.avif")
+	if err := downloadDescriptionSlotImage(t.Context(), client, "http://8.8.8.8/image.avif", outPath); err != nil {
+		t.Fatalf("download AVIF image: %v", err)
+	}
+	written, err := os.ReadFile(outPath)
+	if err != nil || string(written) != string(payload) {
+		t.Fatalf("AVIF output = %q, err=%v", written, err)
 	}
 }
 

@@ -87,7 +87,7 @@ func TestImgBBFullImageURLRejectsForeignMetadata(t *testing.T) {
 		`<meta property="og:image" content="http://i.ibb.co/full.png">`,
 		`<meta property="og:image" content="https://i.ibb.co:8443/full.png">`,
 	} {
-		if fullURL := imgBBFullImageURL([]byte(page)); fullURL != "" {
+		if fullURL := imgBBFullImageURL([]byte(page), "https://ibb.co/example"); fullURL != "" {
 			t.Fatalf("unexpected full image URL %q", fullURL)
 		}
 	}
@@ -96,6 +96,13 @@ func TestImgBBFullImageURLRejectsForeignMetadata(t *testing.T) {
 	}
 	if isImgBBPageURL("https://ibb.co.evil.example/example") || isImgBBPageURL("http://ibb.co/example") {
 		t.Fatal("foreign or insecure ImgBB pages must not be fetched")
+	}
+}
+
+func TestImgBBFullImageURLUsesImageSourceFallback(t *testing.T) {
+	page := `<meta property="og:image" content="https://i.ibb.co.evil.example/wrong.png"><link rel="image_src" href="//i.ibb.co/example/full.png">`
+	if got := imgBBFullImageURL([]byte(page), "https://ibb.co/example"); got != "https://i.ibb.co/example/full.png" {
+		t.Fatalf("ImgBB image source = %q", got)
 	}
 }
 
@@ -150,6 +157,24 @@ func TestResolveImgBBImagesKeepsDirectImageWhenPageLookupFails(t *testing.T) {
 	if len(logger.debug) != 1 || !strings.Contains(logger.debug[0], "decision=validate_direct_image") ||
 		strings.Contains(logger.debug[0], "full.png") {
 		t.Fatalf("expected safe direct-image fallback reason, got %v", logger.debug)
+	}
+}
+
+func TestResolveImgBBImagesFindsViewerInsideWsrvSource(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	logger := &unit3DImageRecordingLogger{}
+	image := bbcode.Image{
+		ImgURL: "https://wsrv.nl/?url=https%3A%2F%2Fibb.co%2FExample",
+		RawURL: "https://wsrv.nl/?url=https%3A%2F%2Fibb.co%2FExample",
+		WebURL: "https://wsrv.nl/?url=https%3A%2F%2Fibb.co%2FExample",
+	}
+	resolved := resolveImgBBImages(ctx, nil, "AITHER", logger, []bbcode.Image{image})
+	if len(resolved) != 1 || resolved[0] != (bbcode.Image{}) {
+		t.Fatalf("ImgBB viewer in proxy was not resolved: %#v", resolved)
+	}
+	if len(logger.debug) != 1 || !strings.Contains(logger.debug[0], "decision=skip_thumbnail") {
+		t.Fatalf("missing ImgBB lookup decision: %v", logger.debug)
 	}
 }
 

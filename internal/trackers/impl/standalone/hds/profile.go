@@ -12,6 +12,7 @@ import (
 // Profile returns HDS identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		UsesMenuImages:      true,
 		Name:                "HDS",
 		BaseURL:             baseURL,
 		DescriptionGroup:    "hds",

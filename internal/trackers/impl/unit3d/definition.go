@@ -54,6 +54,8 @@ type Profile struct {
 	BannedGroups []string
 	// ImageHost contains accepted image-host restrictions.
 	ImageHost *trackers.ImageHostPolicy
+	// SourceOnlyImageReusable accepts site-local proxy links in imported descriptions.
+	SourceOnlyImageReusable func(string, []api.TrackerMetadata) bool
 	// TorrentIdentity contains site-specific torrent identity aliases or overrides.
 	TorrentIdentity *trackers.TorrentIdentityPolicy
 	// ClaimPolicy contains generic claim-orchestration settings.
@@ -229,6 +231,14 @@ func (d *Definition) Name() string {
 
 // TrackerFamily identifies the definition as Unit3D-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyUnit3D }
+
+// UsesMenuImages reports that Unit3D descriptions consume selected DVD menus.
+func (d *Definition) UsesMenuImages() bool { return true }
+
+// SourceOnlyImageReusable reports whether this site accepts its own proxy image link.
+func (d *Definition) SourceOnlyImageReusable(rawURL string, records []api.TrackerMetadata) bool {
+	return d.profile.SourceOnlyImageReusable != nil && d.profile.SourceOnlyImageReusable(rawURL, records)
+}
 
 // ReleaseNamePolicy returns the versioned Unit3D site naming policy with TMDB-authoritative movie years.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -398,10 +399,15 @@ func resolveWorkflowExactMedia(
 		DVDMenus:    make([]api.DVDMenuCaptureImage, 0, len(menus)),
 	}
 	for _, item := range screenshots {
-		exact.Screenshots = append(exact.Screenshots, item.screenshot)
+		image := item.screenshot
+		exact.Screenshots = append(exact.Screenshots, image)
 	}
 	for _, item := range menus {
-		exact.DVDMenus = append(exact.DVDMenus, item.menu)
+		menu := item.menu
+		if sourceOnlyScreenshotImage(menu.ScreenshotImage) {
+			menu.Host, menu.ImgURL, menu.RawURL, menu.WebURL = "", "", "", ""
+		}
+		exact.DVDMenus = append(exact.DVDMenus, menu)
 	}
 
 	type hostedMedia struct {
@@ -418,6 +424,9 @@ func resolveWorkflowExactMedia(
 		upload, exists := privateArtifacts.HostedImages[artifact.ID]
 		if !exists {
 			return nil, errors.New("workflow exact media: hosted artifact content is unavailable")
+		}
+		if sourceOnlyHostedImageLink(upload) {
+			continue
 		}
 		sourceID, exists := privateArtifacts.HostedSources[artifact.ID]
 		if !exists {
@@ -499,6 +508,10 @@ func resolveWorkflowExactMedia(
 		return nil, fmt.Errorf("workflow exact media: %w", err)
 	}
 	return exact, nil
+}
+
+func sourceOnlyScreenshotImage(image api.ScreenshotImage) bool {
+	return imagehost.IsSourceOnlyURL(image.ImgURL) || imagehost.IsSourceOnlyURL(image.RawURL) || imagehost.IsSourceOnlyURL(image.WebURL)
 }
 
 func compareLocalMediaOrder(left, right workflowExactLocalMedia) int {

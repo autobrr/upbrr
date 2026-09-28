@@ -484,6 +484,9 @@ func filterUnit3DImages(images []Image) ([]Image, unit3DImageFilterStats) {
 			stats.empty++
 			continue
 		}
+		if host := imagehost.ExtractHost(selectedURL); host != "" {
+			image.Host = host
+		}
 		if _, found := banned[selectedURL]; found {
 			stats.blocked++
 			continue
@@ -508,55 +511,13 @@ func normalizeNewlines(value string) string {
 }
 
 func normalizeRawImageURL(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return trimmed
-	}
-
-	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
-	pathValue := strings.TrimSpace(parsed.Path)
-
-	if strings.Contains(host, "imgbox.com") && strings.Contains(host, "thumbs") {
-		parsed.Host = strings.ReplaceAll(parsed.Host, "thumbs2.imgbox.com", "images2.imgbox.com")
-		parsed.Path = strings.ReplaceAll(parsed.Path, "_t.png", "_o.png")
-		parsed.Path = strings.ReplaceAll(parsed.Path, "_t.jpg", "_o.jpg")
-		parsed.Path = strings.ReplaceAll(parsed.Path, "_t.jpeg", "_o.jpeg")
-		return parsed.String()
-	}
-
-	if isPixhostHost(host) && strings.HasPrefix(pathValue, "/thumbs/") {
-		replacePixhostThumbHost(parsed, host)
-		parsed.Path = strings.Replace(pathValue, "/thumbs/", "/images/", 1)
-		return parsed.String()
-	}
-
-	return trimmed
-}
-
-func replacePixhostThumbHost(parsed *url.URL, host string) {
-	hostParts := strings.SplitN(host, ".", 2)
-	if len(hostParts) != 2 {
-		return
-	}
-	first := hostParts[0]
-	if !strings.HasPrefix(first, "t") || len(first) == 1 {
-		return
-	}
-
-	port := parsed.Port()
-	parsed.Host = "img" + strings.TrimPrefix(first, "t") + "." + hostParts[1]
-	if port != "" {
-		parsed.Host += ":" + port
-	}
+	return imagehost.NormalizeRawURL(value)
 }
 
 func normalizeLinkedRawImageURL(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
-	if !isLikelyImageURL(trimmed) {
+	proxiedSource := imagehost.WsrvSourceURL(trimmed)
+	if !isLikelyImageURL(trimmed) && !isOnlyImagePageURL(trimmed) && !isLikelyImageURL(proxiedSource) {
 		return "", false
 	}
 	parsed, err := url.Parse(trimmed)
@@ -602,4 +563,16 @@ func isLikelyImageURL(value string) bool {
 	default:
 		return false
 	}
+}
+
+func isOnlyImagePageURL(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "onlyimage.org" && host != "www.onlyimage.org" {
+		return false
+	}
+	return imagehost.NormalizeRawURL(value) != value
 }
