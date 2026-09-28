@@ -569,16 +569,29 @@ func (b workflowMediaBuilder) Build(
 			}
 			return failedMediaSnapshot(snapshot, "Screenshot planning failed. Retry media capture."), privateArtifacts, nil
 		}
+		importedScreenshots := importedTrackerScreenshots(plan)
 		if instructions.SavedImagePlanID != "" {
-			currentPlanID, planErr := api.MediaPlanContentID(release, projections, plan.SuggestedSelections, mediaPlanSavedImages(plan))
+			reviewedSubject, planErr := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{
+				Release: release,
+				Count:   projectedScreenshots,
+				Purpose: api.ScreenshotPurposeFinal,
+			})
+			if planErr != nil {
+				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media resolve saved image plan subject: %w", planErr)
+			}
+			reviewedPlan, planErr := b.screenshots.Plan(ctx, reviewedSubject, projectedScreenshots)
+			if planErr != nil {
+				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media saved image plan: %w", planErr)
+			}
+			currentPlanID, planErr := api.MediaPlanContentID(release, projections, reviewedPlan.SuggestedSelections, mediaPlanSavedImages(reviewedPlan))
 			if planErr != nil {
 				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media saved image plan fingerprint: %w", planErr)
 			}
 			if currentPlanID != instructions.SavedImagePlanID {
 				return api.MediaArtifactSet{}, nil, errors.New("workflow media saved image plan changed; refresh the screenshot plan")
 			}
+			importedScreenshots = importedTrackerScreenshots(reviewedPlan)
 		}
-		importedScreenshots := importedTrackerScreenshots(plan)
 		if len(importedScreenshots) > 0 {
 			snapshot.SavedImagePlanID = instructions.SavedImagePlanID
 		}
@@ -1691,6 +1704,13 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 			}
 			allowed, err := trackers.ReusableImageHostAllowedWithRegistry(b.media.registry, b.config, tracker, key.host, subject.ImageHostOverrides)
 			if err != nil || !allowed {
+				continue
+			}
+			if unhostedSelected && imagehostpolicy.IsUploadHost(key.host) && !slices.ContainsFunc(targets, func(target trackers.ImageUploadTarget) bool {
+				return strings.EqualFold(target.Host, key.host) && slices.ContainsFunc(target.Trackers, func(candidate string) bool {
+					return strings.EqualFold(candidate, tracker)
+				})
+			}) {
 				continue
 			}
 			if unhostedSelected && !imagehostpolicy.IsUploadHost(key.host) {

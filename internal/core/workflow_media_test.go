@@ -1989,6 +1989,7 @@ func (*workflowMediaPlanResolverFake) ResolveDVDMenuSubject(
 type workflowScreenshotFake struct {
 	root       string
 	plan       *api.ScreenshotPlan
+	planFor    func(api.ScreenshotSubject, int) api.ScreenshotPlan
 	result     *api.ScreenshotResult
 	plans      int
 	captures   int
@@ -2000,11 +2001,14 @@ type workflowScreenshotFake struct {
 
 func (f *workflowScreenshotFake) Plan(
 	_ context.Context,
-	_ api.ScreenshotSubject,
+	subject api.ScreenshotSubject,
 	count int,
 ) (api.ScreenshotPlan, error) {
 	f.plans++
 	f.planCounts = append(f.planCounts, count)
+	if f.planFor != nil {
+		return f.planFor(subject, count), nil
+	}
 	if f.plan != nil {
 		return *f.plan, nil
 	}
@@ -3438,6 +3442,103 @@ func TestWorkflowMediaBuilderKeepsSourceOnlyImagesLocal(t *testing.T) {
 	}
 }
 
+func TestWorkflowMediaSavedImagePlanIDIgnoresCaptureOverrides(t *testing.T) {
+	t.Parallel()
+	const reviewedURL = "https://i.ibb.co/reviewed.png"
+	root := t.TempDir()
+	imagePath := filepath.Join(root, "saved.png")
+	if err := os.WriteFile(imagePath, []byte("saved screenshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release := api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Release.2026-GRP.mkv"), Generation: 1}
+	projections := api.TrackerReleaseProjectionSet{
+		ID:       "reviewed-images",
+		Revision: 1,
+		Projections: []api.TrackerReleaseProjection{{
+			TrackerID: "AITHER", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1},
+		}},
+	}
+	screenshots := &workflowScreenshotFake{root: root}
+	screenshots.planFor = func(subject api.ScreenshotSubject, count int) api.ScreenshotPlan {
+		selection := api.ScreenshotSelection{Index: 2, TimestampSeconds: 120}
+		savedURL := "https://i.ibb.co/unreviewed.png"
+		if count == 1 && len(subject.ManualFrames) == 0 {
+			selection = api.ScreenshotSelection{Index: 1, TimestampSeconds: 60}
+			savedURL = reviewedURL
+		}
+		return api.ScreenshotPlan{
+			SuggestedSelections: []api.ScreenshotSelection{selection},
+			FinalSelections:     []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}},
+			TrackerImageLinks: []api.ScreenshotLinkedImage{{
+				Tracker: "AITHER",
+				Path:    imagePath,
+				Host:    "imgbb",
+				URL:     savedURL,
+			}},
+		}
+	}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: screenshots}
+	reviewed, err := builder.Plan(t.Context(), release, projections, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID, err := api.MediaPlanContentID(release, projections, reviewed.SuggestedSelections, reviewed.SavedTrackerImages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := builder.Build(t.Context(), release, projections, api.MediaCaptureInstructions{
+		Purpose:          api.ScreenshotPurposeFinal,
+		ScreenshotCount:  2,
+		ManualFrames:     []int{30},
+		SavedImagePlanID: planID,
+	}, time.Now())
+	hasReviewedHost := slices.ContainsFunc(snapshot.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.Kind == api.MediaArtifactHostedImage && artifact.URL == reviewedURL
+	})
+	if err != nil || snapshot.SavedImagePlanID != planID || countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactScreenshot) != 2 ||
+		countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactHostedImage) != 1 || !hasReviewedHost ||
+		len(screenshots.selections) != 1 || screenshots.selections[0].Index != 2 {
+		t.Fatalf("capture with reviewed saved images = %#v selections=%#v err=%v", snapshot, screenshots.selections, err)
+	}
+}
+
+func TestWorkflowMediaSavedImagePlanIDRejectsUnreviewedExplicitCapture(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	imagePath := filepath.Join(root, "saved.png")
+	if err := os.WriteFile(imagePath, []byte("saved screenshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release := api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Release.2026-GRP.mkv"), Generation: 1}
+	projections := api.TrackerReleaseProjectionSet{ID: "no-screenshots", Revision: 1}
+	plan := api.ScreenshotPlan{
+		FinalSelections: []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}},
+		TrackerImageLinks: []api.ScreenshotLinkedImage{{
+			Tracker: "AITHER",
+			Path:    imagePath,
+			Host:    "imgbb",
+			URL:     "https://i.ibb.co/saved.png",
+		}},
+	}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: &workflowScreenshotFake{root: root, plan: &plan}}
+	reviewed, err := builder.Plan(t.Context(), release, projections, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID, err := api.MediaPlanContentID(release, projections, reviewed.SuggestedSelections, reviewed.SavedTrackerImages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = builder.Build(t.Context(), release, projections, api.MediaCaptureInstructions{
+		Purpose:          api.ScreenshotPurposeFinal,
+		ScreenshotCount:  1,
+		SavedImagePlanID: planID,
+	}, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "saved image plan changed") {
+		t.Fatalf("unreviewed explicit capture accepted: %v", err)
+	}
+}
+
 func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -3988,7 +4089,7 @@ func TestWorkflowMediaPrefersAllowedImportedHost(t *testing.T) {
 	t.Parallel()
 	registry := trackers.NewRegistry()
 	for _, definition := range []workflowImageHostPolicyDefinition{
-		{name: "ALPHA", policy: &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost"}}},
+		{name: "ALPHA", policy: &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb"}}},
 		{name: "BETA", policy: &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbb"}}},
 	} {
 		if err := registry.Register(definition); err != nil {
@@ -4039,7 +4140,8 @@ func TestWorkflowMediaPrefersAllowedImportedHost(t *testing.T) {
 			UsageScope: "global",
 			Trackers:   []string{"ALPHA", "BETA"},
 		}})
-	if err != nil || len(targets) != 2 || targets[0].Host != "pixhost" || !slices.Equal(targets[0].Trackers, []string{"ALPHA"}) ||
+	if err != nil || len(targets) != 2 || targets[0].Host != "pixhost" || !targets[0].ReuseOnly ||
+		!slices.Equal(targets[0].Trackers, []string{"ALPHA"}) ||
 		targets[1].Host != "imgbb" || !slices.Equal(targets[1].Trackers, []string{"BETA"}) {
 		t.Fatalf("host targets = %#v", targets)
 	}
@@ -4057,8 +4159,30 @@ func TestWorkflowMediaPrefersAllowedImportedHost(t *testing.T) {
 			UsageScope: "global",
 			Trackers:   []string{"ALPHA", "BETA"},
 		}})
-	if err != nil || len(targets) != 2 || targets[0].Host != "pixhost" || targets[0].ReuseOnly {
-		t.Fatalf("new selected screenshot must be uploaded with saved links: %#v", targets)
+	if err != nil || len(targets) != 1 || targets[0].Host != "imgbb" || !slices.Equal(targets[0].Trackers, []string{"ALPHA", "BETA"}) {
+		t.Fatalf("unconfigured saved host must not become an uploader: %#v err=%v", targets, err)
+	}
+	cfg.ImageHosting.Host2 = "pixhost"
+	accountScope, err = workflowMediaHostAccountScope(cfg, "pixhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := retained.HostedImages[hostedID]
+	link.AccountScope = accountScope
+	retained.HostedImages[hostedID] = link
+	targets, err = (workflowMediaBuilder{config: cfg, media: &mediaModule{registry: registry}}).preferReusableImageTargets(
+		snapshot, retained, selected, projections, api.UploadSubject{}, nil, []trackers.ImageUploadTarget{{
+			Host:       "pixhost",
+			UsageScope: "global",
+			Trackers:   []string{"ALPHA"},
+		}, {
+			Host:       "imgbb",
+			UsageScope: "global",
+			Trackers:   []string{"BETA"},
+		}})
+	if err != nil || len(targets) != 2 || targets[0].Host != "pixhost" || targets[0].ReuseOnly ||
+		!slices.Equal(targets[0].Trackers, []string{"ALPHA"}) {
+		t.Fatalf("configured saved host must remain an uploader: %#v err=%v", targets, err)
 	}
 }
 
