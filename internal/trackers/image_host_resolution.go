@@ -65,9 +65,6 @@ func exactMediaForTrackerHost(
 		compatiblePaths := make(map[string]struct{})
 		uploads := make([]api.UploadedImageLink, 0, len(exact.ScreenshotUploads))
 		for _, upload := range exact.ScreenshotUploads {
-			if sourceOnlyUploadedImage(upload) {
-				continue
-			}
 			pathValue := strings.TrimSpace(upload.ImagePath)
 			host := strings.ToLower(strings.TrimSpace(upload.Host))
 			scope := normalizeUsageScope(upload.UsageScope)
@@ -103,9 +100,6 @@ func exactMediaForTrackerHost(
 	pathsByHost := make(map[string]map[string]struct{})
 	orderedHosts := make([]string, 0)
 	for _, upload := range exact.ScreenshotUploads {
-		if sourceOnlyUploadedImage(upload) {
-			continue
-		}
 		host := strings.ToLower(strings.TrimSpace(upload.Host))
 		pathValue := strings.TrimSpace(upload.ImagePath)
 		if _, selected := availablePaths[pathValue]; !selected || pathValue == "" || host == "" ||
@@ -153,9 +147,6 @@ func exactMediaForTrackerHost(
 	}
 	filteredUploads := make([]api.UploadedImageLink, 0, len(selected))
 	for _, upload := range exact.ScreenshotUploads {
-		if sourceOnlyUploadedImage(upload) {
-			continue
-		}
 		if strings.EqualFold(strings.TrimSpace(upload.Host), selectedHost) {
 			if _, ok := selected[strings.TrimSpace(upload.ImagePath)]; ok {
 				filteredUploads = append(filteredUploads, upload)
@@ -574,6 +565,8 @@ func optionalImageHostUploadPolicy(policy imageHostPolicy, preferredHosts ...str
 	return applyFailedImageHosts(newPreferredImageHostPolicy(hosts[0], hosts[1:]...), policy.failed)
 }
 
+// sourceOnlyImageUploadPolicy adds configured, tracker-compatible upload hosts
+// before applying optional preferences to images whose original URL cannot be reused.
 func sourceOnlyImageUploadPolicy(registry *Registry, appCfg config.Config, tracker string, policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
 	for _, host := range imageUploadCandidatesForTracker(registry, appCfg, tracker, configuredImageUploadHosts(registry, appCfg)) {
 		if !imageHostUsableForPolicy(registry, tracker, host, policy) {

@@ -58,6 +58,9 @@ type parsedDescriptionSlot struct {
 	slot  api.ScreenshotSlot
 }
 
+// screenshotSlotsFromSource loads or rebuilds the source's slots and returns
+// tracker-specific views without replacing shared stored slots unless the
+// selected media or description and image list belongs to that source.
 func screenshotSlotsFromSource(
 	ctx context.Context,
 	tracker string,
@@ -219,6 +222,9 @@ func soleDescriptionScopeForTracker(
 	return false
 }
 
+// reconcileStoredComparisonSlots rebuilds stale description slots while
+// preserving selected local assets. Legacy images shared with comparison blocks
+// lose unselected variants when their provenance cannot be verified.
 func reconcileStoredComparisonSlots(
 	ctx context.Context,
 	tracker string,

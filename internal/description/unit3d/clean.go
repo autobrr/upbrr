@@ -145,6 +145,8 @@ func stripUnit3DWrapperTags(value string) string {
 	return cleaned
 }
 
+// selectUnit3DFirstImageSet selects the first usable screenshot group outside
+// comparison blocks, skipping poster-only groups and recording skip reasons.
 func selectUnit3DFirstImageSet(desc string) ([]Image, []Note) {
 	comparisonBlocks := comparison.BlockRanges(desc)
 	var notes []Note

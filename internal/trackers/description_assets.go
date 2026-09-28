@@ -1210,10 +1210,6 @@ func filterTrackerMetadataByName(records []api.TrackerMetadata, tracker string) 
 	return filtered
 }
 
-func resolveTrackerScreenshots(urls []string) []api.ScreenshotImage {
-	return resolveTrackerScreenshotsWithPolicy(urls, imageHostPolicy{})
-}
-
 func resolveTrackerScreenshotsWithPolicy(urls []string, policy imageHostPolicy) []api.ScreenshotImage {
 	if len(urls) == 0 {
 		return nil

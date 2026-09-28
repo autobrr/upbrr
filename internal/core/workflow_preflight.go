@@ -41,6 +41,8 @@ type workflowPreflightBuilder struct {
 	images   workflowReusableTrackerImageInventory
 }
 
+// workflowReusableTrackerImageInventory supplies validated local tracker images
+// for the preflight's current source and release.
 type workflowReusableTrackerImageInventory interface {
 	ReusableTrackerImageLinks(context.Context, string, api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error)
 }

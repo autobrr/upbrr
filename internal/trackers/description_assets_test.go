@@ -3577,11 +3577,11 @@ func TestApplyUploadedVariantsToSlotsSkipsNonRenderableSlotsDuringFallback(t *te
 }
 
 func TestResolveTrackerScreenshotsReturnsNilWhenHostsAreInvalid(t *testing.T) {
-	screenshots := resolveTrackerScreenshots([]string{
+	screenshots := resolveTrackerScreenshotsWithPolicy([]string{
 		"not a url",
 		"https://",
 		"   ",
-	})
+	}, imageHostPolicy{})
 	if len(screenshots) != 0 {
 		t.Fatalf("expected no screenshots for invalid urls, got %#v", screenshots)
 	}

@@ -53,8 +53,9 @@ type discFrameKey struct {
 	index  int
 }
 
-// Plan resolves screenshot suggestions only when projections require screenshots.
-// It retains DVD-menu requirements for Build without resolving a screenshot source.
+// Plan resolves screenshot suggestions and reusable tracker images only when
+// projections require screenshots. It retains DVD-menu requirements for Build
+// without resolving a screenshot source.
 func (b workflowMediaBuilder) Plan(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -449,6 +450,10 @@ func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) wor
 	}
 }
 
+// Build captures requested media and retains eligible saved tracker images.
+// When a saved-image plan ID is supplied, it rejects a changed projected plan
+// and imports links from the matching plan. It returns private resources for
+// the workflow commit.
 func (b workflowMediaBuilder) Build(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -1628,6 +1633,9 @@ type retainedHostedImageCandidate struct {
 	link     api.UploadedImageLink
 }
 
+// preferReusableImageTargets favors valid saved links for each tracker. When
+// selected local images still need upload, a saved host can replace an upload
+// target only if the resolved targets already assign it to that tracker.
 func (b workflowMediaBuilder) preferReusableImageTargets(
 	snapshot api.MediaArtifactSet,
 	retained workflowMediaPrivateArtifacts,

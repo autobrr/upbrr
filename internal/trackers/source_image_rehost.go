@@ -357,6 +357,8 @@ func uploadableCachedSourceImagePath(cached string, destination string) string {
 	return pathValue
 }
 
+// sourceOnlyDescriptionImageURLs finds non-portable image links in image tags
+// and bare image URLs while leaving ordinary text links alone.
 func sourceOnlyDescriptionImageURLs(description string) []string {
 	seen := make(map[string]struct{})
 	urls := make([]string, 0)
