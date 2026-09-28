@@ -311,6 +311,30 @@ func TestParseLegacyConfigTypeAnnotationWithEquals(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignmentIndexConsumesMalformedAnnotation(t *testing.T) {
+	input := ":[\n" + strings.Repeat("config: [\n", 100)
+	if assignment, scanned := annotationAssignmentIndex(input); assignment != -1 || scanned != len(input) {
+		t.Fatalf("assignment, scanned = %d, %d; want -1, %d", assignment, scanned, len(input))
+	}
+}
+
+func TestExtractConfigDictDoesNotRescanRejectedAnnotation(t *testing.T) {
+	const nesting = 1000
+	input := strings.Repeat("config: {\n", nesting) + "x: int\n" + strings.Repeat("}", nesting) +
+		" = 0\nconfig = {}\n"
+
+	dict, scanned, err := extractConfigDictScanned(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dict != "{}\n" {
+		t.Fatalf("dict = %q, want %q", dict, "{}\n")
+	}
+	if scanned > len(input) {
+		t.Fatalf("scanned %d bytes for %d-byte input", scanned, len(input))
+	}
+}
+
 func TestParseEmptyDict(t *testing.T) {
 	input := `{}`
 	p := newParser(input)
