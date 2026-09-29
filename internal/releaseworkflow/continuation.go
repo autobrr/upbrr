@@ -138,6 +138,9 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 			case result.Decision == api.DupeDecisionAccepted:
 				lane.Lifecycle = api.OperationLifecycleTerminal
 				lane.Disposition = api.WorkflowDispositionFailed
+				if strictDupeResult(result) {
+					lane.RequiredActions = nil
+				}
 			case stageSucceeded(result.Status):
 				advanceLane(lane, api.WorkflowGoalDuplicatesDecided)
 			case stageFailed(result.Status):

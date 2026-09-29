@@ -469,6 +469,93 @@ func TestCompositeUploadStrictDuplicateSupersedesSingleTrackerNameReview(t *test
 		completed.Operation.Result.Kind != api.WorkflowOperationResultDupes || completed.Dupes == nil {
 		t.Fatalf("strict-duplicate name review result = %#v", completed)
 	}
+	if completed.Projections == nil || len(completed.Workflow.RequiredActions) != 0 || len(completed.Continuation.RequiredActions) != 0 ||
+		slices.ContainsFunc(completed.Continuation.TrackerOutcomes, func(outcome api.TrackerLaneOutcome) bool {
+			return outcome.TrackerID == "ALPHA" && hasPendingRequiredAction(outcome.RequiredActions)
+		}) {
+		t.Fatalf("strict-duplicate name review: projections=%#v workflowActions=%#v continuationActions=%#v lanes=%#v",
+			completed.Projections, completed.Workflow.RequiredActions, completed.Continuation.RequiredActions, completed.Continuation.TrackerOutcomes)
+	}
+	staleActionIndex := slices.IndexFunc(completed.Projections.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "ALPHA"
+	})
+	if staleActionIndex < 0 {
+		t.Fatalf("strict-duplicate fixture has no retained name action: %#v", completed.Projections.RequiredActions)
+	}
+	confirmed := true
+	name := "Example.Release.2026.ALPHA-GRP"
+	staleAnswer := api.RequiredActionAnswer{
+		ActionID:         completed.Projections.RequiredActions[staleActionIndex].ID,
+		WorkflowRevision: completed.Workflow.Revision,
+		TextValue:        &name,
+		Confirmed:        &confirmed,
+	}
+	_, err = module.Execute(t.Context(), testOwnerID, ResolveActionCommand{
+		WorkflowID:       completed.Workflow.ID,
+		ExpectedRevision: completed.Workflow.Revision,
+		Answer:           staleAnswer,
+		IdempotencyKey:   "resolve-stale-name-after-strict-duplicate",
+	})
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("direct stale name resolution error = %v, want invalid transition", err)
+	}
+	_, err = module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       completed.Workflow.ID,
+			ExpectedRevision: completed.Workflow.Revision,
+		},
+		IdempotencyKey: "continue-stale-name-after-strict-duplicate",
+		Goal:           api.WorkflowGoalDuplicatesDecided,
+		Answers:        []api.RequiredActionAnswer{staleAnswer},
+	})
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("continuation stale name resolution error = %v, want invalid transition", err)
+	}
+	_, err = module.SubmitUploadFeedback(t.Context(), testOwnerID, completed.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+		Action: api.ReleaseWorkflowUploadActionIdentity{
+			ID:               completed.Projections.RequiredActions[staleActionIndex].ID,
+			WorkflowRevision: completed.Workflow.Revision,
+		},
+		Response: api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackTrackerInput,
+			TrackerInput: &api.ReleaseWorkflowUploadTrackerInput{
+				TrackerID: "ALPHA",
+				Projection: api.ReleaseWorkflowUploadTrackerProjection{
+					UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: "Example.Release.2026.ALPHA-GRP"},
+				},
+			},
+		},
+		IdempotencyKey: "stale-name-after-strict-duplicate",
+	})
+	if !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale name feedback error = %v, want revision conflict", err)
+	}
+}
+
+func TestCompositeUploadStrictDuplicatePreservesSiblingNameReview(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadNameReviewTestModule(t)
+	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "ALPHA", "in_client")
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-strict-dupe-sibling-name-review")
+	request.Trackers.Include = []api.TrackerID{"ALPHA", "BETA"}
+	request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateBlock
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start strict-duplicate sibling name review: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	if blocked.Dupes == nil || blocked.Operation.Status != api.StageStatusBlocked {
+		t.Fatalf("sibling name review result = %#v", blocked)
+	}
+	if slices.ContainsFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.TrackerID == "ALPHA" && action.Status == api.RequiredActionStatusPending
+	}) || !slices.ContainsFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "BETA" &&
+			action.Status == api.RequiredActionStatusPending
+	}) {
+		t.Fatalf("strict-duplicate sibling actions = %#v", blocked.Continuation.RequiredActions)
+	}
 }
 
 func TestCompositeUploadRuleAuthorizationPrecedesNameReview(t *testing.T) {

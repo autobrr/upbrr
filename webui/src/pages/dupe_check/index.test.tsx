@@ -706,6 +706,20 @@ describe("DupeCheckPage", () => {
                       },
                     ]
                   : [],
+              requiredActions:
+                trackerId === "AITHER"
+                  ? [
+                      {
+                        id: "stale-authorize-aither",
+                        kind: "authorize_rules",
+                        trackerId,
+                        status: "pending",
+                        prompt: "Upload to AITHER anyway?",
+                        workflowRevision: 4,
+                        createdAt: "2026-08-15T00:00:00Z",
+                      },
+                    ]
+                  : [],
               readiness: trackerId === "AITHER" ? "ineligible" : "ready",
             })),
           } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
@@ -723,6 +737,9 @@ describe("DupeCheckPage", () => {
 
     expect(screen.getByText("In client")).toBeInTheDocument();
     expect(screen.getByText("Already in client: Strict match")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Upload to AITHER anyway" }),
+    ).not.toBeInTheDocument();
     const inClientCard = screen.getByRole("heading", { name: "AITHER" }).closest("article");
     expect(inClientCard).toHaveClass("gap-1", "px-3", "py-2");
     expect(within(inClientCard as HTMLElement).queryByText("Canonical:")).not.toBeInTheDocument();

@@ -4773,6 +4773,12 @@ func strictDupeResult(result api.TrackerDupeAssessment) bool {
 	})
 }
 
+func strictDuplicateForTracker(assessment *api.DupeAssessment, trackerID api.TrackerID) bool {
+	return trackerID != "" && assessment != nil && slices.ContainsFunc(assessment.Results, func(result api.TrackerDupeAssessment) bool {
+		return result.TrackerID == trackerID && result.Decision == api.DupeDecisionAccepted && strictDupeResult(result)
+	})
+}
+
 func validateDupeBuild(projections api.TrackerReleaseProjectionSet, snapshot api.DupeAssessment) error {
 	if len(snapshot.Results) != len(projections.Projections) {
 		return errors.New("duplicate assessment must return one result per projection")
@@ -4916,6 +4922,9 @@ func (m *Module) publishDupes(
 	invalidateUploadPlan(&state.Workflow)
 	actions := append([]api.RequiredAction(nil), projections.RequiredActions...)
 	actions = append(actions, collectDupeActions(snapshot.Results)...)
+	actions = slices.DeleteFunc(actions, func(action api.RequiredAction) bool {
+		return strictDuplicateForTracker(&snapshot, action.TrackerID)
+	})
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, actions, collectDupeFailures(snapshot.Results))
 	return CommandResult{Dupes: &snapshot}, nil
 }
@@ -7520,10 +7529,20 @@ func (m *Module) resolveAction(
 	if state.Workflow.TrackerProjections != nil {
 		currentProjections = currentSnapshot(state.Projections, state.Workflow.TrackerProjections.ID)
 	}
+	var currentDupes *api.DupeAssessment
+	if state.Workflow.Dupes != nil {
+		currentDupes = currentSnapshot(state.Dupes, state.Workflow.Dupes.ID)
+	}
 	if action, ok := releaseNameConfirmationAction(currentProjections, command.Answer.ActionID); ok {
+		if strictDuplicateForTracker(currentDupes, action.TrackerID) {
+			return CommandResult{}, fmt.Errorf("%w: required action is stale or unknown", ErrInvalidTransition)
+		}
 		return m.reviewTrackerReleaseName(ctx, ownerID, state, nextRevision, now, action, command.Answer)
 	}
 	if projection, action, ok := projectionRuleAuthorizationAction(currentProjections, command.Answer.ActionID); ok {
+		if strictDuplicateForTracker(currentDupes, action.TrackerID) {
+			return CommandResult{}, fmt.Errorf("%w: required action is stale or unknown", ErrInvalidTransition)
+		}
 		return m.authorizeTrackerRules(ctx, ownerID, state, nextRevision, now, projection, action, command.Answer)
 	}
 	index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
