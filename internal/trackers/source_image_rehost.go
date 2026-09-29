@@ -80,6 +80,11 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 		return fmt.Errorf("trackers: description image dir: %w", err)
 	}
 	client := newDescriptionSlotImageHTTPClient()
+	if slices.ContainsFunc(urls, func(rawURL string) bool {
+		return isPTPDescriptionImageURL(rawURL) || isPTPDescriptionImageURL(preferredFullSizeSourceURL(rawURL))
+	}) {
+		client = PTPDescriptionImageHTTPClient(ctx, client, s.cfg, s.logger)
+	}
 	images := make([]api.ScreenshotImage, 0, len(urls)+len(menuIndices))
 	for index, rawURL := range urls {
 		digest := sha256.Sum256([]byte(rawURL))
@@ -264,6 +269,9 @@ func preferredFullSizeSourceURL(rawURL string) string {
 	proxySource := imagehost.WsrvSourceURL(rawURL)
 	if proxySource == "" {
 		return ""
+	}
+	if isPTPDescriptionImageURL(proxySource) {
+		return proxySource
 	}
 	normalized := imagehost.NormalizeRawURL(rawURL)
 	if normalized == rawURL {

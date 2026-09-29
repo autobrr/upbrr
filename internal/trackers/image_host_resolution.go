@@ -23,6 +23,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -1039,6 +1040,11 @@ func materializeDescriptionSlotImages(
 	}
 
 	client := newDescriptionSlotImageHTTPClient()
+	if slices.ContainsFunc(slots, func(slot api.ScreenshotSlot) bool {
+		return slot.RenderInScreenshots && strings.TrimSpace(slot.ImagePath) == "" && isPTPDescriptionImageURL(slot.OriginalURL)
+	}) {
+		client = PTPDescriptionImageHTTPClient(ctx, client, appCfg, logger)
+	}
 	results := make([]api.ScreenshotImage, 0)
 	changed := false
 	for idx := range slots {
@@ -1136,11 +1142,12 @@ func buildDescriptionSlotImageName(rawURL string, slotOrder int) string {
 }
 
 func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawURL string, outPath string) error {
-	if err := validateDescriptionSlotImageURL(ctx, strings.TrimSpace(rawURL)); err != nil {
+	rawURL = PTPDescriptionImageDownloadURL(rawURL)
+	if err := validateDescriptionSlotImageURL(ctx, rawURL); err != nil {
 		return err
 	}
 	client = descriptionSlotImageHTTPClient(client)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
@@ -1182,6 +1189,117 @@ func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawU
 		return fmt.Errorf("write image: %w", err)
 	}
 	return nil
+}
+
+func isPTPDescriptionImageURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "passthepopcorn.me" || strings.HasSuffix(host, ".passthepopcorn.me")
+}
+
+// PTPDescriptionImageDownloadURL upgrades legacy PTP image links to HTTPS while
+// retaining their original URL for cache and metadata identity at the caller.
+func PTPDescriptionImageDownloadURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if isPTPDescriptionImageURL(rawURL) {
+		parsed, err := url.Parse(rawURL)
+		if err == nil && parsed.Scheme == "http" {
+			parsed.Scheme = "https"
+			return parsed.String()
+		}
+	}
+	return rawURL
+}
+
+// PTPDescriptionImageHTTPClient refreshes PTP's image cookie with the saved web
+// session and sends those cookies only to HTTPS requests on PTP's domain.
+func PTPDescriptionImageHTTPClient(ctx context.Context, client *http.Client, cfg config.Config, logger api.Logger) *http.Client {
+	storedCookies, err := cookiepkg.LoadTrackerCookieMap(ctx, cfg.MainSettings.DBPath, "PTP")
+	if err != nil && !errors.Is(err, cookiepkg.ErrTrackerCookiesNotFound) {
+		if logger != nil {
+			logger.Warnf("trackers: PTP description image session unavailable reason=cookie_load_failed")
+		}
+		storedCookies = nil
+	}
+	if len(storedCookies) == 0 {
+		if logger != nil {
+			logger.Warnf("trackers: PTP description image session unavailable reason=no_session_cookies")
+		}
+		return client
+	}
+	imageCookie, reason := refreshPTPDescriptionImageCookie(ctx, client, storedCookies)
+	if imageCookie != "" {
+		storedCookies["img"] = imageCookie
+	} else if logger != nil {
+		logger.Warnf("trackers: PTP description image cookie unavailable reason=%s", reason)
+	}
+	if logger != nil {
+		logger.Debugf(
+			"trackers: PTP description image web session configured session_cookies=%d image_cookie=%t",
+			len(storedCookies),
+			storedCookies["img"] != "",
+		)
+	}
+	cloned := *client
+	base := cloned.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	cloned.Transport = &ptpDescriptionImageTransport{
+		base:    base,
+		cookies: cookiepkg.CookieMapToHTTPCookies(storedCookies, "passthepopcorn.me"),
+	}
+	return &cloned
+}
+
+func refreshPTPDescriptionImageCookie(ctx context.Context, client *http.Client, storedCookies map[string]string) (string, string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://passthepopcorn.me/upload.php", nil)
+	if err != nil {
+		return "", "invalid_request"
+	}
+	req.Header.Set("User-Agent", "upbrr")
+	for _, cookie := range cookiepkg.CookieMapToHTTPCookies(storedCookies, "passthepopcorn.me") {
+		req.AddCookie(cookie)
+	}
+	webClient := *client
+	webClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := webClient.Do(req)
+	if err != nil {
+		return "", "request_failed"
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Sprintf("http_status_%d", resp.StatusCode)
+	}
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name == "img" && cookie.Value != "" {
+			return cookie.Value, ""
+		}
+	}
+	return "", "missing_img_cookie"
+}
+
+type ptpDescriptionImageTransport struct {
+	base    http.RoundTripper
+	cookies []*http.Cookie
+}
+
+func (t *ptpDescriptionImageTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme == "https" && isPTPDescriptionImageURL(req.URL.String()) && (req.URL.Port() == "" || req.URL.Port() == "443") {
+		authenticated := req.Clone(req.Context())
+		for _, cookie := range t.cookies {
+			authenticated.AddCookie(cookie)
+		}
+		req = authenticated
+	}
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, fmt.Errorf("description image request: %w", err)
+	}
+	return resp, nil
 }
 
 func isAVIFImagePayload(payload []byte) bool {

@@ -124,9 +124,23 @@ func TestRehostPTPComparisonImageWithoutCachedArtifact(t *testing.T) {
 	requests := 0
 	newDescriptionSlotImageHTTPClient = func() *http.Client {
 		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/upload.php" {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Set-Cookie": []string{"img=test-image; Path=/; Secure"}},
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Request:    req,
+				}, nil
+			}
 			requests++
 			if req.URL.String() != rawURL {
 				t.Fatalf("unexpected image URL %q", req.URL)
+			}
+			imageCookie, imageErr := req.Cookie("img")
+			sessionCookie, sessionErr := req.Cookie("session")
+			if imageErr != nil || imageCookie.Value != "test-image" || sessionErr != nil || sessionCookie.Value != "test-session" ||
+				req.Header.Get("Apiuser") != "" || req.Header.Get("Apikey") != "" {
+				t.Fatalf("PTP image request missing site auth: headers=%v", req.Header)
 			}
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -149,6 +163,16 @@ func TestRehostPTPComparisonImageWithoutCachedArtifact(t *testing.T) {
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"PTP": {PTPAPIUser: "test-user", PTPAPIKey: "test-key"},
+		}},
+	}
+	cookiePath, err := dbsvc.CookiePath(cfg.MainSettings.DBPath, "PTP.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookiePath, []byte(`{"session":"test-session"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	repo := &stubRepo{}
 	images := &stubImageService{repo: repo}
@@ -157,9 +181,9 @@ func TestRehostPTPComparisonImageWithoutCachedArtifact(t *testing.T) {
 	description := "[comparison=A|B]\n[img]" + rawURL + "[/img]\n[/comparison]"
 	assets := &DescriptionAssets{Description: description}
 	meta := api.UploadSubject{
-		SourcePath:  source,
+		SourcePath:   source,
 		MediaBinding: trackerTestMediaBinding(source),
-		TrackerData: []api.TrackerMetadata{{Tracker: "PTP", Description: description}},
+		TrackerData:  []api.TrackerMetadata{{Tracker: "PTP", Description: description}},
 	}
 	if err := service.rehostSourceOnlyDescriptionImages(t.Context(), "BTN", meta, config.TrackerConfig{}, assets, nil); err != nil {
 		t.Fatal(err)
@@ -167,6 +191,74 @@ func TestRehostPTPComparisonImageWithoutCachedArtifact(t *testing.T) {
 	if requests != 1 || assets.Description != strings.ReplaceAll(description, rawURL, "https://imgbox/0.png") {
 		t.Fatalf("uncached PTP comparison image: requests=%d description=%q", requests, assets.Description)
 	}
+	proxyURL := "https://wsrv.nl/?url=" + url.QueryEscape(rawURL)
+	proxyDescription := "[comparison=A|B]\n[img]" + proxyURL + "[/img]\n[/comparison]"
+	proxyAssets := &DescriptionAssets{Description: proxyDescription}
+	if err := service.rehostSourceOnlyDescriptionImages(t.Context(), "BTN", meta, config.TrackerConfig{}, proxyAssets, nil); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || proxyAssets.Description != strings.ReplaceAll(proxyDescription, proxyURL, "https://imgbox/0.png") {
+		t.Fatalf("PTP comparison proxy source: requests=%d description=%q", requests, proxyAssets.Description)
+	}
+}
+
+func TestPTPDescriptionImageAuthIsNotSentToRedirectHost(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"PTP": {PTPAPIUser: "test-user", PTPAPIKey: "test-key"},
+		}},
+	}
+	cookiePath, err := dbsvc.CookiePath(cfg.MainSettings.DBPath, "PTP.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookiePath, []byte(`{"session":"test-session"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client := PTPDescriptionImageHTTPClient(t.Context(), &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Hostname() == "passthepopcorn.me" {
+			if req.URL.Path == "/upload.php" {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Set-Cookie": []string{"img=test-image; Path=/; Secure"}},
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Request:    req,
+				}, nil
+			}
+			imageCookie, imageErr := req.Cookie("img")
+			sessionCookie, sessionErr := req.Cookie("session")
+			if imageErr != nil || imageCookie.Value != "test-image" || sessionErr != nil || sessionCookie.Value != "test-session" ||
+				req.Header.Get("Apiuser") != "" || req.Header.Get("Apikey") != "" {
+				t.Fatal("PTP image request missing site auth")
+			}
+			return &http.Response{
+				StatusCode: http.StatusFound,
+				Header:     http.Header{"Location": []string{"https://images.example/shot.png"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}
+		if req.Header.Get("Cookie") != "" {
+			t.Fatalf("PTP auth escaped on redirect: headers=%v", req.Header)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("ok")),
+			Request:    req,
+		}, nil
+	})}, cfg, api.NopLogger{})
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://passthepopcorn.me/i/shot.png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 }
 
 func TestRehostSourceOnlyDescriptionImagesKeepsOriginTrackerLinks(t *testing.T) {

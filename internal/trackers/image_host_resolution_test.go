@@ -18,6 +18,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -887,6 +888,66 @@ func TestMaterializeDescriptionSlotImagesKeepsRetryStateOnDownloadFailure(t *tes
 	}
 	if strings.TrimSpace(slots[0].ImagePath) != "" {
 		t.Fatalf("expected no image path after failed materialization, got %q", slots[0].ImagePath)
+	}
+}
+
+func TestMaterializePTPDescriptionSlotUsesWebSession(t *testing.T) {
+	originalClient := newDescriptionSlotImageHTTPClient
+	originalLookup := descriptionSlotImageLookupIPAddrs
+	newDescriptionSlotImageHTTPClient = func() *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/upload.php" {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Set-Cookie": []string{"img=test-image; Path=/; Secure"}},
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Request:    req,
+				}, nil
+			}
+			imageCookie, err := req.Cookie("img")
+			if req.URL.String() != "https://passthepopcorn.me/i/shot.gif" || err != nil || imageCookie.Value != "test-image" ||
+				req.Header.Get("Apiuser") != "" || req.Header.Get("Apikey") != "" {
+				t.Fatalf("PTP slot request = %s headers=%v", req.URL, req.Header)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/gif"}},
+				Body:       io.NopCloser(strings.NewReader("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")),
+				Request:    req,
+			}, nil
+		})}
+	}
+	descriptionSlotImageLookupIPAddrs = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
+	}
+	t.Cleanup(func() {
+		newDescriptionSlotImageHTTPClient = originalClient
+		descriptionSlotImageLookupIPAddrs = originalLookup
+	})
+
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.Release.2026-GRP.mkv")
+	slots := []api.ScreenshotSlot{{
+		SourcePath:          source,
+		OriginalURL:         "http://passthepopcorn.me/i/shot.gif",
+		RenderInScreenshots: true,
+	}}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"PTP": {PTPAPIUser: "test-user", PTPAPIKey: "test-key"},
+		}},
+	}
+	cookiePath, err := dbsvc.CookiePath(cfg.MainSettings.DBPath, "PTP.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookiePath, []byte(`{"session":"test-session"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	images, changed := materializeDescriptionSlotImages(t.Context(), api.UploadSubject{SourcePath: source}, cfg, "BTN", slots, api.NopLogger{})
+	if !changed || len(images) != 1 || slots[0].ImagePath == "" || images[0].Path != slots[0].ImagePath {
+		t.Fatalf("PTP slot materialization: images=%#v changed=%t slot=%#v", images, changed, slots[0])
 	}
 }
 

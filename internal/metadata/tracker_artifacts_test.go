@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
+	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -51,6 +53,91 @@ func TestPersistUnit3DArtifactsLogsDownloadReasonWithoutImageURL(t *testing.T) {
 		strings.Contains(logger.warnings[0], "private-image") || strings.Contains(logger.warnings[0], "marker=example") {
 		t.Fatalf("expected URL-free download failure reason, got warnings=%v successful=%v", logger.warnings, successful)
 	}
+}
+
+func TestPTPTrackerImageLookupPersistsAuthenticatedArtifact(t *testing.T) {
+	const originalURL = "http://passthepopcorn.me/i/shot.png"
+	const requestURL = "https://passthepopcorn.me/i/shot.png"
+	previousClient := newUnit3DArtifactImageHTTPClient
+	previousValidate := validateTrackerArtifactImageURL
+	newUnit3DArtifactImageHTTPClient = func() *http.Client {
+		return &http.Client{Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/upload.php" {
+				if cookie, err := req.Cookie("session"); err != nil || cookie.Value != "test-session" || req.Header.Get("Apiuser") != "" || req.Header.Get("Apikey") != "" {
+					t.Errorf("PTP web session request missing saved cookie or sent API auth")
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Set-Cookie": []string{"img=test-image; Path=/; Secure"}},
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Request:    req,
+				}, nil
+			}
+			imageCookie, imageErr := req.Cookie("img")
+			sessionCookie, sessionErr := req.Cookie("session")
+			if req.URL.String() != requestURL || imageErr != nil || imageCookie.Value != "test-image" ||
+				sessionErr != nil || sessionCookie.Value != "test-session" || req.Header.Get("Apiuser") != "" || req.Header.Get("Apikey") != "" {
+				t.Errorf("PTP artifact request = %s headers=%v", req.URL, req.Header)
+			}
+			payload := trackerDataPNG1x1()
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": []string{"image/png"}},
+				Body:          io.NopCloser(bytes.NewReader(payload)),
+				ContentLength: int64(len(payload)),
+				Request:       req,
+			}, nil
+		})}
+	}
+	validateTrackerArtifactImageURL = func(_ context.Context, rawURL string) error {
+		if rawURL != requestURL {
+			t.Errorf("validated PTP URL = %q", rawURL)
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		newUnit3DArtifactImageHTTPClient = previousClient
+		validateTrackerArtifactImageURL = previousValidate
+	})
+
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026-GRP.mkv")
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"PTP": {PTPAPIUser: "test-user", PTPAPIKey: "test-key"},
+		}},
+	}
+	cookiePath, err := dbsvc.CookiePath(cfg.MainSettings.DBPath, "PTP.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookiePath, []byte(`{"session":"test-session"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := &fakeRepo{}
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+		"PTP": {
+			TrackerID:   "303",
+			Description: "PTP description",
+			Images:      []bbcode.Image{{RawURL: originalURL}},
+		},
+	}}
+	service := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	state, err := service.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath: sourcePath,
+		TrackerIDs: map[string]string{"ptp": "303"},
+		Policy:     preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, found := trackerRecordFor(state.TrackerData, "PTP")
+	if !found || len(record.ImageURLs) != 1 || record.ImageURLs[0] != originalURL || len(repo.trackerMetadata) != 1 ||
+		len(repo.trackerMetadata[0].ImageURLs) != 1 || repo.trackerMetadata[0].ImageURLs[0] != originalURL {
+		t.Fatalf("PTP image metadata: record=%#v saved=%#v", record, repo.trackerMetadata)
+	}
+	assertTrackerArtifactExists(t, cfg, sourcePath, "PTP", originalURL, 0)
 }
 
 func TestPersistUnit3DArtifactsDoesNotReuseDifferentURLWithSameBasename(t *testing.T) {

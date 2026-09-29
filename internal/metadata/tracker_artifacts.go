@@ -25,6 +25,7 @@ import (
 
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 )
 
@@ -37,6 +38,8 @@ const (
 var newUnit3DArtifactImageHTTPClient = func() *http.Client {
 	return trackerdata.Unit3DImageHTTPClient(&http.Client{Timeout: unit3dImageTimeout})
 }
+
+var validateTrackerArtifactImageURL = trackerdata.ValidateUnit3DImageURL
 
 // persistTrackerArtifacts best-effort persists a tracker description and bounded,
 // validated images beneath the release's private temporary directory. Existing
@@ -140,6 +143,9 @@ func (s *Service) persistTrackerArtifacts(
 	if len(tasks) == 0 {
 		return nil
 	}
+	if strings.EqualFold(tracker, "PTP") {
+		client = trackers.PTPDescriptionImageHTTPClient(ctx, client, s.cfg, s.logger)
+	}
 
 	successfulByIndex := make([]string, len(result.Validated))
 	jobs := make(chan imageTask)
@@ -232,10 +238,11 @@ func buildImageFilename(rawURL string, index int) string {
 }
 
 func downloadImage(ctx context.Context, client *http.Client, rawURL string, outPath string, expectedHeight int, isDVD bool) string {
-	if err := trackerdata.ValidateUnit3DImageURL(ctx, rawURL); err != nil {
+	requestURL := trackers.PTPDescriptionImageDownloadURL(rawURL)
+	if err := validateTrackerArtifactImageURL(ctx, requestURL); err != nil {
 		return "invalid_or_nonpublic_url"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return "invalid_request"
 	}
