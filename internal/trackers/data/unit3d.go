@@ -378,7 +378,16 @@ func PrepareDescriptionImages(ctx context.Context, client *http.Client, tracker 
 		logger = api.NopLogger{}
 	}
 	safeClient := Unit3DImageHTTPClient(client)
-	return validateImages(ctx, safeClient, resolveImgBBImages(ctx, safeClient, tracker, logger, images), tracker, logger)
+	images = resolveImgBBImages(ctx, safeClient, tracker, logger, images)
+	for index := range images {
+		if imagehost.IsWsrvProxyURL(images[index].ImgURL) {
+			images[index].ImgURL = images[index].RawURL
+		}
+		if imagehost.IsWsrvProxyURL(images[index].WebURL) {
+			images[index].WebURL = images[index].RawURL
+		}
+	}
+	return validateImages(ctx, safeClient, images, tracker, logger)
 }
 
 func convertCleanedUnit3DImages(images []descriptionunit3d.Image) []bbcode.Image {
@@ -1137,9 +1146,9 @@ func validateImages(ctx context.Context, client *http.Client, images []bbcode.Im
 }
 
 func checkImage(ctx context.Context, client *http.Client, rawURL string) string {
-	trimmed := strings.TrimSpace(rawURL)
+	trimmed := imagehost.DirectImageURL(rawURL)
 	if trimmed == "" {
-		return "empty_url"
+		return "empty_or_invalid_image_url"
 	}
 	if err := ValidateUnit3DImageURL(ctx, trimmed); err != nil {
 		return "invalid_or_nonpublic_url"

@@ -328,7 +328,7 @@ func TestNormalizeImageRawURLConvertsAdditionalFullSizeHosts(t *testing.T) {
 		{"ptscreens thumbnail", "https://ptscreens.com/a/shot.thumb.jpg", "https://ptscreens.com/a/shot.jpg"},
 		{"blutopia medium", "https://img.blutopia.cc/a/shot.md.png", "https://img.blutopia.cc/a/shot.png"},
 		{"wsrv source", "https://wsrv.nl/?url=https%3A%2F%2Fimg.onlyimage.org%2FAb12.md.png", "https://img.onlyimage.org/Ab12.png"},
-		{"Aither proxy for Blutopia", "https://wsrv.aither.cc/?url=https%3A%2F%2Fimg.blutopia.cc%2Fshot.md.png", "https://wsrv.aither.cc/?url=https%3A%2F%2Fimg.blutopia.cc%2Fshot.png"},
+		{"Aither proxy for Blutopia", "https://wsrv.aither.cc/?url=https%3A%2F%2Fimg.blutopia.cc%2Fshot.md.png", "https://img.blutopia.cc/shot.png"},
 		{"OnlyImage unsupported suffix", "https://img.onlyimage.org/Ab12.th.png", "https://img.onlyimage.org/Ab12.th.png"},
 		{"foreign wsrv host", "https://wsrv.nl.evil.example/?url=https%3A%2F%2Fimg.onlyimage.org%2FAb12.md.png", "https://wsrv.nl.evil.example/?url=https%3A%2F%2Fimg.onlyimage.org%2FAb12.md.png"},
 		{"foreign suffix host", "https://img.evilonlyimage.org/Ab12.md.png", "https://img.evilonlyimage.org/Ab12.md.png"},

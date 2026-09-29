@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -159,7 +160,17 @@ func (s *Service) persistTrackerArtifacts(
 					return
 				}
 
-				fileName := buildImageFilename(task.url, task.index)
+				artifactURL := task.url
+				if imagehost.IsWsrvProxyURL(task.url) {
+					artifactURL = imagehost.DirectImageURL(task.url)
+					if artifactURL == "" {
+						if s.logger != nil {
+							s.logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=invalid_proxy_source", tracker, task.index+1)
+						}
+						continue
+					}
+				}
+				fileName := buildImageFilename(artifactURL, task.index)
 				outPath := filepath.Join(artifactDir, fileName)
 				if info, err := os.Stat(outPath); err == nil && info.Size() > 0 {
 					if s.logger != nil {
@@ -238,7 +249,11 @@ func buildImageFilename(rawURL string, index int) string {
 }
 
 func downloadImage(ctx context.Context, client *http.Client, rawURL string, outPath string, expectedHeight int, isDVD bool) string {
-	requestURL := trackers.PTPDescriptionImageDownloadURL(rawURL)
+	requestURL := imagehost.DirectImageURL(rawURL)
+	if requestURL == "" {
+		return "invalid_proxy_source"
+	}
+	requestURL = trackers.PTPDescriptionImageDownloadURL(requestURL)
 	if err := validateTrackerArtifactImageURL(ctx, requestURL); err != nil {
 		return "invalid_or_nonpublic_url"
 	}

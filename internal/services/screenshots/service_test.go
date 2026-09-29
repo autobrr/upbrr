@@ -146,6 +146,46 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	}
 }
 
+func TestDeleteDirectArtifactRemovesProxyMetadata(t *testing.T) {
+	const proxyURL = "https://wsrv.aither.cc/?w=350&url=https%3A%2F%2Fimg.blutopia.cc%2Ffull.png"
+	const directURL = "https://img.blutopia.cc/full.png"
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026.mkv")
+	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := openScreenshotTestRepository(t)
+	if err := repo.SaveTrackerMetadata(t.Context(), api.TrackerMetadata{
+		SourcePath: sourcePath,
+		Tracker:    "AITHER",
+		ImageURLs:  []string{proxyURL},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tmpRoot := t.TempDir()
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, api.ReleaseInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(tmpDir, "aither", buildTrackerImageFilename(directURL, 0))
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTrackerTestPNG(t, artifactPath)
+	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
+	meta := api.ScreenshotSubject{MediaBinding: screenshotTestBinding(sourcePath), SourcePath: sourcePath}
+	if err := service.Delete(t.Context(), meta, artifactPath); err != nil {
+		t.Fatalf("delete direct artifact: %v", err)
+	}
+	stored, err := repo.ListTrackerMetadataByPath(t.Context(), sourcePath)
+	if err != nil || len(stored) != 1 || len(stored[0].ImageURLs) != 0 {
+		t.Fatalf("proxy metadata survived direct artifact deletion: records=%#v err=%v", stored, err)
+	}
+	if _, err := repo.GetTrackerTimestamp(t.Context(), trackers.TrackerImageDeletionKey(stored[0])); err != nil {
+		t.Fatalf("tracker image deletion was not recorded: %v", err)
+	}
+}
+
 func TestLoadTrackerMetadataWithholdsUnverifiedImagesAcrossTrackers(t *testing.T) {
 	registry, err := trackerimpl.NewRegistry()
 	if err != nil {
@@ -282,6 +322,29 @@ func TestBuildTrackerImageLinksRetainsWebP(t *testing.T) {
 	links := buildTrackerImageLinks([]api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{rawURL}}}, root, nil)
 	if len(links) != 1 || links[0].Path != pathValue || links[0].URL != rawURL {
 		t.Fatalf("WebP source image was omitted: %#v", links)
+	}
+}
+
+func TestBuildTrackerImageLinksRejectsLegacyProxyCache(t *testing.T) {
+	t.Parallel()
+	const proxyURL = "https://wsrv.aither.cc/?w=350&url=https%3A%2F%2Fimg.blutopia.cc%2Ffull.png"
+	const directURL = "https://img.blutopia.cc/full.png"
+	root := t.TempDir()
+	dir := filepath.Join(root, "aither")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(dir, buildTrackerImageFilename(proxyURL, 0))
+	writeTrackerTestPNG(t, legacyPath)
+	records := []api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{proxyURL}}}
+	if links := buildTrackerImageLinks(records, root, nil); len(links) != 0 {
+		t.Fatalf("legacy proxy cache was reused as full-size image: %#v", links)
+	}
+	directPath := filepath.Join(dir, buildTrackerImageFilename(directURL, 0))
+	writeTrackerTestPNG(t, directPath)
+	links := buildTrackerImageLinks(records, root, nil)
+	if len(links) != 1 || links[0].Path != directPath || links[0].URL != directURL || links[0].Host != "img.blutopia.cc" {
+		t.Fatalf("direct-source cache was not reused: %#v", links)
 	}
 }
 

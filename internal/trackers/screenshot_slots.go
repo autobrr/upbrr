@@ -1371,29 +1371,27 @@ func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy i
 		return image, host, scope, true
 	}
 
-	if reusableSourceImageURL(slot.OriginalURL, policy) && !hostInList(slot.OriginalHost, policy.failed) &&
-		(len(policy.allowed) == 0 || hostAllowed(slot.OriginalHost, policy.allowed)) {
-		originalURL := strings.TrimSpace(slot.OriginalURL)
-		if originalURL != "" {
-			host := strings.TrimSpace(slot.OriginalHost)
-			if host == "" {
-				host = strings.TrimSpace(imagehost.ExtractHost(originalURL))
-			}
-			return api.ScreenshotImage{
-				DiscID: slot.DiscID,
-				Path:   strings.TrimSpace(slot.ImagePath),
-				Host:   host,
-				ImgURL: originalURL,
-				RawURL: originalURL,
-				WebURL: originalURL,
-			}, host, globalImageUsageScope, true
-		}
+	directURL := imagehost.DirectImageURL(slot.OriginalURL)
+	host := strings.TrimSpace(imagehost.ExtractHost(directURL))
+	if directURL != "" && host != "" && reusableSourceImageURL(directURL, policy) && !hostInList(host, policy.failed) &&
+		(len(policy.allowed) == 0 || hostAllowed(host, policy.allowed)) {
+		return api.ScreenshotImage{
+			DiscID: slot.DiscID,
+			Path:   strings.TrimSpace(slot.ImagePath),
+			Host:   host,
+			ImgURL: directURL,
+			RawURL: directURL,
+			WebURL: directURL,
+		}, host, globalImageUsageScope, true
 	}
 
 	return api.ScreenshotImage{}, "", "", false
 }
 
 func reusableSourceImageURL(rawURL string, policy imageHostPolicy) bool {
+	if imagehost.IsWsrvProxyURL(rawURL) {
+		return false
+	}
 	return !imagehost.IsSourceOnlyURL(rawURL) || policy.sourceOnlyAllowed != nil && policy.sourceOnlyAllowed(rawURL)
 }
 

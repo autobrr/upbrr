@@ -109,11 +109,94 @@ func TestRehostSourceOnlyComparisonImagesPreservesMarkupAndReusesUploads(t *test
 	if err := service.rehostSourceOnlyDescriptionImages(t.Context(), "TL", meta, config.TrackerConfig{}, optionalAssets, preloaded); err != nil {
 		t.Fatal(err)
 	}
-	if optionalAssets.Description != want {
+	optionalWant := strings.ReplaceAll(strings.ReplaceAll(description, urls[0], "https://example.org/one.png"), urls[1], "https://imgbox/1.png")
+	if optionalAssets.Description != optionalWant {
 		t.Fatalf("optional tracker comparison markup changed:\n%s", optionalAssets.Description)
 	}
 	if len(images.calls) != 1 || images.calls[0] != "imgbox" {
 		t.Fatalf("comparison images uploaded more than once: %#v", images.calls)
+	}
+}
+
+func TestComparisonProxyUsesSupportedSourceHostWithoutUpload(t *testing.T) {
+	t.Parallel()
+	imgboxProxy := "https://wsrv.nl/?n=-1&ll&url=https%3A%2F%2Fthumbs2.imgbox.com%2F13%2Fae%2Fshot_t.png"
+	blutopiaProxy := "https://wsrv.aither.cc/?n=-1&ll&url=https%3A%2F%2Fimg.blutopia.cc%2F2026%2F06%2F14%2Fshot.png"
+	for _, test := range []struct {
+		tracker string
+		proxy   string
+		want    string
+	}{
+		{
+tracker: "BTN",
+ proxy: imgboxProxy,
+ want: "https://images2.imgbox.com/13/ae/shot_o.png",
+},
+		{
+tracker: "AITHER",
+ proxy: blutopiaProxy,
+ want: "https://img.blutopia.cc/2026/06/14/shot.png",
+},
+	} {
+		block := "[comparison=Source|Encode]\r\n[img]" + test.proxy + "[/img]\r\n[/comparison]"
+		assets := &DescriptionAssets{Description: "Notes\n" + block + "\nMore notes"}
+		service := &Service{registry: descriptionAssetsTestRegistry(t)}
+		if err := service.rehostSourceOnlyDescriptionImages(t.Context(), test.tracker, api.UploadSubject{}, config.TrackerConfig{}, assets, nil); err != nil {
+			t.Fatalf("%s direct source: %v", test.tracker, err)
+		}
+		want := "Notes\n" + strings.ReplaceAll(block, test.proxy, test.want) + "\nMore notes"
+		if assets.Description != want {
+			t.Fatalf("%s comparison = %q, want %q", test.tracker, assets.Description, want)
+		}
+	}
+}
+
+func TestComparisonProxyDownloadsSourceWhenRehostingIsRequired(t *testing.T) {
+	const proxy = "https://wsrv.aither.cc/?url=https%3A%2F%2Fimg.blutopia.cc%2Fshot.png"
+	const direct = "https://img.blutopia.cc/shot.png"
+	previousClient := newDescriptionSlotImageHTTPClient
+	previousLookup := descriptionSlotImageLookupIPAddrs
+	requests := 0
+	newDescriptionSlotImageHTTPClient = func() *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			if req.URL.String() != direct {
+				t.Errorf("requested %q, want source %q", req.URL, direct)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/png"}},
+				Body:       io.NopCloser(strings.NewReader("\x89PNG\r\n\x1a\n\x00\x00\x00\x00")),
+				Request:    req,
+			}, nil
+		})}
+	}
+	descriptionSlotImageLookupIPAddrs = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
+	}
+	t.Cleanup(func() {
+		newDescriptionSlotImageHTTPClient = previousClient
+		descriptionSlotImageLookupIPAddrs = previousLookup
+	})
+
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.Release.2026-GRP.mkv")
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
+	}
+	repo := &stubRepo{}
+	images := &stubImageService{repo: repo}
+	service := NewServiceWithRegistryAndImages(cfg, api.NopLogger{}, repo, descriptionAssetsTestRegistry(t), images)
+	description := "[comparison=A|B]\n[img]" + proxy + "[/img]\n[/comparison]"
+	assets := &DescriptionAssets{Description: description}
+	meta := api.UploadSubject{SourcePath: source, MediaBinding: trackerTestMediaBinding(source)}
+	if err := service.rehostSourceOnlyDescriptionImages(t.Context(), "BTN", meta, config.TrackerConfig{}, assets, nil); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || len(images.calls) != 1 || images.calls[0] != "imgbox" ||
+		assets.Description != strings.ReplaceAll(description, proxy, "https://imgbox/0.png") {
+		t.Fatalf("source rehosting requests=%d calls=%#v description=%q", requests, images.calls, assets.Description)
 	}
 }
 
@@ -282,7 +365,11 @@ func TestRehostSourceOnlyDescriptionImagesKeepsOriginTrackerLinks(t *testing.T) 
 		if err := (&Service{registry: registry}).rehostSourceOnlyDescriptionImages(t.Context(), testCase.tracker, api.UploadSubject{}, config.TrackerConfig{}, assets, nil); err != nil {
 			t.Fatalf("%s origin description: %v", testCase.tracker, err)
 		}
-		if assets.Description != description {
+		want := description
+		if testCase.tracker == "AITHER" {
+			want = strings.ReplaceAll(description, testCase.link, "https://img.blutopia.cc/shot.png")
+		}
+		if assets.Description != want {
 			t.Fatalf("%s origin description changed: %q", testCase.tracker, assets.Description)
 		}
 	}
@@ -453,7 +540,7 @@ func TestPreferredFullSizeSourceURL(t *testing.T) {
 	if got := preferredFullSizeSourceURL(proxy); got != full {
 		t.Fatalf("full-size source = %q, want %q", got, full)
 	}
-	if got := preferredFullSizeSourceURL("https://wsrv.nl/?url=" + url.QueryEscape(full)); got != "" {
+	if got := preferredFullSizeSourceURL("https://wsrv.nl/?url=" + url.QueryEscape(full)); got != full {
 		t.Fatalf("already full-size source = %q", got)
 	}
 	if got := preferredFullSizeSourceURL("https://passthepopcorn.me/static/shot.jpg"); got != "" {
@@ -461,8 +548,7 @@ func TestPreferredFullSizeSourceURL(t *testing.T) {
 	}
 	blu := "https://wsrv.aither.cc/?url=" + url.QueryEscape("https://img.blutopia.cc/shot.md.png") + "&w=350"
 	got := preferredFullSizeSourceURL(blu)
-	parsed, err := url.Parse(got)
-	if err != nil || parsed.Hostname() != "wsrv.aither.cc" || parsed.Query().Get("url") != "https://img.blutopia.cc/shot.png" || parsed.Query().Has("w") {
-		t.Fatalf("full-size Aither proxy = %q, err=%v", got, err)
+	if got != "https://img.blutopia.cc/shot.png" {
+		t.Fatalf("full-size Aither source = %q", got)
 	}
 }

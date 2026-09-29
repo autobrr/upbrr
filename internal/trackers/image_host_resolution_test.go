@@ -318,7 +318,8 @@ func TestOriginTrackerKeepsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, registry, preloaded)
-	if err != nil || resolution.blocking || len(resolution.screenshots) != 1 || resolution.screenshots[0].RawURL != rawURL {
+	if err != nil || resolution.blocking || len(resolution.screenshots) != 1 || resolution.screenshots[0].RawURL != "https://example.org/shot.png" ||
+		resolution.screenshots[0].Host != "example.org" {
 		t.Fatalf("origin screenshot = %#v, err=%v", resolution, err)
 	}
 
@@ -331,8 +332,8 @@ func TestOriginTrackerKeepsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
 		t.Fatal(err)
 	}
 	other, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, otherRegistry, otherPreloaded)
-	if err != nil || len(other.screenshots) != 0 || other.feedback.Status != "warning" {
-		t.Fatalf("cross-tracker source-only screenshot = %#v, err=%v", other, err)
+	if err != nil || len(other.screenshots) != 1 || other.screenshots[0].RawURL != "https://example.org/shot.png" {
+		t.Fatalf("cross-tracker direct source screenshot = %#v, err=%v", other, err)
 	}
 }
 
@@ -345,12 +346,47 @@ func TestOriginTrackerMatchesSelectedLocalSourceScreenshot(t *testing.T) {
 	if !attachNativeSourceURLsToSlots(slots, []api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{rawURL}}}, policy) {
 		t.Fatal("native source URL was not matched to selected local image")
 	}
+	slots[0].Variants = []api.ScreenshotSlotVariant{{
+Host: "wsrv.nl",
+ RawURL: rawURL,
+ ImgURL: rawURL,
+}}
 	selected, _, _, err := selectScreenshotsFromSlots("AITHER", slots, policy)
-	if err != nil || len(selected) != 1 || selected[0].RawURL != rawURL || selected[0].Path != imagePath {
+	if err != nil || len(selected) != 1 || selected[0].RawURL != "https://example.org/shot.png" || selected[0].Path != imagePath {
 		t.Fatalf("selected native screenshot = %#v, err=%v", selected, err)
 	}
-	if _, _, _, err := selectScreenshotsFromSlots("TL", slots, imageHostPolicy{}); err == nil {
-		t.Fatal("another tracker reused AITHER's wsrv.nl link")
+	other, _, _, err := selectScreenshotsFromSlots("TL", slots, imageHostPolicy{})
+	if err != nil || len(other) != 1 || other[0].RawURL != "https://example.org/shot.png" {
+		t.Fatalf("another tracker did not reuse the direct image link: %#v, err=%v", other, err)
+	}
+}
+
+func TestLocalTrackerArtifactPathsUseProxySourceIdentity(t *testing.T) {
+	t.Parallel()
+	const proxyURL = "https://wsrv.aither.cc/?w=350&url=https%3A%2F%2Fimg.blutopia.cc%2Ffull.png"
+	const directURL = "https://img.blutopia.cc/full.png"
+	dir := t.TempDir()
+	paths := localTrackerArtifactPaths(dir, proxyURL, 0)
+	if len(paths) == 0 || paths[0] != filepath.Join(dir, buildTrackerArtifactImageName(directURL, 0)) {
+		t.Fatalf("proxy artifact paths = %#v", paths)
+	}
+	if paths := localTrackerArtifactPaths(dir, "https://wsrv.nl/?url=invalid", 0); len(paths) != 0 {
+		t.Fatalf("invalid proxy artifact paths = %#v", paths)
+	}
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:       "BHD",
+		Definition: stubDefinition{name: "BHD"},
+		DataPolicy: &DataLookupPolicy{LegacyImageAssetsNeedProvenance: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	records := []api.TrackerMetadata{{Tracker: "BHD", ImageURLs: []string{proxyURL}}}
+	directPath := filepath.Join(dir, "bhd", buildTrackerArtifactImageName(directURL, 0))
+	legacyPath := filepath.Join(dir, "bhd", buildTrackerArtifactImageName(proxyURL, 0))
+	if !trackerArtifactPathAllowed(directPath, records, registry) || trackerArtifactPathAllowed(legacyPath, records, registry) {
+		t.Fatalf("proxy artifact provenance: direct=%t legacy=%t",
+			trackerArtifactPathAllowed(directPath, records, registry), trackerArtifactPathAllowed(legacyPath, records, registry))
 	}
 }
 

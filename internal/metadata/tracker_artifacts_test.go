@@ -20,6 +20,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -53,6 +54,112 @@ func TestPersistUnit3DArtifactsLogsDownloadReasonWithoutImageURL(t *testing.T) {
 		strings.Contains(logger.warnings[0], "private-image") || strings.Contains(logger.warnings[0], "marker=example") {
 		t.Fatalf("expected URL-free download failure reason, got warnings=%v successful=%v", logger.warnings, successful)
 	}
+}
+
+func TestTrackerArtifactDownloadUsesWsrvSource(t *testing.T) {
+	previousValidate := validateTrackerArtifactImageURL
+	validateTrackerArtifactImageURL = func(_ context.Context, rawURL string) error {
+		if strings.Contains(rawURL, "wsrv") {
+			t.Errorf("validated proxy instead of source: %q", rawURL)
+		}
+		return nil
+	}
+	t.Cleanup(func() { validateTrackerArtifactImageURL = previousValidate })
+	for index, test := range []struct {
+		proxy string
+		want  string
+	}{
+		{
+			proxy: "https://wsrv.nl/?n=-1&ll&url=https%3A%2F%2Fthumbs2.imgbox.com%2F13%2Fae%2Fshot_t.png",
+			want:  "https://images2.imgbox.com/13/ae/shot_o.png",
+		},
+		{
+			proxy: "https://wsrv.aither.cc/?n=-1&ll&url=https%3A%2F%2Fimg.blutopia.cc%2F2026%2F06%2F14%2Fshot.png",
+			want:  "https://img.blutopia.cc/2026/06/14/shot.png",
+		},
+	} {
+		client := &http.Client{Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != test.want {
+				t.Errorf("download URL = %q, want %q", req.URL, test.want)
+			}
+			payload := trackerDataPNG1x1()
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": []string{"image/png"}},
+				Body:          io.NopCloser(bytes.NewReader(payload)),
+				ContentLength: int64(len(payload)),
+				Request:       req,
+			}, nil
+		})}
+		outPath := filepath.Join(t.TempDir(), fmt.Sprintf("source-%d.png", index))
+		if reason := downloadImage(t.Context(), client, test.proxy, outPath, 0, false); reason != "" {
+			t.Fatalf("source download failed: %s", reason)
+		}
+		if info, err := os.Stat(outPath); err != nil || info.Size() == 0 {
+			t.Fatalf("source image was not saved: info=%v err=%v", info, err)
+		}
+	}
+}
+
+func TestPersistTrackerArtifactsReplacesLegacyProxyCache(t *testing.T) {
+	const proxyURL = "https://wsrv.aither.cc/?w=350&url=https%3A%2F%2F93.184.216.34%2Ffull.png"
+	const directURL = "https://93.184.216.34/full.png"
+	previousClient := newUnit3DArtifactImageHTTPClient
+	previousValidate := validateTrackerArtifactImageURL
+	var requests atomic.Int32
+	newUnit3DArtifactImageHTTPClient = func() *http.Client {
+		return &http.Client{Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests.Add(1)
+			if req.URL.String() != directURL {
+				t.Errorf("download URL = %q, want %q", req.URL, directURL)
+			}
+			payload := trackerDataPNG1x1()
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": []string{"image/png"}},
+				Body:          io.NopCloser(bytes.NewReader(payload)),
+				ContentLength: int64(len(payload)),
+				Request:       req,
+			}, nil
+		})}
+	}
+	validateTrackerArtifactImageURL = func(_ context.Context, rawURL string) error {
+		if rawURL != directURL {
+			t.Errorf("validated URL = %q, want %q", rawURL, directURL)
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		newUnit3DArtifactImageHTTPClient = previousClient
+		validateTrackerArtifactImageURL = previousValidate
+	})
+
+	root := t.TempDir()
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}
+	meta := preparationstate.State{SourcePath: filepath.Join(root, "source")}
+	tmpRoot, err := dbsvc.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(tmpDir, "aither", buildImageFilename(proxyURL, 0))
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("old resized proxy bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{cfg: cfg, logger: api.NopLogger{}}
+	successful := svc.persistTrackerArtifacts(t.Context(), meta, "AITHER", trackerdata.Result{
+		Validated: []bbcode.Image{{RawURL: proxyURL}},
+	}, true)
+	if len(successful) != 1 || successful[0] != proxyURL || requests.Load() != 1 {
+		t.Fatalf("proxy refresh: successful=%v requests=%d", successful, requests.Load())
+	}
+	assertTrackerArtifactExists(t, cfg, meta.SourcePath, "AITHER", directURL, 0)
 }
 
 func TestPTPTrackerImageLookupPersistsAuthenticatedArtifact(t *testing.T) {

@@ -16,17 +16,23 @@ var (
 	onlyImagePagePath     = regexp.MustCompile(`(?i)^/image/([a-z0-9]+)/?$`)
 )
 
-// WsrvSourceURL returns the URL carried by a known image proxy, if present.
-func WsrvSourceURL(value string) string {
+// IsWsrvProxyURL reports whether value points at a known wsrv image proxy.
+func IsWsrvProxyURL(value string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return ""
+		return false
 	}
 	host := strings.ToLower(parsed.Hostname())
-	if host != "wsrv.nl" && !strings.HasSuffix(host, ".wsrv.nl") &&
-		host != "wsrv.aither.cc" && !strings.HasSuffix(host, ".wsrv.aither.cc") {
+	return host == "wsrv.nl" || strings.HasSuffix(host, ".wsrv.nl") ||
+		host == "wsrv.aither.cc" || strings.HasSuffix(host, ".wsrv.aither.cc")
+}
+
+// WsrvSourceURL returns the URL carried by a known image proxy, if present.
+func WsrvSourceURL(value string) string {
+	if !IsWsrvProxyURL(value) {
 		return ""
 	}
+	parsed, _ := url.Parse(strings.TrimSpace(value))
 	return parsed.Query().Get("url")
 }
 
@@ -38,38 +44,33 @@ func IsSourceOnlyURL(value string) bool {
 		return false
 	}
 	host := strings.ToLower(parsed.Hostname())
-	return host == "wsrv.nl" || strings.HasSuffix(host, ".wsrv.nl") ||
-		host == "wsrv.aither.cc" || strings.HasSuffix(host, ".wsrv.aither.cc") ||
-		host == "passthepopcorn.me" || strings.HasSuffix(host, ".passthepopcorn.me")
+	return IsWsrvProxyURL(value) || host == "passthepopcorn.me" || strings.HasSuffix(host, ".passthepopcorn.me")
 }
 
-// NormalizeRawURL expands supported thumbnail and viewer URLs to direct full-size images.
+// NormalizeRawURL expands supported thumbnail, viewer, and proxy URLs to direct full-size images.
 func NormalizeRawURL(value string) string {
 	trimmed := strings.TrimSpace(value)
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Hostname() == "" {
 		return trimmed
 	}
-	host := strings.ToLower(parsed.Hostname())
 	if source := WsrvSourceURL(trimmed); source != "" {
 		sourceURL, sourceErr := url.Parse(source)
-		if sourceErr != nil || sourceURL.Scheme != "http" && sourceURL.Scheme != "https" || sourceURL.Hostname() == "" {
+		if sourceErr != nil || sourceURL.Scheme != "http" && sourceURL.Scheme != "https" || sourceURL.Hostname() == "" || IsWsrvProxyURL(source) {
 			return trimmed
 		}
-		fullURL := normalizeDirectImageURL(sourceURL, source)
-		if !isImageFilePath(sourceURL.Path) && fullURL == source {
-			return trimmed
-		}
-		if (host == "wsrv.aither.cc" || strings.HasSuffix(host, ".wsrv.aither.cc")) &&
-			(strings.EqualFold(sourceURL.Hostname(), "img.blutopia.cc") || strings.HasSuffix(strings.ToLower(sourceURL.Hostname()), ".img.blutopia.cc")) {
-			query := parsed.Query()
-			query.Set("url", fullURL)
-			parsed.RawQuery = query.Encode()
-			return parsed.String()
-		}
-		return fullURL
+		return normalizeDirectImageURL(sourceURL, source)
 	}
 	return normalizeDirectImageURL(parsed, trimmed)
+}
+
+// DirectImageURL returns the full-size source URL, or empty for an unusable wsrv proxy.
+func DirectImageURL(value string) string {
+	direct := NormalizeRawURL(value)
+	if IsWsrvProxyURL(direct) {
+		return ""
+	}
+	return direct
 }
 
 func normalizeDirectImageURL(parsed *url.URL, original string) string {
@@ -114,10 +115,4 @@ func normalizeDirectImageURL(parsed *url.URL, original string) string {
 		}
 	}
 	return original
-}
-
-func isImageFilePath(pathValue string) bool {
-	lower := strings.ToLower(pathValue)
-	return strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||
-		strings.HasSuffix(lower, ".gif") || strings.HasSuffix(lower, ".webp") || strings.HasSuffix(lower, ".avif") || strings.HasSuffix(lower, ".bmp")
 }

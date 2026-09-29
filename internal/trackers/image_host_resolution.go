@@ -246,7 +246,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	sourceOnlySlots := false
 	needsLocalRehost := false
 	for _, slot := range renderableSlots(slots) {
-		if imagehost.IsSourceOnlyURL(slot.OriginalURL) {
+		if imagehost.IsSourceOnlyURL(imagehost.DirectImageURL(slot.OriginalURL)) {
 			sourceOnlySlots = true
 		}
 		if strings.TrimSpace(slot.ImagePath) != "" && len(slot.Variants) == 0 {
@@ -911,18 +911,19 @@ func resolveTrackerScreenshotsForAllowedHost(urls []string, policy imageHostPoli
 		filtered := make([]api.ScreenshotImage, 0, len(urls))
 		for _, rawURL := range urls {
 			trimmed := strings.TrimSpace(rawURL)
-			if trimmed == "" || imagehost.IsSourceOnlyURL(trimmed) {
+			directURL := imagehost.DirectImageURL(trimmed)
+			if directURL == "" || imagehost.IsSourceOnlyURL(directURL) {
 				continue
 			}
-			if strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(trimmed))) != host {
+			if strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(directURL))) != host {
 				continue
 			}
 			filtered = append(filtered, api.ScreenshotImage{
 				Index:  freshScreenshotImageIndex(filtered),
 				Host:   host,
-				ImgURL: trimmed,
-				RawURL: trimmed,
-				WebURL: trimmed,
+				ImgURL: directURL,
+				RawURL: directURL,
+				WebURL: directURL,
 			})
 		}
 		if len(filtered) > 0 {
@@ -1041,7 +1042,7 @@ func materializeDescriptionSlotImages(
 
 	client := newDescriptionSlotImageHTTPClient()
 	if slices.ContainsFunc(slots, func(slot api.ScreenshotSlot) bool {
-		return slot.RenderInScreenshots && strings.TrimSpace(slot.ImagePath) == "" && isPTPDescriptionImageURL(slot.OriginalURL)
+		return slot.RenderInScreenshots && strings.TrimSpace(slot.ImagePath) == "" && isPTPDescriptionImageURL(imagehost.DirectImageURL(slot.OriginalURL))
 	}) {
 		client = PTPDescriptionImageHTTPClient(ctx, client, appCfg, logger)
 	}
@@ -1142,6 +1143,10 @@ func buildDescriptionSlotImageName(rawURL string, slotOrder int) string {
 }
 
 func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawURL string, outPath string) error {
+	rawURL = imagehost.DirectImageURL(rawURL)
+	if rawURL == "" {
+		return errors.New("invalid image proxy source")
+	}
 	rawURL = PTPDescriptionImageDownloadURL(rawURL)
 	if err := validateDescriptionSlotImageURL(ctx, rawURL); err != nil {
 		return err
@@ -1490,6 +1495,12 @@ func buildTrackerArtifactImageName(rawURL string, index int) string {
 }
 
 func localTrackerArtifactPaths(dir string, rawURL string, index int) []string {
+	if imagehost.IsWsrvProxyURL(rawURL) {
+		rawURL = imagehost.DirectImageURL(rawURL)
+		if rawURL == "" {
+			return nil
+		}
+	}
 	exactName := buildTrackerArtifactImageName(rawURL, index)
 	paths := []string{filepath.Join(dir, exactName)}
 	legacy := legacyTrackerArtifactImageName(rawURL, 0)

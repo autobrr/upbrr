@@ -1107,16 +1107,12 @@ func (s *Service) removeTrackerImageReference(
 		filtered := make([]string, 0, len(record.ImageURLs))
 		removed := false
 		for idx, urlValue := range record.ImageURLs {
-			matched := pathutil.SamePath(filepath.Dir(absTarget), filepath.Join(tmpDir, trackerDir)) &&
-				matchesHashedTrackerImageName(urlValue, filepath.Base(absTarget))
-			for _, fileName := range []string{buildTrackerImageFilename(urlValue, idx), legacyTrackerImageFilename(urlValue, idx)} {
-				if matched {
-					break
-				}
-				candidate := filepath.Join(tmpDir, trackerDir, fileName)
+			matched := false
+			for _, candidate := range trackerImageArtifactPaths(tmpDir, trackerDir, urlValue, idx) {
 				candidateAbs, err := filepath.Abs(candidate)
 				if err == nil && pathutil.SamePath(candidateAbs, absTarget) {
 					matched = true
+					break
 				}
 			}
 			if matched {
@@ -1735,12 +1731,16 @@ func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, regist
 			if _, allowed := allowedURLs[trimmed]; !allowed {
 				continue
 			}
+			directURL := imagehost.DirectImageURL(trimmed)
+			if directURL == "" {
+				continue
+			}
 			for _, fullPath := range trackerImageArtifactPaths(tmpDir, trackerDir, trimmed, index) {
 				if validTrackerImageArtifact(fullPath) {
-					host := imagehost.ExtractHost(trimmed)
+					host := imagehost.ExtractHost(directURL)
 					results = append(results, api.ScreenshotLinkedImage{
 						Tracker: tracker,
-						URL:     trimmed,
+						URL:     directURL,
 						Path:    fullPath,
 						Host:    host,
 					})
@@ -1780,6 +1780,12 @@ func buildTrackerImageFilename(rawURL string, index int) string {
 }
 
 func trackerImageArtifactPaths(tmpDir string, trackerDir string, rawURL string, index int) []string {
+	if imagehost.IsWsrvProxyURL(rawURL) {
+		rawURL = imagehost.DirectImageURL(rawURL)
+		if rawURL == "" {
+			return nil
+		}
+	}
 	dir := filepath.Join(tmpDir, trackerDir)
 	exact := filepath.Join(dir, buildTrackerImageFilename(rawURL, index))
 	paths := []string{exact}

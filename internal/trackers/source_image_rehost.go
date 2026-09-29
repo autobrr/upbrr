@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,7 +41,10 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 		return nil
 	}
 	urls := sourceOnlyDescriptionImageURLs(assets.Description)
-	urls = slices.DeleteFunc(urls, sourceOnlyImageReusePolicy(s.registry, tracker, meta, preloaded))
+	reuseSourceURL := sourceOnlyImageReusePolicy(s.registry, tracker, meta, preloaded)
+	urls = slices.DeleteFunc(urls, func(rawURL string) bool {
+		return !imagehost.IsWsrvProxyURL(rawURL) && reuseSourceURL(rawURL)
+	})
 	menuIndices := make([]int, 0)
 	if trackerUsesMenuImages(s.registry, tracker) {
 		for index, menu := range assets.MenuImages {
@@ -53,12 +57,35 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 	if len(urls) == 0 && len(menuIndices) == 0 {
 		return nil
 	}
-	if s.images == nil || s.repo == nil || !meta.MediaBinding.Valid() || imageHostUploadSkipped(meta) && meta.ExactMedia == nil {
-		return fmt.Errorf("trackers: %s description has %d images needing hosting and image hosting is unavailable", tracker, len(urls)+len(menuIndices))
-	}
 	policy, err := resolveImageHostPolicyForMetadataWithRegistry(s.registry, tracker, s.cfg, trackerCfg, meta.ImageHostOverrides)
 	if err != nil {
 		return err
+	}
+	directReplacements := make(map[string]string)
+	urls = slices.DeleteFunc(urls, func(rawURL string) bool {
+		if !imagehost.IsWsrvProxyURL(rawURL) {
+			return false
+		}
+		directURL := imagehost.DirectImageURL(rawURL)
+		host := imagehost.ExtractHost(directURL)
+		if directURL == "" || host == "" || hostInList(host, policy.failed) ||
+			len(policy.allowed) > 0 && !hostAllowed(host, policy.allowed) ||
+			!reusableSelectionMatchesPolicy(host, policy) ||
+			(imagehost.IsSourceOnlyURL(directURL) && !reuseSourceURL(directURL)) {
+			return false
+		}
+		if owner := trackerForOwnedHost(s.registry, host); owner != "" && !strings.EqualFold(owner, tracker) {
+			return false
+		}
+		directReplacements[rawURL] = directURL
+		return true
+	})
+	if len(urls) == 0 && len(menuIndices) == 0 {
+		assets.Description = rewriteSourceOnlyDescriptionImageURLs(assets.Description, directReplacements)
+		return nil
+	}
+	if s.images == nil || s.repo == nil || !meta.MediaBinding.Valid() || imageHostUploadSkipped(meta) && meta.ExactMedia == nil {
+		return fmt.Errorf("trackers: %s description has %d images needing hosting and image hosting is unavailable", tracker, len(urls)+len(menuIndices))
 	}
 	if !policy.required {
 		policy = sourceOnlyImageUploadPolicy(s.registry, s.cfg, tracker, policy)
@@ -81,7 +108,7 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 	}
 	client := newDescriptionSlotImageHTTPClient()
 	if slices.ContainsFunc(urls, func(rawURL string) bool {
-		return isPTPDescriptionImageURL(rawURL) || isPTPDescriptionImageURL(preferredFullSizeSourceURL(rawURL))
+		return isPTPDescriptionImageURL(imagehost.DirectImageURL(rawURL))
 	}) {
 		client = PTPDescriptionImageHTTPClient(ctx, client, s.cfg, s.logger)
 	}
@@ -182,7 +209,7 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 				}
 			}
 		}
-		replacements := make(map[string]string, len(urls))
+		replacements := maps.Clone(directReplacements)
 		complete := true
 		for index, rawURL := range urls {
 			image := images[index]
@@ -266,42 +293,10 @@ func sourceOnlyImageReusePolicy(registry *Registry, tracker string, meta api.Upl
 }
 
 func preferredFullSizeSourceURL(rawURL string) string {
-	proxySource := imagehost.WsrvSourceURL(rawURL)
-	if proxySource == "" {
+	if !imagehost.IsWsrvProxyURL(rawURL) {
 		return ""
 	}
-	if isPTPDescriptionImageURL(proxySource) {
-		return proxySource
-	}
-	normalized := imagehost.NormalizeRawURL(rawURL)
-	if normalized == rawURL {
-		return ""
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	query := parsed.Query()
-	resized := query.Has("w") || query.Has("h") || query.Has("width") || query.Has("height")
-	if !resized && normalized == proxySource {
-		return ""
-	}
-	if imagehost.IsSourceOnlyURL(normalized) {
-		normalizedURL, parseErr := url.Parse(normalized)
-		if parseErr != nil {
-			return ""
-		}
-		normalizedQuery := normalizedURL.Query()
-		for _, key := range []string{"w", "h", "width", "height"} {
-			normalizedQuery.Del(key)
-		}
-		normalizedURL.RawQuery = normalizedQuery.Encode()
-		normalized = normalizedURL.String()
-	}
-	if normalized == rawURL {
-		return ""
-	}
-	return normalized
+	return imagehost.DirectImageURL(rawURL)
 }
 
 func cachedSourceDescriptionImagePath(tmpDir string, rawURL string, meta api.UploadSubject, preloaded *preloadedDescriptionAssetData) string {

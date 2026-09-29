@@ -1216,7 +1216,7 @@ func resolveTrackerScreenshotsWithPolicy(urls []string, policy imageHostPolicy) 
 	}
 	hostCounts := make(map[string]int)
 	for _, rawURL := range urls {
-		trimmed := strings.TrimSpace(rawURL)
+		trimmed := imagehost.DirectImageURL(rawURL)
 		if trimmed == "" {
 			continue
 		}
@@ -1236,7 +1236,7 @@ func resolveTrackerScreenshotsWithPolicy(urls []string, policy imageHostPolicy) 
 
 	results := make([]api.ScreenshotImage, 0, len(urls))
 	for _, rawURL := range urls {
-		trimmed := strings.TrimSpace(rawURL)
+		trimmed := imagehost.DirectImageURL(rawURL)
 		if trimmed == "" {
 			continue
 		}

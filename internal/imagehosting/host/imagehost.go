@@ -44,6 +44,13 @@ func ExtractHost(rawURL string) string {
 	if strings.TrimSpace(rawURL) == "" {
 		return ""
 	}
+	if IsWsrvProxyURL(rawURL) {
+		directURL := DirectImageURL(rawURL)
+		if directURL == "" {
+			return ""
+		}
+		rawURL = directURL
+	}
 
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Host == "" {
