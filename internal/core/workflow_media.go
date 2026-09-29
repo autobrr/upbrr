@@ -804,6 +804,8 @@ type importedTrackerScreenshot struct {
 	link  api.ScreenshotLinkedImage
 }
 
+// importedTrackerScreenshots pairs saved tracker links with selected local
+// screenshots and keeps only the first occurrence of each hosted URL.
 func importedTrackerScreenshots(plan api.ScreenshotPlan) []importedTrackerScreenshot {
 	byPath := make(map[string]api.ScreenshotImage, len(plan.FinalSelections))
 	for _, image := range plan.FinalSelections {
@@ -833,6 +835,8 @@ func importedTrackerScreenshots(plan api.ScreenshotPlan) []importedTrackerScreen
 	return imported
 }
 
+// retainImportedScreenshot binds a saved hosted link to its local screenshot
+// and records the host account and tracker usage scopes for later reuse.
 func (b workflowMediaBuilder) retainImportedScreenshot(
 	retained *workflowMediaPrivateArtifacts,
 	snapshot *api.MediaArtifactSet,
@@ -979,6 +983,9 @@ func mergeManualSelectionsWithDiscPlan(
 	return selections, existing, nil
 }
 
+// BuildIncremental keeps current media while capturing requested additions.
+// Already retained screenshot indexes are skipped, and the returned private
+// resource stays paired with the combined artifact snapshot.
 func (b workflowMediaBuilder) BuildIncremental(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -1181,6 +1188,9 @@ func (b workflowMediaBuilder) BuildIncremental(
 	return combined, retained, nil
 }
 
+// matchingRestoredImportedScreenshot finds a retained import with matching
+// bytes and host scope. It prefers the same URL; a changed URL matches only
+// when the old URL is absent and the content match is unambiguous.
 func matchingRestoredImportedScreenshot(
 	ctx context.Context,
 	capturedID api.PublicResourceID,

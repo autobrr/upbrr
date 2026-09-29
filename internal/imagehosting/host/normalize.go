@@ -73,6 +73,8 @@ func DirectImageURL(value string) string {
 	return direct
 }
 
+// normalizeDirectImageURL expands known host-specific thumbnail and viewer
+// forms; unknown image URLs retain their original representation.
 func normalizeDirectImageURL(parsed *url.URL, original string) string {
 	host := strings.ToLower(parsed.Hostname())
 	pathValue := parsed.Path

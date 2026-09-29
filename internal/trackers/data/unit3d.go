@@ -406,6 +406,9 @@ func convertCleanedUnit3DImages(images []descriptionunit3d.Image) []bbcode.Image
 	return converted
 }
 
+// resolveImgBBImages replaces viewer links with full image URLs. If lookup
+// fails, an existing direct image remains usable while thumbnail-only entries
+// are discarded.
 func resolveImgBBImages(ctx context.Context, client *http.Client, tracker string, logger api.Logger, images []bbcode.Image) []bbcode.Image {
 	safeClient := Unit3DImageHTTPClient(client)
 	for index := range images {
@@ -461,6 +464,8 @@ func isImgBBDirectImageURL(rawURL string) bool {
 		!strings.Contains(strings.ToLower(parsed.Path), "/thumbs/")
 }
 
+// fetchImgBBFullImageURL reads a bounded, validated viewer page and returns
+// its full image URL or a URL-free reason suitable for diagnostic logging.
 func fetchImgBBFullImageURL(ctx context.Context, client *http.Client, webURL string) (string, string) {
 	if err := ValidateUnit3DImageURL(ctx, webURL); err != nil {
 		return "", "invalid_or_nonpublic_page_url"
@@ -494,6 +499,8 @@ func fetchImgBBFullImageURL(ctx context.Context, client *http.Client, webURL str
 	return fullURL, ""
 }
 
+// imgBBFullImageURL extracts a direct ImgBB image from page metadata,
+// preferring og:image over an image_src link.
 func imgBBFullImageURL(page []byte, viewerURL string) string {
 	viewer, err := url.Parse(viewerURL)
 	if err != nil {

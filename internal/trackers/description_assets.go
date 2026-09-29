@@ -896,6 +896,8 @@ func resolveDescriptionScreenshots(
 	return nil, resolveTrackerScreenshotsWithPolicy(urls, selectionPolicy), nil
 }
 
+// preloadDescriptionAssetData includes the effective saved description so
+// screenshot reconciliation and description rendering use the same source.
 func preloadDescriptionAssetData(
 	ctx context.Context,
 	meta api.UploadSubject,
@@ -910,17 +912,6 @@ func preloadDescriptionAssetData(
 		return nil, err
 	}
 	return preloaded, nil
-}
-
-func preloadScreenshotAssetData(
-	ctx context.Context,
-	meta api.UploadSubject,
-	repo UploadPersistence,
-	registry *Registry,
-) (*preloadedDescriptionAssetData, error) {
-	// Screenshot slot reconciliation uses the effective description, including
-	// saved overrides, even when the target only consumes screenshots.
-	return preloadDescriptionAssetData(ctx, meta, repo, registry)
 }
 
 func preloadUploadAssetData(

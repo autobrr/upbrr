@@ -272,7 +272,7 @@ func TestOptionalTrackerRehostsSourceOnlyScreenshotFromExactMedia(t *testing.T) 
 		t.Fatal(err)
 	}
 	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbox"}}
-	preloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, registry)
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestOriginTrackerKeepsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := &stubRepo{}
-	preloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, registry)
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestOriginTrackerKeepsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
 	if err := otherRegistry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
 		t.Fatal(err)
 	}
-	otherPreloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, otherRegistry)
+	otherPreloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, otherRegistry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +520,7 @@ func TestExactMediaPreservesLocalScreenshotWhenAnotherHasUsableHost(t *testing.T
 				ExactMedia:   filtered,
 			}
 			repo := &stubRepo{}
-			preloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, registry)
+			preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
 			if err != nil {
 				t.Fatal(err)
 			}

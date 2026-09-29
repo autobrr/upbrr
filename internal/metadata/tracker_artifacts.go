@@ -248,6 +248,8 @@ func buildImageFilename(rawURL string, index int) string {
 	return base
 }
 
+// downloadImage fetches the validated direct image source into a private
+// artifact. It returns a URL-free failure reason for operator diagnostics.
 func downloadImage(ctx context.Context, client *http.Client, rawURL string, outPath string, expectedHeight int, isDVD bool) string {
 	requestURL := imagehost.DirectImageURL(rawURL)
 	if requestURL == "" {

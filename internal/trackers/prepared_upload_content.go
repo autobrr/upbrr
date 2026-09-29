@@ -52,11 +52,7 @@ func (s *Service) prepareUploadContent(
 		if err != nil {
 			return failedPreparedUploadContent(tracker, mode, err)
 		}
-		if mode.UsesDescription() {
-			preloaded, err = preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
-		} else {
-			preloaded, err = preloadScreenshotAssetData(ctx, meta, s.repo, s.registry)
-		}
+		preloaded, err = preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 		if err != nil {
 			return failedPreparedUploadContent(tracker, mode, err)
 		}

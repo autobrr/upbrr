@@ -1292,6 +1292,8 @@ type ptpDescriptionImageTransport struct {
 	cookies []*http.Cookie
 }
 
+// RoundTrip adds saved web cookies to HTTPS requests on PTP's domain and
+// subdomains at the default TLS port, then delegates to the base transport.
 func (t *ptpDescriptionImageTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme == "https" && isPTPDescriptionImageURL(req.URL.String()) && (req.URL.Port() == "" || req.URL.Port() == "443") {
 		authenticated := req.Clone(req.Context())
@@ -1494,6 +1496,8 @@ func buildTrackerArtifactImageName(rawURL string, index int) string {
 	return strings.TrimSuffix(base, "."+ext) + suffix + "." + ext
 }
 
+// localTrackerArtifactPaths looks up saved images by direct source identity
+// for wsrv proxies, leaving older proxy-keyed thumbnails ineligible.
 func localTrackerArtifactPaths(dir string, rawURL string, index int) []string {
 	if imagehost.IsWsrvProxyURL(rawURL) {
 		rawURL = imagehost.DirectImageURL(rawURL)

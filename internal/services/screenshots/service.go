@@ -1160,6 +1160,8 @@ func (s *Service) removeTrackerImageReference(
 	return nil
 }
 
+// loadTrackerMetadata withholds image URLs when a tracker's required asset
+// provenance is missing.
 func (s *Service) loadTrackerMetadata(ctx context.Context, sourcePath string) []api.TrackerMetadata {
 	if s.repo == nil || strings.TrimSpace(sourcePath) == "" {
 		return nil
@@ -1171,22 +1173,7 @@ func (s *Service) loadTrackerMetadata(ctx context.Context, sourcePath string) []
 		}
 		return nil
 	}
-	for index := range records {
-		record := &records[index]
-		if len(record.ImageURLs) == 0 || !trackers.LegacyImageAssetsNeedProvenance(s.registry, record.Tracker) {
-			continue
-		}
-		if _, err := s.repo.GetTrackerTimestamp(ctx, trackers.TrackerAssetProvenanceKey(*record)); err != nil {
-			if !errors.Is(err, internalerrors.ErrNotFound) {
-				s.logger.Warnf("screenshots: failed to check tracker image provenance tracker=%s err=%s",
-					record.Tracker, redaction.RedactValue(err.Error(), nil))
-			} else {
-				s.logger.Tracef("screenshots: withholding unverified legacy tracker images tracker=%s count=%d", record.Tracker, len(record.ImageURLs))
-			}
-			record.ImageURLs = nil
-		}
-	}
-	return records
+	return trackers.FilterUnverifiedTrackerImages(ctx, s.repo, s.registry, records, s.logger)
 }
 
 // retrySQLiteBusy runs fn until it succeeds, fails for a reason other than a
@@ -1702,6 +1689,8 @@ func reindexScreenshotImages(images []api.ScreenshotImage) []api.ScreenshotImage
 	return images
 }
 
+// buildTrackerImageLinks exposes comparison-safe saved images with decodable
+// local artifacts. Proxy records publish the direct source URL and host.
 func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, registry *trackers.Registry) []api.ScreenshotLinkedImage {
 	if strings.TrimSpace(tmpDir) == "" {
 		return nil
@@ -1779,6 +1768,8 @@ func buildTrackerImageFilename(rawURL string, index int) string {
 	return fmt.Sprintf("%s_%x%s", strings.TrimSuffix(legacy, ext), digest[:6], ext)
 }
 
+// trackerImageArtifactPaths uses the direct source as the artifact key for
+// wsrv proxies, excluding older proxy-keyed thumbnails from reuse.
 func trackerImageArtifactPaths(tmpDir string, trackerDir string, rawURL string, index int) []string {
 	if imagehost.IsWsrvProxyURL(rawURL) {
 		rawURL = imagehost.DirectImageURL(rawURL)

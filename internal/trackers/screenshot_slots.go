@@ -600,6 +600,8 @@ func filterTrackerArtifactSelections(
 	return filtered
 }
 
+// trackerArtifactPathAllowed requires selected files from provenance-gated
+// trackers to match a comparison-safe saved image URL.
 func trackerArtifactPathAllowed(imagePath string, records []api.TrackerMetadata, registry *Registry) bool {
 	if strings.TrimSpace(imagePath) == "" {
 		return true
@@ -1395,6 +1397,8 @@ func reusableSourceImageURL(rawURL string, policy imageHostPolicy) bool {
 	return !imagehost.IsSourceOnlyURL(rawURL) || policy.sourceOnlyAllowed != nil && policy.sourceOnlyAllowed(rawURL)
 }
 
+// attachNativeSourceURLsToSlots restores a saved source URL for selected
+// local tracker artifacts when the destination permits source-only reuse.
 func attachNativeSourceURLsToSlots(slots []api.ScreenshotSlot, records []api.TrackerMetadata, policy imageHostPolicy) bool {
 	if policy.sourceOnlyAllowed == nil {
 		return false

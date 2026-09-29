@@ -3154,7 +3154,7 @@ func TestScreenshotPreloadKeepsSavedOverrideSlotAssets(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: sourcePath, Options: api.UploadOptions{KeepImages: true}}
 	registry := descriptionAssetsTestRegistry(t)
-	preloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, registry)
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
 	if err != nil {
 		t.Fatalf("preload saved override: %v", err)
 	}
@@ -3918,7 +3918,7 @@ func TestImageHostPreflightKeepsOtherTrackerSharedSlots(t *testing.T) {
 	meta := api.UploadSubject{SourcePath: sourcePath, Options: api.UploadOptions{KeepImages: true}}
 	images := &stubImageService{repo: repo}
 	registry := descriptionAssetsTestRegistry(t)
-	preloaded, err := preloadScreenshotAssetData(t.Context(), meta, repo, registry)
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
 	if err != nil {
 		t.Fatalf("preload screenshots: %v", err)
 	}

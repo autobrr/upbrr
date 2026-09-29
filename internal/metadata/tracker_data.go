@@ -243,6 +243,9 @@ func shouldUseStrictPriorityLookup(meta preparationstate.State, eligible []strin
 	return false
 }
 
+// enrichTrackerDataPriority checks eligible trackers in order, retains assets
+// only from the first tracker with a description or images, and stops once IDs resolve.
+// Successful records and their freshness timestamps are persisted.
 func (s *Service) enrichTrackerDataPriority(
 	ctx context.Context,
 	meta preparationstate.State,

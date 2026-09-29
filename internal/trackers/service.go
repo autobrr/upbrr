@@ -155,7 +155,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 
 	if preloaded == nil && (len(representatives) > 0 || resolveAll) {
 		var err error
-		preloaded, err = preloadScreenshotAssetData(ctx, meta, s.repo, s.registry)
+		preloaded, err = preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 		if err != nil {
 			s.logger.Warnf("trackers: image host preflight preload failed for %s: %v", meta.SourcePath, err)
 			preloaded = nil
@@ -208,7 +208,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 	}
 
 	if len(representatives) > 0 && reuploaded {
-		refreshed, err := preloadScreenshotAssetData(ctx, meta, s.repo, s.registry)
+		refreshed, err := preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 		if err != nil {
 			s.logger.Warnf("trackers: image host preflight reload failed for %s: %v", meta.SourcePath, err)
 		} else {
@@ -259,7 +259,7 @@ func (s *Service) preloadUploadContentData(
 	if !needsImages {
 		return nil, nil, nil
 	}
-	preloaded, err := preloadScreenshotAssetData(ctx, meta, s.repo, s.registry)
+	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 	if err != nil {
 		return nil, err, err
 	}
