@@ -452,6 +452,68 @@ func TestCompositeUploadDefersSingleTrackerNameReviewUntilDuplicateCheck(t *test
 	}
 }
 
+func TestCompositeUploadStrictDuplicateSupersedesSingleTrackerNameReview(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadNameReviewTestModule(t)
+	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "ALPHA", "in_client")
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-strict-dupe-name-review")
+	request.Trackers.Include = []api.TrackerID{"ALPHA"}
+	request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateBlock
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start strict-duplicate name review: %v", err)
+	}
+	completed := waitCompositeUploadTestOperation(t, module, started)
+	if completed.Operation.Status == api.StageStatusBlocked || completed.Operation.Result == nil ||
+		completed.Operation.Result.Kind != api.WorkflowOperationResultDupes || completed.Dupes == nil {
+		t.Fatalf("strict-duplicate name review result = %#v", completed)
+	}
+}
+
+func TestCompositeUploadRuleAuthorizationPrecedesNameReview(t *testing.T) {
+	t.Parallel()
+
+	authorize := api.RequiredAction{
+		ID:        "authorize-rules",
+		Kind:      api.RequiredActionAuthorizeRules,
+		Status:    api.RequiredActionStatusPending,
+		TrackerID: "ALPHA",
+	}
+	nameReview := api.RequiredAction{
+		ID:        "confirm-name",
+		Kind:      api.RequiredActionProvideTrackerInput,
+		Status:    api.RequiredActionStatusPending,
+		TrackerID: "ALPHA",
+	}
+	current := CommandResult{
+		Projections: &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+			TrackerID: "ALPHA",
+			PolicyDecisions: []api.TrackerPolicyDecision{{
+				Code: releaseNameConfirmationDecisionCode, Decision: "confirmation_required",
+			}},
+			RequiredActions: []api.RequiredAction{nameReview},
+		}}},
+		Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{authorize, nameReview}},
+	}
+	session := &compositeUploadSession{Confirm: true}
+	if got := compositeUploadPendingAction(current, session); got == nil || got.ID != authorize.ID {
+		t.Fatalf("first pending action = %#v, want rule authorization", got)
+	}
+
+	current.Continuation.RequiredActions = []api.RequiredAction{nameReview}
+	if got := compositeUploadPendingAction(current, session); got != nil {
+		t.Fatalf("name review before duplicate assessment = %#v, want deferred", got)
+	}
+
+	current.Dupes = &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+		TrackerID: "ALPHA", Decision: api.DupeDecisionNoMatch,
+	}}}
+	if got := compositeUploadPendingAction(current, session); got == nil || got.ID != nameReview.ID {
+		t.Fatalf("pending action after duplicate assessment = %#v, want name review", got)
+	}
+}
+
 func TestCompositeUploadTrackerInputRejectsMismatchedTrackerWithoutMutation(t *testing.T) {
 	t.Parallel()
 
@@ -814,7 +876,7 @@ func TestCompositeUploadStrictExcludesDuplicateBlockedSibling(t *testing.T) {
 	t.Parallel()
 
 	module, _, uploads := newCompositeUploadTestModule(t)
-	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA")
+	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", "same release")
 	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-dupe-sibling")
 
 	started, err := module.StartUpload(context.Background(), testOwnerID, request)
@@ -2002,6 +2064,7 @@ func compositeUploadAuthBlockedPreflightBuilderFor(
 func compositeUploadDuplicateBlockedBuilder(
 	base DupeAssessmentBuilder,
 	blockedTrackerID api.TrackerID,
+	matchReason string,
 ) DupeAssessmentBuilder {
 	return dupeAssessmentBuilderFunc(func(
 		ctx context.Context,
@@ -2022,7 +2085,7 @@ func compositeUploadDuplicateBlockedBuilder(
 			assessment.Results[index].Decision = api.DupeDecisionAccepted
 			assessment.Results[index].Matches = []api.DupeMatchProjection{{
 				Name:   "Example.Release.2026.1080p-GRP",
-				Reason: "same release",
+				Reason: matchReason,
 			}}
 		}
 		return assessment, privateEvidence, nil

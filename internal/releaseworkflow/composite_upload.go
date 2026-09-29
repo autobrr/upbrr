@@ -1237,6 +1237,9 @@ func compositeUploadPendingAction(
 		if action.Status != api.RequiredActionStatusPending {
 			continue
 		}
+		if compositeUploadStrictDuplicate(current.Dupes, action.TrackerID) {
+			continue
+		}
 		if !session.Confirm && continuationUnattendedSkipsTrackerAction(session.Intent, *action) {
 			continue
 		}
@@ -1693,7 +1696,7 @@ func compositeUploadInitialItems() []api.WorkflowOperationItem {
 
 func compositeUploadTerminalStatus(result CommandResult) api.StageStatus {
 	if slices.ContainsFunc(result.Continuation.RequiredActions, func(action api.RequiredAction) bool {
-		return action.Status == api.RequiredActionStatusPending
+		return action.Status == api.RequiredActionStatusPending && !compositeUploadStrictDuplicate(result.Dupes, action.TrackerID)
 	}) {
 		return api.StageStatusBlocked
 	}
@@ -1747,7 +1750,10 @@ func compositeUploadResult(result CommandResult) *api.WorkflowOperationResult {
 			RefID:            string(result.DryRun.ID),
 			RefRevision:      result.DryRun.Revision,
 		}
-	case result.Dupes != nil && !hasPendingRequiredAction(result.Continuation.RequiredActions):
+	case result.Dupes != nil && !slices.ContainsFunc(result.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return (action.Status == "" || action.Status == api.RequiredActionStatusPending) &&
+			!compositeUploadStrictDuplicate(result.Dupes, action.TrackerID)
+	}):
 		return &api.WorkflowOperationResult{
 			Kind:             api.WorkflowOperationResultDupes,
 			WorkflowRevision: result.Workflow.Revision,
@@ -1757,6 +1763,12 @@ func compositeUploadResult(result CommandResult) *api.WorkflowOperationResult {
 	default:
 		return nil
 	}
+}
+
+func compositeUploadStrictDuplicate(assessment *api.DupeAssessment, trackerID api.TrackerID) bool {
+	return trackerID != "" && assessment != nil && slices.ContainsFunc(assessment.Results, func(result api.TrackerDupeAssessment) bool {
+		return result.TrackerID == trackerID && result.Decision == api.DupeDecisionAccepted && strictDupeResult(result)
+	})
 }
 
 func compositeUploadFeedbackActionKind(kind api.ReleaseWorkflowUploadFeedbackKind) api.RequiredActionKind {
