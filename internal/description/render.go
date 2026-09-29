@@ -8,7 +8,13 @@ import (
 	"strings"
 )
 
-var htmlTagPattern = regexp.MustCompile(`(?i)<[a-z][^>]*>`)
+var (
+	htmlTagPattern       = regexp.MustCompile(`(?i)<[a-z][^>]*>`)
+	bbcodeOpeningPattern = regexp.MustCompile(
+		`\[(b|i|u|s|url|img|spoiler|quote|list|left|right|center|align|comparison|code|hide|mediainfo|font|color)` +
+			`(?:=[^\]]*|[ \t]+[^\]]*)?\]`,
+	)
+)
 
 // Render converts BBCode, MediaInfo blocks, or existing HTML into HTML that has
 // passed the package's element, attribute, class, style, and URL allowlists.
@@ -21,7 +27,8 @@ func Render(raw string) string {
 	if rendered, ok := renderBBCodeWithMediaInfo(trimmed); ok {
 		return sanitizeHTML(rendered)
 	}
-	if looksLikeHTML(trimmed) {
+	// HTML-like text inside a BBCode block does not make the description HTML.
+	if looksLikeHTML(trimmed) && !looksLikeBBCode(trimmed) {
 		return sanitizeHTML(trimmed)
 	}
 	return sanitizeHTML(renderBBCode(trimmed))
@@ -29,4 +36,14 @@ func Render(raw string) string {
 
 func looksLikeHTML(value string) bool {
 	return htmlTagPattern.MatchString(value)
+}
+
+func looksLikeBBCode(value string) bool {
+	lower := strings.ToLower(value)
+	for _, opening := range bbcodeOpeningPattern.FindAllStringSubmatch(lower, -1) {
+		if strings.Contains(lower, "[/"+opening[1]+"]") {
+			return true
+		}
+	}
+	return false
 }

@@ -50,6 +50,13 @@ func TestRenderHTMLSanitizes(t *testing.T) {
 	}
 }
 
+func TestRenderHTMLWithUnpairedBracketText(t *testing.T) {
+	rendered := Render("<p>[b] is a literal marker</p>")
+	if rendered != "<p>[b] is a literal marker</p>" {
+		t.Fatalf("expected HTML formatting to remain intact, got %q", rendered)
+	}
+}
+
 func TestRenderSanitizesURLs(t *testing.T) {
 	rendered := Render("<a href=\"javascript:alert(1)\">Bad</a>")
 	if strings.Contains(rendered, "javascript:") {
@@ -222,6 +229,20 @@ func TestRenderLinkedWidthImageBBCode(t *testing.T) {
 	}
 	if strings.Contains(rendered, "&lt;img") || strings.Contains(rendered, "https://pixhost.to/fv71hr.png</a>") {
 		t.Fatalf("expected no visible link text duplication, got %q", rendered)
+	}
+}
+
+func TestRenderBBCodeWithHTMLLikeComparisonText(t *testing.T) {
+	input := "[align=center][url=https://images.example.invalid/view][img width=350]https://images.example.invalid/thumb.jpg[/img][/url][/align]\n" +
+		"[spoiler=Comparison]<strong>Source</strong>[/spoiler]"
+	rendered := Render(input)
+	if !strings.Contains(rendered, `src="https://images.example.invalid/thumb.jpg"`) ||
+		!strings.Contains(rendered, `width="350"`) ||
+		!strings.Contains(rendered, `href="https://images.example.invalid/view"`) {
+		t.Fatalf("expected BHD BBCode screenshot preview, got %q", rendered)
+	}
+	if strings.Contains(rendered, "[img") || strings.Contains(rendered, "[align") {
+		t.Fatalf("expected BBCode tags to render, got %q", rendered)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -25,6 +26,22 @@ func TestBHDComparisonMarkupStaysExactAndSeparateImagesImport(t *testing.T) {
 	got := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{Description: source})
 	if !strings.Contains(got, comparison) || strings.Count(got, "https://img.example/screen.png") != 1 {
 		t.Fatalf("BHD builder changed comparison or duplicated screenshot: %q", got)
+	}
+}
+
+func TestBHDDescriptionUsesBBCodePreviewWithHTMLLikeComparison(t *testing.T) {
+	raw := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{
+		Description: "[spoiler=Comparisons]<strong>Source</strong>[/spoiler]",
+		Screenshots: []api.ScreenshotImage{{
+			ImgURL: "https://images.example.invalid/thumb.jpg",
+			WebURL: "https://images.example.invalid/view",
+		}},
+	})
+	preview := description.Render(raw)
+	if !strings.Contains(preview, `src="https://images.example.invalid/thumb.jpg"`) ||
+		!strings.Contains(preview, `href="https://images.example.invalid/view"`) ||
+		strings.Contains(preview, "[img") {
+		t.Fatalf("expected rendered BHD screenshot preview, got %q", preview)
 	}
 }
 
