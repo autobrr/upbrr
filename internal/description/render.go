@@ -10,8 +10,9 @@ import (
 	xhtml "golang.org/x/net/html"
 )
 
-var bbcodeTagPattern = regexp.MustCompile(
-	`(?i)\[(?:b|i|u|s|color|size|font|url|img|spoiler|hide|quote|list|li|left|right|center|align|comparison|mediainfo|code|pre)(?:[\]=\s])`,
+var bbcodeOpeningPattern = regexp.MustCompile(
+	`(?i)\[(b|i|u|s|color|size|font|url|img|spoiler|hide|quote|list|li|left|right|center|align|comparison|mediainfo|code|pre)` +
+		`(?:=[^\]]*|[ \t]+[^\]]*)?\]`,
 )
 
 // Render converts BBCode, MediaInfo blocks, or existing HTML into HTML that has
@@ -26,7 +27,7 @@ func Render(raw string) string {
 		return sanitizeHTML(rendered)
 	}
 	text, hasHTML := textOutsideHTMLTags(trimmed)
-	if hasHTML && !bbcodeTagPattern.MatchString(text) {
+	if hasHTML && !looksLikeBBCode(text) {
 		return sanitizeHTML(trimmed)
 	}
 	return sanitizeHTML(renderBBCode(trimmed))
@@ -61,4 +62,14 @@ func textOutsideHTMLTags(value string) (string, bool) {
 		}
 	}
 	return text.String(), hasHTML
+}
+
+func looksLikeBBCode(value string) bool {
+	lower := strings.ToLower(value)
+	for _, opening := range bbcodeOpeningPattern.FindAllStringSubmatch(lower, -1) {
+		if strings.Contains(lower, "[/"+opening[1]+"]") {
+			return true
+		}
+	}
+	return false
 }

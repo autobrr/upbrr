@@ -1156,8 +1156,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/thr/description.go:buildDescription": {
-    "sha256": "d99afd58b3648abc1aecaa6e9ad8658afa523db3a0a1d6e3127b8d7730a7f965",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "f96b9ec7b82f68b33d9bd69d03906b18bca6ae5a27dc1c9b5a0f05116d6030bd",
+    "reason": "Screenshot preview markup changed; provider consumers and manual-precedence decisions in this caller remain unchanged."
   },
   "internal/trackers/impl/standalone/thr/description.go:genresText": {
     "sha256": "cfbdf203a78d1a19f240cb0282f436e621a197cf8c103ad84915b0cb80b24b06",

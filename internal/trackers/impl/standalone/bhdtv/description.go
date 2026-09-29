@@ -35,7 +35,7 @@ func buildDescription(assets trackers.DescriptionAssets) string {
 	}
 	for _, image := range assets.Screenshots {
 		webURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, image.RawURL))
-		imgURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL, image.WebURL))
+		imgURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL, image.WebURL))
 		if webURL == "" || imgURL == "" {
 			continue
 		}

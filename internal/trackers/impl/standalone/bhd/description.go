@@ -94,7 +94,7 @@ func buildScreenshotSection(images []api.ScreenshotImage, limit int) string {
 		if count >= limit {
 			break
 		}
-		imgURL := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(image.RawURL), strings.TrimSpace(image.ImgURL))
+		imgURL := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(image.ImgURL), strings.TrimSpace(image.RawURL))
 		webURL := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(image.WebURL), strings.TrimSpace(image.RawURL), imgURL)
 		if imgURL == "" || webURL == "" {
 			continue

@@ -99,10 +99,16 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 	}
 	parts := make([]string, 0, len(images))
 	for _, image := range images {
-		if strings.TrimSpace(image.RawURL) == "" {
+		rawURL := strings.TrimSpace(image.RawURL)
+		if rawURL == "" {
 			continue
 		}
-		parts = append(parts, "[img]"+strings.TrimSpace(image.RawURL)+"[/img]")
+		imgURL := strings.TrimSpace(image.ImgURL)
+		if imgURL != "" && imgURL != rawURL {
+			parts = append(parts, "[url="+rawURL+"][img]"+imgURL+"[/img][/url]")
+			continue
+		}
+		parts = append(parts, "[img]"+rawURL+"[/img]")
 	}
 	if len(parts) == 0 {
 		return ""

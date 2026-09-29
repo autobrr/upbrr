@@ -39,9 +39,14 @@ func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets)
 		parts = append(parts, base)
 	}
 	for _, image := range assets.Screenshots {
-		raw := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL))
-		if raw != "" {
-			parts = append(parts, "[img]"+raw+"[/img]")
+		rawURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL))
+		if rawURL != "" {
+			imgURL := strings.TrimSpace(image.ImgURL)
+			if imgURL != "" && imgURL != rawURL {
+				parts = append(parts, "[url="+rawURL+"][img]"+imgURL+"[/img][/url]")
+			} else {
+				parts = append(parts, "[img]"+rawURL+"[/img]")
+			}
 		}
 	}
 	parts = append(parts, `[size=2][url=https://www.torrenthr.org/forums.php?action=viewtopic&topicid=8977]upbrr[/url][/size]`)

@@ -28,6 +28,29 @@ func TestBuildDescriptionKeepsComparisonImagesWhenReplacingScreenshots(t *testin
 	}
 }
 
+func TestBuildScreenshotTagUsesHostedThumbnailAndFullSizeLink(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		image api.ScreenshotImage
+		want  string
+	}{
+		{"host page", api.ScreenshotImage{
+			ImgURL: "https://images.example.invalid/thumb.png",
+			RawURL: "https://images.example.invalid/full.png",
+			WebURL: "https://images.example.invalid/page",
+		}, "[url=https://images.example.invalid/page][img=350]https://images.example.invalid/thumb.png[/img][/url]"},
+		{"direct full image", api.ScreenshotImage{ImgURL: "https://images.example.invalid/thumb.png", RawURL: "https://images.example.invalid/full.png"}, "[url=https://images.example.invalid/full.png][img=350]https://images.example.invalid/thumb.png[/img][/url]"},
+		{"no thumbnail", api.ScreenshotImage{RawURL: "https://images.example.invalid/full.png"}, "[url=https://images.example.invalid/full.png][img=350]https://images.example.invalid/full.png[/img][/url]"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := buildScreenshotTag(test.image, 350); got != test.want {
+				t.Fatalf("screenshot tag = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildDescriptionDoesNotDeduplicateSelectedScreenshotAgainstComparison(t *testing.T) {
 	imageURL := "https://img.example/shared.png"
 	comparison := "[spoiler=Comparisons][img]" + imageURL + "[/img][/spoiler]"

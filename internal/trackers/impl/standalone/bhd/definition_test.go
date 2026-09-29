@@ -661,8 +661,8 @@ func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	if strings.Count(result.Description, "Uploaded by upbrr") != 1 {
 		t.Fatalf("expected single signature, got %q", result.Description)
 	}
-	if !strings.Contains(result.Description, "[img width=350]https://img.hdbits.org/full.jpg[/img]") {
-		t.Fatalf("expected raw image url to be used, got %q", result.Description)
+	if !strings.Contains(result.Description, "[url=https://img.hdbits.org/page][img width=350]https://t.hdbits.org/thumb.jpg[/img][/url]") {
+		t.Fatalf("expected linked thumbnail, got %q", result.Description)
 	}
 }
 

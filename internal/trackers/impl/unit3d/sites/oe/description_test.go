@@ -50,7 +50,7 @@ func TestAudioAnalysisFollowsEvidenceAndMenus(t *testing.T) {
 	}
 	if strings.Index(got, "SVT-AV1 preset=4") >= strings.Index(got, "menu.png") ||
 		strings.Index(got, "menu.png") >= strings.Index(got, "audio.png") ||
-		strings.Index(got, "audio.png") >= strings.Index(got, "one.png") ||
+		strings.Index(got, "audio.png") >= strings.Index(got, "one-thumb.png") ||
 		!strings.Contains(got, "[img=350]https://images.example.invalid/audio.png[/img]") {
 		t.Fatalf("audio analysis placement = %q", got)
 	}
@@ -76,7 +76,7 @@ func TestDescriptionOwnsOEMarkupEvidenceAndScreenshots(t *testing.T) {
 		"[spoiler=Template][code]template notes[/code][/spoiler]",
 		"SVT-AV1 preset=4 crf=20", "Example BluRay source; original HDR10 only",
 		"https://images.example/source.png", "https://images.example/encode.png",
-		"[url=https://images.example/one][img=350]https://images.example/one.png[/img][/url]",
+		"[url=https://images.example/one][img=350]https://images.example/one-thumb.png[/img][/url]",
 		"[url=https://images.example/two.png][img=350]https://images.example/two.png[/img][/url]",
 		"[url=https://images.example/three.png][img=350]https://images.example/three.png[/img][/url]",
 	} {
@@ -95,6 +95,23 @@ func TestDescriptionOwnsOEMarkupEvidenceAndScreenshots(t *testing.T) {
 	failures, err := checkDescriptionRequirements(t.Context(), api.NewTrackerValidationSubject(meta, "OE"), api.NopLogger{})
 	if err != nil || len(failures) != 0 {
 		t.Fatalf("composed description must pass final validation: %v %v", failures, err)
+	}
+}
+
+func TestDescriptionKeepsExistingLinkedScreenshotWithoutDuplicatingIt(t *testing.T) {
+	screenshots := oeTestScreenshots()
+	screenshots[1].ImgURL = "https://images.example/two-thumb.png"
+	linkedRaw := "[url=" + screenshots[0].WebURL + "][img=300]" + screenshots[0].RawURL + "[/img][/url]"
+	kept := "[center]Existing screenshot: " + linkedRaw + "[/center]"
+	got, err := buildDescription(t.Context(), oeTestSubject(), config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, screenshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(got, linkedRaw) != 1 || strings.Contains(got, screenshots[0].ImgURL) {
+		t.Fatalf("existing linked screenshot was duplicated: %s", got)
+	}
+	if !strings.Contains(got, "[img=350]"+screenshots[1].ImgURL+"[/img]") {
+		t.Fatalf("new screenshot did not use its hosted thumbnail: %s", got)
 	}
 }
 
