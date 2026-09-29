@@ -1185,12 +1185,16 @@ export type ScreenshotResult = {
 
 export type ScreenshotPlan = {
   SourcePath: string;
+  /** Identifies the reviewed plan used to import saved tracker images. */
+  SavedImagePlanID?: string;
   DiscType: string;
   /** Independent prepared-disc timelines; absent for legacy single-source plans. */
   Discs?: ScreenshotDiscPlan[];
   DurationSeconds: number;
   FrameRate: number;
   SuggestedSelections: ScreenshotSelection[];
+  /** Validated tracker image URLs available for explicit selection. */
+  SavedTrackerImages?: { TrackerID: string; Host: string; URL: string }[];
   ExistingScreenshots: ScreenshotImage[];
   ExistingTrackerScreenshots: ScreenshotImage[];
   FinalSelections: ScreenshotImage[];

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -312,7 +313,7 @@ func filterScreenshotDuplicates(images []api.ScreenshotImage, keptDescription st
 	if len(images) == 0 {
 		return images
 	}
-	seen := extractBBCodeImageURLs(keptDescription)
+	seen := extractBBCodeImageURLs(comparison.RemoveComparisonBlocks(keptDescription))
 	if seen == nil {
 		seen = make(map[string]struct{})
 	}
@@ -386,9 +387,11 @@ func stripUnit3DSignature(value string) string {
 	if trimmed == "" {
 		return ""
 	}
-	trimmed = unit3DBotSignatureTag.ReplaceAllString(trimmed, "")
-	trimmed = unit3DEmptyCenterTag.ReplaceAllString(trimmed, "")
-	return strings.TrimSpace(unit3DUASignatureTag.ReplaceAllString(trimmed, ""))
+	return strings.TrimSpace(comparison.MapOutsideBlocks(trimmed, func(fragment string) string {
+		fragment = unit3DBotSignatureTag.ReplaceAllString(fragment, "")
+		fragment = unit3DEmptyCenterTag.ReplaceAllString(fragment, "")
+		return unit3DUASignatureTag.ReplaceAllString(fragment, "")
+	}))
 }
 
 // StripScreenshotBlocks removes prior pure screenshot sections when a builder
@@ -399,7 +402,17 @@ func StripScreenshotBlocks(value string) string {
 	if trimmed == "" {
 		return ""
 	}
-	cleaned := unit3DWrapperBlockTag.ReplaceAllStringFunc(trimmed, func(match string) string {
+	return normalizeDescription(comparison.MapOutsideBlocks(trimmed, stripScreenshotBlocksFragment))
+}
+
+// PrepareSiteText keeps complete comparison blocks unchanged while applying
+// tracker-specific text preparation to the surrounding content.
+func PrepareSiteText(value string, prepare func(string) string) string {
+	return comparison.MapOutsideBlocks(value, prepare)
+}
+
+func stripScreenshotBlocksFragment(value string) string {
+	return unit3DWrapperBlockTag.ReplaceAllStringFunc(value, func(match string) string {
 		parts := unit3DWrapperBlockTag.FindStringSubmatch(match)
 		if len(parts) != 4 {
 			return match
@@ -409,7 +422,6 @@ func StripScreenshotBlocks(value string) string {
 		}
 		return ""
 	})
-	return normalizeDescription(cleaned)
 }
 
 func stripUnit3DNFOBlocks(value string) string {
@@ -417,7 +429,9 @@ func stripUnit3DNFOBlocks(value string) string {
 	if trimmed == "" {
 		return ""
 	}
-	return normalizeDescription(unit3DNFOBlockTag.ReplaceAllString(trimmed, ""))
+	return normalizeDescription(comparison.MapOutsideBlocks(trimmed, func(fragment string) string {
+		return unit3DNFOBlockTag.ReplaceAllString(fragment, "")
+	}))
 }
 
 func isUnit3DScreenshotBlock(value string) bool {
@@ -595,7 +609,9 @@ func normalizeDescription(value string) string {
 	if trimmed == "" {
 		return ""
 	}
-	cleaned := collapseNewlines.ReplaceAllString(trimmed, "\n\n")
+	cleaned := comparison.MapOutsideBlocks(trimmed, func(fragment string) string {
+		return collapseNewlines.ReplaceAllString(fragment, "\n\n")
+	})
 	return strings.TrimSpace(cleaned)
 }
 
@@ -603,24 +619,26 @@ func finalizeUnit3DDescription(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
 	}
-	value = strings.ReplaceAll(value, "[hide", "[spoiler")
-	value = strings.ReplaceAll(value, "[/hide]", "[/spoiler]")
-	value = unit3DAlignBlockTag.ReplaceAllStringFunc(value, func(match string) string {
-		parts := unit3DAlignBlockTag.FindStringSubmatch(match)
-		if len(parts) != 3 {
-			return match
+	value = comparison.MapOutsideBlocks(value, func(fragment string) string {
+		fragment = strings.ReplaceAll(fragment, "[hide", "[spoiler")
+		fragment = strings.ReplaceAll(fragment, "[/hide]", "[/spoiler]")
+		fragment = unit3DAlignBlockTag.ReplaceAllStringFunc(fragment, func(match string) string {
+			parts := unit3DAlignBlockTag.FindStringSubmatch(match)
+			if len(parts) != 3 {
+				return match
+			}
+			tag := strings.ToLower(strings.TrimSpace(parts[1]))
+			if tag == "left" {
+				tag = "center"
+			}
+			return "[" + tag + "]" + parts[2] + "[/" + tag + "]"
+		})
+		fragment = unit3DWidthImageTag.ReplaceAllString(fragment, "[img=$1]")
+		for _, tag := range []string{"[user]", "[/user]", "[hr]", "[/hr]", "[ul]", "[/ul]", "[ol]", "[/ol]"} {
+			fragment = strings.ReplaceAll(fragment, tag, "")
 		}
-		tag := strings.ToLower(strings.TrimSpace(parts[1]))
-		if tag == "left" {
-			tag = "center"
-		}
-		return "[" + tag + "]" + parts[2] + "[/" + tag + "]"
+		return collapseNewlines.ReplaceAllString(fragment, "\n\n")
 	})
-	value = unit3DWidthImageTag.ReplaceAllString(value, "[img=$1]")
-	for _, tag := range []string{"[user]", "[/user]", "[hr]", "[/hr]", "[ul]", "[/ul]", "[ol]", "[/ol]"} {
-		value = strings.ReplaceAll(value, tag, "")
-	}
-	value = collapseNewlines.ReplaceAllString(value, "\n\n")
 	return normalizeDescription(value)
 }
 

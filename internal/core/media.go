@@ -485,7 +485,15 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		attemptByTarget[key] = attempt
 		pending++
 		go func() {
-			links, err := m.uploadImagesToTarget(ctx, meta, target, images, retainedLinks, blockedRetainedLinks, fallback)
+			targetImages := images
+			if target.ReuseOnly {
+				available := uploadedImagesByPathForTarget(retainedLinks, target)
+				targetImages = slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
+					_, ok := available[normalizedUploadImagePath(image.Path)]
+					return !ok
+				})
+			}
+			links, err := m.uploadImagesToTarget(ctx, meta, target, targetImages, retainedLinks, blockedRetainedLinks, fallback)
 			results <- completedAttempt{
 				index: index,
 				links: links,

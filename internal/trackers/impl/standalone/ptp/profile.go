@@ -19,11 +19,12 @@ import (
 // Its missing-IMDb metadata result is advisory and does not block upload.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:               "PTP",
-		BaseURL:            ptpBaseURL,
-		DescriptionGroup:   "ptp",
-		UploadContentMode:  trackers.UploadContentModeDescription,
-		PrepareDescription: prepareDescription,
+		Name:                    "PTP",
+		BaseURL:                 ptpBaseURL,
+		DescriptionGroup:        "ptp",
+		UploadContentMode:       trackers.UploadContentModeDescription,
+		SourceOnlyImageReusable: sourceOnlyImageReusable,
+		PrepareDescription:      prepareDescription,
 		ReleaseNamePolicy: trackers.WithMovieYearProvider(
 			trackers.CanonicalReleaseNamePolicy(),
 			api.IdentityProviderIMDB,

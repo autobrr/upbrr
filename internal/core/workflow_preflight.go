@@ -38,6 +38,51 @@ type workflowPreflightBuilder struct {
 	registry *trackers.Registry
 	logger   api.Logger
 	banned   *trackers.BannedGroupChecker
+	images   workflowReusableTrackerImageInventory
+}
+
+// workflowReusableTrackerImageInventory supplies validated local tracker images
+// for the preflight's current source and release.
+type workflowReusableTrackerImageInventory interface {
+	ReusableTrackerImageLinks(context.Context, string, api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error)
+}
+
+func (b workflowPreflightBuilder) hasReusableTrackerImages(
+	ctx context.Context,
+	subject api.UploadSubject,
+	projection api.TrackerReleaseProjection,
+) bool {
+	required := projection.Artifacts.ScreenshotCount
+	if b.images == nil || required <= 0 || strings.TrimSpace(subject.SourcePath) == "" {
+		return false
+	}
+	links, err := b.images.ReusableTrackerImageLinks(ctx, subject.SourcePath, subject.Release)
+	if err != nil {
+		b.logger.Tracef("tracker preflight: source images unavailable tracker=%s reason=metadata_read_failed", projection.TrackerID)
+		return false
+	}
+	urlsByHost := make(map[string]map[string]struct{})
+	for _, link := range links {
+		host := strings.ToLower(strings.TrimSpace(link.Host))
+		if host == "" || strings.TrimSpace(link.Path) == "" {
+			continue
+		}
+		if urlsByHost[host] == nil {
+			urlsByHost[host] = make(map[string]struct{})
+		}
+		urlsByHost[host][link.URL] = struct{}{}
+	}
+	for host, urls := range urlsByHost {
+		if len(urls) < required {
+			continue
+		}
+		allowed, err := trackers.ReusableImageHostAllowedWithRegistry(b.registry, b.config, string(projection.TrackerID), host, subject.ImageHostOverrides)
+		if err == nil && allowed {
+			b.logger.Tracef("tracker preflight: source images satisfy host policy tracker=%s host=%s count=%d", projection.TrackerID, host, len(urls))
+			return true
+		}
+	}
+	return false
 }
 
 func (b workflowPreflightBuilder) Build(
@@ -294,7 +339,7 @@ func (b workflowPreflightBuilder) Build(
 			)
 			if err != nil {
 				setMissingImageHostPreflight(&result, "Configured image host does not satisfy this tracker's image-host policy.")
-			} else if !imageHostReady {
+			} else if !imageHostReady && !b.hasReusableTrackerImages(ctx, subject, projection) {
 				setMissingImageHostPreflight(
 					&result,
 					"Required image host is not selected. Configure a compatible host in Image Hosting or tracker settings.",

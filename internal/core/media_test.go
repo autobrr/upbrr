@@ -30,6 +30,93 @@ type imageHostCall struct {
 	paths    []string
 }
 
+func TestReuseOnlyImageTargetsKeepEachHostsSavedImages(t *testing.T) {
+	t.Parallel()
+	images := []api.ScreenshotImage{
+		{Path: filepath.Join(t.TempDir(), "a.png"), Purpose: api.ScreenshotPurposeFinal},
+		{Path: filepath.Join(t.TempDir(), "b.png"), Purpose: api.ScreenshotPurposeFinal},
+	}
+	links := []api.UploadedImageLink{
+		{
+			ImagePath:  images[0].Path,
+			Host:       "pixhost",
+			UsageScope: "global",
+			RawURL:     "https://pixhost.cc/a.png",
+		},
+		{
+			ImagePath:  images[1].Path,
+			Host:       "imgbb",
+			UsageScope: "global",
+			RawURL:     "https://i.ibb.co/b.png",
+		},
+	}
+	module := &mediaModule{logger: api.NopLogger{}}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), api.UploadSubject{}, "", nil,
+		[]trackers.ImageUploadTarget{
+			{
+				Host:       "pixhost",
+				UsageScope: "global",
+				Trackers:   []string{"AITHER"},
+				ReuseOnly:  true,
+			},
+			{
+				Host:       "imgbb",
+				UsageScope: "global",
+				Trackers:   []string{"BHD"},
+				ReuseOnly:  true,
+			},
+		}, images, links, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Attempts) != 2 || len(result.Attempts[0].Links) != 1 || len(result.Attempts[1].Links) != 1 ||
+		result.Attempts[0].Links[0].RawURL != links[0].RawURL || result.Attempts[1].Links[0].RawURL != links[1].RawURL {
+		t.Fatalf("saved host attempts = %#v", result.Attempts)
+	}
+}
+
+func TestSavedHostUploadsAdditionalSelectedImage(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	images := []api.ScreenshotImage{
+		{Path: filepath.Join(root, "saved.png"), Purpose: api.ScreenshotPurposeFinal},
+		{Path: filepath.Join(root, "new.png"), Purpose: api.ScreenshotPurposeFinal},
+	}
+	saved := api.UploadedImageLink{
+		ImagePath:  images[0].Path,
+		Host:       "pixhost",
+		UsageScope: "global",
+		RawURL:     "https://pixhost.cc/saved.png",
+	}
+	release := make(chan struct{})
+	service := &barrierImageHostingService{
+		entered:   make(chan imageHostCall, 1),
+		behaviors: map[string]imageHostBehavior{"pixhost": {release: release}},
+	}
+	module := &mediaModule{images: service, logger: api.NopLogger{}}
+	done := make(chan imageUploadCallResult, 1)
+	go func() {
+		result, err := module.uploadImagesToTargetsWithFallback(t.Context(), api.UploadSubject{}, "", nil,
+			[]trackers.ImageUploadTarget{{
+				Host:       "pixhost",
+				UsageScope: "global",
+				Trackers:   []string{"AITHER"},
+			}},
+			images, []api.UploadedImageLink{saved}, nil)
+		done <- imageUploadCallResult{result: result, err: err}
+	}()
+	call := receiveImageHostCall(t, service.entered)
+	if call.host != "pixhost" || !slices.Equal(call.paths, []string{images[1].Path}) {
+		t.Fatalf("additional image upload = %#v", call)
+	}
+	close(release)
+	result := receiveImageUploadCallResult(t, done)
+	if result.err != nil || len(result.result.Attempts) != 1 || len(result.result.Attempts[0].Links) != 2 ||
+		result.result.Attempts[0].Links[0].RawURL != saved.RawURL {
+		t.Fatalf("saved plus new upload = %#v err=%v", result.result, result.err)
+	}
+}
+
 type imageHostBehavior struct {
 	release <-chan struct{}
 	err     error

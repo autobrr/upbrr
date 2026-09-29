@@ -4,6 +4,8 @@
 package bhd
 
 import (
+	"time"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -17,6 +19,7 @@ func Profile() standalone.Profile {
 		BaseURL:            bhdBaseURL,
 		DescriptionGroup:   "bhd",
 		UploadContentMode:  trackers.UploadContentModeDescription,
+		UsesMenuImages:     true,
 		AuthCapability:     authcontract.APIKeyCapability("BHD"),
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
@@ -92,3 +95,12 @@ type Definition struct{ *standalone.Definition }
 
 // New returns a fresh BHD definition from its tracker-local profile.
 func New() *Definition { return &Definition{Definition: standalone.MustNew(Profile())} }
+
+// DataLookupPolicy keeps BHD's lookup cooldown and refreshes legacy cached images
+// once so only images from the current cleaner are treated as reusable assets.
+func (*Definition) DataLookupPolicy() *trackers.DataLookupPolicy {
+	return &trackers.DataLookupPolicy{
+		Cooldown:                        15 * time.Second,
+		LegacyImageAssetsNeedProvenance: true,
+	}
+}

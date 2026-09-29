@@ -376,8 +376,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "sha256": "106d23ad05fb18047b4a4c966b8899256422a30fcfc7968a647f40d37550e380",
-    "reason": "Only the BHD naming policy identifier changed. Generated BHD names still use current provider evidence with manual title/year precedence; exact manual names bypass defaults."
+    "sha256": "67540bbe262b8fd19278f0aa8e6183ac76dc6974dc2d89083c12455017e49fcc",
+    "reason": "Only the DVD menu image consumption capability changed; provider metadata and manual title/year precedence remain unchanged."
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {
     "sha256": "0af22e8551c67d676e5b37d02a72c73cde9cf5823ae0dc7a3212bddddcf19fe4",
@@ -512,8 +512,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/bt/profile.go:Profile": {
-    "sha256": "92bbc463cc43e1f6ed10764fa6fad870b295630e05a752b16e0edfd3709f5c8a",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "9895d549cf79ceb8f6c62ef0fda63a872061d0f7c584c231df741d470cc41e9b",
+    "reason": "Only the DVD menu image consumption capability changed; provider metadata and manual fact precedence remain unchanged."
   },
   "internal/trackers/impl/standalone/bt/taxonomy.go:resolveAudio": {
     "sha256": "c405467e9a8ec1abed4c5afcd3385442599f6978a24af0eeb442699d30394699",
@@ -1312,8 +1312,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/aither/profile.go:Profile": {
-    "sha256": "7016ee2a18c35d5eb83305d104b1410120f938e4eb7caded0ea1258164652a2f",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "d29e272f01b2f5ec931b95f663c59c7269abd6d717ea2dda704e788cc1cb83ed",
+    "reason": "Only source-origin image reuse policy changed; provider metadata and manual fact/component precedence remain unchanged."
   },
   "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
     "sha256": "c98398ea416e840911bddc332143b554bc8df06151df6d2bd0b427e639504c12",

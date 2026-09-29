@@ -265,6 +265,7 @@ func newCoreWithHooks(
 			tmpDir,
 			nil,
 			mediaRepositoryView{TrackerStateRepository: repositories.Trackers(), MediaAssetRepository: repositories.Media()},
+			registry,
 		)
 	}
 	if services.DVDMenus == nil {
@@ -353,6 +354,10 @@ func newCoreWithHooks(
 			if loadErr != nil && !errors.Is(loadErr, internalerrors.ErrNotFound) {
 				return api.PreparedReleaseDisplay{}, fmt.Errorf("workflow display tracker data: %w", loadErr)
 			}
+			records = trackers.FilterUnverifiedTrackerImages(ctx, repositories.Trackers(), registry, records, logger)
+			for index := range records {
+				records[index].ImageURLs = trackers.ComparisonSafeTrackerImageURLs(records[index], registry)
+			}
 			display.TrackerData = buildTrackerPreview(records, registry)
 			return display, nil
 		},
@@ -402,6 +407,10 @@ func newCoreWithHooks(
 		workflowPrivateVault = vault
 	}
 	e2eOptions := e2eReleaseWorkflowOptions()
+	var reusableImageInventory workflowReusableTrackerImageInventory
+	if inventory, ok := services.Screenshots.(workflowReusableTrackerImageInventory); ok {
+		reusableImageInventory = inventory
+	}
 	workflowOptions := make([]releaseworkflow.Option, 0, 9+len(e2eOptions))
 	workflowOptions = append(
 		workflowOptions,
@@ -414,6 +423,7 @@ func newCoreWithHooks(
 			registry: registry,
 			logger:   logger,
 			banned:   trackers.NewBannedGroupCheckerWithRegistry(cfg.MainSettings.DBPath, registry),
+			images:   reusableImageInventory,
 		}),
 		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes, logger: logger}),
 		releaseworkflow.WithMediaArtifactBuilder(workflowMediaArtifacts),

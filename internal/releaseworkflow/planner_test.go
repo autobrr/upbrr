@@ -2209,6 +2209,116 @@ func TestContinuationPlannerCapturesEachNewExplicitScreenshotIndex(t *testing.T)
 	}
 }
 
+func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{
+		Status: api.StageStatusBlocked,
+		Artifacts: []api.MediaArtifact{{
+			ID:       "previous-screen",
+			Kind:     api.MediaArtifactScreenshot,
+			Index:    3,
+			Selected: true,
+		}},
+	}
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "continue-import-saved",
+		Goal:           api.WorkflowGoalMediaReady,
+		Intent: api.WorkflowIntent{
+			TrackerIDs:             []api.TrackerID{"ALPHA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			Media: &api.MediaCaptureInstructions{
+				Purpose:          api.ScreenshotPurposeFinal,
+				Selections:       []api.ScreenshotSelection{},
+				SavedImagePlanID: "plan-first",
+			},
+		},
+	}
+	for _, status := range []api.StageStatus{api.StageStatusBlocked, api.StageStatusCompleted} {
+		current.Media.Status = status
+		command, stage := planContinuationCommand(request, current, now)
+		if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+			t.Fatalf("%s existing media skipped saved image import: stage=%q command=%#v", status, stage, command)
+		}
+	}
+	current.Media.Artifacts = append(current.Media.Artifacts, api.MediaArtifact{
+		ID:       "saved-screen",
+		Kind:     api.MediaArtifactScreenshot,
+		Index:    0,
+		Selected: true,
+		Source:   "tracker",
+	})
+	current.Media.RequirementsFingerprint = testFingerprint(t, "saved-media-requirements")
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		Release      api.ReleaseRef
+		ProjectionID api.TrackerReleaseProjectionSetID
+		Revision     api.WorkflowRevision
+		Instructions api.MediaCaptureInstructions
+		Requirements api.WorkflowFingerprint
+	}{
+		Release:      current.Projections.ReleaseRef,
+		ProjectionID: current.Projections.ID,
+		Revision:     current.Projections.Revision,
+		Instructions: *request.Intent.Media,
+		Requirements: current.Media.RequirementsFingerprint,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Media.CaptureFingerprint = fingerprint
+	current.Media.SavedImagePlanID = request.Intent.Media.SavedImagePlanID
+	if !continuationGoalReached(current, request) {
+		t.Fatal("imported saved image did not satisfy media goal")
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("completed saved image import planned another command: stage=%q command=%#v", stage, command)
+	}
+	current.Media.CaptureFingerprint = testFingerprint(t, "media-after-hosting")
+	if !continuationGoalReached(current, request) {
+		t.Fatal("image hosting made completed saved image import pending")
+	}
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("hosted saved image import planned another capture: stage=%q command=%#v", stage, command)
+	}
+	originalArtifacts := current.Media.Artifacts
+	current.Media.Artifacts = []api.MediaArtifact{
+		{
+			ID:       "local-screen",
+			Kind:     api.MediaArtifactScreenshot,
+			Selected: true,
+			Source:   "final",
+		},
+		{
+			ID:       "saved-link",
+			Kind:     api.MediaArtifactHostedImage,
+			Selected: true,
+			Source:   "local-screen",
+		},
+	}
+	if !continuationGoalReached(current, request) {
+		t.Fatal("saved link attached to local screenshot did not satisfy media goal")
+	}
+	current.Media.Artifacts = current.Media.Artifacts[:1]
+	if continuationGoalReached(current, request) {
+		t.Fatal("local screenshot without saved hosted link satisfied import")
+	}
+	current.Media.Artifacts = originalArtifacts
+	request.Intent.Media.SavedImagePlanID = "plan-with-new-image"
+	command, stage = planContinuationCommand(request, current, now)
+	if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+		t.Fatalf("new saved-image plan was skipped: stage=%q command=%#v", stage, command)
+	}
+	request.Intent.Media.Selections = []api.ScreenshotSelection{{Index: 0, TimestampSeconds: 60}}
+	request.Intent.Media.SavedImagePlanID = ""
+	command, stage = planContinuationCommand(request, current, now)
+	if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+		t.Fatalf("imported image index blocked selected frame capture: stage=%q command=%#v", stage, command)
+	}
+}
+
 func TestContinuationMediaIntentCanResolveItsPendingGlobalAction(t *testing.T) {
 	t.Parallel()
 

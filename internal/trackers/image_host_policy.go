@@ -14,12 +14,13 @@ import (
 )
 
 type imageHostPolicy struct {
-	allowed     []string
-	uploadHosts []string
-	preferred   []string
-	failed      []string
-	required    bool
-	fallbackOK  bool
+	allowed           []string
+	uploadHosts       []string
+	preferred         []string
+	failed            []string
+	required          bool
+	fallbackOK        bool
+	sourceOnlyAllowed func(string) bool
 }
 
 // ImageUploadTarget identifies one host upload required by a tracker set.
@@ -30,6 +31,8 @@ type ImageUploadTarget struct {
 	UsageScope string
 	// Trackers lists the trackers whose policies require this target.
 	Trackers []string
+	// ReuseOnly limits this target to existing links that satisfy its trackers.
+	ReuseOnly bool
 }
 
 type imageUploadPolicyTarget struct {
@@ -320,6 +323,34 @@ func ImageHostPolicySatisfiedWithRegistry(
 		}
 	}
 	return false, nil
+}
+
+// ReusableImageHostAllowedWithRegistry checks whether an already hosted image
+// may be used by a tracker without requiring that host to be configured as an
+// uploader. It preserves tracker ownership and allowed-host restrictions.
+func ReusableImageHostAllowedWithRegistry(
+	registry *Registry,
+	appCfg config.Config,
+	tracker string,
+	host string,
+	overrides api.ImageHostOverrides,
+) (bool, error) {
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	host = strings.ToLower(strings.TrimSpace(host))
+	if name == "" || host == "" {
+		return false, nil
+	}
+	policy, err := resolveImageHostPolicyForMetadataWithRegistry(registry, name, appCfg, trackerConfigForImageHostPolicy(appCfg, name), overrides)
+	if err != nil {
+		return false, err
+	}
+	if owner := trackerForOwnedHost(registry, host); owner != "" && !strings.EqualFold(owner, name) {
+		return false, nil
+	}
+	if hostInList(host, policy.failed) || len(policy.allowed) > 0 && !hostAllowed(host, policy.allowed) {
+		return false, nil
+	}
+	return reusableSelectionMatchesPolicy(host, policy), nil
 }
 
 // NeededImageUploadTargetsForMetadataWithRegistry resolves image upload targets from tracker-owned policies.
@@ -780,9 +811,19 @@ func newImageHostPolicy(hosts ...string) imageHostPolicy {
 	return imageHostPolicy{
 		allowed:     normalized,
 		uploadHosts: uploadHostsFor(normalized),
-		preferred:   uploadHostsFor(normalized),
+		preferred:   append(uploadHostsFor(normalized), nonUploadHostsFor(normalized)...),
 		required:    true,
 	}
+}
+
+func nonUploadHostsFor(hosts []string) []string {
+	out := make([]string, 0)
+	for _, host := range hosts {
+		if !supportedUploadImageHost(host) {
+			out = append(out, host)
+		}
+	}
+	return out
 }
 
 func newPreferredImageHostPolicy(host string, fallbackHosts ...string) imageHostPolicy {

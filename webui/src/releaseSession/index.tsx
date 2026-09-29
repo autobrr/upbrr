@@ -1508,6 +1508,7 @@ export function ReleaseSessionProvider({
         .map((artifact) => artifact.id);
       const plan: ScreenshotPlan = {
         SourcePath: workflowView.current.release?.release.Source.SourcePath || "",
+        SavedImagePlanID: workflowPlan.id,
         DiscType: workflowPlan.discType || "",
         Discs: (workflowPlan.discs || []).map((disc) => ({
           DiscID: disc.discId,
@@ -1519,6 +1520,11 @@ export function ReleaseSessionProvider({
         DurationSeconds: workflowPlan.durationSeconds,
         FrameRate: workflowPlan.frameRate,
         SuggestedSelections: [...(workflowPlan.suggestedSelections || [])],
+        SavedTrackerImages: (workflowPlan.savedTrackerImages || []).map((image) => ({
+          TrackerID: image.trackerId,
+          Host: image.host,
+          URL: image.url,
+        })),
         ExistingScreenshots: [],
         ExistingTrackerScreenshots: [],
         FinalSelections: [],
@@ -1569,6 +1575,8 @@ export function ReleaseSessionProvider({
                 screenshotCount: requested.length,
                 purpose,
                 selections: requested,
+                savedImagePlanId:
+                  selections?.length === 0 ? state.screenshots.value?.SavedImagePlanID : undefined,
                 captureDvdMenus: false,
                 maxDvdMenuItems: 0,
               },
@@ -2789,7 +2797,8 @@ export function ReleaseSessionProvider({
               ...workflowView.current.media,
               artifacts: workflowView.current.media.artifacts.map((artifact) => ({
                 ...artifact,
-                url: workflowMediaURL(artifact.id),
+                url:
+                  artifact.kind === "hosted_image" ? artifact.url : workflowMediaURL(artifact.id),
               })),
             }
           : null,

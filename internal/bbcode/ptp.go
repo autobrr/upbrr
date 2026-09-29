@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 )
 
@@ -17,7 +18,10 @@ var (
 	ptpComparePattern         = regexp.MustCompile(`(?i)\[comparison=[\s\S]*?\[/comparison\]`)
 	ptpHidePattern            = regexp.MustCompile(`(?i)\[hide[\s\S]*?\[/hide\]`)
 	ptpImgPattern             = regexp.MustCompile(`(?is)\[img(?:[^\]]*)?\][\s\S]*?\[/img\]`)
-	ptpLooseImg               = regexp.MustCompile(`(?i)(https?://[^\s\[\]]+\.(?:png|jpg))`)
+	ptpLooseImg               = regexp.MustCompile(`(?i)(https?://[^\s\[\]]+\.(?:png|jpe?g|gif|webp|avif|bmp))`)
+	ptpSiteURLPattern         = regexp.MustCompile(`(?i)https?://passthepopcorn\.me[^\s\[\]]*`)
+	ptpDirectImagePath        = regexp.MustCompile(`(?i)^/[^?#]+\.(?:png|jpe?g|gif|webp|avif|bmp)(?:[?#].*)?$`)
+	ptpComparisonWrapperOnly  = regexp.MustCompile(`(?is)^\s*(?:\[(?:center|/center|left|/left|right|/right)\]\s*)+$`)
 	ptpQuotePattern           = regexp.MustCompile(`(?i)\[quote.*?\]`)
 	ptpAlignPattern           = regexp.MustCompile(`(?i)\[align=.*?\]`)
 	ptpURLTagPattern          = regexp.MustCompile(`(?i)(\[url[=]]https?://passthepopcorn\.m[^\]]+])`)
@@ -65,9 +69,30 @@ var (
 
 // CleanPTPDescription removes tracker links, embedded MediaInfo, unsupported
 // blocks, and known uploader signatures from a PTP-style description. It
-// returns extracted images separately and omits a cleaned body that is blank or
-// contains only BBCode tags.
+// returns extracted images separately, preserves comparison blocks byte for
+// byte, and omits a cleaned body that is blank or contains only BBCode tags.
 func CleanPTPDescription(description string, discType string) Report {
+	if len(comparison.BlockRanges(description)) == 0 {
+		return cleanPTPDescriptionFragment(description, discType)
+	}
+	images := make([]Image, 0)
+	cleaned := comparison.MapOutsideBlocks(description, func(fragment string) string {
+		report := cleanPTPDescriptionFragment(fragment, discType)
+		images = append(images, report.Images...)
+		if report.Description == "" {
+			if ptpComparisonWrapperOnly.MatchString(fragment) {
+				return fragment
+			}
+			return ""
+		}
+		leading := len(fragment) - len(strings.TrimLeft(fragment, "\n"))
+		trailing := len(fragment) - len(strings.TrimRight(fragment, "\n"))
+		return strings.Repeat("\n", leading) + strings.Trim(report.Description, "\n") + strings.Repeat("\n", trailing)
+	})
+	return Report{Description: strings.Trim(cleaned, "\n"), Images: images}
+}
+
+func cleanPTPDescriptionFragment(description string, discType string) Report {
 	desc := strings.ReplaceAll(description, "&bull;", "-")
 	desc = NormalizeNewlines(desc)
 	desc = ptpBotSignature.ReplaceAllString(desc, "")
@@ -82,17 +107,24 @@ func CleanPTPDescription(description string, discType string) Report {
 		desc = strings.ReplaceAll(desc, urlTag, cleaned)
 	}
 
-	desc = strings.ReplaceAll(desc, "http://passthepopcorn.me", "PTP")
-	desc = strings.ReplaceAll(desc, "https://passthepopcorn.me", "PTP")
+	desc = ptpSiteURLPattern.ReplaceAllStringFunc(desc, func(siteURL string) string {
+		if index := strings.Index(strings.ToLower(siteURL), ".me"); index >= 0 {
+			path := siteURL[index+len(".me"):]
+			if ptpDirectImagePath.MatchString(path) {
+				return siteURL
+			}
+			return "PTP" + path
+		}
+		return siteURL
+	})
 	desc = strings.ReplaceAll(desc, "http://hdbits.org", "HDB")
 	desc = strings.ReplaceAll(desc, "https://hdbits.org", "HDB")
 
 	imagelist := make([]Image, 0)
 	excluded := make(map[string]struct{})
 
-	sourceEncode := regexp.MustCompile(`(?i)\[comparison=Source, Encode\][\s\S]*`).FindAllString(desc, -1)
 	sourceVs := regexp.MustCompile(`(?i)Source Vs Encode:[\s\S]*`).FindAllString(desc, -1)
-	for _, block := range append(sourceEncode, sourceVs...) {
+	for _, block := range sourceVs {
 		urls := ptpLooseImg.FindAllString(block, -1)
 		for _, url := range urls {
 			excluded[url] = struct{}{}

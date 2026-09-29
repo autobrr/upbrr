@@ -6,6 +6,7 @@ package metadata
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"image"
@@ -20,10 +21,12 @@ import (
 	"sync"
 	"time"
 
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 )
 
@@ -37,12 +40,14 @@ var newUnit3DArtifactImageHTTPClient = func() *http.Client {
 	return trackerdata.Unit3DImageHTTPClient(&http.Client{Timeout: unit3dImageTimeout})
 }
 
-// persistUnit3DArtifacts best-effort persists a tracker description and bounded,
+var validateTrackerArtifactImageURL = trackerdata.ValidateUnit3DImageURL
+
+// persistTrackerArtifacts best-effort persists a tracker description and bounded,
 // validated images beneath the release's private temporary directory. Existing
 // non-empty files are reused, image downloads run concurrently, and the returned
 // URL slice preserves input indexes with empty entries for failed downloads.
 // Cancellation returns URLs completed before workers stop.
-func (s *Service) persistUnit3DArtifacts(
+func (s *Service) persistTrackerArtifacts(
 	ctx context.Context,
 	meta preparationstate.State,
 	tracker string,
@@ -51,7 +56,7 @@ func (s *Service) persistUnit3DArtifacts(
 ) []string {
 	if strings.TrimSpace(result.Description) == "" && (len(result.Validated) == 0 || !keepImages) {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: unit3d artifacts skipped (no description/images)")
+			s.logger.Debugf("metadata: tracker artifacts skipped tracker=%s reason=no_description_or_images", tracker)
 		}
 		return nil
 	}
@@ -59,14 +64,14 @@ func (s *Service) persistUnit3DArtifacts(
 	tmpRoot, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Warnf("metadata: unit3d tmp dir: %v", err)
+			s.logger.Warnf("metadata: tracker artifacts temp dir failed tracker=%s: %v", tracker, err)
 		}
 		return nil
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Warnf("metadata: unit3d tmp dir: %v", err)
+			s.logger.Warnf("metadata: tracker artifacts temp dir failed tracker=%s: %v", tracker, err)
 		}
 		return nil
 	}
@@ -78,13 +83,14 @@ func (s *Service) persistUnit3DArtifacts(
 	artifactDir := filepath.Join(tmpDir, trackerDir)
 	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
 		if s.logger != nil {
-			s.logger.Warnf("metadata: unit3d artifact dir: %v", err)
+			s.logger.Warnf("metadata: tracker artifact dir failed tracker=%s: %v", tracker, err)
 		}
 		return nil
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
-			"metadata: unit3d artifacts dir=%s desc=%t images=%d keepImages=%t",
+			"metadata: tracker artifacts tracker=%s dir=%s desc=%t images=%d keepImages=%t",
+			tracker,
 			artifactDir,
 			strings.TrimSpace(result.Description) != "",
 			len(result.Validated),
@@ -97,20 +103,20 @@ func (s *Service) persistUnit3DArtifacts(
 		path := filepath.Join(artifactDir, name)
 		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
 			if s.logger != nil {
-				s.logger.Debugf("metadata: unit3d description exists path=%s", path)
+				s.logger.Debugf("metadata: tracker description exists tracker=%s path=%s", tracker, path)
 			}
 		} else if err := os.WriteFile(path, []byte(result.Description), 0o600); err != nil {
 			if s.logger != nil {
-				s.logger.Warnf("metadata: unit3d description save: %v", err)
+				s.logger.Warnf("metadata: tracker description save failed tracker=%s: %v", tracker, err)
 			}
 		} else if s.logger != nil {
-			s.logger.Debugf("metadata: unit3d description saved path=%s", path)
+			s.logger.Debugf("metadata: tracker description saved tracker=%s path=%s", tracker, path)
 		}
 	}
 
 	if !keepImages || len(result.Validated) == 0 {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: unit3d images skipped keepImages=%t validated=%d", keepImages, len(result.Validated))
+			s.logger.Debugf("metadata: tracker images skipped tracker=%s keepImages=%t validated=%d", tracker, keepImages, len(result.Validated))
 		}
 		return nil
 	}
@@ -138,6 +144,9 @@ func (s *Service) persistUnit3DArtifacts(
 	if len(tasks) == 0 {
 		return nil
 	}
+	if strings.EqualFold(tracker, "PTP") {
+		client = trackers.PTPDescriptionImageHTTPClient(ctx, client, s.cfg, s.logger)
+	}
 
 	successfulByIndex := make([]string, len(result.Validated))
 	jobs := make(chan imageTask)
@@ -151,24 +160,34 @@ func (s *Service) persistUnit3DArtifacts(
 					return
 				}
 
-				fileName := buildImageFilename(task.url, task.index)
+				artifactURL := task.url
+				if imagehost.IsWsrvProxyURL(task.url) {
+					artifactURL = imagehost.DirectImageURL(task.url)
+					if artifactURL == "" {
+						if s.logger != nil {
+							s.logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=invalid_proxy_source", tracker, task.index+1)
+						}
+						continue
+					}
+				}
+				fileName := buildImageFilename(artifactURL, task.index)
 				outPath := filepath.Join(artifactDir, fileName)
 				if info, err := os.Stat(outPath); err == nil && info.Size() > 0 {
 					if s.logger != nil {
-						s.logger.Debugf("metadata: unit3d image exists path=%s", outPath)
+						s.logger.Debugf("metadata: tracker image exists tracker=%s index=%d path=%s", tracker, task.index+1, outPath)
 					}
 					successfulByIndex[task.index] = task.url
 					continue
 				}
 
-				if err := downloadImage(ctx, client, task.url, outPath, expectedHeight, isDVD); err != nil {
+				if reason := downloadImage(ctx, client, task.url, outPath, expectedHeight, isDVD); reason != "" {
 					if s.logger != nil {
-						s.logger.Warnf("metadata: unit3d image save: %v", err)
+						s.logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=%s", tracker, task.index+1, reason)
 					}
 					continue
 				}
 				if s.logger != nil {
-					s.logger.Debugf("metadata: unit3d image saved path=%s", outPath)
+					s.logger.Debugf("metadata: tracker image saved tracker=%s index=%d path=%s", tracker, task.index+1, outPath)
 				}
 				successfulByIndex[task.index] = task.url
 			}
@@ -217,63 +236,75 @@ func buildImageFilename(rawURL string, index int) string {
 		base = "image"
 	}
 	base = sanitizeFilename(base)
+	digest := sha256.Sum256([]byte(rawURL))
+	suffix := fmt.Sprintf("_%02d_%x", index+1, digest[:6])
 	if !strings.Contains(base, ".") {
-		base = fmt.Sprintf("%s_%02d", base, index+1)
+		base += suffix
 	} else {
 		parts := strings.Split(base, ".")
 		ext := parts[len(parts)-1]
-		base = fmt.Sprintf("%s_%02d.%s", strings.TrimSuffix(base, "."+ext), index+1, ext)
+		base = strings.TrimSuffix(base, "."+ext) + suffix + "." + ext
 	}
 	return base
 }
 
-func downloadImage(ctx context.Context, client *http.Client, rawURL string, outPath string, expectedHeight int, isDVD bool) error {
-	if err := trackerdata.ValidateUnit3DImageURL(ctx, rawURL); err != nil {
-		return fmt.Errorf("metadata: validate image URL: %w", err)
+// downloadImage fetches the validated direct image source into a private
+// artifact. It returns a URL-free failure reason for operator diagnostics.
+func downloadImage(ctx context.Context, client *http.Client, rawURL string, outPath string, expectedHeight int, isDVD bool) string {
+	requestURL := imagehost.DirectImageURL(rawURL)
+	if requestURL == "" {
+		return "invalid_proxy_source"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	requestURL = trackers.PTPDescriptionImageDownloadURL(requestURL)
+	if err := validateTrackerArtifactImageURL(ctx, requestURL); err != nil {
+		return "invalid_or_nonpublic_url"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return fmt.Errorf("metadata: build image download request: %w", err)
+		return "invalid_request"
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("metadata: execute image download request: %w", err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "request_timeout"
+		}
+		return "request_failed"
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return fmt.Sprintf("http_status_%d", resp.StatusCode)
 	}
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	if contentType != "" && !strings.Contains(contentType, "image") {
-		return fmt.Errorf("invalid content-type %q", contentType)
+		return "non_image_content_type"
 	}
 	if resp.ContentLength > 0 && resp.ContentLength > unit3dMaxImageBytes {
-		return fmt.Errorf("image exceeds max size (%d bytes)", resp.ContentLength)
+		return "image_too_large"
 	}
 	limited := io.LimitReader(resp.Body, unit3dMaxImageBytes)
 	payload, err := io.ReadAll(limited)
 	if err != nil {
-		return fmt.Errorf("read image body: %w", err)
+		return "image_read_failed"
 	}
 	if len(payload) == 0 {
-		return errors.New("empty image")
+		return "empty_image"
 	}
 	if resp.ContentLength > 0 && int64(len(payload)) < resp.ContentLength {
-		return fmt.Errorf("incomplete image (%d of %d bytes)", len(payload), resp.ContentLength)
+		return "incomplete_image"
 	}
 	imgConfig, _, err := image.DecodeConfig(bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("invalid image data: %w", err)
+		return "image_decode_failed"
 	}
 	if expectedHeight > 0 {
 		if err := validateImageResolution(imgConfig.Height, expectedHeight, isDVD); err != nil {
-			return err
+			return fmt.Sprintf("resolution_mismatch_actual_%d_expected_%d", imgConfig.Height, expectedHeight)
 		}
 	}
 	if err := os.WriteFile(outPath, payload, 0o600); err != nil {
-		return fmt.Errorf("metadata: write screenshot artifact: %w", err)
+		return "image_write_failed"
 	}
-	return nil
+	return ""
 }
 
 func parseResolutionHeight(resolution string) int {

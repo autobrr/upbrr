@@ -5,17 +5,23 @@ package trackers
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/url"
 	"path" //nolint:depguard // Manipulates URL/torrent-style slash paths, not local filesystem paths.
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -33,12 +39,14 @@ const (
 )
 
 var (
-	slotWrapperPattern    = regexp.MustCompile(`(?is)\[(?:center|align=[^\]]+)\]([\s\S]*?)\[/(?:center|align)\]`)
-	slotComparisonPattern = regexp.MustCompile(`(?is)\[comparison=([^\]]+)\]([\s\S]*?)\[/comparison\]`)
-	slotComparisonURL     = regexp.MustCompile(`(?i)https?://[^\s\]]+\.(?:png|jpe?g|gif|webp)`)
-	slotURLImgPattern     = regexp.MustCompile(`(?is)\[url=(https?://[^\]]+)\]\s*\[img[^\]]*\](.*?)\[/img\]\s*\[/url\]`)
-	slotImgPattern        = regexp.MustCompile(`(?is)\[img[^\]]*\](.*?)\[/img\]`)
-	posterLikeSlotHosts   = map[string]struct{}{
+	slotArtifactSuffixPattern = regexp.MustCompile(`_\d+$`)
+	slotHashedArtifactPattern = regexp.MustCompile(`^(.*)_\d+_([0-9a-f]{12})$`)
+	slotWrapperPattern        = regexp.MustCompile(`(?is)\[(?:center|align=[^\]]+)\]([\s\S]*?)\[/(?:center|align)\]`)
+	slotComparisonPattern     = regexp.MustCompile(`(?is)\[comparison=([^\]]+)\]([\s\S]*?)\[/comparison\]`)
+	slotComparisonURL         = regexp.MustCompile(`(?i)https?://[^\s\[\]]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s\[\]]*)?`)
+	slotURLImgPattern         = regexp.MustCompile(`(?is)\[url=(https?://[^\]]+)\]\s*\[img[^\]]*\](.*?)\[/img\]\s*\[/url\]`)
+	slotImgPattern            = regexp.MustCompile(`(?is)\[img[^\]]*\](.*?)\[/img\]`)
+	posterLikeSlotHosts       = map[string]struct{}{
 		"image.tmdb.org":     {},
 		"themoviedb.org":     {},
 		"www.themoviedb.org": {},
@@ -50,6 +58,9 @@ type parsedDescriptionSlot struct {
 	slot  api.ScreenshotSlot
 }
 
+// screenshotSlotsFromSource loads or rebuilds the source's slots and returns
+// tracker-specific views without replacing shared stored slots unless the
+// selected media or description and image list belongs to that source.
 func screenshotSlotsFromSource(
 	ctx context.Context,
 	tracker string,
@@ -63,7 +74,24 @@ func screenshotSlotsFromSource(
 		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
 	}
 	if preloaded != nil && preloaded.screenshotSlotsLoaded {
-		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
+		if preloaded.exactMedia != nil {
+			return cloneScreenshotSlots(preloaded.screenshotSlots), nil
+		}
+		if len(preloaded.screenshotSlots) == 0 && strings.TrimSpace(tracker) != "" {
+			slots, err := synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded, registry)
+			if err != nil {
+				return nil, err
+			}
+			if len(slots) > 0 && screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry) {
+				if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
+					return nil, fmt.Errorf("trackers: %w", err)
+				}
+			}
+			syncSlotsToPreloaded(preloaded, slots)
+			return cloneScreenshotSlots(slots), nil
+		}
+		return reconcileStoredComparisonSlots(ctx, tracker, meta, repo, logger, preloaded, registry,
+			cloneScreenshotSlots(preloaded.screenshotSlots), screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry))
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return nil, nil
@@ -88,7 +116,14 @@ func screenshotSlotsFromSource(
 		if len(slots) == 0 {
 			return nil, nil
 		}
-		return cloneScreenshotSlots(slots), nil
+		if strings.TrimSpace(tracker) == "" {
+			return cloneScreenshotSlots(slots), nil
+		}
+		return reconcileStoredComparisonSlots(ctx, tracker, meta, repo, logger, preloaded, registry,
+			cloneScreenshotSlots(slots), screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry))
+	}
+	if strings.TrimSpace(tracker) == "" {
+		return nil, nil
 	}
 
 	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded, registry)
@@ -98,10 +133,333 @@ func screenshotSlotsFromSource(
 	if len(slots) == 0 {
 		return nil, nil
 	}
-	if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
+	if screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry) {
+		if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
+			return nil, fmt.Errorf("trackers: %w", err)
+		}
+	}
+	if preloaded != nil {
+		syncSlotsToPreloaded(preloaded, slots)
 	}
 	return cloneScreenshotSlots(slots), nil
+}
+
+// screenshotSlotsSourceWide permits replacing the shared slot row only for
+// exact selected media or a description and image list owned by this source.
+func screenshotSlotsSourceWide(
+	ctx context.Context,
+	tracker string,
+	meta api.UploadSubject,
+	repo UploadPersistence,
+	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
+) bool {
+	if repo == nil || strings.TrimSpace(tracker) == "" {
+		return false
+	}
+	if meta.ExactMedia != nil {
+		return true
+	}
+	trackerDescription, _, _ := resolveTrackerDescription(ctx, tracker, meta, repo, nil, preloaded, registry)
+	sourceDescription, _, _ := resolveTrackerDescription(ctx, "", meta, repo, nil, preloaded, registry)
+	if trackerDescription != sourceDescription {
+		if !soleDescriptionScopeForTracker(ctx, tracker, meta, repo, preloaded, registry) {
+			return false
+		}
+		records, err := trackerMetadataFromSource(ctx, meta, repo, preloaded, registry)
+		if err != nil {
+			return false
+		}
+		for _, record := range mergeTrackerMetadata(records, meta.TrackerData) {
+			if strings.TrimSpace(record.Tracker) != "" && !strings.EqualFold(record.Tracker, tracker) &&
+				(strings.TrimSpace(record.Description) != "" || len(record.ImageURLs) > 0) {
+				return false
+			}
+		}
+		if preloaded != nil && (len(preloaded.descriptionOverrides) > 1 || len(preloaded.groupDescriptions) > 1 ||
+			len(preloaded.trackerDescriptions) > 1) {
+			return false
+		}
+	}
+	return slices.Equal(
+		resolveTrackerImageURLs(ctx, tracker, meta, repo, nil, preloaded, registry),
+		resolveTrackerImageURLs(ctx, "", meta, repo, nil, preloaded, registry),
+	)
+}
+
+func soleDescriptionScopeForTracker(
+	ctx context.Context,
+	tracker string,
+	meta api.UploadSubject,
+	repo UploadPersistence,
+	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
+) bool {
+	if len(meta.DescriptionGroups) > 0 {
+		return len(meta.DescriptionGroups) == 1 && len(meta.DescriptionGroups[0].Trackers) == 1 &&
+			strings.EqualFold(strings.TrimSpace(meta.DescriptionGroups[0].Trackers[0]), strings.TrimSpace(tracker))
+	}
+	var overrides []api.DescriptionOverride
+	if preloaded != nil {
+		for _, override := range preloaded.descriptionOverrides {
+			overrides = append(overrides, override)
+		}
+	} else {
+		var err error
+		overrides, err = repo.ListDescriptionOverridesByPath(ctx, meta.SourcePath)
+		if err != nil {
+			return false
+		}
+	}
+	if len(overrides) != 1 {
+		return false
+	}
+	for _, key := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker, registry) {
+		if strings.EqualFold(strings.TrimSpace(overrides[0].GroupKey), strings.TrimSpace(key)) {
+			return true
+		}
+	}
+	return false
+}
+
+// reconcileStoredComparisonSlots rebuilds stale description slots while
+// preserving selected local assets. Legacy images shared with comparison blocks
+// lose unselected variants when their provenance cannot be verified.
+func reconcileStoredComparisonSlots(
+	ctx context.Context,
+	tracker string,
+	meta api.UploadSubject,
+	repo UploadPersistence,
+	logger api.Logger,
+	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
+	slots []api.ScreenshotSlot,
+	persist bool,
+) ([]api.ScreenshotSlot, error) {
+	description, _, _ := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded, registry)
+	sharedURLs := sharedComparisonImageURLs(description)
+	migrationURLs := make(map[string]struct{})
+	checkedURLs := make(map[string]struct{})
+	for _, slot := range slots {
+		if slot.SourceKind != screenshotSlotSourceDescription {
+			continue
+		}
+		urlKey := bbcode.NormalizeImageRawURL(slot.OriginalURL)
+		if _, shared := sharedURLs[urlKey]; !shared {
+			continue
+		}
+		if _, checked := checkedURLs[urlKey]; !checked {
+			checkedURLs[urlKey] = struct{}{}
+			if repo != nil {
+				if _, err := repo.GetTrackerTimestamp(ctx, comparisonSlotProvenanceKey(meta.SourcePath, tracker, urlKey)); err == nil {
+					continue
+				} else if !errors.Is(err, internalerrors.ErrNotFound) {
+					return nil, fmt.Errorf("trackers: load comparison slot provenance: %w", err)
+				}
+			}
+			migrationURLs[urlKey] = struct{}{}
+		}
+	}
+	migrateShared := len(migrationURLs) > 0
+	selectedSharedURLs := make(map[string]struct{})
+	if migrateShared {
+		selections, err := finalSelectionsFromSource(ctx, meta, repo, preloaded)
+		if err != nil && !errorsIsNotFound(err) {
+			return nil, err
+		}
+		selectedPaths := make(map[string]struct{}, len(selections))
+		for _, selection := range selections {
+			selectedPaths[strings.TrimSpace(selection.ImagePath)] = struct{}{}
+		}
+		for _, slot := range slots {
+			urlKey := bbcode.NormalizeImageRawURL(slot.OriginalURL)
+			if _, migrate := migrationURLs[urlKey]; !migrate {
+				continue
+			}
+			if _, selected := selectedPaths[strings.TrimSpace(slot.ImagePath)]; selected && strings.TrimSpace(slot.ImagePath) != "" {
+				selectedSharedURLs[urlKey] = struct{}{}
+			}
+		}
+	}
+	trackerRecords, err := trackerMetadataFromSource(ctx, meta, repo, preloaded, registry)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	if len(trackerRecords) == 0 {
+		trackerRecords = FilterUnverifiedTrackerImages(ctx, repo, registry, meta.TrackerData, logger)
+	}
+	filteredSlots := make([]api.ScreenshotSlot, 0, len(slots))
+	for _, slot := range slots {
+		if !trackerArtifactPathAllowed(slot.ImagePath, trackerRecords, registry) {
+			continue
+		}
+		filteredSlots = append(filteredSlots, slot)
+	}
+	changed := len(filteredSlots) != len(slots)
+	slots = filteredSlots
+	if !changed && !migrateShared && (strings.TrimSpace(description) == "" || storedDescriptionSlotsMatchCurrent(slots, description)) &&
+		storedTrackerURLSlotsMatchCurrent(ctx, tracker, meta, repo, logger, preloaded, registry, slots) {
+		return slots, nil
+	}
+	rebuilt, err := synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded, registry)
+	if err != nil {
+		return nil, err
+	}
+	preserveStoredDescriptionAssets(rebuilt, slots)
+	if migrateShared {
+		for index := range rebuilt {
+			if rebuilt[index].SourceKind != screenshotSlotSourceDescription {
+				continue
+			}
+			urlKey := bbcode.NormalizeImageRawURL(rebuilt[index].OriginalURL)
+			if _, migrate := migrationURLs[urlKey]; !migrate {
+				continue
+			}
+			if _, selected := selectedSharedURLs[urlKey]; selected {
+				continue
+			}
+			rebuilt[index].ImagePath = ""
+			rebuilt[index].DiscID = ""
+			rebuilt[index].Variants = nil
+			rebuilt[index].OriginalKey = rebuilt[index].OriginalURL
+		}
+	}
+	rebuilt = normalizeSlotOrders(rebuilt)
+	if persist && repo != nil {
+		if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, rebuilt); err != nil {
+			return nil, fmt.Errorf("trackers: %w", err)
+		}
+		if migrateShared {
+			for urlKey := range migrationURLs {
+				if err := repo.SaveTrackerTimestamp(ctx, api.TrackerTimestamp{
+					Tracker: comparisonSlotProvenanceKey(meta.SourcePath, tracker, urlKey), UpdatedAt: time.Now().UTC(),
+				}); err != nil {
+					return nil, fmt.Errorf("trackers: save comparison slot provenance: %w", err)
+				}
+			}
+		}
+	}
+	if preloaded != nil {
+		syncSlotsToPreloaded(preloaded, rebuilt)
+	}
+	return cloneScreenshotSlots(rebuilt), nil
+}
+
+func sharedComparisonImageURLs(description string) map[string]struct{} {
+	blocks := comparison.BlockRanges(description)
+	if len(blocks) == 0 {
+		return nil
+	}
+	comparisonURLs := make(map[string]struct{})
+	for _, block := range blocks {
+		for _, rawURL := range slotComparisonURL.FindAllString(description[block[0]:block[1]], -1) {
+			comparisonURLs[bbcode.NormalizeImageRawURL(rawURL)] = struct{}{}
+		}
+	}
+	shared := make(map[string]struct{})
+	for _, slot := range parseDescriptionImageSlots("", comparison.RemoveComparisonBlocks(description)) {
+		key := bbcode.NormalizeImageRawURL(slot.OriginalURL)
+		if _, found := comparisonURLs[key]; found {
+			shared[key] = struct{}{}
+		}
+	}
+	return shared
+}
+
+func comparisonSlotProvenanceKey(sourcePath string, tracker string, imageURL string) string {
+	record := api.TrackerMetadata{
+		SourcePath:  sourcePath,
+		Tracker:     tracker,
+		Description: imageURL,
+	}
+	return TrackerAssetProvenanceKey(record) + ":comparison_slots_v2"
+}
+
+func storedDescriptionSlotsMatchCurrent(slots []api.ScreenshotSlot, description string) bool {
+	current := parseDescriptionImageSlots("", comparison.RemoveComparisonBlocks(description))
+	index := 0
+	for _, slot := range slots {
+		if slot.SourceKind != screenshotSlotSourceDescription {
+			continue
+		}
+		if index >= len(current) || slot.OriginalURL != current[index].OriginalURL ||
+			slot.SectionKind != current[index].SectionKind {
+			return false
+		}
+		index++
+	}
+	return index == len(current)
+}
+
+func storedTrackerURLSlotsMatchCurrent(
+	ctx context.Context,
+	tracker string,
+	meta api.UploadSubject,
+	repo UploadPersistence,
+	logger api.Logger,
+	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
+	slots []api.ScreenshotSlot,
+) bool {
+	hasTrackerURL := false
+	for _, slot := range slots {
+		if slot.SourceKind == screenshotSlotSourceTracker && strings.TrimSpace(slot.OriginalURL) != "" {
+			hasTrackerURL = true
+			break
+		}
+	}
+	if !hasTrackerURL {
+		return true
+	}
+	allowed := make(map[string]struct{})
+	for _, rawURL := range resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry) {
+		allowed[strings.TrimSpace(rawURL)] = struct{}{}
+	}
+	for _, slot := range slots {
+		if slot.SourceKind != screenshotSlotSourceTracker || strings.TrimSpace(slot.OriginalURL) == "" {
+			continue
+		}
+		if _, found := allowed[strings.TrimSpace(slot.OriginalURL)]; !found {
+			return false
+		}
+		delete(allowed, strings.TrimSpace(slot.OriginalURL))
+	}
+	return len(allowed) == 0
+}
+
+func preserveStoredDescriptionAssets(rebuilt []api.ScreenshotSlot, stored []api.ScreenshotSlot) {
+	for index := range rebuilt {
+		if rebuilt[index].SourceKind != screenshotSlotSourceDescription {
+			continue
+		}
+		for _, previous := range stored {
+			if previous.SourceKind != screenshotSlotSourceDescription || previous.OriginalURL != rebuilt[index].OriginalURL ||
+				previous.SectionKind != rebuilt[index].SectionKind {
+				continue
+			}
+			if rebuilt[index].ImagePath == "" {
+				rebuilt[index].ImagePath = previous.ImagePath
+				rebuilt[index].DiscID = previous.DiscID
+			}
+			for _, variant := range previous.Variants {
+				if variant.ImagePath != "" && variant.ImagePath != rebuilt[index].ImagePath {
+					continue
+				}
+				found := false
+				for _, current := range rebuilt[index].Variants {
+					if strings.EqualFold(current.Host, variant.Host) &&
+						normalizeUsageScope(current.UsageScope) == normalizeUsageScope(variant.UsageScope) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					rebuilt[index].Variants = append(rebuilt[index].Variants, variant)
+				}
+			}
+			break
+		}
+	}
 }
 
 func filterStoredSlotsForSelectedImages(
@@ -182,17 +540,22 @@ func synthesizeScreenshotSlots(
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err
 	}
-	sort.Slice(selections, func(i, j int) bool { return selections[i].Order < selections[j].Order })
 
-	trackerRecords, err := trackerMetadataFromSource(ctx, meta, repo, preloaded)
+	trackerRecords, err := trackerMetadataFromSource(ctx, meta, repo, preloaded, registry)
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err
 	}
+	if len(trackerRecords) == 0 {
+		trackerRecords = FilterUnverifiedTrackerImages(ctx, repo, registry, meta.TrackerData, logger)
+	}
+	selections = filterTrackerArtifactSelections(selections, trackerRecords, registry)
+	sort.Slice(selections, func(i, j int) bool { return selections[i].Order < selections[j].Order })
 	uploads, err := uploadedImagesFromSource(ctx, meta, repo, preloaded)
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err
 	}
 
+	description = comparison.RemoveComparisonBlocks(description)
 	slots := parseDescriptionImageSlots(meta.SourcePath, description)
 	if len(slots) > 0 {
 		attachSelectionPathsToSlots(slots, selections)
@@ -215,13 +578,57 @@ func synthesizeScreenshotSlots(
 		return nil, nil
 	}
 
-	urls := collectImageURLs(trackerRecords)
+	urls := collectImageURLs(trackerRecords, registry)
 	if len(urls) == 0 {
-		urls = collectImageURLs(meta.TrackerData)
+		urls = collectImageURLs(FilterUnverifiedTrackerImages(ctx, repo, registry, meta.TrackerData, logger), registry)
 	}
 	slots = buildTrackerURLSlots(meta.SourcePath, urls)
 	applyUploadedVariantsToSlots(slots, uploads)
 	return normalizeSlotOrders(slots), nil
+}
+
+func filterTrackerArtifactSelections(
+	selections []api.ScreenshotFinalSelection,
+	records []api.TrackerMetadata,
+	registry *Registry,
+) []api.ScreenshotFinalSelection {
+	filtered := make([]api.ScreenshotFinalSelection, 0, len(selections))
+	for _, selection := range selections {
+		if trackerArtifactPathAllowed(selection.ImagePath, records, registry) {
+			filtered = append(filtered, selection)
+		}
+	}
+	return filtered
+}
+
+// trackerArtifactPathAllowed requires selected files from provenance-gated
+// trackers to match a comparison-safe saved image URL.
+func trackerArtifactPathAllowed(imagePath string, records []api.TrackerMetadata, registry *Registry) bool {
+	if strings.TrimSpace(imagePath) == "" {
+		return true
+	}
+	for _, record := range records {
+		if !LegacyImageAssetsNeedProvenance(registry, record.Tracker) {
+			continue
+		}
+		trackerDir := sanitizePersistedTrackerArtifactName(strings.ToLower(strings.TrimSpace(record.Tracker)))
+		if !strings.EqualFold(filepath.Base(filepath.Dir(imagePath)), trackerDir) {
+			continue
+		}
+		allowedURLs := ComparisonSafeTrackerImageURLs(record, registry)
+		for index, rawURL := range record.ImageURLs {
+			if !slices.Contains(allowedURLs, rawURL) {
+				continue
+			}
+			for _, candidate := range localTrackerArtifactPaths(filepath.Dir(imagePath), rawURL, index) {
+				if pathutil.SamePath(candidate, imagePath) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return true
 }
 
 func parseDescriptionImageSlots(sourcePath string, description string) []api.ScreenshotSlot {
@@ -427,7 +834,7 @@ func alignRenderableSlotsToSourceImages(slots []api.ScreenshotSlot, sourceImages
 			if !slots[idx].RenderInScreenshots {
 				continue
 			}
-			if _, ok := sourceByKey[screenshotURLMatchKey(slots[idx].OriginalURL)]; ok {
+			if _, ok := sourceImageForURL(sourceByKey, slots[idx].OriginalURL); ok {
 				hasMatch = true
 				break
 			}
@@ -441,8 +848,7 @@ func alignRenderableSlotsToSourceImages(slots []api.ScreenshotSlot, sourceImages
 			if !slots[idx].RenderInScreenshots {
 				continue
 			}
-			key := screenshotURLMatchKey(slots[idx].OriginalURL)
-			source, ok := sourceByKey[key]
+			source, ok := sourceImageForURL(sourceByKey, slots[idx].OriginalURL)
 			if !ok {
 				slots[idx].RenderInScreenshots = false
 				changed = true
@@ -488,7 +894,7 @@ func attachMatchingSourceImagesToSlots(slots []api.ScreenshotSlot, sourceImages 
 		if !slots[idx].RenderInScreenshots || strings.TrimSpace(slots[idx].ImagePath) != "" {
 			continue
 		}
-		source, ok := sourceByKey[screenshotURLMatchKey(slots[idx].OriginalURL)]
+		source, ok := sourceImageForURL(sourceByKey, slots[idx].OriginalURL)
 		if !ok {
 			continue
 		}
@@ -619,15 +1025,40 @@ func alignRenderableSlotsToSourceImagesByOrder(slots []api.ScreenshotSlot, sourc
 }
 
 func screenshotURLMatchKey(rawURL string) string {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	trimmed := bbcode.NormalizeImageRawURL(strings.TrimSpace(rawURL))
+	parsed, err := url.Parse(trimmed)
 	if err != nil {
 		return ""
 	}
-	return screenshotBaseMatchKey(path.Base(parsed.Path))
+	filename := strings.ToLower(path.Base(parsed.Path))
+	base := sanitizePersistedTrackerArtifactName(strings.TrimSuffix(filename, filepath.Ext(filename)))
+	if base == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(trimmed))
+	return fmt.Sprintf("%s|%x", base, digest[:6])
 }
 
 func screenshotSourceMatchKey(pathValue string) string {
-	return screenshotBaseMatchKey(filepath.Base(strings.TrimSpace(pathValue)))
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(pathValue)))
+	ext := path.Ext(base)
+	if match := slotHashedArtifactPattern.FindStringSubmatch(strings.TrimSuffix(base, ext)); len(match) == 3 {
+		return match[1] + "|" + match[2]
+	}
+	return screenshotBaseMatchKey(base)
+}
+
+func sourceImageForURL(sourceByKey map[string]api.ScreenshotImage, rawURL string) (api.ScreenshotImage, bool) {
+	key := screenshotURLMatchKey(rawURL)
+	if key == "" {
+		return api.ScreenshotImage{}, false
+	}
+	if source, ok := sourceByKey[key]; ok {
+		return source, true
+	}
+	base, _, _ := strings.Cut(key, "|")
+	source, ok := sourceByKey[base]
+	return source, ok
 }
 
 func screenshotBaseMatchKey(base string) string {
@@ -639,8 +1070,8 @@ func screenshotBaseMatchKey(base string) string {
 	if ext != "" {
 		base = strings.TrimSuffix(base, ext)
 	}
-	base = regexp.MustCompile(`_\d+$`).ReplaceAllString(base, "")
-	return base
+	base = slotArtifactSuffixPattern.ReplaceAllString(base, "")
+	return sanitizePersistedTrackerArtifactName(base)
 }
 
 func appendSelectionOnlySlots(slots *[]api.ScreenshotSlot, selections []api.ScreenshotFinalSelection) {
@@ -764,7 +1195,7 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 	result := SlotUploadAttachmentResult{}
 	seenUploads := make(map[string]struct{}, len(uploads))
 	for _, upload := range uploads {
-		if upload.Purpose == api.ScreenshotPurposeAudioAnalysis {
+		if upload.Purpose == api.ScreenshotPurposeAudioAnalysis || sourceOnlyUploadedImage(upload) {
 			continue
 		}
 		uploadKey := strings.ToLower(
@@ -943,25 +1374,84 @@ func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy i
 		return image, host, scope, true
 	}
 
-	if !hostInList(slot.OriginalHost, policy.failed) && (len(policy.allowed) == 0 || hostAllowed(slot.OriginalHost, policy.allowed)) {
-		originalURL := strings.TrimSpace(slot.OriginalURL)
-		if originalURL != "" {
-			host := strings.TrimSpace(slot.OriginalHost)
-			if host == "" {
-				host = strings.TrimSpace(imagehost.ExtractHost(originalURL))
-			}
+	directURL := imagehost.DirectImageURL(slot.OriginalURL)
+	host := strings.TrimSpace(imagehost.ExtractHost(directURL))
+	if directURL != "" && host != "" && reusableSourceImageURL(directURL, policy) && !hostInList(host, policy.failed) &&
+		(len(policy.allowed) == 0 || hostAllowed(host, policy.allowed)) {
+		return api.ScreenshotImage{
+			DiscID: slot.DiscID,
+			Path:   strings.TrimSpace(slot.ImagePath),
+			Host:   host,
+			ImgURL: directURL,
+			RawURL: directURL,
+			WebURL: directURL,
+		}, host, globalImageUsageScope, true
+	}
+	rawURL := strings.TrimSpace(slot.OriginalURL)
+	if imagehost.IsWsrvProxyURL(rawURL) && policy.sourceOnlyAllowed != nil && policy.sourceOnlyAllowed(rawURL) {
+		proxyURL, _ := url.Parse(rawURL)
+		host = strings.ToLower(proxyURL.Hostname())
+		if host != "" && !hostInList(host, policy.failed) && (len(policy.allowed) == 0 || hostAllowed(host, policy.allowed)) {
 			return api.ScreenshotImage{
 				DiscID: slot.DiscID,
 				Path:   strings.TrimSpace(slot.ImagePath),
 				Host:   host,
-				ImgURL: originalURL,
-				RawURL: originalURL,
-				WebURL: originalURL,
+				ImgURL: rawURL,
+				RawURL: rawURL,
+				WebURL: rawURL,
 			}, host, globalImageUsageScope, true
 		}
 	}
 
 	return api.ScreenshotImage{}, "", "", false
+}
+
+func reusableSourceImageURL(rawURL string, policy imageHostPolicy) bool {
+	if imagehost.IsWsrvProxyURL(rawURL) {
+		return false
+	}
+	return !imagehost.IsSourceOnlyURL(rawURL) || policy.sourceOnlyAllowed != nil && policy.sourceOnlyAllowed(rawURL)
+}
+
+// attachNativeSourceURLsToSlots restores a saved source URL for selected
+// local tracker artifacts when the destination permits source-only reuse.
+func attachNativeSourceURLsToSlots(slots []api.ScreenshotSlot, records []api.TrackerMetadata, policy imageHostPolicy) bool {
+	if policy.sourceOnlyAllowed == nil {
+		return false
+	}
+	changed := false
+	for index := range slots {
+		slot := &slots[index]
+		if slot.OriginalURL != "" || slot.ImagePath == "" {
+			continue
+		}
+		for _, record := range records {
+			trackerDir := sanitizePersistedTrackerArtifactName(strings.ToLower(strings.TrimSpace(record.Tracker)))
+			if trackerDir == "" || !strings.EqualFold(filepath.Base(filepath.Dir(slot.ImagePath)), trackerDir) {
+				continue
+			}
+			for urlIndex, rawURL := range record.ImageURLs {
+				if !imagehost.IsSourceOnlyURL(rawURL) || !policy.sourceOnlyAllowed(rawURL) {
+					continue
+				}
+				for _, candidate := range localTrackerArtifactPaths(filepath.Dir(slot.ImagePath), rawURL, urlIndex) {
+					if pathutil.SamePath(candidate, slot.ImagePath) {
+						slot.OriginalURL = rawURL
+						slot.OriginalHost = imagehost.ExtractHost(rawURL)
+						changed = true
+						break
+					}
+				}
+				if slot.OriginalURL != "" {
+					break
+				}
+			}
+			if slot.OriginalURL != "" {
+				break
+			}
+		}
+	}
+	return changed
 }
 
 func selectVariantForSlot(slot api.ScreenshotSlot, tracker string, policy imageHostPolicy) (api.ScreenshotImage, string, string, bool) {
@@ -970,6 +1460,10 @@ func selectVariantForSlot(slot api.ScreenshotSlot, tracker string, policy imageH
 	for _, scope := range preferredScopes {
 		candidates := make([]api.ScreenshotSlotVariant, 0)
 		for _, variant := range slot.Variants {
+			if !reusableSourceImageURL(variant.RawURL, policy) || !reusableSourceImageURL(variant.ImgURL, policy) ||
+				!reusableSourceImageURL(variant.WebURL, policy) {
+				continue
+			}
 			if normalizeUsageScope(variant.UsageScope) != scope {
 				continue
 			}
@@ -1020,6 +1514,10 @@ func allRenderableSlotsHaveEligibleVariant(slots []api.ScreenshotSlot, tracker s
 	for _, slot := range renderable {
 		found := false
 		for _, variant := range slot.Variants {
+			if !reusableSourceImageURL(variant.RawURL, policy) || !reusableSourceImageURL(variant.ImgURL, policy) ||
+				!reusableSourceImageURL(variant.WebURL, policy) {
+				continue
+			}
 			if !uploadEligibleForTracker(variant.UsageScope, tracker) {
 				continue
 			}

@@ -1385,13 +1385,16 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
 
     await page.getByRole("button", { name: "Descriptions" }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
+    await expect(page.getByRole("button", { name: "Refresh descriptions" })).toBeEnabled();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
     await expect(page.getByText("Action required")).toHaveCount(0);
 
     await page.getByRole("button", { name: "Menu Images" }).click();
-    const captureResponse = page.waitForResponse((response) =>
-      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    const captureResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/app/ContinueReleaseWorkflow") &&
+        response.request().postDataJSON()?.goal === "media_ready",
     );
     await page.getByRole("button", { name: "Capture DVD menus" }).click();
     await expect((await captureResponse).ok()).toBe(true);
@@ -1412,6 +1415,7 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
 
     await page.getByRole("button", { name: "Descriptions" }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
+    await expect(page.getByRole("button", { name: "Refresh descriptions" })).toBeEnabled();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
     await expect(page.getByText("Action required")).toHaveCount(0);

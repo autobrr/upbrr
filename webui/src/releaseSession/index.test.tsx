@@ -4702,6 +4702,13 @@ describe("useReleaseSession", () => {
                   Source: "auto",
                 },
               ],
+              savedTrackerImages: [
+                {
+                  trackerId: "AITHER",
+                  host: "imgbb",
+                  url: "https://images.example.invalid/saved.png",
+                },
+              ],
               createdAt: "2026-07-20T00:00:00Z",
             }),
             captureMedia,
@@ -4719,6 +4726,26 @@ describe("useReleaseSession", () => {
       "Disc 1",
       "Disc 2",
     ]);
+    expect(result.current.screenshots.view.plan?.SavedTrackerImages).toEqual([
+      {
+        TrackerID: "AITHER",
+        Host: "imgbb",
+        URL: "https://images.example.invalid/saved.png",
+      },
+    ]);
+    expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("media-plan-1");
+    await act(() => result.current.screenshots.generate("final", []));
+    expect(captureMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ workflow: expect.objectContaining({ id: "workflow-new" }) }),
+      expect.objectContaining({
+        purpose: "final",
+        selections: [],
+        savedImagePlanId: "media-plan-1",
+      }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    await act(() => result.current.screenshots.load());
     await act(() => result.current.screenshots.generate("final"));
 
     expect(captureMedia).toHaveBeenCalledWith(
@@ -5039,6 +5066,13 @@ describe("useReleaseSession", () => {
         url: "https://example.invalid/1.png",
       }),
     ]);
+    expect(result.current.screenshots.view.artifacts?.artifacts).toContainEqual(
+      expect.objectContaining({
+        id: "hosted-1",
+        kind: "hosted_image",
+        url: "https://example.invalid/1.png",
+      }),
+    );
   });
 
   it("marks Input dirty while backend reconciliation accepts a changed tracker selection", async () => {

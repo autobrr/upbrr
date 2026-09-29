@@ -35,6 +35,9 @@ func TestExtractHost(t *testing.T) {
 		{"ilikeshots", "https://yes.ilikeshots.club/abc.png", "ilikeshots"},
 		{"unknown host", "https://example.com/image.png", "example.com"},
 		{"unknown subdomain", "https://static.example.com/image.png", "static.example.com"},
+		{"wsrv imgbox source", "https://wsrv.nl/?n=-1&ll&url=https%3A%2F%2Fthumbs2.imgbox.com%2F13%2Fae%2Fshot_t.png", "imgbox"},
+		{"Aither wsrv Blutopia source", "https://wsrv.aither.cc/?n=-1&ll&url=https%3A%2F%2Fimg.blutopia.cc%2F2026%2F06%2F14%2Fshot.png", "img.blutopia.cc"},
+		{"wsrv without source", "https://wsrv.nl/?n=-1", ""},
 		{"empty string", "", ""},
 		{"invalid url", "not-a-url", ""},
 	}

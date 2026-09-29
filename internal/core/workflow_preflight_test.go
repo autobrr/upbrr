@@ -31,6 +31,12 @@ type workflowPreflightAuthFake struct {
 	validatedIDs    *[]string
 }
 
+type workflowPreflightImagesFake struct{ links []api.ScreenshotLinkedImage }
+
+func (f workflowPreflightImagesFake) ReusableTrackerImageLinks(context.Context, string, api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error) {
+	return f.links, nil
+}
+
 type workflowAudioPolicyDefinition struct {
 	name       string
 	policy     trackerspkg.AudioPolicy
@@ -584,6 +590,39 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		if assessment.Results[1].State != api.TrackerPreflightStateReady || !finalized[1].DupeReady {
 			t.Fatalf("unrestricted sibling preflight = %#v/%#v", assessment.Results[1], finalized[1])
+		}
+
+		withImages := projections
+		withImages.Projections = append([]api.TrackerReleaseProjection(nil), projections.Projections...)
+		withImages.Projections[0].Artifacts.ScreenshotCount = 2
+		subject := api.UploadSubject{SourcePath: `C:\releases\Example.Release.2026-GRP.mkv`}
+		builder.images = workflowPreflightImagesFake{links: []api.ScreenshotLinkedImage{
+			{
+				Tracker: "AITHER",
+				URL: "https://pixhost.cc/one.png",
+				Path: "image-one.png",
+				Host: "pixhost",
+			},
+			{
+				Tracker: "AITHER",
+				URL: "https://pixhost.cc/two.png",
+				Path: "image-two.png",
+				Host: "pixhost",
+			},
+		}}
+		assessment, finalized, err = builder.Build(context.Background(), subject, catalog, runtime, withImages, now)
+		if err != nil || assessment.Results[0].State != api.TrackerPreflightStateReady || !finalized[0].DupeReady {
+			t.Fatalf("reusable source host preflight = %#v/%#v err=%v", assessment.Results[0], finalized[0], err)
+		}
+		builder.images = workflowPreflightImagesFake{links: []api.ScreenshotLinkedImage{{
+			Tracker: "AITHER",
+			URL: "https://pixhost.cc/one.png",
+			Path: "image-one.png",
+			Host: "pixhost",
+		}}}
+		assessment, finalized, err = builder.Build(context.Background(), subject, catalog, runtime, withImages, now)
+		if err != nil || assessment.Results[0].State != api.TrackerPreflightStateFailed || finalized[0].DupeReady {
+			t.Fatalf("insufficient source images preflight = %#v/%#v err=%v", assessment.Results[0], finalized[0], err)
 		}
 
 		builder.config.ImageHosting.Host1 = "pixhost"

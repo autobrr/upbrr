@@ -315,6 +315,56 @@ func TestNormalizeImageRawURLConvertsPixhostThumbURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeImageRawURLConvertsAdditionalFullSizeHosts(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"imgbox numbered host", "https://thumbs3.imgbox.com/a/shot_t.webp", "https://images3.imgbox.com/a/shot_o.webp"},
+		{"onlyimage medium", "https://img.onlyimage.org/Ab12.md.png", "https://img.onlyimage.org/Ab12.png"},
+		{"onlyimage page", "https://onlyimage.org/image/Ab12", "https://img.onlyimage.org/Ab12.png"},
+		{"beyondhd thumbnail", "https://img.beyondhd.co/a/shot.th.webp", "https://img.beyondhd.co/a/shot.webp"},
+		{"ptscreens thumbnail", "https://ptscreens.com/a/shot.thumb.jpg", "https://ptscreens.com/a/shot.jpg"},
+		{"blutopia medium", "https://img.blutopia.cc/a/shot.md.png", "https://img.blutopia.cc/a/shot.png"},
+		{"wsrv source", "https://wsrv.nl/?url=https%3A%2F%2Fimg.onlyimage.org%2FAb12.md.png", "https://img.onlyimage.org/Ab12.png"},
+		{"Aither proxy for Blutopia", "https://wsrv.aither.cc/?url=https%3A%2F%2Fimg.blutopia.cc%2Fshot.md.png", "https://img.blutopia.cc/shot.png"},
+		{"OnlyImage unsupported suffix", "https://img.onlyimage.org/Ab12.th.png", "https://img.onlyimage.org/Ab12.th.png"},
+		{"foreign wsrv host", "https://wsrv.nl.evil.example/?url=https%3A%2F%2Fimg.onlyimage.org%2FAb12.md.png", "https://wsrv.nl.evil.example/?url=https%3A%2F%2Fimg.onlyimage.org%2FAb12.md.png"},
+		{"foreign suffix host", "https://img.evilonlyimage.org/Ab12.md.png", "https://img.evilonlyimage.org/Ab12.md.png"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := bbcode.NormalizeImageRawURL(test.in); got != test.want {
+				t.Fatalf("normalized URL = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCleanPTPDescriptionKeepsComparisonAndFullSizeImages(t *testing.T) {
+	const block = "[comparison=Source, Encode]\r\n[img]https://img.onlyimage.org/Compare.png[/img]\r\n[/comparison]"
+	description := "Notes\n" + block + "\n[img]https://img.onlyimage.org/Ab12.png[/img]\n" +
+		"https://passthepopcorn.me/i/direct.webp"
+	report := ptp.CleanDescription(description, "")
+	if !strings.Contains(report.Description, block) || strings.Contains(strings.ReplaceAll(report.Description, block, ""), "Ab12.png") {
+		t.Fatalf("comparison or screenshot body changed incorrectly: %q", report.Description)
+	}
+	if len(report.Images) != 2 || report.Images[0].RawURL != "https://img.onlyimage.org/Ab12.png" ||
+		report.Images[1].RawURL != "https://passthepopcorn.me/i/direct.webp" {
+		t.Fatalf("PTP full-size images = %#v", report.Images)
+	}
+}
+
+func TestCleanPTPDescriptionKeepsFullSizeStaticImage(t *testing.T) {
+	t.Parallel()
+	const source = "https://passthepopcorn.me/static/screenshot.jpg"
+	report := ptp.CleanDescription("[img]"+source+"[/img]", "")
+	if len(report.Images) != 1 || report.Images[0].RawURL != source {
+		t.Fatalf("PTP static full-size image = %#v", report.Images)
+	}
+}
+
 func TestIsOnlyBBCode(t *testing.T) {
 	if !bbcode.IsOnlyTags("[b][/b]") {
 		t.Fatal("expected only bbcode to be true")

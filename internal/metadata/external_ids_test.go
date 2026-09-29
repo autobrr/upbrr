@@ -212,7 +212,12 @@ func (f *fakeRepo) ListTrackerRuleFailuresByPath(_ context.Context, _ string) ([
 	return nil, nil
 }
 
-func (f *fakeRepo) GetTrackerTimestamp(_ context.Context, _ string) (time.Time, error) {
+func (f *fakeRepo) GetTrackerTimestamp(_ context.Context, tracker string) (time.Time, error) {
+	for _, timestamp := range slices.Backward(f.trackerTimestamps) {
+		if timestamp.Tracker == tracker {
+			return timestamp.UpdatedAt, nil
+		}
+	}
 	return time.Time{}, internalerrors.ErrNotFound
 }
 
@@ -222,6 +227,12 @@ func (f *fakeRepo) SaveTrackerTimestamp(_ context.Context, timestamp api.Tracker
 }
 
 func (f *fakeRepo) SaveTrackerMetadata(_ context.Context, metadata api.TrackerMetadata) error {
+	for index := range f.trackerMetadata {
+		if f.trackerMetadata[index].SourcePath == metadata.SourcePath && f.trackerMetadata[index].Tracker == metadata.Tracker {
+			f.trackerMetadata[index] = metadata
+			return nil
+		}
+	}
 	f.trackerMetadata = append(f.trackerMetadata, metadata)
 	return nil
 }

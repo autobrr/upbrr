@@ -3,7 +3,98 @@
 
 package unit3d
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestCleanDescriptionPreservesComparisonAndImportsLaterScreenshots(t *testing.T) {
+	comparison := "[spoiler=Comparisons]\r\n[align=left]Source &amp; Encode[/align]\r\n\r\n\r\n" +
+		"[center][URL=https://www.imagebam.com/view/EXAMPLE][IMG]https://thumbs2.imagebam.com/aa/bb/cc/compare.jpg[/IMG][/URL][/center]\r\n[/spoiler]"
+	screenshots := "[url=https://ibb.co/shot-one][img]https://i.ibb.co/example/shot-one.png[/img][/url]\n" +
+		"[url=https://ibb.co/shot-two][img]https://i.ibb.co/example/shot-two.png[/img][/url]"
+	description := "Release notes\n\n" + comparison + "\n\n" + screenshots
+
+	report := CleanDescription(description, "https://aither.cc")
+	if !strings.Contains(report.Description, comparison) {
+		t.Fatalf("comparison BBCode was changed or removed: %q", report.Description)
+	}
+	if strings.Contains(report.Description, "shot-one.png") || strings.Contains(report.Description, "shot-two.png") {
+		t.Fatalf("separate screenshot links remained in cleaned body: %q", report.Description)
+	}
+	if len(report.Images) != 2 || report.Images[0].RawURL != "https://i.ibb.co/example/shot-one.png" ||
+		report.Images[1].RawURL != "https://i.ibb.co/example/shot-two.png" {
+		t.Fatalf("expected two later screenshots, got %#v", report.Images)
+	}
+	if len(report.Notes) == 0 || !strings.Contains(report.Notes[0].Message, "comparison_blocks=1 image_tags=1") {
+		t.Fatalf("expected comparison handling note, got %#v", report.Notes)
+	}
+	if body := CleanDescriptionBody(description, "https://aither.cc").Description; body != report.Description {
+		t.Fatalf("body-only cleanup differs: %q", body)
+	}
+	if images := CleanDescriptionImages(description, "https://aither.cc").Images; len(images) != 2 || images[0].RawURL != report.Images[0].RawURL {
+		t.Fatalf("image-only cleanup differs: %#v", images)
+	}
+}
+
+func TestCleanDescriptionPreservesComparisonTag(t *testing.T) {
+	comparison := `[comparison=Source, Encode][img]https://i.ibb.co/example/compare.png[/img][/comparison]`
+	report := CleanDescription(comparison+"\n\n"+
+		`[img]https://i.ibb.co/example/screenshot.png[/img]`, "https://aither.cc")
+	if !strings.Contains(report.Description, comparison) || len(report.Images) != 1 ||
+		report.Images[0].RawURL != "https://i.ibb.co/example/screenshot.png" {
+		t.Fatalf("comparison should remain and separate screenshot should be selected: %#v", report)
+	}
+}
+
+func TestCleanDescriptionPreservesNestedComparisonSpoiler(t *testing.T) {
+	comparison := "[spoiler=Comparisons]\r\n[spoiler=Source][img]https://img.example/source.png[/img][/spoiler]\r\n" +
+		"[img]https://img.example/encode.png[/img]\r\n[/spoiler]"
+	report := CleanDescription(comparison+"\n\n[img]https://img.example/screen.png[/img]", "https://blu.example")
+	if !strings.Contains(report.Description, comparison) || len(report.Images) != 1 ||
+		report.Images[0].RawURL != "https://img.example/screen.png" {
+		t.Fatalf("nested comparison was changed or imported as screenshots: %#v", report)
+	}
+	if body := StripScreenshotBlocks(comparison + "\n\n[center][img]https://img.example/screen.png[/img][/center]"); !strings.Contains(body, comparison) || strings.Contains(body, "screen.png") {
+		t.Fatalf("builder strip changed nested comparison: %q", body)
+	}
+}
+
+func TestCleanDescriptionPrefersScreenshotWrapperOverStandaloneCover(t *testing.T) {
+	report := CleanDescriptionImages(
+		"[img]https://covers.example/cover.jpg[/img]\n\n"+
+			"[center][img]https://img.example/screenshot.png[/img][/center]",
+		"https://aither.cc",
+	)
+	if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.example/screenshot.png" {
+		t.Fatalf("expected wrapped screenshot to win over standalone cover, got %#v", report.Images)
+	}
+}
+
+func TestCleanDescriptionImageNotesExplainSkippedCandidates(t *testing.T) {
+	report := CleanDescriptionImages(
+		"[center][img][/img]"+
+			"[img]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img]"+
+			"[img]https://thumbs2.imagebam.com/aa/bb/cc/compare.jpg[/img]"+
+			"[url=https://img.example/screen.png][img]https://img.example/screen.png[/img][/url]"+
+			"[url=https://img.example/screen.png][img]https://img.example/screen.png[/img][/url][/center]",
+		"https://aither.cc",
+	)
+	if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.example/screen.png" {
+		t.Fatalf("expected one usable image, got %#v", report.Images)
+	}
+	if len(report.Notes) != 1 {
+		t.Fatalf("expected one image-selection note, got %#v", report.Notes)
+	}
+	for _, field := range []string{"candidates=5", "usable=1", "empty=1", "blocked=1", "unsupported_thumbnails=1", "duplicates=1"} {
+		if !strings.Contains(report.Notes[0].Message, field) {
+			t.Fatalf("missing %s from image note %q", field, report.Notes[0].Message)
+		}
+	}
+	if strings.Contains(report.Notes[0].Message, "https://") {
+		t.Fatalf("image URLs leaked into note: %q", report.Notes[0].Message)
+	}
+}
 
 func TestCleanDescriptionPreservesSameHostImageURLs(t *testing.T) {
 	report := CleanDescription(
@@ -67,6 +158,51 @@ func TestCleanDescriptionConvertsMixedCasePixhostThumbURL(t *testing.T) {
 	}
 	if report.Images[0].RawURL != "https://img1.pixhost.cc/images/11645/shot.png" {
 		t.Fatalf("expected pixhost raw URL conversion, got %q", report.Images[0].RawURL)
+	}
+}
+
+func TestCleanDescriptionUsesOnlyImagePageOverBackupThumbnail(t *testing.T) {
+	report := CleanDescription(
+		"[url=https://onlyimage.org/image/Ab12][img]https://file.aither.cc/backup.png[/img][/url]",
+		"https://aither.cc",
+	)
+	if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.onlyimage.org/Ab12.png" ||
+		report.Images[0].WebURL != "https://onlyimage.org/image/Ab12" {
+		t.Fatalf("OnlyImage original not selected: %#v", report.Images)
+	}
+}
+
+func TestCleanDescriptionUsesLinkedWsrvSource(t *testing.T) {
+	report := CleanDescription(
+		"[url=https://wsrv.nl/?url=https%3A%2F%2Fimg.onlyimage.org%2FFull.md.png][img]https://file.aither.cc/backup.png[/img][/url]",
+		"https://aither.cc",
+	)
+	if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.onlyimage.org/Full.png" {
+		t.Fatalf("proxied full-size image not selected: %#v", report.Images)
+	}
+}
+
+func TestCleanDescriptionUsesWsrvSourceHostForUnlinkedImage(t *testing.T) {
+	report := CleanDescription(
+		"[img]https://wsrv.nl/?url=https%3A%2F%2Fimg.onlyimage.org%2FFull.md.png[/img]",
+		"https://aither.cc",
+	)
+	if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.onlyimage.org/Full.png" || report.Images[0].Host != "onlyimage" {
+		t.Fatalf("proxied image host not updated: %#v", report.Images)
+	}
+}
+
+func TestCleanDescriptionKeepsSupportedImageWhenLinkedFormatCannotBeRehosted(t *testing.T) {
+	for _, extension := range []string{"avif", "bmp", "gif"} {
+		t.Run(extension, func(t *testing.T) {
+			report := CleanDescription(
+				"[url=https://img.blutopia.cc/Full."+extension+"][img]https://img.blutopia.cc/Thumb.jpg[/img][/url]",
+				"https://aither.cc",
+			)
+			if len(report.Images) != 1 || report.Images[0].RawURL != "https://img.blutopia.cc/Thumb.jpg" {
+				t.Fatalf("unsupported linked image displaced JPEG: %#v", report.Images)
+			}
+		})
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 // Profile returns BT identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		UsesMenuImages:          true,
 		Name:                    "BT",
 		BaseURL:                 baseURL,
 		DescriptionGroup:        "bt",

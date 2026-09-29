@@ -2565,17 +2565,11 @@ func (m *Module) MediaPlan(
 	if err != nil {
 		return api.MediaPlan{}, fmt.Errorf("release workflow build media plan: %w", err)
 	}
-	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		WorkflowID api.WorkflowID
-		Revision   api.WorkflowRevision
-		Release    api.ReleaseSnapshotRef
-		Projection api.TrackerReleaseProjectionSetRef
-		Selections []api.ScreenshotSelection
-	}{workflowID, state.Workflow.Revision, *state.Workflow.Release, *state.Workflow.TrackerProjections, plan.SuggestedSelections})
+	planID, err := api.MediaPlanContentID(projections.ReleaseRef, targets.Projections(), plan.SuggestedSelections, plan.SavedTrackerImages)
 	if err != nil {
 		return api.MediaPlan{}, fmt.Errorf("release workflow media plan fingerprint: %w", err)
 	}
-	plan.ID = api.MediaPlanID("plan_" + string(fingerprint)[:24])
+	plan.ID = planID
 	plan.WorkflowID = workflowID
 	plan.Revision = state.Workflow.Revision
 	plan.Release = *state.Workflow.Release
@@ -3175,8 +3169,10 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 			return true
 		case api.RequiredActionReviewDuplicates:
 			return workflow.Dupes == nil
-		case api.RequiredActionApproveTrackers,
-			api.RequiredActionApproveUpload: //nolint:staticcheck // Remove retained v1 action during restart.
+		case api.RequiredActionApproveTrackers:
+			return true
+		//nolint:staticcheck // Remove retained v1 action during restart.
+		case api.RequiredActionApproveUpload:
 			return true
 		case api.RequiredActionReconcileSubmission:
 			return workflow.UploadResult == nil && workflow.Media == nil

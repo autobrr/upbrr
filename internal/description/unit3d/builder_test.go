@@ -11,6 +11,48 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestBuildDescriptionKeepsComparisonImagesWhenReplacingScreenshots(t *testing.T) {
+	comparison := "[spoiler=Comparisons]\r\n[align=left]Source &amp; Encode[/align]\r\n\r\n\r\n" +
+		"[center][url=https://img.example/comparison-page][img width=320]https://img.example/comparison.png[/img][/url][/center]\r\n[/spoiler]"
+	kept := "Release notes\n\n" + comparison + "\n\n[center][img]https://img.example/old-screen.png[/img][/center]"
+	description, err := BuildDescription(t.Context(), api.DescriptionSubject{}, config.Config{}, config.TrackerConfig{},
+		api.NopLogger{}, kept, nil, []api.ScreenshotImage{{ImgURL: "https://img.example/new-screen.png"}})
+	if err != nil {
+		t.Fatalf("build description: %v", err)
+	}
+	if !strings.Contains(description, comparison) {
+		t.Fatalf("comparison block was changed or removed: %q", description)
+	}
+	if strings.Contains(description, "old-screen.png") || !strings.Contains(description, "new-screen.png") {
+		t.Fatalf("screenshot replacement failed: %q", description)
+	}
+}
+
+func TestBuildDescriptionDoesNotDeduplicateSelectedScreenshotAgainstComparison(t *testing.T) {
+	imageURL := "https://img.example/shared.png"
+	comparison := "[spoiler=Comparisons][img]" + imageURL + "[/img][/spoiler]"
+	description, err := BuildDescription(t.Context(), api.DescriptionSubject{}, config.Config{}, config.TrackerConfig{},
+		api.NopLogger{}, comparison, nil, []api.ScreenshotImage{{ImgURL: imageURL}})
+	if err != nil {
+		t.Fatalf("build description: %v", err)
+	}
+	if !strings.Contains(description, comparison) || strings.Count(description, imageURL) != 2 {
+		t.Fatalf("comparison hid separately selected screenshot: %q", description)
+	}
+}
+
+func TestBuildDescriptionKeepsNestedSourceAudioInComparison(t *testing.T) {
+	comparison := "[spoiler=Comparisons]\n[spoiler=source_audio]copied audio[/spoiler]\n[/spoiler]"
+	description, err := BuildDescription(t.Context(), api.DescriptionSubject{}, config.Config{}, config.TrackerConfig{},
+		api.NopLogger{}, "Notes\n\n"+comparison, nil, nil)
+	if err != nil {
+		t.Fatalf("build description: %v", err)
+	}
+	if !strings.Contains(description, comparison) {
+		t.Fatalf("nested comparison changed: %q", description)
+	}
+}
+
 func TestBuildDescriptionPlacesAudioAfterMenusBeforeScreenshots(t *testing.T) {
 	t.Parallel()
 	audio := "[spoiler=source_audio]\n[img]https://img.example/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"

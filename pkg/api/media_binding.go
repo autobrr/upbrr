@@ -34,9 +34,11 @@ type ReusableMediaAsset struct {
 	ContentSHA256      string
 	Kind               MediaArtifactKind
 	Image              ScreenshotImage
-	Selected           bool
-	Order              int
-	HostedLinks        []UploadedImageLink
+	// Imported identifies an image restored from tracker metadata rather than captured locally.
+	Imported    bool
+	Selected    bool
+	Order       int
+	HostedLinks []UploadedImageLink
 }
 
 // Valid reports whether the asset is independently reusable. Legacy records

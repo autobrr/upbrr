@@ -5,10 +5,13 @@ package trackers
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +29,8 @@ type stubRepo struct {
 	mu                     sync.Mutex
 	trackerRecords         []api.TrackerMetadata
 	trackerRecordsErr      error
+	provenanceMissing      bool
+	trackerTimestamps      map[string]time.Time
 	trackerRecordsCalls    int
 	selections             []api.ScreenshotFinalSelection
 	selectionsErr          error
@@ -216,11 +221,28 @@ func (s *stubRepo) SaveTrackerRuleFailures(_ context.Context, sourcePath string,
 func (s *stubRepo) ListTrackerRuleFailuresByPath(context.Context, string) ([]api.TrackerRuleFailure, error) {
 	return nil, nil
 }
-func (s *stubRepo) GetTrackerTimestamp(context.Context, string) (time.Time, error) {
+
+func (s *stubRepo) GetTrackerTimestamp(_ context.Context, key string) (time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if value, ok := s.trackerTimestamps[key]; ok {
+		return value, nil
+	}
+	if s.provenanceMissing {
+		return time.Time{}, internalerrors.ErrNotFound
+	}
 	return time.Time{}, nil
 }
-func (s *stubRepo) SaveTrackerTimestamp(context.Context, api.TrackerTimestamp) error { return nil }
-func (s *stubRepo) SaveTrackerMetadata(context.Context, api.TrackerMetadata) error   { return nil }
+func (s *stubRepo) SaveTrackerTimestamp(_ context.Context, timestamp api.TrackerTimestamp) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.trackerTimestamps == nil {
+		s.trackerTimestamps = make(map[string]time.Time)
+	}
+	s.trackerTimestamps[timestamp.Tracker] = timestamp.UpdatedAt
+	return nil
+}
+func (s *stubRepo) SaveTrackerMetadata(context.Context, api.TrackerMetadata) error { return nil }
 func (s *stubRepo) ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -295,6 +317,9 @@ func (s *stubRepo) DeleteUploadedImage(_ context.Context, _ api.PreparedMediaBin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deletedUploads = append(s.deletedUploads, host+":"+imagePath)
+	s.uploads = slices.DeleteFunc(s.uploads, func(upload api.UploadedImageLink) bool {
+		return upload.ImagePath == imagePath && upload.Host == host
+	})
 	return nil
 }
 func (s *stubRepo) GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error) {
@@ -419,6 +444,16 @@ func TestAudioAnalysisDescriptionKeepsGraphsOutOfScreenshots(t *testing.T) {
 	if !strings.Contains(edited.Description, "Edited body") || strings.Count(edited.Description, "[spoiler=source_audio]") != 1 {
 		t.Fatalf("edited description duplicated audio section: %q", edited.Description)
 	}
+	comparison := "[spoiler=Comparisons]\n[spoiler=source_audio]copied audio[/spoiler]\n[/spoiler]"
+	editedComparison, err := ResolveDescriptionAssets(t.Context(), "AITHER", api.UploadSubject{
+		DescriptionOverride: "Edited body\n\n" + comparison + "\n\n" + assets.Description, ExactMedia: exact,
+	}, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve edited comparison audio description: %v", err)
+	}
+	if !strings.Contains(editedComparison.Description, comparison) || strings.Count(editedComparison.Description, "[spoiler=source_audio]") != 2 {
+		t.Fatalf("copied comparison audio block changed: %q", editedComparison.Description)
+	}
 	exact.AudioUploads[0].Host = "imgbb"
 	pixhost := exact.AudioUploads[0]
 	pixhost.Host = "pixhost"
@@ -449,11 +484,11 @@ func TestAudioAnalysisDescriptionKeepsGraphsOutOfScreenshots(t *testing.T) {
 func TestPersistedAudioGraphDoesNotFillPathlessScreenshotSlot(t *testing.T) {
 	t.Parallel()
 	repo := &stubRepo{uploads: []api.UploadedImageLink{{
-		ImagePath: "audio-graph.png",
- Purpose: api.ScreenshotPurposeAudioAnalysis,
-		Host: "imgbb",
- UsageScope: "global",
- RawURL: "https://images.example.invalid/audio.png",
+		ImagePath:  "audio-graph.png",
+		Purpose:    api.ScreenshotPurposeAudioAnalysis,
+		Host:       "imgbb",
+		UsageScope: "global",
+		RawURL:     "https://images.example.invalid/audio.png",
 	}}}
 	slots, err := synthesizeScreenshotSlots(t.Context(), "AITHER", api.UploadSubject{
 		SourcePath:          "/synthetic/release",
@@ -470,17 +505,17 @@ func TestPersistedAudioGraphDoesNotFillPathlessScreenshotSlot(t *testing.T) {
 func TestAudioGraphUploadDoesNotAttachToScreenshotSlot(t *testing.T) {
 	t.Parallel()
 	slots := []api.ScreenshotSlot{{
-		SourcePath: "/synthetic/release",
- SlotOrder: 0,
-		OriginalURL: "https://images.example.invalid/shot.png",
- RenderInScreenshots: true,
+		SourcePath:          "/synthetic/release",
+		SlotOrder:           0,
+		OriginalURL:         "https://images.example.invalid/shot.png",
+		RenderInScreenshots: true,
 	}}
 	result := ApplyUploadedVariantsToSlots(slots, []api.UploadedImageLink{{
-		ImagePath: "audio-graph.png",
- Purpose: api.ScreenshotPurposeAudioAnalysis,
-		Host: "imgbb",
- UsageScope: "global",
- RawURL: "https://images.example.invalid/audio.png",
+		ImagePath:  "audio-graph.png",
+		Purpose:    api.ScreenshotPurposeAudioAnalysis,
+		Host:       "imgbb",
+		UsageScope: "global",
+		RawURL:     "https://images.example.invalid/audio.png",
 	}})
 	if result.MatchedUploads != 0 || result.FallbackMatched != 0 || len(slots[0].Variants) != 0 || slots[0].ImagePath != "" {
 		t.Fatalf("audio graph attached to screenshot slot: result=%#v slots=%#v", result, slots)
@@ -1466,6 +1501,37 @@ func TestResolveDescriptionAssetsFallbackTrackerImages(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsRefreshesStoredTrackerImageSlots(t *testing.T) {
+	const sourcePath = "/tmp/source"
+	const firstURL = "https://imgbb.com/a.png"
+	const addedURL = "https://imgbb.com/b.png"
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{{
+			SourcePath: sourcePath,
+			Tracker:    "ANT",
+			ImageURLs:  []string{firstURL, addedURL},
+		}},
+		screenshotSlots: []api.ScreenshotSlot{{
+			SourcePath:          sourcePath,
+			SourceKind:          screenshotSlotSourceTracker,
+			OriginalURL:         firstURL,
+			RenderInScreenshots: true,
+		}},
+	}
+	meta := api.UploadSubject{SourcePath: sourcePath, Options: api.UploadOptions{KeepImages: true}}
+
+	assets, err := ResolveDescriptionAssets(t.Context(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve description assets: %v", err)
+	}
+	if len(assets.Screenshots) != 2 || assets.Screenshots[0].ImgURL != firstURL || assets.Screenshots[1].ImgURL != addedURL {
+		t.Fatalf("refreshed tracker screenshots = %#v", assets.Screenshots)
+	}
+	if len(assets.Slots) != 2 || len(repo.screenshotSlots) != 2 || repo.screenshotSlots[1].OriginalURL != addedURL {
+		t.Fatalf("refreshed tracker slots were not persisted: resolved=%#v stored=%#v", assets.Slots, repo.screenshotSlots)
+	}
+}
+
 func TestResolveDescriptionAssetsSkipsTrackerImagesWhenNotKeepingImages(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{{
@@ -2172,17 +2238,42 @@ Some text
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(repo.screenshotSlots) != 3 {
-		t.Fatalf("expected 3 persisted screenshot slots, got %d", len(repo.screenshotSlots))
+	if len(repo.screenshotSlots) != 1 {
+		t.Fatalf("expected only the ordinary image as a persisted screenshot slot, got %d", len(repo.screenshotSlots))
 	}
-	if len(assets.Screenshots) != 3 {
-		t.Fatalf("expected 3 screenshots, got %d", len(assets.Screenshots))
+	if len(assets.Screenshots) != 1 {
+		t.Fatalf("expected only the ordinary screenshot, got %d", len(assets.Screenshots))
 	}
 	if assets.Screenshots[0].ImgURL != "https://imgbb.com/first.png" {
 		t.Fatalf("expected first description image first, got %#v", assets.Screenshots)
 	}
-	if assets.Screenshots[1].ImgURL != "https://pixhost.to/second.png" || assets.Screenshots[2].ImgURL != "https://pixhost.to/third.png" {
-		t.Fatalf("expected comparison images in source order, got %#v", assets.Screenshots)
+	if !strings.Contains(assets.Description, "[comparison=A,B]https://pixhost.to/second.png https://pixhost.to/third.png[/comparison]") {
+		t.Fatalf("comparison block changed during override resolution: %q", assets.Description)
+	}
+}
+
+func TestResolveDescriptionAssetsKeepsImportedComparisonsOutOfScreenshotSlots(t *testing.T) {
+	comparison := "[spoiler=Comparisons]\n[center][url=https://imagebam.example/view/one]" +
+		"[img]https://thumbs.imagebam.example/one.jpg[/img][/url][/center]\n[/spoiler]"
+	repo := &stubRepo{trackerRecords: []api.TrackerMetadata{{
+		SourcePath:  "/tmp/source",
+		Tracker:     "AITHER",
+		Description: "Release notes\n\n" + comparison,
+		ImageURLs:   []string{"https://i.ibb.co/example/full.png"},
+	}}}
+	assets, err := ResolveDescriptionAssets(t.Context(), "AITHER", api.UploadSubject{
+		SourcePath: "/tmp/source",
+		Options:    api.UploadOptions{KeepImages: true},
+	}, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve imported tracker assets: %v", err)
+	}
+	if !strings.Contains(assets.Description, comparison) {
+		t.Fatalf("imported comparison changed: %q", assets.Description)
+	}
+	if len(assets.Screenshots) != 1 || assets.Screenshots[0].ImgURL != "https://i.ibb.co/example/full.png" ||
+		len(assets.Slots) != 1 {
+		t.Fatalf("comparison was imported as screenshots: screenshots=%#v slots=%#v", assets.Screenshots, assets.Slots)
 	}
 }
 
@@ -2227,7 +2318,7 @@ func TestResolveDescriptionAssetsLimitsDescriptionSlotsToSelectedImages(t *testi
 	}
 }
 
-func TestRewriteDescriptionSlotURLsReplacesComparisonImages(t *testing.T) {
+func TestRewriteDescriptionSlotURLsPreservesComparisonImages(t *testing.T) {
 	description := strings.TrimSpace(`
 [center]
 [comparison=A,B,C]
@@ -2262,21 +2353,968 @@ https://lostimg.cc/extra.png
 		},
 	}, false)
 
-	if strings.Contains(rewritten, "lostimg.cc") {
-		t.Fatalf("expected stale comparison URLs replaced, got %q", rewritten)
+	if rewritten != description {
+		t.Fatalf("comparison block changed during screenshot rewrite: %q", rewritten)
 	}
-	expectedOrder := []string{
-		"https://pixhost.to/show/source.png",
-		"https://pixhost.to/show/encode.png",
-		"https://pixhost.to/show/extra.png",
+}
+
+func TestImportedComparisonMarkupStaysExactThroughCleanupAndSlotRewrite(t *testing.T) {
+	comparison := "[spoiler=Comparisons]\r\n[align=left]Source &amp; Encode[/align]\r\n\r\n\r\n" +
+		"[center][img width=320]https://img.example/comparison.png[/img][/center]\r\n[/spoiler]"
+	oldURL := "https://img.example/old-screen.png"
+	description := "Body\n\n" + comparison + "\n\n[img]" + oldURL + "[/img]"
+	cleaned := sanitizeTrackerDescription("AITHER", description, descriptionAssetsTestRegistry(t))
+	if !strings.Contains(cleaned, "Body\n\n"+comparison+"\n\n[img]"+oldURL+"[/img]") {
+		t.Fatalf("tracker cleanup changed imported comparison or its surrounding spacing: %q", cleaned)
 	}
-	last := -1
-	for _, expected := range expectedOrder {
-		pos := strings.Index(rewritten, expected)
-		if pos <= last {
-			t.Fatalf("expected comparison replacement order %v, got %q", expectedOrder, rewritten)
+	rewritten := rewriteDescriptionSlotURLs(cleaned, []api.ScreenshotSlot{{
+		OriginalURL:         oldURL,
+		SourceKind:          screenshotSlotSourceTracker,
+		RenderInScreenshots: true,
+	}}, []api.ScreenshotImage{{RawURL: "https://img.example/new-screen.png"}}, false)
+	if !strings.Contains(rewritten, comparison) || strings.Contains(rewritten, oldURL) ||
+		!strings.Contains(rewritten, "https://img.example/new-screen.png") {
+		t.Fatalf("slot rewrite changed imported comparison or missed separate screenshot: %q", rewritten)
+	}
+}
+
+func TestStoredImportedComparisonSlotIsExcludedAndCannotRewriteItsBlock(t *testing.T) {
+	comparisonURL := "https://img.example/compare.png"
+	screenshotURL := "https://img.example/screen.png"
+	comparison := "[spoiler=Comparisons]\r\n[center][img]" + comparisonURL + "[/img][/center]\r\n[/spoiler]"
+	description := comparison + "\n\n[center][img]" + screenshotURL + "[/img][/center]"
+	meta := api.UploadSubject{
+		SourcePath:  "/tmp/source",
+		TrackerData: []api.TrackerMetadata{{Tracker: "AITHER", Description: description}},
+		Options:     api.UploadOptions{KeepImages: true},
+	}
+	stored := parseDescriptionImageSlots(meta.SourcePath, description)
+	if len(stored) != 2 {
+		t.Fatalf("expected legacy comparison and normal slots, got %#v", stored)
+	}
+	preloaded := &preloadedDescriptionAssetData{
+		registry:              descriptionAssetsTestRegistry(t),
+		screenshotSlots:       stored,
+		screenshotSlotsLoaded: true,
+	}
+	filtered, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, nil, api.NopLogger{}, preloaded, preloaded.registry)
+	if err != nil {
+		t.Fatalf("load stored slots: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].OriginalURL != screenshotURL {
+		t.Fatalf("imported comparison stayed in stored screenshot slots: %#v", filtered)
+	}
+	if filtered[0].SlotOrder != 0 {
+		t.Fatalf("ordinary screenshot was not rebuilt after removing comparison slot: %#v", filtered)
+	}
+	rewritten := rewriteDescriptionSlotURLs(description, stored, []api.ScreenshotImage{
+		{RawURL: "https://img.example/rehosted-comparison.png"},
+		{RawURL: "https://img.example/rehosted-screen.png"},
+	}, false)
+	if !strings.Contains(rewritten, comparison) {
+		t.Fatalf("persisted comparison slot rewrote imported BBCode: %q", rewritten)
+	}
+}
+
+func TestStoredImportedComparisonKeepsLaterRepeatedNormalImage(t *testing.T) {
+	imageURL := "https://img.example/shared.png"
+	comparison := "[spoiler=Comparisons][center][img]" + imageURL + "[/img][/center][/spoiler]"
+	meta := api.UploadSubject{
+		SourcePath:  "/tmp/source",
+		TrackerData: []api.TrackerMetadata{{Tracker: "BHD", Description: comparison + "\n\n[center][img]" + imageURL + "[/img][/center]"}},
+		Options:     api.UploadOptions{KeepImages: true},
+	}
+	stored := []api.ScreenshotSlot{
+		{
+			SourcePath:  meta.SourcePath,
+			SourceKind:  screenshotSlotSourceDescription,
+			SlotOrder:   0,
+			OriginalURL: imageURL,
+			ImagePath:   "/tmp/comparison.png",
+		},
+		{
+			SourcePath:  meta.SourcePath,
+			SourceKind:  screenshotSlotSourceDescription,
+			SlotOrder:   1,
+			OriginalURL: imageURL,
+			ImagePath:   "/tmp/screenshot.png",
+		},
+	}
+	preloaded := &preloadedDescriptionAssetData{
+		registry:              descriptionAssetsTestRegistry(t),
+		screenshotSlots:       stored,
+		screenshotSlotsLoaded: true,
+	}
+	filtered, err := screenshotSlotsFromSource(t.Context(), "BHD", meta, nil, api.NopLogger{}, preloaded, preloaded.registry)
+	if err != nil {
+		t.Fatalf("load stored slots: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].OriginalURL != imageURL || filtered[0].SlotOrder != 0 || !filtered[0].RenderInScreenshots {
+		t.Fatalf("later normal screenshot was not rebuilt from current description: %#v", filtered)
+	}
+}
+
+func TestEditedComparisonRebuildsStoredSlotsAndPreservesSelections(t *testing.T) {
+	imageURL := "https://img.example/shared.png"
+	secondURL := "https://img.example/second.png"
+	comparison := "[spoiler=Comparisons][center][img]" + imageURL + "[/img][/center][/spoiler]"
+	normal := "[center][img]" + imageURL + "[/img][/center]"
+	oldDescription := comparison + "\n\n" + normal
+	meta := api.UploadSubject{
+		SourcePath:          "/tmp/source",
+		DescriptionOverride: normal + "\n\n" + comparison + "\n\n[center][img]" + secondURL + "[/img][/center]",
+		TrackerData:         []api.TrackerMetadata{{Tracker: "AITHER", Description: oldDescription}},
+		Options:             api.UploadOptions{KeepImages: true},
+	}
+	stored := []api.ScreenshotSlot{
+		{
+			SourcePath:  meta.SourcePath,
+			SourceKind:  screenshotSlotSourceDescription,
+			SlotOrder:   0,
+			OriginalURL: imageURL,
+			SectionKind: screenshotSectionComparison,
+		},
+		{
+			SourcePath:          meta.SourcePath,
+			SourceKind:          screenshotSlotSourceDescription,
+			SlotOrder:           1,
+			OriginalURL:         imageURL,
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}
+	newRepo := func() *stubRepo {
+		return &stubRepo{
+			screenshotSlots: cloneScreenshotSlots(stored),
+			selections: []api.ScreenshotFinalSelection{
+				{
+					SourcePath: meta.SourcePath,
+					ImagePath:  "/tmp/normal.png",
+					Order:      0,
+				},
+				{
+					SourcePath: meta.SourcePath,
+					ImagePath:  "/tmp/second.png",
+					Order:      1,
+				},
+				{
+					SourcePath: meta.SourcePath,
+					ImagePath:  "/tmp/extra.png",
+					Order:      2,
+				},
+			},
+			uploads: []api.UploadedImageLink{
+				{
+					SourcePath: meta.SourcePath,
+					ImagePath:  "/tmp/normal.png",
+					Host:       "imgbb",
+					RawURL:     "https://img.example/normal-upload.png",
+				},
+				{
+					SourcePath: meta.SourcePath,
+					ImagePath:  "/tmp/second.png",
+					Host:       "imgbb",
+					RawURL:     "https://img.example/second-upload.png",
+				},
+				{
+					SourcePath: meta.SourcePath,
+					ImagePath:  "/tmp/extra.png",
+					Host:       "imgbb",
+					RawURL:     "https://img.example/extra-upload.png",
+				},
+			},
 		}
-		last = pos
+	}
+	assertRebuilt := func(t *testing.T, slots []api.ScreenshotSlot) {
+		t.Helper()
+		if len(slots) != 3 || slots[0].SourceKind != screenshotSlotSourceDescription || slots[0].OriginalURL != imageURL ||
+			slots[0].ImagePath != "/tmp/normal.png" || slots[0].SlotOrder != 0 || !slots[0].RenderInScreenshots ||
+			len(slots[0].Variants) != 1 || slots[0].Variants[0].RawURL != "https://img.example/normal-upload.png" ||
+			slots[1].SourceKind != screenshotSlotSourceDescription || slots[1].OriginalURL != secondURL ||
+			slots[1].ImagePath != "/tmp/second.png" || slots[1].SlotOrder != 1 || !slots[1].RenderInScreenshots ||
+			len(slots[1].Variants) != 1 || slots[1].Variants[0].RawURL != "https://img.example/second-upload.png" ||
+			slots[2].SourceKind != screenshotSlotSourceSelection || slots[2].ImagePath != "/tmp/extra.png" ||
+			slots[2].SlotOrder != 2 || len(slots[2].Variants) != 1 ||
+			slots[2].Variants[0].RawURL != "https://img.example/extra-upload.png" {
+			t.Fatalf("reordered comparison lost normal screenshots or selections: %#v", slots)
+		}
+	}
+	registry := descriptionAssetsTestRegistry(t)
+	t.Run("persistent", func(t *testing.T) {
+		repo := newRepo()
+		slots, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, repo, api.NopLogger{}, nil, registry)
+		if err != nil {
+			t.Fatalf("load slots: %v", err)
+		}
+		assertRebuilt(t, slots)
+		assertRebuilt(t, repo.screenshotSlots)
+	})
+	t.Run("without persistence", func(t *testing.T) {
+		repo := newRepo()
+		slots, err := screenshotSlotsFromSourceWithoutPersist(t.Context(), "AITHER", meta, repo, api.NopLogger{}, nil, registry)
+		if err != nil {
+			t.Fatalf("load slots: %v", err)
+		}
+		assertRebuilt(t, slots)
+		if len(repo.screenshotSlots) != 2 || repo.screenshotSlots[0].SectionKind != screenshotSectionComparison {
+			t.Fatalf("non-persistent lookup replaced stored slots: %#v", repo.screenshotSlots)
+		}
+	})
+}
+
+func TestEditedComparisonDropsStaleStoredImage(t *testing.T) {
+	oldComparisonURL := "https://img.example/old-comparison.png"
+	newComparisonURL := "https://img.example/new-comparison.png"
+	screenshotURL := "https://img.example/screen.png"
+	normal := "[center][img]" + screenshotURL + "[/img][/center]"
+	meta := api.UploadSubject{
+		SourcePath:          "/tmp/source",
+		DescriptionOverride: "[spoiler=Comparisons][img]" + newComparisonURL + "[/img][/spoiler]\n\n" + normal,
+		Options:             api.UploadOptions{KeepImages: true},
+	}
+	repo := &stubRepo{screenshotSlots: []api.ScreenshotSlot{
+		{
+			SourcePath:  meta.SourcePath,
+			SourceKind:  screenshotSlotSourceDescription,
+			SlotOrder:   0,
+			OriginalURL: oldComparisonURL,
+		},
+		{
+			SourcePath:          meta.SourcePath,
+			SourceKind:          screenshotSlotSourceDescription,
+			SlotOrder:           1,
+			OriginalURL:         screenshotURL,
+			ImagePath:           "/tmp/screen.png",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+			Variants: []api.ScreenshotSlotVariant{{
+				SlotOrder: 1,
+				Host:      "imgbb",
+				ImagePath: "/tmp/screen.png",
+				RawURL:    "https://img.example/rehosted.png",
+			}},
+		},
+	}}
+	slots, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, repo, api.NopLogger{}, nil, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("load edited comparison slots: %v", err)
+	}
+	if len(slots) != 1 || slots[0].OriginalURL != screenshotURL || slots[0].SlotOrder != 0 ||
+		slots[0].ImagePath != "/tmp/screen.png" || len(slots[0].Variants) != 1 ||
+		slots[0].Variants[0].SlotOrder != 0 || slots[0].Variants[0].RawURL != "https://img.example/rehosted.png" ||
+		len(repo.screenshotSlots) != 1 || repo.screenshotSlots[0].OriginalURL != screenshotURL {
+		t.Fatalf("stale comparison image survived slot reconciliation: result=%#v stored=%#v", slots, repo.screenshotSlots)
+	}
+}
+
+func TestRemovedComparisonDropsStoredImage(t *testing.T) {
+	screenshotURL := "https://img.example/screen.png"
+	meta := api.UploadSubject{
+		SourcePath:          "/tmp/source",
+		DescriptionOverride: "Notes\n\n[center][img]" + screenshotURL + "[/img][/center]",
+		Options:             api.UploadOptions{KeepImages: true},
+	}
+	repo := &stubRepo{screenshotSlots: []api.ScreenshotSlot{
+		{
+			SourcePath:  meta.SourcePath,
+			SourceKind:  screenshotSlotSourceDescription,
+			SlotOrder:   0,
+			OriginalURL: "https://img.example/removed-comparison.png",
+		},
+		{
+			SourcePath:          meta.SourcePath,
+			SourceKind:          screenshotSlotSourceDescription,
+			SlotOrder:           1,
+			OriginalURL:         screenshotURL,
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}}
+	slots, err := screenshotSlotsFromSource(t.Context(), "BHD", meta, repo, api.NopLogger{}, nil, descriptionAssetsTestRegistry(t))
+	if err != nil || len(slots) != 1 || slots[0].OriginalURL != screenshotURL ||
+		len(repo.screenshotSlots) != 1 || repo.screenshotSlots[0].OriginalURL != screenshotURL {
+		t.Fatalf("removed comparison retained stale image: slots=%#v stored=%#v err=%v", slots, repo.screenshotSlots, err)
+	}
+}
+
+func TestUnverifiedCachedTrackerImageSlotIsDropped(t *testing.T) {
+	meta := api.UploadSubject{
+		SourcePath: "/tmp/source",
+		TrackerData: []api.TrackerMetadata{{
+			Tracker:     "BHD",
+			Description: "Legacy notes without image provenance",
+		}},
+		Options: api.UploadOptions{KeepImages: true},
+	}
+	repo := &stubRepo{
+		trackerRecords: meta.TrackerData,
+		screenshotSlots: []api.ScreenshotSlot{{
+			SourcePath:          meta.SourcePath,
+			SourceKind:          screenshotSlotSourceTracker,
+			OriginalURL:         "https://img.example/legacy-comparison.png",
+			RenderInScreenshots: true,
+		}},
+	}
+	slots, err := screenshotSlotsFromSource(t.Context(), "BHD", meta, repo, api.NopLogger{}, nil, descriptionAssetsTestRegistry(t))
+	if err != nil || len(slots) != 0 || len(repo.screenshotSlots) != 0 {
+		t.Fatalf("unverified cached tracker image survived slot reconciliation: slots=%#v stored=%#v err=%v", slots, repo.screenshotSlots, err)
+	}
+}
+
+func TestEditedOverrideKeepsComparisonOutOfStoredSlots(t *testing.T) {
+	imageURL := "https://img.example/shared.png"
+	comparisonBlock := "[spoiler=Comparisons][center][img]" + imageURL + "[/img][/center][/spoiler]"
+	description := comparisonBlock + "\n\n[center][img]" + imageURL + "[/img][/center]"
+	meta := api.UploadSubject{
+		SourcePath:          "/tmp/source",
+		DescriptionOverride: description,
+		Options:             api.UploadOptions{KeepImages: true},
+	}
+	stored := []api.ScreenshotSlot{
+		{
+			SourcePath:  meta.SourcePath,
+			SourceKind:  screenshotSlotSourceDescription,
+			SlotOrder:   0,
+			OriginalURL: imageURL,
+		},
+		{
+			SourcePath:          meta.SourcePath,
+			SourceKind:          screenshotSlotSourceDescription,
+			SlotOrder:           1,
+			OriginalURL:         imageURL,
+			ImagePath:           "/tmp/screen.png",
+			RenderInScreenshots: true,
+		},
+	}
+	preloaded := &preloadedDescriptionAssetData{
+		registry:              descriptionAssetsTestRegistry(t),
+		screenshotSlots:       stored,
+		screenshotSlotsLoaded: true,
+	}
+	filtered, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, nil, api.NopLogger{}, preloaded, preloaded.registry)
+	if err != nil || len(filtered) != 1 || filtered[0].SlotOrder != 0 || !filtered[0].RenderInScreenshots {
+		t.Fatalf("edited override retained comparison slot: slots=%#v err=%v", filtered, err)
+	}
+	assets := DescriptionAssets{
+		Description: description,
+		Slots:       filtered,
+		Override:    true,
+	}
+	applyResolvedDescriptionScreenshots(t.Context(), "AITHER", meta, nil, nil, &assets, []api.ScreenshotImage{{Path: "/tmp/screen.png", RawURL: "https://img.example/rehosted.png"}})
+	if !strings.Contains(assets.Description, comparisonBlock) || !strings.Contains(assets.Description, "https://img.example/rehosted.png") {
+		t.Fatalf("edited override rewrote comparison or missed ordinary screenshot: %q", assets.Description)
+	}
+}
+
+func TestStoredComparisonDoesNotCountDeduplicatedOutsideImage(t *testing.T) {
+	imageURL := "https://img.example/shared.png"
+	description := "[center][img]" + imageURL + "[/img][/center]\n" +
+		"[comparison=Source, Encode]" + imageURL + "[/comparison]\n" +
+		"[center][img]" + imageURL + "[/img][/center]"
+	meta := api.UploadSubject{
+		SourcePath:  "/tmp/source",
+		TrackerData: []api.TrackerMetadata{{Tracker: "AITHER", Description: description}},
+		Options:     api.UploadOptions{KeepImages: true},
+	}
+	stored := parseDescriptionImageSlots(meta.SourcePath, description)
+	if len(stored) != 2 {
+		t.Fatalf("expected one normal and one comparison slot, got %#v", stored)
+	}
+	preloaded := &preloadedDescriptionAssetData{
+		registry:              descriptionAssetsTestRegistry(t),
+		screenshotSlots:       stored,
+		screenshotSlotsLoaded: true,
+	}
+	filtered, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, nil, api.NopLogger{}, preloaded, preloaded.registry)
+	if err != nil || len(filtered) != 1 || filtered[0].SectionKind != screenshotSectionWrapped || filtered[0].SlotOrder != 0 {
+		t.Fatalf("comparison slot survived deduplicated normal URL: slots=%#v err=%v", filtered, err)
+	}
+}
+
+func TestLegacyComparisonOnlyCachedImageIsNotRehosted(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	imageURL := "https://img.example/compare.png"
+	record := api.TrackerMetadata{
+		Tracker:     "AITHER",
+		Description: "[spoiler=Comparisons][img]" + imageURL + "[/img][/spoiler]",
+		ImageURLs:   []string{imageURL},
+	}
+	meta := api.UploadSubject{
+		SourcePath:  sourcePath,
+		TrackerData: []api.TrackerMetadata{record},
+		Options:     api.UploadOptions{KeepImages: true},
+	}
+	if urls := collectImageURLs(meta.TrackerData, nil); len(urls) != 0 {
+		t.Fatalf("comparison-only cached URLs should be excluded: %#v", urls)
+	}
+	registry := descriptionAssetsTestRegistry(t)
+	slots, err := synthesizeScreenshotSlots(t.Context(), "AITHER", meta, &stubRepo{provenanceMissing: true}, api.NopLogger{}, nil, registry)
+	if err != nil || len(slots) != 0 {
+		t.Fatalf("comparison-only cached image became a slot: slots=%#v err=%v", slots, err)
+	}
+	tmpRoot, err := dbsvc.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("temp root: %v", err)
+	}
+	releaseDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, meta.Release)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	artifactPath := filepath.Join(releaseDir, "aither", legacyTrackerArtifactImageName(imageURL, 0))
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatalf("artifact dir: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("image"), 0o600); err != nil {
+		t.Fatalf("write legacy artifact: %v", err)
+	}
+	if local := resolveLocalTrackerScreenshots(t.Context(), meta, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}, "AITHER", nil, nil, api.NopLogger{}); len(local) != 0 {
+		t.Fatalf("comparison-only legacy artifact selected for rehost: %#v", local)
+	}
+	record.Description += "\n\n[img]" + imageURL + "[/img]"
+	if urls := collectImageURLs([]api.TrackerMetadata{record}, nil); len(urls) != 1 || urls[0] != imageURL {
+		t.Fatalf("normal screenshot reusing comparison URL was removed: %#v", urls)
+	}
+}
+
+func TestLegacyLooseBHDComparisonURLIsNotRehosted(t *testing.T) {
+	imageURL := "https://img.example/compare.png?width=100"
+	record := api.TrackerMetadata{
+		Tracker:     "BHD",
+		Description: "[spoiler=Comparisons]" + imageURL + "[/spoiler]",
+		ImageURLs:   []string{imageURL},
+	}
+	if urls := collectImageURLs([]api.TrackerMetadata{record}, nil); len(urls) != 0 {
+		t.Fatalf("loose comparison URL became a cached screenshot: %#v", urls)
+	}
+	record.Description += "\n\n" + imageURL
+	if urls := collectImageURLs([]api.TrackerMetadata{record}, nil); len(urls) != 1 || urls[0] != imageURL {
+		t.Fatalf("separate loose screenshot sharing comparison URL was lost: %#v", urls)
+	}
+}
+
+func TestLegacyLinkedComparisonOriginalIsNotRehosted(t *testing.T) {
+	fullURL := "https://img.example/full.png"
+	thumbURL := "https://img.example/thumb.png"
+	comparisonBlock := "[spoiler=Comparisons][url=" + fullURL + "][img]" + thumbURL + "[/img][/url][/spoiler]"
+	record := api.TrackerMetadata{
+		Tracker:     "AITHER",
+		Description: comparisonBlock,
+		ImageURLs:   []string{fullURL},
+	}
+	if urls := collectImageURLs([]api.TrackerMetadata{record}, nil); len(urls) != 0 {
+		t.Fatalf("linked original in comparison became a cached screenshot: %#v", urls)
+	}
+	meta := api.UploadSubject{
+		SourcePath:  filepath.Join(t.TempDir(), "source.mkv"),
+		TrackerData: []api.TrackerMetadata{record},
+		Options:     api.UploadOptions{KeepImages: true},
+	}
+	slots, err := synthesizeScreenshotSlots(t.Context(), "AITHER", meta, &stubRepo{provenanceMissing: true}, api.NopLogger{}, nil, descriptionAssetsTestRegistry(t))
+	if err != nil || len(slots) != 0 {
+		t.Fatalf("linked comparison original became a screenshot slot: slots=%#v err=%v", slots, err)
+	}
+	record.Description += "\n\n[url=" + fullURL + "][img]" + thumbURL + "[/img][/url]"
+	if urls := collectImageURLs([]api.TrackerMetadata{record}, nil); len(urls) != 1 || urls[0] != fullURL {
+		t.Fatalf("linked original reused outside comparison was excluded: %#v", urls)
+	}
+}
+
+func TestResolveLocalTrackerScreenshotsFindsShiftedHashedImage(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	imageURL := "https://img.example/my%20shot.png"
+	meta := api.UploadSubject{
+		SourcePath:  sourcePath,
+		TrackerData: []api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{imageURL}}},
+		Options:     api.UploadOptions{KeepImages: true},
+	}
+	tmpRoot, err := dbsvc.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("temp root: %v", err)
+	}
+	releaseDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, meta.Release)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	digest := sha256.Sum256([]byte(imageURL))
+	artifactPath := filepath.Join(releaseDir, "aither", fmt.Sprintf("my_shot_02_%x.png", digest[:6]))
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatalf("artifact dir: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("image"), 0o600); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	local := resolveLocalTrackerScreenshots(t.Context(), meta, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}, "AITHER", nil, nil, api.NopLogger{})
+	if len(local) != 1 || local[0].Path != artifactPath {
+		t.Fatalf("shifted hashed artifact was not found: %#v", local)
+	}
+}
+
+func TestLegacyPreparedTrackerImagesRequireProvenance(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	imageURL := "https://img.example/legacy-comparison.png"
+	record := api.TrackerMetadata{
+		SourcePath:  sourcePath,
+		Tracker:     "AITHER",
+		TrackerID:   "101",
+		Description: "Legacy notes without comparison markup",
+		ImageURLs:   []string{imageURL},
+	}
+	repo := &stubRepo{trackerRecords: []api.TrackerMetadata{record}, provenanceMissing: true}
+	registry := descriptionAssetsTestRegistry(t)
+	meta := api.UploadSubject{
+		SourcePath:  sourcePath,
+		TrackerData: []api.TrackerMetadata{record},
+		Options:     api.UploadOptions{KeepImages: true},
+	}
+	if urls := resolveTrackerImageURLs(t.Context(), "AITHER", meta, repo, api.NopLogger{}, nil, registry); len(urls) != 0 {
+		t.Fatalf("unverified legacy URL was reused: %#v", urls)
+	}
+	tmpRoot, err := dbsvc.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("temp root: %v", err)
+	}
+	releaseDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, meta.Release)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	artifactPath := filepath.Join(releaseDir, "aither", buildTrackerArtifactImageName(imageURL, 0))
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatalf("artifact dir: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}
+	if local := resolveLocalTrackerScreenshots(t.Context(), meta, cfg, "AITHER", repo, registry, api.NopLogger{}); len(local) != 0 {
+		t.Fatalf("unverified local artifact was reused: %#v", local)
+	}
+}
+
+func TestSynthesizedSlotsExcludeSavedComparisonArtifacts(t *testing.T) {
+	registry := descriptionAssetsTestRegistry(t)
+	comparisonURL := "https://img.example/comparison.png"
+	normalURL := "https://img.example/normal.png"
+	for _, test := range []struct {
+		name        string
+		description string
+		urls        []string
+		verified    bool
+		wantPath    string
+	}{
+		{
+			name:        "legacy comparison only",
+			description: "[spoiler=Comparisons][img]" + comparisonURL + "[/img][/spoiler]",
+			urls:        []string{comparisonURL},
+		},
+		{
+			name:        "comparison before normal screenshot",
+			description: "[spoiler=Comparisons][img]" + comparisonURL + "[/img][/spoiler]\n[center][img]" + normalURL + "[/img][/center]",
+			urls:        []string{normalURL},
+			verified:    true,
+			wantPath:    "normal",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+			trackerDir := filepath.Join(t.TempDir(), "aither")
+			comparisonPath := filepath.Join(trackerDir, buildTrackerArtifactImageName(comparisonURL, 0))
+			normalPath := filepath.Join(trackerDir, buildTrackerArtifactImageName(normalURL, 0))
+			record := api.TrackerMetadata{
+				SourcePath:  sourcePath,
+				Tracker:     "AITHER",
+				TrackerID:   "101",
+				Description: test.description,
+				ImageURLs:   test.urls,
+			}
+			repo := &stubRepo{
+				trackerRecords:    []api.TrackerMetadata{record},
+				provenanceMissing: !test.verified,
+				selections: []api.ScreenshotFinalSelection{{
+					SourcePath: sourcePath,
+					ImagePath:  comparisonPath,
+					Order:      0,
+				}},
+			}
+			if test.wantPath != "" {
+				repo.selections = append(repo.selections, api.ScreenshotFinalSelection{
+					SourcePath: sourcePath,
+					ImagePath:  normalPath,
+					Order:      1,
+				})
+			}
+			meta := api.UploadSubject{
+				SourcePath: sourcePath,
+				Options:    api.UploadOptions{KeepImages: true},
+			}
+			slots, err := synthesizeScreenshotSlots(t.Context(), "AITHER", meta, repo, api.NopLogger{}, nil, registry)
+			if err != nil {
+				t.Fatalf("synthesize slots: %v", err)
+			}
+			if test.wantPath == "" {
+				if len(slots) != 0 {
+					t.Fatalf("comparison-only selection became a slot: %#v", slots)
+				}
+				return
+			}
+			if len(slots) != 1 || slots[0].ImagePath != normalPath || slots[0].OriginalURL != normalURL {
+				t.Fatalf("normal screenshot was paired with comparison artifact: %#v", slots)
+			}
+		})
+	}
+}
+
+func TestStoredSharedComparisonSlotPreservesSelectedPathAndVariantsOnce(t *testing.T) {
+	registry := descriptionAssetsTestRegistry(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	imageURL := "https://img.example/shared.png"
+	description := "[spoiler=Comparisons][center][img]" + imageURL + "[/img][/center][/spoiler]\n" +
+		"[center][img]" + imageURL + "[/img][/center]"
+	stored := parseDescriptionImageSlots(sourcePath, description)
+	if len(stored) != 1 || stored[0].OriginalURL != imageURL || stored[0].SectionKind != screenshotSectionWrapped {
+		t.Fatalf("legacy duplicate parser shape changed: %#v", stored)
+	}
+	oldPath := filepath.Join(t.TempDir(), "description-images", "slot_001_shared.png")
+	stored[0].ImagePath = oldPath
+	stored[0].Variants = []api.ScreenshotSlotVariant{{
+		Host:      "imgbox",
+		ImagePath: oldPath,
+		ImgURL:    "https://img.example/old-host.png",
+	}}
+	repo := &stubRepo{
+		provenanceMissing: true,
+		screenshotSlots:   stored,
+		selections:        []api.ScreenshotFinalSelection{{ImagePath: oldPath}},
+		uploads: []api.UploadedImageLink{{
+			ImagePath: oldPath,
+			Host:      "imgbox",
+			ImgURL:    "https://img.example/old-host.png",
+		}},
+	}
+	meta := api.UploadSubject{
+		SourcePath:             sourcePath,
+		DescriptionGroupsFinal: true,
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: description,
+			HasOverride:    true,
+		}},
+		Options: api.UploadOptions{KeepImages: true},
+	}
+	slots, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, repo, api.NopLogger{}, nil, registry)
+	if err != nil {
+		t.Fatalf("reconcile legacy shared slot: %v", err)
+	}
+	if len(slots) != 1 || slots[0].OriginalURL != imageURL || slots[0].ImagePath != oldPath || len(slots[0].Variants) != 1 {
+		t.Fatalf("selected ordinary screenshot was lost: %#v", slots)
+	}
+	if len(repo.selections) != 1 || len(repo.uploads) != 1 {
+		t.Fatalf("selected screenshot references were deleted: selections=%#v uploads=%#v", repo.selections, repo.uploads)
+	}
+	if _, err := repo.GetTrackerTimestamp(t.Context(), comparisonSlotProvenanceKey(sourcePath, "AITHER", imageURL)); err != nil {
+		t.Fatalf("comparison slot migration marker missing: %v", err)
+	}
+	freshPath := filepath.Join(t.TempDir(), "normal.png")
+	repo.screenshotSlots[0].ImagePath = freshPath
+	repo.screenshotSlots[0].Variants = []api.ScreenshotSlotVariant{{
+		Host:      "imgbox",
+		ImagePath: freshPath,
+		ImgURL:    "https://img.example/new-host.png",
+	}}
+	meta.DescriptionGroups[0].RawDescription = "Edited notes\n" + description
+	slots, err = screenshotSlotsFromSource(t.Context(), "AITHER", meta, repo, api.NopLogger{}, nil, registry)
+	if err != nil || len(slots) != 2 || slots[0].ImagePath != freshPath || len(slots[0].Variants) != 1 ||
+		slots[1].ImagePath != oldPath {
+		t.Fatalf("fresh normal screenshot was cleared after migration: slots=%#v err=%v", slots, err)
+	}
+}
+
+func TestStoredSharedComparisonSlotClearsUnselectedLegacyAssets(t *testing.T) {
+	registry := descriptionAssetsTestRegistry(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	imageURL := "https://img.example/shared.png"
+	description := "[spoiler=Comparisons][img]" + imageURL + "[/img][/spoiler]\n[img]" + imageURL + "[/img]"
+	stored := parseDescriptionImageSlots(sourcePath, description)
+	oldPath := filepath.Join(t.TempDir(), "description-images", "slot_001_shared.png")
+	stored[0].ImagePath = oldPath
+	stored[0].Variants = []api.ScreenshotSlotVariant{{ImagePath: oldPath, Host: "imgbox"}}
+	repo := &stubRepo{provenanceMissing: true, screenshotSlots: stored}
+	meta := api.UploadSubject{
+		SourcePath: sourcePath,
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: description,
+		}},
+		Options: api.UploadOptions{KeepImages: true},
+	}
+	slots, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, repo, api.NopLogger{}, nil, registry)
+	if err != nil || len(slots) != 1 || slots[0].ImagePath != "" || len(slots[0].Variants) != 0 {
+		t.Fatalf("unselected comparison asset remained attached: slots=%#v err=%v", slots, err)
+	}
+}
+
+func TestValidatedNormalImageSharedWithComparisonRemainsAvailable(t *testing.T) {
+	imageURL := "https://img.example/shared.png"
+	raw := "[spoiler=Comparisons][img]" + imageURL + "[/img][/spoiler]\n[img]" + imageURL + "[/img]"
+	cleaned := descriptionunit3d.CleanDescription(raw, "https://aither.cc")
+	if len(cleaned.Images) != 1 || cleaned.Images[0].RawURL != imageURL || strings.Count(cleaned.Description, imageURL) != 1 {
+		t.Fatalf("producer did not retain one ordinary image and copied comparison: %#v", cleaned)
+	}
+	registry := descriptionAssetsTestRegistry(t)
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:       "BHD",
+		Definition: descriptionAssetsTestDefinition{name: "BHD", family: FamilyStandalone},
+		Family:     FamilyStandalone,
+		DataPolicy: &DataLookupPolicy{LegacyImageAssetsNeedProvenance: true},
+	}); err != nil {
+		t.Fatalf("register BHD: %v", err)
+	}
+	for _, tracker := range []string{"AITHER", "BHD"} {
+		record := api.TrackerMetadata{
+			SourcePath:  "/tmp/source",
+			Tracker:     tracker,
+			Description: cleaned.Description,
+			ImageURLs:   []string{imageURL},
+		}
+		repo := &stubRepo{
+			provenanceMissing: true,
+			trackerTimestamps: map[string]time.Time{
+				TrackerAssetProvenanceKey(record): time.Now().UTC(),
+			},
+		}
+		verified := FilterUnverifiedTrackerImages(t.Context(), repo, registry, []api.TrackerMetadata{record}, api.NopLogger{})
+		urls := collectImageURLs(verified, registry)
+		if len(urls) != 1 || urls[0] != imageURL {
+			t.Fatalf("%s lost validated normal image shared with comparison: %v", tracker, urls)
+		}
+	}
+}
+
+func TestTrackerSpecificSlotViewsPreserveSharedStoredSlots(t *testing.T) {
+	registry := descriptionAssetsTestRegistry(t)
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:       "BHD",
+		Definition: descriptionAssetsTestDefinition{name: "BHD", family: FamilyStandalone},
+		Family:     FamilyStandalone,
+	}); err != nil {
+		t.Fatalf("register BHD: %v", err)
+	}
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	aitherURL := "https://img.example/aither.png"
+	bhdURL := "https://img.example/bhd.png"
+	aitherDescription := "[center][img]" + aitherURL + "[/img][/center]"
+	bhdDescription := "[center][img]" + bhdURL + "[/img][/center]"
+	stored := parseDescriptionImageSlots(sourcePath, aitherDescription)
+	stored[0].ImagePath = filepath.Join(t.TempDir(), "selected.png")
+	stored[0].Variants = []api.ScreenshotSlotVariant{{
+		ImagePath: stored[0].ImagePath,
+		Host:      "imgbox",
+		ImgURL:    "https://img.example/hosted.png",
+	}}
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "AITHER", Description: aitherDescription},
+			{Tracker: "BHD", Description: bhdDescription},
+		},
+		screenshotSlots: cloneScreenshotSlots(stored),
+	}
+	meta := api.UploadSubject{SourcePath: sourcePath, Options: api.UploadOptions{KeepImages: true}}
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
+	if err != nil {
+		t.Fatalf("preload description assets: %v", err)
+	}
+	if !reflect.DeepEqual(repo.screenshotSlots, stored) {
+		t.Fatalf("preload changed shared slots: %#v", repo.screenshotSlots)
+	}
+
+	type result struct {
+		tracker string
+		slots   []api.ScreenshotSlot
+		err     error
+	}
+	results := make(chan result, 2)
+	for _, tracker := range []string{"AITHER", "BHD"} {
+		go func() {
+			preloadedCopy := clonePreloadedDescriptionAssetData(preloaded)
+			slots, loadErr := screenshotSlotsFromSource(t.Context(), tracker, meta, repo, api.NopLogger{}, preloadedCopy, registry)
+			results <- result{
+				tracker: tracker,
+				slots:   slots,
+				err:     loadErr,
+			}
+		}()
+	}
+	for range 2 {
+		got := <-results
+		if got.err != nil || len(got.slots) != 1 {
+			t.Fatalf("%s slots: %#v, err=%v", got.tracker, got.slots, got.err)
+		}
+		wantURL := aitherURL
+		if got.tracker == "BHD" {
+			wantURL = bhdURL
+		}
+		if got.slots[0].OriginalURL != wantURL {
+			t.Fatalf("%s received another tracker's slot: %#v", got.tracker, got.slots)
+		}
+	}
+	if !reflect.DeepEqual(repo.screenshotSlots, stored) {
+		t.Fatalf("tracker-specific view replaced shared slots: %#v", repo.screenshotSlots)
+	}
+}
+
+func TestScreenshotPreloadKeepsSavedOverrideSlotAssets(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	overrideURL := "https://img.example/override.png"
+	override := "[center][img]" + overrideURL + "[/img][/center]"
+	stored := parseDescriptionImageSlots(sourcePath, override)
+	stored[0].ImagePath = filepath.Join(t.TempDir(), "selected.png")
+	stored[0].Variants = []api.ScreenshotSlotVariant{{
+		ImagePath: stored[0].ImagePath,
+		Host:      "imgbox",
+		ImgURL:    "https://img.example/hosted.png",
+	}}
+	repo := &stubRepo{
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "[img]https://img.example/raw.png[/img]"}},
+		screenshotSlots:     cloneScreenshotSlots(stored),
+		descriptionOverride: override,
+		overrideGroupKey:    "unit3d",
+	}
+	meta := api.UploadSubject{SourcePath: sourcePath, Options: api.UploadOptions{KeepImages: true}}
+	registry := descriptionAssetsTestRegistry(t)
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
+	if err != nil {
+		t.Fatalf("preload saved override: %v", err)
+	}
+	if !reflect.DeepEqual(repo.screenshotSlots, stored) {
+		t.Fatalf("preload replaced saved override slots: %#v", repo.screenshotSlots)
+	}
+	slots, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil || len(slots) != 1 || slots[0].OriginalURL != overrideURL || slots[0].ImagePath != stored[0].ImagePath ||
+		len(slots[0].Variants) != 1 || slots[0].Variants[0].ImgURL != stored[0].Variants[0].ImgURL {
+		t.Fatalf("saved override slot assets were lost: slots=%#v err=%v", slots, err)
+	}
+}
+
+func TestFinalPreparedDescriptionPreservesImportedComparison(t *testing.T) {
+	comparisonURL := "https://img.example/shared.png"
+	screenshotURL := comparisonURL
+	comparisonBlock := "[spoiler=Comparisons]\r\n[img]" + comparisonURL + "[/img]\r\n[/spoiler]"
+	description := comparisonBlock + "\n\n[center][img]" + screenshotURL + "[/img][/center]"
+	meta := api.UploadSubject{
+		SourcePath:             "/tmp/source",
+		DescriptionGroupsFinal: true,
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: description,
+			HasOverride:    true,
+		}},
+		Options: api.UploadOptions{KeepImages: true},
+	}
+	stored := parseDescriptionImageSlots(meta.SourcePath, description)
+	preloaded := &preloadedDescriptionAssetData{
+		registry:              descriptionAssetsTestRegistry(t),
+		screenshotSlots:       stored,
+		screenshotSlotsLoaded: true,
+	}
+	slots, err := screenshotSlotsFromSource(t.Context(), "AITHER", meta, nil, api.NopLogger{}, preloaded, preloaded.registry)
+	if err != nil {
+		t.Fatalf("load stored slots: %v", err)
+	}
+	if len(slots) != 1 || slots[0].OriginalURL != screenshotURL || slots[0].SlotOrder != 0 {
+		t.Fatalf("final description retained imported comparison slot: %#v", slots)
+	}
+	synthesized, err := synthesizeScreenshotSlots(t.Context(), "AITHER", meta, &stubRepo{}, api.NopLogger{}, nil, preloaded.registry)
+	if err != nil || len(synthesized) != 1 || synthesized[0].OriginalURL != screenshotURL {
+		t.Fatalf("final description synthesized imported comparison slot: slots=%#v err=%v", synthesized, err)
+	}
+	assets := DescriptionAssets{
+		Description: description,
+		Slots:       slots,
+		Override:    true,
+		Final:       true,
+	}
+	applyResolvedDescriptionScreenshots(t.Context(), "AITHER", meta, nil, preloaded, &assets, []api.ScreenshotImage{{
+		RawURL: "https://img.example/rehosted.png",
+	}})
+	if !strings.Contains(assets.Description, comparisonBlock) || strings.Count(assets.Description, screenshotURL) != 1 ||
+		!strings.Contains(assets.Description, "https://img.example/rehosted.png") {
+		t.Fatalf("final description changed imported comparison or missed screenshot: %q", assets.Description)
+	}
+}
+
+func TestImportedNestedComparisonIsExcludedFromSynthesizedSlots(t *testing.T) {
+	comparison := "[spoiler=Comparisons][spoiler=Source][img]https://img.example/source.png[/img][/spoiler]" +
+		"[img]https://img.example/encode.png[/img][/spoiler]"
+	meta := api.UploadSubject{
+		SourcePath:  "/tmp/source",
+		TrackerData: []api.TrackerMetadata{{Tracker: "AITHER", Description: comparison + "\n\n[center][img]https://img.example/screen.png[/img][/center]"}},
+		Options:     api.UploadOptions{KeepImages: true},
+	}
+	registry := descriptionAssetsTestRegistry(t)
+	slots, err := synthesizeScreenshotSlots(t.Context(), "AITHER", meta, &stubRepo{}, api.NopLogger{}, nil, registry)
+	if err != nil {
+		t.Fatalf("synthesize slots: %v", err)
+	}
+	if len(slots) != 1 || slots[0].OriginalURL != "https://img.example/screen.png" {
+		t.Fatalf("nested comparison imported into screenshot slots: %#v", slots)
+	}
+}
+
+func TestAlignRenderableSlotsUsesHashedArtifactNameAfterFailedImage(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{OriginalURL: "https://first.example/shot.png", RenderInScreenshots: true},
+		{OriginalURL: "https://t1.pixhost.cc/thumbs/123/shot.png", RenderInScreenshots: true},
+	}
+	imported := descriptionunit3d.CleanDescriptionImages("[center][img]"+slots[1].OriginalURL+"[/img][/center]", "https://blu.example")
+	if len(imported.Images) != 1 || imported.Images[0].RawURL != "https://img1.pixhost.cc/images/123/shot.png" {
+		t.Fatalf("unexpected Unit3D full image URL: %#v", imported.Images)
+	}
+	fullURL := imported.Images[0].RawURL
+	secondPath := filepath.Join(t.TempDir(), buildTrackerArtifactImageName(fullURL, 1))
+	if !alignRenderableSlotsToSourceImages(slots, []api.ScreenshotImage{{Path: secondPath}}) ||
+		slots[0].RenderInScreenshots || slots[0].ImagePath != "" || slots[1].ImagePath != secondPath {
+		t.Fatalf("failed image hole shifted later screenshot: %#v", slots)
+	}
+}
+
+func TestAlignRenderableSlotsMatchesEscapedSpaceArtifactAfterFailedImage(t *testing.T) {
+	firstURL := "https://first.example/my%20shot.png"
+	secondURL := "https://second.example/my%20shot.png"
+	slots := []api.ScreenshotSlot{
+		{OriginalURL: firstURL, RenderInScreenshots: true},
+		{OriginalURL: secondURL, RenderInScreenshots: true},
+	}
+	digest := sha256.Sum256([]byte(secondURL))
+	secondPath := filepath.Join(t.TempDir(), fmt.Sprintf("my_shot_02_%x.png", digest[:6]))
+	if !alignRenderableSlotsToSourceImages(slots, []api.ScreenshotImage{{Path: secondPath}}) ||
+		slots[0].RenderInScreenshots || slots[0].ImagePath != "" || slots[1].ImagePath != secondPath {
+		t.Fatalf("escaped-space image matched failed earlier slot: %#v", slots)
+	}
+}
+
+func TestAlignRenderableSlotsMatchesNumericURLStemAfterFailedImage(t *testing.T) {
+	firstURL := "https://img.example/shot_01.jpg"
+	secondURL := "https://img.example/shot_02.jpg"
+	for _, name := range []string{
+		buildTrackerArtifactImageName(secondURL, 1),
+		buildDescriptionSlotImageName(secondURL, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			slots := []api.ScreenshotSlot{
+				{OriginalURL: firstURL, RenderInScreenshots: true},
+				{OriginalURL: secondURL, RenderInScreenshots: true},
+			}
+			secondPath := filepath.Join(t.TempDir(), name)
+			if !alignRenderableSlotsToSourceImages(slots, []api.ScreenshotImage{{Path: secondPath}}) ||
+				slots[0].RenderInScreenshots || slots[0].ImagePath != "" || slots[1].ImagePath != secondPath {
+				t.Fatalf("numbered URL stem shifted later screenshot: %#v", slots)
+			}
+		})
 	}
 }
 
@@ -2289,15 +3327,19 @@ https://lostimg.cc/encode.png
 `)
 	slots := parseDescriptionImageSlots("/tmp/source", description)
 	appendSourceImageSlots(&slots, "/tmp/source", []api.ScreenshotImage{{Path: "/tmp/encode_01.png"}})
-	assets := DescriptionAssets{Description: description, Slots: slots}
+	assets := DescriptionAssets{
+		Description: description,
+		Slots:       slots,
+		Override:    true,
+	}
 	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: "/tmp/source"}, nil, nil, &assets, []api.ScreenshotImage{
 		{Path: "/tmp/source-copy.png", RawURL: "https://pixhost/source.png"},
 		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-comparison.png"},
 		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-normal.png"},
 	})
 
-	if !strings.Contains(assets.Description, "https://pixhost/source.png") || !strings.Contains(assets.Description, "https://pixhost/encode-comparison.png") {
-		t.Fatalf("expected comparison URLs rewritten, got %q", assets.Description)
+	if assets.Description != description {
+		t.Fatalf("comparison block changed during override screenshot rewrite: %q", assets.Description)
 	}
 	if len(assets.Screenshots) != 1 {
 		t.Fatalf("expected only normal description screenshot, got %#v", assets.Screenshots)
@@ -2566,11 +3608,11 @@ func TestApplyUploadedVariantsToSlotsSkipsNonRenderableSlotsDuringFallback(t *te
 }
 
 func TestResolveTrackerScreenshotsReturnsNilWhenHostsAreInvalid(t *testing.T) {
-	screenshots := resolveTrackerScreenshots([]string{
+	screenshots := resolveTrackerScreenshotsWithPolicy([]string{
 		"not a url",
 		"https://",
 		"   ",
-	})
+	}, imageHostPolicy{})
 	if len(screenshots) != 0 {
 		t.Fatalf("expected no screenshots for invalid urls, got %#v", screenshots)
 	}
@@ -2715,7 +3757,7 @@ func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testi
 	}
 }
 
-func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
+func TestEnsureDescriptionImageHostReusesAllowedHostForRequiredTracker(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
 			{
@@ -2749,23 +3791,24 @@ func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 		},
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
+	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, descriptionAssetsTestRegistry(t))
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resolution.feedback.SelectedHost != "pixhost" {
-		t.Fatalf("expected pixhost host, got %q", resolution.feedback.SelectedHost)
+	if resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb host, got %q", resolution.feedback.SelectedHost)
 	}
-	if !resolution.feedback.Reuploaded {
-		t.Fatal("expected screenshots to be reuploaded")
+	if resolution.feedback.Reuploaded || len(images.calls) != 0 {
+		t.Fatalf("expected existing allowed host to be reused, got feedback=%#v uploads=%v", resolution.feedback, images.calls)
 	}
 	if len(resolution.screenshots) != 2 {
 		t.Fatalf("expected 2 screenshots, got %d", len(resolution.screenshots))
 	}
 	for _, screenshot := range resolution.screenshots {
-		if screenshot.Host != "pixhost" {
-			t.Fatalf("expected all rehosted screenshots to use pixhost, got %#v", resolution.screenshots)
+		if screenshot.Host != "imgbb" {
+			t.Fatalf("expected all reused screenshots to use imgbb, got %#v", resolution.screenshots)
 		}
 	}
 }
@@ -2841,7 +3884,11 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 		t.Fatalf("release temp dir: %v", err)
 	}
 	for index, rawURL := range meta.TrackerData[0].ImageURLs {
-		pathValue := filepath.Join(releaseDir, "aither", buildTrackerArtifactImageName(rawURL, index))
+		fileName := buildTrackerArtifactImageName(rawURL, index)
+		if index == 0 {
+			fileName = legacyTrackerArtifactImageName(rawURL, index)
+		}
+		pathValue := filepath.Join(releaseDir, "aither", fileName)
 		if err := os.MkdirAll(filepath.Dir(pathValue), 0o700); err != nil {
 			t.Fatalf("tracker artifact dir: %v", err)
 		}
@@ -2869,7 +3916,7 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 		t.Fatalf("expected pixhost upload from local tracker images, got calls %v", images.calls)
 	}
 	if len(resolution.screenshots) != 2 {
-		t.Fatalf("expected two selected local tracker screenshots, got %d", len(resolution.screenshots))
+		t.Fatalf("expected current and legacy local tracker screenshots, got %d", len(resolution.screenshots))
 	}
 	if len(repo.screenshotSlots) != 3 {
 		t.Fatalf("expected persisted description slots, got %d", len(repo.screenshotSlots))
@@ -2879,7 +3926,44 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 	}
 }
 
-func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionImage(t *testing.T) {
+func TestImageHostPreflightKeepsOtherTrackerSharedSlots(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	aitherDescription := "[center][img]https://img.example/aither.png[/img][/center]"
+	ptpDescription := "[center][img]https://img.example/ptp.png[/img][/center]"
+	stored := parseDescriptionImageSlots(sourcePath, aitherDescription)
+	stored[0].ImagePath = filepath.Join(t.TempDir(), "aither.png")
+	stored[0].Variants = []api.ScreenshotSlotVariant{{
+		ImagePath: stored[0].ImagePath,
+		Host:      "imgbox",
+		ImgURL:    "https://img.example/aither-hosted.png",
+	}}
+	ptpPath := filepath.Join(t.TempDir(), "ptp.png")
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "AITHER", Description: aitherDescription},
+			{Tracker: "PTP", Description: ptpDescription},
+		},
+		screenshotSlots: cloneScreenshotSlots(stored),
+		selections:      []api.ScreenshotFinalSelection{{SourcePath: sourcePath, ImagePath: ptpPath}},
+	}
+	meta := api.UploadSubject{SourcePath: sourcePath, Options: api.UploadOptions{KeepImages: true}}
+	images := &stubImageService{repo: repo}
+	registry := descriptionAssetsTestRegistry(t)
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
+	if err != nil {
+		t.Fatalf("preload screenshots: %v", err)
+	}
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "PTP", meta, config.Config{}, config.TrackerConfig{},
+		repo, images, api.NopLogger{}, registry, preloaded)
+	if err != nil || len(resolution.screenshots) != 1 {
+		t.Fatalf("PTP preflight: resolution=%#v err=%v", resolution, err)
+	}
+	if !reflect.DeepEqual(repo.screenshotSlots, stored) {
+		t.Fatalf("PTP preflight replaced Aither's shared slots: %#v", repo.screenshotSlots)
+	}
+}
+
+func TestEnsureDescriptionImageHostCopiesImportedComparisonAndRehostsSeparateScreenshot(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
 	imageBaseURL := "http://8.8.8.8"
@@ -2898,7 +3982,9 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 %s
 %s
 [/comparison]
-`, comparisonURLs[0], comparisonURLs[1], comparisonURLs[2])),
+
+[img]%s[/img]
+`, comparisonURLs[0], comparisonURLs[1], comparisonURLs[2], comparisonURLs[1])),
 			ImageURLs: []string{comparisonURLs[1]},
 		}},
 		Options: api.UploadOptions{KeepImages: true},
@@ -2918,17 +4004,6 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 	if err := os.WriteFile(encodePath, []byte("image"), 0o600); err != nil {
 		t.Fatalf("write local image: %v", err)
 	}
-	descriptionImageDir := filepath.Join(releaseDir, "description-images")
-	if err := os.MkdirAll(descriptionImageDir, 0o700); err != nil {
-		t.Fatalf("description image dir: %v", err)
-	}
-	for idx, rawURL := range comparisonURLs {
-		imagePath := filepath.Join(descriptionImageDir, buildDescriptionSlotImageName(rawURL, idx))
-		if err := os.WriteFile(imagePath, []byte("image"), 0o600); err != nil {
-			t.Fatalf("write materialized description image: %v", err)
-		}
-	}
-
 	repo := &stubRepo{}
 	images := &stubImageService{}
 	resolution, err := ensureDescriptionImageHostWithRegistry(
@@ -2944,38 +4019,22 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resolution.screenshots) != 4 {
-		t.Fatalf("expected three comparison screenshots plus one normal screenshot, got %#v", resolution.screenshots)
-	}
-	for idx := range 3 {
-		if strings.Contains(resolution.screenshots[idx].Path, "aither") {
-			t.Fatalf("expected comparison screenshot %d to use materialized comparison image, got %#v", idx, resolution.screenshots[idx])
-		}
-	}
-	if !strings.Contains(resolution.screenshots[3].Path, "aither") {
-		t.Fatalf("expected normal screenshot to use extracted tracker image, got %#v", resolution.screenshots[3])
+	if len(resolution.screenshots) != 1 || !strings.Contains(resolution.screenshots[0].Path, "aither") {
+		t.Fatalf("expected only extracted tracker screenshot to be rehosted, got %#v", resolution.screenshots)
 	}
 	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve assets: %v", err)
 	}
 	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.screenshots)
-	if strings.Contains(assets.Description, imageBaseURL) {
-		t.Fatalf("expected comparison source URLs replaced, got %q", assets.Description)
-	}
-	expectedComparison := []string{"https://pixhost/0.png", "https://pixhost/1.png", "https://pixhost/2.png"}
-	last := -1
-	for _, expected := range expectedComparison {
-		pos := strings.Index(assets.Description, expected)
-		if pos <= last {
-			t.Fatalf("expected rehosted comparison order %v, got %q", expectedComparison, assets.Description)
-		}
-		last = pos
+	comparisonBlock := meta.TrackerData[0].Description[:strings.Index(meta.TrackerData[0].Description, "[/comparison]")+len("[/comparison]")]
+	if !strings.Contains(assets.Description, comparisonBlock) {
+		t.Fatalf("imported comparison was changed: %q", assets.Description)
 	}
 	if len(assets.Screenshots) != 1 {
 		t.Fatalf("expected matched extracted image as normal screenshot, got %#v", assets.Screenshots)
 	}
-	if assets.Screenshots[0].RawURL != "https://pixhost/3.png" {
+	if assets.Screenshots[0].RawURL != "https://pixhost/0.png" {
 		t.Fatalf("expected separate normal screenshot upload, got %#v", assets.Screenshots)
 	}
 }
@@ -3365,7 +4424,7 @@ func TestEnsureDescriptionImageHostReusesGlobalUploadsInsteadOfOtherTrackerScope
 	}
 }
 
-func TestEnsureDescriptionImageHostSkipsAutomaticUploadWhenDisabled(t *testing.T) {
+func TestEnsureDescriptionImageHostReusesAllowedHostWhenAutomaticUploadDisabled(t *testing.T) {
 	skipUpload := true
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
@@ -3410,17 +4469,14 @@ func TestEnsureDescriptionImageHostSkipsAutomaticUploadWhenDisabled(t *testing.T
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resolution.feedback.Status != "warning" {
-		t.Fatalf("expected warning status, got %#v", resolution.feedback)
+	if resolution.feedback.Status != "reused" || resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb reuse, got %#v", resolution.feedback)
 	}
 	if resolution.feedback.Reuploaded {
 		t.Fatal("expected automatic upload to stay disabled")
 	}
-	if len(resolution.screenshots) != 0 {
-		t.Fatalf("expected no rehosted screenshots, got %#v", resolution.screenshots)
-	}
-	if !strings.Contains(resolution.feedback.Message, "disabled") {
-		t.Fatalf("expected disabled message, got %q", resolution.feedback.Message)
+	if len(resolution.screenshots) != 2 {
+		t.Fatalf("expected two reused screenshots, got %#v", resolution.screenshots)
 	}
 }
 

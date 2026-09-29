@@ -85,10 +85,33 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 	}
 	var cached api.TrackerMetadata
 	cachedIndex := -1
+	refreshCachedAssets := false
 	if meta.StoredDataFresh {
 		stored, err := s.repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: load stored tracker metadata: %w", err)
+		}
+		if !meta.Policy.OnlyID && meta.Policy.KeepImages {
+			for index := range stored {
+				record := &stored[index]
+				if len(record.ImageURLs) == 0 || !trackerscatalog.LegacyImageAssetsNeedProvenance(s.registry, record.Tracker) {
+					continue
+				}
+				_, provenanceErr := s.repo.GetTrackerTimestamp(ctx, trackerscatalog.TrackerAssetProvenanceKey(*record))
+				if provenanceErr == nil {
+					continue
+				}
+				if !errors.Is(provenanceErr, internalerrors.ErrNotFound) {
+					return preparationstate.State{}, fmt.Errorf("metadata: load tracker asset provenance: %w", provenanceErr)
+				}
+				if s.logger != nil {
+					s.logger.Tracef("metadata: clearing legacy tracker image provenance tracker=%s count=%d", record.Tracker, len(record.ImageURLs))
+				}
+				record.ImageURLs = nil
+				if err := s.repo.SaveTrackerMetadata(ctx, *record); err != nil {
+					return preparationstate.State{}, fmt.Errorf("metadata: clear unverified tracker image urls: %w", err)
+				}
+			}
 		}
 		for index, tracker := range trackers {
 			for _, record := range stored {
@@ -114,15 +137,44 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 				break
 			}
 		}
-		if cachedIndex == 0 || cachedIndex > 0 && !shouldUseStrictPriorityLookup(meta, trackers, s.cfg.Trackers.PreferredTracker) {
-			meta.TrackerData = append(meta.TrackerData, cached)
-			if s.logger != nil {
-				s.logger.Debugf("metadata: reusing matching stored tracker IDs tracker=%s for %s", cached.Tracker, meta.SourcePath)
+		if cachedIndex >= 0 {
+			needsDescription := !meta.Policy.OnlyID && strings.TrimSpace(cached.Description) == ""
+			needsImages := meta.Policy.KeepImages && (len(cached.ImageURLs) == 0 || slices.ContainsFunc(cached.ImageURLs, func(value string) bool {
+				return strings.TrimSpace(value) == ""
+			}))
+			if needsImages {
+				_, deletionErr := s.repo.GetTrackerTimestamp(ctx, trackerscatalog.TrackerImageDeletionKey(cached))
+				if deletionErr == nil {
+					needsImages = false
+				} else if !errors.Is(deletionErr, internalerrors.ErrNotFound) {
+					return preparationstate.State{}, fmt.Errorf("metadata: load tracker image deletion: %w", deletionErr)
+				}
 			}
-			return meta, nil
-		}
-		if cachedIndex > 0 {
-			trackers = trackers[:cachedIndex]
+			needsAssets := needsDescription || needsImages
+			refreshCachedAssets = needsAssets
+			strictPriority := shouldUseStrictPriorityLookup(meta, trackers, s.cfg.Trackers.PreferredTracker)
+			if !needsAssets && (cachedIndex == 0 || !strictPriority) {
+				meta.TrackerData = append(meta.TrackerData, cached)
+				if s.logger != nil {
+					s.logger.Debugf("metadata: reusing matching stored tracker IDs tracker=%s for %s", cached.Tracker, meta.SourcePath)
+				}
+				return meta, nil
+			}
+			if needsAssets && s.logger != nil {
+				s.logger.Debugf(
+					"metadata: refreshing stored tracker assets tracker=%s description_missing=%t images_missing=%t",
+					cached.Tracker, needsDescription, needsImages,
+				)
+			}
+			if strictPriority {
+				limit := cachedIndex
+				if needsAssets {
+					limit++
+				}
+				trackers = trackers[:limit]
+			} else {
+				trackers = trackers[cachedIndex : cachedIndex+1]
+			}
 		} else if s.logger != nil {
 			s.logger.Debugf("metadata: stored source snapshot has no matching tracker IDs; checking trackers for %s", meta.SourcePath)
 		}
@@ -137,8 +189,16 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 			return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
-		if s.isTrackerCoolingDown(ctx, tracker, now) {
+		assetRefresh := refreshCachedAssets && strings.EqualFold(tracker, cached.Tracker)
+		timestampKey := tracker
+		if assetRefresh {
+			timestampKey = trackerAssetTimestampKey(tracker)
+		}
+		if s.isTrackerCoolingDown(ctx, tracker, timestampKey, now) {
 			continue
+		}
+		if assetRefresh && s.logger != nil {
+			s.logger.Debugf("metadata: tracker asset refresh eligible tracker=%s", tracker)
 		}
 		eligible = append(eligible, tracker)
 	}
@@ -149,7 +209,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 		return meta, nil
 	}
 	if cachedIndex >= 0 {
-		result, err := s.enrichTrackerDataPriority(ctx, meta, eligible, now)
+		result, err := s.enrichTrackerDataPriority(ctx, meta, eligible, now, &cached)
 		if err != nil {
 			return preparationstate.State{}, err
 		}
@@ -164,7 +224,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 		return s.enrichTrackerDataConcurrent(ctx, meta, eligible, now)
 	}
 
-	return s.enrichTrackerDataPriority(ctx, meta, eligible, now)
+	return s.enrichTrackerDataPriority(ctx, meta, eligible, now, nil)
 }
 
 func shouldUseStrictPriorityLookup(meta preparationstate.State, eligible []string, preferred string) bool {
@@ -183,11 +243,15 @@ func shouldUseStrictPriorityLookup(meta preparationstate.State, eligible []strin
 	return false
 }
 
+// enrichTrackerDataPriority checks eligible trackers in order, retains assets
+// only from the first tracker with a description or images, and stops once IDs resolve.
+// Successful records and their freshness timestamps are persisted.
 func (s *Service) enrichTrackerDataPriority(
 	ctx context.Context,
 	meta preparationstate.State,
 	eligible []string,
 	now time.Time,
+	cached *api.TrackerMetadata,
 ) (preparationstate.State, error) {
 	assetSourceTracker := ""
 	for _, tracker := range eligible {
@@ -197,7 +261,21 @@ func (s *Service) enrichTrackerDataPriority(
 		default:
 		}
 
-		record, persistable, hasIDs, err := s.lookupTrackerData(ctx, meta, tracker, now)
+		lookupMeta := meta
+		if cached != nil && strings.EqualFold(cached.Tracker, tracker) && trackerIDFor(meta, tracker) == "" && cached.TrackerID != "" {
+			lookupMeta.TrackerIDs = cloneTrackerIDs(meta.TrackerIDs)
+			if lookupMeta.TrackerIDs == nil {
+				lookupMeta.TrackerIDs = make(map[string]string)
+			}
+			lookupMeta.TrackerIDs[strings.ToLower(tracker)] = cached.TrackerID
+		}
+		record, persistable, hasIDs, err := s.lookupTrackerData(ctx, lookupMeta, tracker, now)
+		freshAssets := trackerRecordHasDescriptionAssets(record)
+		if cached != nil && strings.EqualFold(cached.Tracker, tracker) && ctx.Err() == nil {
+			if stampErr := s.repo.SaveTrackerTimestamp(ctx, db.TrackerTimestamp{Tracker: trackerAssetTimestampKey(tracker), UpdatedAt: now}); stampErr != nil {
+				return preparationstate.State{}, fmt.Errorf("metadata: save tracker asset timestamp: %w", stampErr)
+			}
+		}
 		if err != nil {
 			if s.logger != nil {
 				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", tracker, redaction.RedactValue(err.Error(), nil))
@@ -206,6 +284,36 @@ func (s *Service) enrichTrackerDataPriority(
 		}
 		if !persistable {
 			continue
+		}
+		if cached != nil && strings.EqualFold(cached.Tracker, tracker) {
+			freshDescription := strings.TrimSpace(record.Description) != ""
+			if !hasIDs && !trackerRecordHasDescriptionAssets(record) {
+				continue
+			}
+			if record.TrackerID == "" {
+				record.TrackerID = cached.TrackerID
+			}
+			if record.InfoHash == "" {
+				record.InfoHash = cached.InfoHash
+			}
+			record.Matched = record.Matched || cached.Matched
+			record.TMDBID = firstNonZero(record.TMDBID, cached.TMDBID)
+			record.IMDBID = firstNonZero(record.IMDBID, cached.IMDBID)
+			record.TVDBID = firstNonZero(record.TVDBID, cached.TVDBID)
+			record.MALID = firstNonZero(record.MALID, cached.MALID)
+			if record.Category == api.CategoryUnknown {
+				record.Category = cached.Category
+			}
+			if record.Description == "" {
+				record.Description = cached.Description
+			}
+			if len(record.ImageURLs) == 0 && !freshDescription {
+				record.ImageURLs = append([]string(nil), cached.ImageURLs...)
+			}
+			if record.Filename == "" {
+				record.Filename = cached.Filename
+			}
+			hasIDs = hasTrackerMetadataIDs(record)
 		}
 
 		if trackerRecordHasDescriptionAssets(record) {
@@ -232,6 +340,14 @@ func (s *Service) enrichTrackerDataPriority(
 		}
 		if err := s.repo.SaveTrackerTimestamp(ctx, db.TrackerTimestamp{Tracker: tracker, UpdatedAt: now}); err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: save tracker timestamp: %w", err)
+		}
+		if !meta.Policy.OnlyID && meta.Policy.KeepImages && freshAssets && trackerRecordHasDescriptionAssets(record) &&
+			trackerscatalog.LegacyImageAssetsNeedProvenance(s.registry, tracker) {
+			if err := s.repo.SaveTrackerTimestamp(ctx, db.TrackerTimestamp{
+				Tracker: trackerscatalog.TrackerAssetProvenanceKey(record), UpdatedAt: now,
+			}); err != nil {
+				return preparationstate.State{}, fmt.Errorf("metadata: save tracker asset provenance: %w", err)
+			}
 		}
 		meta.TrackerData = append(meta.TrackerData, record)
 		if hasIDs {
@@ -328,6 +444,15 @@ func (s *Service) enrichTrackerDataConcurrent(
 			workers.Wait()
 			return preparationstate.State{}, fmt.Errorf("metadata: save tracker timestamp: %w", err)
 		}
+		if !meta.Policy.OnlyID && meta.Policy.KeepImages && trackerRecordHasDescriptionAssets(outcome.record) &&
+			trackerscatalog.LegacyImageAssetsNeedProvenance(s.registry, outcome.tracker) {
+			if err := s.repo.SaveTrackerTimestamp(ctx, db.TrackerTimestamp{
+				Tracker: trackerscatalog.TrackerAssetProvenanceKey(outcome.record), UpdatedAt: now,
+			}); err != nil {
+				workers.Wait()
+				return preparationstate.State{}, fmt.Errorf("metadata: save tracker asset provenance: %w", err)
+			}
+		}
 		meta.TrackerData = append(meta.TrackerData, outcome.record)
 		if outcome.hasIDs {
 			winnerResolved = true
@@ -409,7 +534,7 @@ func (s *Service) lookupTrackerData(
 
 	applyTrackerDataResult(&record, result)
 	if strings.TrimSpace(result.Description) != "" || len(result.Images) > 0 {
-		downloadedImages := s.persistUnit3DArtifacts(
+		downloadedImages := s.persistTrackerArtifacts(
 			ctx,
 			meta,
 			tracker,
@@ -547,8 +672,12 @@ func trackerRecordHasDescriptionAssets(record api.TrackerMetadata) bool {
 	return strings.TrimSpace(record.Description) != "" || len(record.ImageURLs) > 0
 }
 
-func (s *Service) isTrackerCoolingDown(ctx context.Context, tracker string, now time.Time) bool {
-	last, err := s.repo.GetTrackerTimestamp(ctx, tracker)
+func trackerAssetTimestampKey(tracker string) string {
+	return tracker + ":assets"
+}
+
+func (s *Service) isTrackerCoolingDown(ctx context.Context, tracker string, timestampKey string, now time.Time) bool {
+	last, err := s.repo.GetTrackerTimestamp(ctx, timestampKey)
 	if err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
 			return false
@@ -564,7 +693,7 @@ func (s *Service) isTrackerCoolingDown(ctx context.Context, tracker string, now 
 	}
 	if now.Sub(last) < cooldown {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: tracker %s cooldown active", tracker)
+			s.logger.Debugf("metadata: tracker %s cooldown active timestamp_key=%s", tracker, timestampKey)
 		}
 		return true
 	}

@@ -24,6 +24,11 @@ type Profile struct {
 	DescriptionGroup        string
 	LocalizedMetadataLocale string
 	UploadContentMode       trackers.UploadContentMode
+	// UsesMenuImages reports whether this tracker's description consumes selected DVD menus.
+	UsesMenuImages bool
+	// SourceOnlyImageReusable lets the tracker accept its own source-only URL.
+	// Stored tracker records are available for provenance checks; nil rejects it.
+	SourceOnlyImageReusable func(string, []api.TrackerMetadata) bool
 	PrepareDescription      DescriptionPreparer
 	PrepareUpload           trackers.UploadPreparer
 	ReleaseNamePolicy       trackers.ReleaseNamePolicyBinding

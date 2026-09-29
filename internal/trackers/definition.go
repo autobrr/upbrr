@@ -412,6 +412,8 @@ type DataLookupPolicy struct {
 	Cooldown time.Duration
 	// DeferWhenCollectingImages postpones lookup while the caller is still collecting images.
 	DeferWhenCollectingImages bool
+	// LegacyImageAssetsNeedProvenance refreshes cached images saved before comparison-block provenance was retained.
+	LegacyImageAssetsNeedProvenance bool
 }
 
 // DataLookupPolicyProvider declares tracker-owned lookup orchestration policy.

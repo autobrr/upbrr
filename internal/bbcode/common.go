@@ -5,10 +5,11 @@ package bbcode
 
 import (
 	"html"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 )
 
 var onlyBBCodePattern = regexp.MustCompile(`\[/?[a-zA-Z0-9]+(?:=[^\]]*)?\]`)
@@ -327,70 +328,6 @@ func itoa(value int) string {
 	return strconv.Itoa(value)
 }
 
-func normalizeImageRawURL(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	converted := convertImgboxThumbURL(trimmed)
-	converted = convertPixhostThumbURL(converted)
-	return converted
-}
-
-// NormalizeImageRawURL expands known image-host thumbnail URLs to original images.
-func NormalizeImageRawURL(value string) string { return normalizeImageRawURL(value) }
-
-func convertImgboxThumbURL(value string) string {
-	parsed, err := url.Parse(value)
-	if err != nil {
-		return value
-	}
-	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
-	if !strings.Contains(host, "imgbox.com") || !strings.Contains(host, "thumbs") {
-		return value
-	}
-	parsed.Host = strings.ReplaceAll(parsed.Host, "thumbs2.imgbox.com", "images2.imgbox.com")
-	parsed.Path = strings.ReplaceAll(parsed.Path, "_t.png", "_o.png")
-	parsed.Path = strings.ReplaceAll(parsed.Path, "_t.jpg", "_o.jpg")
-	parsed.Path = strings.ReplaceAll(parsed.Path, "_t.jpeg", "_o.jpeg")
-	return parsed.String()
-}
-
-func convertPixhostThumbURL(value string) string {
-	parsed, err := url.Parse(value)
-	if err != nil {
-		return value
-	}
-	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
-	pathValue := strings.TrimSpace(parsed.Path)
-	if !isPixhostHost(host) || !strings.HasPrefix(pathValue, "/thumbs/") {
-		return value
-	}
-	replacePixhostThumbHost(parsed, host)
-	parsed.Path = strings.Replace(pathValue, "/thumbs/", "/images/", 1)
-	return parsed.String()
-}
-
-func replacePixhostThumbHost(parsed *url.URL, host string) {
-	hostParts := strings.SplitN(host, ".", 2)
-	if len(hostParts) != 2 {
-		return
-	}
-	first := hostParts[0]
-	if !strings.HasPrefix(first, "t") || len(first) == 1 {
-		return
-	}
-
-	port := parsed.Port()
-	parsed.Host = "img" + strings.TrimPrefix(first, "t") + "." + hostParts[1]
-	if port != "" {
-		parsed.Host += ":" + port
-	}
-}
-
-func isPixhostHost(host string) bool {
-	return host == "pixhost.cc" ||
-		host == "pixhost.to" ||
-		strings.HasSuffix(host, ".pixhost.cc") ||
-		strings.HasSuffix(host, ".pixhost.to")
-}
+// NormalizeImageRawURL expands supported thumbnail and viewer URLs to their
+// full-size images, including image URLs wrapped by known wsrv proxies.
+func NormalizeImageRawURL(value string) string { return imagehost.NormalizeRawURL(value) }

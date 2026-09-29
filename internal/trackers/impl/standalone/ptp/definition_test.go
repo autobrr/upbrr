@@ -28,6 +28,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestSourceOnlyImageReusableOnPTP(t *testing.T) {
+	t.Parallel()
+	if !sourceOnlyImageReusable("https://passthepopcorn.me/static/shot.jpg", nil) {
+		t.Fatal("PTP should accept its own image link")
+	}
+	if sourceOnlyImageReusable("https://wsrv.nl/?url=shot.jpg", nil) {
+		t.Fatal("PTP should rehost another site's image link")
+	}
+}
+
 func (d *Definition) prepareDryRun(ctx context.Context, input trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	input.Intent = trackers.PreparationIntentDryRun
 	plan, failure := trackers.PrepareAdapter(ctx, input, nil, func(ctx context.Context, input trackers.PreparationInput) (trackers.PreparedOperation, error) {
@@ -54,6 +64,28 @@ func TestBuildDescriptionPreservesAudioGraphsBeforeScreenshots(t *testing.T) {
 	}
 	if strings.Index(got, "Notes") > strings.Index(got, "[hide=source_audio]") {
 		t.Fatalf("audio precedes notes: %q", got)
+	}
+}
+
+func TestBuildDescriptionPreservesImportedComparisonMarkup(t *testing.T) {
+	const block = "[comparison=Source, Encode]\r\n[center][img]https://img.onlyimage.org/Compare.png[/img][/center]\r\n[/comparison]"
+	const description = "Notes\n\n" + block + "\n\nAfter"
+	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
+		Description: description,
+	})
+	if got != description {
+		t.Fatalf("PTP comparison markup changed: %q", got)
+	}
+}
+
+func TestBuildDescriptionPreservesCenteredComparison(t *testing.T) {
+	t.Parallel()
+	const block = "[comparison=Source, Encode]\n[img]https://img.onlyimage.org/Compare.png[/img]\n[/comparison]"
+	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
+		Description: "[center]\n" + block + "\n[/center]",
+	})
+	if got != "[align=center]\n"+block+"\n[/align]" {
+		t.Fatalf("PTP comparison alignment changed: %q", got)
 	}
 }
 

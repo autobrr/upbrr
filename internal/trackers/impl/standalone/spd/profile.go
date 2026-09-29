@@ -14,6 +14,7 @@ import (
 // including the strict requirement for matching TMDB or IMDb metadata.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		UsesMenuImages:      true,
 		Name:                "SPD",
 		BaseURL:             baseURL,
 		DescriptionGroup:    "spd",

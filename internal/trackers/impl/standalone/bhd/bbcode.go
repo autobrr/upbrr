@@ -4,10 +4,13 @@
 package bhd
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 )
 
@@ -40,24 +43,56 @@ var (
 	)
 )
 
+func maskBHDComparisonBlocks(value string) (string, []string) {
+	matches := comparison.BlockRanges(value)
+	if len(matches) == 0 {
+		return value, nil
+	}
+	blocks := make([]string, 0, len(matches))
+	var masked strings.Builder
+	last := 0
+	for index, match := range matches {
+		masked.WriteString(value[last:match[0]])
+		masked.WriteString("\x00upbrr-comparison-" + strconv.Itoa(index) + "\x00")
+		blocks = append(blocks, value[match[0]:match[1]])
+		last = match[1]
+	}
+	masked.WriteString(value[last:])
+	return masked.String(), blocks
+}
+
+func restoreBHDComparisonBlocks(value string, blocks []string) string {
+	for index, block := range blocks {
+		value = strings.ReplaceAll(value, "\x00upbrr-comparison-"+strconv.Itoa(index)+"\x00", block)
+	}
+	return value
+}
+
 // CleanDescription removes unsupported BHD formatting and uploader signatures,
 // extracts unique image URLs, and applies the requested Framestor and Flux
 // behavior. Image extraction preserves the first occurrence of each raw URL.
 func CleanDescription(description string, options BBCodeOptions) bbcode.Report {
-	desc := bbcode.NormalizeNewlines(description)
+	masked, comparisonBlocks := maskBHDComparisonBlocks(description)
+	desc := bbcode.NormalizeNewlines(masked)
 	report := bbcode.Report{}
 	imagelist := make([]bbcode.Image, 0)
+	if len(comparisonBlocks) > 0 {
+		report.Notes = append(report.Notes, bbcode.Note{
+			Kind:    "images",
+			Message: fmt.Sprintf("comparison_blocks=%d preserved_in_description=true excluded_from_screenshot_import=true", len(comparisonBlocks)),
+		})
+	}
 
 	if options.Framestor {
 		if options.OnNFO != nil {
-			if err := options.OnNFO(desc); err != nil {
+			if err := options.OnNFO(bbcode.NormalizeNewlines(description)); err != nil {
 				report.Notes = append(report.Notes, bbcode.Note{Kind: "nfo", Message: err.Error()})
 			}
 		}
 		report.Artifacts = append(report.Artifacts, bbcode.Artifact{
 			Name:    "bhd.nfo",
 			Kind:    "nfo",
-			Content: desc,
+			Content: bbcode.NormalizeNewlines(description),
 		})
 	}
 
@@ -68,13 +103,17 @@ func CleanDescription(description string, options BBCodeOptions) bbcode.Report {
 	desc = strings.ReplaceAll(desc, "<", "\\")
 
 	seen := make(map[string]struct{})
+	candidates := 0
+	duplicates := 0
 	appendImage := func(imgURL, webURL string) {
+		candidates++
 		imgURL = strings.TrimSpace(imgURL)
 		if imgURL == "" {
 			return
 		}
 		key := strings.ToLower(imgURL)
 		if _, ok := seen[key]; ok {
+			duplicates++
 			return
 		}
 		seen[key] = struct{}{}
@@ -115,6 +154,10 @@ func CleanDescription(description string, options BBCodeOptions) bbcode.Report {
 		appendImage(imgURL, "")
 		desc = strings.ReplaceAll(desc, imgURL, "")
 	}
+	report.Notes = append(report.Notes, bbcode.Note{
+		Kind:    "images",
+		Message: fmt.Sprintf("candidates=%d extracted=%d duplicates=%d", candidates, len(imagelist), duplicates),
+	})
 
 	for _, image := range imagelist {
 		imgURL := regexp.QuoteMeta(image.ImgURL)
@@ -142,15 +185,16 @@ func CleanDescription(description string, options BBCodeOptions) bbcode.Report {
 		if strings.TrimSpace(strings.ReplaceAll(desc, "\n", "")) == "" {
 			return bbcode.Report{Images: imagelist}
 		}
-		report.Description = "[code]" + desc + "[/code]"
+		report.Description = wrapBHDFluxText(desc, comparisonBlocks)
 	} else {
 		report.Description = desc
 	}
 
+	report.Description = restoreBHDComparisonBlocks(report.Description, comparisonBlocks)
 	if report.Description == "" {
 		report.Description = ""
 	}
-	if bbcode.IsOnlyTags(report.Description) {
+	if len(comparisonBlocks) == 0 && bbcode.IsOnlyTags(report.Description) {
 		return bbcode.Report{
 			Images:    imagelist,
 			Notes:     report.Notes,
@@ -163,4 +207,28 @@ func CleanDescription(description string, options BBCodeOptions) bbcode.Report {
 		Notes:       report.Notes,
 		Artifacts:   report.Artifacts,
 	}
+}
+
+func wrapBHDFluxText(value string, comparisonBlocks []string) string {
+	if len(comparisonBlocks) == 0 {
+		return "[code]" + value + "[/code]"
+	}
+	parts := make([]string, 0, len(comparisonBlocks)*2+1)
+	remaining := value
+	for index := range comparisonBlocks {
+		marker := "\x00upbrr-comparison-" + strconv.Itoa(index) + "\x00"
+		before, after, found := strings.Cut(remaining, marker)
+		if !found {
+			continue
+		}
+		if text := strings.TrimSpace(before); text != "" {
+			parts = append(parts, "[code]"+text+"[/code]")
+		}
+		parts = append(parts, marker)
+		remaining = after
+	}
+	if text := strings.TrimSpace(remaining); text != "" {
+		parts = append(parts, "[code]"+text+"[/code]")
+	}
+	return strings.Join(parts, "\n\n")
 }

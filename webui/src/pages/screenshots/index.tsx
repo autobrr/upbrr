@@ -52,6 +52,14 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
     () => workflowImages.filter((artifact) => artifact.selected),
     [workflowImages],
   );
+  const retainedImageURLs = new Set(
+    (view.artifacts?.artifacts || [])
+      .filter((artifact) => artifact.kind === "hosted_image")
+      .map((artifact) => artifact.url),
+  );
+  const savedTrackerImages = (plan?.SavedTrackerImages || []).filter(
+    (image) => !retainedImageURLs.has(image.URL),
+  );
 
   const discPlans = useMemo(() => {
     if (plan?.Discs?.length) return plan.Discs;
@@ -86,6 +94,21 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
     disc,
     images: workflowImages.filter((artifact) => (artifact.discId || "") === disc.DiscID),
   }));
+  const unassignedImages = workflowImages.filter(
+    (artifact) => !discPlans.some((disc) => disc.DiscID === (artifact.discId || "")),
+  );
+  if (unassignedImages.length) {
+    workflowImageGroups.push({
+      disc: {
+        DiscID: "",
+        DiscName: "Saved images",
+        DurationSeconds: 0,
+        FrameRate: 0,
+        SuggestedSelections: [],
+      },
+      images: unassignedImages,
+    });
+  }
 
   const previewDuration = Math.max(livePreviewDisc?.DurationSeconds || 0, 0);
   const previewFrameRate = Math.max(livePreviewDisc?.FrameRate || 0, 0);
@@ -189,6 +212,48 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
           </button>
         </div>
       </section>
+
+      {savedTrackerImages.length ? (
+        <section className={`${pageStyle.panel} grid gap-3`} aria-busy={busy}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2>Saved tracker images</h2>
+            <p className="text-muted-foreground">
+              {savedTrackerImages.length} saved image(s) can be used as screenshots with their
+              existing upload URLs.
+            </p>
+            <button
+              className="primary"
+              type="button"
+              disabled={mutationsBlocked}
+              onClick={() => void facet.generate("final", [])}
+            >
+              Use saved images
+            </button>
+          </div>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-[9px]">
+            {savedTrackerImages.map((image, index) => {
+              const label = `Saved screenshot ${index + 1} from ${image.TrackerID}`;
+              return (
+                <div className="grid gap-1.5" key={`${image.TrackerID}-${image.URL}`}>
+                  <button
+                    className="overflow-hidden rounded-[14px] border border-foreground/10 bg-card/60 p-0 text-left cursor-pointer [&>img]:block [&>img]:w-full"
+                    type="button"
+                    onClick={() => {
+                      setLightboxImage(image.URL);
+                      setLightboxAlt(label);
+                    }}
+                  >
+                    <img src={image.URL} alt={label} loading="lazy" referrerPolicy="no-referrer" />
+                  </button>
+                  <p className="text-muted-foreground">
+                    {image.TrackerID} · {image.Host}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <section className={`${pageStyle.panel} grid gap-[9px]`}>
         <details>
@@ -390,7 +455,8 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
       ) : null}
       {plan?.RequiresManualFrames ? (
         <p className="text-muted-foreground">
-          Duration or frame rate is missing. Enter manual frame times before capturing.
+          Duration or frame rate is missing. Use saved images or enter manual frame times to capture
+          new screenshots.
         </p>
       ) : null}
 

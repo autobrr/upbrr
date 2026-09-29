@@ -970,7 +970,7 @@ func TestBuildUploadDryRunDistinguishesReadyEmptyAndFailedScreenshots(t *testing
 					t.Fatalf("expected ready empty screenshot assets, got %#v", inputs[0].Assets)
 				}
 				if test.repo.overrideCalls != 0 {
-					t.Fatalf("screenshot mode loaded description overrides %d time(s)", test.repo.overrideCalls)
+					t.Fatalf("screenshot mode loaded description overrides %d time(s), want 0", test.repo.overrideCalls)
 				}
 			} else if entries[0].ContentFailure == nil || entries[0].ContentFailure.Code != api.TrackerContentFailureScreenshotPreparation {
 				t.Fatalf("expected structured screenshot failure, got %#v", entries[0].ContentFailure)
@@ -1016,10 +1016,11 @@ func TestBuildUploadDryRunScopesDescriptionPreloadFailure(t *testing.T) {
 		t.Fatalf("unexpected mixed-mode results: %#v", entries)
 	}
 	if len(screenshotInputs) != 1 || len(descriptionInputs) != 0 {
-		t.Fatalf("expected only screenshot adapter invocation, screenshots=%d descriptions=%d", len(screenshotInputs), len(descriptionInputs))
+		t.Fatalf("failed override read must block only description mode, screenshots=%d descriptions=%d", len(screenshotInputs), len(descriptionInputs))
 	}
-	if entries[1].ContentFailure == nil || entries[1].ContentFailure.Code != api.TrackerContentFailureDescriptionPreparation {
-		t.Fatalf("expected structured description failure, got %#v", entries[1].ContentFailure)
+	if entries[0].ContentFailure != nil || entries[1].ContentFailure == nil ||
+		entries[1].ContentFailure.Code != api.TrackerContentFailureDescriptionPreparation {
+		t.Fatalf("expected only a structured description failure, got %#v and %#v", entries[0].ContentFailure, entries[1].ContentFailure)
 	}
 }
 
@@ -1333,6 +1334,75 @@ func TestBuildPreparationGroupsExactMatchingUnit3DDescriptions(t *testing.T) {
 	}
 	if got := strings.Join(group.Trackers, ","); got != "AITHER,HHD" {
 		t.Fatalf("expected both trackers in group, got %q", got)
+	}
+}
+
+func TestBuildPreparationUsesTrackerCompatibleExactImageSets(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	for _, target := range []struct {
+		name string
+		host string
+	}{
+		{name: "ALPHA", host: "pixhost"},
+		{name: "BETA", host: "imgbb"},
+	} {
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:       target.name,
+			Definition: hostAwareDescriptionDefinition{name: target.name, group: "shared"},
+			ImageHost:  &ImageHostPolicy{AllowedHosts: []string{target.host}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026-GRP.mkv")
+	exact := &api.ExactMediaAssets{}
+	for index, host := range []string{"pixhost", "pixhost", "imgbb", "imgbb"} {
+		pathValue := filepath.Join(root, fmt.Sprintf("image-%d.png", index))
+		url := fmt.Sprintf("https://%s.example.invalid/image-%d.png", host, index)
+		exact.Screenshots = append(exact.Screenshots, api.ScreenshotImage{Path: pathValue, Purpose: api.ScreenshotPurposeFinal})
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  pathValue,
+			Host:       host,
+			UsageScope: "global",
+			RawURL:     url,
+		})
+	}
+	skipUpload := true
+	meta := api.UploadSubject{
+		MediaBinding: trackerTestMediaBinding(sourcePath),
+		SourcePath:   sourcePath,
+		ExactMedia:   exact,
+		ImageHostOverrides: api.ImageHostOverrides{
+			SkipUpload: &skipUpload,
+		},
+	}
+	svc := NewServiceWithRegistry(config.Config{}, nil, &stubRepo{}, registry)
+	preview, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{"ALPHA", "BETA"})
+	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 2 {
+		t.Fatalf("mixed-host preparation = %#v err=%v", preview, err)
+	}
+	for _, entry := range preview.Descriptions {
+		if entry.ImageHost.SelectedHost == "" || !strings.Contains(entry.RawDescription, entry.ImageHost.SelectedHost) {
+			t.Fatalf("host-specific description = %#v", entry)
+		}
+	}
+	if preflight := svc.preflightDescriptionImageHosts(t.Context(), meta, []string{"ALPHA", "BETA"}); len(preflight) != 0 {
+		t.Fatalf("exact media upload preflight must resolve per tracker: %#v", preflight)
+	}
+	for _, target := range []struct {
+		name string
+		host string
+	}{
+		{name: "ALPHA", host: "pixhost"},
+		{name: "BETA", host: "imgbb"},
+	} {
+		content := svc.prepareUploadContent(t.Context(), target.name, meta, config.TrackerConfig{}, nil, nil)
+		if content.State != preparedUploadContentReady || content.ImageHost.SelectedHost != target.host ||
+			content.Assets == nil || len(content.Assets.Screenshots) != 2 {
+			t.Fatalf("host-specific upload content tracker=%s content=%#v", target.name, content)
+		}
 	}
 }
 
@@ -2641,8 +2711,8 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	if err := os.MkdirAll(trackerDir, 0o700); err != nil {
 		t.Fatalf("tracker dir: %v", err)
 	}
-	firstPath := filepath.Join(trackerDir, "4m092k_01.png")
-	secondPath := filepath.Join(trackerDir, "7oj122_02.png")
+	firstPath := filepath.Join(trackerDir, buildTrackerArtifactImageName(meta.TrackerData[0].ImageURLs[0], 0))
+	secondPath := filepath.Join(trackerDir, buildTrackerArtifactImageName(meta.TrackerData[0].ImageURLs[1], 1))
 	for _, pathValue := range []string{firstPath, secondPath} {
 		if err := os.WriteFile(pathValue, []byte("png"), 0o600); err != nil {
 			t.Fatalf("write tracker artifact %s: %v", pathValue, err)

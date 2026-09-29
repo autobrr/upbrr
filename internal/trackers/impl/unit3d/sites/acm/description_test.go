@@ -19,15 +19,15 @@ func TestDVDAudioAnalysisFollowsMediaInfoAndMenus(t *testing.T) {
 	got, err := buildACMDescription(t.Context(), meta, cfg, config.TrackerConfig{}, api.NopLogger{},
 		"Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		[]api.ScreenshotImage{{
-RawURL: "https://images.example.invalid/menu.png",
- ImgURL: "https://images.example.invalid/menu.png",
- WebURL: "https://images.example.invalid/menu",
-}},
+			RawURL: "https://images.example.invalid/menu.png",
+			ImgURL: "https://images.example.invalid/menu.png",
+			WebURL: "https://images.example.invalid/menu",
+		}},
 		[]api.ScreenshotImage{{
-RawURL: "https://images.example.invalid/shot.png",
- ImgURL: "https://images.example.invalid/shot.png",
- WebURL: "https://images.example.invalid/shot",
-}})
+			RawURL: "https://images.example.invalid/shot.png",
+			ImgURL: "https://images.example.invalid/shot.png",
+			WebURL: "https://images.example.invalid/shot",
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestDescriptionUsesOnlyACMMarkupTransforms(t *testing.T) {
 	}
 	for _, want := range []string{
 		"[align=left][spoiler=FraMeSToR NFO:][code]release notes[/code][/spoiler][/align]",
-		"[spoiler=Source vs Encode]",
+		"[comparison=Source,Encode]https://images.example/source.png https://images.example/encode.png[/comparison]",
 		"https://images.example/source.png",
 		"https://images.example/encode.png",
 		"https://images.example/thumb.png",
@@ -69,10 +69,30 @@ func TestDescriptionUsesOnlyACMMarkupTransforms(t *testing.T) {
 	}
 }
 
+func TestDescriptionPreservesImportedComparisonMarkup(t *testing.T) {
+	comparison := "[comparison=Source,Encode]\r\nhttps://images.example/source.png https://images.example/encode.png\r\n[/comparison]"
+	meta := api.UploadSubject{TrackerData: []api.TrackerMetadata{{Tracker: "ACM", Description: comparison}}}
+	got, err := buildACMDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{},
+		"[pre]Notes[/pre]\n\n"+comparison, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, comparison) || !strings.Contains(got, "[code]Notes[/code]") {
+		t.Fatalf("ACM changed imported comparison or skipped surrounding cleanup: %q", got)
+	}
+	meta.TrackerData = nil
+	got, err = buildACMDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{},
+		"[pre]Notes[/pre]\n\n"+comparison, nil, nil)
+	if err != nil || !strings.Contains(got, comparison) {
+		t.Fatalf("ACM changed DB-only comparison: description=%q err=%v", got, err)
+	}
+}
+
 func TestDescriptionTransformsTemplateAndReplacesScreenshots(t *testing.T) {
+	const comparison = "[comparison=Source,Encode]https://images.example/source.png https://images.example/encode.png[/comparison]"
 	meta := api.UploadSubject{DescriptionTemplate: "[center][spoiler=Scene NFO:][code]stale scene nfo[/code][/spoiler][/center]\n" +
 		"[align=left][hide=FraMeSToR NFO:][pre]template notes[/pre][/hide][/align]\n" +
-		"[comparison=Source,Encode]https://images.example/source.png https://images.example/encode.png[/comparison]"}
+		comparison}
 	oldScreenshots := []api.ScreenshotImage{
 		{RawURL: "https://images.example/old-one.png"},
 		{RawURL: "https://images.example/old-two.png"},
@@ -82,7 +102,8 @@ func TestDescriptionTransformsTemplateAndReplacesScreenshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(first, "stale scene nfo") || !strings.Contains(first, "[spoiler=FraMeSToR NFO:][code]template notes[/code][/spoiler]") {
+	if strings.Contains(first, "stale scene nfo") || !strings.Contains(first, "[spoiler=FraMeSToR NFO:][code]template notes[/code][/spoiler]") ||
+		!strings.Contains(first, comparison) {
 		t.Errorf("template bypassed ACM transforms: %s", first)
 	}
 	meta.DescriptionTemplate = ""
@@ -94,7 +115,7 @@ func TestDescriptionTransformsTemplateAndReplacesScreenshots(t *testing.T) {
 	if strings.Contains(rebuilt, "https://images.example/old-") {
 		t.Errorf("regeneration retained obsolete screenshots: %s", rebuilt)
 	}
-	for _, want := range []string{"User notes", "template notes", "[spoiler=Source vs Encode]", "https://images.example/source.png", "https://images.example/encode.png", "https://images.example/current.png"} {
+	for _, want := range []string{"User notes", "template notes", comparison, "https://images.example/current.png"} {
 		if !strings.Contains(rebuilt, want) {
 			t.Errorf("regeneration lost %q: %s", want, rebuilt)
 		}

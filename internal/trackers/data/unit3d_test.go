@@ -7,12 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -26,6 +29,153 @@ type rewriteHostTransport struct {
 type unit3DSearchRecordingLogger struct {
 	api.NopLogger
 	trace []string
+}
+
+type unit3DImageRecordingLogger struct {
+	api.NopLogger
+	debug []string
+}
+
+func (l *unit3DImageRecordingLogger) Debugf(format string, args ...any) {
+	l.debug = append(l.debug, fmt.Sprintf(format, args...))
+}
+
+func TestValidateImagesLogsSafeRejectionReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	logger := &unit3DImageRecordingLogger{}
+	images := []bbcode.Image{{RawURL: "http://93.184.216.34/private-image.png"}}
+	validated := validateImages(t.Context(), &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}}, images, "AITHER", logger)
+	if len(validated) != 0 {
+		t.Fatalf("expected rejected image, got %#v", validated)
+	}
+	if len(logger.debug) != 1 || !strings.Contains(logger.debug[0], "AITHER") ||
+		!strings.Contains(logger.debug[0], "index=1 reason=http_status_403") {
+		t.Fatalf("expected status reason in debug log, got %v", logger.debug)
+	}
+	if strings.Contains(logger.debug[0], "private-image") {
+		t.Fatalf("image URL leaked into debug log: %q", logger.debug[0])
+	}
+}
+
+func TestFetchImgBBFullImageURLUsesPageMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><head><meta content="https://i.ibb.co/example/full.png" property="og:image"></head></html>`))
+	}))
+	t.Cleanup(server.Close)
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	client := Unit3DImageHTTPClient(&http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}})
+	fullURL, reason := fetchImgBBFullImageURL(t.Context(), client, "https://93.184.216.34/shot")
+	if reason != "" || fullURL != "https://i.ibb.co/example/full.png" {
+		t.Fatalf("full image = %q, reason = %q", fullURL, reason)
+	}
+}
+
+func TestImgBBFullImageURLRejectsForeignMetadata(t *testing.T) {
+	for _, page := range []string{
+		`<meta property="og:image" content="https://i.ibb.co.evil.example/full.png">`,
+		`<meta property="og:image" content="http://i.ibb.co/full.png">`,
+		`<meta property="og:image" content="https://i.ibb.co:8443/full.png">`,
+	} {
+		if fullURL := imgBBFullImageURL([]byte(page), "https://ibb.co/example"); fullURL != "" {
+			t.Fatalf("unexpected full image URL %q", fullURL)
+		}
+	}
+	if !isImgBBPageURL("https://ibb.co/example") || !isImgBBPageURL("https://www.ibb.co/example") {
+		t.Fatal("expected ImgBB pages to be recognized")
+	}
+	if isImgBBPageURL("https://ibb.co.evil.example/example") || isImgBBPageURL("http://ibb.co/example") {
+		t.Fatal("foreign or insecure ImgBB pages must not be fetched")
+	}
+}
+
+func TestImgBBFullImageURLUsesImageSourceFallback(t *testing.T) {
+	page := `<meta property="og:image" content="https://i.ibb.co.evil.example/wrong.png"><link rel="image_src" href="//i.ibb.co/example/full.png">`
+	if got := imgBBFullImageURL([]byte(page), "https://ibb.co/example"); got != "https://i.ibb.co/example/full.png" {
+		t.Fatalf("ImgBB image source = %q", got)
+	}
+}
+
+func TestResolveImgBBImagesSkipsThumbnailWhenPageLookupFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	logger := &unit3DImageRecordingLogger{}
+	images := []bbcode.Image{
+		{RawURL: "https://93.184.216.34/first.png", WebURL: "https://93.184.216.34/first.png"},
+		{RawURL: "https://i.ibb.co/example/thumb.png", WebURL: "https://ibb.co/example"},
+		{RawURL: "https://93.184.216.34/third.png", WebURL: "https://93.184.216.34/third.png"},
+	}
+	resolved := resolveImgBBImages(ctx, nil, "AITHER", logger, images)
+	if len(resolved) != 3 || resolved[1] != (bbcode.Image{}) || resolved[2].RawURL != "https://93.184.216.34/third.png" {
+		t.Fatalf("failed ImgBB lookup shifted later screenshot or retained thumbnail: %#v", resolved)
+	}
+	if len(logger.debug) != 1 || !strings.Contains(logger.debug[0], "decision=skip_thumbnail") ||
+		strings.Contains(logger.debug[0], "thumb.png") {
+		t.Fatalf("expected safe thumbnail rejection reason, got %v", logger.debug)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		if err := png.Encode(w, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+			t.Errorf("encode image: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	validated := validateImages(t.Context(), &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}},
+		resolved, "AITHER", logger)
+	if len(validated) != 3 || validated[0].RawURL != "https://93.184.216.34/first.png" ||
+		validated[1] != (bbcode.Image{}) || validated[2].RawURL != "https://93.184.216.34/third.png" {
+		t.Fatalf("validation shifted images after failed ImgBB lookup: %#v", validated)
+	}
+}
+
+func TestResolveImgBBImagesKeepsDirectImageWhenPageLookupFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	logger := &unit3DImageRecordingLogger{}
+	image := bbcode.Image{
+		RawURL: "https://i.ibb.co/example/full.png",
+		WebURL: "https://ibb.co/example",
+	}
+	resolved := resolveImgBBImages(ctx, nil, "BLU", logger, []bbcode.Image{image})
+	if len(resolved) != 1 || resolved[0] != image {
+		t.Fatalf("direct ImgBB image was lost when page lookup failed: %#v", resolved)
+	}
+	if len(logger.debug) != 1 || !strings.Contains(logger.debug[0], "decision=validate_direct_image") ||
+		strings.Contains(logger.debug[0], "full.png") {
+		t.Fatalf("expected safe direct-image fallback reason, got %v", logger.debug)
+	}
+}
+
+func TestResolveImgBBImagesFindsViewerInsideWsrvSource(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	logger := &unit3DImageRecordingLogger{}
+	image := bbcode.Image{
+		ImgURL: "https://wsrv.nl/?url=https%3A%2F%2Fibb.co%2FExample",
+		RawURL: "https://wsrv.nl/?url=https%3A%2F%2Fibb.co%2FExample",
+		WebURL: "https://wsrv.nl/?url=https%3A%2F%2Fibb.co%2FExample",
+	}
+	resolved := resolveImgBBImages(ctx, nil, "AITHER", logger, []bbcode.Image{image})
+	if len(resolved) != 1 || resolved[0] != (bbcode.Image{}) {
+		t.Fatalf("ImgBB viewer in proxy was not resolved: %#v", resolved)
+	}
+	if len(logger.debug) != 1 || !strings.Contains(logger.debug[0], "decision=skip_thumbnail") {
+		t.Fatalf("missing ImgBB lookup decision: %v", logger.debug)
+	}
 }
 
 func (l *unit3DSearchRecordingLogger) Tracef(format string, args ...any) {
@@ -552,5 +702,43 @@ func TestTorrentInfoUsesBearerAuthorization(t *testing.T) {
 	}
 	if result.TMDBID != 123 || result.Category != "MOVIE" {
 		t.Fatalf("unexpected Unit3D lookup result: %#v", result)
+	}
+}
+
+func TestTorrentInfoOtherUnit3DTrackerImportsDescriptionAndImages(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/torrents/42":
+			if r.Header.Get("Authorization") != "Bearer secret" {
+				t.Error("bearer authorization mismatch")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"attributes": map[string]any{
+				"description": "Release notes\n[img]https://93.184.216.34/full.png[/img]",
+			}})
+		case "/full.png":
+			w.Header().Set("Content-Type", "image/png")
+			if err := png.Encode(w, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+				t.Errorf("encode test image: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	client := NewClientWithRegistry(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+		"BLU": {APIKey: "secret"},
+	}}}, api.NopLogger{}, &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}}, testUnit3DRegistry(t, "BLU", "https://blu.example"))
+	result, err := client.TorrentInfo(t.Context(), "BLU", "42", "", false, true)
+	if err != nil {
+		t.Fatalf("torrent info: %v", err)
+	}
+	if result.TrackerID != "42" || !strings.Contains(result.Description, "Release notes") ||
+		len(result.Images) != 1 || result.Images[0].RawURL != "https://93.184.216.34/full.png" {
+		t.Fatalf("BLU description/images not imported: %#v", result)
 	}
 }

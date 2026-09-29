@@ -46,6 +46,17 @@ func (s *Service) prepareUploadContent(
 	if mode == UploadContentModeNone {
 		return preparedUploadContent{Mode: mode, State: preparedUploadContentNotRequired}
 	}
+	if meta.ExactMedia != nil && imageHostUploadSkipped(meta) {
+		var err error
+		meta.ExactMedia, err = exactMediaForTrackerHost(tracker, meta, s.cfg, trackerCfg, s.registry)
+		if err != nil {
+			return failedPreparedUploadContent(tracker, mode, err)
+		}
+		preloaded, err = preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
+		if err != nil {
+			return failedPreparedUploadContent(tracker, mode, err)
+		}
+	}
 
 	resolution, found := preflight[normalizeTrackerName(tracker)]
 	var err error
@@ -85,6 +96,11 @@ func (s *Service) prepareUploadContent(
 		return failedPreparedUploadContent(tracker, mode, err)
 	}
 	applyResolvedDescriptionScreenshots(ctx, tracker, meta, s.repo, preloaded, &assets, resolution.screenshots)
+	if mode.UsesDescription() || trackerUsesMenuImages(s.registry, tracker) {
+		if err := s.rehostSourceOnlyDescriptionImages(ctx, tracker, meta, trackerCfg, &assets, preloaded); err != nil {
+			return failedPreparedUploadContent(tracker, mode, err)
+		}
+	}
 	return preparedUploadContent{
 		Mode:      mode,
 		State:     preparedUploadContentReady,

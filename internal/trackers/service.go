@@ -89,6 +89,9 @@ func (s *Service) maxConcurrentTrackerUploads(total int) int {
 // workers run, using configured image-host preferences even for trackers without
 // a restricted image-host policy.
 func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.UploadSubject, trackers []string) imageHostPreflight {
+	if meta.ExactMedia != nil && imageHostUploadSkipped(meta) {
+		return nil
+	}
 	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, trackers, s.logger, s.registry)
 	return s.preflightDescriptionImageHostsWithPreferences(ctx, meta, trackers, preferredImageHosts, nil, true)
 }
@@ -152,7 +155,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 
 	if preloaded == nil && (len(representatives) > 0 || resolveAll) {
 		var err error
-		preloaded, err = preloadScreenshotAssetData(ctx, meta, s.repo, s.registry)
+		preloaded, err = preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 		if err != nil {
 			s.logger.Warnf("trackers: image host preflight preload failed for %s: %v", meta.SourcePath, err)
 			preloaded = nil
@@ -205,7 +208,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 	}
 
 	if len(representatives) > 0 && reuploaded {
-		refreshed, err := preloadScreenshotAssetData(ctx, meta, s.repo, s.registry)
+		refreshed, err := preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 		if err != nil {
 			s.logger.Warnf("trackers: image host preflight reload failed for %s: %v", meta.SourcePath, err)
 		} else {
@@ -258,7 +261,7 @@ func (s *Service) preloadUploadContentData(
 	if !needsImages {
 		return nil, nil, nil
 	}
-	preloaded, err := preloadScreenshotAssetData(ctx, meta, s.repo, s.registry)
+	preloaded, err := preloadUploadAssetData(ctx, meta, s.repo, s.registry)
 	if err != nil {
 		return nil, err, err
 	}
@@ -324,8 +327,12 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		return api.PreparationPreview{SourcePath: meta.SourcePath, ContentFailures: contentFailures}, nil
 	}
 	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, s.logger, s.registry)
-	preflight := s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
-	mergePreflightImageHostFailures(&meta.ImageHostOverrides, preflight)
+	scopeExactReuse := meta.ExactMedia != nil && imageHostUploadSkipped(meta)
+	var preflight imageHostPreflight
+	if !scopeExactReuse {
+		preflight = s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
+		mergePreflightImageHostFailures(&meta.ImageHostOverrides, preflight)
+	}
 	preflightUploaded := false
 	for _, resolution := range preflight {
 		if resolution.feedback.Reuploaded {
@@ -366,20 +373,33 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
 		key := strings.ToUpper(strings.TrimSpace(tracker))
+		trackerMeta := meta
+		trackerPreloaded := preloaded
+		if scopeExactReuse {
+			trackerMeta.ExactMedia, err = exactMediaForTrackerHost(tracker, meta, s.cfg, trackerCfg, s.registry, preferredImageHosts[key])
+			if err == nil {
+				trackerPreloaded, err = preloadDescriptionAssetData(ctx, trackerMeta, s.repo, s.registry)
+			}
+			if err != nil {
+				failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
+				contentFailures = append(contentFailures, *failed.Failure)
+				continue
+			}
+		}
 		resolution, ok := preflight[key]
 		if !ok {
 			var err error
 			resolution, err = ensureDescriptionImageHostWithDataAndRegistry(
 				ctx,
 				tracker,
-				meta,
+				trackerMeta,
 				s.cfg,
 				trackerCfg,
 				s.repo,
 				s.images,
 				s.logger,
 				s.registry,
-				preloaded,
+				trackerPreloaded,
 				preferredImageHosts[key],
 			)
 			if err != nil {
@@ -395,15 +415,20 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
-		assets, err := resolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger, preloaded)
+		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger, trackerPreloaded)
 		if err != nil {
 			s.logger.Warnf("trackers: preparation assets failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
-		applyResolvedDescriptionScreenshots(ctx, tracker, meta, s.repo, preloaded, &assets, resolution.screenshots)
-		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentDescriptionPreview, tracker, meta, trackerCfg, &assets))
+		applyResolvedDescriptionScreenshots(ctx, tracker, trackerMeta, s.repo, trackerPreloaded, &assets, resolution.screenshots)
+		if err := s.rehostSourceOnlyDescriptionImages(ctx, tracker, trackerMeta, trackerCfg, &assets, trackerPreloaded); err != nil {
+			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
+			contentFailures = append(contentFailures, *failed.Failure)
+			continue
+		}
+		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentDescriptionPreview, tracker, trackerMeta, trackerCfg, &assets))
 		if failure != nil {
 			s.logger.Errorf("trackers: preparation failed for %s: %v", tracker, failure)
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, failure)
@@ -635,7 +660,7 @@ func (s *Service) buildUploadPreview(
 		)
 	}
 	preflight := imageHostPreflight(nil)
-	if screenshotPreloadErr == nil {
+	if screenshotPreloadErr == nil && (meta.ExactMedia == nil || !imageHostUploadSkipped(meta)) {
 		preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, logger, s.registry)
 		preflight = s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
 		mergePreflightImageHostFailures(&meta.ImageHostOverrides, preflight)

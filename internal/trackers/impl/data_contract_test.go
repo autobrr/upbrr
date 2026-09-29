@@ -57,6 +57,7 @@ func (t rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, erro
 func TestLookupPTP(t *testing.T) {
 	t.Parallel()
 
+	const comparisonBlock = "[comparison=Source, Encode]\n[img]https://img.onlyimage.org/compare.png[/img]\n[/comparison]"
 	requestErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -75,7 +76,7 @@ func TestLookupPTP(t *testing.T) {
 					},
 				})
 			case r.URL.Query().Get("action") == "get_description":
-				_, _ = w.Write([]byte("Desc\nhttps://pixhost.to/abc.png"))
+				_, _ = w.Write([]byte("Desc\n" + comparisonBlock + "\nhttps://pixhost.to/abc.png\nhttps://passthepopcorn.me/i/direct.webp"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -114,7 +115,9 @@ func TestLookupPTP(t *testing.T) {
 	if ptpResult.IMDBID != 1122334 || ptpResult.TrackerID != "777" || ptpResult.InfoHash != "abc123" {
 		t.Fatalf("unexpected ptp result: %+v", ptpResult)
 	}
-	if ptpResult.Description != "Desc" || len(ptpResult.Images) != 1 {
+	if !strings.Contains(ptpResult.Description, "Desc\n"+comparisonBlock) || len(ptpResult.Images) != 2 ||
+		ptpResult.Images[0].RawURL != "https://pixhost.to/abc.png" ||
+		ptpResult.Images[1].RawURL != "https://passthepopcorn.me/i/direct.webp" {
 		t.Fatalf("unexpected ptp description/images: %+v", ptpResult)
 	}
 }
