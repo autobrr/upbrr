@@ -102,7 +102,7 @@ func oeRenderableScreenshots(screenshots []api.ScreenshotImage) ([]api.Screensho
 		if strings.TrimSpace(screenshot.RawURL) == "" {
 			screenshot.RawURL = key
 		}
-		screenshot.ImgURL = key
+		screenshot.ImgURL = cmp.Or(strings.TrimSpace(screenshot.ImgURL), key)
 		prepared = append(prepared, screenshot)
 	}
 	if len(prepared) < oeMinimumScreenshots {
@@ -130,7 +130,7 @@ func oeAppendMissingScreenshotLinks(description string, screenshots []api.Screen
 			"[url=%s][img=%d]%s[/img][/url]",
 			screenshot.WebURL,
 			thumbnailSize,
-			screenshot.RawURL,
+			cmp.Or(strings.TrimSpace(screenshot.ImgURL), strings.TrimSpace(screenshot.RawURL)),
 		))
 	}
 	return strings.TrimSpace(description) + "\n\n[center]" + strings.Join(links, "") + "[/center]"
@@ -139,6 +139,7 @@ func oeAppendMissingScreenshotLinks(description string, screenshots []api.Screen
 func oeHasLinkedScreenshot(description string, screenshot api.ScreenshotImage) bool {
 	description = comparison.RemoveComparisonBlocks(description)
 	linkPrefix := "[url=" + screenshot.WebURL + "][img"
+	imgURL := cmp.Or(strings.TrimSpace(screenshot.ImgURL), strings.TrimSpace(screenshot.RawURL))
 	for remaining := description; ; {
 		start := strings.Index(remaining, linkPrefix)
 		if start < 0 {
@@ -150,7 +151,7 @@ func oeHasLinkedScreenshot(description string, screenshot api.ScreenshotImage) b
 			return false
 		}
 		content := remaining[closeTag+1:]
-		if strings.HasPrefix(content, screenshot.RawURL+"[/img][/url]") {
+		if strings.HasPrefix(content, imgURL+"[/img][/url]") {
 			return true
 		}
 		remaining = content

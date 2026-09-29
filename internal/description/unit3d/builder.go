@@ -287,12 +287,15 @@ func buildScreenshotSection(images []api.ScreenshotImage, thumbnailSize int, scr
 func buildScreenshotTag(image api.ScreenshotImage, thumbnailSize int) string {
 	webURL := strings.TrimSpace(image.WebURL)
 	rawURL := strings.TrimSpace(image.RawURL)
-	if webURL != "" && rawURL != "" {
-		return fmt.Sprintf("[url=%s][img=%d]%s[/img][/url]", webURL, thumbnailSize, rawURL)
-	}
 	url := pickScreenshotURL(image)
 	if url == "" {
 		return ""
+	}
+	if webURL != "" {
+		return fmt.Sprintf("[url=%s][img=%d]%s[/img][/url]", webURL, thumbnailSize, url)
+	}
+	if rawURL != "" {
+		return fmt.Sprintf("[url=%s][img=%d]%s[/img][/url]", rawURL, thumbnailSize, url)
 	}
 	return fmt.Sprintf("[img=%d]%s[/img]", thumbnailSize, url)
 }

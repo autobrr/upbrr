@@ -67,6 +67,36 @@ func TestBuildDescriptionUsesPreparedDiscMenuAssets(t *testing.T) {
 	}
 }
 
+func TestBuildDescriptionLinksHostedDiscMenuThumbnail(t *testing.T) {
+	t.Parallel()
+	assets := trackers.DescriptionAssets{
+		Description: "Body token",
+		MenuImages: []api.ScreenshotImage{
+			{
+				ImgURL: "https://images.example.invalid/menu-thumb.png",
+				RawURL: "https://images.example.invalid/menu-full.png",
+				WebURL: "https://images.example.invalid/menu-page",
+			},
+			{
+				ImgURL: "https://images.example.invalid/other-thumb.png",
+				RawURL: "https://images.example.invalid/other-full.png",
+			},
+		},
+		Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/normal.png"}},
+	}
+	result, err := prepareDescription(context.Background(), trackers.PreparationInput{Tracker: "ANT", Assets: &assets})
+	if err != nil {
+		t.Fatalf("build description: %v", err)
+	}
+	want := "[url=https://images.example.invalid/menu-page][img]https://images.example.invalid/menu-thumb.png[/img][/url]"
+	wantDirect := "[url=https://images.example.invalid/other-full.png][img]https://images.example.invalid/other-thumb.png[/img][/url]"
+	if !strings.Contains(result.Description, want) || !strings.Contains(result.Description, wantDirect) ||
+		strings.Contains(result.Description, "[img]https://images.example.invalid/menu-full.png[/img]") ||
+		strings.Contains(result.Description, "normal.png") {
+		t.Fatalf("hosted menu preview = %q, want %q and %q without normal screenshot", result.Description, want, wantDirect)
+	}
+}
+
 func assertDescriptionTokensInOrder(t *testing.T, description string, tokens ...string) {
 	t.Helper()
 	previous := -1

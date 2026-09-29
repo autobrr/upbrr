@@ -50,7 +50,7 @@ func TestAudioAnalysisFollowsEvidenceAndMenus(t *testing.T) {
 	}
 	if strings.Index(got, "SVT-AV1 preset=4") >= strings.Index(got, "menu.png") ||
 		strings.Index(got, "menu.png") >= strings.Index(got, "audio.png") ||
-		strings.Index(got, "audio.png") >= strings.Index(got, "one.png") ||
+		strings.Index(got, "audio.png") >= strings.Index(got, "one-thumb.png") ||
 		!strings.Contains(got, "[img=350]https://images.example.invalid/audio.png[/img]") {
 		t.Fatalf("audio analysis placement = %q", got)
 	}
@@ -76,7 +76,7 @@ func TestDescriptionOwnsOEMarkupEvidenceAndScreenshots(t *testing.T) {
 		"[spoiler=Template][code]template notes[/code][/spoiler]",
 		"SVT-AV1 preset=4 crf=20", "Example BluRay source; original HDR10 only",
 		"https://images.example/source.png", "https://images.example/encode.png",
-		"[url=https://images.example/one][img=350]https://images.example/one.png[/img][/url]",
+		"[url=https://images.example/one][img=350]https://images.example/one-thumb.png[/img][/url]",
 		"[url=https://images.example/two.png][img=350]https://images.example/two.png[/img][/url]",
 		"[url=https://images.example/three.png][img=350]https://images.example/three.png[/img][/url]",
 	} {

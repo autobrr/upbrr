@@ -57,9 +57,15 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		}
 		var shotParts []string
 		for _, img := range assets.MenuImages {
-			url := metautil.FirstNonEmptyTrimmed(img.RawURL, img.ImgURL, img.WebURL)
-			if url != "" {
-				shotParts = append(shotParts, "[img]"+url+"[/img]")
+			previewURL := metautil.FirstNonEmptyTrimmed(img.ImgURL, img.RawURL, img.WebURL)
+			if previewURL == "" {
+				continue
+			}
+			linkURL := metautil.FirstNonEmptyTrimmed(img.WebURL, img.RawURL)
+			if linkURL != "" && linkURL != previewURL {
+				shotParts = append(shotParts, "[url="+linkURL+"][img]"+previewURL+"[/img][/url]")
+			} else {
+				shotParts = append(shotParts, "[img]"+previewURL+"[/img]")
 			}
 		}
 		if len(shotParts) > 0 {

@@ -87,10 +87,19 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 	}
 	parts := make([]string, 0, len(images))
 	for _, image := range images {
-		if strings.TrimSpace(image.WebURL) == "" || strings.TrimSpace(image.RawURL) == "" {
+		webURL := strings.TrimSpace(image.WebURL)
+		rawURL := strings.TrimSpace(image.RawURL)
+		imgURL := strings.TrimSpace(image.ImgURL)
+		if imgURL == "" {
+			imgURL = rawURL
+		}
+		if webURL == "" {
+			webURL = rawURL
+		}
+		if webURL == "" || imgURL == "" {
 			continue
 		}
-		parts = append(parts, "[url="+strings.TrimSpace(image.WebURL)+"][img=350]"+strings.TrimSpace(image.RawURL)+"[/img][/url]")
+		parts = append(parts, "[url="+webURL+"][img=350]"+imgURL+"[/img][/url]")
 	}
 	if len(parts) == 0 {
 		return ""
