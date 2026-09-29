@@ -4767,12 +4767,14 @@ func (m *Module) approveTrackers(
 	return CommandResult{TrackerApproval: &snapshot}, nil
 }
 
+// strictDupeResult reports in-client evidence regardless of the current decision.
 func strictDupeResult(result api.TrackerDupeAssessment) bool {
 	return slices.ContainsFunc(result.Matches, func(match api.DupeMatchProjection) bool {
 		return strings.EqualFold(strings.TrimSpace(match.Reason), "in_client")
 	})
 }
 
+// strictDuplicateForTracker reports accepted in-client evidence for one tracker.
 func strictDuplicateForTracker(assessment *api.DupeAssessment, trackerID api.TrackerID) bool {
 	return trackerID != "" && assessment != nil && slices.ContainsFunc(assessment.Results, func(result api.TrackerDupeAssessment) bool {
 		return result.TrackerID == trackerID && result.Decision == api.DupeDecisionAccepted && strictDupeResult(result)

@@ -70,6 +70,8 @@ func projectContinuationRequiredActions(
 	return actions
 }
 
+// projectTrackerLaneOutcomes combines current stage evidence into per-tracker outcomes.
+// A terminal accepted in-client match clears actions retained by earlier stages.
 func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome {
 	if current.Projections == nil {
 		return nil

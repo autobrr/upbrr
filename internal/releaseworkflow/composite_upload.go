@@ -1228,6 +1228,8 @@ func compositeUploadAllTrackersRemoved(current CommandResult, session *composite
 	})
 }
 
+// compositeUploadPendingAction returns the first action that pauses all remaining lanes.
+// Name review waits for duplicate evidence; accepted in-client matches supersede tracker actions.
 func compositeUploadPendingAction(
 	current CommandResult,
 	session *compositeUploadSession,
@@ -1694,6 +1696,8 @@ func compositeUploadInitialItems() []api.WorkflowOperationItem {
 	return items
 }
 
+// compositeUploadTerminalStatus maps the continuation outcome to the retained operation status.
+// Superseded actions for accepted in-client matches do not block that operation.
 func compositeUploadTerminalStatus(result CommandResult) api.StageStatus {
 	if slices.ContainsFunc(result.Continuation.RequiredActions, func(action api.RequiredAction) bool {
 		return action.Status == api.RequiredActionStatusPending && !strictDuplicateForTracker(result.Dupes, action.TrackerID)
@@ -1727,6 +1731,9 @@ func compositeUploadTerminalStatus(result CommandResult) api.StageStatus {
 	return api.StageStatusCompleted
 }
 
+// compositeUploadResult identifies a completed upload or dry run, an already-uploaded
+// workflow, or duplicate evidence without pending actions. It returns nil when no
+// terminal result is available.
 func compositeUploadResult(result CommandResult) *api.WorkflowOperationResult {
 	switch {
 	case result.Workflow.AllSelectedTrackersAlreadyUploaded():
