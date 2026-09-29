@@ -16,7 +16,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,10 +23,8 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
-	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -67,6 +64,12 @@ func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string
 }
 
 func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (trackers.PreparedOperation, error) {
+	if req.Logger != nil {
+		req.Logger.Debugf("trackers: PTP upload preparation state=started mode=%s tracker_count=%d rehashed=%t",
+			req.Intent, len(req.Meta.Trackers), slices.ContainsFunc(req.Meta.RehashedTrackers, func(tracker string) bool {
+				return strings.EqualFold(tracker, "PTP")
+			}))
+	}
 	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
 	}
@@ -83,6 +86,10 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
+	if req.Logger != nil {
+		req.Logger.Debugf("trackers: PTP upload preparation state=ready group=%s fields=%d body_bytes=%d description_bytes=%d",
+			ptpGroupMode(state.groupID), len(state.fields), len(body), len(state.description))
+	}
 	trackerTorrentPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "PTP")
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: PTP resolve registered torrent path: %w", err)
@@ -92,6 +99,8 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	}, nil), nil
 }
 
+// submitPreparedUpload sends the prepared PTP payload once. A final torrent URL confirms
+// success; other responses are logged and saved as bounded, redacted diagnostics when possible.
 func submitPreparedUpload(
 	ctx context.Context,
 	req trackers.PreparationInput,
@@ -100,6 +109,11 @@ func submitPreparedUpload(
 	contentType string,
 	trackerTorrentPath string,
 ) (api.UploadSummary, error) {
+	started := time.Now()
+	if req.Logger != nil {
+		req.Logger.Debugf("trackers: PTP submission state=started group=%s body_bytes=%d timeout=%s",
+			ptpGroupMode(state.groupID), len(body), state.client.Timeout)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.uploadURL, bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: PTP request build: %w", err)
@@ -109,6 +123,10 @@ func submitPreparedUpload(
 
 	resp, err := state.client.Do(httpReq)
 	if err != nil {
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: PTP submission state=transport_failed duration=%s error=%s",
+				time.Since(started), redaction.RedactValue(err.Error(), nil))
+		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: PTP upload request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -118,6 +136,10 @@ func submitPreparedUpload(
 		finalURL = resp.Request.URL.String()
 	}
 	if matches := ptpSuccessPattern.FindStringSubmatch(finalURL); len(matches) == 3 {
+		if req.Logger != nil {
+			req.Logger.Debugf("trackers: PTP submission state=accepted status=%d final_page=%s duration=%s",
+				resp.StatusCode, ptpResponsePage(resp), time.Since(started))
+		}
 		groupID := strings.TrimSpace(matches[1])
 		torrentID := strings.TrimSpace(matches[2])
 		torrentURL := strings.TrimRight(state.baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(groupID) + "&torrentid=" + url.QueryEscape(torrentID)
@@ -135,19 +157,37 @@ func submitPreparedUpload(
 		}, nil
 	}
 
-	_, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: PTP read upload response: %w", err)
-	}
-	failurePath := ""
-	if pathValue, pathErr := resolveFailurePath(req.Meta, req.Runtime.DBPath); pathErr == nil {
-		failurePath = pathValue
-		redactedBody := []byte(redaction.RedactValue(string(responsePreview), nil))
-		_ = os.WriteFile(failurePath, redactedBody, 0o600)
-	}
+	responseBody, responsePreview, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+	failurePath, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "PTP", "upload_failure", responsePreview, ".html")
 	errText := commonhttp.ExtractHTTPErrorDetail(responsePreview)
 	if errText == "" {
 		errText = "upload failed"
+	}
+	if req.Logger != nil {
+		groupIDPresent, torrentIDPresent := false, false
+		if resp.Request != nil && resp.Request.URL != nil {
+			groupIDPresent = resp.Request.URL.Query().Has("id")
+			torrentIDPresent = resp.Request.URL.Query().Has("torrentid")
+		}
+		const failureDiagnostic = "trackers: PTP submission state=rejected status=%d final_page=%s response_kind=%s login_page=%t " +
+			"group_id_present=%t torrent_id_present=%t duration=%s detail=%q artifact_saved=%t read_error=%s artifact_error=%s"
+		req.Logger.Warnf(
+			failureDiagnostic,
+			resp.StatusCode,
+			ptpResponsePage(resp),
+			ptpAuthResponseKind(resp, responseBody),
+			ptpLoginPageResponse(resp, responseBody),
+			groupIDPresent,
+			torrentIDPresent,
+			time.Since(started),
+			compactError(errText),
+			failurePath != "",
+			ptpDiagnosticError(readErr),
+			ptpDiagnosticError(artifactErr),
+		)
+	}
+	if readErr != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: PTP read upload response: %w", readErr)
 	}
 	if failurePath != "" {
 		return api.UploadSummary{}, fmt.Errorf(
@@ -164,6 +204,38 @@ func submitPreparedUpload(
 		commonhttp.RedactErrorDetail(finalURL),
 		compactError(errText),
 	)
+}
+
+func ptpGroupMode(groupID string) string {
+	if groupID != "" {
+		return "existing"
+	}
+	return "new"
+}
+
+// ptpResponsePage classifies the final response path without exposing its URL or query values.
+func ptpResponsePage(resp *http.Response) string {
+	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
+		return "unknown"
+	}
+	switch resp.Request.URL.Path {
+	case ptpUploadPath:
+		return "upload"
+	case ptpTorrentPath:
+		return "torrent"
+	case "/login.php":
+		return "login"
+	default:
+		return "other"
+	}
+}
+
+// ptpDiagnosticError redacts error text before it is included in a PTP diagnostic log.
+func ptpDiagnosticError(err error) string {
+	if err == nil {
+		return "none"
+	}
+	return redaction.RedactValue(err.Error(), nil)
 }
 
 func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDryRunEntry {
@@ -218,7 +290,7 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 		assets = trackers.DescriptionAssets{}
 	}
 	description := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
-	groupID, err := lookupGroupID(ctx, baseURL, req.TrackerConfig, req.Meta)
+	groupID, err := lookupGroupID(ctx, baseURL, req.TrackerConfig, req.Meta, req.Logger)
 	if err != nil {
 		return uploadState{}, err
 	}
@@ -240,6 +312,10 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 			return uploadState{}, err
 		}
 	}
+	if req.Logger != nil {
+		req.Logger.Debugf("trackers: PTP upload inputs state=ready group=%s poster_present=%t screenshots=%d selected_image_host=%s",
+			ptpGroupMode(groupID), poster != "", len(assets.Screenshots), strings.TrimSpace(req.SelectedImageHost))
+	}
 
 	return uploadState{
 		baseURL:     baseURL,
@@ -254,12 +330,20 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 	}, nil
 }
 
-func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.TrackerConfig, meta api.UploadSubject) (string, error) {
+// lookupGroupID finds an existing PTP group when API credentials and an IMDb ID are available.
+// Transport, HTTP status, and decode failures are logged and fall back to a new group.
+func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.TrackerConfig, meta api.UploadSubject, logger api.Logger) (string, error) {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
 	apiUser := strings.TrimSpace(trackerConfig.PTPAPIUser)
 	apiKey := strings.TrimSpace(trackerConfig.PTPAPIKey)
 	if apiUser == "" || apiKey == "" || meta.Identity.IMDBID == 0 {
+		logger.Debugf("trackers: PTP group lookup state=skipped api_credentials_present=%t imdb_present=%t",
+			apiUser != "" && apiKey != "", meta.Identity.IMDBID != 0)
 		return "", nil
 	}
+	logger.Debugf("trackers: PTP group lookup state=started")
 	headers := map[string]string{
 		"ApiUser":    apiUser,
 		"ApiKey":     apiKey,
@@ -278,24 +362,34 @@ func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.Tra
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		logger.Warnf("trackers: PTP group lookup state=request_failed decision=new_group error=%s", redaction.RedactValue(err.Error(), nil))
 		return "", nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logger.Warnf("trackers: PTP group lookup state=http_failed decision=new_group status=%d", resp.StatusCode)
 		return "", nil
 	}
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		logger.Warnf(
+			"trackers: PTP group lookup state=decode_failed decision=new_group status=%d error=%s",
+			resp.StatusCode,
+			redaction.RedactValue(err.Error(), nil),
+		)
 		return "", nil
 	}
 	if movies, ok := payload["Movies"].([]any); ok && len(movies) > 0 {
 		if movie, ok := movies[0].(map[string]any); ok {
 			if groupID := stringFromAny(movie["GroupId"]); groupID != "" {
+				logger.Debugf("trackers: PTP group lookup state=completed group=existing")
 				return groupID, nil
 			}
 		}
 	}
-	return stringFromAny(payload["GroupId"]), nil
+	groupID := stringFromAny(payload["GroupId"])
+	logger.Debugf("trackers: PTP group lookup state=completed group=%s", ptpGroupMode(groupID))
+	return groupID, nil
 }
 
 func ipInPrefixes(ip netip.Addr, prefixes []netip.Prefix) bool {
@@ -456,21 +550,6 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 		return nil, "", fmt.Errorf("trackers: PTP close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
-}
-
-func resolveFailurePath(meta api.UploadSubject, dbPath string) (string, error) {
-	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
-		return "", errors.New("trackers: PTP failure path requires db path and source path")
-	}
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	return filepath.Join(tmpDir, "[PTP]upload_failure.html"), nil
 }
 
 func resolveRemasterTitle(meta api.UploadSubject) string {

@@ -24,6 +24,7 @@ import (
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -130,23 +131,33 @@ func convertDescription(value string) string {
 	return replacer.Replace(value)
 }
 
+// rehostPosterToSelectedHost uses the selected image host when enabled and available.
+// It returns the original URL if rehosting is skipped or fails.
 func rehostPosterToSelectedHost(ctx context.Context, req trackers.PreparationInput, imageURL string) string {
 	trimmedURL := strings.TrimSpace(imageURL)
 	if trimmedURL == "" {
 		return ""
 	}
+	logger := req.Logger
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
 	if req.UploadImages == nil {
+		logger.Debugf("trackers: PTP poster rehost state=skipped reason=uploader_unavailable")
 		return trimmedURL
 	}
 	if req.Meta.ImageHostOverrides.SkipUpload != nil && *req.Meta.ImageHostOverrides.SkipUpload {
+		logger.Debugf("trackers: PTP poster rehost state=skipped reason=image_upload_disabled")
 		return trimmedURL
 	}
 
 	selectedHost := strings.ToLower(strings.TrimSpace(req.SelectedImageHost))
 	if selectedHost == "" {
+		logger.Debugf("trackers: PTP poster rehost state=skipped reason=host_unselected")
 		return trimmedURL
 	}
 	if strings.EqualFold(strings.TrimSpace(imagehost.ExtractHost(trimmedURL)), selectedHost) {
+		logger.Debugf("trackers: PTP poster rehost state=skipped reason=already_on_selected_host")
 		return trimmedURL
 	}
 
@@ -169,9 +180,7 @@ func rehostPosterToSelectedHost(ctx context.Context, req trackers.PreparationInp
 		logPosterRehostFailure(req.Logger, selectedHost, errors.New("upload returned blank link"))
 		return trimmedURL
 	}
-	if req.Logger != nil {
-		req.Logger.Infof("trackers: PTP poster rehosted to %s", selectedHost)
-	}
+	logger.Infof("trackers: PTP poster rehosted to %s", selectedHost)
 	return strings.TrimSpace(uploadedURL)
 }
 
@@ -310,15 +319,16 @@ func isPublicPosterIP(ip netip.Addr) bool {
 	return !ipInPrefixes(ip, reservedPosterPrefixes)
 }
 
+// logPosterRehostFailure redacts error text before reporting a poster rehost failure.
 func logPosterRehostFailure(logger api.Logger, host string, err error) {
 	if logger == nil || err == nil {
 		return
 	}
 	if strings.TrimSpace(host) == "" {
-		logger.Warnf("trackers: PTP poster rehost failed: %v", err)
+		logger.Warnf("trackers: PTP poster rehost failed: %s", redaction.RedactValue(err.Error(), nil))
 		return
 	}
-	logger.Warnf("trackers: PTP poster rehost to %s failed: %v", strings.TrimSpace(host), err)
+	logger.Warnf("trackers: PTP poster rehost to %s failed: %s", strings.TrimSpace(host), redaction.RedactValue(err.Error(), nil))
 }
 
 func resolvePoster(meta api.UploadSubject) string {

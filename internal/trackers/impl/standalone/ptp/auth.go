@@ -20,6 +20,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	authtotp "github.com/autobrr/upbrr/internal/trackers/auth/totp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -78,22 +79,33 @@ func resolveSessionLogin(
 
 	cookies, err := loadCookies(ctx, dbPath)
 	if err == nil && len(cookies) > 0 {
+		logger.Debugf("trackers: PTP upload session state=checking source=stored")
 		client, token, tokenErr := fetchAntiCsrfToken(ctx, baseURL, cookies)
 		if tokenErr == nil {
+			logger.Debugf("trackers: PTP upload session state=ready source=stored")
 			return client, token, nil
 		}
 		if !errors.Is(tokenErr, errPTPStoredSessionInvalid) {
+			logger.Warnf("trackers: PTP upload session state=failed source=stored error=%s", redaction.RedactValue(tokenErr.Error(), nil))
 			return nil, "", tokenErr
 		}
+		logger.Debugf("trackers: PTP upload session state=invalid source=stored")
 		if strings.TrimSpace(trackerConfig.Username) == "" || strings.TrimSpace(trackerConfig.Password) == "" ||
 			strings.TrimSpace(normalizedAnnounceURL(trackerConfig.AnnounceURL)) == "" {
+			logger.Warnf("trackers: PTP upload session state=failed source=stored reason=login_unavailable")
 			return nil, "", tokenErr
 		}
 	}
 	if err != nil && !errors.Is(err, cookiepkg.ErrTrackerCookiesNotFound) {
+		logger.Warnf("trackers: PTP upload session state=failed source=stored error=%s", redaction.RedactValue(err.Error(), nil))
 		return nil, "", err
 	}
-	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger, login)
+	logger.Debugf("trackers: PTP upload session state=checking source=login")
+	client, token, loginErr := loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger, login)
+	if loginErr != nil {
+		logger.Warnf("trackers: PTP upload session state=failed source=login error=%s", redaction.RedactValue(loginErr.Error(), nil))
+	}
+	return client, token, loginErr
 }
 
 // ResolveSessionForTrackerAuth validates PTP stored cookies or logs in with
@@ -164,9 +176,12 @@ func loginAndFetchAntiCsrfToken(
 	trackerConfig config.TrackerConfig,
 	dbPath string,
 	baseURL string,
-	_ api.Logger,
+	logger api.Logger,
 	login api.TrackerAuthLoginRequest,
 ) (*http.Client, string, error) {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
 	username := strings.TrimSpace(trackerConfig.Username)
 	password := strings.TrimSpace(trackerConfig.Password)
 	announceURL := normalizedAnnounceURL(trackerConfig.AnnounceURL)
@@ -208,6 +223,7 @@ func loginAndFetchAntiCsrfToken(
 	switch strings.TrimSpace(stringFromAny(payload["Result"])) {
 	case "Ok":
 	case "TfaRequired":
+		logger.Debugf("trackers: PTP upload session state=challenge source=login kind=2fa")
 		code, codeErr := resolvePTP2FACode(trackerConfig, login)
 		if codeErr != nil {
 			return nil, "", fmt.Errorf("trackers: PTP 2FA required: %w", codeErr)
@@ -247,6 +263,7 @@ func loginAndFetchAntiCsrfToken(
 	if err := saveCookies(ctx, dbPath, client, baseURL); err != nil {
 		return nil, "", fmt.Errorf("trackers: PTP persist login cookies: %w", err)
 	}
+	logger.Debugf("trackers: PTP upload session state=ready source=login")
 	return client, token, nil
 }
 

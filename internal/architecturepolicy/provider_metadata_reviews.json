@@ -1048,8 +1048,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
-    "sha256": "c18499be471ea708cbbc33dc5060235013ffdf60f225ed2449cdce76f8b76ddc",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "97ef4dfcfb1444a98c6ea28536ea5b3319abb8982672baa2400b6bbfcedb0fe3",
+    "reason": "PTP diagnostics and logger plumbing do not change provider-value selection; prepared metadata and manual fact precedence in description, poster, and upload-field construction remain unchanged."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:resolveGroupTitleYear": {
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66",

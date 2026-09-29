@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -723,6 +724,136 @@ func TestSubmitPreparedUploadPreservesLateHTMLFailure(t *testing.T) {
 	if strings.Contains(err.Error(), "private-description") || strings.Contains(err.Error(), "private-script") || strings.Contains(err.Error(), "padding") {
 		t.Fatalf("error included content outside the visible alert: %v", err)
 	}
+}
+
+func TestSubmitPreparedUploadLogsSafeFailureAndSavesDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	const detail = "PTP rejected the torrent after validation"
+	const secret = "private-csrf-value"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`<div class="alert alert--error">` + detail + ` AntiCsrfToken=` + secret + `</div><textarea>private-description</textarea>`))
+	}))
+	t.Cleanup(server.Close)
+
+	root := t.TempDir()
+	logger := &ptpDiagnosticLogger{}
+	_, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{
+		Meta:    api.UploadSubject{SourcePath: filepath.Join(root, "Example.Release.2026.1080p-GRP.mkv")},
+		Runtime: trackers.PreparationRuntime{DBPath: filepath.Join(root, "upbrr.db")},
+		Logger:  logger,
+	}, uploadState{
+		baseURL:   server.URL,
+		uploadURL: server.URL + ptpUploadPath,
+		client:    server.Client(),
+	}, nil, "application/octet-stream", "")
+	if err == nil || !strings.Contains(err.Error(), detail) || !strings.Contains(err.Error(), "failure=") {
+		t.Fatal("expected PTP rejection and saved diagnostic path")
+	}
+	logs := strings.Join(logger.warnings, "\n")
+	for _, part := range []string{"state=rejected", "status=422", "final_page=upload", "response_kind=html", "artifact_saved=true", detail} {
+		if !strings.Contains(logs, part) {
+			t.Fatalf("missing %q from PTP diagnostic log", part)
+		}
+	}
+	if strings.Contains(logs, secret) || strings.Contains(logs, "private-description") || strings.Contains(err.Error(), secret) {
+		t.Fatal("PTP diagnostic exposed private response content")
+	}
+	artifact := filepath.Join(root, "tmp", "Example.Release.2026.1080p-GRP.mkv", "[PTP]upload_failure.html")
+	content, readErr := os.ReadFile(artifact)
+	if readErr != nil || !strings.Contains(string(content), detail) || strings.Contains(string(content), secret) {
+		t.Fatal("PTP diagnostic artifact missing or unsafe")
+	}
+}
+
+func TestSubmitPreparedUploadLogsTransportFailureWithoutURLSecret(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.Close()
+	logger := &ptpDiagnosticLogger{}
+	_, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{Logger: logger}, uploadState{
+		uploadURL: server.URL + ptpUploadPath + "?api_key=private-key-value",
+		client:    server.Client(),
+	}, nil, "application/octet-stream", "")
+	if err == nil {
+		t.Fatal("expected transport failure")
+	}
+	logs := strings.Join(logger.warnings, "\n")
+	if !strings.Contains(logs, "state=transport_failed") || strings.Contains(logs, "private-key-value") {
+		t.Fatal("transport diagnostic missing or leaked query secret")
+	}
+}
+
+func TestSubmitPreparedUploadIdentifiesLoginRedirect(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == ptpUploadPath {
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
+	}))
+	t.Cleanup(server.Close)
+	logger := &ptpDiagnosticLogger{}
+	_, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{Logger: logger}, uploadState{
+		uploadURL: server.URL + ptpUploadPath,
+		client:    server.Client(),
+	}, nil, "application/octet-stream", "")
+	if err == nil {
+		t.Fatal("expected login redirect to fail upload")
+	}
+	logs := strings.Join(logger.warnings, "\n")
+	for _, part := range []string{"state=rejected", "status=200", "final_page=login", "login_page=true"} {
+		if !strings.Contains(logs, part) {
+			t.Fatalf("missing %q from login redirect diagnostic", part)
+		}
+	}
+}
+
+func TestLookupGroupIDLogsHTTPFailureWithoutCredentials(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	logger := &ptpDiagnosticLogger{}
+	groupID, err := lookupGroupID(t.Context(), server.URL, config.TrackerConfig{
+		PTPAPIUser: "private-user",
+		PTPAPIKey:  "private-key",
+	}, api.UploadSubject{Identity: api.ExternalIdentity{IMDBID: 1234567}}, logger)
+	if err != nil || groupID != "" {
+		t.Fatalf("group lookup result = %q, %v", groupID, err)
+	}
+	logs := strings.Join(logger.warnings, "\n")
+	if !strings.Contains(logs, "state=http_failed") || !strings.Contains(logs, "status=503") ||
+		strings.Contains(logs, "private-user") || strings.Contains(logs, "private-key") {
+		t.Fatal("group lookup diagnostic missing or unsafe")
+	}
+}
+
+func TestPosterRehostFailureLogRedactsURLSecret(t *testing.T) {
+	t.Parallel()
+
+	logger := &ptpDiagnosticLogger{}
+	logPosterRehostFailure(logger, "pixhost", errors.New("poster download: https://images.example.invalid/poster?api_key=private-key-value"))
+	logs := strings.Join(logger.warnings, "\n")
+	if !strings.Contains(logs, "poster rehost to pixhost failed") || !strings.Contains(logs, "[REDACTED]") || strings.Contains(logs, "private-key-value") {
+		t.Fatal("poster diagnostic missing or unsafe")
+	}
+}
+
+type ptpDiagnosticLogger struct {
+	api.NopLogger
+	warnings []string
+}
+
+func (l *ptpDiagnosticLogger) Warnf(format string, args ...any) {
+	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
 }
 
 func newPTPAuthDB(t *testing.T) string {
