@@ -138,6 +138,7 @@ func TestOpenActiveInputRequestsExternalProviderRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	var verified []api.PrepareInput
+	displayed := make(chan struct{}, 1)
 	workflow, err := releaseworkflow.New(
 		persistent,
 		releaseworkflow.NewMemoryPrivateResourceStore(),
@@ -146,6 +147,9 @@ func TestOpenActiveInputRequestsExternalProviderRefresh(t *testing.T) {
 				Generation: 1,
 				Source:     api.SourceManifest{SourcePath: input.SourcePath},
 			}}, nil
+		}, DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
+			displayed <- struct{}{}
+			return api.PreparedReleaseDisplay{}, nil
 		}},
 		releaseworkflow.WithActiveInputs(repo, func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
 			verified = append(verified, input)
@@ -159,6 +163,7 @@ func TestOpenActiveInputRequestsExternalProviderRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = workflow.Shutdown(context.Background()) })
 	core := &Core{workflow: workflow, logger: api.NopLogger{}}
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	clearedMALID := 0
@@ -174,13 +179,19 @@ func TestOpenActiveInputRequestsExternalProviderRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open active input: %v", err)
 	}
+	activeRevision := opened.Revision
 	t.Cleanup(func() {
 		_, _ = core.ReleaseActiveInput(context.Background(), "active-input-owner", api.ReleaseActiveInputRequest{
-			ExpectedRevision: opened.Revision,
+			ExpectedRevision: activeRevision,
 		})
 	})
 	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessRefresh {
 		t.Fatalf("verified preparation inputs = %#v", verified)
+	}
+	select {
+	case <-displayed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("prepared workflow did not resolve its display")
 	}
 	refreshed, err := core.OpenActiveInput(t.Context(), "active-input-owner", api.OpenActiveInputRequest{
 		ExpectedRevision: opened.Revision,
@@ -199,6 +210,7 @@ func TestOpenActiveInputRequestsExternalProviderRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh active input: %v", err)
 	}
+	activeRevision = refreshed.Revision
 	if refreshed.Revision <= opened.Revision || len(verified) != 2 ||
 		verified[1].ExternalFreshness != api.ExternalFreshnessRefresh {
 		t.Fatalf("refreshed active input = %#v, verified preparations = %#v", refreshed, verified)
