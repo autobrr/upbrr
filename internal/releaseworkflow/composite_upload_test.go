@@ -545,6 +545,9 @@ func TestCompositeUploadRuleAuthorizationPrecedesNameReview(t *testing.T) {
 				t.Fatalf("confirm name after rule authorization: %v", err)
 			}
 			completed := waitCompositeUploadTestOperation(t, module, resumed)
+			if completed.Projections == nil || len(completed.Projections.Projections) == 0 || completed.ProjectionInstructions == nil {
+				t.Fatalf("authorized reviewed result = %#v", completed)
+			}
 			projection := completed.Projections.Projections[0]
 			confirmedFingerprint := completed.ProjectionInstructions.Instructions["ALPHA"].ConfirmedNameFingerprint
 			if projection.UploadReleaseName != test.reviewedName || projection.RuleAuthorizationFingerprint == "" ||
