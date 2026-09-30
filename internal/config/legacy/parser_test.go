@@ -311,6 +311,21 @@ func TestParseLegacyConfigTypeAnnotationWithEquals(t *testing.T) {
 	}
 }
 
+func TestParseLegacyConfigAnnotationComparisons(t *testing.T) {
+	for _, operator := range []string{"==", "!=", "<=", ">="} {
+		t.Run(operator, func(t *testing.T) {
+			input := `config: bool if True ` + operator + ` True else dict = {"DEFAULT": {"screens": 6}}`
+			legacy, err := ParseLegacyConfig([]byte(input))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if legacy.Default["screens"] != 6 {
+				t.Fatalf("screens: got %v, want 6", legacy.Default["screens"])
+			}
+		})
+	}
+}
+
 func TestAnnotationAssignmentIndexConsumesMalformedAnnotation(t *testing.T) {
 	input := ":[\n" + strings.Repeat("config: [\n", 100)
 	if assignment, scanned := annotationAssignmentIndex(input); assignment != -1 || scanned != len(input) {

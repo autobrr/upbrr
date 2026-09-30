@@ -172,6 +172,9 @@ func annotationAssignmentIndex(src string) (int, int) {
 				return -1, i + 1
 			}
 		case '=':
+			if i+1 < len(src) && src[i+1] == '=' || i > 0 && strings.ContainsRune("=!<>", rune(src[i-1])) {
+				continue
+			}
 			if depth == 0 {
 				return i, i + 1
 			}
