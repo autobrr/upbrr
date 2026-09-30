@@ -10,6 +10,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func categoryIDs(category api.CanonicalCategory) []string {
+	return map[api.CanonicalCategory][]string{
+		api.CanonicalCategoryMovie: {"1", "6"},
+		api.CanonicalCategoryTV:    {"2", "7", "8", "9"},
+	}[category]
+}
+
 func categoryID(meta api.UploadSubject) string {
 	tag := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-")))
 	subFrench := strings.Contains(tag, "vostfr") || strings.Contains(tag, "subfrench")

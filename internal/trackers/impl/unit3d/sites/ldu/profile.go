@@ -14,6 +14,7 @@ func Profile() unit3d.Profile {
 		BaseURL:           "https://theldu.to",
 		ReleaseNamePolicy: namePolicy(),
 		Site: unit3d.SiteProfile{
+			CategoryIDs:       categoryIDs,
 			ResolveCategoryID: categoryID,
 		},
 	}

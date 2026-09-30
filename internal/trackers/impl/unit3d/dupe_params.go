@@ -9,13 +9,15 @@ import (
 	"strconv"
 	"strings"
 
-	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 var dupeSeasonPattern = regexp.MustCompile(`(?i)\bS(\d{1,2})`)
 
-func buildDupeSearchParams(meta api.DuplicateSubject, tracker string) url.Values {
+// buildDupeSearchParams binds a TMDB work to the site's full category family and
+// optional TV season. Missing work or category scope returns nil. Type, resolution
+// and episode-number filters are omitted so the evaluator can compare related variants.
+func buildDupeSearchParams(meta api.DuplicateSubject, profile SiteProfile) url.Values {
 	tmdbID := meta.Identity.TMDBID
 	if tmdbID == 0 {
 		return nil
@@ -25,19 +27,20 @@ func buildDupeSearchParams(meta api.DuplicateSubject, tracker string) url.Values
 	if err != nil {
 		return nil
 	}
-	category := strings.ToUpper(string(categoryValue))
-	categoryID := resolveUnit3DDupeCategoryID(tracker, category)
-	if categoryID == "" {
+	categoryIDs := resolveUnit3DCategoryIDs(categoryValue, profile)
+	if len(categoryIDs) == 0 {
 		return nil
 	}
 
 	params := url.Values{}
 	params.Set("tmdbId", strconv.Itoa(tmdbID))
-	params.Set("categories[]", categoryID)
+	for _, id := range categoryIDs {
+		params.Add("categories[]", id)
+	}
 	params.Set("name", "")
 	params.Set("perPage", "100")
 
-	if strings.EqualFold(category, "TV") {
+	if categoryValue == api.CanonicalCategoryTV {
 		season := resolveSeasonValue(meta)
 		if season != "" {
 			params.Set("name", " "+season)
@@ -48,20 +51,6 @@ func buildDupeSearchParams(meta api.DuplicateSubject, tracker string) url.Values
 	}
 
 	return params
-}
-
-func resolveUnit3DDupeCategoryID(tracker string, category string) string {
-	if strings.EqualFold(tracker, "EMUW") {
-		switch strings.ToUpper(strings.TrimSpace(category)) {
-		case "MOVIE", "FANRES":
-			return "1"
-		case "TV":
-			return "2"
-		default:
-			return ""
-		}
-	}
-	return trackerdata.CategoryID(category)
 }
 
 func resolveSeasonValue(meta api.DuplicateSubject) string {

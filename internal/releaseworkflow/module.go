@@ -3148,10 +3148,8 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	reconciliationPending := slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
 	})
-	if !reconciliationPending {
-		if err := m.invalidateUnavailablePrivateAuthority(ownerID, workflow, now); err != nil {
-			return err
-		}
+	if err := m.invalidateUnavailablePrivateAuthority(ownerID, workflow, now); err != nil {
+		return err
 	}
 	if authRetryRequired {
 		workflow.TrackerProjections = nil
@@ -3195,10 +3193,12 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	for index := range workflow.RequiredActions {
 		workflow.RequiredActions[index].WorkflowRevision = nextRevision
 	}
-	if hasPendingRequiredAction(workflow.RequiredActions) {
-		workflow.Status = api.WorkflowStatusBlocked
-	} else {
-		workflow.Status = api.WorkflowStatusActive
+	if workflow.Status != api.WorkflowStatusFailed || workflow.Dupes == nil {
+		if hasPendingRequiredAction(workflow.RequiredActions) {
+			workflow.Status = api.WorkflowStatusBlocked
+		} else {
+			workflow.Status = api.WorkflowStatusActive
+		}
 	}
 	workflow.Failures = slices.DeleteFunc(workflow.Failures, func(failure api.WorkflowFailure) bool {
 		if authRetryRequired &&
@@ -3253,11 +3253,25 @@ func currentPreflightAuthRetry(state State) (bool, map[api.RequiredActionID]stru
 	return authBlocked, actionIDs
 }
 
+// invalidateUnavailablePrivateAuthority clears workflow refs whose private resources
+// are unavailable or consumed, including projections and preflight for obsolete dupes.
+// It preserves submitted lineage and defers invalidation during pending reconciliation.
+// Preserved results support history and client-only retries; fresh tracker submissions
+// still require current private duplicate evidence.
+// Unexpected private-store errors are returned to the caller.
 func (m *Module) invalidateUnavailablePrivateAuthority(
 	ownerID string,
 	workflow *api.ReleaseWorkflow,
 	now time.Time,
 ) error {
+	if workflow.UploadResult != nil {
+		return nil
+	}
+	if slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
+	}) {
+		return nil
+	}
 	if workflow.Dupes != nil {
 		available, err := m.privateResourceAvailable(
 			ownerID,
@@ -3269,6 +3283,8 @@ func (m *Module) invalidateUnavailablePrivateAuthority(
 			return err
 		}
 		if !available {
+			workflow.TrackerProjections = nil
+			workflow.TrackerPreflight = nil
 			invalidateDupeAndDownstream(workflow)
 		}
 	}
@@ -3337,10 +3353,14 @@ func (m *Module) privateResourceAvailable(
 	}
 }
 
+// workflowNeedsRestartRecovery includes failed workflows only while duplicate authority
+// remains and no upload result exists, allowing contract invalidation before they resume.
 func workflowNeedsRestartRecovery(state State) bool {
 	switch state.Workflow.Status {
-	case api.WorkflowStatusCompleted, api.WorkflowStatusCanceled, api.WorkflowStatusFailed:
+	case api.WorkflowStatusCompleted, api.WorkflowStatusCanceled:
 		return false
+	case api.WorkflowStatusFailed:
+		return state.Workflow.Dupes != nil && state.Workflow.UploadResult == nil
 	case api.WorkflowStatusDraft, api.WorkflowStatusActive, api.WorkflowStatusBlocked:
 	}
 	if state.Workflow.Release != nil {
@@ -8284,7 +8304,17 @@ func (m *Module) resolveAction(
 			return CommandResult{}, fmt.Errorf("release workflow reconcile external effect: %w", err)
 		}
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
-			return m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)
+			result, err := m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
+				return CommandResult{}, fmt.Errorf("release workflow reconcile image-host private authority: %w", err)
+			}
+			if state.Workflow.Media == nil {
+				result.Media = nil
+			}
+			return result, nil
 		}
 		if action.EffectKind == api.WorkflowExternalEffectClientInjection &&
 			strings.HasPrefix(action.EffectScopeID, "upload:") {
@@ -8299,9 +8329,6 @@ func (m *Module) resolveAction(
 			}
 			invalidateUploadPlan(&state.Workflow)
 		}
-		if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
-			return CommandResult{}, fmt.Errorf("release workflow reconcile private authority: %w", err)
-		}
 		state.Workflow.Failures = slices.DeleteFunc(state.Workflow.Failures, func(failure api.WorkflowFailure) bool {
 			if failure.Failure.Code != api.OperationFailureUnknownOutcome {
 				return false
@@ -8313,6 +8340,11 @@ func (m *Module) resolveAction(
 		})
 	}
 	state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
+	if action.Kind == api.RequiredActionReconcileSubmission {
+		if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow reconcile private authority: %w", err)
+		}
+	}
 	if !hasPendingRequiredAction(state.Workflow.RequiredActions) && state.Workflow.Status == api.WorkflowStatusBlocked {
 		if state.Workflow.UploadResult != nil {
 			state.Workflow.Status = api.WorkflowStatusCompleted

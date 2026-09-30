@@ -10,6 +10,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func categoryIDs(category api.CanonicalCategory) []string {
+	return map[api.CanonicalCategory][]string{
+		api.CanonicalCategoryMovie: {"1", "3"},
+		api.CanonicalCategoryTV:    {"2", "3"},
+	}[category]
+}
+
 func categoryID(meta api.UploadSubject) string {
 	if strings.Contains(strings.ToUpper(strings.TrimSpace(meta.Edition)), "FANRES") {
 		return "3"

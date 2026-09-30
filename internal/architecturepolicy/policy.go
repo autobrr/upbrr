@@ -187,6 +187,7 @@ var unit3DCallbackFiles = map[string]string{
 	"ApplyAdditionalPayload": "payload.go",
 	"BuildDescription":       "description.go",
 	"BuildName":              "name.go",
+	"CategoryIDs":            "taxonomy.go",
 	"FinalizeDescription":    "description.go",
 	"InputSchema":            "questionnaire.go",
 	"InputReadiness":         "questionnaire.go",

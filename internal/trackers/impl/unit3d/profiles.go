@@ -11,7 +11,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// SiteProfile contains optional site-owned Unit3D payload callbacks.
+// SiteProfile contains site-owned Unit3D taxonomy and preparation callbacks.
 type SiteProfile struct {
 	// InputSchema declares site-specific controls using finalized prepared facts.
 	InputSchema func(api.UploadSubject) *api.TrackerQuestionnaire
@@ -29,8 +29,15 @@ type SiteProfile struct {
 	ResolveTypeID func(meta api.UploadSubject) string
 	// ResolveResolutionID optionally maps prepared metadata to a site resolution identifier.
 	ResolveResolutionID func(meta api.UploadSubject) string
-	// ResolveCategoryID optionally maps prepared metadata to a site category identifier.
+	// ResolveCategoryID optionally selects the upload category from finalized facts.
+	// A custom resolver requires CategoryIDs; empty or out-of-family IDs are unsupported.
 	ResolveCategoryID func(meta api.UploadSubject) string
+	// CategoryIDs returns the complete native family for a canonical movie or TV category.
+	// Upload validation checks membership; duplicate search uses every returned ID,
+	// including related subtype, language and pack categories. The callback must be pure
+	// and return positive integer IDs; empty or invalid families are unsupported.
+	// Without either category callback, movies use category 1 and TV uses category 2.
+	CategoryIDs func(api.CanonicalCategory) []string
 	// ApplyAdditionalPayload appends site-owned fields to a prepared payload.
 	ApplyAdditionalPayload func(req trackers.PreparationInput, data map[string]string)
 	// FinalizeDescription applies final site-owned description transformations.

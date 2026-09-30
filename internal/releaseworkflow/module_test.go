@@ -4921,96 +4921,108 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 
 func TestResolveImageHostingReconciliationInvalidatesMissingPrivateMedia(t *testing.T) {
 	t.Parallel()
-
-	module, repository := newTestModule(t, testPreparer())
-	ctx := context.Background()
-	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
-	workflowID := api.WorkflowID("workflow-image-reconcile")
-	operationID := api.WorkflowOperationID("operation-image-reconcile")
-	effectScopeID := "imgbox:media-1"
-	started := api.ReleaseWorkflowEffectRecord{
-		OwnerID:             testOwnerID,
-		WorkflowID:          workflowID,
-		OperationID:         operationID,
-		EffectID:            "effect-image-reconcile",
-		Kind:                string(api.WorkflowExternalEffectImageHosting),
-		ScopeID:             effectScopeID,
-		SemanticFingerprint: "semantic-image-reconcile",
-		Status:              api.WorkflowEffectStatusStarted,
-		StartedAt:           now,
-		UpdatedAt:           now,
-	}
-	if _, _, err := repository.BeginEffect(ctx, started); err != nil {
-		t.Fatalf("begin image-host effect: %v", err)
-	}
-	if err := repository.MarkOperationEffectsUnknown(ctx, testOwnerID, workflowID, operationID, now.Add(time.Second)); err != nil {
-		t.Fatalf("mark image-host effect unknown: %v", err)
-	}
-	action := api.RequiredAction{
-		ID:               "action-image-reconcile",
-		Kind:             api.RequiredActionReconcileSubmission,
-		Status:           api.RequiredActionStatusPending,
-		WorkflowRevision: 2,
-		EffectKind:       api.WorkflowExternalEffectImageHosting,
-		EffectScopeID:    effectScopeID,
-		Prompt:           "Verify the image-host effect.",
-		Options: []api.RequiredActionOption{{
-			Value: api.RequiredActionReconcileNotCompleted,
-			Label: "Confirmed not completed",
-		}},
-		CreatedAt: now,
-	}
-	state := State{
-		Workflow: api.ReleaseWorkflow{
-			ID:              workflowID,
-			Revision:        2,
-			Status:          api.WorkflowStatusBlocked,
-			Dupes:           &api.DupeAssessmentRef{ID: "dupes-1", Revision: 1},
-			Media:           &api.MediaArtifactSetRef{ID: "media-1", Revision: 1},
-			Descriptions:    &api.DescriptionSetRef{ID: "descriptions-1", Revision: 1},
-			DryRun:          &api.UploadDryRunResultRef{ID: "dry-run-1", Revision: 1},
-			RequiredActions: []api.RequiredAction{action},
-			Failures: []api.WorkflowFailure{{
-				Failure: api.OperationFailure{
-					Code:      api.OperationFailureUnknownOutcome,
-					Operation: api.OperationKindImageHosting,
-					Message:   "Unknown image-host result.",
-					Recovery:  api.OperationRecoveryConfirm,
+	for _, available := range []bool{false, true} {
+		name := "unavailable dupes"
+		if available {
+			name = "current dupes"
+		}
+		t.Run(name, func(t *testing.T) {
+			module, repository := newTestModule(t, testPreparer())
+			ctx := context.Background()
+			now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+			workflowID := api.WorkflowID("workflow-image-reconcile")
+			operationID := api.WorkflowOperationID("operation-image-reconcile")
+			effectScopeID := "imgbox:media-1"
+			started := api.ReleaseWorkflowEffectRecord{
+				OwnerID:             testOwnerID,
+				WorkflowID:          workflowID,
+				OperationID:         operationID,
+				EffectID:            "effect-image-reconcile",
+				Kind:                string(api.WorkflowExternalEffectImageHosting),
+				ScopeID:             effectScopeID,
+				SemanticFingerprint: "semantic-image-reconcile",
+				Status:              api.WorkflowEffectStatusStarted,
+				StartedAt:           now,
+				UpdatedAt:           now,
+			}
+			if _, _, err := repository.BeginEffect(ctx, started); err != nil {
+				t.Fatalf("begin image-host effect: %v", err)
+			}
+			if err := repository.MarkOperationEffectsUnknown(ctx, testOwnerID, workflowID, operationID, now.Add(time.Second)); err != nil {
+				t.Fatalf("mark image-host effect unknown: %v", err)
+			}
+			action := api.RequiredAction{
+				ID:               "action-image-reconcile",
+				Kind:             api.RequiredActionReconcileSubmission,
+				Status:           api.RequiredActionStatusPending,
+				WorkflowRevision: 2,
+				EffectKind:       api.WorkflowExternalEffectImageHosting,
+				EffectScopeID:    effectScopeID,
+				Prompt:           "Verify the image-host effect.",
+				Options: []api.RequiredActionOption{{
+					Value: api.RequiredActionReconcileNotCompleted,
+					Label: "Confirmed not completed",
+				}},
+				CreatedAt: now,
+			}
+			state := State{
+				Workflow: api.ReleaseWorkflow{
+					ID:              workflowID,
+					Revision:        2,
+					Status:          api.WorkflowStatusBlocked,
+					Dupes:           &api.DupeAssessmentRef{ID: "dupes-1", Revision: 1},
+					Media:           &api.MediaArtifactSetRef{ID: "media-1", Revision: 1},
+					Descriptions:    &api.DescriptionSetRef{ID: "descriptions-1", Revision: 1},
+					DryRun:          &api.UploadDryRunResultRef{ID: "dry-run-1", Revision: 1},
+					RequiredActions: []api.RequiredAction{action},
+					Failures: []api.WorkflowFailure{{
+						Failure: api.OperationFailure{
+							Code:      api.OperationFailureUnknownOutcome,
+							Operation: api.OperationKindImageHosting,
+							Message:   "Unknown image-host result.",
+							Recovery:  api.OperationRecoveryConfirm,
+						},
+						Resource: effectScopeID,
+					}},
 				},
-				Resource: effectScopeID,
-			}},
-		},
-		Media: map[api.MediaArtifactSetID]api.MediaArtifactSet{
-			"media-1": {
-				ID:              "media-1",
-				Revision:        1,
-				RequiredActions: []api.RequiredAction{action},
-			},
-		},
-	}
-	_, err := module.resolveAction(ctx, testOwnerID, &state, 3, now.Add(2*time.Second), ResolveActionCommand{
-		WorkflowID:       workflowID,
-		ExpectedRevision: 2,
-		Answer: api.RequiredActionAnswer{
-			ActionID:         action.ID,
-			WorkflowRevision: 2,
-			SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
-		},
-	})
-	if err != nil {
-		t.Fatalf("resolve missing private image-host reconciliation: %v", err)
-	}
-	if state.Workflow.Dupes == nil || state.Workflow.Media != nil || state.Workflow.Descriptions != nil ||
-		state.Workflow.DryRun != nil || len(state.Workflow.RequiredActions) != 0 || len(state.Workflow.Failures) != 0 ||
-		state.Workflow.Status != api.WorkflowStatusActive {
-		t.Fatalf("reconciled image-host workflow=%#v", state.Workflow)
-	}
-	retry := started
-	retry.EffectID = "effect-image-retry"
-	retry.StartedAt = now.Add(3 * time.Second)
-	retry.UpdatedAt = retry.StartedAt
-	if _, idempotent, err := repository.BeginEffect(ctx, retry); err != nil || idempotent {
-		t.Fatalf("begin reconciled image-host retry idempotent=%v err=%v", idempotent, err)
+				Media: map[api.MediaArtifactSetID]api.MediaArtifactSet{
+					"media-1": {
+						ID:              "media-1",
+						Revision:        1,
+						RequiredActions: []api.RequiredAction{action},
+					},
+				},
+			}
+			if available {
+				if err := module.private.Put(testOwnerID, workflowID, dupePrivateResourceID(state.Workflow.Dupes.ID), "current evidence", now.Add(time.Hour)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := module.resolveAction(ctx, testOwnerID, &state, 3, now.Add(2*time.Second), ResolveActionCommand{
+				WorkflowID:       workflowID,
+				ExpectedRevision: 2,
+				Answer: api.RequiredActionAnswer{
+					ActionID:         action.ID,
+					WorkflowRevision: 2,
+					SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
+				},
+			})
+			if err != nil {
+				t.Fatalf("resolve missing private image-host reconciliation: %v", err)
+			}
+			if (state.Workflow.Dupes != nil) != available || state.Workflow.Media != nil || state.Workflow.Descriptions != nil ||
+				state.Workflow.DryRun != nil || len(state.Workflow.RequiredActions) != 0 || len(state.Workflow.Failures) != 0 ||
+				state.Workflow.Status != api.WorkflowStatusActive {
+				t.Fatalf("reconciled image-host workflow=%#v", state.Workflow)
+			}
+			retry := started
+			retry.EffectID = "effect-image-retry"
+			retry.StartedAt = now.Add(3 * time.Second)
+			retry.UpdatedAt = retry.StartedAt
+			if _, idempotent, err := repository.BeginEffect(ctx, retry); err != nil || idempotent {
+				t.Fatalf("begin reconciled image-host retry idempotent=%v err=%v", idempotent, err)
+			}
+		})
 	}
 }
 
