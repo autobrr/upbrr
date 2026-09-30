@@ -167,12 +167,19 @@ def load_python_config(path: pathlib.Path) -> dict[str, Any]:
     module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in module.body:
         if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "config":
-                    value = ast.literal_eval(node.value)
-                    if not isinstance(value, dict):
-                        raise ValueError("legacy config variable is not a dictionary")
-                    return value
+            targets = node.targets
+            value_node = node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+            value_node = node.value
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == "config":
+                value = ast.literal_eval(value_node)
+                if not isinstance(value, dict):
+                    raise ValueError("legacy config variable is not a dictionary")
+                return value
     raise ValueError("could not find `config = {...}` in input file")
 
 
