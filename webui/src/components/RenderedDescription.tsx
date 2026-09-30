@@ -7,6 +7,8 @@ import "./rendered-description.css";
 
 type Props = {
   html: string;
+  imagePreviews?: Readonly<Record<string, string>>;
+  onImageOpen?: (url: string, alt: string) => void;
 };
 
 const configureRenderedLinks = (root: HTMLElement) => {
@@ -29,8 +31,26 @@ const handleRenderedDescriptionLinkClick = (event: ReactMouseEvent<HTMLElement>)
   }
 };
 
-export default function RenderedDescription({ html }: Props) {
+export default function RenderedDescription({ html, imagePreviews, onImageOpen }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const handleLinkClick = (event: ReactMouseEvent<HTMLElement>) => {
+    const target = event.target;
+    if (onImageOpen && target instanceof Element) {
+      const image =
+        target instanceof HTMLImageElement
+          ? target
+          : target.closest("a[href], button[data-description-lightbox]")?.querySelector("img");
+      const full = image?.dataset.fullImage;
+      if (full) {
+        event.preventDefault();
+        event.stopPropagation();
+        onImageOpen(full, image.alt || "Description image");
+        return;
+      }
+    }
+    handleRenderedDescriptionLinkClick(event);
+  };
 
   useEffect(() => {
     const root = rootRef.current;
@@ -38,6 +58,36 @@ export default function RenderedDescription({ html }: Props) {
       return;
     }
 
+    if (onImageOpen) {
+      const fullByPreview = new Map(
+        Object.entries(imagePreviews || {}).map(([full, preview]) => [preview, full]),
+      );
+      root.querySelectorAll<HTMLImageElement>("img[src]").forEach((image) => {
+        const generatedButton = image.parentElement?.closest("button[data-description-lightbox]");
+        if (generatedButton) generatedButton.replaceWith(image);
+        delete image.dataset.fullImage;
+        const full = fullByPreview.get(image.getAttribute("src") || "");
+        if (!full) return;
+        let parsed: URL;
+        try {
+          parsed = new URL(full);
+        } catch {
+          return;
+        }
+        if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname)
+          return;
+        image.dataset.fullImage = full;
+        if (!image.closest("a[href]")) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "description-image-button";
+          button.dataset.descriptionLightbox = "true";
+          button.setAttribute("aria-label", image.alt || "View full-size description image");
+          image.replaceWith(button);
+          button.append(image);
+        }
+      });
+    }
     configureRenderedLinks(root);
 
     const comparisons = Array.from(root.querySelectorAll<HTMLElement>(".comparison"));
@@ -145,14 +195,14 @@ export default function RenderedDescription({ html }: Props) {
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [html]);
+  }, [html, imagePreviews, onImageOpen]);
 
   return (
     <div
       ref={rootRef}
       className="tracker-description rendered whitespace-pre-wrap text-muted-foreground leading-relaxed"
-      onAuxClick={handleRenderedDescriptionLinkClick}
-      onClick={handleRenderedDescriptionLinkClick}
+      onAuxClick={handleLinkClick}
+      onClick={handleLinkClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

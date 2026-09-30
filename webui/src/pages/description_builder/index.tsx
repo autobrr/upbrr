@@ -15,6 +15,7 @@ type Props = {
   useFavicons?: boolean;
   faviconOnly?: boolean;
   trackerIconSrcByName?: TrackerIconCache;
+  onImageOpen?: (url: string, alt: string) => void;
 };
 
 const groupLabel = (groupKey: string, trackers: string[]) => {
@@ -30,6 +31,7 @@ export default function DescriptionBuilderPage(props: Props) {
     useFavicons = true,
     faviconOnly = false,
     trackerIconSrcByName = {},
+    onImageOpen,
   } = props;
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const { view } = facet;
@@ -193,7 +195,11 @@ export default function DescriptionBuilderPage(props: Props) {
                       <h2>Rendered Raw Preview</h2>
                     </div>
                     {renderedHTML ? (
-                      <RenderedDescription html={renderedHTML} />
+                      <RenderedDescription
+                        html={renderedHTML}
+                        imagePreviews={group.imagePreviews}
+                        onImageOpen={onImageOpen}
+                      />
                     ) : (
                       <p className="text-muted-foreground">No rendered preview yet.</p>
                     )}

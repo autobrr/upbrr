@@ -232,6 +232,24 @@ func TestRenderLinkedWidthImageBBCode(t *testing.T) {
 	}
 }
 
+func TestRenderWithImagePreviewsKeepsFullSizeLinks(t *testing.T) {
+	full := "https://images.example.invalid/full.png"
+	preview := "https://images.example.invalid/preview.png"
+	input := "[url=" + full + "][img]" + full + "[/img][/url]"
+	rendered := RenderWithImagePreviews(input, map[string]string{full: preview})
+	if !strings.Contains(rendered, `href="`+full+`"`) || !strings.Contains(rendered, `src="`+preview+`"`) ||
+		strings.Contains(rendered, `src="`+full+`"`) {
+		t.Fatalf("expected preview source and full-size link, got %q", rendered)
+	}
+	if unsafe := RenderWithImagePreviews(input, map[string]string{full: "javascript:alert(1)"}); !strings.Contains(unsafe, `src="`+full+`"`) {
+		t.Fatalf("unsafe preview changed image source: %q", unsafe)
+	}
+	html := RenderWithImagePreviews(`<div><img src="`+full+`"></div>`, map[string]string{full: preview})
+	if !strings.Contains(html, `src="`+preview+`"`) || strings.Contains(html, `src="`+full+`"`) {
+		t.Fatalf("HTML image did not use preview: %q", html)
+	}
+}
+
 func TestRenderCenteredDescriptionImages(t *testing.T) {
 	input := `[center][img=300]https://images.example.test/poster.png[/img][/center]
 

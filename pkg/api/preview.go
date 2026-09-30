@@ -113,6 +113,7 @@ type PreparationDescription struct {
 	RawDescriptionHTML string
 	Description        string
 	DescriptionHTML    string
+	ImagePreviews      map[string]string
 	HasOverride        bool
 	ImageHost          ImageHostFeedback
 }
@@ -149,6 +150,7 @@ type TrackerPreview struct {
 	Description     string
 	DescriptionHTML string
 	ImageURLs       []string
+	ImagePreviews   map[string]string
 	Filename        string
 	Matched         bool
 	UpdatedAt       string

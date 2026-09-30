@@ -49,9 +49,10 @@ type MediaPlan struct {
 // MediaPlanSavedImage is a validated saved image available for media capture.
 // The local artifact path remains private until the workflow retains it.
 type MediaPlanSavedImage struct {
-	TrackerID TrackerID `json:"trackerId"`
-	Host      string    `json:"host"`
-	URL       string    `json:"url"`
+	TrackerID  TrackerID `json:"trackerId"`
+	Host       string    `json:"host"`
+	URL        string    `json:"url"`
+	PreviewURL string    `json:"previewUrl,omitempty"`
 }
 
 // MediaPlanContentID binds a screenshot plan to its release, projection revision,

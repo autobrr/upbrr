@@ -1524,6 +1524,7 @@ export function ReleaseSessionProvider({
           TrackerID: image.trackerId,
           Host: image.host,
           URL: image.url,
+          PreviewURL: image.previewUrl,
         })),
         ExistingScreenshots: [],
         ExistingTrackerScreenshots: [],
@@ -1804,6 +1805,8 @@ export function ReleaseSessionProvider({
     try {
       const html = await activePorts.descriptions.render(
         descriptionSource(key),
+        workflowView.current?.descriptions?.descriptions.find((group) => group.groupKey === key)
+          ?.imagePreviews ?? {},
         command.controller.signal,
       );
       if (command.controller.signal.aborted) return false;

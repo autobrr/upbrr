@@ -115,9 +115,10 @@ func mediaPlanSavedImages(plan api.ScreenshotPlan) []api.MediaPlanSavedImage {
 	images := make([]api.MediaPlanSavedImage, 0, len(plan.TrackerImageLinks))
 	for _, imported := range importedTrackerScreenshots(plan) {
 		images = append(images, api.MediaPlanSavedImage{
-			TrackerID: api.TrackerID(imported.link.Tracker),
-			Host:      imported.link.Host,
-			URL:       imported.link.URL,
+			TrackerID:  api.TrackerID(imported.link.Tracker),
+			Host:       imported.link.Host,
+			URL:        imported.link.URL,
+			PreviewURL: imported.link.PreviewURL,
 		})
 	}
 	return images

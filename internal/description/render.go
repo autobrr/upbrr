@@ -33,6 +33,51 @@ func Render(raw string) string {
 	return sanitizeHTML(renderBBCode(trimmed))
 }
 
+// RenderWithImagePreviews substitutes known hosted thumbnails only in rendered
+// image sources. The raw description and full-size link targets remain intact.
+func RenderWithImagePreviews(raw string, previews map[string]string) string {
+	rendered := Render(raw)
+	if rendered == "" || len(previews) == 0 {
+		return rendered
+	}
+	fragment, err := xhtml.ParseFragment(strings.NewReader(rendered), fragmentContext())
+	if err != nil {
+		return rendered
+	}
+	changed := false
+	var visit func(*xhtml.Node)
+	visit = func(node *xhtml.Node) {
+		if node.Type == xhtml.ElementNode && node.Data == "img" {
+			for idx := range node.Attr {
+				attr := &node.Attr[idx]
+				if attr.Key != "src" {
+					continue
+				}
+				if preview, ok := previews[attr.Val]; ok {
+					if safe, allowed := sanitizeURL(preview, true); allowed && safe != attr.Val {
+						attr.Val = safe
+						changed = true
+					}
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	for _, node := range fragment {
+		visit(node)
+	}
+	if !changed {
+		return rendered
+	}
+	var output strings.Builder
+	for _, node := range fragment {
+		sanitizeNode(&output, node)
+	}
+	return output.String()
+}
+
 func textOutsideHTMLTags(value string) (string, bool) {
 	var text strings.Builder
 	tokenizer := xhtml.NewTokenizer(strings.NewReader(value))

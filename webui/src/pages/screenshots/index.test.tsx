@@ -109,21 +109,29 @@ describe("ScreenshotsPage", () => {
         plan: {
           ...plan(),
           SavedTrackerImages: [
-            { TrackerID: "AITHER", Host: "imgbb", URL: "https://images.example.invalid/one.png" },
+            {
+              TrackerID: "AITHER",
+              Host: "imgbb",
+              URL: "https://images.example.invalid/one.png",
+              PreviewURL: "https://images.example.invalid/one-preview.png",
+            },
             { TrackerID: "AITHER", Host: "imgbb", URL: "https://images.example.invalid/two.png" },
           ],
         },
         artifacts: null,
       },
     };
+    const lightbox = vi.fn();
     render(
-      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+      <ScreenshotsPage facet={screenshots} setLightboxImage={lightbox} setLightboxAlt={vi.fn()} />,
     );
     expect(screen.getByAltText("Saved screenshot 1 from AITHER")).toHaveAttribute(
       "src",
-      "https://images.example.invalid/one.png",
+      "https://images.example.invalid/one-preview.png",
     );
     expect(screen.getByAltText("Saved screenshot 2 from AITHER")).toBeInTheDocument();
+    fireEvent.click(screen.getByAltText("Saved screenshot 1 from AITHER"));
+    expect(lightbox).toHaveBeenCalledWith("https://images.example.invalid/one.png");
     fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
     expect(screenshots.generate).toHaveBeenCalledWith("final", []);
   });

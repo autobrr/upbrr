@@ -264,8 +264,8 @@ export const activeInputClient = {
 
 /** Stateless generic BBCode rendering. */
 export const descriptionClient = {
-  render: (raw: string, signal?: AbortSignal) =>
-    requestApp<string>("RenderDescription", { Raw: raw }, { signal }),
+  render: (raw: string, previews: Readonly<Record<string, string>>, signal?: AbortSignal) =>
+    requestApp<string>("RenderDescription", { Raw: raw, ImagePreviews: previews }, { signal }),
 };
 
 /** Config persistence plus browser-native import and download behavior. */

@@ -1724,6 +1724,14 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 		updatedAt = time.Now().UTC()
 	}
 	imageURLs := encodeStringList(metadata.ImageURLs)
+	imagePreviews := "{}"
+	if len(metadata.ImagePreviews) > 0 {
+		encoded, err := json.Marshal(metadata.ImagePreviews)
+		if err != nil {
+			return fmt.Errorf("db save tracker image previews: %w", err)
+		}
+		imagePreviews = string(encoded)
+	}
 	matched := 0
 	if metadata.Matched {
 		matched = 1
@@ -1731,9 +1739,9 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 	_, err := r.execWrite(ctx, "save tracker metadata", `
 		INSERT INTO tracker_metadata (
 			source_path, tracker, tracker_id, torrent_url, info_hash, tmdb_id, imdb_id, tvdb_id, mal_id,
-			category, description, image_urls, filename, matched, updated_at
+			category, description, image_urls, image_previews, filename, matched, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path, tracker) DO UPDATE SET
 			tracker_id = excluded.tracker_id,
 			torrent_url = excluded.torrent_url,
@@ -1745,6 +1753,7 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 			category = excluded.category,
 			description = excluded.description,
 			image_urls = excluded.image_urls,
+			image_previews = excluded.image_previews,
 			filename = excluded.filename,
 			matched = excluded.matched,
 			updated_at = excluded.updated_at
@@ -1761,6 +1770,7 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 		metadata.Category,
 		metadata.Description,
 		imageURLs,
+		imagePreviews,
 		metadata.Filename,
 		matched,
 		updatedAt.Format(time.RFC3339Nano),
@@ -1781,7 +1791,7 @@ func (r *SQLiteRepository) ListTrackerMetadataByPath(ctx context.Context, path s
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT tracker, tracker_id, torrent_url, info_hash, tmdb_id, imdb_id, tvdb_id, mal_id,
-			category, description, image_urls, filename, matched, updated_at
+			category, description, image_urls, image_previews, filename, matched, updated_at
 		FROM tracker_metadata
 		WHERE source_path = ?
 		ORDER BY tracker ASC
@@ -1795,6 +1805,7 @@ func (r *SQLiteRepository) ListTrackerMetadataByPath(ctx context.Context, path s
 	for rows.Next() {
 		var record TrackerMetadata
 		var imageURLs string
+		var imagePreviews string
 		var matched int
 		var updatedAt string
 		if err := rows.Scan(
@@ -1809,6 +1820,7 @@ func (r *SQLiteRepository) ListTrackerMetadataByPath(ctx context.Context, path s
 			&record.Category,
 			&record.Description,
 			&imageURLs,
+			&imagePreviews,
 			&record.Filename,
 			&matched,
 			&updatedAt,
@@ -1820,6 +1832,11 @@ func (r *SQLiteRepository) ListTrackerMetadataByPath(ctx context.Context, path s
 		if imageURLs != "" {
 			if parsed, err := decodeStringList(imageURLs); err == nil {
 				record.ImageURLs = parsed
+			}
+		}
+		if imagePreviews != "" {
+			if err := json.Unmarshal([]byte(imagePreviews), &record.ImagePreviews); err != nil {
+				return nil, fmt.Errorf("db decode tracker image previews: %w", err)
 			}
 		}
 		if updatedAt != "" {

@@ -169,7 +169,11 @@ export type ReleaseWorkflowPorts = Readonly<{
 }>;
 
 export type DescriptionPorts = Readonly<{
-  render(raw: string, signal: AbortSignal): Promise<string>;
+  render(
+    raw: string,
+    previews: Readonly<Record<string, string>>,
+    signal: AbortSignal,
+  ): Promise<string>;
 }>;
 
 export type ReleaseSessionPorts = Readonly<{

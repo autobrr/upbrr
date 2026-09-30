@@ -34,6 +34,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestMediaPlanSavedImagesRetainsPreviewURL(t *testing.T) {
+	t.Parallel()
+	plan := api.ScreenshotPlan{
+		FinalSelections: []api.ScreenshotImage{{Path: "synthetic.png", Purpose: api.ScreenshotPurposeFinal}},
+		TrackerImageLinks: []api.ScreenshotLinkedImage{{
+			Tracker:    "AITHER",
+			URL:        "https://images.example.invalid/full.png",
+			PreviewURL: "https://images.example.invalid/preview.png",
+			Path:       "synthetic.png",
+			Host:       "pixhost",
+		}},
+	}
+	images := mediaPlanSavedImages(plan)
+	if len(images) != 1 || images[0].URL != plan.TrackerImageLinks[0].URL || images[0].PreviewURL != plan.TrackerImageLinks[0].PreviewURL {
+		t.Fatalf("saved image projection = %#v", images)
+	}
+}
+
 type workflowMediaResolverFake struct {
 	screenshotSubject *api.ScreenshotSubject
 }

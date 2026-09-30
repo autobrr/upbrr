@@ -2899,6 +2899,37 @@ func TestBuildPreparationDoesNotImportUploadOutcomeBlocks(t *testing.T) {
 	}
 }
 
+func TestBuildPreparationUsesStoredImagePreviews(t *testing.T) {
+	t.Parallel()
+	const full = "https://images.example.invalid/full.png"
+	const previewURL = "https://images.example.invalid/preview.png"
+	registry := NewRegistry()
+	if err := registry.Register(stubPreparationDefinition{
+		name: "AITHER",
+		group: "unit3d",
+		description: "[url=" + full + "][img]" + full + "[/img][/url]",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	repo := &stubRepo{trackerRecords: []api.TrackerMetadata{{
+		Tracker:       "AITHER",
+		Description:   "stored",
+		ImagePreviews: map[string]string{full: previewURL},
+	}}}
+	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	prepared, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv"),
+	}), []string{"AITHER"})
+	if err != nil || len(prepared.Descriptions) != 1 {
+		t.Fatalf("prepared descriptions = %#v, err = %v", prepared, err)
+	}
+	entry := prepared.Descriptions[0]
+	if entry.ImagePreviews[full] != previewURL || !strings.Contains(entry.DescriptionHTML, `src="`+previewURL+`"`) ||
+		!strings.Contains(entry.DescriptionHTML, `href="`+full+`"`) {
+		t.Fatalf("stored image preview lost from prepared description: %#v", entry)
+	}
+}
+
 func TestBuildUploadDryRunIncludesBlockedTrackers(t *testing.T) {
 	t.Parallel()
 

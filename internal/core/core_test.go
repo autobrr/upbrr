@@ -4,6 +4,7 @@
 package core
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,16 @@ import (
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestRenderDescriptionUsesPreviewImageSource(t *testing.T) {
+	t.Parallel()
+	full := "https://images.example.invalid/full.png"
+	preview := "https://images.example.invalid/preview.png"
+	rendered, err := (&Core{}).RenderDescription(context.Background(), "[url="+full+"][img]"+full+"[/img][/url]", map[string]string{full: preview})
+	if err != nil || !strings.Contains(rendered, `src="`+preview+`"`) || !strings.Contains(rendered, `href="`+full+`"`) {
+		t.Fatalf("rendered description = %q, err = %v", rendered, err)
+	}
+}
 
 func TestBuildTrackerPreviewSanitizesStoredDescription(t *testing.T) {
 	t.Parallel()
@@ -30,6 +41,23 @@ func TestBuildTrackerPreviewSanitizesStoredDescription(t *testing.T) {
 		!strings.Contains(html, `<p>Use [draft] &amp; review</p>`) ||
 		strings.Contains(html, "onerror") || strings.Contains(html, "javascript:") {
 		t.Fatalf("expected safe stored description preview, got %q", html)
+	}
+}
+
+func TestBuildTrackerPreviewUsesStoredImagePreviews(t *testing.T) {
+	t.Parallel()
+	full := "https://images.example.invalid/full.png"
+	previewURL := "https://images.example.invalid/preview.png"
+	previews := buildTrackerPreview([]api.TrackerMetadata{{
+		Tracker:       "Example",
+		Description:   "[url=" + full + "][img]" + full + "[/img][/url]",
+		ImageURLs:     []string{full},
+		ImagePreviews: map[string]string{full: previewURL},
+	}}, nil)
+	if len(previews) != 1 || previews[0].ImagePreviews[full] != previewURL ||
+		!strings.Contains(previews[0].DescriptionHTML, `src="`+previewURL+`"`) ||
+		!strings.Contains(previews[0].DescriptionHTML, `href="`+full+`"`) {
+		t.Fatalf("stored tracker preview = %#v", previews)
 	}
 }
 

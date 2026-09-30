@@ -3583,6 +3583,9 @@
           "host": {
             "type": "string"
           },
+          "previewUrl": {
+            "type": "string"
+          },
           "trackerId": {
             "$ref": "#/components/schemas/TrackerID"
           },
@@ -7564,6 +7567,12 @@
           "groupKey": {
             "type": "string"
           },
+          "imagePreviews": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "rendered": {
             "type": "string"
           },
@@ -9916,6 +9925,12 @@
           "IMDBID": {
             "type": "integer"
           },
+          "ImagePreviews": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "ImageURLs": {
             "type": "array",
             "items": {
@@ -9956,6 +9971,7 @@
           "DescriptionHTML",
           "Filename",
           "IMDBID",
+          "ImagePreviews",
           "ImageURLs",
           "InfoHash",
           "MALID",

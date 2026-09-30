@@ -937,6 +937,7 @@ export type MediaPlanID = string;
 
 export type MediaPlanSavedImage = Readonly<{
   host: string;
+  previewUrl?: string;
   trackerId: TrackerID;
   url: string;
 }>;
@@ -1784,6 +1785,7 @@ export type RemoveReleaseWorkflowHostedImagesRequest = Readonly<{
 export type RenderedDescription = Readonly<{
   contentFingerprint: WorkflowFingerprint;
   groupKey: string;
+  imagePreviews?: Readonly<Record<string, string>>;
   rendered: string;
   source: string;
   trackerIds: readonly TrackerID[];
@@ -2397,6 +2399,7 @@ export type TrackerPreview = Readonly<{
   DescriptionHTML: string;
   Filename: string;
   IMDBID: number;
+  ImagePreviews: Readonly<Record<string, string>>;
   ImageURLs: readonly string[];
   InfoHash: string;
   MALID: number;

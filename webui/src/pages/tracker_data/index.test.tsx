@@ -50,8 +50,12 @@ describe("TrackerDataPage", () => {
             Tracker: "BTN",
             TrackerID: "two",
             Description: "Second description",
-            DescriptionHTML: "<p>Second description</p>",
+            DescriptionHTML:
+              '<img src="https://example.invalid/two-preview.png" alt="Existing description image">',
             ImageURLs: ["https://example.invalid/two.png"],
+            ImagePreviews: {
+              "https://example.invalid/two.png": "https://example.invalid/two-preview.png",
+            },
           },
         ],
       },
@@ -69,7 +73,13 @@ describe("TrackerDataPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Render HDS entry 1" }));
     expect(screen.getByRole("button", { name: "Show raw HDS entry 1" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Render BTN entry 2" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Render BTN entry 2" }));
+    fireEvent.click(screen.getByRole("img", { name: "Existing description image" }));
+    expect(image).toHaveBeenCalledWith("https://example.invalid/two.png");
     fireEvent.click(screen.getByRole("button", { name: "Preview BTN image 1 in entry 2" }));
+    expect(
+      screen.getByRole("button", { name: "Preview BTN image 1 in entry 2" }).querySelector("img"),
+    ).toHaveAttribute("src", "https://example.invalid/two-preview.png");
     expect(image).toHaveBeenCalledWith("https://example.invalid/two.png");
     expect(alt).toHaveBeenCalledWith("BTN image");
   });

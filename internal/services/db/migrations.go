@@ -66,6 +66,11 @@ var migrationRegistry = []migrationStep{
 		apply:     migrateAddTrackerTorrentURL,
 	},
 	{
+		id:        "2026_09_add_tracker_image_previews",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateAddTrackerImagePreviews,
+	},
+	{
 		id:        "2026_09_mark_uploaded_audio_analysis",
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateMarkUploadedAudioAnalysis,
@@ -259,6 +264,27 @@ func migrateAddTrackerTorrentURL(ctx context.Context, exec migrationExecutor) er
 	}
 	if _, err := exec.ExecContext(ctx, `ALTER TABLE tracker_metadata ADD COLUMN torrent_url TEXT NOT NULL DEFAULT ""`); err != nil {
 		return fmt.Errorf("db: add tracker torrent URL: %w", err)
+	}
+	return nil
+}
+
+func migrateAddTrackerImagePreviews(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "tracker_metadata")
+	if err != nil {
+		return err
+	}
+	if !tablePresent {
+		return nil
+	}
+	exists, err := tableColumnExists(ctx, exec, "tracker_metadata", "image_previews")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE tracker_metadata ADD COLUMN image_previews TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		return fmt.Errorf("db: add tracker image previews: %w", err)
 	}
 	return nil
 }

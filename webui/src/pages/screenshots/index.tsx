@@ -243,7 +243,12 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                       setLightboxAlt(label);
                     }}
                   >
-                    <img src={image.URL} alt={label} loading="lazy" referrerPolicy="no-referrer" />
+                    <img
+                      src={image.PreviewURL || image.URL}
+                      alt={label}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
                   </button>
                   <p className="text-muted-foreground">
                     {image.TrackerID} · {image.Host}

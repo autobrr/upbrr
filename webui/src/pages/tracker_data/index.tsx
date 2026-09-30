@@ -224,7 +224,14 @@ export default function TrackerDataPage(props: Props) {
                       ) : null}
                     </div>
                     {isRendered ? (
-                      <RenderedDescription html={renderedHTML} />
+                      <RenderedDescription
+                        html={renderedHTML}
+                        imagePreviews={item.ImagePreviews}
+                        onImageOpen={(url, alt) => {
+                          setLightboxImage(url);
+                          setLightboxAlt(alt);
+                        }}
+                      />
                     ) : (
                       <p className="whitespace-pre-wrap text-muted-foreground leading-relaxed">
                         {item.Description || "No description provided."}
@@ -250,7 +257,7 @@ export default function TrackerDataPage(props: Props) {
                           >
                             <img
                               className="w-full rounded-lg border border-border"
-                              src={url}
+                              src={item.ImagePreviews?.[url] || url}
                               alt="Tracker"
                               loading="lazy"
                             />

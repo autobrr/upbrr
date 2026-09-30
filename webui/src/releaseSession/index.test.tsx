@@ -135,6 +135,7 @@ const workflowCurrentWithDescriptions = (
   revision: number,
   unit3dSource: string,
   standaloneSource = "standalone source",
+  unit3dImagePreviews?: Readonly<Record<string, string>>,
 ): ReleaseWorkflowCurrent => {
   const current = workflowCurrent(workflowID, revision);
   return {
@@ -159,6 +160,7 @@ const workflowCurrentWithDescriptions = (
           trackerIds: ["AITHER"],
           source: unit3dSource,
           rendered: `<p>${unit3dSource}</p>`,
+          ...(unit3dImagePreviews ? { imagePreviews: unit3dImagePreviews } : {}),
           contentFingerprint: "3".repeat(64),
         },
         {
@@ -3317,7 +3319,9 @@ describe("useReleaseSession", () => {
     const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
     const withPreparedDescription = (revision: number): ReleaseWorkflowCurrent => ({
       ...workflowCurrentFromPreview(
-        workflowCurrentWithDescriptions(workflowID, revision, "generated source"),
+        workflowCurrentWithDescriptions(workflowID, revision, "generated source", undefined, {
+          "https://images.example.invalid/full.png": "https://images.example.invalid/preview.png",
+        }),
         preview(sourcePath, 1),
       ),
       projections: {
@@ -3355,7 +3359,11 @@ describe("useReleaseSession", () => {
     await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(7));
     await act(() => result.current.descriptions.render("unit3d"));
 
-    expect(render).toHaveBeenCalledWith("generated source", expect.any(AbortSignal));
+    expect(render).toHaveBeenCalledWith(
+      "generated source",
+      { "https://images.example.invalid/full.png": "https://images.example.invalid/preview.png" },
+      expect.any(AbortSignal),
+    );
     expect(result.current.descriptions.view.renderedByGroup.unit3d).toBe("<p>generated source</p>");
 
     await act(() => result.current.descriptions.save("unit3d"));

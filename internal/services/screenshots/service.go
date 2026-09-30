@@ -1728,10 +1728,11 @@ func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, regist
 				if validTrackerImageArtifact(fullPath) {
 					host := imagehost.ExtractHost(directURL)
 					results = append(results, api.ScreenshotLinkedImage{
-						Tracker: tracker,
-						URL:     directURL,
-						Path:    fullPath,
-						Host:    host,
+						Tracker:    tracker,
+						URL:        directURL,
+						PreviewURL: record.ImagePreviews[trimmed],
+						Path:       fullPath,
+						Host:       host,
 					})
 					break
 				}

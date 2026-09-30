@@ -283,7 +283,14 @@ function UploadedImagesRoute() {
 }
 
 function DescriptionsRoute() {
-  const { session, useFavicons, faviconOnly, trackerIconSrcByName } = useRouteViews();
+  const {
+    session,
+    useFavicons,
+    faviconOnly,
+    trackerIconSrcByName,
+    setLightboxImage,
+    setLightboxAlt,
+  } = useRouteViews();
   return (
     <GuardedReleaseView
       route="descriptions"
@@ -295,6 +302,10 @@ function DescriptionsRoute() {
         useFavicons={useFavicons}
         faviconOnly={faviconOnly}
         trackerIconSrcByName={trackerIconSrcByName}
+        onImageOpen={(url, alt) => {
+          setLightboxImage(url);
+          setLightboxAlt(alt);
+        }}
       />
     </GuardedReleaseView>
   );

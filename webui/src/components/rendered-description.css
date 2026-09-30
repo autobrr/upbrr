@@ -7,6 +7,14 @@
   overflow-wrap: anywhere;
 }
 
+.tracker-description.rendered .description-image-button {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
 .tracker-description.rendered :is(h1, h2, h3, h4) {
   margin: 0.75em 0 0.4em;
   font-weight: 600;

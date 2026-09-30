@@ -994,11 +994,11 @@ func (c *Core) Close() error {
 }
 
 // RenderDescription renders raw BBCode after rejecting a pre-canceled context.
-func (c *Core) RenderDescription(ctx context.Context, raw string) (string, error) {
+func (c *Core) RenderDescription(ctx context.Context, raw string, previews map[string]string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", classifyOperationError(api.OperationKindDescription, fmt.Errorf("core: render description canceled: %w", err))
 	}
-	return description.Render(raw), nil
+	return description.RenderWithImagePreviews(raw, previews), nil
 }
 
 func buildTrackerPreview(records []api.TrackerMetadata, registry *trackers.Registry) []api.TrackerPreview {
@@ -1043,6 +1043,7 @@ func buildTrackerPreview(records []api.TrackerMetadata, registry *trackers.Regis
 	result := make([]api.TrackerPreview, 0, len(byTracker))
 	for _, key := range orderedKeys {
 		record := byTracker[key]
+		imagePreviews := record.ImagePreviews
 		preview := api.TrackerPreview{
 			Tracker:         record.Tracker,
 			TrackerID:       record.TrackerID,
@@ -1054,8 +1055,9 @@ func buildTrackerPreview(records []api.TrackerMetadata, registry *trackers.Regis
 			MALID:           record.MALID,
 			Category:        string(record.Category),
 			Description:     record.Description,
-			DescriptionHTML: description.Render(record.Description),
+			DescriptionHTML: description.RenderWithImagePreviews(record.Description, imagePreviews),
 			ImageURLs:       append([]string{}, record.ImageURLs...),
+			ImagePreviews:   imagePreviews,
 			Filename:        record.Filename,
 			Matched:         record.Matched,
 		}
