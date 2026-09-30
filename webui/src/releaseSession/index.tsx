@@ -3014,13 +3014,7 @@ export function ReleaseSessionProvider({
       overrideRules: async (tracker) => {
         const normalizedTracker = tracker.trim().toUpperCase();
         const current = workflowView.current;
-        const projection = current?.projections?.projections.find(
-          (candidate) => candidate.trackerId === normalizedTracker,
-        );
-        const action = [
-          ...(current?.workflow.requiredActions || []),
-          ...(projection?.requiredActions || []),
-        ].find(
+        const action = current?.workflow.requiredActions?.find(
           (candidate) =>
             candidate.kind === "authorize_rules" &&
             candidate.trackerId === normalizedTracker &&

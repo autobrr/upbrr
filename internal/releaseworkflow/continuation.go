@@ -70,6 +70,8 @@ func projectContinuationRequiredActions(
 	return actions
 }
 
+// projectTrackerLaneOutcomes combines current stage evidence into per-tracker outcomes.
+// A terminal accepted in-client match clears actions retained by earlier stages.
 func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome {
 	if current.Projections == nil {
 		return nil
@@ -138,6 +140,9 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 			case result.Decision == api.DupeDecisionAccepted:
 				lane.Lifecycle = api.OperationLifecycleTerminal
 				lane.Disposition = api.WorkflowDispositionFailed
+				if strictDupeResult(result) {
+					lane.RequiredActions = nil
+				}
 			case stageSucceeded(result.Status):
 				advanceLane(lane, api.WorkflowGoalDuplicatesDecided)
 			case stageFailed(result.Status):

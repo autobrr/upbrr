@@ -112,7 +112,7 @@ const trackerBlockReasons = (
   readiness: TrackerPreflightAssessment["results"][number] | undefined,
   result: DupeAssessment["results"][number] | undefined,
 ) => {
-  const hasRuleOverride = Boolean(ruleOverrideAction(projection));
+  const hasRuleOverride = !hasInClientMatch(result) && Boolean(ruleOverrideAction(projection));
   const inClientMatches = (result?.matches || []).filter(
     (match) => match.reason?.trim().toLowerCase() === "in_client",
   );
@@ -248,7 +248,7 @@ function WorkflowDupeAssessmentView({
         const readiness = preflightByTracker.get(trackerID);
         const nameConfirmation = releaseNameConfirmationState(projection);
         const releaseNameNotices = releaseNameOverrideNotices(projection);
-        const ruleOverride = ruleOverrideAction(projection);
+        const ruleOverride = !hasInClientMatch(result) ? ruleOverrideAction(projection) : undefined;
         const releaseName = releaseNameOverrides[trackerID] ?? projection?.uploadReleaseName ?? "";
         const inClient = hasInClientMatch(result);
         const strictBlocked =

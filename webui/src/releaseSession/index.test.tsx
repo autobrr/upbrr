@@ -2781,6 +2781,56 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it("ignores a tracker rule action retained only in a projection", async () => {
+    const workflowID = "workflow-stale-dupe-rule-override";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const action = {
+      createdAt: "2026-08-15T00:00:00Z",
+      id: "stale-authorize-alpha",
+      kind: "authorize_rules" as const,
+      prompt: "Upload to ALPHA anyway?",
+      status: "pending" as const,
+      trackerId: "ALPHA",
+      workflowRevision: 7,
+    };
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      projections: {
+        projections: [
+          {
+            trackerId: "ALPHA",
+            artifacts: {
+              screenshotCount: 0,
+              dvdMenuCount: 0,
+              imageHosting: false,
+              description: false,
+            },
+            requiredActions: [action],
+          },
+        ],
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+    };
+    const continueWorkflow = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => retained, continue: continueWorkflow }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    await act(async () => {
+      expect(await result.current.duplicates.overrideRules("alpha")).toBe(false);
+    });
+    expect(continueWorkflow).not.toHaveBeenCalled();
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
   it("declines a tracker preparation action to request its fallback", async () => {
     const workflowID = "workflow-resolve-tracker-preparation";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
