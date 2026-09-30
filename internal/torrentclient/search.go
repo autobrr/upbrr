@@ -290,7 +290,7 @@ func resolveSearchClients(cfg config.Config, overrides api.ClientOverrides) ([]s
 		if requested == "" || strings.EqualFold(requested, "none") {
 			return nil, false
 		}
-		if name, _, ok := lookupTorrentClientConfig(cfg.TorrentClients, requested); ok {
+		if name, _, ok := lookupTorrentClientConfig(cfg.TorrentClients, *overrides.Client); ok {
 			return []string{name}, false
 		}
 		return nil, false
@@ -374,7 +374,7 @@ func selectSearchClientNames(clients map[string]config.TorrentClientConfig, sele
 		if trimmed == "" || strings.EqualFold(trimmed, "none") {
 			continue
 		}
-		name, _, ok := lookupTorrentClientConfig(clients, trimmed)
+		name, _, ok := lookupTorrentClientConfig(clients, value)
 		if !ok {
 			continue
 		}

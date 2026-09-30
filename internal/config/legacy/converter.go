@@ -267,6 +267,13 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 // migrateTorrentClients copies torrent client settings from the legacy config.
 func migrateTorrentClients(legacyClients map[string]any, out *config.Config) []string {
 	var warnings []string
+	clientNames := make(map[string]config.TorrentClientConfig, len(legacyClients))
+	for name, raw := range legacyClients {
+		if _, ok := raw.(map[string]any); ok {
+			clientNames[name] = config.TorrentClientConfig{}
+		}
+	}
+	referencedClients := referencedTorrentClients(clientNames, out)
 
 	if out.TorrentClients == nil {
 		out.TorrentClients = make(map[string]config.TorrentClientConfig)
@@ -289,10 +296,49 @@ func migrateTorrentClients(legacyClients map[string]any, out *config.Config) []s
 			}
 		}
 
+		_, referenced := referencedClients[clientName]
+		if !torrentClientComplete(tc) && !referenced {
+			warnings = append(warnings, "skipped incomplete torrent client: "+clientName)
+			continue
+		}
 		out.TorrentClients[clientName] = tc
 	}
 
 	return warnings
+}
+
+func referencedTorrentClients(clients map[string]config.TorrentClientConfig, cfg *config.Config) map[string]struct{} {
+	referenced := make(map[string]struct{})
+	references := append([]string{cfg.ClientSetup.DefaultClient}, cfg.ClientSetup.InjectClients...)
+	references = append(references, cfg.ClientSetup.SearchClients...)
+	for _, reference := range references {
+		if strings.EqualFold(strings.TrimSpace(reference), "none") {
+			continue
+		}
+		if resolved, ok := config.ResolveTorrentClientName(clients, reference); ok {
+			referenced[resolved] = struct{}{}
+		}
+	}
+	for _, tracker := range cfg.Trackers.Trackers {
+		if resolved, ok := config.ResolveTorrentClientName(clients, tracker.TorrentClient); ok {
+			referenced[resolved] = struct{}{}
+		}
+	}
+	return referenced
+}
+
+func torrentClientComplete(client config.TorrentClientConfig) bool {
+	switch strings.ToLower(strings.TrimSpace(client.ClientType())) {
+	case "watch":
+		return strings.TrimSpace(client.WatchFolder) != ""
+	case "qbit", "qbittorrent":
+		return client.UsesQuiProxy() || (strings.TrimSpace(client.QbitHost()) != "" &&
+			strings.TrimSpace(client.QbitUsername()) != "" && strings.TrimSpace(client.QbitPassword()) != "")
+	case "qui":
+		return client.UsesQuiProxy()
+	default:
+		return true
+	}
 }
 
 // coerceValue converts a legacy value to match the type of the template value.

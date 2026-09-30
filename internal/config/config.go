@@ -1058,7 +1058,7 @@ func (c Config) Validate() error {
 	for trackerName, trackerCfg := range c.Trackers.Trackers {
 		torrentClient := strings.TrimSpace(trackerCfg.TorrentClient)
 		if torrentClient != "" {
-			if !lookupTorrentClient(c.TorrentClients, torrentClient) {
+			if _, ok := ResolveTorrentClientName(c.TorrentClients, trackerCfg.TorrentClient); !ok {
 				return fmt.Errorf("config: trackers.%s.torrent_client references unknown torrent client %q", trackerName, trackerCfg.TorrentClient)
 			}
 		}
@@ -1101,43 +1101,33 @@ func validateGlobalTorrentClientSelector(clients map[string]TorrentClientConfig,
 	if trimmed == "" || strings.EqualFold(trimmed, "none") {
 		return nil
 	}
-	if !lookupTorrentClient(clients, trimmed) {
+	if _, ok := ResolveTorrentClientName(clients, selected); !ok {
 		return fmt.Errorf("config: %s references unknown torrent client %q", field, selected)
 	}
 	return nil
 }
 
-// lookupTorrentClient resolves tracker torrent_client selectors using the same
-// exact-or-unique-folded name rule as runtime injection. Ambiguous folded names
-// are rejected so config validation cannot accept a selector runtime skips.
-func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string) bool {
+// ResolveTorrentClientName resolves a selector to its original map key. A literal
+// map-key match wins; otherwise exactly one trimmed, case-insensitive alias is required.
+func ResolveTorrentClientName(clients map[string]TorrentClientConfig, selected string) (string, bool) {
 	trimmed := strings.TrimSpace(selected)
 	if trimmed == "" {
-		return false
+		return "", false
+	}
+	if _, ok := clients[selected]; ok {
+		return selected, true
 	}
 
-	exactMatches := make([]string, 0, 1)
-	foldMatches := make([]string, 0, 1)
+	match := ""
 	for name := range clients {
-		nameTrimmed := strings.TrimSpace(name)
-		if nameTrimmed == trimmed {
-			exactMatches = append(exactMatches, name)
-			continue
-		}
-		if strings.EqualFold(nameTrimmed, trimmed) {
-			foldMatches = append(foldMatches, name)
+		if strings.EqualFold(strings.TrimSpace(name), trimmed) {
+			if match != "" {
+				return "", false
+			}
+			match = name
 		}
 	}
-
-	switch len(exactMatches) {
-	case 1:
-		return true
-	case 0:
-	default:
-		return false
-	}
-
-	return len(foldMatches) == 1
+	return match, match != ""
 }
 
 // ResolveBTNAPIToken returns the BTN tracker API key from ASCII case variants
