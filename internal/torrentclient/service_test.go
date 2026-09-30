@@ -2109,6 +2109,66 @@ func TestInjectTrackerTorrentClientURLOnlyWatchReturnsErrorWithoutFallback(t *te
 	}
 }
 
+func TestInjectGlobalNoneDoesNotSelectClientNamedNone(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		setup     config.ClientSetupConfig
+		overrides api.ClientOverrides
+		wantOther bool
+	}{
+		{name: "default", setup: config.ClientSetupConfig{DefaultClient: "none"}},
+		{name: "inject list", setup: config.ClientSetupConfig{InjectClients: config.CSVList{"none"}}},
+		{
+			name:      "mixed inject list",
+			setup:     config.ClientSetupConfig{InjectClients: config.CSVList{"other", "none"}},
+			wantOther: true,
+		},
+		{name: "explicit override", overrides: api.ClientOverrides{Client: new("none")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			noneWatch := filepath.Join(root, "none")
+			otherWatch := filepath.Join(root, "other")
+			if err := os.MkdirAll(noneWatch, 0o700); err != nil {
+				t.Fatalf("mkdir none: %v", err)
+			}
+			if err := os.MkdirAll(otherWatch, 0o700); err != nil {
+				t.Fatalf("mkdir other: %v", err)
+			}
+			torrentPath := filepath.Join(root, "sample.torrent")
+			if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+
+			svc := NewService(config.Config{
+				ClientSetup: test.setup,
+				TorrentClients: map[string]config.TorrentClientConfig{
+					"none":  {Type: "watch", WatchFolder: noneWatch},
+					"other": {Type: "watch", WatchFolder: otherWatch},
+				},
+			}, nil)
+			if err := svc.Inject(context.Background(), api.ClientSubject{SourcePath: "video.mkv", ClientOverrides: test.overrides}, api.TorrentResult{Path: torrentPath}); err != nil {
+				t.Fatalf("inject: %v", err)
+			}
+
+			if _, err := os.Stat(filepath.Join(noneWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected none client untouched, got %v", err)
+			}
+			_, err := os.Stat(filepath.Join(otherWatch, filepath.Base(torrentPath)))
+			if test.wantOther && err != nil {
+				t.Fatalf("expected other client copy, got %v", err)
+			}
+			if !test.wantOther && !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected other client untouched, got %v", err)
+			}
+		})
+	}
+}
+
 func TestInjectTrackerTorrentClientCanSelectClientNamedNone(t *testing.T) {
 	t.Parallel()
 
@@ -2160,12 +2220,12 @@ func TestSelectTorrentClientsRejectsAmbiguousCaseInsensitiveNames(t *testing.T) 
 		"qbit": {Type: "qbit"},
 	}
 
-	matches := selectTorrentClients(clients, []string{"QBIT"})
+	matches := selectTorrentClients(clients, []string{"QBIT"}, false)
 	if len(matches) != 0 {
 		t.Fatalf("expected ambiguous case-insensitive selector to be ignored, got %v", matches)
 	}
 
-	matches = selectTorrentClients(clients, []string{"qbit"})
+	matches = selectTorrentClients(clients, []string{"qbit"}, false)
 	if len(matches) != 1 {
 		t.Fatalf("expected exact selector match, got %v", matches)
 	}
@@ -2173,12 +2233,40 @@ func TestSelectTorrentClientsRejectsAmbiguousCaseInsensitiveNames(t *testing.T) 
 		t.Fatalf("expected exact lower-case client match, got %v", matches)
 	}
 
-	matches = selectTorrentClients(clients, []string{"QBIT", "qbit"})
+	matches = selectTorrentClients(clients, []string{"QBIT", "qbit"}, false)
 	if len(matches) != 1 {
 		t.Fatalf("expected later exact selector after ambiguous selector, got %v", matches)
 	}
 	if _, ok := matches["qbit"]; !ok {
 		t.Fatalf("expected exact lower-case client match after ambiguous selector, got %v", matches)
+	}
+}
+
+func TestSelectTorrentClientsPrefersLiteralPaddedName(t *testing.T) {
+	t.Parallel()
+
+	clients := map[string]config.TorrentClientConfig{
+		"selected": {Type: "qbit"},
+	}
+	clients[" selected "] = config.TorrentClientConfig{Type: "watch"}
+
+	matches := selectTorrentClients(clients, []string{" selected "}, false)
+	if len(matches) != 1 {
+		t.Fatalf("expected one exact selector match, got %v", matches)
+	}
+	if _, ok := matches[" selected "]; !ok {
+		t.Fatalf("expected literal padded client match, got %v", matches)
+	}
+}
+
+func TestTrackerTorrentClientPreservesLiteralPaddedName(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+		"AITHER": {TorrentClient: " selected "},
+	}}}, nil)
+	if got := svc.trackerTorrentClient("AITHER"); got != " selected " {
+		t.Fatalf("expected literal padded tracker client, got %q", got)
 	}
 }
 
@@ -2189,7 +2277,7 @@ func TestSelectTorrentClientsDeduplicatesNormalizedSelectors(t *testing.T) {
 		"qbit": {Type: "qbit"},
 	}
 
-	matches := selectTorrentClients(clients, []string{"qbit", " QBIT ", "qbit"})
+	matches := selectTorrentClients(clients, []string{"qbit", " QBIT ", "qbit"}, false)
 	if len(matches) != 1 {
 		t.Fatalf("expected duplicate selector variants to select one client, got %v", matches)
 	}
@@ -2206,7 +2294,7 @@ func TestSelectTorrentClientsKeepsExactCaseVariantClients(t *testing.T) {
 		"qbit": {Type: "qbit"},
 	}
 
-	matches := selectTorrentClients(clients, []string{"Qbit", "qbit"})
+	matches := selectTorrentClients(clients, []string{"Qbit", "qbit"}, false)
 	if len(matches) != 2 {
 		t.Fatalf("expected both exact case-variant clients, got %v", matches)
 	}

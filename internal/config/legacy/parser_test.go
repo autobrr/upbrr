@@ -39,6 +39,27 @@ func TestExtractConfigDict(t *testing.T) {
 			input: `config = {"DEFAULT": {}}`,
 		},
 		{
+			name:  "type annotated assignment",
+			input: `config: dict[str, Any] = {"DEFAULT": {}}`,
+		},
+		{
+			name:  "type annotation with equals literal",
+			input: `config: Literal["="] = {"DEFAULT": {}}`,
+		},
+		{
+			name:  "type annotation with nested equals",
+			input: `config: Annotated[dict, dict(kind="=")] = {"DEFAULT": {}}`,
+		},
+		{
+			name:    "unassigned type annotation",
+			input:   "config: dict[str, Any]\nother = {\"DEFAULT\": {}}",
+			wantErr: true,
+		},
+		{
+			name:  "multiline type annotation",
+			input: "config: Literal[\n\"=\" # legacy type\n] = {\"DEFAULT\": {}}",
+		},
+		{
 			name:  "with leading comments",
 			input: "# comment\nconfig = {\"DEFAULT\": {}}",
 		},
@@ -277,6 +298,55 @@ config = {
 	qbit := requireMap(t, clients["qbittorrent"])
 	if qbit["qbit_url"] != "http://localhost:8080" {
 		t.Errorf("qbit_url: got %v", qbit["qbit_url"])
+	}
+}
+
+func TestParseLegacyConfigTypeAnnotationWithEquals(t *testing.T) {
+	legacy, err := ParseLegacyConfig([]byte(`config: Literal["="] = {"DEFAULT": {"screens": 6}}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if legacy.Default["screens"] != 6 {
+		t.Fatalf("screens: got %v", legacy.Default["screens"])
+	}
+}
+
+func TestParseLegacyConfigAnnotationComparisons(t *testing.T) {
+	for _, operator := range []string{"==", "!=", "<=", ">="} {
+		t.Run(operator, func(t *testing.T) {
+			input := `config: bool if True ` + operator + ` True else dict = {"DEFAULT": {"screens": 6}}`
+			legacy, err := ParseLegacyConfig([]byte(input))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if legacy.Default["screens"] != 6 {
+				t.Fatalf("screens: got %v, want 6", legacy.Default["screens"])
+			}
+		})
+	}
+}
+
+func TestAnnotationAssignmentIndexConsumesMalformedAnnotation(t *testing.T) {
+	input := ":[\n" + strings.Repeat("config: [\n", 100)
+	if assignment, scanned := annotationAssignmentIndex(input); assignment != -1 || scanned != len(input) {
+		t.Fatalf("assignment, scanned = %d, %d; want -1, %d", assignment, scanned, len(input))
+	}
+}
+
+func TestExtractConfigDictDoesNotRescanRejectedAnnotation(t *testing.T) {
+	const nesting = 1000
+	input := strings.Repeat("config: {\n", nesting) + "x: int\n" + strings.Repeat("}", nesting) +
+		" = 0\nconfig = {}\n"
+
+	dict, scanned, err := extractConfigDictScanned(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dict != "{}\n" {
+		t.Fatalf("dict = %q, want %q", dict, "{}\n")
+	}
+	if scanned > len(input) {
+		t.Fatalf("scanned %d bytes for %d-byte input", scanned, len(input))
 	}
 }
 

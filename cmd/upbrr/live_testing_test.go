@@ -55,6 +55,10 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.MainSettings.DBPath = source
+	for name, client := range cfg.TorrentClients {
+		client.URL, client.Username, client.Password = "http://127.0.0.1:1", "test", "test"
+		cfg.TorrentClients[name] = client
+	}
 	cfg.Trackers.DefaultTrackers = config.CSVList{"BHD"}
 	lstConfig := cfg.Trackers.Trackers["LST"]
 	lstConfig.ImageHost = "imgbb"
@@ -63,6 +67,9 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 	cfg.ImageHosting.LostimgAPI = "synthetic-lostimg-key"
 	if err := configstore.SaveToDBPath(t.Context(), cfg, source); err != nil {
 		t.Fatal(err)
+	}
+	if _, _, err := cliConfigActivation(t.Context(), *cfg, source, api.NopLogger{}); err != nil {
+		t.Fatalf("activate source config: %v", err)
 	}
 	root, err := livetest.PrivateRoot()
 	if err != nil {
@@ -76,6 +83,26 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 	var profile livetest.Profile
 	if err := json.Unmarshal([]byte(result.stdout), &profile); err != nil {
 		t.Fatal(err)
+	}
+	persisted, err := configstore.LoadFromDBPath(t.Context(), profile.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := db.OpenContext(t.Context(), profile.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	activation, err := repo.LoadConfigActivation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := config.EffectiveConfigFingerprint(*persisted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.Fingerprint != fingerprint {
+		t.Fatalf("persisted activation fingerprint = %q, want %q", activation.Fingerprint, fingerprint)
 	}
 	if len(profile.DefaultTrackers) != 1 || profile.DefaultTrackers[0] != "BHD" {
 		t.Fatalf("live-test init changed default trackers: %v", profile.DefaultTrackers)
@@ -99,6 +126,9 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 	}
 	if len(loaded.Trackers.DefaultTrackers) != 1 || loaded.Trackers.DefaultTrackers[0] != "BHD" {
 		t.Fatalf("isolated profile changed default trackers: %v", loaded.Trackers.DefaultTrackers)
+	}
+	if _, _, err := cliConfigActivation(t.Context(), loaded, profile.DBPath, api.NopLogger{}); err != nil {
+		t.Fatalf("live-test config is not activated: %v", err)
 	}
 	sourceAfter, err := configstore.LoadFromDBPath(t.Context(), source)
 	if err != nil {

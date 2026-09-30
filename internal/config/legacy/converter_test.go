@@ -5,6 +5,7 @@ package legacy
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -173,6 +174,190 @@ func TestConvertTorrentClients(t *testing.T) {
 	}
 	if qbit.QbitPass != "secret" {
 		t.Errorf("QbitPass: got %q, want secret", qbit.QbitPass)
+	}
+}
+
+func TestConvertTorrentClientsSkipsIncompleteTemplates(t *testing.T) {
+	input := []byte(`
+config = {
+    'DEFAULT': {
+        'tmdb_api': 'test',
+        'screens': 6,
+        'default_torrent_client': 'qbittorrent',
+    },
+    'TRACKERS': {},
+    'TORRENT_CLIENTS': {
+        'qbittorrent': {
+            'torrent_client': 'qbit',
+            'qbit_url': 'http://localhost:8080',
+            'qbit_user': 'admin',
+            'qbit_pass': 'secret',
+        },
+        'qbittorrent_searching': {
+            'torrent_client': 'qbit',
+            'qbit_url': 'http://localhost:8080',
+        },
+        'watch': {
+            'torrent_client': 'watch',
+        },
+    },
+}
+`)
+
+	cfg, warnings, err := ImportFromContent(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := cfg.TorrentClients["qbittorrent_searching"]; ok {
+		t.Fatal("incomplete qBittorrent template was imported")
+	}
+	if _, ok := cfg.TorrentClients["watch"]; ok {
+		t.Fatal("incomplete watch template was imported")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("converted config should validate: %v", err)
+	}
+	hasWarning := false
+	for _, warning := range warnings {
+		if strings.Contains(warning, "incomplete torrent client") {
+			hasWarning = true
+			break
+		}
+	}
+	if !hasWarning {
+		t.Fatalf("missing incomplete client warning: %v", warnings)
+	}
+}
+
+func TestConvertTorrentClientsPreservesReferencedIncompleteClients(t *testing.T) {
+	tests := []struct {
+		name     string
+		defaults map[string]any
+		trackers map[string]any
+	}{
+		{name: "default", defaults: map[string]any{"default_torrent_client": "selected"}},
+		{name: "inject", defaults: map[string]any{"injecting_client_list": "selected"}},
+		{name: "search", defaults: map[string]any{"searching_client_list": "selected"}},
+		{name: "tracker", trackers: map[string]any{"BHD": map[string]any{"torrent_client": "selected"}}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			defaults := map[string]any{"tmdb_api": "test", "screens": 6}
+			maps.Copy(defaults, test.defaults)
+			legacy := &Config{
+				Default:  defaults,
+				Trackers: test.trackers,
+				TorrentClients: map[string]any{
+					"selected": map[string]any{
+						"torrent_client": "qbit",
+						"qbit_url":       "http://localhost:8080",
+					},
+					"unused": map[string]any{"torrent_client": "watch"},
+				},
+			}
+
+			cfg, _, err := ImportFromContent(marshalLegacyConfig(legacy))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if _, ok := cfg.TorrentClients["selected"]; !ok {
+				t.Fatal("referenced incomplete client was skipped")
+			}
+			if _, ok := cfg.TorrentClients["unused"]; ok {
+				t.Fatal("unreferenced incomplete client was imported")
+			}
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "torrent_clients.selected.username or qbit_user is required") {
+				t.Fatalf("expected missing client configuration error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestConvertTorrentClientsResolvesReferencedNames(t *testing.T) {
+	incomplete := func(names ...string) map[string]any {
+		clients := make(map[string]any, len(names))
+		for _, name := range names {
+			clients[name] = map[string]any{"torrent_client": "watch"}
+		}
+		return clients
+	}
+	tests := []struct {
+		name     string
+		defaults map[string]any
+		trackers map[string]any
+		clients  map[string]any
+		want     []string
+	}{
+		{
+			name:     "exact Qbit",
+			defaults: map[string]any{"default_torrent_client": "Qbit"},
+			clients:  incomplete("Qbit", "qbit"),
+			want:     []string{"Qbit"},
+		},
+		{
+			name:     "exact qbit",
+			defaults: map[string]any{"default_torrent_client": "qbit"},
+			clients:  incomplete("Qbit", "qbit"),
+			want:     []string{"qbit"},
+		},
+		{
+			name:     "unique folded",
+			defaults: map[string]any{"default_torrent_client": "SELECTED"},
+			clients:  incomplete("selected"),
+			want:     []string{"selected"},
+		},
+		{
+			name:     "literal exact before padded alias",
+			defaults: map[string]any{"default_torrent_client": "selected"},
+			clients:  incomplete("selected", " selected "),
+			want:     []string{"selected"},
+		},
+		{
+			name:     "ambiguous QBIT",
+			defaults: map[string]any{"default_torrent_client": "QBIT"},
+			clients:  incomplete("Qbit", "qbit"),
+		},
+		{
+			name:     "default none",
+			defaults: map[string]any{"default_torrent_client": "none"},
+			clients:  incomplete("none"),
+		},
+		{
+			name:     "inject none",
+			defaults: map[string]any{"injecting_client_list": "none"},
+			clients:  incomplete("none"),
+		},
+		{
+			name:     "search none",
+			defaults: map[string]any{"searching_client_list": "none"},
+			clients:  incomplete("none"),
+		},
+		{
+			name:     "tracker none",
+			trackers: map[string]any{"BHD": map[string]any{"torrent_client": "none"}},
+			clients:  incomplete("none"),
+			want:     []string{"none"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			defaults := map[string]any{"tmdb_api": "test", "screens": 6}
+			maps.Copy(defaults, test.defaults)
+			cfg, _, err := ImportFromContent(marshalLegacyConfig(&Config{
+				Default:        defaults,
+				Trackers:       test.trackers,
+				TorrentClients: test.clients,
+			}))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := slices.Sorted(maps.Keys(cfg.TorrentClients))
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("imported clients = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

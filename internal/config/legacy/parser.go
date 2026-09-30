@@ -72,7 +72,13 @@ func ParseLegacyConfig(data []byte) (*Config, error) {
 // `config` to appear at the start of a line (after optional whitespace) to
 // avoid false positives inside string literals or comments.
 func extractConfigDict(src string) (string, error) {
+	dict, _, err := extractConfigDictScanned(src)
+	return dict, err
+}
+
+func extractConfigDictScanned(src string) (string, int, error) {
 	idx := 0
+	scanned := 0
 	for idx < len(src) {
 		pos := strings.Index(src[idx:], "config")
 		if pos < 0 {
@@ -101,6 +107,16 @@ func extractConfigDict(src string) (string, error) {
 		}
 
 		rest := skipWhitespaceAndComments(src[after:])
+		if len(rest) > 0 && rest[0] == ':' {
+			annotationStart := len(src) - len(rest)
+			annotationEnd, annotationScanned := annotationAssignmentIndex(rest)
+			scanned += annotationScanned
+			if annotationEnd < 0 {
+				idx = annotationStart + annotationScanned
+				continue
+			}
+			rest = skipWhitespaceAndComments(rest[annotationEnd:])
+		}
 		if len(rest) == 0 || rest[0] != '=' {
 			idx = after
 			continue
@@ -108,14 +124,63 @@ func extractConfigDict(src string) (string, error) {
 		rest = skipWhitespaceAndComments(rest[1:])
 
 		if len(rest) == 0 || rest[0] != '{' {
-			idx = after
+			idx = len(src) - len(rest)
 			continue
 		}
 
-		return rest, nil
+		return rest, scanned, nil
 	}
 
-	return "", errors.New("legacy config: could not find 'config = {' assignment")
+	return "", scanned, errors.New("legacy config: could not find 'config = {' assignment")
+}
+
+func annotationAssignmentIndex(src string) (int, int) {
+	var quote byte
+	escaped := false
+	depth := 0
+	for i := 0; i < len(src); i++ {
+		ch := src[i]
+		if quote != 0 {
+			switch {
+			case escaped:
+				escaped = false
+			case ch == '\\':
+				escaped = true
+			case ch == quote:
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case '#':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			if depth == 0 {
+				return -1, i
+			}
+		case '\n':
+			if depth == 0 {
+				return -1, i + 1
+			}
+		case '=':
+			if i+1 < len(src) && src[i+1] == '=' || i > 0 && strings.ContainsRune("=!<>", rune(src[i-1])) {
+				continue
+			}
+			if depth == 0 {
+				return i, i + 1
+			}
+		}
+	}
+	return -1, len(src)
 }
 
 // skipWhitespaceAndComments returns src with leading ASCII whitespace and

@@ -532,6 +532,221 @@ func TestCompositeUploadReleaseNameFeedbackPreservesSiblingProjection(t *testing
 	}
 }
 
+func TestCompositeUploadDefersSingleTrackerNameReviewUntilDuplicateCheck(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadNameReviewTestModule(t)
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-single-name-review")
+	request.Trackers.Include = []api.TrackerID{"ALPHA"}
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start single-tracker name review: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	if blocked.Dupes == nil {
+		t.Fatalf("single-tracker name review blocked before duplicate check: %#v", blocked)
+	}
+	if !slices.ContainsFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "ALPHA" &&
+			action.Status == api.RequiredActionStatusPending
+	}) {
+		t.Fatalf("single-tracker name review action = %#v", blocked.Continuation.RequiredActions)
+	}
+}
+
+func TestCompositeUploadStrictDuplicateSupersedesSingleTrackerNameReview(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadNameReviewTestModule(t)
+	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "ALPHA", "in_client")
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-strict-dupe-name-review")
+	request.Trackers.Include = []api.TrackerID{"ALPHA"}
+	request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateBlock
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start strict-duplicate name review: %v", err)
+	}
+	completed := waitCompositeUploadTestOperation(t, module, started)
+	if completed.Operation.Status == api.StageStatusBlocked || completed.Operation.Result == nil ||
+		completed.Operation.Result.Kind != api.WorkflowOperationResultDupes || completed.Dupes == nil {
+		t.Fatalf("strict-duplicate name review result = %#v", completed)
+	}
+	if completed.Projections == nil || len(completed.Workflow.RequiredActions) != 0 || len(completed.Continuation.RequiredActions) != 0 ||
+		slices.ContainsFunc(completed.Continuation.TrackerOutcomes, func(outcome api.TrackerLaneOutcome) bool {
+			return outcome.TrackerID == "ALPHA" && hasPendingRequiredAction(outcome.RequiredActions)
+		}) {
+		t.Fatalf("strict-duplicate name review: projections=%#v workflowActions=%#v continuationActions=%#v lanes=%#v",
+			completed.Projections, completed.Workflow.RequiredActions, completed.Continuation.RequiredActions, completed.Continuation.TrackerOutcomes)
+	}
+	staleActionIndex := slices.IndexFunc(completed.Projections.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "ALPHA"
+	})
+	if staleActionIndex < 0 {
+		t.Fatalf("strict-duplicate fixture has no retained name action: %#v", completed.Projections.RequiredActions)
+	}
+	confirmed := true
+	name := "Example.Release.2026.ALPHA-GRP"
+	staleAnswer := api.RequiredActionAnswer{
+		ActionID:         completed.Projections.RequiredActions[staleActionIndex].ID,
+		WorkflowRevision: completed.Workflow.Revision,
+		TextValue:        &name,
+		Confirmed:        &confirmed,
+	}
+	_, err = module.Execute(t.Context(), testOwnerID, ResolveActionCommand{
+		WorkflowID:       completed.Workflow.ID,
+		ExpectedRevision: completed.Workflow.Revision,
+		Answer:           staleAnswer,
+		IdempotencyKey:   "resolve-stale-name-after-strict-duplicate",
+	})
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("direct stale name resolution error = %v, want invalid transition", err)
+	}
+	_, err = module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       completed.Workflow.ID,
+			ExpectedRevision: completed.Workflow.Revision,
+		},
+		IdempotencyKey: "continue-stale-name-after-strict-duplicate",
+		Goal:           api.WorkflowGoalDuplicatesDecided,
+		Answers:        []api.RequiredActionAnswer{staleAnswer},
+	})
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("continuation stale name resolution error = %v, want invalid transition", err)
+	}
+	_, err = module.SubmitUploadFeedback(t.Context(), testOwnerID, completed.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+		Action: api.ReleaseWorkflowUploadActionIdentity{
+			ID:               completed.Projections.RequiredActions[staleActionIndex].ID,
+			WorkflowRevision: completed.Workflow.Revision,
+		},
+		Response: api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackTrackerInput,
+			TrackerInput: &api.ReleaseWorkflowUploadTrackerInput{
+				TrackerID: "ALPHA",
+				Projection: api.ReleaseWorkflowUploadTrackerProjection{
+					UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: "Example.Release.2026.ALPHA-GRP"},
+				},
+			},
+		},
+		IdempotencyKey: "stale-name-after-strict-duplicate",
+	})
+	if !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale name feedback error = %v, want revision conflict", err)
+	}
+}
+
+func TestCompositeUploadStrictDuplicatePreservesSiblingNameReview(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadNameReviewTestModule(t)
+	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "ALPHA", "in_client")
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-strict-dupe-sibling-name-review")
+	request.Trackers.Include = []api.TrackerID{"ALPHA", "BETA"}
+	request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateBlock
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start strict-duplicate sibling name review: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	if blocked.Dupes == nil || blocked.Operation.Status != api.StageStatusBlocked {
+		t.Fatalf("sibling name review result = %#v", blocked)
+	}
+	if slices.ContainsFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.TrackerID == "ALPHA" && action.Status == api.RequiredActionStatusPending
+	}) || !slices.ContainsFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "BETA" &&
+			action.Status == api.RequiredActionStatusPending
+	}) {
+		t.Fatalf("strict-duplicate sibling actions = %#v", blocked.Continuation.RequiredActions)
+	}
+}
+
+func TestCompositeUploadRuleAuthorizationPrecedesNameReview(t *testing.T) {
+	for _, test := range []struct {
+		name                  string
+		reviewedName          string
+		generatedConfirmation bool
+	}{
+		{
+			name:                  "generated name",
+			reviewedName:          "Example.Release.2026.ALPHA-GRP",
+			generatedConfirmation: true,
+		},
+		{
+			name:         "edited name",
+			reviewedName: "Example.Release.2026.REVIEWED-GRP",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module, _, _ := newCompositeUploadTestModuleConfigured(t, true, true)
+			request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-rule-then-name-"+test.name)
+			request.Trackers.Include = []api.TrackerID{"ALPHA"}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("start rule-and-name composite upload: %v", err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			actionIndex := slices.IndexFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Kind == api.RequiredActionAuthorizeRules && action.Status == api.RequiredActionStatusPending
+			})
+			if actionIndex < 0 {
+				t.Fatalf("rule authorization action = %#v", blocked.Operation)
+			}
+			resumed, err := module.SubmitUploadFeedback(t.Context(), testOwnerID, blocked.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+				Action: api.ReleaseWorkflowUploadActionIdentity{
+					ID:               blocked.Continuation.RequiredActions[actionIndex].ID,
+					WorkflowRevision: blocked.Workflow.Revision,
+				},
+				Response: api.ReleaseWorkflowUploadFeedbackResponse{
+					Kind: api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
+					RuleAuthorization: &api.ReleaseWorkflowUploadConfirmation{
+						Confirmed: true,
+					},
+				},
+				IdempotencyKey: "authorize-rule-before-name",
+			})
+			if err != nil {
+				t.Fatalf("authorize rule before name review: %v", err)
+			}
+			review := waitCompositeUploadTestOperation(t, module, resumed)
+			actionIndex = slices.IndexFunc(review.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Kind == api.RequiredActionProvideTrackerInput && action.Status == api.RequiredActionStatusPending
+			})
+			if review.Dupes == nil || actionIndex < 0 {
+				t.Fatalf("post-authorization name review = %#v", review)
+			}
+			resumed, err = module.SubmitUploadFeedback(t.Context(), testOwnerID, review.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+				Action: api.ReleaseWorkflowUploadActionIdentity{
+					ID:               review.Continuation.RequiredActions[actionIndex].ID,
+					WorkflowRevision: review.Workflow.Revision,
+				},
+				Response: api.ReleaseWorkflowUploadFeedbackResponse{
+					Kind: api.ReleaseWorkflowUploadFeedbackTrackerInput,
+					TrackerInput: &api.ReleaseWorkflowUploadTrackerInput{
+						TrackerID: "ALPHA",
+						Projection: api.ReleaseWorkflowUploadTrackerProjection{
+							UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: test.reviewedName},
+						},
+					},
+				},
+				IdempotencyKey: "confirm-name-after-rule",
+			})
+			if err != nil {
+				t.Fatalf("confirm name after rule authorization: %v", err)
+			}
+			completed := waitCompositeUploadTestOperation(t, module, resumed)
+			if completed.Projections == nil || len(completed.Projections.Projections) == 0 || completed.ProjectionInstructions == nil {
+				t.Fatalf("authorized reviewed result = %#v", completed)
+			}
+			projection := completed.Projections.Projections[0]
+			confirmedFingerprint := completed.ProjectionInstructions.Instructions["ALPHA"].ConfirmedNameFingerprint
+			if projection.UploadReleaseName != test.reviewedName || projection.RuleAuthorizationFingerprint == "" ||
+				(confirmedFingerprint != "") != test.generatedConfirmation {
+				t.Fatalf("authorized reviewed projection = %#v instructions=%#v", projection, completed.ProjectionInstructions)
+			}
+		})
+	}
+}
+
 func TestCompositeUploadTrackerInputRejectsMismatchedTrackerWithoutMutation(t *testing.T) {
 	t.Parallel()
 
@@ -894,7 +1109,7 @@ func TestCompositeUploadStrictExcludesDuplicateBlockedSibling(t *testing.T) {
 	t.Parallel()
 
 	module, _, uploads := newCompositeUploadTestModule(t)
-	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA")
+	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", "same release")
 	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-dupe-sibling")
 
 	started, err := module.StartUpload(context.Background(), testOwnerID, request)
@@ -1839,14 +2054,27 @@ func newCompositeUploadTestModuleConfigured(
 		projectionInput := "composite-projection-input"
 		for _, trackerID := range trackerIDs {
 			automaticName := "Example.Release.2026." + string(trackerID) + "-GRP"
+			automaticNamingFingerprint := testFingerprint(t, string(trackerID)+"-naming")
 			projection := testProjection(t, trackerID, automaticName)
 			projection.DescriptionGroup = "alpha"
-			if releaseNameReview && trackerID != "GAMMA" {
+			if releaseNameReview {
+				projection.NamingPolicyID = "test/name-review/v1"
+				projection.NamingFingerprint = automaticNamingFingerprint
+				projection.DuplicatePolicyID = "test/dupe-review/v1"
+				projection.DuplicatePolicyFingerprint = testFingerprint(t, string(trackerID)+"-duplicate-policy")
+				projection.DuplicateTargetFingerprint = testFingerprint(t, string(trackerID)+"-duplicate-target")
+				projection.DuplicateSearchFingerprint = testFingerprint(t, string(trackerID)+"-duplicate-search")
+			}
+			waivableFingerprint := testFingerprint(t, "composite-waivable-rules")
+			ruleAuthorized := !waivableRules || trackerID != "ALPHA" || ruleAuthorizations[trackerID] == waivableFingerprint
+			if releaseNameReview && trackerID != "GAMMA" && ruleAuthorized {
 				projection.PolicyDecisions = []api.TrackerPolicyDecision{{
 					Code:     releaseNameConfirmationDecisionCode,
 					Decision: "confirmation_required",
 				}}
-				if instruction := instructions[trackerID]; instruction.UploadReleaseName.Present {
+				instruction := instructions[trackerID]
+				switch {
+				case instruction.UploadReleaseName.Present:
 					projection.UploadReleaseName = instruction.UploadReleaseName.Value
 					projection.AdditionalNames = []api.TrackerReleaseName{{
 						Role:  api.TrackerReleaseNameRoleSearch,
@@ -1855,8 +2083,11 @@ func newCompositeUploadTestModuleConfigured(
 					projection.ProjectorFingerprint = testFingerprint(t, string(trackerID)+"-projector-reviewed")
 					projection.InputFingerprint = testFingerprint(t, string(trackerID)+"-input-reviewed")
 					projection.PolicyDecisions[0].Decision = "confirmed"
-					projectionInput += "-" + strings.ToLower(string(trackerID)) + "-reviewed"
-				} else {
+					projectionInput = fmt.Sprintf("%s-%s-reviewed", projectionInput, strings.ToLower(string(trackerID)))
+				case instruction.ConfirmedNameFingerprint == automaticNamingFingerprint:
+					projection.PolicyDecisions[0].Decision = "confirmed"
+					projectionInput = fmt.Sprintf("%s-%s-confirmed", projectionInput, strings.ToLower(string(trackerID)))
+				default:
 					projection.UploadReady = false
 					projection.RequiredActions = []api.RequiredAction{{
 						Kind:           api.RequiredActionProvideTrackerInput,
@@ -1868,44 +2099,47 @@ func newCompositeUploadTestModuleConfigured(
 							Label: automaticName,
 						}},
 					}}
-					actions = append(actions, projection.RequiredActions...)
-					projectionInput += "-" + strings.ToLower(string(trackerID)) + "-pending"
+					projectionInput = fmt.Sprintf("%s-%s-pending", projectionInput, strings.ToLower(string(trackerID)))
 				}
 			}
 			if waivableRules && trackerID == "ALPHA" {
-				waivableFingerprint := testFingerprint(t, "composite-waivable-rules")
+				decisionIndex := len(projection.PolicyDecisions)
 				projection.WaivableRuleFingerprint = waivableFingerprint
-				projection.PolicyDecisions = []api.TrackerPolicyDecision{{
+				projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
 					Code:        "language_rule",
 					Message:     "language waiver required",
 					Disposition: api.RuleDispositionWaivable,
-				}}
+				})
 				if ruleAuthorizations[trackerID] == waivableFingerprint {
 					projection.RuleAuthorizationFingerprint = waivableFingerprint
-					projection.PolicyDecisions[0].Decision = "authorized"
-					projectionInput = "composite-projection-input-authorized"
+					projection.PolicyDecisions[decisionIndex].Decision = "authorized"
+					projectionInput += "-authorized"
 				} else {
 					projection.Readiness = api.ReadinessStatusBlocked
 					projection.DupeReady = false
 					projection.UploadReady = false
-					projection.PolicyDecisions[0].Decision = "authorization_required"
-					projection.PolicyDecisions[0].Blocking = true
+					projection.PolicyDecisions[decisionIndex].Decision = "authorization_required"
+					projection.PolicyDecisions[decisionIndex].Blocking = true
 					projection.RequiredActions = []api.RequiredAction{{
 						Kind:   api.RequiredActionAuthorizeRules,
 						Prompt: "Alpha rule warning: language rule. Upload to this tracker anyway?",
 					}}
-					actions = append(actions, projection.RequiredActions...)
-					projectionInput = "composite-projection-input-pending"
+					projectionInput += "-waiver-pending"
 				}
 			}
+			actions = append(actions, projection.RequiredActions...)
 			projected = append(projected, projection)
+		}
+		status := api.StageStatusReady
+		if !slices.ContainsFunc(projected, func(projection api.TrackerReleaseProjection) bool { return projection.DupeReady }) {
+			status = api.StageStatusBlocked
 		}
 		return catalog, runtime, api.TrackerSelection{TrackerIDs: trackerIDs}, api.TrackerReleaseProjectionSet{
 			InputFingerprint:  testFingerprint(t, projectionInput),
 			PolicyFingerprint: testFingerprint(t, "composite-projection-policy"),
 			ExecutionMode:     executionMode,
 			Projections:       projected,
-			Status:            api.StageStatusReady,
+			Status:            status,
 			RequiredActions:   actions,
 		}, nil
 	})
@@ -1923,12 +2157,24 @@ func newCompositeUploadTestModuleConfigured(
 			if err != nil {
 				return api.DupeAssessment{}, nil, fmt.Errorf("fingerprint composite dupe projection: %w", err)
 			}
+			var evidenceFingerprint api.WorkflowFingerprint
+			var search api.DupeSearchEvidence
+			if projection.DuplicatePolicyID != "" {
+				evidenceFingerprint = testFingerprint(t, string(projection.TrackerID)+"-duplicate-evidence")
+				search.Complete = true
+			}
 			results = append(results, api.TrackerDupeAssessment{
 				TrackerID:             projection.TrackerID,
 				UploadReleaseName:     projection.UploadReleaseName,
 				ProjectionFingerprint: fingerprint,
 				CriteriaFingerprint:   projection.CriteriaFingerprint,
+				TargetFingerprint:     projection.DuplicateTargetFingerprint,
+				SearchFingerprint:     projection.DuplicateSearchFingerprint,
+				PolicyID:              projection.DuplicatePolicyID,
+				PolicyFingerprint:     projection.DuplicatePolicyFingerprint,
+				EvidenceFingerprint:   evidenceFingerprint,
 				Criteria:              projection.DuplicateCriteria,
+				Search:                search,
 				Decision:              api.DupeDecisionNoMatch,
 				Status:                api.StageStatusCompleted,
 				CheckedAt:             now,
@@ -2082,6 +2328,7 @@ func compositeUploadAuthBlockedPreflightBuilderFor(
 func compositeUploadDuplicateBlockedBuilder(
 	base DupeAssessmentBuilder,
 	blockedTrackerID api.TrackerID,
+	matchReason string,
 ) DupeAssessmentBuilder {
 	return dupeAssessmentBuilderFunc(func(
 		ctx context.Context,
@@ -2102,7 +2349,7 @@ func compositeUploadDuplicateBlockedBuilder(
 			assessment.Results[index].Decision = api.DupeDecisionAccepted
 			assessment.Results[index].Matches = []api.DupeMatchProjection{{
 				Name:   "Example.Release.2026.1080p-GRP",
-				Reason: "same release",
+				Reason: matchReason,
 			}}
 		}
 		return assessment, privateEvidence, nil
@@ -2137,4 +2384,22 @@ func waitCompositeUploadTestOperation(
 	}
 	current.Operation = &operation
 	return current
+}
+
+func TestCompositeUploadResultFallsBackToDuplicateAssessment(t *testing.T) {
+	result := CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-duplicates", Revision: 7},
+		Dupes:    &api.DupeAssessment{ID: "dupes-duplicates", Revision: 6},
+	}
+
+	got := compositeUploadResult(result)
+	if got == nil || got.Kind != api.WorkflowOperationResultDupes || got.RefID != "dupes-duplicates" ||
+		got.RefRevision != 6 || got.WorkflowRevision != 7 {
+		t.Fatalf("duplicate composite result = %#v", got)
+	}
+
+	result.Continuation.RequiredActions = []api.RequiredAction{{Status: api.RequiredActionStatusPending}}
+	if got := compositeUploadResult(result); got != nil {
+		t.Fatalf("blocked duplicate composite result = %#v, want nil", got)
+	}
 }

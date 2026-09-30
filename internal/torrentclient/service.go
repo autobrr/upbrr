@@ -163,8 +163,8 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 		return nil
 	}
 
-	clientOverrides := s.resolveInjectClientOverrides(meta.ClientOverrides, torrent.Tracker)
-	clients := resolveInjectClients(s.cfg, clientOverrides)
+	clientOverrides, trackerClientOverride := s.resolveInjectClientOverrides(meta.ClientOverrides, torrent.Tracker)
+	clients := resolveInjectClients(s.cfg, clientOverrides, trackerClientOverride)
 	// Tracker-scoped torrent_client is an effective client override; URL
 	// fallback is only for global/default selections that cannot consume URLs.
 	effectiveClientOverride := clientOverrides.Client != nil && strings.TrimSpace(*clientOverrides.Client) != ""
@@ -229,16 +229,16 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 	return nil
 }
 
-func (s *Service) resolveInjectClientOverrides(overrides api.ClientOverrides, tracker string) api.ClientOverrides {
+func (s *Service) resolveInjectClientOverrides(overrides api.ClientOverrides, tracker string) (api.ClientOverrides, bool) {
 	if overrides.Client != nil && strings.TrimSpace(*overrides.Client) != "" {
-		return overrides
+		return overrides, false
 	}
 	trackerClient := s.trackerTorrentClient(tracker)
 	if trackerClient == "" {
-		return overrides
+		return overrides, false
 	}
 	overrides.Client = &trackerClient
-	return overrides
+	return overrides, true
 }
 
 func (s *Service) trackerTorrentClient(tracker string) string {
@@ -246,7 +246,7 @@ func (s *Service) trackerTorrentClient(tracker string) string {
 	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(trackerCfg.TorrentClient)
+	return trackerCfg.TorrentClient
 }
 
 func (s *Service) trackerConfig(tracker string) (config.TrackerConfig, bool) {
@@ -547,34 +547,31 @@ func (s *Service) cleanupFailedLinkStaging(ctx context.Context, clientName strin
 // non-empty injecting_client_list, then default_torrent_client. Configured
 // selectors are authoritative: if a non-empty selector set resolves to no
 // clients, lower-priority fallbacks are skipped.
-func resolveInjectClients(cfg config.Config, overrides api.ClientOverrides) map[string]config.TorrentClientConfig {
+func resolveInjectClients(cfg config.Config, overrides api.ClientOverrides, trackerClientOverride bool) map[string]config.TorrentClientConfig {
 	clients := cfg.TorrentClients
 	if len(clients) == 0 {
 		return nil
 	}
 
 	if overrides.Client != nil && strings.TrimSpace(*overrides.Client) != "" {
-		if isDisableSelector(*overrides.Client) {
-			if selected := selectTorrentClients(clients, []string{*overrides.Client}); len(selected) > 0 {
-				return selected
-			}
+		if isDisableSelector(*overrides.Client) && !trackerClientOverride {
 			return disabledTorrentClientSelection()
 		}
-		return selectTorrentClients(clients, []string{*overrides.Client})
+		return selectTorrentClients(clients, []string{*overrides.Client}, trackerClientOverride)
 	}
 
 	if hasDisableOnlySelector(cfg.ClientSetup.InjectClients) {
 		return disabledTorrentClientSelection()
 	}
 	if hasNonBlankSelector(cfg.ClientSetup.InjectClients) {
-		return selectTorrentClients(clients, cfg.ClientSetup.InjectClients)
+		return selectTorrentClients(clients, cfg.ClientSetup.InjectClients, false)
 	}
 
 	if strings.TrimSpace(cfg.ClientSetup.DefaultClient) != "" {
 		if isDisableSelector(cfg.ClientSetup.DefaultClient) {
 			return disabledTorrentClientSelection()
 		}
-		return selectTorrentClients(clients, []string{cfg.ClientSetup.DefaultClient})
+		return selectTorrentClients(clients, []string{cfg.ClientSetup.DefaultClient}, false)
 	}
 
 	if len(clients) == 1 {
@@ -630,12 +627,13 @@ func disabledTorrentClientSelection() map[string]config.TorrentClientConfig {
 	}
 }
 
-// selectTorrentClients returns configured clients selected by name. Blank and
-// unknown selectors are ignored; ambiguous case-insensitive selectors are
-// ignored rather than letting map iteration order choose a target. Duplicate
-// selectors are collapsed only after they resolve to the same configured client,
-// so exact case-variant client names can both be selected.
-func selectTorrentClients(clients map[string]config.TorrentClientConfig, selected []string) map[string]config.TorrentClientConfig {
+// selectTorrentClients returns configured clients selected by name. Blank,
+// unknown, and global disable selectors are ignored; tracker-scoped selectors
+// may resolve a configured client named "none". Ambiguous case-insensitive
+// selectors are ignored rather than letting map iteration order choose a target.
+// Duplicate selectors are collapsed only after they resolve to the same configured
+// client, so exact case-variant client names can both be selected.
+func selectTorrentClients(clients map[string]config.TorrentClientConfig, selected []string, allowDisableSelector bool) map[string]config.TorrentClientConfig {
 	if len(clients) == 0 || len(selected) == 0 {
 		return nil
 	}
@@ -644,10 +642,10 @@ func selectTorrentClients(clients map[string]config.TorrentClientConfig, selecte
 	seenClients := make(map[string]struct{}, len(selected))
 	for _, value := range selected {
 		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
+		if trimmed == "" || isDisableSelector(value) && !allowDisableSelector {
 			continue
 		}
-		name, client, ok := lookupTorrentClientConfig(clients, trimmed)
+		name, client, ok := lookupTorrentClientConfig(clients, value)
 		if !ok {
 			continue
 		}
@@ -667,38 +665,11 @@ func selectTorrentClients(clients map[string]config.TorrentClientConfig, selecte
 // key casing when selected matches exactly or has exactly one case-insensitive
 // match. Ambiguous exact or folded matches are rejected.
 func lookupTorrentClientConfig(clients map[string]config.TorrentClientConfig, selected string) (string, config.TorrentClientConfig, bool) {
-	trimmed := strings.TrimSpace(selected)
-	if trimmed == "" {
+	name, ok := config.ResolveTorrentClientName(clients, selected)
+	if !ok {
 		return "", config.TorrentClientConfig{}, false
 	}
-
-	exactMatches := make([]string, 0, 1)
-	foldMatches := make([]string, 0, 1)
-	for name := range clients {
-		nameTrimmed := strings.TrimSpace(name)
-		if nameTrimmed == trimmed {
-			exactMatches = append(exactMatches, name)
-			continue
-		}
-		if strings.EqualFold(nameTrimmed, trimmed) {
-			foldMatches = append(foldMatches, name)
-		}
-	}
-
-	switch len(exactMatches) {
-	case 1:
-		name := exactMatches[0]
-		return name, clients[name], true
-	case 0:
-	default:
-		return "", config.TorrentClientConfig{}, false
-	}
-
-	if len(foldMatches) == 1 {
-		name := foldMatches[0]
-		return name, clients[name], true
-	}
-	return "", config.TorrentClientConfig{}, false
+	return name, clients[name], true
 }
 
 // withURLCapableInjectFallback replaces empty or URL-incompatible global/default
