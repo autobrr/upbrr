@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -1399,14 +1400,13 @@ func TestOpenInputVerifiesPreInputRecordHistoryWithoutClaimingLegacyWorkflow(t *
 
 func openActiveInputRecoveryRepository(ctx context.Context, t *testing.T) *db.SQLiteRepository {
 	t.Helper()
-	repo, err := db.OpenContext(ctx, filepath.Join(t.TempDir(), "active-input-recovery.sqlite"))
+	dbPath := filepath.Join(t.TempDir(), "active-input-recovery.sqlite")
+	dbfixture.WriteMigrated(t, dbPath)
+	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
 	return repo
 }
 
