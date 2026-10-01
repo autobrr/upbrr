@@ -524,6 +524,169 @@ async function waitForPopulatedRoute(page: Page, route: string) {
   await expect(page.getByRole("main")).not.toContainText("Loading configuration...");
 }
 
+for (const theme of ["minimal", "swizzin"]) {
+  for (const mode of ["light", "dark"]) {
+    for (const width of [1920, 1440, 768, 390, 320]) {
+      test(`grouped grids and Input controls stay aligned without clipping (${theme}, ${mode}, ${width}px)`, async ({
+        page,
+      }) => {
+        test.setTimeout(90_000);
+        const output = path.resolve("../docs/plans/visual-quality-evidence/grouped-grid");
+        await mkdir(output, { recursive: true });
+        const workspace = await createE2EWorkspace();
+        let app: AppServer | undefined;
+        try {
+          app = await startApp(workspace);
+          await page.setViewportSize({ width, height: 900 });
+          await fetchMetadata(page, app.url, workspace.sourcePath);
+          await page.evaluate(
+            ({ theme, mode }) =>
+              localStorage.setItem(
+                "upbrr:appearance:v1",
+                JSON.stringify({ version: 1, theme, mode, accents: {} }),
+              ),
+            { theme, mode },
+          );
+          await page.goto(new URL("input", app.url).toString());
+          await page.getByText("Edit Release Details", { exact: true }).click();
+          const editor = page.getByTestId("input-correction-editor");
+          await expect(editor).toBeVisible();
+          await editor.locator("details").evaluateAll((elements) =>
+            elements.forEach((element) => {
+              element.open = true;
+            }),
+          );
+          expect(
+            await editor.evaluate(
+              (element) =>
+                element.parentElement!.clientWidth - element.getBoundingClientRect().width,
+            ),
+          ).toBeLessThanOrEqual(1);
+          const category = editor.getByRole("textbox", { name: "Category", exact: true });
+          const automatic = editor.getByRole("button", { name: "Auto Category", exact: true });
+          const title = editor.getByRole("textbox", { name: "Title", exact: true });
+          const triState = editor.getByRole("combobox", { name: "No year", exact: true });
+          const categoryBounds = await category.boundingBox();
+          for (const control of [automatic, title, triState]) {
+            expect((await control.boundingBox())?.height).toBe(categoryBounds?.height);
+          }
+          expect((await automatic.boundingBox())?.y).toBe(categoryBounds?.y);
+          if (width >= 1440) {
+            for (const label of ["Type", "Source"]) {
+              const bounds = await editor
+                .getByRole("textbox", { name: label, exact: true })
+                .boundingBox();
+              expect(bounds?.y).toBe(categoryBounds?.y);
+              expect(bounds?.x).toBeGreaterThan(categoryBounds!.x);
+            }
+          }
+          expect(
+            await editor.evaluate((element) => element.scrollWidth - element.clientWidth),
+          ).toBeLessThanOrEqual(1);
+          expect(
+            await editor.locator("input, select, button").evaluateAll(
+              (elements) =>
+                elements.filter((element) => {
+                  if (!element.getClientRects().length) return false;
+                  const bounds = element.getBoundingClientRect();
+                  const parent = element
+                    .closest("[data-testid='input-correction-editor']")!
+                    .getBoundingClientRect();
+                  return bounds.left < parent.left - 1 || bounds.right > parent.right + 1;
+                }).length,
+            ),
+          ).toBe(0);
+          await captureFullContent(page, path.join(output, `${theme}-${mode}-input-${width}.png`));
+          await page.goto(new URL("settings", app.url).toString());
+          await page
+            .getByRole("navigation", { name: "Settings sections" })
+            .getByRole("button", { name: "Description", exact: true })
+            .click();
+          const settings = page.locator(".settings-body");
+          const settingsPage = page.getByTestId("settings-page");
+          if (width >= 1440) {
+            const bounds = (await settingsPage.boundingBox())!;
+            const main = (await page.locator("main.content").boundingBox())!;
+            expect(bounds.width).toBeLessThanOrEqual(1152);
+            expect(
+              Math.abs(bounds.x - main.x - (main.x + main.width - bounds.x - bounds.width)),
+            ).toBeLessThanOrEqual(1);
+          }
+          await expect(
+            settings.getByRole("heading", { name: "Description", exact: true }),
+          ).toBeVisible();
+          expect(
+            await settings.evaluate((element) => element.scrollWidth - element.clientWidth),
+          ).toBeLessThanOrEqual(1);
+          const numeric = settings.getByRole("spinbutton", { name: "Thumbnail Size", exact: true });
+          const toggle = settings.getByRole("switch", { name: "Add Logo", exact: true });
+          for (const group of ["Content", "Screenshot layout", "Custom headers"]) {
+            await expect(settings.getByRole("heading", { name: group, exact: true })).toBeVisible();
+          }
+          const screenshots = settings.getByRole("region", { name: "Screenshot layout" });
+          await expect(screenshots.locator("input")).toHaveCount(4);
+          const header = settings.getByRole("textbox", { name: "Tonemapped Header", exact: true });
+          await expect(header).toHaveJSProperty("tagName", "TEXTAREA");
+          if (width >= 1440) {
+            const columns = screenshots.getByRole("textbox", { name: "Screens Per Row" });
+            expect((await columns.boundingBox())?.y).toBe((await numeric.boundingBox())?.y);
+            expect((await columns.boundingBox())?.x).toBeGreaterThan(
+              (await numeric.boundingBox())!.x,
+            );
+          }
+          const checked = await toggle.getAttribute("aria-checked");
+          await toggle.focus();
+          await page.keyboard.press("Space");
+          await expect(toggle).toHaveAttribute(
+            "aria-checked",
+            checked === "true" ? "false" : "true",
+          );
+          await page.keyboard.press("Space");
+          await expect(toggle).toHaveAttribute("aria-checked", checked!);
+          if (theme === "minimal" && mode === "dark" && width === 1440) {
+            await page
+              .getByRole("navigation", { name: "Release workflow" })
+              .getByRole("button", { name: "Input", exact: true })
+              .click();
+            await page.getByRole("button", { name: "Close input", exact: true }).click();
+            await expect(
+              page.getByRole("button", { name: "Close input", exact: true }),
+            ).toBeDisabled();
+            await page
+              .getByRole("navigation", { name: "Workspace" })
+              .getByRole("button", { name: "Settings", exact: true })
+              .click();
+            const text = "[center]Synthetic header[/center]\nSecond line.";
+            await header.fill(text);
+            await settings.getByRole("switch", { name: "Show advanced" }).click();
+            await expect(
+              settings.getByRole("heading", { name: "Limits and processing" }),
+            ).toBeVisible();
+            await expect(header).toHaveValue(text);
+            await page.getByRole("button", { name: "Save", exact: true }).click();
+            await expect(
+              page.getByText("Settings saved and applied.", { exact: true }),
+            ).toBeVisible();
+            await page.reload();
+            await page
+              .getByRole("navigation", { name: "Settings sections" })
+              .getByRole("button", { name: "Description", exact: true })
+              .click();
+            await expect(header).toHaveValue(text);
+          }
+          await captureFullContent(
+            page,
+            path.join(output, `${theme}-${mode}-settings-${width}.png`),
+          );
+        } finally {
+          await app?.stop();
+          await workspace.cleanup();
+        }
+      });
+    }
+  }
+}
+
 test("capture baseline reported surfaces", async ({ page }) => {
   test.setTimeout(300_000);
   const workspace = await createE2EWorkspace();
@@ -2041,6 +2204,31 @@ test("capture all settings subsections and their visible controls", async ({ pag
     "API Tokens": 18,
     "Tracker Auth": 15,
   };
+  const expectedGroups: Record<string, string[]> = {
+    Main: [
+      "Notifications",
+      "Metadata and tracker checks",
+      "Interface and input history",
+      "Storage",
+    ],
+    "Image Hosting": ["Lostimg", "ReelFliX", "Samaritano"],
+    Metadata: ["Provider lookups", "Blu-ray matching", "Overrides and retained images"],
+    Screens: [
+      "Capture targets",
+      "Image uploads",
+      "Overlays",
+      "Tone mapping",
+      "Processing and compression",
+    ],
+    Description: ["Content", "Screenshot layout", "Custom headers", "Limits and processing"],
+    Arr: ["Sonarr", "Radarr", "Media paths"],
+    "Post Upload": ["Tracker handling", "Upload output", "Cross-seeding", "Client injection"],
+    Trackers: ["Connection and credentials", "Upload preferences", "Client handling"],
+    "Torrent Clients": ["Connection", "Folders", "Labels and tags", "Linking and path mapping"],
+    "Client Handling": ["Default client", "Client selection"],
+    "Torrent Specific": ["Torrent construction", "Rehash scheduling"],
+    Appearance: ["Theme"],
+  };
   try {
     app = await startApp(workspace);
     await page.goto(app.url);
@@ -2147,6 +2335,35 @@ test("capture all settings subsections and their visible controls", async ({ pag
             element.open = true;
           }),
         );
+        for (const group of expectedGroups[section] ?? []) {
+          await expect(
+            page
+              .locator(".settings-body")
+              .getByRole("heading", { name: group, exact: true })
+              .first(),
+          ).toBeVisible();
+        }
+        if (section === "Arr" && width === 1280) {
+          for (const service of ["Sonarr", "Radarr"]) {
+            const group = page.getByRole("region", { name: service, exact: true });
+            const url = await group
+              .getByRole("textbox", { name: `${service} URL`, exact: true })
+              .boundingBox();
+            const key = await group
+              .getByRole("textbox", { name: `${service} API Key`, exact: true })
+              .boundingBox();
+            expect(key?.y).toBe(url?.y);
+            expect(key?.x).toBeGreaterThan(url!.x);
+          }
+        }
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+        ).toBeLessThanOrEqual(1);
+        expect(
+          await page
+            .locator(".settings-body")
+            .evaluate((element) => element.scrollWidth - element.clientWidth),
+        ).toBeLessThanOrEqual(1);
         await expect
           .poll(
             async () =>

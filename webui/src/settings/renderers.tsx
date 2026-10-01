@@ -10,6 +10,7 @@ import { Select } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { trackerFieldPresentation } from "./trackerFields";
 import { settingsStyle } from "./style";
+import { SettingsFieldGroups } from "./FieldGroups";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 import {
   nextQbitDirectState,
@@ -27,7 +28,7 @@ import type {
 } from "../types";
 
 const settingsInputClass =
-  "h-9 rounded-md border border-input bg-card px-3 py-1.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-[3px] focus:ring-ring/50";
+  "min-h-9 rounded-md border border-input bg-card px-3 py-1.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-[3px] focus:ring-ring/50";
 
 type FieldOption = NonNullable<FieldMeta["options"]>[number];
 
@@ -260,7 +261,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     }
     if (typeHint === "boolean" || typeof value === "boolean") {
       return (
-        <label className={`${settingsStyle.field} cursor-pointer`} key={path.join(".")}>
+        <label className={settingsStyle.switchRow} key={path.join(".")}>
           <span>{displayLabel}</span>
           <Switch
             aria-label={displayLabel}
@@ -297,14 +298,35 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
       );
     }
 
+    const descriptionHeader =
+      path[0] === "Description" &&
+      [
+        "TonemappedHeader",
+        "CustomDescriptionHeader",
+        "ScreenshotHeader",
+        "DiscMenuHeader",
+        "CustomSignature",
+      ].includes(label);
     return (
-      <label className={settingsStyle.field} key={path.join(".")}>
+      <label
+        className={`${settingsStyle.field}${descriptionHeader ? " col-span-full" : ""}`}
+        key={path.join(".")}
+      >
         <span>{displayLabel}</span>
-        <input
-          className={settingsInputClass}
-          value={value === null ? "" : String(value ?? "")}
-          onChange={(event) => updateConfigValue(path, event.target.value)}
-        />
+        {descriptionHeader ? (
+          <textarea
+            className={`${settingsInputClass} w-full resize-y`}
+            rows={3}
+            value={value === null ? "" : String(value ?? "")}
+            onChange={(event) => updateConfigValue(path, event.target.value)}
+          />
+        ) : (
+          <input
+            className={settingsInputClass}
+            value={value === null ? "" : String(value ?? "")}
+            onChange={(event) => updateConfigValue(path, event.target.value)}
+          />
+        )}
       </label>
     );
   };
@@ -511,184 +533,255 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       Remove
                     </Button>
                   </div>
-                  <div className={settingsStyle.grid}>
-                    {renderField(
-                      "Type",
-                      valueFor(client, "Type", "TorrentClient") ?? "qbit",
-                      ["TorrentClients", name, "Type"],
-                      meta.Type,
-                    )}
-                    {watchClient
-                      ? renderField(
-                          "WatchFolder",
-                          client.WatchFolder ?? "",
-                          ["TorrentClients", name, "WatchFolder"],
-                          meta.WatchFolder,
-                        )
-                      : null}
-                    {watchClient
-                      ? renderField(
-                          "StorageDir",
-                          client.StorageDir ?? "",
-                          ["TorrentClients", name, "StorageDir"],
-                          meta.StorageDir,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "QuiProxyURL",
-                          client.QuiProxyURL ?? "",
-                          ["TorrentClients", name, "QuiProxyURL"],
-                          meta.QuiProxyURL,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "QbitCategoryValue",
-                          valueFor(client, "QbitCategoryValue", "Category") ?? "",
-                          ["TorrentClients", name, "QbitCategoryValue"],
-                          meta.QbitCategoryValue,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "QbitTag",
-                          qbitTagFor(client),
-                          ["TorrentClients", name, "QbitTag"],
-                          meta.QbitTag,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "QbitCrossCategory",
-                          client.QbitCrossCategory ?? "",
-                          ["TorrentClients", name, "QbitCrossCategory"],
-                          meta.QbitCrossCategory,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "QbitCrossTag",
-                          client.QbitCrossTag ?? "",
-                          ["TorrentClients", name, "QbitCrossTag"],
-                          meta.QbitCrossTag,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "UseTrackerAsTag",
-                          client.UseTrackerAsTag ?? false,
-                          ["TorrentClients", name, "UseTrackerAsTag"],
-                          meta.UseTrackerAsTag,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "Linking",
-                          client.Linking ?? "",
-                          ["TorrentClients", name, "Linking"],
-                          meta.Linking,
-                        )
-                      : null}
-                    {!watchClient ? (
-                      <label
-                        className={settingsStyle.switchRow}
-                        key={`TorrentClients-${name}-AllowFallback`}
-                      >
-                        <span>Allow link fallback</span>
-                        <Switch
-                          aria-label="Allow link fallback"
-                          checked={Boolean(client.AllowFallback ?? true)}
-                          onChange={(event) =>
-                            updateConfigValue(
-                              ["TorrentClients", name, "AllowFallback"],
-                              event.target.checked,
+                  <SettingsFieldGroups
+                    section="TorrentClients"
+                    fields={[
+                      [
+                        "Type",
+                        renderField(
+                          "Type",
+                          valueFor(client, "Type", "TorrentClient") ?? "qbit",
+                          ["TorrentClients", name, "Type"],
+                          meta.Type,
+                        ),
+                      ],
+                      [
+                        "WatchFolder",
+                        watchClient
+                          ? renderField(
+                              "WatchFolder",
+                              client.WatchFolder ?? "",
+                              ["TorrentClients", name, "WatchFolder"],
+                              meta.WatchFolder,
                             )
-                          }
-                        />
-                      </label>
-                    ) : null}
-                    {!watchClient
-                      ? renderField(
-                          "LinkedFolder",
-                          arrayFor(client, "LinkedFolder"),
-                          ["TorrentClients", name, "LinkedFolder"],
-                          meta.LinkedFolder,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "LocalPath",
-                          arrayFor(client, "LocalPath"),
-                          ["TorrentClients", name, "LocalPath"],
-                          meta.LocalPath,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "RemotePath",
-                          arrayFor(client, "RemotePath"),
-                          ["TorrentClients", name, "RemotePath"],
-                          meta.RemotePath,
-                        )
-                      : null}
-                    {!watchClient
-                      ? renderField(
-                          "AutomaticManagementPaths",
-                          arrayFor(client, "AutomaticManagementPaths"),
-                          ["TorrentClients", name, "AutomaticManagementPaths"],
-                          meta.AutomaticManagementPaths,
-                        )
-                      : null}
-                    {!watchClient && advancedOpen
-                      ? renderField(
-                          "VerifyWebUICertificate",
-                          client.VerifyWebUICertificate ?? true,
-                          ["TorrentClients", name, "VerifyWebUICertificate"],
-                          meta.VerifyWebUICertificate,
-                        )
-                      : null}
-                  </div>
-
-                  {!watchClient ? (
-                    <label className={settingsStyle.switchRow}>
-                      <span>qBit direct</span>
-                      <Switch
-                        aria-label="qBit direct"
-                        checked={directEnabled}
-                        onChange={(event) => setQbitDirect(name, event.target.checked)}
-                      />
-                    </label>
-                  ) : null}
-
-                  {!watchClient && directEnabled ? (
-                    <div className={settingsStyle.grid}>
-                      {renderField(
+                          : null,
+                      ],
+                      [
+                        "StorageDir",
+                        watchClient
+                          ? renderField(
+                              "StorageDir",
+                              client.StorageDir ?? "",
+                              ["TorrentClients", name, "StorageDir"],
+                              meta.StorageDir,
+                            )
+                          : null,
+                      ],
+                      [
+                        "QuiProxyURL",
+                        !watchClient
+                          ? renderField(
+                              "QuiProxyURL",
+                              client.QuiProxyURL ?? "",
+                              ["TorrentClients", name, "QuiProxyURL"],
+                              meta.QuiProxyURL,
+                            )
+                          : null,
+                      ],
+                      [
+                        "QbitCategoryValue",
+                        !watchClient
+                          ? renderField(
+                              "QbitCategoryValue",
+                              valueFor(client, "QbitCategoryValue", "Category") ?? "",
+                              ["TorrentClients", name, "QbitCategoryValue"],
+                              meta.QbitCategoryValue,
+                            )
+                          : null,
+                      ],
+                      [
+                        "QbitTag",
+                        !watchClient
+                          ? renderField(
+                              "QbitTag",
+                              qbitTagFor(client),
+                              ["TorrentClients", name, "QbitTag"],
+                              meta.QbitTag,
+                            )
+                          : null,
+                      ],
+                      [
+                        "QbitCrossCategory",
+                        !watchClient
+                          ? renderField(
+                              "QbitCrossCategory",
+                              client.QbitCrossCategory ?? "",
+                              ["TorrentClients", name, "QbitCrossCategory"],
+                              meta.QbitCrossCategory,
+                            )
+                          : null,
+                      ],
+                      [
+                        "QbitCrossTag",
+                        !watchClient
+                          ? renderField(
+                              "QbitCrossTag",
+                              client.QbitCrossTag ?? "",
+                              ["TorrentClients", name, "QbitCrossTag"],
+                              meta.QbitCrossTag,
+                            )
+                          : null,
+                      ],
+                      [
+                        "UseTrackerAsTag",
+                        !watchClient
+                          ? renderField(
+                              "UseTrackerAsTag",
+                              client.UseTrackerAsTag ?? false,
+                              ["TorrentClients", name, "UseTrackerAsTag"],
+                              meta.UseTrackerAsTag,
+                            )
+                          : null,
+                      ],
+                      [
+                        "Linking",
+                        !watchClient
+                          ? renderField(
+                              "Linking",
+                              client.Linking ?? "",
+                              ["TorrentClients", name, "Linking"],
+                              meta.Linking,
+                            )
+                          : null,
+                      ],
+                      [
+                        "AllowFallback",
+                        !watchClient ? (
+                          <label
+                            className={settingsStyle.switchRow}
+                            key={`TorrentClients-${name}-AllowFallback`}
+                          >
+                            <span>Allow link fallback</span>
+                            <Switch
+                              aria-label="Allow link fallback"
+                              checked={Boolean(client.AllowFallback ?? true)}
+                              onChange={(event) =>
+                                updateConfigValue(
+                                  ["TorrentClients", name, "AllowFallback"],
+                                  event.target.checked,
+                                )
+                              }
+                            />
+                          </label>
+                        ) : null,
+                      ],
+                      [
+                        "LinkedFolder",
+                        !watchClient
+                          ? renderField(
+                              "LinkedFolder",
+                              arrayFor(client, "LinkedFolder"),
+                              ["TorrentClients", name, "LinkedFolder"],
+                              meta.LinkedFolder,
+                            )
+                          : null,
+                      ],
+                      [
+                        "LocalPath",
+                        !watchClient
+                          ? renderField(
+                              "LocalPath",
+                              arrayFor(client, "LocalPath"),
+                              ["TorrentClients", name, "LocalPath"],
+                              meta.LocalPath,
+                            )
+                          : null,
+                      ],
+                      [
+                        "RemotePath",
+                        !watchClient
+                          ? renderField(
+                              "RemotePath",
+                              arrayFor(client, "RemotePath"),
+                              ["TorrentClients", name, "RemotePath"],
+                              meta.RemotePath,
+                            )
+                          : null,
+                      ],
+                      [
+                        "AutomaticManagementPaths",
+                        !watchClient
+                          ? renderField(
+                              "AutomaticManagementPaths",
+                              arrayFor(client, "AutomaticManagementPaths"),
+                              ["TorrentClients", name, "AutomaticManagementPaths"],
+                              meta.AutomaticManagementPaths,
+                            )
+                          : null,
+                      ],
+                      [
+                        "VerifyWebUICertificate",
+                        !watchClient && advancedOpen
+                          ? renderField(
+                              "VerifyWebUICertificate",
+                              client.VerifyWebUICertificate ?? true,
+                              ["TorrentClients", name, "VerifyWebUICertificate"],
+                              meta.VerifyWebUICertificate,
+                            )
+                          : null,
+                      ],
+                      [
+                        "QbitDirect",
+                        !watchClient ? (
+                          <label
+                            className={`${settingsStyle.switchRow} col-span-full border-t border-foreground/10 pt-4`}
+                            key={`TorrentClients-${name}-QbitDirect`}
+                          >
+                            <span>qBit direct</span>
+                            <Switch
+                              aria-label="qBit direct"
+                              checked={directEnabled}
+                              onChange={(event) => setQbitDirect(name, event.target.checked)}
+                            />
+                          </label>
+                        ) : null,
+                      ],
+                      [
                         "QbitURL",
-                        valueFor(client, "QbitURL", "URL") ?? "",
-                        ["TorrentClients", name, "QbitURL"],
-                        meta.QbitURL,
-                      )}
-                      {renderField(
+                        !watchClient && directEnabled
+                          ? renderField(
+                              "QbitURL",
+                              valueFor(client, "QbitURL", "URL") ?? "",
+                              ["TorrentClients", name, "QbitURL"],
+                              meta.QbitURL,
+                            )
+                          : null,
+                      ],
+                      [
                         "QbitPort",
-                        client.QbitPort ?? 0,
-                        ["TorrentClients", name, "QbitPort"],
-                        meta.QbitPort,
-                      )}
-                      {renderField(
+                        !watchClient && directEnabled
+                          ? renderField(
+                              "QbitPort",
+                              client.QbitPort ?? 0,
+                              ["TorrentClients", name, "QbitPort"],
+                              meta.QbitPort,
+                            )
+                          : null,
+                      ],
+                      [
                         "QbitUser",
-                        valueFor(client, "QbitUser", "Username") ?? "",
-                        ["TorrentClients", name, "QbitUser"],
-                        meta.QbitUser,
-                      )}
-                      {renderField(
+                        !watchClient && directEnabled
+                          ? renderField(
+                              "QbitUser",
+                              valueFor(client, "QbitUser", "Username") ?? "",
+                              ["TorrentClients", name, "QbitUser"],
+                              meta.QbitUser,
+                            )
+                          : null,
+                      ],
+                      [
                         "QbitPass",
-                        valueFor(client, "QbitPass", "Password") ?? "",
-                        ["TorrentClients", name, "QbitPass"],
-                        meta.QbitPass,
-                      )}
-                    </div>
-                  ) : null}
+                        !watchClient && directEnabled
+                          ? renderField(
+                              "QbitPass",
+                              valueFor(client, "QbitPass", "Password") ?? "",
+                              ["TorrentClients", name, "QbitPass"],
+                              meta.QbitPass,
+                            )
+                          : null,
+                      ],
+                    ]}
+                  />
                 </div>
               );
             })
@@ -955,10 +1048,12 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       </Button>
                     </summary>
                     <div className={settingsStyle.body}>
-                      <div className={settingsStyle.grid}>
-                        {schema
+                      <SettingsFieldGroups
+                        section="Trackers"
+                        fields={schema
                           .filter((meta) => !(meta.advanced && !advancedOpen))
-                          .map((meta) =>
+                          .map((meta) => [
+                            meta.key,
                             renderField(
                               meta.key,
                               value[meta.key] ??
@@ -967,8 +1062,8 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                               ["Trackers", "Trackers", key, meta.key],
                               meta,
                             ),
-                          )}
-                      </div>
+                          ])}
+                      />
                     </div>
                   </details>
                 );
@@ -1078,54 +1173,63 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         <div className={settingsStyle.subgroup}>
           <div className={settingsStyle.title}>Additional Hosts</div>
           <div className={settingsStyle.grid}>
-            <label className={settingsStyle.switchRow}>
-              <span>Lostimg enabled</span>
-              <Switch
-                aria-label="Lostimg enabled"
-                checked={Boolean(imageCfg.LostimgEnabled)}
-                onChange={(event) =>
-                  updateConfigValue(["ImageHosting", "LostimgEnabled"], event.target.checked)
-                }
-              />
-            </label>
-            {renderField(
-              "LostimgAPI",
-              (imageCfg.LostimgAPI as ConfigValue) ?? "",
-              ["ImageHosting", "LostimgAPI"],
-              sectionFieldMeta.ImageHosting.LostimgAPI,
-            )}
-            <label className={settingsStyle.switchRow}>
-              <span>ReelFliX enabled</span>
-              <Switch
-                aria-label="ReelFliX enabled"
-                checked={Boolean(imageCfg.ReelflixEnabled)}
-                onChange={(event) =>
-                  updateConfigValue(["ImageHosting", "ReelflixEnabled"], event.target.checked)
-                }
-              />
-            </label>
-            {renderField(
-              "ReelflixAPI",
-              (imageCfg.ReelflixAPI as ConfigValue) ?? "",
-              ["ImageHosting", "ReelflixAPI"],
-              sectionFieldMeta.ImageHosting.ReelflixAPI,
-            )}
-            <label className={settingsStyle.switchRow}>
-              <span>Samaritano enabled</span>
-              <Switch
-                aria-label="Samaritano enabled"
-                checked={Boolean(imageCfg.SamaritanoEnabled)}
-                onChange={(event) =>
-                  updateConfigValue(["ImageHosting", "SamaritanoEnabled"], event.target.checked)
-                }
-              />
-            </label>
-            {renderField(
-              "SamaritanoAPI",
-              (imageCfg.SamaritanoAPI as ConfigValue) ?? "",
-              ["ImageHosting", "SamaritanoAPI"],
-              sectionFieldMeta.ImageHosting.SamaritanoAPI,
-            )}
+            <section className="grid min-w-0 content-start gap-3" aria-label="Lostimg">
+              <h3 className="m-0 text-sm font-semibold">Lostimg</h3>
+              <label className={settingsStyle.switchRow}>
+                <span>Lostimg enabled</span>
+                <Switch
+                  aria-label="Lostimg enabled"
+                  checked={Boolean(imageCfg.LostimgEnabled)}
+                  onChange={(event) =>
+                    updateConfigValue(["ImageHosting", "LostimgEnabled"], event.target.checked)
+                  }
+                />
+              </label>
+              {renderField(
+                "LostimgAPI",
+                (imageCfg.LostimgAPI as ConfigValue) ?? "",
+                ["ImageHosting", "LostimgAPI"],
+                sectionFieldMeta.ImageHosting.LostimgAPI,
+              )}
+            </section>
+            <section className="grid min-w-0 content-start gap-3" aria-label="ReelFliX">
+              <h3 className="m-0 text-sm font-semibold">ReelFliX</h3>
+              <label className={settingsStyle.switchRow}>
+                <span>ReelFliX enabled</span>
+                <Switch
+                  aria-label="ReelFliX enabled"
+                  checked={Boolean(imageCfg.ReelflixEnabled)}
+                  onChange={(event) =>
+                    updateConfigValue(["ImageHosting", "ReelflixEnabled"], event.target.checked)
+                  }
+                />
+              </label>
+              {renderField(
+                "ReelflixAPI",
+                (imageCfg.ReelflixAPI as ConfigValue) ?? "",
+                ["ImageHosting", "ReelflixAPI"],
+                sectionFieldMeta.ImageHosting.ReelflixAPI,
+              )}
+            </section>
+            <section className="grid min-w-0 content-start gap-3" aria-label="Samaritano">
+              <h3 className="m-0 text-sm font-semibold">Samaritano</h3>
+              <label className={settingsStyle.switchRow}>
+                <span>Samaritano enabled</span>
+                <Switch
+                  aria-label="Samaritano enabled"
+                  checked={Boolean(imageCfg.SamaritanoEnabled)}
+                  onChange={(event) =>
+                    updateConfigValue(["ImageHosting", "SamaritanoEnabled"], event.target.checked)
+                  }
+                />
+              </label>
+              {renderField(
+                "SamaritanoAPI",
+                (imageCfg.SamaritanoAPI as ConfigValue) ?? "",
+                ["ImageHosting", "SamaritanoAPI"],
+                sectionFieldMeta.ImageHosting.SamaritanoAPI,
+              )}
+            </section>
           </div>
         </div>
       </div>

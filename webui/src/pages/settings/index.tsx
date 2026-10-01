@@ -21,6 +21,7 @@ import type {
 import { formatApplicationVersion } from "../../utils/applicationInfo";
 import APITokensSettings from "./api_tokens";
 import { AppearanceSettings } from "../../themes/AppearanceSettings";
+import { SettingsFieldGroups } from "../../settings/FieldGroups";
 import { confirmationDialogStyle, settingsStyle } from "../../settings/style";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
@@ -46,7 +47,7 @@ const apiTokensSection = {
 };
 
 const settingsInputClass =
-  "h-8 rounded-md border border-input bg-card px-2.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
+  "h-9 rounded-md border border-input bg-card px-3 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
 // Tracker-supplied auth kinds can be long adapter descriptors; keep chips
 // wrapped inside the auth card on narrow screens.
 const trackerAuthChipClass =
@@ -694,7 +695,7 @@ export default function SettingsPage(props: Props) {
   );
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4" data-testid="settings-page">
       <header className="relative z-[1] max-w-[720px]">
         <p className={pageStyle.eyebrow}>upbrr</p>
         <h1>Settings</h1>
@@ -848,9 +849,9 @@ export default function SettingsPage(props: Props) {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-[180px_minmax(0,1fr)] gap-3 max-[960px]:grid-cols-1">
+        <div className="grid grid-cols-[180px_minmax(0,1fr)] gap-6 max-[960px]:grid-cols-1">
           <nav
-            className="settings-tags sticky top-4 flex flex-col gap-1 self-start rounded-lg border border-border bg-card p-1.5 max-[960px]:static max-[960px]:flex-row max-[960px]:flex-wrap"
+            className="settings-tags sticky top-4 flex flex-col gap-1 self-start max-[960px]:static max-[960px]:flex-row max-[960px]:flex-wrap"
             aria-label="Settings sections"
           >
             {[
@@ -867,7 +868,7 @@ export default function SettingsPage(props: Props) {
                 className={cn(
                   "flex min-h-9 w-auto shrink-0 items-center rounded-md px-3 text-left text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-[961px]:w-full",
                   settingsSection === section.key
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-accent text-accent-foreground"
                     : "bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 )}
                 onClick={() => setSettingsSection(section.key)}
@@ -886,8 +887,11 @@ export default function SettingsPage(props: Props) {
             settingsSection === apiTokensSection.key ||
             settingsSection === trackerAuthSection.key ? null : configData ? (
               <div className={settingsStyle.form}>
+                <h2 className="m-0 text-lg font-semibold">
+                  {settingsSections.find((section) => section.key === settingsSection)?.label}
+                </h2>
                 {showAdvancedToggle ? (
-                  <label className={settingsStyle.switchRow}>
+                  <label className={`${settingsStyle.switchRow} self-start gap-6`}>
                     <span>Show advanced</span>
                     <Switch
                       aria-label="Show advanced"
@@ -913,7 +917,7 @@ export default function SettingsPage(props: Props) {
                   typeof configData.TorrentClients === "object" ? (
                   renderTorrentClientsSection(advancedOpen)
                 ) : (
-                  <div className={settingsStyle.grid}>
+                  <div className="grid min-w-0 gap-5">
                     {(() => {
                       const section = settingsSections.find((item) => item.key === settingsSection);
                       if (!section) return null;
@@ -926,15 +930,17 @@ export default function SettingsPage(props: Props) {
                         return null;
                       }
                       const meta = sectionFieldMeta[section.jsonKey] || {};
-                      return Object.entries(sectionData as ConfigMap)
-                        .filter(([key]) => {
-                          const fieldMeta = meta[key];
-                          if (fieldMeta?.advanced && !advancedOpen) return false;
-                          return true;
-                        })
-                        .map(([key, value]) =>
-                          renderField(key, value, [section.jsonKey, key], meta[key]),
-                        );
+                      return (
+                        <SettingsFieldGroups
+                          section={section.jsonKey}
+                          fields={Object.entries(sectionData as ConfigMap)
+                            .filter(([key]) => !meta[key]?.advanced || advancedOpen)
+                            .map(([key, value]) => [
+                              key,
+                              renderField(key, value, [section.jsonKey, key], meta[key]),
+                            ])}
+                        />
+                      );
                     })()}
                   </div>
                 )}

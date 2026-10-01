@@ -3,16 +3,16 @@
 
 /** Layout shared by schema fields and the hand-built settings sections. */
 export const settingsStyle = {
-  form: "settings-form flex flex-col gap-2.5",
-  grid: "grid grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-2.5",
+  form: "settings-form flex flex-col gap-5",
+  grid: "grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-x-6 gap-y-5",
   field:
-    "settings-field grid min-w-0 content-start gap-1.5 rounded-lg border border-border bg-card p-2.5 text-sm text-card-foreground [&>span:first-child]:font-semibold [&>span:first-child]:leading-tight [&>span:first-child]:text-foreground [&>label:first-child]:font-semibold [&>label:first-child]:leading-tight [&>label:first-child]:text-foreground [&>input]:min-h-9 [&>select]:min-h-9",
+    "settings-field grid min-w-0 content-start gap-1.5 text-sm text-card-foreground [&>*]:min-w-0 [&>span:first-child]:font-medium [&>label:first-child]:font-medium [&>input]:min-h-9 [&>select]:min-h-9",
   switchRow:
-    "settings-switch-row settings-field--switch flex min-h-16 cursor-pointer items-center justify-between gap-2.5 rounded-lg border border-border bg-card p-2.5 text-sm text-foreground",
+    "settings-switch-row settings-field--switch flex min-h-14 cursor-pointer items-center justify-between gap-4 py-2 text-sm text-foreground [&>span]:min-w-0 [&>span]:font-medium",
   toggle:
     "flex min-h-10 cursor-pointer items-center justify-between gap-2 rounded-[10px] border border-foreground/10 bg-card/55 px-[9px] py-[7px] text-[0.88rem] text-foreground",
   subgroup:
-    "flex flex-col gap-2 rounded-lg border border-foreground/10 bg-foreground/[0.035] p-2.5",
+    "flex min-w-0 flex-col gap-4 rounded-lg border border-foreground/10 bg-background/50 p-4 sm:p-5",
   card: "settings-card flex flex-col gap-2 rounded-lg border border-foreground/10 bg-foreground/[0.035] p-2.5",
   title: "font-semibold text-foreground",
   collapsible: "flex flex-col gap-2",

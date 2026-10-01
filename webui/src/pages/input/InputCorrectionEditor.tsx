@@ -34,6 +34,15 @@ const refFor = (field: string, trackId = ""): CorrectionFieldRef => ({
   ...(trackId ? { trackId } : {}),
 });
 
+const inputFieldClass =
+  "grid min-w-0 content-start gap-1.5 text-sm [&_input]:h-9 [&_input]:min-w-0 [&_input]:rounded-md [&_input]:px-3 [&_input]:py-1.5 [&_input]:text-sm [&>label]:font-medium";
+
+const inputSectionClass =
+  "grid min-w-0 gap-4 rounded-lg border border-foreground/10 bg-background/50 p-4 sm:p-5";
+
+const inputGridClass =
+  "grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,19rem),1fr))] gap-x-6 gap-y-5";
+
 function CommaListInput({
   id,
   label,
@@ -149,19 +158,21 @@ function CorrectionRow({
 }>) {
   return (
     <div
-      className={settingsStyle.field}
+      className={inputFieldClass}
       data-correction-field={field}
       {...(trackId ? { "data-track-id": trackId } : {})}
     >
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <label htmlFor={`correction-${field}-${trackId || "value"}`}>{label}</label>
+      <label className="font-medium" htmlFor={`correction-${field}-${trackId || "value"}`}>
+        {label}
+      </label>
+      <div className="flex min-w-0 items-start gap-2">
+        <div className="min-w-0 flex-1 [&_input]:w-full">{children}</div>
         {!readOnly ? (
           <Button type="button" className="shrink-0" aria-label={`Auto ${label}`} onClick={onAuto}>
             Auto
           </Button>
         ) : null}
       </div>
-      <div className="min-w-0 [&_input]:w-full">{children}</div>
       <span className="text-xs text-muted-foreground">
         {manual ? "Manual value" : "Automatic value"}
         {stale && !readOnly ? " · Saved value needs confirmation" : ""}
@@ -196,7 +207,7 @@ function TriStateField({
 }>) {
   const id = `correction-${field}-value`;
   return (
-    <div className={settingsStyle.field} data-correction-field={field}>
+    <div className={inputFieldClass} data-correction-field={field}>
       <label htmlFor={id}>{label}</label>
       <Select
         id={id}
@@ -489,7 +500,7 @@ function TrackerInputField({
       ),
   };
   return (
-    <div className={settingsStyle.field} data-tracker-input={`${tracker}:${field.Key}`}>
+    <div className={inputFieldClass} data-tracker-input={`${tracker}:${field.Key}`}>
       <label htmlFor={id}>
         {field.Label}
         {field.Required ? " *" : ""}
@@ -560,10 +571,10 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
     facet.changeMetadata({ ...view.intent.metadata, [key]: value });
 
   return (
-    <div className="grid gap-4" data-testid="input-correction-editor">
-      <div className={settingsStyle.subgroup}>
+    <div className="grid w-full min-w-0 gap-5" data-testid="input-correction-editor">
+      <div className={inputSectionClass}>
         <div className={settingsStyle.title}>Provider IDs</div>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
+        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-x-6 gap-y-5">
           {identityFields.map(({ field, label, key }) => {
             const manual = hasOwn(view.intent.identity, key);
             const manualValue = view.intent.identity[key];
@@ -602,9 +613,9 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         </div>
       </div>
 
-      <div className={settingsStyle.subgroup}>
+      <div className={inputSectionClass}>
         <div className={settingsStyle.title}>Release name</div>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
+        <div className={inputGridClass}>
           {releaseStringFields.map(({ field, label, key, automatic }) => {
             const readOnly = key === "ManualYear" && isTV;
             const manual = !readOnly && hasOwn(view.intent.releaseName, key);
@@ -647,6 +658,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               </CorrectionRow>
             );
           })}
+          <div className="col-span-full border-t border-foreground/10" />
           {releaseBooleanFields.map(({ field, label, key }) => (
             <TriStateField
               key={field}
@@ -666,9 +678,9 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         </div>
       </div>
 
-      <div className={settingsStyle.subgroup}>
+      <div className={inputSectionClass}>
         <div className={settingsStyle.title}>Metadata and languages</div>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
+        <div className={inputGridClass}>
           {metadataStringFields.map(({ field, label, key, automatic }) => {
             const readOnly = key === "Title" || key === "OriginalTitle";
             const manual = !readOnly && hasOwn(view.intent.metadata, key);
@@ -741,7 +753,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         </div>
       </div>
 
-      <details className={settingsStyle.subgroup} data-testid="input-track-coverage">
+      <details className={inputSectionClass} data-testid="input-track-coverage">
         <summary className="cursor-pointer font-semibold">Inspected tracks</summary>
         <p className="text-muted-foreground">
           {release?.Media?.TrackCoverageComplete
@@ -751,7 +763,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         {(release?.Media?.Tracks || []).length === 0 ? (
           <p className="text-muted-foreground">No inspected audio or subtitle tracks.</p>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
+          <div className={inputGridClass}>
             {(release?.Media?.Tracks || []).map((track, index) => {
               const field = "metadata.track_languages";
               const correction = (view.intent.metadata.TrackLanguages || []).find(
@@ -807,11 +819,11 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         )}
       </details>
 
-      <details className={settingsStyle.subgroup} data-testid="input-source-options">
+      <details className={inputSectionClass} data-testid="input-source-options">
         <summary className="cursor-pointer font-semibold">Source options</summary>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
+        <div className={inputGridClass}>
           {view.selectedTrackers.map((tracker) => (
-            <div className={settingsStyle.field} key={tracker} data-tracker-source-id={tracker}>
+            <div className={inputFieldClass} key={tracker} data-tracker-source-id={tracker}>
               <label htmlFor={`tracker-source-${tracker}`}>{tracker} source ID</label>
               <input
                 id={`tracker-source-${tracker}`}
@@ -873,7 +885,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               }
             />
           </label>
-          <div className={settingsStyle.field}>
+          <div className={inputFieldClass}>
             <label htmlFor="input-client-search">Client search name</label>
             <input
               id="input-client-search"
@@ -888,12 +900,12 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
       </details>
 
       {(view.readiness?.schemas || []).length > 0 ? (
-        <details className={settingsStyle.subgroup} data-testid="input-tracker-fields">
+        <details className={inputSectionClass} data-testid="input-tracker-fields">
           <summary className="cursor-pointer font-semibold">Tracker Input</summary>
           {(view.readiness?.schemas || []).map((schema) => (
             <section key={schema.Tracker} aria-label={`${schema.Tracker} Input fields`}>
               <h4 className="mb-2 text-sm font-semibold">{schema.Tracker}</h4>
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
+              <div className={inputGridClass}>
                 {schema.Fields.map((field) => (
                   <TrackerInputField
                     key={field.Key}
@@ -916,7 +928,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
       ) : null}
 
       {view.readiness ? (
-        <details className={settingsStyle.subgroup} data-testid="input-readiness">
+        <details className={inputSectionClass} data-testid="input-readiness">
           <summary className="cursor-pointer font-semibold">Input readiness</summary>
           <p className="text-muted-foreground">Status: {view.readiness.status}</p>
           {(view.readiness.fields || []).length === 0 ? (

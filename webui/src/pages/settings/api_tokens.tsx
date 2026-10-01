@@ -21,7 +21,7 @@ const supportedScopes: ReadonlyArray<Readonly<{ value: APITokenScope; label: str
 ];
 
 const inputClass =
-  "h-8 w-full rounded-md border border-input bg-card px-2.5 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
+  "h-9 w-full rounded-md border border-input bg-card px-3 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
 const apiTokensKey = ["api-tokens"] as const;
 
 /** Manages persistent public API tokens without exposing stored hashes or revoked secrets. */

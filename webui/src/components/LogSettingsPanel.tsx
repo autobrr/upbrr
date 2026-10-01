@@ -12,6 +12,7 @@ import { subscribeWebEvent } from "../api/client";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../types";
 import { cn } from "../utils/cn";
 import { settingsStyle } from "../settings/style";
+import { SettingsFieldGroups } from "../settings/FieldGroups";
 
 type LogEntry = {
   ID: number;
@@ -329,12 +330,14 @@ export default function LogSettingsPanel({
             <p className="helper">Adjust log verbosity and file rotation.</p>
           </div>
         </div>
-        <div className={settingsStyle.grid}>
-          {["Level", "FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => {
+        <SettingsFieldGroups
+          section="Logging"
+          fields={["Level", "FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => {
             const meta = fieldMeta[key];
             if (key === "Level") {
               const label = meta?.label ?? "Level";
-              return (
+              return [
+                key,
                 <label className={settingsStyle.field} key="Logging.Level">
                   <span>{label}</span>
                   <Select
@@ -352,12 +355,12 @@ export default function LogSettingsPanel({
                       </option>
                     ))}
                   </Select>
-                </label>
-              );
+                </label>,
+              ];
             }
-            return renderField(key, loggingConfig[key], ["Logging", key], meta);
+            return [key, renderField(key, loggingConfig[key], ["Logging", key], meta)];
           })}
-        </div>
+        />
         <div className="grid min-w-0 gap-1 rounded-md border border-border bg-muted px-3 py-2 text-foreground">
           <span className="text-sm font-medium text-muted-foreground">Log path</span>
           <span className="text-sm font-medium [overflow-wrap:anywhere]">

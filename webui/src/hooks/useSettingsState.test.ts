@@ -1979,7 +1979,7 @@ describe("tracker catalog interactions", () => {
     ).toBeInTheDocument();
   });
 
-  it("adds a synthetic Unit3D tracker and preserves catalog field order", async () => {
+  it("adds a synthetic Unit3D tracker and groups its catalog fields by purpose", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -2010,7 +2010,17 @@ describe("tracker catalog interactions", () => {
     const labels = Array.from(
       (card as HTMLElement).querySelectorAll<HTMLSpanElement>("label.settings-field > span"),
     ).map((label) => label.textContent);
-    expect(labels).toEqual(["Uploader name", "API key", "Image host"]);
+    expect(labels).toEqual(["API key", "Uploader name", "Image host"]);
+    const tracker = within(card as HTMLElement);
+    expect(tracker.getByRole("region", { name: "Connection and credentials" })).toContainElement(
+      tracker.getByLabelText("API key"),
+    );
+    expect(tracker.getByRole("region", { name: "Upload preferences" })).toContainElement(
+      tracker.getByLabelText("Uploader name"),
+    );
+    expect(tracker.getByRole("region", { name: "Images and descriptions" })).toContainElement(
+      tracker.getByLabelText("Image host"),
+    );
   });
 
   it("shows a tracker as configured when only one required credential is present", async () => {
