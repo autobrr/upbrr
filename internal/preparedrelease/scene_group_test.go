@@ -87,6 +87,8 @@ func TestPrepareRecomputesV18SceneGroupAfterRestart(t *testing.T) {
 	}
 }
 
+// sceneGroupPreparation builds a SQLite-backed pipeline whose module can be
+// restarted while retaining persisted facts and a counted synthetic scene lookup.
 func sceneGroupPreparation(t *testing.T) (*db.SQLiteRepository, api.PrepareInput, *preparedSceneDetector, func() *Module) {
 	t.Helper()
 	sourcePath := writePreparedTestFile(t, "Example.Movie.2026.1080p.WEB-DL.H.264-grp.mkv", "synthetic media")
@@ -120,6 +122,8 @@ func sceneGroupPreparation(t *testing.T) (*db.SQLiteRepository, api.PrepareInput
 	return repo, api.PrepareInput{SourcePath: sourcePath}, detector, restart
 }
 
+// assertPreparedSceneGroup checks that one exact prepared generation projects
+// the corrected scene group into both upload and duplicate-check subjects.
 func assertPreparedSceneGroup(t *testing.T, module *Module, release api.PreparedRelease) {
 	t.Helper()
 	assertSceneGroupNaming(t, release.Naming)
@@ -141,6 +145,8 @@ func assertPreparedSceneGroup(t *testing.T, module *Module, release api.Prepared
 	}
 }
 
+// assertSceneGroupNaming checks the persisted group, structured name component,
+// and both generated-name variants against the synthetic scene spelling.
 func assertSceneGroupNaming(t *testing.T, naming api.NamingFacts) {
 	t.Helper()
 	if !naming.Scene || naming.Tag != "-GrP" || naming.Group != "GrP" || !strings.HasSuffix(naming.ReleaseName, "-GrP") {
@@ -162,6 +168,8 @@ type preparedSceneDetector struct {
 	calls int
 }
 
+// Detect counts fresh scene lookups so restart tests can distinguish recomputation
+// from persisted-generation reuse without contacting SRRDB.
 func (d *preparedSceneDetector) Detect(context.Context, preparationstate.State) (metadata.SceneResult, error) {
 	d.calls++
 	return metadata.SceneResult{IsScene: true, SceneName: d.name}, nil
@@ -169,16 +177,20 @@ func (d *preparedSceneDetector) Detect(context.Context, preparationstate.State) 
 
 type sceneGroupMediaInfo struct{}
 
+// Export leaves technical metadata empty so synthetic media needs no external
+// MediaInfo process and filename-derived naming remains under test.
 func (sceneGroupMediaInfo) Export(context.Context, mediainfo.Request) (mediainfo.Result, error) {
 	return mediainfo.Result{}, nil
 }
 
 type sceneGroupIMDB struct{}
 
+// Search keeps identity enrichment deterministic without live IMDb requests.
 func (sceneGroupIMDB) Search(context.Context, imdb.SearchInput) (imdb.SearchResult, error) {
 	return imdb.SearchResult{}, nil
 }
 
+// GetInfo supplies no provider overrides, preserving the scene naming fixture.
 func (sceneGroupIMDB) GetInfo(context.Context, string, string, bool) (imdb.Info, error) {
 	return imdb.Info{}, nil
 }
