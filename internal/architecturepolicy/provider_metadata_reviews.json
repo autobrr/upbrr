@@ -1300,7 +1300,7 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/acm/profile.go:Profile": {
-    "sha256": "46626357c9bdac1d9682611a524c8af09f9646bd93e16f54749815507fc1584e",
+    "sha256": "0081ca2b2b1df12354ddcfa815080f583a7b0fa14ec32fb8ba2e55d4db1338a2",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/acm/taxonomy.go:resolveACMKeywords": {
@@ -1520,7 +1520,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/upload.go:buildUnit3DData": {
-    "sha256": "c08267537232172d40e049edfb7e31cb3c4e641fe131ccaa59b6e4613b2526c5",
+    "sha256": "d16217030214b6c4aa2e910e149e01616fa657eef98619b605115378ecaccfec",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {

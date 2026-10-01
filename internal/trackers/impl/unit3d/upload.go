@@ -582,6 +582,8 @@ func buildUnit3DData(req trackers.PreparationInput, name, description, mediainfo
 		"sticky":           "0",
 	}
 
+	applyDiscTaxonomy(req, data, profile)
+
 	if strings.EqualFold(category, "TV") {
 		if !shouldIncludeUnit3DTVFields(meta, category) {
 			applyUnit3DAdditionalPayload(req, data, profile)

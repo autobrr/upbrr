@@ -358,6 +358,18 @@ If the site changes only rules, IDs, naming, description formatting, payload fie
 policies, keep it as a Unit3D profile. If it replaces the protocol substantially, implement it as
 a standalone tracker instead of filling shared Unit3D code with site-name branches.
 
+For disc uploads, the family maps region codes and publisher names using the official
+UNIT3D default catalogs. Add site-only extensions or overrides with
+`SiteProfile.ResolveRegionID` and `ResolveDistributorID`, implemented in the site's
+`taxonomy.go`. Return a positive numeric ID for a verified name, or an empty string
+to use the family default. Explicit positive numeric inputs retain their value.
+Do not use fuzzy matching or assume a partial site dropdown is a complete catalog.
+Unknown optional names are omitted with diagnostics; retain any stricter site validation.
+Bind site validation and payload callbacks to the same effective `SiteProfile.RegionID`
+and `DistributorID` methods so an extension is neither rejected nor overwritten by defaults.
+Configure callbacks in the site taxonomy/profile constructor before binding those methods;
+treat the returned profile as immutable rather than changing its resolver fields afterward.
+
 ### 2. Create the site package
 
 Create:

@@ -369,30 +369,32 @@ func TestCheckRepositoryRejectsUnit3DCallbackOutsideOwnedFile(t *testing.T) {
 }
 
 func TestCheckRepositoryUnit3DCategoryCatalogBelongsInTaxonomy(t *testing.T) {
-	for _, file := range []string{"taxonomy.go", "profile.go"} {
-		t.Run(file, func(t *testing.T) {
-			root := t.TempDir()
-			writePolicyFixture(t, root, "internal/trackers/impl/unit3d/sites/example/profile.go",
-				"package example\nvar site = SiteProfile{CategoryIDs: categoryIDs}\n")
-			if file == "profile.go" {
+	for _, callback := range []string{"CategoryIDs", "ResolveRegionID", "ResolveDistributorID"} {
+		for _, file := range []string{"taxonomy.go", "profile.go"} {
+			t.Run(callback+" "+file, func(t *testing.T) {
+				root := t.TempDir()
 				writePolicyFixture(t, root, "internal/trackers/impl/unit3d/sites/example/profile.go",
-					"package example\nvar site = SiteProfile{CategoryIDs: categoryIDs}\nfunc categoryIDs() []string { return nil }\n")
-			} else {
-				writePolicyFixture(t, root, "internal/trackers/impl/unit3d/sites/example/taxonomy.go",
-					"package example\nfunc categoryIDs() []string { return nil }\n")
-			}
-			violations, err := CheckRepository(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if file == "taxonomy.go" {
-				if len(violations) != 0 {
-					t.Fatalf("violations = %#v", violations)
+					"package example\nvar site = SiteProfile{"+callback+": categoryIDs}\n")
+				if file == "profile.go" {
+					writePolicyFixture(t, root, "internal/trackers/impl/unit3d/sites/example/profile.go",
+						"package example\nvar site = SiteProfile{"+callback+": categoryIDs}\nfunc categoryIDs() []string { return nil }\n")
+				} else {
+					writePolicyFixture(t, root, "internal/trackers/impl/unit3d/sites/example/taxonomy.go",
+						"package example\nfunc categoryIDs() []string { return nil }\n")
 				}
-			} else {
-				assertViolationContains(t, violations, "site-local taxonomy.go")
-			}
-		})
+				violations, err := CheckRepository(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if file == "taxonomy.go" {
+					if len(violations) != 0 {
+						t.Fatalf("violations = %#v", violations)
+					}
+				} else {
+					assertViolationContains(t, violations, "site-local taxonomy.go")
+				}
+			})
+		}
 	}
 }
 
@@ -903,4 +905,29 @@ func assertViolationContains(t *testing.T, violations []Violation, message strin
 		}
 	}
 	t.Fatalf("violations = %#v, want message containing %q", violations, message)
+}
+
+func TestCheckRepositoryUnit3DSearchCallbackBelongsInDupe(t *testing.T) {
+	for _, file := range []string{"dupe.go", "profile.go"} {
+		t.Run(file, func(t *testing.T) {
+			root := t.TempDir()
+			writePolicyFixture(t, root, "internal/trackers/impl/unit3d/sites/example/profile.go", "package example\nvar site = SiteProfile{AdjustSearchParams: adjustSearch}\n")
+			source := "package example\nfunc adjustSearch() {}\n"
+			if file == "profile.go" {
+				source += "var site = SiteProfile{AdjustSearchParams: adjustSearch}\n"
+			}
+			writePolicyFixture(t, root, filepath.ToSlash(filepath.Join("internal", "trackers", "impl", "unit3d", "sites", "example", file)), source)
+			violations, err := CheckRepository(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if file == "dupe.go" {
+				if len(violations) != 0 {
+					t.Fatalf("violations = %#v", violations)
+				}
+			} else {
+				assertViolationContains(t, violations, "site-local dupe.go")
+			}
+		})
+	}
 }
