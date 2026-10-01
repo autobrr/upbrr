@@ -506,14 +506,14 @@ test("embedded web distinguishes a cleared metadata provider ID from Auto", asyn
     await page.getByRole("button", { name: "Refresh metadata" }).click();
     await expect((await cleared).ok()).toBe(true);
     await waitForMetadataReady(page, app.url);
-    await expect(malRow.getByText("Manual value", { exact: true })).toBeVisible();
+    await expect(malRow.getByText("Manual value · Applied", { exact: true })).toBeVisible();
 
     const restored = waitForAppMethod(page, "GetActiveInput");
     await page.reload();
     await expect((await restored).ok()).toBe(true);
     await page.getByText("Edit Release Details", { exact: true }).click();
     await expect(malInput).toHaveValue("");
-    await expect(malRow.getByText("Manual value", { exact: true })).toBeVisible();
+    await expect(malRow.getByText("Manual value · Applied", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Auto MAL ID" }).click();
     const reset = waitForAppMethod(page, "OpenActiveInput");
@@ -528,6 +528,58 @@ test("embedded web distinguishes a cleared metadata provider ID from Auto", asyn
     await expect((await restoredID).ok()).toBe(true);
     await waitForMetadataReady(page, app.url);
     await expect(malInput).toHaveValue("5114");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web distinguishes pending manual edits and Auto resets through refresh", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const row = page.locator('[data-correction-field="metadata.original_language"]');
+    const language = page.getByRole("textbox", { name: "Original language", exact: true });
+    const automaticLanguage = await language.inputValue();
+    const manualLanguage = automaticLanguage === "Spanish" ? "Japanese" : "Spanish";
+    await language.fill(manualLanguage);
+    await expect(row.getByText("Manual change pending", { exact: true })).toBeVisible();
+    const pending = page.getByRole("status").filter({ hasText: "Metadata changes are pending" });
+    await expect(pending).toBeVisible();
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(pending).toBeVisible();
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const apply = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await apply).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
+    await expect(language).toHaveValue(manualLanguage);
+    await expect(pending).toHaveCount(0);
+    await page.getByRole("button", { name: "Auto Original language" }).click();
+    await expect(row.getByText("Auto reset pending", { exact: true })).toBeVisible();
+    await expect(row.getByText("Automatic value", { exact: true })).toHaveCount(0);
+    const tmdb = page.getByRole("textbox", { name: "TMDB ID", exact: true });
+    const automaticID = await tmdb.inputValue();
+    for (const invalid of ["invalid", "invalid-again"]) {
+      await tmdb.fill(invalid);
+      await expect(tmdb).toHaveAttribute("aria-invalid", "true");
+      await page.getByRole("button", { name: "Auto TMDB ID", exact: true }).click();
+      await expect(tmdb).toHaveValue(automaticID);
+      await expect(tmdb).toHaveAttribute("aria-invalid", "false");
+    }
+    const reset = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await reset).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(row.getByText("Automatic value", { exact: true })).toBeVisible();
+    await expect(language).toHaveValue(automaticLanguage);
+    await expect(pending).toHaveCount(0);
   } finally {
     await app?.stop();
     await workspace.cleanup();

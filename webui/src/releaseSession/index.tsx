@@ -2472,6 +2472,7 @@ export function ReleaseSessionProvider({
         correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
         corrections: workflowView.current?.corrections || null,
+        valueFields: state.correctionValueFields,
         resetFields: state.correctionResetFields,
         confirmFields: state.correctionConfirmFields,
         trackerInputAnswers,

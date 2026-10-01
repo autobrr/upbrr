@@ -139,6 +139,8 @@ export type InputFacet = Readonly<{
     correctionDirty: boolean;
     intent: PreparationIntent;
     corrections: ReleaseCorrectionsSnapshot | null;
+    /** Manual fields changed locally but not yet applied by metadata refresh. */
+    valueFields: readonly CorrectionFieldRef[];
     resetFields: readonly CorrectionFieldRef[];
     confirmFields: readonly CorrectionFieldRef[];
     trackerInputAnswers: Readonly<Record<string, Readonly<Record<string, string | null>>>>;

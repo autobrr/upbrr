@@ -138,7 +138,7 @@ function ProviderIDInput({
 function CorrectionRow({
   field,
   label,
-  manual,
+  status,
   stale,
   trackId,
   readOnly = false,
@@ -148,7 +148,7 @@ function CorrectionRow({
 }: Readonly<{
   field: string;
   label: string;
-  manual: boolean;
+  status: string;
   stale: boolean;
   trackId?: string;
   readOnly?: boolean;
@@ -174,7 +174,7 @@ function CorrectionRow({
         ) : null}
       </div>
       <span className="text-xs text-muted-foreground">
-        {manual ? "Manual value" : "Automatic value"}
+        {status}
         {stale && !readOnly ? " · Saved value needs confirmation" : ""}
       </span>
       {stale && !readOnly ? (
@@ -190,7 +190,7 @@ function TriStateField({
   field,
   label,
   value,
-  automatic,
+  status,
   stale,
   onChange,
   onAuto,
@@ -199,7 +199,7 @@ function TriStateField({
   field: string;
   label: string;
   value: boolean | null | undefined;
-  automatic?: boolean;
+  status: string;
   stale: boolean;
   onChange: (value: boolean) => void;
   onAuto: () => void;
@@ -223,9 +223,7 @@ function TriStateField({
         <option value="no">No</option>
       </Select>
       <span className="text-xs text-muted-foreground">
-        {value === undefined || value === null
-          ? `Automatic${automatic === undefined ? "" : automatic ? ": Yes" : ": No"}`
-          : "Manual value"}
+        {status}
         {stale ? " · Saved value needs confirmation" : ""}
       </span>
       {stale ? (
@@ -546,7 +544,8 @@ const bindingSummary = (binding: ContentBinding | undefined) => {
 };
 
 /**
- * Renders correction drafts while the release session owns edits and transport.
+ * Shows pending edits and applied overrides while the release session owns transport.
+ * Auto resets local text drafts; automatic facts are rederived on metadata refresh.
  * Title, original title, and TV year are disabled. Source IDs default to resolved
  * tracker data unless the draft supplies an override or an explicit empty value.
  */
@@ -559,7 +558,22 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
     (!["movie", "film"].includes(category) && release?.Identity.Category === "tv");
   const staleFields = new Set(view.corrections?.corrections.staleContentFields || []);
 
-  const reset = (field: string, trackId = "") => facet.resetCorrection(refFor(field, trackId));
+  const [draftResets, setDraftResets] = useState<Record<string, number>>({});
+  const draftKey = (field: string, trackId = "") => draftResets[`${field}:${trackId}`] || 0;
+  const reset = (field: string, trackId = "") => {
+    const key = `${field}:${trackId}`;
+    setDraftResets((previous) => ({ ...previous, [key]: (previous[key] || 0) + 1 }));
+    facet.resetCorrection(refFor(field, trackId));
+  };
+  const statusFor = (field: string, manual: boolean, trackId = "", automatic?: boolean) => {
+    const matches = (ref: CorrectionFieldRef) =>
+      ref.field === field && (ref.trackId || "") === trackId;
+    if (view.resetFields.some(matches)) return "Auto reset pending";
+    if (view.valueFields.some(matches)) return "Manual change pending";
+    if (view.confirmFields.some(matches)) return "Confirmation pending";
+    if (manual) return "Manual value · Applied";
+    return `Automatic value${automatic === undefined ? "" : automatic ? ": Yes" : ": No"}`;
+  };
   const confirm = (field: string, trackId = "") => facet.confirmCorrection(refFor(field, trackId));
 
   const identityAutomatic = (key: keyof ExternalIDOverrides) => Number(release?.Identity[key] || 0);
@@ -584,13 +598,14 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 key={field}
                 field={field}
                 label={label}
-                manual={manual}
+                status={statusFor(field, manual)}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <ProviderIDInput
+                    key={draftKey(field)}
                     id={`correction-${field}-value`}
                     label={label}
                     value={value}
@@ -626,7 +641,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 key={field}
                 field={field}
                 label={label}
-                manual={manual}
+                status={statusFor(field, manual)}
                 readOnly={readOnly}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
@@ -669,6 +684,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                   ? (view.intent.releaseName[key] as boolean | null | undefined)
                   : undefined
               }
+              status={statusFor(field, hasOwn(view.intent.releaseName, key))}
               stale={staleFields.has(field)}
               onChange={(value) => setReleaseName(key, value)}
               onAuto={() => reset(field)}
@@ -690,7 +706,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 key={field}
                 field={field}
                 label={label}
-                manual={manual}
+                status={statusFor(field, manual)}
                 readOnly={readOnly}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
@@ -719,12 +735,13 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 key={field}
                 field={field}
                 label={label}
-                manual={manual}
+                status={statusFor(field, manual)}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
                 <CommaListInput
+                  key={draftKey(field)}
                   id={`correction-${field}-value`}
                   label={label}
                   value={value}
@@ -743,7 +760,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                   ? (view.intent.metadata[key] as boolean | null | undefined)
                   : undefined
               }
-              automatic={automatic(release)}
+              status={statusFor(field, hasOwn(view.intent.metadata, key), "", automatic(release))}
               stale={staleFields.has(field)}
               onChange={(value) => setMetadata(key, value)}
               onAuto={() => reset(field)}
@@ -782,12 +799,13 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                   field={field}
                   trackId={track.ID}
                   label={label}
-                  manual={Boolean(correction)}
+                  status={statusFor(field, Boolean(correction), track.ID)}
                   stale={false}
                   onAuto={() => reset(field, track.ID)}
                   onConfirm={() => confirm(field, track.ID)}
                 >
                   <CommaListInput
+                    key={draftKey(field, track.ID)}
                     id={`correction-${field}-${track.ID}`}
                     label={label}
                     value={correction?.languages || track.Languages}

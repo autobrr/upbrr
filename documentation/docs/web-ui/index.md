@@ -62,7 +62,9 @@ See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and t
 
 Use **Input** to correct titles, genre, release naming fields, and languages before duplicate checking. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
 
-Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. **Auto** removes the saved correction. An empty list or explicit **No** remains a manual value.
+Edited fields show a pending change until you apply **Refresh metadata**. Applied overrides remain marked **Manual value · Applied** after refresh. **Auto** clears the local draft and queues removal of the saved correction; the field shows **Auto reset pending** until refresh derives the automatic value. The previous prepared value may remain visible while that reset is pending.
+
+Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. An empty list, an empty string, a removed provider ID, or explicit **No** remains a manual value until you choose **Auto**.
 
 **Refresh metadata** verifies the source again and fetches current provider facts. Compatible screenshot content, selection, order, and hosted links can be reused when media preparation runs again. Earlier duplicate decisions and upload approval must be renewed.
 

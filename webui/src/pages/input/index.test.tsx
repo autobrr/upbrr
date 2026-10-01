@@ -95,6 +95,7 @@ const inputFacet = (): InputFacet => ({
       search: { skip: false, client: "" },
     },
     corrections: null,
+    valueFields: [],
     resetFields: [],
     confirmFields: [],
     trackerInputAnswers: {},
@@ -1168,6 +1169,158 @@ describe("InputPage", () => {
       target: { value: "ja" },
     });
     expect(facet.changeMetadata).toHaveBeenLastCalledWith({ OriginalLanguage: "ja" });
+  });
+
+  it("resets an invalid provider draft on every Auto click without resetting another field", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: { ...release, Identity: { ...release.Identity, TMDBID: 101 } },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    fireEvent.change(screen.getByLabelText("IMDB ID"), { target: { value: "keep-invalid" } });
+    for (const invalid of ["invalid", "invalid-again"]) {
+      fireEvent.focus(screen.getByLabelText("TMDB ID"));
+      fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: invalid } });
+      fireEvent.click(screen.getByRole("button", { name: "Auto TMDB ID" }));
+      expect(screen.getByLabelText("TMDB ID")).toHaveValue("101");
+      expect(screen.getByLabelText("TMDB ID")).toHaveAttribute("aria-invalid", "false");
+      expect(screen.getByLabelText("IMDB ID")).toHaveValue("keep-invalid");
+    }
+    expect(facet.resetCorrection).toHaveBeenCalledTimes(2);
+  });
+
+  it("distinguishes pending edits and Auto resets from applied manual values", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const applied = {
+      ...base,
+      view: {
+        ...base.view,
+        release: { ...release, Media: { ...release.Media, OriginalLanguage: "es" } },
+        intent: { ...base.view.intent, metadata: { OriginalLanguage: "es" } },
+      },
+    };
+    const { container, rerender } = render(<InputCorrectionEditor facet={applied} />);
+    const row = () =>
+      within(
+        container.querySelector<HTMLElement>(
+          '[data-correction-field="metadata.original_language"]',
+        )!,
+      );
+    expect(row().getByText("Manual value · Applied")).toBeInTheDocument();
+    const pending = {
+      ...applied,
+      view: {
+        ...applied.view,
+        correctionDirty: true,
+        valueFields: [{ field: "metadata.original_language" }],
+        intent: { ...base.view.intent, metadata: { OriginalLanguage: "fr" } },
+      },
+    };
+    rerender(<InputCorrectionEditor facet={pending} />);
+    expect(row().getByText("Manual change pending")).toBeInTheDocument();
+    const reset = {
+      ...applied,
+      view: {
+        ...applied.view,
+        correctionDirty: true,
+        intent: { ...base.view.intent, metadata: {} },
+        resetFields: [{ field: "metadata.original_language" }],
+      },
+    };
+    rerender(<InputCorrectionEditor facet={reset} />);
+    expect(row().getByText("Auto reset pending")).toBeInTheDocument();
+    expect(row().queryByText("Automatic value")).not.toBeInTheDocument();
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...base,
+          view: {
+            ...base.view,
+            release: { ...release, Media: { ...release.Media, OriginalLanguage: "ja" } },
+          },
+        }}
+      />,
+    );
+    expect(row().getByText("Automatic value")).toBeInTheDocument();
+    expect(screen.getByLabelText("Original language")).toHaveValue("ja");
+  });
+
+  it("keeps explicit empty and false values visibly manual after refresh", () => {
+    const base = readyInputFacet(1);
+    const facet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: {
+          ...base.view.intent,
+          identity: { TMDBID: 0 },
+          metadata: { OriginalLanguage: "", AudioLanguages: [], HardcodedSubs: false },
+        },
+      },
+    };
+    const { container } = render(<InputCorrectionEditor facet={facet} />);
+    for (const field of [
+      "identity.tmdb",
+      "metadata.original_language",
+      "metadata.audio_languages",
+      "metadata.hardcoded_subs",
+    ]) {
+      expect(
+        within(
+          container.querySelector<HTMLElement>(`[data-correction-field="${field}"]`)!,
+        ).getByText("Manual value · Applied"),
+      ).toBeInTheDocument();
+    }
+    expect(screen.getByLabelText("TMDB ID")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Remove TMDB ID" })).toBeDisabled();
+    expect(screen.getByLabelText("Original language")).toHaveValue("");
+    expect(screen.getByLabelText("Audio languages")).toHaveValue("");
+    expect(screen.getByLabelText("Hardcoded subtitles")).toHaveValue("no");
+  });
+
+  it("clears only the selected language-list draft on Auto", () => {
+    const base = readyInputFacet(1);
+    render(
+      <InputCorrectionEditor
+        facet={{ ...base, view: { ...base.view, release: preparedRelease() } }}
+      />,
+    );
+    const automatic = screen.getByLabelText("Audio languages").getAttribute("value") || "";
+    fireEvent.focus(screen.getByLabelText("Audio languages"));
+    fireEvent.change(screen.getByLabelText("Audio languages"), { target: { value: "English, " } });
+    fireEvent.click(screen.getByRole("button", { name: "Auto Audio languages" }));
+    expect(screen.getByLabelText("Audio languages")).toHaveValue(automatic);
+  });
+
+  it("keeps the pending metadata notice visible when release details are collapsed", () => {
+    const base = readyInputFacet(1);
+    const props = {
+      sourcePathHistory: [],
+      handleBrowseFile: vi.fn(),
+      handleBrowseFolder: vi.fn(),
+      trackerUploadItems: [],
+      showExternalIDInputUI: false,
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+      trackerIconSrcByName: {},
+    };
+    const { rerender } = render(
+      <InputPage facet={{ ...base, view: { ...base.view, correctionDirty: true } }} {...props} />,
+    );
+    const notice = screen.getByText(/Metadata changes are pending/);
+    expect(notice).toBeVisible();
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    expect(notice).toBeVisible();
+    rerender(<InputPage facet={base} {...props} />);
+    expect(screen.queryByText(/Metadata changes are pending/)).not.toBeInTheDocument();
   });
 
   it("keeps explicit false, empty, and Auto correction intents distinct", () => {

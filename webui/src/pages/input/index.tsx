@@ -1661,6 +1661,12 @@ export default function InputPage(props: Props) {
               Review release facts, source options, and selected tracker input.
             </p>
           ) : null}
+          {showReleaseDetails && view.correctionDirty ? (
+            <p className="text-sm font-medium text-primary" role="status">
+              Metadata changes are pending. Use {hasPreview ? "Refresh metadata" : "Retry metadata"}{" "}
+              to apply them to the release and dependent metadata.
+            </p>
+          ) : null}
           {showReleaseDetails ? (
             <details className={editDropdownClass}>
               <summary className={editDropdownSummaryClass}>Edit Release Details</summary>

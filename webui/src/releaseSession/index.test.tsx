@@ -2597,6 +2597,7 @@ describe("useReleaseSession", () => {
     expect(result.current.input.view.selectedTrackers).toEqual(["PTP"]);
 
     act(() => result.current.input.changeMetadata({ Title: "Edited title" }));
+    expect(result.current.input.view.valueFields).toEqual([{ field: "metadata.title" }]);
     act(() => result.current.input.changeSourceLookupURL("https://example.invalid/source"));
     act(() => result.current.input.changeTrackerSourceID("PTP", "123"));
     act(() =>
@@ -2659,6 +2660,8 @@ describe("useReleaseSession", () => {
       ),
     ).toBe(true);
     expect(result.current.input.view.intent.metadata.Title).toBe("Edited title");
+    expect(result.current.input.view.valueFields).toEqual([]);
+    expect(result.current.input.view.correctionDirty).toBe(false);
     expect(result.current.input.view.intent).toMatchObject({
       sourceLookupURL: "https://example.invalid/source",
       trackerSourceIDs: { PTP: "123" },
