@@ -95,6 +95,7 @@ func TestValidationCallbacksReceiveEffectiveMetadata(t *testing.T) {
 				}
 				return "0"
 			},
+			CategoryIDs:         func(api.CanonicalCategory) []string { return []string{"1"} },
 			ResolveTypeID:       func(api.UploadSubject) string { return "1" },
 			ResolveResolutionID: func(api.UploadSubject) string { return "1" },
 		},

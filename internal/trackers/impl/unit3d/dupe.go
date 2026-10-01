@@ -15,12 +15,14 @@ import (
 
 type dupeSearcher struct {
 	trackerID string
+	profile   SiteProfile
 	cfg       config.Config
 	client    *trackerdata.Client
 	maxPages  int
 }
 
-// NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
+// NewDuplicateAdapter returns an adapter using the registered site's category catalog
+// and one immutable dependency set.
 func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
@@ -28,6 +30,7 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	_ = logger
 	searcher := &dupeSearcher{
 		trackerID: deps.Tracker(),
+		profile:   d.profile.Site,
 		cfg:       cfg,
 		client:    trackerdata.NewClientWithRegistry(cfg, logger, httpClient, deps.Registry()),
 		maxPages:  deps.MaxPages(100),
@@ -35,14 +38,15 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	return searcher
 }
 
-// Search queries the site's bounded evidence scope and preserves completeness
-// and pagination metadata for downstream duplicate decisions.
+// Search gathers same-work evidence across the site's canonical category family.
+// Missing credentials or unresolved TMDB/category metadata return a typed not-run result.
+// Pagination completeness and warnings are retained for downstream duplicate decisions.
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
 	tracker := s.trackerID
 	if strings.TrimSpace(trackerdata.TrackerAPIKey(s.cfg, tracker)) == "" {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing api_key for tracker", nil)
 	}
-	params := buildDupeSearchParams(meta, tracker)
+	params := buildDupeSearchParams(meta, s.profile)
 	if len(params) == 0 {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing required metadata for dupe search", nil)
 	}

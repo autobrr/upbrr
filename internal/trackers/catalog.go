@@ -65,6 +65,7 @@ func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint
 		Name              string
 		Family            Family
 		ProjectorVersion  string
+		SearchContract    string
 		ReleaseNamePolicy string
 		NameConfirmation  ReleaseNameConfirmationMode
 		MovieYearProvider api.IdentityProvider
@@ -91,6 +92,7 @@ func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint
 		Name:              descriptor.Name,
 		Family:            descriptor.Family,
 		ProjectorVersion:  descriptor.ProjectorVersion,
+		SearchContract:    DuplicateSearchContractID,
 		ReleaseNamePolicy: descriptor.ReleaseNamePolicy.ID,
 		NameConfirmation:  descriptor.ReleaseNamePolicy.Confirmation,
 		MovieYearProvider: descriptor.ReleaseNamePolicy.MovieYearProvider,

@@ -77,6 +77,12 @@ func (h cztHandler) Search(ctx context.Context, meta api.DuplicateSubject) dupe.
 	params.Set("passkey", passkey)
 	params.Set("incldead", "1")
 
+	dupe.TraceSearchRequest(h.logger, "CZT", http.MethodGet, "/api.php", map[string]any{
+		"action":   params.Get("action"),
+		"type":     params.Get("type"),
+		"query":    params.Get("query"),
+		"incldead": params.Get("incldead"),
+	})
 	status, payload, err := cztJSONGet(ctx, h.http, base+"/api.php", params)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

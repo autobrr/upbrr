@@ -16,6 +16,7 @@ func Profile() unit3d.Profile {
 		ValidationPolicy: ValidationPolicy(),
 		BannedGroups:     BannedGroups(),
 		Site: unit3d.SiteProfile{
+			CategoryIDs:         categoryIDs,
 			ResolveTypeID:       typeID,
 			ResolveResolutionID: resolutionID,
 			ResolveCategoryID:   categoryID,

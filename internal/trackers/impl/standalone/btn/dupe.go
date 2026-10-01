@@ -277,6 +277,11 @@ func (s *dupeSearcher) fetchPage(ctx context.Context, token string, filter map[s
 		return btnDupePage{}, dupe.FailureRequest, fmt.Errorf("build BTN search page at offset %d: %w", offset, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	dupe.TraceSearchRequest(s.logger, "BTN", req.Method, "getTorrents", map[string]any{
+		"search":  filter,
+		"results": btnDupePageLimit,
+		"offset":  offset,
+	})
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return btnDupePage{}, dupe.FailureRequest, fmt.Errorf("request BTN search page at offset %d: %w", offset, err)

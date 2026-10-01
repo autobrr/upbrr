@@ -185,6 +185,11 @@ func (h dupeSearcher) fetchARPage(
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
 	}
+	dupe.TraceSearchRequest(h.logger, "AR", req.Method, "/ajax.php", map[string]any{
+		"action":    params.Get("action"),
+		"searchstr": params.Get("searchstr"),
+		"page":      page,
+	})
 	resp, err := h.http.Do(req)
 	if err != nil {
 		return arResponse{}, dupe.FailureRequest, fmt.Errorf("request AR search page %d: %w", page, err)

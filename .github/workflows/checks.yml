@@ -1,6 +1,10 @@
 name: checks
 
 on:
+  # PR merge-ref caches cannot seed other PRs. Populate the same caches from
+  # trusted main commits; only the Go matrix needs to run for this event.
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -43,16 +47,20 @@ jobs:
           "modules=$($paths.GOMODCACHE)" >> $env:GITHUB_OUTPUT
           "build=$($paths.GOCACHE)" >> $env:GITHUB_OUTPUT
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
+      - name: Restore Go modules
+        id: go-modules
+        uses: actions/cache/restore@v4
         with:
           path: ${{ steps.go-cache-paths.outputs.modules }}
           key: go-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-
 
       # Keep race-test outputs separate from other Go jobs. Restore the latest
       # compatible snapshot, then save refreshed results under this commit's key.
-      - name: Cache Go test results
-        uses: actions/cache@v4
+      - name: Restore Go test results
+        id: go-tests
+        uses: actions/cache/restore@v4
         with:
           path: ${{ steps.go-cache-paths.outputs.build }}
           key: go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-${{ hashFiles('go.sum') }}-${{ github.sha }}
@@ -60,11 +68,55 @@ jobs:
             go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-${{ hashFiles('go.sum') }}-
             go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-
 
+      - name: Report Go cache restores
+        shell: pwsh
+        env:
+          CACHE_REF: ${{ github.ref }}
+          MODULE_PRIMARY: ${{ steps.go-modules.outputs.cache-primary-key }}
+          MODULE_MATCHED: ${{ steps.go-modules.outputs.cache-matched-key }}
+          MODULE_EXACT: ${{ steps.go-modules.outputs.cache-hit }}
+          BUILD_PRIMARY: ${{ steps.go-tests.outputs.cache-primary-key }}
+          BUILD_MATCHED: ${{ steps.go-tests.outputs.cache-matched-key }}
+          BUILD_EXACT: ${{ steps.go-tests.outputs.cache-hit }}
+          MODULE_PATH: ${{ steps.go-cache-paths.outputs.modules }}
+          BUILD_PATH: ${{ steps.go-cache-paths.outputs.build }}
+        run: |
+          Write-Host "Cache scope: $env:CACHE_REF (default-branch fallback is also eligible)"
+          Write-Host "Modules: primary=$env:MODULE_PRIMARY matched=$env:MODULE_MATCHED exact=$env:MODULE_EXACT"
+          Write-Host "Race build: primary=$env:BUILD_PRIMARY matched=$env:BUILD_MATCHED exact=$env:BUILD_EXACT"
+          Write-Host "Cache paths: modules=$env:MODULE_PATH build=$env:BUILD_PATH"
+          Write-Host "An archive restore does not guarantee Go package test-result cache hits."
+
+      # Download before tests so even a failed test run leaves reusable modules.
+      # A fallback archive can contain older modules; Go resolves/verifies the
+      # versions selected by this checkout's go.mod and go.sum.
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Save Go modules
+        if: steps.go-modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.go-cache-paths.outputs.modules }}
+          key: ${{ steps.go-modules.outputs.cache-primary-key }}
+
       - name: Run Go tests
+        id: tests
         # These flags limit each package's test binary; package concurrency keeps Go's default -p.
         run: go test -race -v -cpu=4 -parallel=4 -timeout 20m ./...
 
+      # Go caches successful compile actions even if another package/test fails.
+      # Keep the test's failure status and never upload after cancellation. Reuse
+      # the immutable commit key on retries instead of producing per-run archives.
+      - name: Save Go test results
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') && steps.go-tests.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.go-cache-paths.outputs.build }}
+          key: ${{ steps.go-tests.outputs.cache-primary-key }}
+
   test-frontend:
+    if: github.event_name != 'push'
     name: Frontend checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -135,6 +187,7 @@ jobs:
           key: ${{ steps.prettier-cache.outputs.cache-primary-key }}
 
   test-documentation:
+    if: github.event_name != 'push'
     name: Documentation checks
     runs-on: ubuntu-latest
     timeout-minutes: 15

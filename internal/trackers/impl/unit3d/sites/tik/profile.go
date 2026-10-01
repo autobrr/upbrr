@@ -15,6 +15,7 @@ func Profile() unit3d.Profile {
 		BaseURL: "https://cinematik.net",
 		Rules:   Rules(),
 		Site: unit3d.SiteProfile{
+			CategoryIDs:       categoryIDs,
 			ResolveTypeID:     typeID,
 			ResolveCategoryID: categoryID,
 		},

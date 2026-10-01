@@ -7,6 +7,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func categoryIDs(category api.CanonicalCategory) []string {
+	return map[api.CanonicalCategory][]string{
+		api.CanonicalCategoryMovie: {"66", "70"},
+		api.CanonicalCategoryTV:    {"2", "79"},
+	}[category]
+}
+
 func categoryID(meta api.UploadSubject) string {
 	genreIDs := ""
 	if meta.ProviderMetadata.TMDB != nil {

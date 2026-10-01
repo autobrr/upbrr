@@ -354,6 +354,9 @@ func (m *Module) settleRecoveryActions(ctx context.Context, ownerID string, work
 		})
 	}
 	if settledCount != 0 {
+		if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
+			return false, fmt.Errorf("release workflow settle private authority: %w", err)
+		}
 		state.Workflow.Revision = nextRevision
 		state.Workflow.UpdatedAt = now
 		for index := range state.Workflow.RequiredActions {

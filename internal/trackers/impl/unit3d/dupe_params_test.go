@@ -19,7 +19,7 @@ func TestBuildUnit3DSearchParamsSkipsResolutionForOTW(t *testing.T) {
 		ReleaseName: "Show.S01E02.1080p.WEB-DL.H264-GRP",
 	}
 
-	params := buildDupeSearchParams(meta, "OTW")
+	params := buildDupeSearchParams(meta, SiteProfile{})
 	if _, ok := params["resolutions[]"]; ok {
 		t.Fatalf("did not expect OTW resolution filter, got %#v", params["resolutions[]"])
 	}
@@ -40,7 +40,7 @@ func TestBuildUnit3DSearchParamsAvoidsPolicyUnsafeNarrowing(t *testing.T) {
 		EpisodeInt:  2,
 	}
 
-	params := buildDupeSearchParams(meta, "AITHER")
+	params := buildDupeSearchParams(meta, SiteProfile{})
 	if _, ok := params["resolutions[]"]; ok {
 		t.Fatalf("did not expect resolution narrowing, got %#v", params["resolutions[]"])
 	}
@@ -65,7 +65,7 @@ func TestBuildUnit3DSearchParamsUsesEMUWTrackerMappings(t *testing.T) {
 		ReleaseName: "Movie.2025.540p.WEB-DL.H264-GRP",
 	}
 
-	params := buildDupeSearchParams(meta, "EMUW")
+	params := buildDupeSearchParams(meta, SiteProfile{})
 	if got := params.Get("name"); got != "" {
 		t.Fatalf("expected empty movie search name, got %q", got)
 	}
@@ -93,7 +93,7 @@ func TestBuildUnit3DSearchParamsUsesEMUWPaired1080Resolution(t *testing.T) {
 		ReleaseName: "Show.S02E03.1080i.HDTV.H264-GRP",
 	}
 
-	params := buildDupeSearchParams(meta, "EMUW")
+	params := buildDupeSearchParams(meta, SiteProfile{})
 	if got := params.Get("name"); got != " S02" {
 		t.Fatalf("expected season search name, got %q", got)
 	}

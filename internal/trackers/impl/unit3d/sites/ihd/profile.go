@@ -13,6 +13,7 @@ func Profile() unit3d.Profile {
 		Name:    "IHD",
 		BaseURL: "https://infinityhd.net",
 		Site: unit3d.SiteProfile{
+			CategoryIDs:         categoryIDs,
 			ResolveResolutionID: resolutionID,
 			ResolveCategoryID:   categoryID,
 		},

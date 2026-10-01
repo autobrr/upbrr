@@ -11,6 +11,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func categoryIDs(category api.CanonicalCategory) []string {
+	return map[api.CanonicalCategory][]string{
+		api.CanonicalCategoryMovie: {"1", "6", "8", "12", "17", "21", "22", "25", "27", "45"},
+		api.CanonicalCategoryTV:    {"2", "9", "29", "31", "40", "41"},
+	}[category]
+}
+
 func categoryID(meta api.UploadSubject) string {
 	category := unit3d.Category(meta)
 	genreParts := []string{unit3d.Keywords(meta)}

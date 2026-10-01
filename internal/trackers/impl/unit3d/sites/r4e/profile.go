@@ -11,6 +11,7 @@ func Profile() unit3d.Profile {
 		Name:    "R4E",
 		BaseURL: "https://racing4everyone.eu",
 		Site: unit3d.SiteProfile{
+			CategoryIDs:       categoryIDs,
 			ResolveCategoryID: categoryID,
 		},
 	}

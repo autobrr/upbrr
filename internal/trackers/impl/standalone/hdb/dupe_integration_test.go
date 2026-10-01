@@ -29,9 +29,12 @@ func (f hdbRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 type hdbCaptureLogger struct {
 	debug []string
+	trace []string
 }
 
-func (l *hdbCaptureLogger) Tracef(string, ...any) {}
+func (l *hdbCaptureLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
 func (l *hdbCaptureLogger) Infof(string, ...any)  {}
 func (l *hdbCaptureLogger) Warnf(string, ...any)  {}
 func (l *hdbCaptureLogger) Errorf(string, ...any) {}
@@ -204,12 +207,20 @@ func TestHDBHandlerSearchBuildsPayloadAndParsesResults(t *testing.T) {
 		entry.HDR.Formats[0] != api.HDRFormatHDR10 || entry.Description != "Example description" {
 		t.Fatalf("unexpected structured HDB evidence %#v", entry)
 	}
-	logs := strings.Join(logger.debug, "\n")
-	if strings.Contains(logs, `"username":"user"`) || strings.Contains(logs, `"passkey":"pk"`) {
+	logs := strings.Join(logger.trace, "\n")
+	if strings.Contains(logs, "username") || strings.Contains(logs, "passkey") || strings.Contains(logs, `"pk"`) {
 		t.Fatal("HDB request log exposed credentials")
 	}
-	if !strings.Contains(logs, `"username":"[REDACTED]"`) || !strings.Contains(logs, `"passkey":"[REDACTED]"`) {
-		t.Fatal("HDB request log did not preserve redaction markers")
+	for _, want := range []string{
+		"dupechecking: request tracker=HDB method=POST endpoint=/api/torrents",
+		`"category":[1]`, `"imdb":{"id":"1234567"}`, `"limit":100`, `"page":0`,
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("request TRACE missing %q", want)
+		}
+	}
+	if strings.Contains(strings.Join(logger.debug, "\n"), "payload=") {
+		t.Fatal("request payload must only be logged at TRACE")
 	}
 	search := result.SearchEvidence()
 	if !search.Complete || search.Pages != 1 || search.Scope != "work_identity" {
@@ -279,6 +290,7 @@ func TestHDBHandlerSearchPaginatesFullPages(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	requestedPages := make([]int64, 0, 2)
+	logger := &hdbCaptureLogger{}
 
 	client := &http.Client{
 		Transport: hdbRoundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -315,7 +327,7 @@ func TestHDBHandlerSearchPaginatesFullPages(t *testing.T) {
 			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 				"HDB": {Username: "user", Passkey: "pk"},
 			}},
-		}, client, api.NopLogger{})
+		}, client, logger)
 
 	result := handler.Search(context.Background(), api.DuplicateSubject{
 		SourcePath: "C:/media/movie",
@@ -336,6 +348,9 @@ func TestHDBHandlerSearchPaginatesFullPages(t *testing.T) {
 	}
 	if len(requestedPages) != 2 || requestedPages[0] != 0 || requestedPages[1] != 1 {
 		t.Fatalf("unexpected requested pages %v", requestedPages)
+	}
+	if len(logger.trace) != 2 || !strings.Contains(logger.trace[0], `"page":0`) || !strings.Contains(logger.trace[1], `"page":1`) {
+		t.Fatalf("request TRACE did not follow actual page numbers: %v", logger.trace)
 	}
 	search := result.SearchEvidence()
 	if !search.Complete || search.Pages != 2 || search.Scope != "work_identity" {

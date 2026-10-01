@@ -12,8 +12,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.lookupMediaCode": {
-    "sha256": "9237ad60fc3384491123160dbca8187715053c814f00d8898fa3d702bac93c38",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "8e86b095232e58be925fea611c751b366d5151902d467dad1ccc250442fb821b",
+    "reason": "TRACE request logging review: lookupAZDupeTitle manual precedence and current provider evidence, IMDb-first fallback, and exact work binding remain unchanged."
   },
   "internal/trackers/impl/azfamily/dupe.go:lookupAZDupeTitle": {
     "sha256": "ecc4717887dc181147f8dbd988de0bdc91e3fc01dd172a33fffe9ff3e3b92318",
@@ -724,8 +724,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
-    "sha256": "908745a313439169085b7bc9445d9c687542dd59f9d6197e6c0711351332c93b",
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+    "sha256": "7441a490dba410427b5428b0c85dc809fac67a6c3d6f9b135cfa8360e87c0b07",
+    "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request."
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztSearchQuery": {
     "sha256": "2d38ea4da0a0bf08231658a75447746ff14967056bbf73f4038656e8f5720c87",
@@ -820,8 +820,8 @@
     "reason": "Matches claim title and note aliases against the reviewed canonical/provider candidate helper while preserving all conflicting ownership rows. It does not select effective metadata."
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:*dupeSearcher.Search": {
-    "sha256": "f5ef24576439f55dd06a2092e9a0392444497033950aa60990d87d9d06637c97",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "b39220b64c79075ec7f985147b281a70262f4cd3dbe8d034f7558213fb7c8307",
+    "reason": "TRACE request logging review: removing the DEBUG payload dump preserves hdbDupeCategoryID manual precedence, IMDb/TVDB priority, and manual-aware title fallback."
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:hdbDupeCategoryID": {
     "sha256": "1f6d6b4de4085b49135f2f0bc4cc7d1c2be5697e6ad3ff67d7ffa85d162caf45",
@@ -1192,8 +1192,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:*dupeSearcher.Search": {
-    "sha256": "3df89f91df4c9e67da2e98cacf9cc8e7ccd3305ae03613323278f851245c3b68",
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+    "sha256": "98ee1c9dc611fab0777be4dbc9c4e201636775e834384ea9d4e915ef48789b3f",
+    "reason": "TRACE request logging review: the existing finalized/projected title fallback still applies EffectiveMetadata.PreferredTitle before the unchanged request."
   },
   "internal/trackers/impl/standalone/tl/taxonomy.go:resolveCategory": {
     "sha256": "f79f27d1a41d6b892ad3553524f497832020d485ba637b878e9924bf9ed2bcc2",
@@ -1316,8 +1316,8 @@
     "reason": "Only source-origin image reuse policy changed; provider metadata and manual fact/component precedence remain unchanged."
   },
   "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
-    "sha256": "c98398ea416e840911bddc332143b554bc8df06151df6d2bd0b427e639504c12",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "2bd391d7b8d645bb56e5b600ede58a6eefb21cf615726709da234b70f85a6326",
+    "reason": "Adds a canonical category-family catalog for broad duplicate gathering. The catalog reads no provider metadata; existing localized naming and upload taxonomy retain their prepared-provider and manual-precedence paths."
   },
   "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
     "sha256": "67b7400f6d66a8d55f1b84880d5ec9af04766463495bcc0c9cd66245ad253c8e",
@@ -1360,8 +1360,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/ldu/profile.go:Profile": {
-    "sha256": "71222b98a3f2e62d6cf1cde2b11372cbc1a9e6437923d03aa54b3420cbd1ce45",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "b2e3227f09bebecc2b8d65eb0f415872abe501f16d93a8b664a05315b91e2aff",
+    "reason": "Adds a category-family catalog independent of provider subtype evidence. Existing naming and upload taxonomy preserve manual genres and finalized language, edition, anime and pack facts; preview/search regressions cover those native category decisions."
   },
   "internal/trackers/impl/unit3d/sites/ldu/taxonomy.go:categoryID": {
     "sha256": "764fce6075342e0c5d24b9072d38a74c6d983ffc5ff4b1ec3d29d40bcc767dd3",
@@ -1416,8 +1416,8 @@
     "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
   },
   "internal/trackers/impl/unit3d/sites/r4e/profile.go:Profile": {
-    "sha256": "96b26d5521320735572518695a448dbf92d2475ff9a017063681531eddd04086",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "f2abe36ed4a59b0d194cd76bd52d7fbe460f273a18b61ce0921f680f5bc04ac7",
+    "reason": "Adds a provider-independent catalog covering both documentary and ordinary categories. The existing upload category resolver retains TMDB genre-ID precedence; preview/search regressions cover both mappings for movies and TV."
   },
   "internal/trackers/impl/unit3d/sites/r4e/taxonomy.go:categoryID": {
     "sha256": "776d1d6fcd4fc8c61202322f9b4388220565bfbb8bb64d8343df6a7b87c0db87",
@@ -1452,12 +1452,12 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/unit3d/sites/sam/profile.go:Profile": {
-    "sha256": "a348c14f04c00c764026c491ef34d72f8807ce9ec4916462e60963d4ef3b7747",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "fbcdb07300b49bc8c08e977214e76f40c4d606d16ab056fefb8ffc295d678284",
+    "reason": "Adds a canonical category-family catalog covering TV and anime together without provider reads. Existing localized naming and finalized anime upload classification preserve prepared-provider and manual-precedence paths."
   },
   "internal/trackers/impl/unit3d/sites/tik/profile.go:Profile": {
-    "sha256": "19aba601a96cd1310e1d067fd31f572bd78046dcb6ba323a1ac2c68383402788",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "7cbef29d671d39dff93cdd6a7439d7203334c5a448623a0e3c4ade0363016af6",
+    "reason": "Adds a provider-independent category-family catalog. Existing upload taxonomy preserves explicit site overrides before manual language/genre facts and automatic TMDB evidence; preview/search regressions cover corrected language and enabled/disabled site flags."
   },
   "internal/trackers/impl/unit3d/sites/tik/taxonomy.go:categoryID": {
     "sha256": "c551e1e403bbd95f036633902985c2d60366e22c9c587e473bd8e35c69bbcc6d",

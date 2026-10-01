@@ -27,6 +27,7 @@ const dcDupeMaxPages = 100
 type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
+	logger   api.Logger
 	endpoint string
 	maxPages int
 }
@@ -36,10 +37,10 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
 		cfg:      cfg,
 		http:     httpClient,
+		logger:   logger,
 		endpoint: "https://digitalcore.club/api/v1/torrents/dupe-search",
 		maxPages: deps.MaxPages(dcDupeMaxPages),
 	}
@@ -133,6 +134,12 @@ func (s *dupeSearcher) searchPage(
 	req.URL.RawQuery = params.Encode()
 	req.Header.Set("X-Api-Key", apiKey)
 	req.Header.Set("Accept", "application/json")
+	dupe.TraceSearchRequest(s.logger, "DC", req.Method, "/api/v1/torrents/dupe-search", map[string]any{
+		"imdb":        params.Get("imdb"),
+		"releaseName": params.Get("releaseName"),
+		"limit":       params.Get("limit"),
+		"index":       params.Get("index"),
+	})
 
 	resp, err := s.http.Do(req)
 	if err != nil {

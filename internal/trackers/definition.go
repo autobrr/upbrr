@@ -18,8 +18,10 @@ import (
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
 const GeneralDuplicatePolicyID = "general/duplicate/v8"
 
-// DuplicateSearchContractID identifies effective work-scope completion semantics.
-const DuplicateSearchContractID = "duplicate-search/work-scope/v1"
+// DuplicateSearchContractID versions authoritative search scope and completion semantics.
+// Projection/catalog fingerprints and persisted private evidence carry this ID so older
+// search results cannot authorize fresh tracker submissions.
+const DuplicateSearchContractID = "duplicate-search/work-scope/v2"
 
 // ErrSubmitted2FARejected marks tracker auth failure after a supplied manual 2FA code was rejected.
 var ErrSubmitted2FARejected = errors.New("trackers: submitted 2FA rejected")

@@ -10,6 +10,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func categoryIDs(category api.CanonicalCategory) []string {
+	return map[api.CanonicalCategory][]string{
+		api.CanonicalCategoryMovie: {"1", "4"},
+		api.CanonicalCategoryTV:    {"2", "3"},
+	}[category]
+}
+
 func categoryID(meta api.UploadSubject) string {
 	category := unit3d.Category(meta)
 	if strings.EqualFold(category, "TV") && meta.Anime {

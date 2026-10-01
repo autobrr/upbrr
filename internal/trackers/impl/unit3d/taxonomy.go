@@ -5,6 +5,8 @@ package unit3d
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
@@ -50,12 +52,44 @@ func resolveUnit3DResolutionIDForTracker(_ string, meta api.UploadSubject, profi
 	return resolveUnit3DResolutionID(meta)
 }
 
+// resolveUnit3DCategoryIDForTracker returns the selected upload category only when
+// it belongs to the canonical family's valid catalog. An empty result is unsupported.
 func resolveUnit3DCategoryIDForTracker(_ string, meta api.UploadSubject, profiles ...SiteProfile) string {
 	profile := firstSiteProfile(profiles)
-	if profile.ResolveCategoryID != nil {
-		return profile.ResolveCategoryID(meta)
+	category, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
 	}
-	return resolveUnit3DCategoryID(meta)
+	categoryID := resolveUnit3DCategoryID(meta)
+	if profile.ResolveCategoryID != nil {
+		categoryID = profile.ResolveCategoryID(meta)
+	}
+	if !slices.Contains(resolveUnit3DCategoryIDs(category, profile), categoryID) {
+		return ""
+	}
+	return categoryID
+}
+
+// resolveUnit3DCategoryIDs resolves the full native family shared by upload validation
+// and duplicate search. Unsupported categories, missing override catalogs and invalid
+// IDs produce an empty scope; common category defaults apply only without an override.
+func resolveUnit3DCategoryIDs(category api.CanonicalCategory, profile SiteProfile) []string {
+	if category != api.CanonicalCategoryMovie && category != api.CanonicalCategoryTV {
+		return nil
+	}
+	if profile.CategoryIDs == nil {
+		if profile.ResolveCategoryID != nil {
+			return nil
+		}
+		return []string{trackerdata.CategoryID(string(category))}
+	}
+	categoryIDs := profile.CategoryIDs(category)
+	for _, id := range categoryIDs {
+		if value, err := strconv.Atoi(id); err != nil || value <= 0 {
+			return nil
+		}
+	}
+	return categoryIDs
 }
 
 // resolveUnit3DCategory maps only the canonical prepared identity category.

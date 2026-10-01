@@ -5,6 +5,7 @@ package azfamily
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,72 @@ import (
 
 func adapterEvidence(result dupe.AdapterResult) ([]api.DupeEntry, []string, error) {
 	return result.Entries(), result.Notes(), result.Cause()
+}
+
+type azDupeTraceLogger struct {
+	api.NopLogger
+	trace []string
+}
+
+func (l *azDupeTraceLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
+
+func TestAZRequestTraceIncludesFallbackAndGroupPages(t *testing.T) {
+	t.Parallel()
+	var terms []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "private-cookie" {
+			t.Error("logging must preserve request authentication")
+		}
+		switch r.URL.Path {
+		case "/ajax/movies/2":
+			term := r.URL.Query().Get("term")
+			terms = append(terms, term)
+			if term == "tt0000123" {
+				_, _ = io.WriteString(w, `{"data":[]}`)
+			} else {
+				_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123"}]}`)
+			}
+		case "/movies/torrents/77":
+			if r.URL.Query().Get("page") == "" {
+				_, _ = io.WriteString(w, `<a rel="next" href="/movies/torrents/77?page=2">Next</a>`)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	logger := &azDupeTraceLogger{}
+	searcher := dupeSearcher{
+		http:    server.Client(),
+		logger:  logger,
+		tracker: "AZ",
+	}
+	site := azDupeSiteDef{baseURL: server.URL}
+	cookies := []*http.Cookie{{Name: "session", Value: "private-cookie"}}
+	id, err := searcher.lookupMediaCode(t.Context(), site, cookies, api.DuplicateSubject{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV, IMDBID: 123},
+		Release:  api.ReleaseInfo{Title: "Example Series"},
+	})
+	if err != nil || id != "77" || strings.Join(terms, ",") != "tt0000123,Example Series" {
+		t.Fatalf("lookup id=%q terms=%v err=%v", id, terms, err)
+	}
+	_, pages, complete, warning, err := searcher.fetchTorrentList(t.Context(), site, cookies, server.URL+"/movies/torrents/"+id)
+	if err != nil || !complete || warning != "" || pages != 2 {
+		t.Fatalf("group pages=%d complete=%t warning=%q err=%v", pages, complete, warning, err)
+	}
+	logs := strings.Join(logger.trace, "\n")
+	for _, want := range []string{
+		`"category":"2"`, `"term":"tt0000123"`, `"term":"Example Series"`, `"group_id":"77"`, `"request_page":2`, `"page":"2"`,
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("request TRACE missing %q", want)
+		}
+	}
+	if len(logger.trace) != 4 || strings.Contains(logs, "private-cookie") || strings.Contains(logs, server.URL) {
+		t.Fatal("request TRACE has the wrong request count or exposed authentication/URL")
+	}
 }
 
 func TestAZDupeTitlePreservesManualTitleAuthority(t *testing.T) {

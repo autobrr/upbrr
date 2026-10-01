@@ -942,6 +942,7 @@ func sceneResultHasData(result SceneResult) bool {
 func applySceneResult(meta *preparationstate.State, result SceneResult) {
 	meta.Scene = result.IsScene
 	meta.SceneName = result.SceneName
+	applySceneGroupCasing(meta)
 	meta.SceneTMDBID = result.TMDBID
 	meta.SceneIMDB = result.IMDBID
 	meta.SceneTVDBID = result.TVDBID

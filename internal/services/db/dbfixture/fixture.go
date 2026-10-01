@@ -23,7 +23,10 @@ var (
 )
 
 // WriteMigrated writes a private SQLite database with the current empty
-// schema. The migration graph is materialized once per test process.
+// schema. The migration graph is materialized once per test process. Callers
+// should use a new path in t.TempDir, then open it through the production db API.
+// Never overwrite a populated database during restart/recovery tests. Tests of
+// migrations or database initialization must build their own database instead.
 func WriteMigrated(t testing.TB, dbPath string) {
 	t.Helper()
 

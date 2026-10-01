@@ -208,6 +208,11 @@ func cleanRTFSearchTitle(meta api.DuplicateSubject) string {
 }
 
 func (h *dupeSearcher) search(ctx context.Context, params url.Values, apiKey string) (int, any, error) {
+	dupe.TraceSearchRequest(h.logger, "RTF", http.MethodGet, "/api/torrent", map[string]any{
+		"includingDead": params.Get("includingDead"),
+		"imdbId":        params.Get("imdbId"),
+		"search":        params.Get("search"),
+	})
 	headers := map[string]string{
 		"accept":        "application/json",
 		"Authorization": strings.TrimSpace(apiKey),

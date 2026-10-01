@@ -93,12 +93,6 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		request.Search, searchMethod = query, "text_fallback"
 		s.logger.Debugf("dupechecking: HDB falling back to text search for %s", meta.SourcePath)
 	}
-	if logPayload, err := json.Marshal(request); err != nil {
-		s.logger.Debugf("dupechecking: HDB search payload_marshal_failed=%v source=%s", err, meta.SourcePath)
-	} else {
-		s.logger.Debugf("dupechecking: HDB search payload=%s source=%s", redaction.RedactValue(string(logPayload), nil), meta.SourcePath)
-	}
-
 	maxPages := s.maxPages
 	if maxPages <= 0 {
 		maxPages = 100
@@ -220,6 +214,14 @@ func (s *dupeSearcher) fetchPage(ctx context.Context, request hdbDupeRequest) ([
 		return nil, dupe.FailureRequest, fmt.Errorf("build HDB search page %d request: %w", request.Page, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	dupe.TraceSearchRequest(s.logger, "HDB", req.Method, "/api/torrents", map[string]any{
+		"category": request.Category,
+		"imdb":     request.IMDB,
+		"tvdb":     request.TVDB,
+		"search":   request.Search,
+		"limit":    request.Limit,
+		"page":     request.Page,
+	})
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return nil, dupe.FailureRequest, fmt.Errorf("request HDB search page %d: %w", request.Page, err)
