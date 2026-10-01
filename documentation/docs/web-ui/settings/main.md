@@ -24,6 +24,12 @@ TMDB API is a secret. The Web UI masks a saved key; leaving `[REDACTED]` unchang
 
 :::
 
+## Scene group casing
+
+When SRRDB confirms a scene release, upbrr uses the group spelling from that release name to correct the casing of a matching filename-derived group. For example, an extracted filename ending in `-mixed.mkv` gets the tag `-MiXeD` when the confirmed release name ends in `-MiXeD`. Intentionally lowercase scene groups stay lowercase.
+
+This only corrects casing for the same group, matched case-insensitively. It does not replace a different group or fill a missing group. Without a confirmed scene match and usable group name, the existing tag stays unchanged. The corrected tag is used in generated release names; explicit [group tag overrides or tag removal](../../cli/index.md#naming-fields) still take precedence.
+
 ## Verify the change
 
 Save, prepare a synthetic release such as `Example.Release.2026.1080p-GRP`, then inspect its metadata. Tracker icon changes appear across Input, Tracker Data, Dupe Check, and Descriptions without restarting the server.
