@@ -54,6 +54,29 @@ func TestExtract(t *testing.T) {
 		wantMul []int
 	}{
 		{
+			name: "year numbered season episode",
+			path: "Example.Show.S2026E03.1080p.WEB-DL.mkv",
+			want: Result{Season: 2026, Episode: 3},
+		},
+		{
+			name: "year numbered season pack",
+			path: "Example.Show.S2026.1080p.WEB-DL",
+			want: Result{Season: 2026, TVPack: true},
+		},
+		{
+			name: "year numbered alternate episode",
+			path: "Example.Show.2026x03.1080p.WEB-DL.mkv",
+			want: Result{Season: 2026, Episode: 3},
+		},
+		{
+			name: "oversized season episode is not truncated",
+			path: "Example.Show.S20260E03.1080p.mkv",
+		},
+		{
+			name: "oversized season pack is not truncated",
+			path: "Example.Show.S20260.1080p",
+		},
+		{
 			name: "standard tv",
 			path: "Show.Name.S01E05.1080p.WEB-DL.mkv",
 			want: Result{Season: 1, Episode: 5},
@@ -193,7 +216,25 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 			want:  5,
 		},
 		{
-			name:  "max season",
+			name:  "year numbered season",
+			parse: ParseSeasonInstruction,
+			value: "2026",
+			want:  2026,
+		},
+		{
+			name:  "prefixed year numbered season",
+			parse: ParseSeasonInstruction,
+			value: "S2026",
+			want:  2026,
+		},
+		{
+			name:  "four digit season boundary",
+			parse: ParseSeasonInstruction,
+			value: "9999",
+			want:  9999,
+		},
+		{
+			name:  "two digit season",
 			parse: ParseSeasonInstruction,
 			value: "99",
 			want:  99,
@@ -278,7 +319,7 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 		{
 			name:  "season overflow",
 			parse: ParseSeasonInstruction,
-			value: "100",
+			value: "10000",
 		},
 		{
 			name:  "garbage season",

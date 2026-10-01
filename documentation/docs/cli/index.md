@@ -179,6 +179,8 @@ Saved corrections use a newer database format. Older binaries do not support wri
 
 ### Naming fields
 
+Season tokens accept up to four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S2026E03` for an episode or `S2026` for a season pack.
+
 | Option                        | Aliases                                           | Purpose                                           |
 | ----------------------------- | ------------------------------------------------- | ------------------------------------------------- |
 | `--category <value>`          | `-category`, `-c`                                 | Override category.                                |
