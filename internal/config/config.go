@@ -1025,14 +1025,7 @@ func (c Config) Validate() error {
 			if strings.TrimSpace(client.QbitHost()) == "" {
 				return fmt.Errorf("config: torrent_clients.%s.url or qbit_url is required", name)
 			}
-			if !client.UsesQuiProxy() {
-				if strings.TrimSpace(client.QbitUsername()) == "" {
-					return fmt.Errorf("config: torrent_clients.%s.username or qbit_user is required", name)
-				}
-				if strings.TrimSpace(client.QbitPassword()) == "" {
-					return fmt.Errorf("config: torrent_clients.%s.password or qbit_pass is required", name)
-				}
-			}
+			// Authentication requirements belong to the server, which may allow local/subnet bypass.
 			switch strings.ToLower(strings.TrimSpace(client.Linking)) {
 			case "", "none", "disabled", "symlink", "hardlink", "reflink":
 			default:
