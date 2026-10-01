@@ -17,6 +17,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -822,12 +823,11 @@ func validRuntimeActivationConfig() config.Config {
 
 func openRuntimeActivationTestRepo(t *testing.T) *db.SQLiteRepository {
 	t.Helper()
-	repo, err := db.OpenWithLogger(filepath.Join(t.TempDir(), "runtime-activation.db"), api.NopLogger{})
+	dbPath := filepath.Join(t.TempDir(), "runtime-activation.db")
+	dbfixture.WriteMigrated(t, dbPath)
+	repo, err := db.OpenWithLogger(dbPath, api.NopLogger{})
 	if err != nil {
 		t.Fatalf("open repository: %v", err)
-	}
-	if err := repo.MigrateContext(t.Context()); err != nil {
-		t.Fatalf("migrate repository: %v", err)
 	}
 	t.Cleanup(func() { _ = repo.Close() })
 	return repo

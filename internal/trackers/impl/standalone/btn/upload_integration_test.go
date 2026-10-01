@@ -30,6 +30,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -3091,18 +3092,9 @@ func writeBTNTestMediaInfo(t *testing.T, dir string, content string) string {
 func newBTNAuthDB(t *testing.T) string {
 	t.Helper()
 
-	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	authfixture.Write(t, dbPath)
-	repo, err := servicedb.OpenWithLoggerContext(ctx, dbPath, api.NopLogger{})
-	if err != nil {
-		t.Fatalf("OpenWithLoggerContext: %v", err)
-	}
-	if err := repo.MigrateContext(ctx); err != nil {
-		_ = repo.Close()
-		t.Fatalf("MigrateContext: %v", err)
-	}
-	_ = repo.Close()
 	return dbPath
 }
 
