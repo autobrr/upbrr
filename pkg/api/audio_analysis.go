@@ -210,6 +210,7 @@ func (i AudioAnalysisInstructions) Normalize() (AudioAnalysisInstructions, error
 // AudioAnalysisSubject is the private exact-generation input used by the decoder.
 // VideoPath is a host filesystem path and must not enter public workflow state.
 type AudioAnalysisSubject struct {
+	MediaBinding        PreparedMediaBinding
 	Release             ReleaseRef
 	SourcePath          string
 	VideoPath           string

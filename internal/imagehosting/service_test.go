@@ -1052,3 +1052,59 @@ func imageHostingTestBinding(sourcePath string) api.PreparedMediaBinding {
 func imageHostingTestSubject(sourcePath string) api.ImageHostingSubject {
 	return api.ImageHostingSubject{MediaBinding: imageHostingTestBinding(sourcePath), SourcePath: sourcePath}
 }
+
+func TestAudioUploadsPersistAccountProvenance(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		name := "single"
+		if batch {
+			name = "batch"
+		}
+		t.Run(name, func(t *testing.T) {
+			imagePath := filepath.Join(t.TempDir(), "waveform.png")
+			if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Config{ImageHosting: config.ImageHostingConfig{ImgBBAPI: "synthetic-api-key"}}
+			repo := &recordingRepo{}
+			service := &Service{
+				cfg:       cfg,
+				logger:    api.NopLogger{},
+				repo:      repo,
+				uploaders: map[string]uploader{"test": &fakeUploader{result: uploadResult{RawURL: "https://example.invalid/audio.png"}}},
+			}
+			if batch {
+				service.uploaders["test"] = &fakeBatchUploader{}
+			}
+			links, err := service.Upload(t.Context(), imageHostingTestSubject("source"), "test", "global", []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeAudioAnalysis}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := AudioAccountScope(cfg, nil, "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(links) != 1 || len(repo.savedImages) != 1 || links[0].AccountScope != want || repo.savedImages[0].AccountScope != want || strings.Contains(want, "synthetic-api-key") {
+				t.Fatalf("upload provenance was not persisted: %#v", links)
+			}
+			cfg.ImageHosting.ImgBBAPI = "replacement-api-key"
+			changed, err := AudioAccountScope(cfg, nil, "test")
+			if err != nil || changed == want {
+				t.Fatal("account change did not invalidate provenance")
+			}
+		})
+	}
+}
+
+func TestAudioAccountScopeIncludesOwnedHostCredentials(t *testing.T) {
+	registry := imageHostingTestRegistry(t)
+	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"HDB": {Passkey: "first-example-passkey"}}}}
+	first, err := AudioAccountScope(cfg, registry, "hdb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Trackers.Trackers["HDB"] = config.TrackerConfig{Passkey: "second-example-passkey"}
+	second, err := AudioAccountScope(cfg, registry, "hdb")
+	if err != nil || first == second {
+		t.Fatal("owned image-host account change did not invalidate provenance")
+	}
+}

@@ -388,6 +388,7 @@ func newCoreWithHooks(
 	workflowAudioAnalysis := newWorkflowAudioAnalysisBuilder(
 		preparedFacts,
 		audioanalysis.NewService(logger),
+		repositories.Media(),
 		audioTmpRoot,
 	)
 	descriptionReuse, _ := repoOwner.(api.DescriptionReuseRepository)
