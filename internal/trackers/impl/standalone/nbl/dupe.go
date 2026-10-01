@@ -22,6 +22,7 @@ import (
 type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
+	logger   api.Logger
 	endpoint string
 	maxPages int
 }
@@ -31,10 +32,10 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
 		cfg:      cfg,
 		http:     httpClient,
+		logger:   logger,
 		endpoint: "https://nebulance.io/api.php",
 		maxPages: deps.MaxPages(100),
 	}
@@ -156,6 +157,15 @@ func (s *dupeSearcher) searchPage(
 		return nblSearchPage{}, dupe.FailureRequest, fmt.Errorf("build NBL search request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	dupe.TraceSearchRequest(s.logger, "NBL", req.Method, "/api.php", map[string]any{
+		"action":   pageParams.Get("action"),
+		"age":      pageParams.Get("age"),
+		"tvmaze":   pageParams.Get("tvmaze"),
+		"imdb":     pageParams.Get("imdb"),
+		"release":  pageParams.Get("release"),
+		"per_page": pageParams.Get("per_page"),
+		"page":     page,
+	})
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return nblSearchPage{}, dupe.FailureRequest, fmt.Errorf("execute NBL search request: %w", err)

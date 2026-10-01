@@ -20,6 +20,7 @@ func Profile() unit3d.Profile {
 			Source: "TheOldSchool",
 		},
 		Site: unit3d.SiteProfile{
+			CategoryIDs:       categoryIDs,
 			ResolveTypeID:     typeID,
 			ResolveCategoryID: categoryID,
 		},

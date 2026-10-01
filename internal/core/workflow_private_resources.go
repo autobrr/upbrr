@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -19,11 +20,16 @@ const (
 	workflowPrivateResourceKindAudioAnalysis = "upbrr/workflow-audio-analysis/v1"
 )
 
+// persistedWorkflowDupeEvidence records the search contract alongside durable evidence.
+// The contract is checked before restoring the assessment for workflow continuation.
 type persistedWorkflowDupeEvidence struct {
-	Summary    api.DupeCheckSummary `json:"summary"`
-	Assessment json.RawMessage      `json:"assessment"`
+	SearchContract string               `json:"searchContract"`
+	Summary        api.DupeCheckSummary `json:"summary"`
+	Assessment     json.RawMessage      `json:"assessment"`
 }
 
+// MarshalPrivateResource encodes duplicate evidence with the current search contract.
+// It rejects a nil assessment instead of persisting an unusable snapshot.
 func (e workflowDupePrivateEvidence) MarshalPrivateResource() (string, []byte, error) {
 	if e.Assessment == nil {
 		return "", nil, errors.New("marshal workflow duplicate assessment: evidence is unavailable")
@@ -33,8 +39,9 @@ func (e workflowDupePrivateEvidence) MarshalPrivateResource() (string, []byte, e
 		return "", nil, fmt.Errorf("marshal workflow duplicate assessment: %w", err)
 	}
 	payload, err := json.Marshal(persistedWorkflowDupeEvidence{
-		Summary:    e.Summary,
-		Assessment: assessment,
+		SearchContract: trackers.DuplicateSearchContractID,
+		Summary:        e.Summary,
+		Assessment:     assessment,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal workflow duplicate evidence: %w", err)
@@ -42,10 +49,16 @@ func (e workflowDupePrivateEvidence) MarshalPrivateResource() (string, []byte, e
 	return workflowPrivateResourceKindDupes, payload, nil
 }
 
+// decodeWorkflowDupePrivateEvidence restores only evidence for the current search contract.
+// Missing or mismatched contracts return [releaseworkflow.ErrPrivateResourceUnavailable]
+// so recovery can invalidate obsolete authority; malformed payloads return decoding errors.
 func decodeWorkflowDupePrivateEvidence(payload []byte) (any, error) {
 	var persisted persistedWorkflowDupeEvidence
 	if err := json.Unmarshal(payload, &persisted); err != nil {
 		return nil, fmt.Errorf("decode workflow duplicate evidence: %w", err)
+	}
+	if persisted.SearchContract != trackers.DuplicateSearchContractID {
+		return nil, releaseworkflow.ErrPrivateResourceUnavailable
 	}
 	assessment, err := dupechecking.UnmarshalAssessment(persisted.Assessment)
 	if err != nil {
@@ -168,6 +181,9 @@ func workflowPrivateResourceCodecs(builder workflowMediaBuilder, audioBuilder wo
 		{
 			Kind:   workflowPrivateResourceKindDupes,
 			Decode: decodeWorkflowDupePrivateEvidence,
+			// Duplicate evidence owns no external resources. Expired legacy evidence
+			// can be deleted even though its search contract no longer permits reuse.
+			DecodeForRelease: func([]byte) (any, error) { return nil, nil },
 		},
 		{
 			Kind: workflowPrivateResourceKindMedia,

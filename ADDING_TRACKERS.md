@@ -432,6 +432,7 @@ func Profile() unit3d.Profile {
 		BaseURL: "https://tracker.example.invalid",
 		Rules:   Rules(),
 		Site: unit3d.SiteProfile{
+			CategoryIDs:         categoryIDs,
 			ResolveCategoryID:   categoryID,
 			ResolveTypeID:       typeID,
 			ResolveResolutionID: resolutionID,
@@ -444,6 +445,13 @@ Put the algorithms in `taxonomy.go`:
 
 ```go
 // taxonomy.go
+func categoryIDs(category api.CanonicalCategory) []string {
+	return map[api.CanonicalCategory][]string{
+		api.CanonicalCategoryMovie: {"1"},
+		api.CanonicalCategoryTV:    {"2", "9"},
+	}[category]
+}
+
 func categoryID(meta api.UploadSubject) string {
 	switch {
 	case strings.EqualFold(unit3d.Category(meta), "TV") && meta.TVPack:
@@ -473,41 +481,64 @@ func resolutionID(meta api.UploadSubject) string {
 }
 ```
 
-Available upload callbacks are:
+Available site callbacks are:
 
-| Callback                 | Use                                                                    |
-| ------------------------ | ---------------------------------------------------------------------- |
+| Callback                 | Use                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------- |
 | `BuildName`              | Legacy string naming; prefer `Profile.ReleaseNamePolicy` for component edits |
-| `BuildDescription`       | Replace shared Unit3D description rendering                            |
-| `ResolveKeywords`        | Filter or remap the `keywords` field                                   |
-| `ResolveTypeID`          | Map prepared release facts to a site type ID                           |
-| `ResolveResolutionID`    | Map prepared release facts to a site resolution ID                     |
-| `ResolveCategoryID`      | Map canonical category and site facts to a site category ID            |
-| `ApplyAdditionalPayload` | Add site-only upload fields after the common payload is built          |
-| `FinalizeDescription`    | Transform the completed shared description without replacing its build |
+| `BuildDescription`       | Replace shared Unit3D description rendering                                  |
+| `ResolveKeywords`        | Filter or remap the `keywords` field                                         |
+| `ResolveTypeID`          | Map prepared release facts to a site type ID                                 |
+| `ResolveResolutionID`    | Map prepared release facts to a site resolution ID                           |
+| `ResolveCategoryID`      | Map canonical category and site facts to a site category ID                  |
+| `CategoryIDs`            | Declare every native category ID in a canonical movie or TV family           |
+| `ApplyAdditionalPayload` | Add site-only upload fields after the common payload is built                |
+| `FinalizeDescription`    | Transform the completed shared description without replacing its build       |
 
 An empty or `"0"` category, type, or resolution mapping is treated as unsupported by mandatory
 Unit3D constructibility and blocks the tracker before duplicate search. Upload preparation retains
 the same defensive invariant. Test every accepted mapping; do not let accidental empty IDs reach
 the API.
 
-#### Duplicate-search mappings can differ independently
+#### Duplicate search covers the full category family
 
-`SiteProfile.ResolveCategoryID`, `ResolveTypeID`, and `ResolveResolutionID` currently affect upload
-and dry-run payloads only. Unit3D duplicate search builds a separate filter query.
+`SiteProfile.CategoryIDs` is the shared category catalog for upload validation and duplicate
+search. A site that supplies `ResolveCategoryID` must also supply `CategoryIDs`. Define both pure
+functions in the site's `taxonomy.go` and wire them in `profile.go`. Sites without a category
+override inherit movie `1` and TV `2`.
 
-If the new tracker uses nonstandard duplicate-search IDs, omits filters, changes the filter path,
-or searches pending torrents, treat that as a Unit3D family-contract extension:
+`ResolveCategoryID` selects one upload category from the exact prepared generation, including
+provider evidence, manual corrections, and tracker-site overrides. That ID must belong to the
+catalog for the release's canonical category. A missing catalog, an unsupported canonical
+category, an invalid native ID, or an upload ID outside the catalog blocks constructibility.
+Duplicate search returns a typed not-run result when its category scope is unavailable; it must
+not report a complete search under an unrelated default category.
 
-1. Add a typed duplicate-search callback/policy to the Unit3D profile contract.
-2. Pass the composed profile into the Unit3D duplicate adapter.
-3. Apply the callback in `dupe_params.go` or the Unit3D data client without adding a new
-   tracker-name conditional.
-4. Define the mapping in the new site's `profile.go` or a site-local `dupe.go`.
-5. Test the exact query parameters and response normalization.
+Duplicate search sends every ID in the canonical family's catalog as repeated `categories[]`
+parameters. Include ordinary and specialized categories such as anime, packs, language, and genre
+subcategories even when this release uploads to only one of them. For example, a TV site with
+ordinary TV `2` and anime TV `3` declares `{"2", "3"}` and searches both for every TV release.
+Include a category in both families only when the site's taxonomy actually shares it between
+movies and TV. Keep native IDs and category algorithms out of the shared query builder.
 
-Do not assume that custom upload IDs are also correct for duplicate search. Do not copy existing
-legacy site-name exceptions as the pattern for new trackers.
+Preserve authoritative provider-ID work binding, season scoping, and complete pagination.
+Unit3D duplicate gathering omits `types[]`, `resolutions[]`, and episode-number filters so that
+the shared evaluator can compare all relevant release variants and season packs. Custom type
+and resolution callbacks still select upload payload fields.
+
+The shared Unit3D data client emits a TRACE request record for every filter or pending API
+request, including the work ID, full repeated category list, other selected filters, and paging.
+New Unit3D sites inherit this handling; see [TRACE request logging](#trace-request-logging) for
+the logging contract and regression expectations.
+
+Test the registered site's actual upload-preview `category_id` alongside its outgoing duplicate
+query. Cover every specialized upload category, applicable manual/site overrides, default sites,
+unsupported scopes, and pagination. A search-semantics change must version
+`trackers.DuplicateSearchContractID` and invalidate retained duplicate authority, including
+restart recovery; changing query parameters alone does not make saved assessments current.
+
+If a site changes the filter endpoint, searches pending torrents, or requires other protocol
+behavior, extend a typed Unit3D profile/data policy and its tests without tracker-name dispatch.
 
 ### 4. Add tracker rules and validation
 
@@ -740,7 +771,8 @@ At minimum, cover:
 - every nonstandard category/type/resolution mapping
 - additional payload fields and description/name transforms
 - static/dynamic banned-group behavior when present
-- duplicate-search query mapping when it differs from standard Unit3D
+- complete movie/TV category catalogs, upload-ID membership, and outgoing duplicate queries
+- broad duplicate scope across specialized categories, manual/site overrides, and pagination
 - dry-run/live payload parity for site-specific fields
 
 Existing contract tests also enforce endpoint locality, validation/banned-group ownership, absence
@@ -919,6 +951,34 @@ The adapter's `Search` must return one structural result:
 
 Use only the dependency snapshot supplied to the factory. Do not read unrelated global config.
 Bound response bodies, sanitize remote diagnostics, and normalize entries into `api.DupeEntry`.
+
+#### TRACE request logging
+
+Use the factory's `deps.Logger()` to emit `dupe.TraceSearchRequest` immediately before each
+duplicate-search API request. Log the actual selected request fields: provider or tracker-group
+IDs, complete category arrays, title fallback queries, any other scope filters, and page,
+offset, or limit values. Include every pagination request, fallback lookup, and search retry.
+Keep request diagnostics at TRACE; the shared coordinator owns search progress and outcomes.
+
+Pass a static endpoint label and an explicit map of safe fields from the constructed query or
+body. Never pass raw request URLs, headers, cookies, full authenticated payloads, credentials,
+or opaque continuation tokens. The helper redacts values as an additional safeguard without
+mutating the request. For opaque continuation links, log the request ordinal and continuation
+flag plus the bound work ID, leaving the token out.
+
+```go
+dupe.TraceSearchRequest(s.logger, "EXAMPLE", req.Method, "/api/torrents/filter", map[string]any{
+	"tmdbId":       params.Get("tmdbId"),
+	"categories[]": params["categories[]"],
+	"page":         params.Get("page"),
+	"perPage":      params.Get("perPage"),
+})
+```
+
+Extend request-construction tests to assert that TRACE shows the outgoing IDs, full category
+list, and pagination or fallback changes, while excluding credentials and continuation tokens.
+Verify that logging preserves the request's filters and authentication. Diagnostic logging must
+not narrow discovery: collect the broad work-bound result set for downstream duplicate evaluation.
 
 ### 6. Add rules, validation, and banned groups
 

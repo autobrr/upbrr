@@ -17,8 +17,9 @@ import (
 )
 
 type dupeSearcher struct {
-	cfg  config.Config
-	http *http.Client
+	cfg    config.Config
+	http   *http.Client
+	logger api.Logger
 }
 
 // newDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
@@ -26,8 +27,11 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
-	return &dupeSearcher{cfg: cfg, http: httpClient}
+	return &dupeSearcher{
+		cfg:    cfg,
+		http:   httpClient,
+		logger: logger,
+	}
 }
 
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
@@ -51,6 +55,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.Failed(dupe.FailureRequest, "TL search failed", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	dupe.TraceSearchRequest(s.logger, "TL", req.Method, "/torrents/browse/list/query", map[string]any{"query": query})
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return dupe.Failed(dupe.FailureRequest, "TL search failed", err)

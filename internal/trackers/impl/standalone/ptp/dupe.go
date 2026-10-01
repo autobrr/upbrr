@@ -21,6 +21,7 @@ import (
 type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
+	logger   api.Logger
 	endpoint string
 }
 
@@ -30,10 +31,10 @@ func newDuplicateAdapterAt(deps dupe.Dependencies, baseURL string) dupe.Adapter 
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
 		cfg:      cfg,
 		http:     httpClient,
+		logger:   logger,
 		endpoint: strings.TrimRight(baseURL, "/") + ptpTorrentPath,
 	}
 }
@@ -105,6 +106,12 @@ func (s *dupeSearcher) get(ctx context.Context, params url.Values, headers map[s
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
+	dupe.TraceSearchRequest(s.logger, "PTP", req.Method, ptpTorrentPath, map[string]any{
+		"imdb":          params.Get("imdb"),
+		"id":            params.Get("id"),
+		"json":          params.Get("json"),
+		"jsontrumpable": params.Get("jsontrumpable"),
+	})
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ptp dupe request: %w", err)

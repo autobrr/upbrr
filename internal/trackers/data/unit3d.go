@@ -703,6 +703,24 @@ func (c *Client) searchUnit3DEndpoint(
 		}
 		seenPageURLs[unit3DSearchURLKey(req.URL)] = struct{}{}
 		SetUnit3DAPIHeaders(req, apiKey)
+		if c.logger != nil {
+			query := req.URL.Query()
+			requestParams := map[string]any{
+				"request_page": pageNumber,
+				"continuation": usingContinuation,
+				"work_tmdb_id": endpoint.filterTMDBID,
+			}
+			for _, key := range []string{"tmdbId", "categories[]", "types[]", "resolutions[]", "name", "seasonNumber", "episodeNumber", "perPage", "page"} {
+				if values, present := query[key]; present {
+					requestParams[key] = values
+				}
+			}
+			endpointLabel := "/api/torrents/filter"
+			if endpoint.pending {
+				endpointLabel = "/api/torrents/pending"
+			}
+			dupe.TraceSearchRequest(c.logger, tracker, req.Method, endpointLabel, requestParams)
+		}
 
 		resp, err := c.http.Do(req)
 		if err != nil {

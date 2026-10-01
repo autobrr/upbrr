@@ -989,12 +989,13 @@ func TestResetIdleInputOnStartupClearsDiscardedActionFromActiveInput(t *testing.
 	}
 }
 
-func TestSettleRecoveryActionsPreservesSubmittedTrackerAfterDiscardedClientInjection(t *testing.T) {
+func TestClientInjectionRecoveryPreservesSubmittedTracker(t *testing.T) {
 	for _, test := range []struct {
 		name                string
 		priorFailureCode    api.OperationFailureCode
 		expectedFailureCode api.OperationFailureCode
 		newResult           bool
+		manual              bool
 	}{
 		{
 			name:                "published unknown outcome",
@@ -1006,6 +1007,13 @@ func TestSettleRecoveryActionsPreservesSubmittedTrackerAfterDiscardedClientInjec
 			name:                "interrupted client retry",
 			priorFailureCode:    api.OperationFailureClientInjection,
 			expectedFailureCode: api.OperationFailureClientInjection,
+		},
+		{
+			name:                "manual reconciliation with unavailable duplicate authority",
+			priorFailureCode:    api.OperationFailureUnknownOutcome,
+			expectedFailureCode: api.OperationFailureMissingExactTorrent,
+			newResult:           true,
+			manual:              true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1089,9 +1097,42 @@ func TestSettleRecoveryActionsPreservesSubmittedTrackerAfterDiscardedClientInjec
 			if err := repository.Save(ctx, testOwnerID, previousRevision, state); err != nil {
 				t.Fatal(err)
 			}
-			settled, err := module.settleRecoveryActions(ctx, testOwnerID, state.Workflow.ID)
-			if err != nil || !settled {
-				t.Fatalf("settle discarded client injection = %t, err=%v", settled, err)
+			if test.manual {
+				effect := api.ReleaseWorkflowEffectRecord{
+					OwnerID:             testOwnerID,
+					WorkflowID:          state.Workflow.ID,
+					OperationID:         "client-injection-operation",
+					EffectID:            "client-injection-effect",
+					Kind:                string(action.EffectKind),
+					ScopeID:             action.EffectScopeID,
+					SemanticFingerprint: "client-injection-semantic",
+					Status:              api.WorkflowEffectStatusStarted,
+					StartedAt:           state.Workflow.UpdatedAt,
+					UpdatedAt:           state.Workflow.UpdatedAt,
+				}
+				if _, _, err := repository.BeginEffect(ctx, effect); err != nil {
+					t.Fatal(err)
+				}
+				if err := repository.MarkOperationEffectsUnknown(ctx, testOwnerID, state.Workflow.ID, effect.OperationID, module.clock.Now().UTC()); err != nil {
+					t.Fatal(err)
+				}
+				_, err := module.Execute(ctx, testOwnerID, ResolveActionCommand{
+					WorkflowID:       state.Workflow.ID,
+					ExpectedRevision: state.Workflow.Revision,
+					Answer: api.RequiredActionAnswer{
+						ActionID:         action.ID,
+						WorkflowRevision: state.Workflow.Revision,
+						SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
+					},
+				})
+				if err != nil {
+					t.Fatalf("reconcile client injection: %v", err)
+				}
+			} else {
+				settled, err := module.settleRecoveryActions(ctx, testOwnerID, state.Workflow.ID)
+				if err != nil || !settled {
+					t.Fatalf("settle discarded client injection = %t, err=%v", settled, err)
+				}
 			}
 			state, err = repository.Load(ctx, testOwnerID, state.Workflow.ID)
 			if err != nil {

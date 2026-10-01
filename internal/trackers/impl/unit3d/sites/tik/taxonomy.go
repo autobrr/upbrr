@@ -67,6 +67,13 @@ func discType(meta api.UploadSubject) string {
 	return ""
 }
 
+func categoryIDs(category api.CanonicalCategory) []string {
+	return map[api.CanonicalCategory][]string{
+		api.CanonicalCategoryMovie: {"1", "3", "5", "6"},
+		api.CanonicalCategoryTV:    {"2", "4", "5"},
+	}[category]
+}
+
 func categoryID(meta api.UploadSubject) string {
 	category := unit3d.Category(meta)
 	foreign, opera, asian := isForeign(meta), isOpera(meta), isAsian(meta)

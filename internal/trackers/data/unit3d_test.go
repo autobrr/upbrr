@@ -378,6 +378,7 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse test server URL: %v", err)
 	}
+	logger := &unit3DSearchRecordingLogger{}
 	client := NewClientWithRegistry(config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
@@ -386,7 +387,7 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 				},
 			},
 		},
-	}, api.NopLogger{}, &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}}, testUnit3DRegistry(t, "CBR", baseURL))
+	}, logger, &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}}, testUnit3DRegistry(t, "CBR", baseURL))
 
 	params := url.Values{}
 	params.Set("tmdbId", "42")
@@ -414,6 +415,15 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	}
 	if entries[1].ID != "202" || entries[1].SizeBytes != 456 || entries[1].Files[0] != "pending.mkv" {
 		t.Fatalf("unexpected pending fields: %#v", entries[1])
+	}
+	logs := strings.Join(logger.trace, "\n")
+	for _, endpoint := range []string{"/api/torrents/filter", "/api/torrents/pending"} {
+		if !strings.Contains(logs, "dupechecking: request tracker=CBR method=GET endpoint="+endpoint) {
+			t.Fatalf("request TRACE missing endpoint %q", endpoint)
+		}
+	}
+	if !strings.Contains(logs, `"tmdbId":["42"]`) || strings.Contains(logs, "secret") || strings.Contains(logs, baseURL) {
+		t.Fatal("request TRACE missing the work ID or exposed authentication/URL")
 	}
 }
 
@@ -461,6 +471,10 @@ func TestSearchTorrentsWithEvidenceFollowsLinksAndIgnoresMeta(t *testing.T) {
 	}
 	logs := strings.Join(logger.trace, "\n")
 	for _, decision := range []string{
+		`"continuation":false`,
+		`"continuation":true`,
+		`"request_page":1`,
+		`"request_page":2`,
 		"state=active decision=link_mode count=1",
 		"state=active decision=continue count=1",
 		"state=completed decision=terminal count=2",

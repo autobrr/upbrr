@@ -21,6 +21,7 @@ import (
 type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
+	logger   api.Logger
 	endpoint string
 	maxPages int
 }
@@ -30,10 +31,10 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
 		cfg:      cfg,
 		http:     httpClient,
+		logger:   logger,
 		endpoint: "https://anthelion.me/api.php",
 		maxPages: deps.MaxPages(100),
 	}
@@ -79,6 +80,14 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		req.URL.RawQuery = pageParams.Encode()
 		req.Header.Set("User-Agent", "upbrr")
 		req.Header.Set("X-Api-Key", apiKey)
+		dupe.TraceSearchRequest(s.logger, "ANT", req.Method, "/api.php", map[string]any{
+			"t":      pageParams.Get("t"),
+			"o":      pageParams.Get("o"),
+			"tmdb":   pageParams.Get("tmdb"),
+			"imdb":   pageParams.Get("imdb"),
+			"limit":  pageParams.Get("limit"),
+			"offset": pageParams.Get("offset"),
+		})
 		resp, err := s.http.Do(req)
 		if err != nil {
 			return dupe.Failed(dupe.FailureRequest, "ANT request failed", err)

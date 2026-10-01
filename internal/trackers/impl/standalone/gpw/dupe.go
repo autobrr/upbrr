@@ -20,6 +20,7 @@ import (
 type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
+	logger   api.Logger
 	endpoint string
 }
 
@@ -28,10 +29,10 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
 		cfg:      cfg,
 		http:     httpClient,
+		logger:   logger,
 		endpoint: "https://greatposterwall.com/api.php",
 	}
 }
@@ -53,6 +54,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		"action":  {"torrent"},
 		"imdbID":  {providerid.IMDb(meta.Identity.IMDBID).Prefixed()},
 	}.Encode()
+	dupe.TraceSearchRequest(s.logger, "GPW", req.Method, "/api.php", map[string]any{
+		"action": req.URL.Query().Get("action"),
+		"imdbID": req.URL.Query().Get("imdbID"),
+	})
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return dupe.Failed(dupe.FailureRequest, "GPW search failed", err)

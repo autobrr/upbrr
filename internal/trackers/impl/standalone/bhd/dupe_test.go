@@ -27,6 +27,15 @@ type bhdRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f bhdRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+type bhdDupeTraceLogger struct {
+	api.NopLogger
+	trace []string
+}
+
+func (l *bhdDupeTraceLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
+
 func bhdStringFromAny(value any) string {
 	if value == nil {
 		return ""
@@ -131,13 +140,20 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			t.Parallel()
 
 			var payload map[string]any
+			logger := &bhdDupeTraceLogger{}
 			client := &http.Client{Transport: bhdRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path != "/api/torrents/api-credential" {
+					t.Fatalf("logging changed the credential-bearing request path: %s", req.URL.Path)
+				}
 				body, err := io.ReadAll(req.Body)
 				if err != nil {
 					t.Fatalf("read request body: %v", err)
 				}
 				if err := json.Unmarshal(body, &payload); err != nil {
 					t.Fatalf("decode request body: %v", err)
+				}
+				if payload["rsskey"] != "rss-credential" {
+					t.Fatal("logging changed the request's RSS credential")
 				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
@@ -148,9 +164,9 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 				}, nil
 			})}
 			cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-				"BHD": {APIKey: "placeholder"},
+				"BHD": {APIKey: "api-credential", BhdRSSKey: "rss-credential"},
 			}}}
-			handler := dupe.NewAdapter(New(), "BHD", cfg, client, api.NopLogger{})
+			handler := dupe.NewAdapter(New(), "BHD", cfg, client, logger)
 
 			entries, notes, err := adapterEvidence(handler.Search(context.Background(), tc.meta))
 			if err != nil {
@@ -176,6 +192,22 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			}
 			if value, ok := payload["search"]; ok {
 				t.Fatalf("expected no title or season filter, got %#v", value)
+			}
+			logs := strings.Join(logger.trace, "\n")
+			for _, want := range []string{
+				"dupechecking: request tracker=BHD method=POST endpoint=/api/torrents",
+				`"categories":"` + tc.wantCategory + `"`, `"page":1`,
+			} {
+				if !strings.Contains(logs, want) {
+					t.Fatalf("request TRACE missing %q", want)
+				}
+			}
+			if tc.wantTMDBID != "" && !strings.Contains(logs, `"tmdb_id":"`+tc.wantTMDBID+`"`) ||
+				tc.wantIMDBID != "" && !strings.Contains(logs, `"imdb_id":"`+tc.wantIMDBID+`"`) {
+				t.Fatal("request TRACE missing the selected work ID")
+			}
+			if strings.Contains(logs, "api-credential") || strings.Contains(logs, "rss-credential") || strings.Contains(logs, "rsskey") {
+				t.Fatal("request TRACE exposed credentials")
 			}
 		})
 	}
