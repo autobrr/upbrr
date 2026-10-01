@@ -26,6 +26,24 @@ func DetectTag(path string) string {
 	return "-" + group
 }
 
+// applySceneGroupCasing uses the confirmed scene release name to restore the
+// casing lost in extracted filenames. It never changes a group identity or
+// invents a missing group, and leaves a different effective tag alone.
+// Explicit tag instructions are applied after scene detection.
+func applySceneGroupCasing(meta *preparationstate.State) {
+	if !meta.Scene {
+		return
+	}
+	group := strings.TrimSpace(ParseReleaseInfo(meta.SceneName).Group)
+	if group == "" || !strings.EqualFold(strings.TrimSpace(meta.Release.Group), group) {
+		return
+	}
+	meta.Release.Group = group
+	if strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-"), group) {
+		meta.Tag = "-" + group
+	}
+}
+
 // SeasonPackGroupTagInfo describes the parsed release groups found in a season
 // pack file list.
 type SeasonPackGroupTagInfo struct {
