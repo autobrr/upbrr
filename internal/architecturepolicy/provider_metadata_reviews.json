@@ -12,8 +12,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.lookupMediaCode": {
-    "sha256": "9237ad60fc3384491123160dbca8187715053c814f00d8898fa3d702bac93c38",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "8e86b095232e58be925fea611c751b366d5151902d467dad1ccc250442fb821b",
+    "reason": "TRACE request logging review: lookupAZDupeTitle manual precedence and current provider evidence, IMDb-first fallback, and exact work binding remain unchanged."
   },
   "internal/trackers/impl/azfamily/dupe.go:lookupAZDupeTitle": {
     "sha256": "ecc4717887dc181147f8dbd988de0bdc91e3fc01dd172a33fffe9ff3e3b92318",
@@ -724,8 +724,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
-    "sha256": "908745a313439169085b7bc9445d9c687542dd59f9d6197e6c0711351332c93b",
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+    "sha256": "7441a490dba410427b5428b0c85dc809fac67a6c3d6f9b135cfa8360e87c0b07",
+    "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request."
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztSearchQuery": {
     "sha256": "2d38ea4da0a0bf08231658a75447746ff14967056bbf73f4038656e8f5720c87",
@@ -820,8 +820,8 @@
     "reason": "Matches claim title and note aliases against the reviewed canonical/provider candidate helper while preserving all conflicting ownership rows. It does not select effective metadata."
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:*dupeSearcher.Search": {
-    "sha256": "f5ef24576439f55dd06a2092e9a0392444497033950aa60990d87d9d06637c97",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "b39220b64c79075ec7f985147b281a70262f4cd3dbe8d034f7558213fb7c8307",
+    "reason": "TRACE request logging review: removing the DEBUG payload dump preserves hdbDupeCategoryID manual precedence, IMDb/TVDB priority, and manual-aware title fallback."
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:hdbDupeCategoryID": {
     "sha256": "1f6d6b4de4085b49135f2f0bc4cc7d1c2be5697e6ad3ff67d7ffa85d162caf45",
@@ -1192,8 +1192,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:*dupeSearcher.Search": {
-    "sha256": "3df89f91df4c9e67da2e98cacf9cc8e7ccd3305ae03613323278f851245c3b68",
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+    "sha256": "98ee1c9dc611fab0777be4dbc9c4e201636775e834384ea9d4e915ef48789b3f",
+    "reason": "TRACE request logging review: the existing finalized/projected title fallback still applies EffectiveMetadata.PreferredTitle before the unchanged request."
   },
   "internal/trackers/impl/standalone/tl/taxonomy.go:resolveCategory": {
     "sha256": "f79f27d1a41d6b892ad3553524f497832020d485ba637b878e9924bf9ed2bcc2",

@@ -4,6 +4,7 @@
 package impl
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,15 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/tos"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type categorySearchTraceLogger struct {
+	api.NopLogger
+	trace []string
+}
+
+func (l *categorySearchTraceLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
 
 func TestUnit3DCategorySearchIncludesUploadAndRelatedCategories(t *testing.T) {
 	t.Parallel()
@@ -184,7 +194,8 @@ func TestUnit3DCategorySearchIncludesUploadAndRelatedCategories(t *testing.T) {
 			cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 				test.tracker: {APIKey: "test-key"},
 			}}}
-			adapter := dupe.NewAdapter(definition, test.tracker, cfg, server.Client(), api.NopLogger{}, registry)
+			logger := &categorySearchTraceLogger{}
+			adapter := dupe.NewAdapter(definition, test.tracker, cfg, server.Client(), logger, registry)
 			result := adapter.Search(t.Context(), api.DuplicateSubject{
 				Identity:    meta.Identity,
 				ReleaseName: meta.ReleaseName,
@@ -193,6 +204,22 @@ func TestUnit3DCategorySearchIncludesUploadAndRelatedCategories(t *testing.T) {
 			})
 			if result.Disposition() != dupe.DispositionResolved || !result.SearchEvidence().EffectiveComplete() {
 				t.Fatalf("search = %v (%s), evidence = %+v", result.Disposition(), result.SafeMessage(), result.SearchEvidence())
+			}
+			categories, err := json.Marshal(wantScope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logs := strings.Join(logger.trace, "\n")
+			for _, want := range []string{
+				"dupechecking: request tracker=" + test.tracker + " method=GET endpoint=/api/torrents/filter",
+				`"tmdbId":["123"]`, `"categories[]":` + string(categories), `"page":["1"]`, `"perPage":["100"]`,
+			} {
+				if !strings.Contains(logs, want) {
+					t.Fatalf("request TRACE missing %q", want)
+				}
+			}
+			if strings.Contains(logs, "test-key") || strings.Contains(logs, server.URL) {
+				t.Fatal("request TRACE exposed credentials or the configured URL")
 			}
 		})
 	}

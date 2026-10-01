@@ -5,6 +5,7 @@ package ptp
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -21,9 +22,19 @@ type ptpRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f ptpRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+type ptpDupeTraceLogger struct {
+	api.NopLogger
+	trace []string
+}
+
+func (l *ptpDupeTraceLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
+
 func TestPTPHandlerReturnsCompleteExactGroup(t *testing.T) {
 	t.Parallel()
 
+	logger := &ptpDupeTraceLogger{}
 	requests := 0
 	client := &http.Client{Transport: ptpRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requests++
@@ -60,12 +71,20 @@ func TestPTPHandlerReturnsCompleteExactGroup(t *testing.T) {
 		Trackers: map[string]config.TrackerConfig{
 			"PTP": {PTPAPIUser: "api-user", PTPAPIKey: "api-key"},
 		},
-	}}, client, api.NopLogger{})
+	}}, client, logger)
 	result := handler.Search(context.Background(), api.DuplicateSubject{
 		Identity: api.ExternalIdentity{IMDBID: 1234567, Category: "MOVIE"},
 	})
 	if result.Disposition() != dupe.DispositionResolved || result.Cause() != nil {
 		t.Fatalf("PTP result disposition=%v error=%v", result.Disposition(), result.Cause())
+	}
+	if len(logger.trace) != 2 || !strings.Contains(logger.trace[0], `"imdb":"1234567"`) ||
+		!strings.Contains(logger.trace[1], `"id":"700"`) {
+		t.Fatalf("request TRACE missing IMDb or group lookup: %v", logger.trace)
+	}
+	logs := strings.Join(logger.trace, "\n")
+	if strings.Contains(logs, "api-user") || strings.Contains(logs, "api-key") || strings.Contains(logs, "https://") {
+		t.Fatal("request TRACE exposed authentication or URL")
 	}
 	search := result.SearchEvidence()
 	if !search.Complete || search.Pages != 1 || search.Scope != "work_identity" || len(search.Warnings) != 0 {

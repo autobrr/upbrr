@@ -526,6 +526,11 @@ Unit3D duplicate gathering omits `types[]`, `resolutions[]`, and episode-number 
 the shared evaluator can compare all relevant release variants and season packs. Custom type
 and resolution callbacks still select upload payload fields.
 
+The shared Unit3D data client emits a TRACE request record for every filter or pending API
+request, including the work ID, full repeated category list, other selected filters, and paging.
+New Unit3D sites inherit this handling; see [TRACE request logging](#trace-request-logging) for
+the logging contract and regression expectations.
+
 Test the registered site's actual upload-preview `category_id` alongside its outgoing duplicate
 query. Cover every specialized upload category, applicable manual/site overrides, default sites,
 unsupported scopes, and pagination. A search-semantics change must version
@@ -946,6 +951,34 @@ The adapter's `Search` must return one structural result:
 
 Use only the dependency snapshot supplied to the factory. Do not read unrelated global config.
 Bound response bodies, sanitize remote diagnostics, and normalize entries into `api.DupeEntry`.
+
+#### TRACE request logging
+
+Use the factory's `deps.Logger()` to emit `dupe.TraceSearchRequest` immediately before each
+duplicate-search API request. Log the actual selected request fields: provider or tracker-group
+IDs, complete category arrays, title fallback queries, any other scope filters, and page,
+offset, or limit values. Include every pagination request, fallback lookup, and search retry.
+Keep request diagnostics at TRACE; the shared coordinator owns search progress and outcomes.
+
+Pass a static endpoint label and an explicit map of safe fields from the constructed query or
+body. Never pass raw request URLs, headers, cookies, full authenticated payloads, credentials,
+or opaque continuation tokens. The helper redacts values as an additional safeguard without
+mutating the request. For opaque continuation links, log the request ordinal and continuation
+flag plus the bound work ID, leaving the token out.
+
+```go
+dupe.TraceSearchRequest(s.logger, "EXAMPLE", req.Method, "/api/torrents/filter", map[string]any{
+	"tmdbId":       params.Get("tmdbId"),
+	"categories[]": params["categories[]"],
+	"page":         params.Get("page"),
+	"perPage":      params.Get("perPage"),
+})
+```
+
+Extend request-construction tests to assert that TRACE shows the outgoing IDs, full category
+list, and pagination or fallback changes, while excluding credentials and continuation tokens.
+Verify that logging preserves the request's filters and authentication. Diagnostic logging must
+not narrow discovery: collect the broad work-bound result set for downstream duplicate evaluation.
 
 ### 6. Add rules, validation, and banned groups
 

@@ -108,6 +108,10 @@ func (h dupeSearcher) lookupMediaCode(ctx context.Context, site azDupeSiteDef, c
 		for _, cookie := range cookies {
 			req.AddCookie(cookie)
 		}
+		dupe.TraceSearchRequest(h.logger, h.tracker, req.Method, "/ajax/movies", map[string]any{
+			"category": categoryID,
+			"term":     term,
+		})
 		resp, err := h.http.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("dupechecking: fetch %s media lookup: %w", site.baseURL, err)
@@ -190,6 +194,11 @@ func (h dupeSearcher) fetchTorrentList(
 		for _, cookie := range cookies {
 			req.AddCookie(cookie)
 		}
+		dupe.TraceSearchRequest(h.logger, h.tracker, req.Method, "/movies/torrents", map[string]any{
+			"group_id":     strings.TrimPrefix(req.URL.Path, "/movies/torrents/"),
+			"request_page": pages + 1,
+			"page":         req.URL.Query().Get("page"),
+		})
 		resp, err := h.http.Do(req)
 		if err != nil {
 			return nil, pages, false, warning, fmt.Errorf("dupechecking: fetch %s torrent list: %w", site.baseURL, err)
