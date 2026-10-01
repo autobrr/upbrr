@@ -367,6 +367,9 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 			return api.PrepareResult{}, err
 		}
 	}
+	if input.Instructions.Metadata.Anime != nil {
+		collected.Media.Anime = *input.Instructions.Metadata.Anime
+	}
 	preparedAt := m.now().UTC()
 	release := api.PreparedRelease{
 		Generation:       generation,
