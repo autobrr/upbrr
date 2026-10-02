@@ -126,7 +126,6 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 			ImgRehost: true,
 		},
 		"PTP": {ImageHost: "imgbox"},
-		"THR": {ImgAPI: "synthetic-original-thr-key"},
 	}
 	backend := &Backend{
 		repo:     repo,
@@ -197,14 +196,6 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 				hdb.Username = "synthetic-different-user"
 				hdb.Passkey = "synthetic-different-passkey"
 				candidate.Trackers.Trackers["HDB"] = hdb
-			},
-		},
-		{
-			name: "THR uploader credential",
-			mutate: func(candidate *config.Config) {
-				thr := candidate.Trackers.Trackers["THR"]
-				thr.ImgAPI = "synthetic-different-thr-key"
-				candidate.Trackers.Trackers["THR"] = thr
 			},
 		},
 		{

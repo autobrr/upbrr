@@ -38,7 +38,6 @@ import (
 	ptsimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/pts"
 	rtfimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
 	spdimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/spd"
-	thrimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/thr"
 	tlimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/tl"
 	unit3dimpl "github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	aitherimpl "github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/aither"
@@ -256,23 +255,6 @@ func TestSiteHandlersSearch(t *testing.T) {
 				}
 			},
 			scope: dupe.WorkScopeProviderID,
-		},
-		{
-			name:    "THR",
-			tracker: "THR",
-			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 123}, SourcePath: "x"},
-			setup:   func(_ *testing.T, _ string, _ string) {},
-			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
-				return dupe.NewAdapter(thrimpl.New(), "THR", cfg, client, api.NopLogger{})
-			},
-			validate: func(t *testing.T, entries []api.DupeEntry) {
-				if len(entries) != 1 || entries[0].Name != "THR.Movie.2024.1080p.BluRay-GRP" {
-					t.Fatalf("unexpected THR entries: %#v", entries)
-				}
-			},
-			scope:      dupe.WorkScopeProviderID,
-			enumerated: true,
-			effective:  true,
 		},
 		{
 			name:    "TL",
@@ -590,24 +572,6 @@ func TestSiteHandlersSearch(t *testing.T) {
 				case "PTS":
 					if r.URL.Path == "/torrents.php" {
 						_, _ = w.Write([]byte(`<table class="torrents"><table class="torrentname"><b>PTS.Movie.2024.1080p.WEB-DL-GRP</b></table></table>`))
-						return
-					}
-				case "THR":
-					if r.URL.Path == "/login.php" {
-						_, _ = w.Write([]byte(`<form><input type="hidden" name="returnto" value="/browse.php"></form>`))
-						return
-					}
-					if r.URL.Path == "/takelogin.php" {
-						http.SetCookie(w, &http.Cookie{
-							Name:  "session",
-							Value: "cookie",
-							Path:  "/",
-						})
-						_, _ = w.Write([]byte("ok"))
-						return
-					}
-					if r.URL.Path == "/browse.php" {
-						_, _ = w.Write([]byte(`<a href="details.php?id=91" onmousemove="return overlibImage('THR.Movie.2024.1080p.BluRay-GRP','/images/test.png')">link</a>`))
 						return
 					}
 				case "TL":

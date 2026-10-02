@@ -347,14 +347,16 @@ type TrackerConfig struct {
 	ImageCount          int    `yaml:"image_count" json:"ImageCount"`
 	Channel             string `yaml:"channel" json:"Channel"`
 	ImgAPI              string `yaml:"img_api" json:"ImgAPI"`
-	PronfoAPIKey        string `yaml:"pronfo_api_key" json:"PronfoAPIKey"`
-	PronfoTheme         string `yaml:"pronfo_theme" json:"PronfoTheme"`
-	PronfoRAPIID        string `yaml:"pronfo_rapi_id" json:"PronfoRAPIID"`
-	APIUpload           bool   `yaml:"api_upload" json:"APIUpload"`
-	Exclusive           bool   `yaml:"exclusive" json:"Exclusive"`
-	LoginQuestion       string `yaml:"login_question" json:"LoginQuestion"`
-	LoginAnswer         string `yaml:"login_answer" json:"LoginAnswer"`
-	UserID              string `yaml:"user_id" json:"UserID"`
+	// Pronfo fields are compatibility-only: preserve legacy config and its
+	// secret encryption without advertising a supported tracker feature.
+	PronfoAPIKey  string `yaml:"pronfo_api_key" json:"PronfoAPIKey"`
+	PronfoTheme   string `yaml:"pronfo_theme" json:"PronfoTheme"`
+	PronfoRAPIID  string `yaml:"pronfo_rapi_id" json:"PronfoRAPIID"`
+	APIUpload     bool   `yaml:"api_upload" json:"APIUpload"`
+	Exclusive     bool   `yaml:"exclusive" json:"Exclusive"`
+	LoginQuestion string `yaml:"login_question" json:"LoginQuestion"`
+	LoginAnswer   string `yaml:"login_answer" json:"LoginAnswer"`
+	UserID        string `yaml:"user_id" json:"UserID"`
 	// Internal is a deprecated compatibility field. Group-list matches alone
 	// determine tracker-specific internal handling.
 	Internal              bool           `yaml:"internal" json:"Internal"`
@@ -1064,7 +1066,8 @@ func (c Config) Validate() error {
 		}
 
 		imageHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
-		if imageHost != "" {
+		// Unsupported saved entries are inert, so obsolete hosts must not block startup.
+		if imageHost != "" && len(trackerAllowedYAMLKeys(strings.ToUpper(strings.TrimSpace(trackerName)))) > 0 {
 			if !imagehostpolicy.IsUploadHost(imageHost) {
 				return fmt.Errorf("config: trackers.%s.image_host %q is not supported", trackerName, trackerCfg.ImageHost)
 			}

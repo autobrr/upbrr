@@ -110,7 +110,6 @@ func TestRemainingStandaloneNamesTargetComponents(t *testing.T) {
 		{"FL", "DV.DD+.HDR10+.Tales.2001.1080p.WEB-DL.DDP.5.1.DoVi.HDR.H.264-GRP"},
 		{"HDT", "DV DD+ HDR10+ Tales 2001 1080p WEB-DL DD+5.1 DoVi HDR10+ H.264-GRP"},
 		{"BHDTV", "DV.DD+.HDR10+.Tales.2001.1080p.WEB-DL.DDP.5.1.DV.HDR10+.H.264-GRP"},
-		{"THR", "DV DD HDR10 Tales 2001 1080p WEB-DL DDP 5.1 DV HDR10 H.264-GRP"},
 	} {
 		t.Run(tc.tracker, func(t *testing.T) {
 			generated := metadata.BuildReleaseName(api.ReleaseNameRequest{
@@ -244,12 +243,6 @@ func TestFileListExactUploadKeepsGeneratedDuplicateName(t *testing.T) {
 	projection, failure = registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: "FL", Meta: subject}, "", "", "")
 	if failure != nil || projection.DuplicateCriteria.Name != "Example.Movie.2001.1080p.WEB-DL.DDP.5.1.H.264-GRP" {
 		t.Fatalf("missing title search=%q failure=%v", projection.DuplicateCriteria.Name, failure)
-	}
-	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"THR": {"name_override": "THR Exact Name"}}
-	thr, _ := registry.LookupDescriptor("THR")
-	prepared, thrFailure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "THR", Meta: subject}, thr.ReleaseNamePolicy)
-	if thrFailure != nil || prepared.Projection.DuplicateCriteria.Name != "THR Exact Name" {
-		t.Fatalf("THR exact search changed: %v", thrFailure)
 	}
 	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"FL": {"name": "Exact Questionnaire Name"}}
 	subject.GeneratedName = nil

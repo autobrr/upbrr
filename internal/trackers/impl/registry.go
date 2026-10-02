@@ -30,7 +30,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/pts"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/spd"
-	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/thr"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/tl"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/tvc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -174,7 +173,6 @@ func standaloneDefinitions() []trackers.Definition {
 		pts.New(),
 		rtf.New(),
 		spd.New(),
-		thr.New(),
 		tl.New(),
 		tvc.New(),
 	}

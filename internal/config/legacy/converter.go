@@ -228,15 +228,19 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 			continue
 		}
 		if !knownTrackers[trackerName] {
-			unknown := make(map[string]any, len(trackerValues))
+			outTracker := config.TrackerConfig{Unknown: make(map[string]any)}
 			for key, value := range trackerValues {
 				if strings.EqualFold(strings.TrimSpace(key), "url") {
 					warnings = append(warnings, fmt.Sprintf("ignored deprecated tracker URL: trackers.%s.%s", trackerName, key))
 					continue
 				}
-				unknown[key] = value
+				if templateValue := getTrackerFieldDefault(key); templateValue != nil {
+					setTrackerField(&outTracker, key, coerceValue(value, templateValue))
+					continue
+				}
+				outTracker.Unknown[key] = value
 			}
-			out.Trackers.Trackers[trackerName] = config.TrackerConfig{Unknown: unknown}
+			out.Trackers.Trackers[trackerName] = outTracker
 			warnings = append(warnings, "preserved unsupported tracker entry: "+trackerName)
 			continue
 		}
@@ -565,7 +569,7 @@ func getTrackerFieldDefault(yamlKey string) any {
 	t := reflect.TypeFor[config.TrackerConfig]()
 	for field := range t.Fields() {
 		tag := strings.TrimSpace(strings.Split(field.Tag.Get("yaml"), ",")[0])
-		if tag == yamlKey {
+		if tag != "" && tag != "-" && tag == yamlKey {
 			return reflect.Zero(field.Type).Interface()
 		}
 	}

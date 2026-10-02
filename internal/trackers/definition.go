@@ -774,8 +774,6 @@ type ImageHostPolicy struct {
 	OwnedHosts []string
 	// DisableWithoutRehost disables the policy unless image rehosting is enabled.
 	DisableWithoutRehost bool
-	// DisableWithoutAPI disables the policy unless tracker image API credentials exist.
-	DisableWithoutAPI bool
 	// ConditionalHost is enabled only when its associated runtime condition is met.
 	ConditionalHost string
 	// EnableWithImageHosting enables ConditionalHost through global image-hosting settings.

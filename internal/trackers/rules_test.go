@@ -172,7 +172,6 @@ func TestStandaloneConstructibilityAuditPoliciesRejectInvalidFacts(t *testing.T)
 		{tracker: "FF", rule: "unsupported_category"},
 		{tracker: "FL", rule: "unsupported_category"},
 		{tracker: "NBL", rule: "nbl_asset_mediainfo_text"},
-		{tracker: "THR", rule: "unsupported_category"},
 		{tracker: "TL", rule: "unsupported_category"},
 		{tracker: "GPW", rule: "prepared_media_missing"},
 		{tracker: "PTP", rule: "unsupported_category"},

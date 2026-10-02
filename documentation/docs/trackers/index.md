@@ -7,6 +7,8 @@ description: Configure tracker credentials, authentication, default selection, d
 
 upbrr's tracker catalog is built from registered tracker implementations. The Web UI renders each tracker's supported settings and capabilities from that catalog.
 
+THR support, including its tracker-owned image host, has been removed because the site changed its underlying codebase. Existing saved THR entries remain unsupported configuration; they do not enable uploads or authentication. Remove THR from your default and per-run selections. A replacement integration is not included.
+
 ## Configure a tracker
 
 1. Open **Settings**.
