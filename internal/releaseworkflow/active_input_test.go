@@ -350,7 +350,7 @@ func TestReopenVerifiedInputRestoresAudioAnalysis(t *testing.T) {
 	}
 }
 
-func TestContinueInitialOpenRequestsExternalProviderRefresh(t *testing.T) {
+func TestContinueInitialOpenLoadsAndSameInputApplies(t *testing.T) {
 	t.Parallel()
 	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
 	if err != nil {
@@ -365,13 +365,20 @@ func TestContinueInitialOpenRequestsExternalProviderRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	var verified []api.PrepareInput
-	module, err := New(persistent, NewMemoryPrivateResourceStore(), testPreparer(), WithActiveInputs(repo,
+	prepared := make(chan api.PrepareInput, 1)
+	preparer := testPreparer()
+	prepare := preparer.PrepareFunc
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		prepared <- input
+		return prepare(ctx, input)
+	}
+	module, err := New(persistent, NewMemoryPrivateResourceStore(), preparer, WithActiveInputs(repo,
 		func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
 			verified = append(verified, input)
 			return api.InputRecord{
 				CanonicalPath: input.SourcePath,
 				SourceVersion: "verified",
-				Manifest:      []byte(`{}`),
+				Manifest:      []byte(`{"identity":{"digest":"verified"}}`),
 			}, nil
 		}))
 	if err != nil {
@@ -386,19 +393,101 @@ func TestContinueInitialOpenRequestsExternalProviderRefresh(t *testing.T) {
 			<-done
 		}
 	})
-	_, err = module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+	request := api.ContinueReleaseWorkflowRequest{
 		IdempotencyKey: "initial-open-refresh",
 		Goal:           api.WorkflowGoalPrepared,
 		Intent: api.WorkflowIntent{Preparation: &api.PrepareInput{
 			SourcePath: filepath.Join(t.TempDir(), "source.mkv"),
 		}},
-	})
+	}
+	opened, err := module.Continue(t.Context(), testOwnerID, request)
 	if err != nil {
 		t.Fatalf("continue initial open: %v", err)
 	}
-	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessRefresh {
+	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessLoad {
 		t.Fatalf("verified preparation inputs = %#v", verified)
 	}
+
+	// Admission replay must retain its receipt when the original load is now active.
+	if _, err := module.Continue(t.Context(), testOwnerID, request); err != nil {
+		t.Fatalf("replay initial open: %v", err)
+	}
+	if len(verified) != 1 {
+		t.Fatalf("replay re-verified input: %#v", verified)
+	}
+	collect := func(current CommandResult, want api.ExternalFreshness) {
+		t.Helper()
+		continued := request
+		continued.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision}
+		advanced, continueErr := module.Continue(t.Context(), testOwnerID, continued)
+		if continueErr != nil {
+			t.Fatalf("continue admitted preparation: %v", continueErr)
+		}
+		if advanced.Operation == nil {
+			t.Fatal("preparation did not start")
+		}
+		waitForWorkflowOperation(t, module, current.Workflow.ID, advanced.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+			return isTerminalProgressStatus(status.Status)
+		})
+		select {
+		case input := <-prepared:
+			if input.ExternalFreshness != want || input.VerifiedSource == nil || input.VerifiedSource.Identity.Digest != "verified" {
+				t.Fatalf("collected freshness/source = %q/%#v, want %q/verified", input.ExternalFreshness, input.VerifiedSource, want)
+			}
+		default:
+			t.Fatal("admitted preparation was not collected")
+		}
+		state, loadErr := persistent.Load(t.Context(), testOwnerID, current.Workflow.ID)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		if state.PreparationInput == nil || state.PreparationInput.ExternalFreshness != api.ExternalFreshnessReuse {
+			t.Fatalf("one-shot freshness survived successful preparation: %#v", state.PreparationInput)
+		}
+	}
+	collect(opened, api.ExternalFreshnessLoad)
+	request.IdempotencyKey = "apply-same-input"
+	applied, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("apply active input without workflow authority: %v", err)
+	}
+	if len(verified) != 2 || verified[1].ExternalFreshness != api.ExternalFreshnessReuse {
+		t.Fatalf("same-input correction preparation = %#v", verified)
+	}
+	collect(applied, api.ExternalFreshnessReuse)
+	slot, err := module.ActiveInput(t.Context(), testOwnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignProcess := slot
+	foreignProcess.CoordinatorID = "prior-process"
+	input, err := module.PreparationForInputOpen(t.Context(), foreignProcess, *request.Intent.Preparation)
+	if err != nil || input.ExternalFreshness != api.ExternalFreshnessLoad {
+		t.Fatalf("prior-process load freshness = %q, error %v", input.ExternalFreshness, err)
+	}
+	if err := module.ReleaseInput(t.Context(), testOwnerID, slot.Revision); err != nil {
+		t.Fatal(err)
+	}
+	request.IdempotencyKey = "reload-closed-input"
+	reloaded, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("reload closed input: %v", err)
+	}
+	collect(reloaded, api.ExternalFreshnessLoad)
+	request.IdempotencyKey = "explicit-provider-refresh"
+	request.Intent.Preparation.ExternalFreshness = api.ExternalFreshnessRefresh
+	refreshed, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("explicit provider refresh: %v", err)
+	}
+	collect(refreshed, api.ExternalFreshnessRefresh)
+	request.IdempotencyKey = "open-different-input"
+	request.Intent.Preparation = &api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "other.mkv")}
+	switched, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("load different input: %v", err)
+	}
+	collect(switched, api.ExternalFreshnessLoad)
 }
 
 func TestClosedInputWorkflowSourceAssociatesTerminalHistoryPurge(t *testing.T) {

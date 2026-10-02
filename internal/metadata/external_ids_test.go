@@ -684,7 +684,7 @@ func TestResolveExternalIDsExplicitRefreshReconcilesProvidersWithoutRetainedAuth
 func TestResolveExternalIDsExplicitRefreshDoesNotRetainFailedProviderAuthority(t *testing.T) {
 	const sourcePath = "/media/Example.Movie.2026.1080p-GRP.mkv"
 	tmdbClient := &stubTMDB{metadataErr: errors.New("provider unavailable")}
-	result, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient)).resolveExternalIdentity(t.Context(), preparationstate.State{
+	result, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(t.Context(), preparationstate.State{
 		SourcePath:        sourcePath,
 		ExternalFreshness: api.ExternalFreshnessRefresh,
 		StoredDataFresh:   true,
@@ -731,7 +731,7 @@ func TestResolveExternalIDsExplicitRefreshPropagatesCancellation(t *testing.T) {
 		cancel()
 		return tmdb.MetadataResult{}, context.Canceled
 	}}
-	_, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient)).resolveExternalIdentity(ctx, preparationstate.State{
+	_, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(ctx, preparationstate.State{
 		SourcePath:        "/media/Example.Movie.2026.1080p-GRP.mkv",
 		ExternalFreshness: api.ExternalFreshnessRefresh,
 		MediaInfoTMDBID:   10,

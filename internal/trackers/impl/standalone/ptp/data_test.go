@@ -3,9 +3,13 @@
 package ptp
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -112,4 +116,129 @@ func TestPTPSearchNameKeepsExtensionlessRelease(t *testing.T) {
 	if got := ptpSearchName("Example.Release.2026"); got != "Example.Release.2026" {
 		t.Fatalf("extensionless release name = %q", got)
 	}
+}
+
+func TestDataLookupResponseOutcomes(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name      string
+		status    int
+		body      string
+		wantError bool
+	}{
+		{
+			name:      "server error",
+			status:    http.StatusInternalServerError,
+			body:      `private response`,
+			wantError: true,
+		},
+		{
+			name:      "API error",
+			status:    http.StatusOK,
+			body:      `{"Result":"Error","Error":"private response"}`,
+			wantError: true,
+		},
+		{
+			name:   "empty",
+			status: http.StatusOK,
+			body:   `{}`,
+		},
+		{
+			name:   "not found",
+			status: http.StatusNotFound,
+			body:   `private response`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("action") == "get_description" {
+					t.Error("empty or failed lookup requested a description")
+				}
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			lookup := newDataTestLookup(server)
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{TrackerID: "42"})
+			if (err != nil) != tt.wantError || result.HasData() {
+				t.Fatalf("response outcome: result=%+v err=%v, wantError=%t", result, err, tt.wantError)
+			}
+			if err != nil && strings.Contains(err.Error(), "private response") {
+				t.Fatalf("response content leaked: %v", err)
+			}
+		})
+	}
+}
+
+func TestDataLookupPreservesDescriptionFailure(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name           string
+		status         int
+		transportError error
+		wantError      bool
+	}{
+		{
+			name:      "server error",
+			status:    http.StatusInternalServerError,
+			wantError: true,
+		},
+		{
+			name:           "transport error",
+			transportError: io.ErrUnexpectedEOF,
+			wantError:      true,
+		},
+		{
+			name:           "canceled",
+			transportError: context.Canceled,
+			wantError:      true,
+		},
+		{name: "empty", status: http.StatusOK},
+		{name: "not found", status: http.StatusNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("action") == "get_description" {
+					w.WriteHeader(tt.status)
+					return
+				}
+				_, _ = w.Write([]byte(`{"GroupId":"700","ImdbId":"1234567","Torrents":[{"Id":"42","InfoHash":"example-hash"}]}`))
+			}))
+			defer server.Close()
+			lookup := newDataTestLookup(server)
+			transport := lookup.http.Transport
+			lookup.http.Transport = dataRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Query().Get("action") == "get_description" && tt.transportError != nil {
+					return nil, tt.transportError
+				}
+				return transport.RoundTrip(req)
+			})
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{TrackerID: "42"})
+			if (err != nil) != tt.wantError || result.IMDBID != 1234567 || result.TrackerID != "42" || result.InfoHash != "example-hash" ||
+				result.TorrentURL != server.URL+"/torrents.php?id=700&torrentid=42" || result.Description != "" {
+				t.Fatalf("description outcome: result=%+v err=%v, wantError=%t", result, err, tt.wantError)
+			}
+			if tt.transportError != nil && !errors.Is(err, tt.transportError) {
+				t.Fatalf("description error lost cause: %v", err)
+			}
+		})
+	}
+}
+
+func newDataTestLookup(server *httptest.Server) *dataLookup {
+	return &dataLookup{
+		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"PTP": {PTPAPIUser: "user", PTPAPIKey: "key"},
+		}}},
+		http:     server.Client(),
+		endpoint: server.URL + "/torrents.php",
+	}
+}
+
+type dataRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f dataRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

@@ -53,10 +53,13 @@ func (m *Module) Continue(
 			if err != nil {
 				return CommandResult{}, err
 			}
-			request.Intent.Preparation.ExternalFreshness = api.ExternalFreshnessRefresh
+			input, err := m.PreparationForInputOpen(ctx, slot, *request.Intent.Preparation)
+			if err != nil {
+				return CommandResult{}, err
+			}
 			opened, err := m.OpenInput(ctx, ownerID, OpenInputRequest{
 				ExpectedRevision:    slot.Revision,
-				Input:               *request.Intent.Preparation,
+				Input:               input,
 				IdempotencyKey:      request.IdempotencyKey,
 				TrackerDecisionMode: trackerDecisionModeFromContext(ctx, TrackerDecisionModePostDupeGate),
 			})
@@ -115,6 +118,14 @@ func (m *Module) Continue(
 	state, err := m.repository.Load(ctx, ownerID, authority.WorkflowID)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue load tracker decision policy: %w", err)
+	}
+	// The first continuation admits the input before a later request collects
+	// it. Carry that admission's one-shot freshness across the transport boundary.
+	if m.activeInputs != nil && current.Release == nil && state.PreparationInput != nil && request.Intent.Preparation != nil &&
+		!request.Intent.Preparation.ExternalFreshness.RequiresRefresh() {
+		input := *request.Intent.Preparation
+		input.ExternalFreshness = state.PreparationInput.ExternalFreshness
+		request.Intent.Preparation = &input
 	}
 	if err := validateConfirmedNameProjectionInstructions(&state, request.Intent.ProjectionInstructions); err != nil {
 		return CommandResult{}, err

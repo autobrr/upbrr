@@ -33,9 +33,9 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 }
 
 // Lookup resolves IMDb and TVDB identifiers for a BTN torrent ID. Missing or
-// short API tokens, missing tracker IDs, non-success responses, API errors, and
-// empty torrent results produce an empty result without an error. Ambiguous or
-// mismatched torrent results return an error before identifiers can be applied.
+// short API tokens, missing tracker IDs, and missing torrents produce an empty
+// result without an error. HTTP/API failures and ambiguous or mismatched torrent
+// results return an error before identifiers can be applied.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	token := strings.TrimSpace(config.ResolveBTNAPIToken(l.cfg))
 	trackerID := strings.TrimSpace(req.TrackerID)
@@ -66,8 +66,11 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: btn request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if resp.StatusCode == http.StatusNotFound {
 		return trackers.DataLookupResult{}, nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: btn request failed status=%d", resp.StatusCode)
 	}
 	var decoded struct {
 		Error  map[string]any `json:"error"`
@@ -79,7 +82,7 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: btn decode: %w", err)
 	}
 	if len(decoded.Error) > 0 {
-		return trackers.DataLookupResult{}, nil
+		return trackers.DataLookupResult{}, errors.New("trackerdata: btn API rejected lookup")
 	}
 	if len(decoded.Result.Torrents) == 0 {
 		return trackers.DataLookupResult{}, nil

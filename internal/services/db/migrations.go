@@ -61,6 +61,11 @@ type migrationExecutor interface {
 var migrationRegistry = []migrationStep{
 	{id: baselineMigrationID, apply: createBaselineSchema},
 	{
+		id:        "2026_10_add_metadata_evidence",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateAddMetadataEvidence,
+	},
+	{
 		id:        "2026_09_add_tracker_torrent_url",
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateAddTrackerTorrentURL,

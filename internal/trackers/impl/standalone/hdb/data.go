@@ -35,8 +35,8 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 }
 
 // Lookup resolves the first HDB torrent by tracker ID or folder/file search.
-// Missing credentials or filters, non-success responses, API rejection, and
-// empty data produce an empty result without an error. OnlyID and KeepImages
+// Missing credentials or filters and missing torrents produce an empty result
+// without an error; HTTP/API failures return an error. OnlyID and KeepImages
 // independently control description and image projection.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	username, passkey := hdbCredentials(l.cfg)
@@ -104,15 +104,18 @@ func (l *dataLookup) requestFirst(ctx context.Context, payload map[string]any) (
 		return nil, false, fmt.Errorf("trackerdata: hdb request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if resp.StatusCode == http.StatusNotFound {
 		return nil, false, nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, false, fmt.Errorf("trackerdata: hdb request failed status=%d", resp.StatusCode)
 	}
 	result := map[string]any{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, false, fmt.Errorf("trackerdata: hdb decode: %w", err)
 	}
-	if hdbInt(result["status"]) != 0 {
-		return nil, false, nil
+	if status := hdbInt(result["status"]); status != 0 {
+		return nil, false, fmt.Errorf("trackerdata: hdb API rejected lookup status=%d", status)
 	}
 	items, _ := result["data"].([]any)
 	if len(items) == 0 {

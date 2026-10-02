@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -42,9 +43,10 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, l
 }
 
 // Lookup resolves a BHD torrent by tracker ID or by folder/file name. Missing
-// API or RSS credentials, an unusable search filter, non-success responses, and
-// empty API results produce an empty result without an error. Description and
-// image fields honor OnlyID and KeepImages independently.
+// API or RSS credentials, an unusable search filter, and missing torrents produce
+// an empty result without an error. HTTP/API failures return an error alongside
+// any metadata obtained before a description or image failure. Description and image
+// fields honor OnlyID and KeepImages independently.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	cfg, apiKey := bhdConfig(l.cfg)
 	rssKey := strings.TrimSpace(cfg.BhdRSSKey)
@@ -96,13 +98,13 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 			torrentID = strings.TrimSpace(req.TrackerID)
 		}
 		if torrentID != "" {
-			if body, requestErr := l.request(ctx, endpoint, map[string]any{"action": "description", "torrent_id": torrentID}); requestErr == nil {
-				description = bhdString(body["result"])
-				if description == "" {
-					l.logger.Debugf("bhd: description lookup empty reason=empty_response")
-				}
-			} else {
-				l.logger.Debugf("bhd: description lookup failed reason=request_failed")
+			body, requestErr := l.request(ctx, endpoint, map[string]any{"action": "description", "torrent_id": torrentID})
+			if requestErr != nil {
+				return result, requestErr
+			}
+			description = bhdString(body["result"])
+			if description == "" {
+				l.logger.Debugf("bhd: description lookup empty reason=empty_response")
 			}
 		} else {
 			l.logger.Debugf("bhd: description lookup skipped reason=missing_torrent_id")
@@ -114,8 +116,9 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	if !req.OnlyID {
 		result.Description = strings.TrimSpace(report.Description)
 	}
+	var imageErr error
 	if req.KeepImages {
-		result.Images = trackerdata.PrepareDescriptionImages(ctx, l.http, "BHD", l.logger, report.Images)
+		result.Images, imageErr = trackerdata.PrepareDescriptionImages(ctx, l.http, "BHD", l.logger, report.Images)
 	}
 	validatedCount := 0
 	for _, image := range result.Images {
@@ -127,6 +130,9 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		descriptionSource, len(description), len(result.Description), len(report.Images), validatedCount, req.OnlyID, req.KeepImages)
 	for _, note := range report.Notes {
 		l.logger.Debugf("bhd: description note kind=%s msg=%s", note.Kind, note.Message)
+	}
+	if imageErr != nil {
+		return result, fmt.Errorf("bhd: prepare description images: %w", imageErr)
 	}
 	return result, nil
 }
@@ -159,18 +165,21 @@ func (l *dataLookup) request(ctx context.Context, endpoint string, payload map[s
 		return nil, fmt.Errorf("trackerdata: bhd request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("trackerdata: bhd request failed status=%d", resp.StatusCode)
 	}
 	result := map[string]any{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("trackerdata: bhd decode: %w", err)
 	}
-	if bhdInt(result["status_code"]) == 0 {
-		return nil, nil
+	if bhdInt(result["status_code"]) != 1 {
+		return nil, errors.New("trackerdata: bhd API rejected lookup")
 	}
 	if success, ok := result["success"].(bool); ok && !success {
-		return nil, nil
+		return nil, errors.New("trackerdata: bhd API rejected lookup")
 	}
 	return result, nil
 }

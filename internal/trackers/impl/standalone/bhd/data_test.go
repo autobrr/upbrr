@@ -6,6 +6,7 @@ package bhd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -99,8 +100,8 @@ func TestDataLookup(t *testing.T) {
 		SearchName: "release.mkv",
 		KeepImages: true,
 	})
-	if err != nil {
-		t.Fatalf("lookup: %v", err)
+	if err == nil {
+		t.Fatal("expected partial image validation error")
 	}
 	if result.TrackerID != "99" || result.TorrentURL != "https://beyond-hd.me/details/99" || result.IMDBID != 1234567 ||
 		result.TMDBID != 765 || result.Category != "MOVIE" || result.Description != "hello" ||
@@ -250,6 +251,156 @@ func TestDataLookupOmitsUnverifiedTorrentPages(t *testing.T) {
 			})
 			if err != nil || result.TorrentURL != "" || result.TrackerID != test.wantID {
 				t.Fatalf("unverified torrent result = %+v, error = %v", result, err)
+			}
+		})
+	}
+}
+
+func TestDataLookupResponseOutcomes(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name      string
+		status    int
+		body      string
+		wantError bool
+	}{
+		{
+			name:      "server error",
+			status:    http.StatusInternalServerError,
+			body:      `private response`,
+			wantError: true,
+		},
+		{
+			name:      "API status error",
+			status:    http.StatusOK,
+			body:      `{"status_code":0,"message":"private response"}`,
+			wantError: true,
+		},
+		{
+			name:      "non-success API status",
+			status:    http.StatusOK,
+			body:      `{"status_code":2,"results":[]}`,
+			wantError: true,
+		},
+		{
+			name:      "API success error",
+			status:    http.StatusOK,
+			body:      `{"status_code":1,"success":false,"message":"private response"}`,
+			wantError: true,
+		},
+		{
+			name:      "empty",
+			status:    http.StatusOK,
+			body:      `{"status_code":1,"success":true,"results":[]}`,
+			wantError: false,
+		},
+		{
+			name:      "not found",
+			status:    http.StatusNotFound,
+			body:      `private response`,
+			wantError: false,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			lookup := &dataLookup{
+				cfg:     config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BHD": {APIKey: strings.Repeat("a", minDataTokenLength), BhdRSSKey: strings.Repeat("b", minDataTokenLength)}}}},
+				http:    server.Client(),
+				baseURL: server.URL,
+			}
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{TrackerID: "42", OnlyID: true})
+			if (err != nil) != tt.wantError || result.HasData() {
+				t.Fatalf("response outcome: result=%+v err=%v, wantError=%t", result, err, tt.wantError)
+			}
+			if err != nil && strings.Contains(err.Error(), "private response") {
+				t.Fatalf("response content leaked: %v", err)
+			}
+		})
+	}
+}
+
+func TestDataLookupPreservesCancellation(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	lookup := &dataLookup{
+		cfg:     config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BHD": {APIKey: strings.Repeat("a", minDataTokenLength), BhdRSSKey: strings.Repeat("b", minDataTokenLength)}}}},
+		http:    server.Client(),
+		baseURL: server.URL,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	result, err := lookup.Lookup(ctx, trackers.DataLookupRequest{TrackerID: "42", OnlyID: true})
+	if !errors.Is(err, context.Canceled) || result.HasData() {
+		t.Fatalf("canceled lookup: result=%+v err=%v", result, err)
+	}
+}
+
+func TestDataLookupPreservesDescriptionFailure(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name      string
+		status    int
+		body      string
+		wantError bool
+	}{
+		{
+			name:      "server error",
+			status:    http.StatusInternalServerError,
+			body:      `private response`,
+			wantError: true,
+		},
+		{
+			name:      "API error",
+			status:    http.StatusOK,
+			body:      `{"status_code":0,"message":"private response"}`,
+			wantError: true,
+		},
+		{
+			name:   "empty",
+			status: http.StatusOK,
+			body:   `{"status_code":1,"success":true,"result":""}`,
+		},
+		{name: "not found", status: http.StatusNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Errorf("decode request: %v", err)
+					return
+				}
+				if request["action"] == "description" {
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(tt.body))
+					return
+				}
+				_, _ = w.Write([]byte(`{"status_code":1,"success":true,"result":{"id":"42","imdb_id":"tt1234567","description":"1"}}`))
+			}))
+			defer server.Close()
+			lookup := &dataLookup{
+				cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"BHD": {APIKey: strings.Repeat("a", minDataTokenLength), BhdRSSKey: strings.Repeat("b", minDataTokenLength)},
+				}}},
+				http:    server.Client(),
+				baseURL: server.URL,
+				logger:  api.NopLogger{},
+			}
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{TrackerID: "42"})
+			if (err != nil) != tt.wantError || result.IMDBID != 1234567 || result.TrackerID != "42" ||
+				result.TorrentURL != "https://beyond-hd.me/details/42" || result.Description != "" {
+				t.Fatalf("description outcome: result=%+v err=%v, wantError=%t", result, err, tt.wantError)
+			}
+			if err != nil && strings.Contains(err.Error(), "private response") {
+				t.Fatalf("response content leaked: %v", err)
 			}
 		})
 	}

@@ -220,7 +220,11 @@ func (m *Module) startUpload(
 		if loadErr != nil {
 			return CommandResult{}, loadErr
 		}
-		session.Intent.Preparation.ExternalFreshness = api.ExternalFreshnessRefresh
+		input, prepareErr := m.PreparationForInputOpen(ctx, slot, *session.Intent.Preparation)
+		if prepareErr != nil {
+			return CommandResult{}, prepareErr
+		}
+		session.Intent.Preparation = &input
 		opened, openErr := m.OpenInput(ctx, ownerID, OpenInputRequest{
 			ExpectedRevision:    slot.Revision,
 			Input:               *session.Intent.Preparation,

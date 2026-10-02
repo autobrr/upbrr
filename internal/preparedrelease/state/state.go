@@ -29,7 +29,8 @@ type Request struct {
 	// IdentityResetFields suppresses legacy explicit pins after a persisted Auto reset.
 	IdentityResetFields []api.CorrectionField
 	// RetainedClientEvidence is compatible evidence from this process's current
-	// generation, supplied only for downstream enrichment without a fresh search.
+	// generation. Local corrections and provider enrichment reuse it when the
+	// source resources and client-search policy remain compatible.
 	RetainedClientEvidence *ClientEvidenceSnapshot
 }
 
@@ -127,15 +128,17 @@ func (s State) requiresMediaInfoUniqueID() bool {
 // instruction, or transport state. Callers must project it into canonical fact
 // groups or operation-owned subjects before it leaves this boundary.
 type State struct {
-	MetadataRequirements    api.MetadataRequirementSet
-	ExternalFreshness       api.ExternalFreshness
-	SourceFingerprint       string
-	SourcePath              string
-	SourceLookupURL         string
-	SourceLookupActive      bool
-	SourceLookupMode        string
-	SourceLookupTracker     string
-	SourceLookupTrackerID   string
+	MetadataRequirements  api.MetadataRequirementSet
+	ExternalFreshness     api.ExternalFreshness
+	SourceFingerprint     string
+	SourcePath            string
+	SourceLookupURL       string
+	SourceLookupActive    bool
+	SourceLookupMode      string
+	SourceLookupTracker   string
+	SourceLookupTrackerID string
+	// BlurayReleaseID reapplies a manual selection after cached catalogue rescoring.
+	BlurayReleaseID         string
 	LookupWarnings          []string
 	Paths                   []string
 	DiscType                string

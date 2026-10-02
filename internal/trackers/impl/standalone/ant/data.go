@@ -35,8 +35,8 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 
 // Lookup searches ANT by filename and returns IMDb and TMDB identifiers from
 // the sole result or the result containing the requested file. Disc uploads,
-// missing credentials or names, non-success responses, and no match produce an
-// empty result without an error.
+// missing credentials or names, and no match produce an empty result without
+// an error. HTTP failures other than not found return an error.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	if strings.TrimSpace(req.Meta.DiscType) != "" {
 		return trackers.DataLookupResult{}, nil
@@ -63,8 +63,11 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: ant request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if resp.StatusCode == http.StatusNotFound {
 		return trackers.DataLookupResult{}, nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: ant request failed status=%d", resp.StatusCode)
 	}
 	var decoded struct {
 		Items []map[string]any `json:"item"`

@@ -63,6 +63,31 @@ func (m *Module) OwnsActiveInput(slot api.ActiveInputRecord) bool {
 	return m != nil && slot.State != api.ActiveInputEmpty && slot.Fence != 0 && slot.CoordinatorID == m.processEpoch
 }
 
+// PreparationForInputOpen distinguishes a new input load from reapplying the
+// current process's active source. Explicit freshness controls are preserved;
+// callers must still admit the open against the supplied slot revision.
+func (m *Module) PreparationForInputOpen(
+	ctx context.Context,
+	slot api.ActiveInputRecord,
+	input api.PrepareInput,
+) (api.PrepareInput, error) {
+	if input.ExternalFreshness != api.ExternalFreshnessReuse {
+		return input, nil
+	}
+	input.ExternalFreshness = api.ExternalFreshnessLoad
+	if slot.State != api.ActiveInputActive || !m.OwnsActiveInput(slot) {
+		return input, nil
+	}
+	record, err := m.activeInputs.LoadInputRecordByID(ctx, slot.InputID)
+	if err != nil {
+		return api.PrepareInput{}, fmt.Errorf("release workflow read active input source: %w", err)
+	}
+	if pathing.SamePath(record.CanonicalPath, input.SourcePath) {
+		input.ExternalFreshness = api.ExternalFreshnessReuse
+	}
+	return input, nil
+}
+
 // ResetIdleInputOnStartup claims an expired foreign input, settles interrupted
 // prior-process operations, and closes the slot when it becomes idle. It waits
 // for live work leases, preserves completed checkpoints, and retains an active
@@ -248,10 +273,16 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	}
 	m.activeMu.Lock()
 	defer m.activeMu.Unlock()
+	// Load is derived from the active slot, so replaying its admission after the
+	// slot becomes active must have the same fingerprint as ordinary reuse.
+	fingerprintInput := request.Input
+	if fingerprintInput.ExternalFreshness == api.ExternalFreshnessLoad {
+		fingerprintInput.ExternalFreshness = api.ExternalFreshnessReuse
+	}
 	fingerprint, err := canonicalCommandFingerprint(struct {
 		Input   api.PrepareInput
 		Request api.WorkflowFingerprint
-	}{request.Input, request.RequestFingerprint})
+	}{fingerprintInput, request.RequestFingerprint})
 	if err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -354,6 +385,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	if prior.InputID != record.ID || workflow == "" {
 		created, createErr := m.Execute(ctx, owner, CreateWorkflowCommand{
 			SourcePath:          strings.TrimSpace(record.CanonicalPath),
+			PreparationInput:    &request.Input,
 			Instructions:        request.Input.Instructions,
 			IdempotencyKey:      reservation,
 			TrackerDecisionMode: trackerDecisionModeFromContext(ctx, normalizeTrackerDecisionMode(request.TrackerDecisionMode)),
@@ -416,6 +448,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			return api.ActiveInputRecord{}, fmt.Errorf("release workflow load refreshed workflow: %w", loadErr)
 		}
 		state.SourcePath = strings.TrimSpace(record.CanonicalPath)
+		state.PreparationInput = &request.Input
 		if request.Composite != nil && (state.Composite == nil || state.Composite.RequestFingerprint != request.Composite.RequestFingerprint) {
 			state.Composite = request.Composite
 		}

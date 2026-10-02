@@ -948,7 +948,7 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     await expect(page.getByRole("button", { name: "Refresh metadata" })).toBeEnabled();
     await expect
       .poll(() => workspace.fake.counters.clientSearches)
-      .toBe(effectsAfterUpload.clientSearches + 1);
+      .toBe(effectsAfterUpload.clientSearches);
     expect(workspace.fake.counters.imageUploads).toBe(effectsAfterUpload.imageUploads);
     expect(workspace.fake.counters.trackerUploads).toBe(1);
     expect(workspace.fake.counters.clientInjections).toBe(effectsAfterUpload.clientInjections);
@@ -975,10 +975,7 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     await expect(
       page.getByText("All selected trackers were already uploaded. No upload is needed."),
     ).toBeVisible();
-    expect(workspace.fake.counters).toEqual({
-      ...effectsAfterUpload,
-      clientSearches: effectsAfterUpload.clientSearches + 1,
-    });
+    expect(workspace.fake.counters).toEqual(effectsAfterUpload);
     expect(workspace.fake.trackerUploadBodies).toHaveLength(1);
 
     const deletedWorkflowID = excluded.current?.workflow.id;

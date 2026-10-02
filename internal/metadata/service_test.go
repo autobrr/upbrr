@@ -99,6 +99,7 @@ func TestCollectSourceEvidenceCarriesExternalFreshness(t *testing.T) {
 	}
 	request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
 	request.Input.ExternalFreshness = api.ExternalFreshnessRefresh
+	request.Input.Instructions.BlurayReleaseID = "selected-disc"
 	service := NewService(&stubRepo{}, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
 
 	meta, err := service.collectSourceEvidence(t.Context(), request)
@@ -107,6 +108,9 @@ func TestCollectSourceEvidenceCarriesExternalFreshness(t *testing.T) {
 	}
 	if meta.ExternalFreshness != api.ExternalFreshnessRefresh {
 		t.Fatalf("external freshness = %q, want refresh", meta.ExternalFreshness)
+	}
+	if meta.BlurayReleaseID != "selected-disc" {
+		t.Fatalf("Blu-ray instruction = %q", meta.BlurayReleaseID)
 	}
 }
 

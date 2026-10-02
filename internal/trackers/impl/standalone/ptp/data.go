@@ -6,6 +6,7 @@ package ptp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,8 +44,9 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 
 // Lookup resolves a torrent by tracker ID or release-name search, then
 // independently projects its identifiers, cleaned description, and images.
-// Missing credentials, non-success responses, and misses return an empty or
-// partial result without error.
+// Missing credentials and misses return an empty result without error. HTTP/API
+// failures return an error alongside any identifiers obtained before a description
+// failure.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	apiUser, apiKey := ptpAPIKeys(l.cfg)
 	if apiUser == "" || apiKey == "" {
@@ -58,8 +60,8 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		found, err = l.fetchByID(ctx, headers, foundID)
 	} else {
 		found, err = l.search(ctx, headers, req.SearchName)
-		foundID = found.trackerID
 	}
+	foundID = found.trackerID
 	if err != nil {
 		return trackers.DataLookupResult{}, err
 	}
@@ -153,8 +155,11 @@ func (l *dataLookup) description(ctx context.Context, headers map[string]string,
 		return "", fmt.Errorf("trackerdata: ptp description request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if resp.StatusCode == http.StatusNotFound {
 		return "", nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("trackerdata: ptp description request failed status=%d", resp.StatusCode)
 	}
 	payload, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -178,14 +183,20 @@ func (l *dataLookup) getJSON(ctx context.Context, params url.Values, headers map
 		return nil, fmt.Errorf("trackerdata: request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("trackerdata: ptp request failed status=%d", resp.StatusCode)
 	}
 	var result map[string]any
 	decoder := json.NewDecoder(resp.Body)
 	decoder.UseNumber()
 	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("trackerdata: decode: %w", err)
+	}
+	if ptpString(result["Error"]) != "" || strings.EqualFold(ptpString(result["Result"]), "Error") {
+		return nil, errors.New("trackerdata: ptp API rejected lookup")
 	}
 	return result, nil
 }

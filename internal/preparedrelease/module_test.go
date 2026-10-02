@@ -663,6 +663,15 @@ func TestPrepareForceRecheckBuildsOneFreshGeneration(t *testing.T) {
 }
 
 func TestPrepareExternalRefreshBuildsFreshGeneration(t *testing.T) {
+	testPrepareFreshnessBuildsGeneration(t, api.ExternalFreshnessRefresh)
+}
+
+func TestPrepareFreshLoadBuildsGeneration(t *testing.T) {
+	testPrepareFreshnessBuildsGeneration(t, api.ExternalFreshnessLoad)
+}
+
+func testPrepareFreshnessBuildsGeneration(t *testing.T, freshness api.ExternalFreshness) {
+	t.Helper()
 	t.Parallel()
 
 	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
@@ -674,7 +683,7 @@ func TestPrepareExternalRefreshBuildsFreshGeneration(t *testing.T) {
 	}
 	second, err := module.Prepare(t.Context(), api.PrepareInput{
 		SourcePath:        path,
-		ExternalFreshness: api.ExternalFreshnessRefresh,
+		ExternalFreshness: freshness,
 	})
 	if err != nil {
 		t.Fatalf("external refresh prepare: %v", err)
@@ -685,8 +694,8 @@ func TestPrepareExternalRefreshBuildsFreshGeneration(t *testing.T) {
 	if collector.callCount() != 2 {
 		t.Fatalf("external refresh collector calls = %d, want 2", collector.callCount())
 	}
-	if collector.externalFreshnessAt(1) != api.ExternalFreshnessRefresh {
-		t.Fatalf("collector external freshness = %q, want refresh", collector.externalFreshnessAt(1))
+	if collector.externalFreshnessAt(1) != freshness {
+		t.Fatalf("collector external freshness = %q, want %q", collector.externalFreshnessAt(1), freshness)
 	}
 }
 
@@ -1801,14 +1810,34 @@ func TestPreparationEnrichmentReusesOnlyCompatibleClientEvidence(t *testing.T) {
 		replaceSource bool
 	}{
 		{name: "metadata demand", retained: true},
-		{name: "explicit refresh", change: func(input *api.PrepareInput) { input.ExternalFreshness = api.ExternalFreshnessRefresh }},
+		{
+			name:     "provider refresh",
+			change:   func(input *api.PrepareInput) { input.ExternalFreshness = api.ExternalFreshnessRefresh },
+			retained: true,
+		},
+		{name: "fresh load", change: func(input *api.PrepareInput) { input.ExternalFreshness = api.ExternalFreshnessLoad }},
 		{name: "forced preparation", change: func(input *api.PrepareInput) { input.Force = true }},
 		{name: "client recheck", change: func(input *api.PrepareInput) { force := true; input.Controls.ForceRecheck = &force }},
 		{name: "client policy", change: func(input *api.PrepareInput) { input.Search.Skip = true }},
 		{name: "client selection", change: func(input *api.PrepareInput) { client := "other"; input.Search.Client = &client }},
 		{name: "source bytes", replaceSource: true},
-		{name: "preparation policy", change: func(input *api.PrepareInput) { input.Policy.KeepImages = true }},
-		{name: "fact instruction", change: func(input *api.PrepareInput) { input.Instructions.SourceLookup = "different-source" }},
+		{
+			name:     "image demand",
+			change:   func(input *api.PrepareInput) { input.Policy.KeepImages = true },
+			retained: true,
+		},
+		{name: "folder policy", change: func(input *api.PrepareInput) { input.Policy.KeepFolder = true }},
+		{
+			name:     "source lookup",
+			change:   func(input *api.PrepareInput) { input.Instructions.SourceLookup = "different-source" },
+			retained: true,
+		},
+		{
+			name:     "local correction",
+			change:   func(input *api.PrepareInput) { input.Instructions.ReleaseName.NoEpisodeTitle = new(true) },
+			retained: true,
+		},
+		{name: "playlist", change: func(input *api.PrepareInput) { input.Instructions.Playlist = api.PlaylistInstruction{Set: true} }},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()

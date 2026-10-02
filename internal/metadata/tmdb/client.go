@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -615,6 +616,25 @@ func (c *Client) findByExternal(ctx context.Context, externalID, source string) 
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, params map[string]string, target any) error {
+	if !evidence.Enabled(ctx) {
+		return c.uncachedJSON(ctx, path, params, target)
+	}
+	err := evidence.JSON(
+		ctx,
+		"tmdb.response.v1",
+		[]any{c.baseURL, c.apiKey, path, params},
+		target,
+		errNotFound,
+		nil,
+		func() error { return c.uncachedJSON(ctx, path, params, target) },
+	)
+	if err != nil {
+		return fmt.Errorf("metadata evidence response: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) uncachedJSON(ctx context.Context, path string, params map[string]string, target any) error {
 	if strings.TrimSpace(c.apiKey) == "" {
 		return errors.New("tmdb: api key missing")
 	}

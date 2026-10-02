@@ -3598,6 +3598,8 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			UNION
 			SELECT source_path FROM prepared_release_current
 			UNION
+			SELECT source_path FROM metadata_evidence
+			UNION
 			SELECT source_path FROM dvd_mediainfo
 			UNION
 			SELECT source_path FROM external_metadata
@@ -3954,6 +3956,7 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 	}{
 		{sql: `DELETE FROM dvd_mediainfo WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM prepared_release_current WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM metadata_evidence WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM external_metadata WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM external_ids WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM release_overrides WHERE source_path = ?`, args: []any{trimmedPath}},
