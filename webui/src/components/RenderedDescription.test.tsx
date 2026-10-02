@@ -56,4 +56,44 @@ describe("RenderedDescription external links", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(open).not.toHaveBeenCalled();
   });
+
+  it("opens a bare preview image at full size in the lightbox", () => {
+    const openImage = vi.fn();
+    const full = "https://images.example.invalid/full.png";
+    const preview = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs";
+    render(
+      <RenderedDescription
+        html={`<img src="${preview}" alt="Screenshot">`}
+        imagePreviews={{ [full]: preview }}
+        onImageOpen={openImage}
+      />,
+    );
+    const image = screen.getByRole("img", { name: "Screenshot" });
+    expect(image.closest("button")).toHaveAttribute("type", "button");
+    const allowed = image.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    expect(allowed).toBe(false);
+    expect(openImage).toHaveBeenCalledWith(full, "Screenshot");
+  });
+
+  it("opens linked preview images at full size in the lightbox", () => {
+    const openImage = vi.fn();
+    const openExternal = vi.spyOn(window, "open").mockImplementation(() => null);
+    const full = "https://images.example.invalid/full.png";
+    const preview = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs";
+    render(
+      <RenderedDescription
+        html={`<a href="about:blank"><img src="${preview}" alt="Screenshot"></a>`}
+        imagePreviews={{ [full]: preview }}
+        onImageOpen={openImage}
+      />,
+    );
+    const allowed = screen
+      .getByRole("img", { name: "Screenshot" })
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(allowed).toBe(false);
+    expect(openImage).toHaveBeenCalledWith(full, "Screenshot");
+    expect(openExternal).not.toHaveBeenCalled();
+  });
 });

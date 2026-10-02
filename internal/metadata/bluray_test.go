@@ -10,6 +10,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -77,5 +78,25 @@ func TestShouldLookupBlurayWhenDescriptionNeedsBlurayData(t *testing.T) {
 				t.Fatalf("shouldLookupBluray() = %t, want %t", gotLookup, tt.wantLookup)
 			}
 		})
+	}
+}
+
+func TestReusableBlurayMetadataRefreshesCandidatesScoredWithoutBDInfo(t *testing.T) {
+	service := &Service{}
+	meta := preparationstate.State{ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
+		IMDBID: 1234567,
+		Candidates: []api.BlurayReleaseCandidate{{
+			MatchNotes: []string{"local BDInfo unavailable (-15)"},
+		}},
+	}}}
+	if cached := service.reusableBlurayMetadata(meta, 1234567, nil); cached == nil {
+		t.Fatal("candidate scored without BDInfo should remain reusable while BDInfo is unavailable")
+	}
+	if cached := service.reusableBlurayMetadata(meta, 1234567, &discparse.BDInfo{Playlist: "00001"}); cached != nil {
+		t.Fatal("candidate scored without BDInfo should be refreshed when the summary becomes available")
+	}
+	meta.ProviderMetadata.Bluray.Candidates[0].MatchNotes = []string{"video codec matches"}
+	if cached := service.reusableBlurayMetadata(meta, 1234567, &discparse.BDInfo{Playlist: "00001"}); cached == nil {
+		t.Fatal("candidate scored with BDInfo should remain reusable")
 	}
 }

@@ -316,6 +316,12 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 		InfoHash:  strings.TrimSpace(attrs.infoHash),
 		FileName:  attrs.fileName,
 	}
+	if attrs.id != "" && result.TrackerID == "" {
+		result.TrackerID = attrs.id
+	}
+	if result.TrackerID != "" && !attrs.ambiguous && (attrs.id == "" || attrs.id == result.TrackerID) {
+		result.TorrentURL = baseURL + "/torrents/" + url.PathEscape(result.TrackerID)
+	}
 
 	description := strings.TrimSpace(attrs.description)
 	if description == "" {
@@ -1375,6 +1381,7 @@ type unit3dResponse struct {
 }
 
 type unit3dDataItem struct {
+	ID         json.Number      `json:"id"`
 	Attributes unit3dAttributes `json:"attributes"`
 }
 
@@ -1399,6 +1406,8 @@ type unit3dFile struct {
 }
 
 type parsedAttributes struct {
+	id          string
+	ambiguous   bool
 	category    string
 	description string
 	tmdbID      int
@@ -1420,7 +1429,12 @@ func (r unit3dResponse) extractAttributes(preferTopLevel bool) *parsedAttributes
 		var dataItems []unit3dDataItem
 		if err := json.Unmarshal(r.Data, &dataItems); err == nil {
 			if len(dataItems) > 0 {
-				return parseAttributes(dataItems[0].Attributes)
+				attrs := parseAttributes(dataItems[0].Attributes)
+				attrs.ambiguous = len(dataItems) > 1
+				if len(dataItems) == 1 {
+					attrs.id = string(dataItems[0].ID)
+				}
+				return attrs
 			}
 		}
 	}

@@ -59,8 +59,10 @@ pnpm --dir webui run build
 
 ## Styling
 
-- Touched local layout/spacing: prefer Tailwind utilities.
-- Keep CSS for shared/theme/cross-cutting selectors or JSX readability.
+- Use Tailwind utilities and shared UI components for local layout, spacing, and controls; avoid new page-specific stylesheets.
+- `src/styles.css` owns theme token mapping and shared shell rules; `src/themes/palettes.css` owns bundled palette values. Keep tracker-generated markup rules scoped to `src/components/rendered-description.css`.
+- `internal/description` converts and sanitizes tracker BBCode, mixed HTML, and MediaInfo before `RenderedDescription` inserts the HTML. Do not parse tracker markup or add tracker-specific presentation logic in React.
+- Appearance changes need the catalog, palette, bootstrap, and theme tests kept in sync. Check applicable light/dark modes and supported accents at desktop and mobile widths.
 - No repo-wide format/style sweeps unless explicitly requested.
 - Text must fit desktop/mobile containers; no viewport-width font scaling dependence.
 

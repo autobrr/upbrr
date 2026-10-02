@@ -28,11 +28,23 @@ pnpm --dir webui exec playwright show-report
 
 ## Projects
 
-- `web-smoke`: embedded server at `http://localhost:7480`, `--dev-no-auth`; nav/settings/invalid-input smoke coverage.
+- `web-smoke`: embedded server at `http://localhost:7480`; nav/settings/invalid-input and authenticated appearance coverage, including palette contrast and mobile overflow.
 - `web-base-path-smoke`: embedded server under configured base path; asset, navigation, API, event-stream routing coverage.
-- `web-full-upload`: metadata, screenshot/image upload, tracker dry-run/upload, history through embedded web UI.
+- `web-full-upload`: metadata, screenshot/image upload, tracker dry-run/upload, history, source MediaInfo, and mixed BBCode/HTML description preview and recovery through embedded Web UI.
 - `cli-full-upload`: full CLI upload path against local fakes + temp config/DB.
 - `api-full-upload`: authenticated composite API uploads, authority/idempotency, continuation/restart, cancellation, client-effect recovery.
+
+## Visual checks
+
+The route/theme/description capture and mobile touch specs use separate Playwright configs; `make e2e` does not include them. Build the embedded E2E binary first, then run the relevant suite from the repo root:
+
+```powershell
+make e2e-build
+pnpm --dir webui exec playwright test --config visual-quality.config.ts
+pnpm --dir webui exec playwright test --config visual-quality-touch.config.ts
+```
+
+Use `--grep` to run a focused visual scenario while iterating. The capture suite writes local evidence under ignored `docs/plans/visual-quality-evidence/`; inspect relevant screenshots and audit records, and never commit them.
 
 ## Harness Rules
 

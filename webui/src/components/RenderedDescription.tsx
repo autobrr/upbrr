@@ -3,9 +3,12 @@
 
 import { type MouseEvent as ReactMouseEvent, useEffect, useRef } from "react";
 import { handleExternalLinkClick } from "../utils/externalLinks";
+import "./rendered-description.css";
 
 type Props = {
   html: string;
+  imagePreviews?: Readonly<Record<string, string>>;
+  onImageOpen?: (url: string, alt: string) => void;
 };
 
 const configureRenderedLinks = (root: HTMLElement) => {
@@ -28,8 +31,26 @@ const handleRenderedDescriptionLinkClick = (event: ReactMouseEvent<HTMLElement>)
   }
 };
 
-export default function RenderedDescription({ html }: Props) {
+export default function RenderedDescription({ html, imagePreviews, onImageOpen }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const handleLinkClick = (event: ReactMouseEvent<HTMLElement>) => {
+    const target = event.target;
+    if (onImageOpen && target instanceof Element) {
+      const image =
+        target instanceof HTMLImageElement
+          ? target
+          : target.closest("a[href], button[data-description-lightbox]")?.querySelector("img");
+      const full = image?.dataset.fullImage;
+      if (full) {
+        event.preventDefault();
+        event.stopPropagation();
+        onImageOpen(full, image.alt || "Description image");
+        return;
+      }
+    }
+    handleRenderedDescriptionLinkClick(event);
+  };
 
   useEffect(() => {
     const root = rootRef.current;
@@ -37,6 +58,36 @@ export default function RenderedDescription({ html }: Props) {
       return;
     }
 
+    if (onImageOpen) {
+      const fullByPreview = new Map(
+        Object.entries(imagePreviews || {}).map(([full, preview]) => [preview, full]),
+      );
+      root.querySelectorAll<HTMLImageElement>("img[src]").forEach((image) => {
+        const generatedButton = image.parentElement?.closest("button[data-description-lightbox]");
+        if (generatedButton) generatedButton.replaceWith(image);
+        delete image.dataset.fullImage;
+        const full = fullByPreview.get(image.getAttribute("src") || "");
+        if (!full) return;
+        let parsed: URL;
+        try {
+          parsed = new URL(full);
+        } catch {
+          return;
+        }
+        if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname)
+          return;
+        image.dataset.fullImage = full;
+        if (!image.closest("a[href]")) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "description-image-button";
+          button.dataset.descriptionLightbox = "true";
+          button.setAttribute("aria-label", image.alt || "View full-size description image");
+          image.replaceWith(button);
+          button.append(image);
+        }
+      });
+    }
     configureRenderedLinks(root);
 
     const comparisons = Array.from(root.querySelectorAll<HTMLElement>(".comparison"));
@@ -94,6 +145,7 @@ export default function RenderedDescription({ html }: Props) {
           event.preventDefault();
           details.open = false;
           comparison.classList.remove("comparison--open");
+          if (summary) summary.textContent = "Show";
           return;
         }
         const digit = Number.parseInt(event.key, 10);
@@ -115,35 +167,23 @@ export default function RenderedDescription({ html }: Props) {
         applyColumn(Math.min(maxColumns, Math.max(1, Math.ceil(ratio * maxColumns))));
       };
 
-      const handleToggle = () => {
-        if (details.open || comparison.classList.contains("comparison--open")) {
-          applyColumn(current);
-          globalThis.addEventListener("keydown", handleKeyDown);
-          globalThis.addEventListener("mousemove", handleMouseMove);
-        } else {
-          globalThis.removeEventListener("keydown", handleKeyDown);
-          globalThis.removeEventListener("mousemove", handleMouseMove);
-        }
-      };
-
       const handleSummaryClick = (event: MouseEvent) => {
         event.preventDefault();
         details.open = !details.open;
         comparison.classList.toggle("comparison--open", details.open);
-        handleToggle();
+        if (summary) summary.textContent = details.open ? "Close" : "Show";
+        if (details.open) applyColumn(current);
       };
 
-      details.addEventListener("toggle", handleToggle);
       if (summary) {
         summary.addEventListener("click", handleSummaryClick);
+        summary.textContent = details.open ? "Close" : "Show";
       }
+      globalThis.addEventListener("keydown", handleKeyDown);
+      globalThis.addEventListener("mousemove", handleMouseMove);
       applyColumn(1);
-      if (details.open) {
-        handleToggle();
-      }
 
       cleanups.push(() => {
-        details.removeEventListener("toggle", handleToggle);
         if (summary) {
           summary.removeEventListener("click", handleSummaryClick);
         }
@@ -155,14 +195,14 @@ export default function RenderedDescription({ html }: Props) {
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [html]);
+  }, [html, imagePreviews, onImageOpen]);
 
   return (
     <div
       ref={rootRef}
-      className="tracker-description rendered"
-      onAuxClick={handleRenderedDescriptionLinkClick}
-      onClick={handleRenderedDescriptionLinkClick}
+      className="tracker-description rendered whitespace-pre-wrap text-muted-foreground leading-relaxed"
+      onAuxClick={handleLinkClick}
+      onClick={handleLinkClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

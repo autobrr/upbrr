@@ -89,9 +89,10 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		return trackers.DataLookupResult{}, errors.New("trackerdata: btn response did not identify the requested torrent")
 	}
 	return trackers.DataLookupResult{
-		TrackerID: trackerID,
-		IMDBID:    int(btnInt(value["ImdbID"])),
-		TVDBID:    int(btnInt(value["TvdbID"])),
+		TrackerID:  trackerID,
+		TorrentURL: decodeBTNTorrent(trackerID, value).link(),
+		IMDBID:     int(btnInt(value["ImdbID"])),
+		TVDBID:     int(btnInt(value["TvdbID"])),
 	}, nil
 }
 

@@ -71,6 +71,49 @@ func TestFetchMetadataUsesGermanDetailFallbackWhenTranslationsFail(t *testing.T)
 	}
 }
 
+func TestFetchMetadataRetriesLogoAfterArtworkFailure(t *testing.T) {
+	imageCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/movie/123":
+			_, _ = w.Write([]byte(`{"title":"Example Movie","release_date":"2024-01-01"}`))
+		case "/movie/123/images":
+			imageCalls++
+			if imageCalls == 1 {
+				http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte(`{"logos":[{"file_path":"/title.png","iso_639_1":"en"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key")
+	client.baseURL = server.URL
+	input := MetadataInput{
+		TMDBID:        123,
+		Category:      "MOVIE",
+		AddLogo:       true,
+		LogoLanguages: []string{"en"},
+	}
+	first, err := client.FetchMetadata(t.Context(), input)
+	if err != nil {
+		t.Fatalf("fetch metadata after artwork failure: %v", err)
+	}
+	if first.Logo != "" || first.LogoLookupAttempted {
+		t.Fatalf("failed artwork lookup must remain retryable, got %#v", first)
+	}
+	second, err := client.FetchMetadata(t.Context(), input)
+	if err != nil {
+		t.Fatalf("retry metadata artwork: %v", err)
+	}
+	if second.Logo == "" || !second.LogoLookupAttempted || imageCalls != 2 {
+		t.Fatalf("expected successful logo retry, calls=%d metadata=%#v", imageCalls, second)
+	}
+}
+
 func TestFetchMetadataStoresGenericAndRegionalLocalizedTitles(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

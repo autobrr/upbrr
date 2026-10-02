@@ -1959,8 +1959,9 @@ type BlurayPlaybackSpec struct {
 }
 
 type BlurayImage struct {
-	Kind string
-	URL  string
+	Kind       string
+	URL        string
+	PreviewURL string
 }
 
 func (m *BlurayMetadata) CandidateByID(releaseID string) *BlurayReleaseCandidate {
@@ -2008,36 +2009,37 @@ func (m *BlurayMetadata) SelectCandidate(releaseID string, auto bool, reason str
 // TMDBMetadata is the shared TMDB metadata snapshot returned to CLI and WebUI
 // callers during upload preparation and review.
 type TMDBMetadata struct {
-	TMDBID           int
-	IMDBID           int
-	TVDBID           int
-	Category         string
-	Title            string
-	OriginalTitle    string
-	Year             int
-	ReleaseDate      string
-	FirstAirDate     string
-	LastAirDate      string
-	OriginCountry    []string
-	OriginalLanguage string
-	Overview         string
-	Poster           string
-	TMDBPosterPath   string
-	Logo             string
-	TMDBLogo         string
-	Backdrop         string
-	TMDBType         string
-	Runtime          int
-	Genres           string
-	GenreIDs         string
-	Creators         []string
-	Directors        []string
-	Cast             []string
-	MALID            int
-	Anime            bool
-	Demographic      string
-	RetrievedAKA     string
-	Keywords         string
+	TMDBID              int
+	IMDBID              int
+	TVDBID              int
+	Category            string
+	Title               string
+	OriginalTitle       string
+	Year                int
+	ReleaseDate         string
+	FirstAirDate        string
+	LastAirDate         string
+	OriginCountry       []string
+	OriginalLanguage    string
+	Overview            string
+	Poster              string
+	TMDBPosterPath      string
+	Logo                string
+	LogoLookupAttempted bool
+	TMDBLogo            string
+	Backdrop            string
+	TMDBType            string
+	Runtime             int
+	Genres              string
+	GenreIDs            string
+	Creators            []string
+	Directors           []string
+	Cast                []string
+	MALID               int
+	Anime               bool
+	Demographic         string
+	RetrievedAKA        string
+	Keywords            string
 	// LocalizedTitles maps lowercase language codes and optional regional tags
 	// such as "de" or "pt-BR" to TMDB translation titles. Nil values marshal as
 	// an empty JSON object for WebUI callers.
@@ -2239,24 +2241,26 @@ type TVDBMetadata struct {
 	// YearSource identifies the TVDB source used for Year, such as first_aired, translation_name, translation_alias, extended_alias, or slug.
 	YearSource string
 	// YearConfidence is "high" for explicit TVDB title/alias years and "low" for guarded slug-derived naming years.
-	YearConfidence         string
-	NameDisambiguation     TVDBNameDisambiguation
-	Type                   string
-	Status                 string
-	Network                string
-	OriginalCountry        string
-	OriginalLanguage       string
-	HasEnglish             bool
-	Genres                 string
-	Poster                 string
-	Aliases                []string
-	EpisodeSeason          int
-	EpisodeNumber          int
-	EpisodeName            string
-	EpisodeNameEnglish     string
-	EpisodeOverview        string
-	EpisodeOverviewEnglish string
-	EpisodeAired           string
+	YearConfidence                 string
+	NameDisambiguation             TVDBNameDisambiguation
+	Type                           string
+	Status                         string
+	Network                        string
+	OriginalCountry                string
+	OriginalLanguage               string
+	HasEnglish                     bool
+	Genres                         string
+	Poster                         string
+	PosterThumbnail                string
+	PosterThumbnailLookupAttempted bool
+	Aliases                        []string
+	EpisodeSeason                  int
+	EpisodeNumber                  int
+	EpisodeName                    string
+	EpisodeNameEnglish             string
+	EpisodeOverview                string
+	EpisodeOverviewEnglish         string
+	EpisodeAired                   string
 	// EpisodeImage is the selected episode image URL when the API returned one.
 	EpisodeImage string
 	// Episodes contains fetched TVDB episode entries, usually the season needed
@@ -2265,33 +2269,34 @@ type TVDBMetadata struct {
 }
 
 type TVmazeMetadata struct {
-	TVmazeID       int
-	Name           string
-	Premiered      string
-	Ended          string
-	Summary        string
-	Status         string
-	Type           string
-	Language       string
-	Genres         string
-	Runtime        int
-	AverageRuntime int
-	Rating         float64
-	Weight         int
-	OfficialSite   string
-	Country        string
-	Network        string
-	NetworkCountry string
-	NetworkLogo    string
-	WebChannel     string
-	WebCountry     string
-	WebLogo        string
-	Poster         string
-	PosterMedium   string
-	Backdrop       string
-	BackdropMedium string
-	IMDBID         int
-	TVDBID         int
+	TVmazeID                int
+	Name                    string
+	Premiered               string
+	Ended                   string
+	Summary                 string
+	Status                  string
+	Type                    string
+	Language                string
+	Genres                  string
+	Runtime                 int
+	AverageRuntime          int
+	Rating                  float64
+	Weight                  int
+	OfficialSite            string
+	Country                 string
+	Network                 string
+	NetworkCountry          string
+	NetworkLogo             string
+	WebChannel              string
+	WebCountry              string
+	WebLogo                 string
+	Poster                  string
+	PosterMedium            string
+	Backdrop                string
+	BackdropMedium          string
+	BackdropLookupAttempted bool
+	IMDBID                  int
+	TVDBID                  int
 }
 
 type ClientSearchResult struct {

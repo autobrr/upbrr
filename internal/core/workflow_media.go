@@ -115,9 +115,10 @@ func mediaPlanSavedImages(plan api.ScreenshotPlan) []api.MediaPlanSavedImage {
 	images := make([]api.MediaPlanSavedImage, 0, len(plan.TrackerImageLinks))
 	for _, imported := range importedTrackerScreenshots(plan) {
 		images = append(images, api.MediaPlanSavedImage{
-			TrackerID: api.TrackerID(imported.link.Tracker),
-			Host:      imported.link.Host,
-			URL:       imported.link.URL,
+			TrackerID:  api.TrackerID(imported.link.Tracker),
+			Host:       imported.link.Host,
+			URL:        imported.link.URL,
+			PreviewURL: imported.link.PreviewURL,
 		})
 	}
 	return images
@@ -984,8 +985,9 @@ func mergeManualSelectionsWithDiscPlan(
 }
 
 // BuildIncremental keeps current media while capturing requested additions.
-// Already retained screenshot indexes are skipped, and the returned private
-// resource stays paired with the combined artifact snapshot.
+// Already retained screenshot indexes are skipped, including existing files
+// returned by the capture plan. The private resource stays paired with the
+// combined artifact snapshot.
 func (b workflowMediaBuilder) BuildIncremental(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -996,6 +998,7 @@ func (b workflowMediaBuilder) BuildIncremental(
 	now time.Time,
 ) (api.MediaArtifactSet, releaseworkflow.RetainedMediaResource, error) {
 	var retained workflowMediaPrivateArtifacts
+	indexes := make(map[discFrameKey]struct{})
 	if existing != nil {
 		var ok bool
 		retained, ok = privateExisting.(workflowMediaPrivateArtifacts)
@@ -1003,15 +1006,14 @@ func (b workflowMediaBuilder) BuildIncremental(
 			return api.MediaArtifactSet{}, nil, errors.New("workflow media retained resource is incompatible")
 		}
 		retained = cloneWorkflowMediaPrivateArtifacts(retained)
-	}
-	if instructions.Purpose == api.ScreenshotPurposeFinal && len(instructions.Selections) > 0 && existing != nil {
-		requestedScreenshotCount := max(instructions.ScreenshotCount, len(instructions.Selections))
-		indexes := make(map[discFrameKey]struct{})
 		for _, artifact := range existing.Artifacts {
 			if artifact.Kind == api.MediaArtifactScreenshot && !isImportedWorkflowScreenshot(artifact, retained) {
 				indexes[discFrameKey{discID: artifact.DiscID, index: artifact.Index}] = struct{}{}
 			}
 		}
+	}
+	if instructions.Purpose == api.ScreenshotPurposeFinal && len(instructions.Selections) > 0 && existing != nil {
+		requestedScreenshotCount := max(instructions.ScreenshotCount, len(instructions.Selections))
 		filtered := make([]api.ScreenshotSelection, 0, len(instructions.Selections))
 		for _, selection := range instructions.Selections {
 			key := discFrameKey{discID: selection.DiscID, index: selection.Index}
@@ -1091,6 +1093,13 @@ func (b workflowMediaBuilder) BuildIncremental(
 		capturedImportedURLs[link.RawURL] = struct{}{}
 	}
 	for _, artifact := range captured.Artifacts {
+		if artifact.Kind == api.MediaArtifactScreenshot && !isImportedWorkflowScreenshot(artifact, capturedRetained) {
+			key := discFrameKey{discID: artifact.DiscID, index: artifact.Index}
+			if _, exists := indexes[key]; exists {
+				continue
+			}
+			indexes[key] = struct{}{}
+		}
 		if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" {
 			if image, ok := capturedRetained.ArtifactImages[artifact.ID]; ok {
 				pathKey := strings.ToLower(normalizedUploadImagePath(image.Path))
@@ -1508,6 +1517,25 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 		if tracker == "" {
 			return nil, false
 		}
+		hostedSources := make(map[api.PublicResourceID]struct{}, len(selectedSources))
+		eligibleSources := make(map[api.PublicResourceID]struct{}, len(selectedSources))
+		for _, candidate := range b.retainedHostedImageCandidates(snapshot, retained, selectedSources) {
+			host := strings.ToLower(strings.TrimSpace(candidate.link.Host))
+			if slices.Contains(snapshot.FailedHosts, host) {
+				continue
+			}
+			hostedSources[candidate.sourceID] = struct{}{}
+			scope := normalizeImageUploadUsageScope(candidate.link.UsageScope)
+			allowed, err := trackers.ReusableImageHostAllowedWithRegistry(b.media.registry, b.config, tracker, host, subject.ImageHostOverrides)
+			if err == nil && allowed && (scope == "global" || scope == "tracker:"+tracker) {
+				eligibleSources[candidate.sourceID] = struct{}{}
+			}
+		}
+		for sourceID := range selectedSources {
+			if _, hosted := hostedSources[sourceID]; !hosted {
+				eligibleSources[sourceID] = struct{}{}
+			}
+		}
 		excludedHosts := make([]string, 0)
 		for {
 			targets, err := b.media.resolveImageUploadTargets([]string{tracker}, subject, "", excludedHosts)
@@ -1530,6 +1558,7 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 					snapshot,
 					retained,
 					selectedSources,
+					eligibleSources,
 					selectedArtifactIDs,
 					projection.Artifacts.ScreenshotCount,
 					target.Host,
@@ -1561,6 +1590,7 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 	snapshot api.MediaArtifactSet,
 	retained workflowMediaPrivateArtifacts,
 	selectedSources map[api.PublicResourceID]struct{},
+	eligibleSources map[api.PublicResourceID]struct{},
 	selectedArtifactIDs []api.PublicResourceID,
 	requiredScreenshots int,
 	host string,
@@ -1605,6 +1635,11 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 	}
 	if coveredScreenshots < requiredScreenshots || coveredMenus < selectedMenus {
 		return api.HostedImageAttempt{}, false
+	}
+	for sourceID := range eligibleSources {
+		if _, covered := coveredSources[sourceID]; !covered {
+			return api.HostedImageAttempt{}, false
+		}
 	}
 	trackerIDs := make([]api.TrackerID, 0, len(trackers))
 	for _, tracker := range trackers {
@@ -1686,19 +1721,6 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 			selectedMenus++
 		}
 	}
-	unhostedSelected := false
-	for sourceID, kind := range selectedKinds {
-		if kind != api.MediaArtifactScreenshot && kind != api.MediaArtifactDVDMenu {
-			continue
-		}
-		if !slices.ContainsFunc(ordered, func(key hostScope) bool {
-			_, ok := sources[key][sourceID]
-			return ok
-		}) {
-			unhostedSelected = true
-			break
-		}
-	}
 	preferred := make([]trackers.ImageUploadTarget, 0)
 	assigned := make(map[string]struct{})
 	for _, projection := range projections {
@@ -1706,7 +1728,34 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 		if tracker == "" || projection.Artifacts.ScreenshotCount <= 0 {
 			continue
 		}
+		usableKeys := make(map[hostScope]struct{}, len(ordered))
+		eligibleSources := make(map[api.PublicResourceID]struct{}, len(selectedKinds))
+		hostedSources := make(map[api.PublicResourceID]struct{}, len(selectedKinds))
 		for _, key := range ordered {
+			allowed, err := trackers.ReusableImageHostAllowedWithRegistry(b.media.registry, b.config, tracker, key.host, subject.ImageHostOverrides)
+			usable := err == nil && allowed && (key.scope == "global" || key.scope == "tracker:"+tracker)
+			if usable {
+				usableKeys[key] = struct{}{}
+			}
+			for sourceID := range sources[key] {
+				hostedSources[sourceID] = struct{}{}
+				if usable {
+					eligibleSources[sourceID] = struct{}{}
+				}
+			}
+		}
+		for sourceID, kind := range selectedKinds {
+			if kind != api.MediaArtifactScreenshot && kind != api.MediaArtifactDVDMenu {
+				continue
+			}
+			if _, hosted := hostedSources[sourceID]; !hosted {
+				eligibleSources[sourceID] = struct{}{}
+			}
+		}
+		for _, key := range ordered {
+			if _, usable := usableKeys[key]; !usable {
+				continue
+			}
 			coveredScreenshots, coveredMenus := 0, 0
 			for sourceID := range sources[key] {
 				switch selectedKinds[sourceID] {
@@ -1720,18 +1769,14 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 			if coveredScreenshots < projection.Artifacts.ScreenshotCount || coveredMenus < selectedMenus {
 				continue
 			}
-			allowed, err := trackers.ReusableImageHostAllowedWithRegistry(b.media.registry, b.config, tracker, key.host, subject.ImageHostOverrides)
-			if err != nil || !allowed {
-				continue
-			}
-			if unhostedSelected && imagehostpolicy.IsUploadHost(key.host) && !slices.ContainsFunc(targets, func(target trackers.ImageUploadTarget) bool {
-				return strings.EqualFold(target.Host, key.host) && slices.ContainsFunc(target.Trackers, func(candidate string) bool {
-					return strings.EqualFold(candidate, tracker)
-				})
-			}) {
-				continue
-			}
-			if unhostedSelected && !imagehostpolicy.IsUploadHost(key.host) {
+			missingSelected := coveredScreenshots+coveredMenus < len(eligibleSources)
+			canUploadHere := imagehostpolicy.IsUploadHost(key.host) && slices.ContainsFunc(targets, func(target trackers.ImageUploadTarget) bool {
+				return strings.EqualFold(target.Host, key.host) && normalizeImageUploadUsageScope(target.UsageScope) == key.scope &&
+					slices.ContainsFunc(target.Trackers, func(candidate string) bool {
+						return strings.EqualFold(candidate, tracker)
+					})
+			})
+			if missingSelected && !canUploadHere {
 				if slices.ContainsFunc(targets, func(target trackers.ImageUploadTarget) bool {
 					return imagehostpolicy.IsUploadHost(target.Host) && slices.ContainsFunc(target.Trackers, func(candidate string) bool {
 						return strings.EqualFold(candidate, tracker)
@@ -1739,12 +1784,13 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 				}) {
 					continue
 				}
-				return nil, fmt.Errorf("workflow image hosting: %s has unhosted screenshots; configure an uploader or use saved images only", tracker)
+				return nil, fmt.Errorf("workflow image hosting: %s: configure an uploader or select images on one allowed host", tracker)
 			}
 			matched := false
 			for index := range preferred {
 				if preferred[index].Host == key.host && preferred[index].UsageScope == key.scope {
 					preferred[index].Trackers = append(preferred[index].Trackers, tracker)
+					preferred[index].ReuseOnly = preferred[index].ReuseOnly && !missingSelected
 					matched = true
 					break
 				}
@@ -1754,7 +1800,7 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 					Host:       key.host,
 					UsageScope: key.scope,
 					Trackers:   []string{tracker},
-					ReuseOnly:  !unhostedSelected,
+					ReuseOnly:  !missingSelected,
 				})
 			}
 			assigned[tracker] = struct{}{}

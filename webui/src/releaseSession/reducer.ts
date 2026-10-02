@@ -1081,6 +1081,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         ...invalidateReleaseWork(state, "Source changed."),
+        workflowView: { status: "idle", current: null, error: "", failure: null },
         sessionRevision: state.sessionRevision + 1,
         commandRevision: state.commandRevision + 1,
         sourceDraft: sourcePath,

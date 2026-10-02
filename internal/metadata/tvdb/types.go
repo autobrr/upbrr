@@ -26,21 +26,23 @@ type SeriesMetadata struct {
 	// SeriesYearSource identifies the TVDB title signal that made SeriesYear safe for release-name disambiguation.
 	SeriesYearSource string
 	// SeriesYearConfidence is "high" for explicit title/alias years and "low" for guarded slug-derived years.
-	SeriesYearConfidence string
-	Overview             string
-	OverviewEnglish      string
-	Slug                 string
-	FirstAired           string
-	Type                 string
-	Status               string
-	Network              string
-	OriginalCountry      string
-	OriginalLanguage     string
-	HasEnglish           bool
-	Genres               []string
-	Poster               string
-	Aliases              []Alias
-	NameDisambiguation   NameDisambiguation
+	SeriesYearConfidence           string
+	Overview                       string
+	OverviewEnglish                string
+	Slug                           string
+	FirstAired                     string
+	Type                           string
+	Status                         string
+	Network                        string
+	OriginalCountry                string
+	OriginalLanguage               string
+	HasEnglish                     bool
+	Genres                         []string
+	Poster                         string
+	PosterThumbnail                string
+	PosterThumbnailLookupAttempted bool
+	Aliases                        []Alias
+	NameDisambiguation             NameDisambiguation
 }
 
 // NameDisambiguation contains the general TVDB name-search evidence for one

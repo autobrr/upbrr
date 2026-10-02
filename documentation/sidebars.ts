@@ -41,6 +41,7 @@ const sidebars: SidebarsConfig = {
             "web-ui/settings/client-handling",
             "web-ui/settings/torrent-specific",
             "web-ui/settings/application-details",
+            "web-ui/settings/appearance",
             "web-ui/settings/api-tokens",
             "web-ui/settings/tracker-auth",
           ],

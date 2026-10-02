@@ -139,6 +139,7 @@ type TrackerMetadata struct {
 	SourcePath string
 	Tracker    string
 	TrackerID  string
+	TorrentURL string
 	InfoHash   string
 	TMDBID     int
 	IMDBID     int
@@ -146,12 +147,13 @@ type TrackerMetadata struct {
 	MALID      int
 	// Category is site-reported movie/TV evidence consumed only by canonical
 	// external-identity resolution; unsupported values are ignored.
-	Category    Category
-	Description string
-	ImageURLs   []string
-	Filename    string
-	Matched     bool
-	UpdatedAt   time.Time `ts_type:"string"`
+	Category      Category
+	Description   string
+	ImageURLs     []string
+	ImagePreviews map[string]string
+	Filename      string
+	Matched       bool
+	UpdatedAt     time.Time `ts_type:"string"`
 }
 
 type TrackerTimestamp struct {

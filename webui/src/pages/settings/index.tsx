@@ -1,12 +1,13 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactElement, SetStateAction } from "react";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
-import { applicationClient, trackerAuthClient } from "../../api/app";
+import { trackerAuthClient } from "../../api/app";
 import { cn } from "../../utils/cn";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 import type {
@@ -19,12 +20,20 @@ import type {
 } from "../../types";
 import { formatApplicationVersion } from "../../utils/applicationInfo";
 import APITokensSettings from "./api_tokens";
+import { AppearanceSettings } from "../../themes/AppearanceSettings";
+import { SettingsFieldGroups } from "../../settings/FieldGroups";
+import { confirmationDialogStyle, settingsStyle } from "../../settings/style";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
 
 const applicationDetailsSection = {
   key: "application_details",
   label: "Application Details",
+};
+
+const appearanceSection = {
+  key: "appearance",
+  label: "Appearance",
 };
 
 const trackerAuthSection = {
@@ -38,12 +47,12 @@ const apiTokensSection = {
 };
 
 const settingsInputClass =
-  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+  "h-9 rounded-md border border-input bg-card px-3 text-sm text-card-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30";
 // Tracker-supplied auth kinds can be long adapter descriptors; keep chips
 // wrapped inside the auth card on narrow screens.
 const trackerAuthChipClass =
-  "max-w-full whitespace-normal rounded-full border border-slate-400/20 bg-slate-950/35 px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-[var(--muted)] [overflow-wrap:anywhere]";
-const trackerAuthMetaClass = "m-0 text-[0.8rem] text-[var(--muted)]";
+  "max-w-full whitespace-normal rounded-full border border-border bg-muted px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-muted-foreground [overflow-wrap:anywhere]";
+const trackerAuthMetaClass = "m-0 text-[0.8rem] text-muted-foreground";
 
 /** Builds the case-insensitive key shared by main tracker config and tracker auth rows. */
 const trackerNameKey = (name: string) => name.trim().toLowerCase();
@@ -83,6 +92,10 @@ type ConfigOpStatus = {
 } | null;
 
 type Props = {
+  applicationInfo: ApplicationInfo | null;
+  applicationInfoFetchedAt: number | null;
+  applicationInfoLoading: boolean;
+  applicationInfoError: string;
   configData: ConfigMap | null;
   settingsLoading: boolean;
   settingsExporting: boolean;
@@ -107,10 +120,15 @@ type Props = {
   handleImportConfigConfirm: () => void | Promise<void>;
   handleImportConfigCancel: () => void;
   handleSaveSettings: () => void | Promise<void>;
-  renderImageHostingSection: () => JSX.Element | null;
-  renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
-  renderTorrentClientsSection: (advancedOpen: boolean) => JSX.Element | null;
-  renderField: (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => JSX.Element;
+  renderImageHostingSection: () => ReactElement | null;
+  renderTrackerSection: (advancedOpen: boolean) => ReactElement | null;
+  renderTorrentClientsSection: (advancedOpen: boolean) => ReactElement | null;
+  renderField: (
+    label: string,
+    value: ConfigValue,
+    path: string[],
+    meta?: FieldMeta,
+  ) => ReactElement;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
 };
 
@@ -121,6 +139,10 @@ type Props = {
  */
 export default function SettingsPage(props: Props) {
   const {
+    applicationInfo,
+    applicationInfoFetchedAt,
+    applicationInfoLoading,
+    applicationInfoError,
     configData,
     settingsLoading,
     settingsExporting,
@@ -152,10 +174,6 @@ export default function SettingsPage(props: Props) {
   } = props;
 
   const [warningsExpanded, setWarningsExpanded] = useState(false);
-  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
-  const [applicationInfoError, setApplicationInfoError] = useState("");
-  const [applicationInfoLoading, setApplicationInfoLoading] = useState(false);
-  const [applicationInfoFetchedAt, setApplicationInfoFetchedAt] = useState<number | null>(null);
   const [uptimeTick, setUptimeTick] = useState(() => Date.now());
   const [trackerAuthCapabilities, setTrackerAuthCapabilities] = useState<TrackerAuthCapability[]>(
     [],
@@ -195,36 +213,6 @@ export default function SettingsPage(props: Props) {
       setTrackerAuthActionErrors({});
     }
   }, [invalidateTrackerAuthStatusVersions, settingsSection]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setApplicationInfoLoading(true);
-    setApplicationInfoError("");
-    void applicationClient
-      .getInfo()
-      .then((info) => {
-        if (cancelled) {
-          return;
-        }
-        setApplicationInfo(info);
-        setApplicationInfoFetchedAt(Date.now());
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setApplicationInfoError(String(error));
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setApplicationInfoLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!applicationInfo) {
@@ -411,11 +399,13 @@ export default function SettingsPage(props: Props) {
           ? "Encrypted cookie storage partially ready"
           : "Encrypted cookie storage unavailable";
     return (
-      <div className="settings-form gap-4">
-        <div className="settings-subgroup">
-          <div className="settings-subgroup__title">Tracker Auth</div>
-          <div className="settings-auth-status">
-            <span className={`settings-auth-badge ${storageReady ? "is-ready" : "is-warning"}`}>
+      <div className="flex flex-col gap-4">
+        <div className={settingsStyle.subgroup}>
+          <div className={settingsStyle.title}>Tracker Auth</div>
+          <div className="flex flex-col gap-2.5">
+            <span
+              className={`${settingsStyle.authBadge} ${storageReady ? settingsStyle.authReady : settingsStyle.authWarning}`}
+            >
               {storageStatusLabel}
             </span>
             <p className="helper">
@@ -423,7 +413,7 @@ export default function SettingsPage(props: Props) {
               can relogin automatically during unattended uploads.
             </p>
           </div>
-          <label className="settings-field max-w-[360px]">
+          <label className={`${settingsStyle.field} max-w-[360px]`}>
             <span>Filter trackers</span>
             <input
               className={settingsInputClass}
@@ -433,8 +423,10 @@ export default function SettingsPage(props: Props) {
             />
           </label>
         </div>
-        {trackerAuthLoading ? <p className="muted">Loading tracker auth...</p> : null}
-        {trackerAuthError ? <p className="error">{trackerAuthError}</p> : null}
+        {trackerAuthLoading ? (
+          <p className="text-muted-foreground">Loading tracker auth...</p>
+        ) : null}
+        {trackerAuthError ? <p className={pageStyle.error}>{trackerAuthError}</p> : null}
         <div className="grid gap-[0.85rem]">
           {capabilities.map((capability) => {
             const status = trackerAuthStatuses[capability.trackerID];
@@ -445,17 +437,17 @@ export default function SettingsPage(props: Props) {
             const canTestAuth = capability.supportsRemoteValidation === true;
             return (
               <div
-                className="settings-card tracker-auth-card grid min-w-0 gap-3"
+                className={`${settingsStyle.card} tracker-auth-card min-w-0 gap-3`}
                 key={capability.trackerID}
               >
                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-[0.6rem]">
                   <div className="min-w-0 flex-1">
-                    <p className="settings-detail-card__label">Tracker</p>
+                    <p className={settingsStyle.detailLabel}>Tracker</p>
                     <h2 className="m-0 mt-[0.1rem] text-[1.05rem] leading-tight [overflow-wrap:anywhere]">
                       {capability.displayName || capability.trackerID}
                     </h2>
                   </div>
-                  <span className={`settings-auth-badge ${statusBadgeClass(status?.state)}`}>
+                  <span className={`${settingsStyle.authBadge} ${statusBadgeClass(status?.state)}`}>
                     {formatTrackerAuthState(status?.state)}
                   </span>
                 </div>
@@ -496,17 +488,20 @@ export default function SettingsPage(props: Props) {
                   <p className="helper [overflow-wrap:anywhere]">{statusDisplay.message}</p>
                 ) : null}
                 {statusDisplay.lastError ? (
-                  <p className="error [overflow-wrap:anywhere]">{statusDisplay.lastError}</p>
+                  <p className={`${pageStyle.error} [overflow-wrap:anywhere]`}>
+                    {statusDisplay.lastError}
+                  </p>
                 ) : null}
-                {actionError ? <p className="error">{actionError}</p> : null}
+                {actionError ? <p className={pageStyle.error}>{actionError}</p> : null}
                 {(capability.notes ?? []).map((note) => (
-                  <p className="muted [overflow-wrap:anywhere]" key={note}>
+                  <p className="text-muted-foreground [overflow-wrap:anywhere]" key={note}>
                     {note}
                   </p>
                 ))}
                 {status?.needs2FA ? (
                   <div className="flex flex-wrap items-center gap-[0.6rem]">
                     <input
+                      aria-label={`${capability.displayName || capability.trackerID} 2FA code`}
                       className={`${settingsInputClass} w-36`}
                       value={code}
                       inputMode="numeric"
@@ -521,6 +516,7 @@ export default function SettingsPage(props: Props) {
                     />
                     <Button
                       type="button"
+                      aria-label={`Submit 2FA — ${capability.displayName || capability.trackerID}`}
                       disabled={!status.challengeID || !code.trim()}
                       onClick={() =>
                         runTrackerAuthAction(capability.trackerID, "2fa", () =>
@@ -532,10 +528,11 @@ export default function SettingsPage(props: Props) {
                     </Button>
                   </div>
                 ) : null}
-                <div className="settings-auth-actions">
+                <div className="flex flex-wrap items-center gap-2">
                   {capability.supportsCookieFile ? (
                     <Button
                       type="button"
+                      aria-label={`Import Cookies — ${capability.displayName || capability.trackerID}`}
                       disabled={Boolean(busy)}
                       onClick={() =>
                         runTrackerAuthAction(capability.trackerID, "import", () =>
@@ -549,6 +546,7 @@ export default function SettingsPage(props: Props) {
                   {canTestAuth ? (
                     <Button
                       type="button"
+                      aria-label={`Check Auth — ${capability.displayName || capability.trackerID}`}
                       disabled={Boolean(busy)}
                       onClick={() =>
                         runTrackerAuthAction(capability.trackerID, "test", () =>
@@ -561,6 +559,7 @@ export default function SettingsPage(props: Props) {
                   ) : null}
                   <Button
                     type="button"
+                    aria-label={`Delete Auth — ${capability.displayName || capability.trackerID}`}
                     disabled={Boolean(busy)}
                     onClick={() =>
                       runTrackerAuthAction(capability.trackerID, "delete", () =>
@@ -587,15 +586,15 @@ export default function SettingsPage(props: Props) {
   const uptimeValue = applicationInfo ? formatApplicationUptime(uptimeSeconds) : "";
   const applicationVersion = applicationInfo ? formatApplicationVersion(applicationInfo) : "";
   const applicationDetailsPanel = (
-    <div className="settings-subgroup settings-subgroup--application">
+    <div className={settingsStyle.subgroup}>
       <p className="helper">
         Read-only build and runtime details for this install. Auth, bind, and storage paths are
         intentionally excluded.
       </p>
-      <div className="settings-details-grid">
-        <div className="settings-detail-card">
-          <p className="settings-detail-card__label">Project</p>
-          <p className="settings-detail-card__value">
+      <div className={settingsStyle.detailGrid}>
+        <div className={settingsStyle.detailCard}>
+          <p className={settingsStyle.detailLabel}>Project</p>
+          <p className={settingsStyle.detailValue}>
             <a
               href="https://github.com/autobrr/upbrr"
               target="_blank"
@@ -609,29 +608,33 @@ export default function SettingsPage(props: Props) {
         </div>
         {applicationInfo ? (
           <>
-            <div className="settings-detail-card">
-              <p className="settings-detail-card__label">Version</p>
-              <p className="settings-detail-card__value mono">{applicationVersion}</p>
+            <div className={settingsStyle.detailCard}>
+              <p className={settingsStyle.detailLabel}>Version</p>
+              <p className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}>
+                {applicationVersion}
+              </p>
             </div>
-            <div className="settings-detail-card">
-              <p className="settings-detail-card__label">Build</p>
-              <p className="settings-detail-card__value mono">
+            <div className={settingsStyle.detailCard}>
+              <p className={settingsStyle.detailLabel}>Build</p>
+              <p className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}>
                 {applicationInfo.buildIdentifier || "Unavailable"}
               </p>
             </div>
-            <div className="settings-detail-card">
-              <p className="settings-detail-card__label">Go Runtime</p>
-              <p className="settings-detail-card__value mono">{applicationInfo.goVersion}</p>
+            <div className={settingsStyle.detailCard}>
+              <p className={settingsStyle.detailLabel}>Go Runtime</p>
+              <p className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}>
+                {applicationInfo.goVersion}
+              </p>
             </div>
-            <div className="settings-detail-card">
-              <p className="settings-detail-card__label">DVD Menu Engine</p>
-              <p className="settings-detail-card__value mono">
+            <div className={settingsStyle.detailCard}>
+              <p className={settingsStyle.detailLabel}>DVD Menu Engine</p>
+              <p className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}>
                 {applicationInfo.dvdMenuEngine.EngineVersion || "Unavailable"}
               </p>
             </div>
-            <div className="settings-detail-card">
-              <p className="settings-detail-card__label">FFmpeg DVD Menus</p>
-              <p className="settings-detail-card__value mono">
+            <div className={settingsStyle.detailCard}>
+              <p className={settingsStyle.detailLabel}>FFmpeg DVD Menus</p>
+              <p className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}>
                 {applicationInfo.dvdMenuCapabilityStatus === "available"
                   ? "Available"
                   : applicationInfo.dvdMenuCapabilityStatus === "incompatible"
@@ -640,37 +643,40 @@ export default function SettingsPage(props: Props) {
               </p>
               <p className="helper">{applicationInfo.dvdMenuCapabilityMessage}</p>
             </div>
-            <div className="settings-detail-card">
-              <p className="settings-detail-card__label">FFmpeg Version</p>
-              <p className="settings-detail-card__value mono">
+            <div className={settingsStyle.detailCard}>
+              <p className={settingsStyle.detailLabel}>FFmpeg Version</p>
+              <p className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}>
                 {applicationInfo.dvdMenuEngine.FFmpegVersion || "Unavailable"}
               </p>
             </div>
-            <div className="settings-detail-card">
-              <p className="settings-detail-card__label">Platform</p>
-              <p className="settings-detail-card__value mono">
+            <div className={settingsStyle.detailCard}>
+              <p className={settingsStyle.detailLabel}>Platform</p>
+              <p className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}>
                 {applicationInfo.goos}/{applicationInfo.goarch}
               </p>
             </div>
-            <div className="settings-detail-card">
-              <p className="settings-detail-card__label">Uptime</p>
-              <p className="settings-detail-card__value mono">
+            <div className={settingsStyle.detailCard}>
+              <p className={settingsStyle.detailLabel}>Uptime</p>
+              <p className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}>
                 {uptimeValue || applicationInfo.uptime}
               </p>
             </div>
             {applicationInfo.dependencies.length > 0 ? (
-              <div className="settings-detail-card col-span-full">
-                <p className="settings-detail-card__label">Autobrr dependencies</p>
+              <div className={`${settingsStyle.detailCard} col-span-full`}>
+                <p className={settingsStyle.detailLabel}>Autobrr dependencies</p>
                 <div className="mt-2 grid">
                   {applicationInfo.dependencies.map((dependency) => (
                     <div
-                      className="grid gap-1 border-t border-white/10 py-2 first:border-t-0 first:pt-0 last:pb-0 min-[720px]:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] min-[720px]:items-baseline"
+                      className="grid gap-1 border-t border-border py-2 first:border-t-0 first:pt-0 last:pb-0 min-[720px]:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] min-[720px]:items-baseline"
                       key={dependency.path}
                     >
-                      <p className="settings-detail-card__value mono" title={dependency.path}>
+                      <p
+                        className={`${settingsStyle.detailValue} font-mono text-[0.95rem]`}
+                        title={dependency.path}
+                      >
                         {dependency.path.replace(/^github\.com\/autobrr\//, "")}
                       </p>
-                      <p className="mono break-words min-[720px]:text-right">
+                      <p className="font-mono text-[0.95rem] break-words min-[720px]:text-right">
                         {dependency.version}
                       </p>
                     </div>
@@ -681,29 +687,39 @@ export default function SettingsPage(props: Props) {
           </>
         ) : null}
       </div>
-      {applicationInfoLoading ? <p className="muted">Loading application details...</p> : null}
-      {applicationInfoError ? <p className="error">{applicationInfoError}</p> : null}
+      {applicationInfoLoading ? (
+        <p className="text-muted-foreground">Loading application details...</p>
+      ) : null}
+      {applicationInfoError ? <p className={pageStyle.error}>{applicationInfoError}</p> : null}
     </div>
   );
 
   return (
-    <div className="content-stack">
-      <header className="hero">
-        <p className="eyebrow">upbrr</p>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4" data-testid="settings-page">
+      <header className="relative z-[1] max-w-[720px]">
+        <p className={pageStyle.eyebrow}>upbrr</p>
         <h1>Settings</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           Edit settings by section. Changes apply immediately and are saved to SQLite.
         </p>
       </header>
 
-      <section className="panel">
-        <div className="settings-header">
-          <div className="settings-meta">
-            <p className="label">Configuration</p>
+      <section className={pageStyle.panel}>
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-col gap-2.5">
+            <p className={pageStyle.label}>Configuration</p>
             <p className="helper">Invalid changes will be rejected with a validation error.</p>
           </div>
-          <div className="settings-actions">
-            <Button type="button" onClick={loadSettings} disabled={settingsLoading}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => {
+                if (!settingsDirty || window.confirm("Discard unsaved settings and reload?")) {
+                  loadSettings();
+                }
+              }}
+              disabled={settingsLoading}
+            >
               Reload
             </Button>
             <Button
@@ -734,8 +750,18 @@ export default function SettingsPage(props: Props) {
         </div>
 
         {configOpStatus ? (
-          <div className={`config-status-banner config-status-banner--${configOpStatus.type}`}>
-            <div className="config-status-banner__icon">
+          <div
+            className={cn(
+              "my-2.5 flex items-start gap-2.5 rounded-[14px] border p-3",
+              configOpStatus.type === "success" &&
+                "border-status-success/30 bg-status-success/10 text-status-success",
+              configOpStatus.type === "warning" &&
+                "border-status-warning/30 bg-status-warning/10 text-status-warning",
+              configOpStatus.type === "error" &&
+                "border-destructive/30 bg-destructive/10 text-destructive-text",
+            )}
+          >
+            <div>
               {configOpStatus.type === "success" ? (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                   <path
@@ -780,21 +806,23 @@ export default function SettingsPage(props: Props) {
                 </svg>
               )}
             </div>
-            <div className="config-status-banner__body">
-              <p className="config-status-banner__title">{configOpStatus.title}</p>
-              <p className="config-status-banner__message">{configOpStatus.message}</p>
+            <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
+              <p className="m-0 font-semibold">{configOpStatus.title}</p>
+              <p className="m-0 text-foreground [overflow-wrap:anywhere]">
+                {configOpStatus.message}
+              </p>
               {configOpStatus.warnings && configOpStatus.warnings.length > 0 ? (
-                <div className="config-status-banner__warnings">
+                <div>
                   <button
                     type="button"
-                    className="config-status-banner__toggle"
+                    className="border-0 bg-transparent text-inherit"
                     onClick={() => setWarningsExpanded((prev) => !prev)}
                   >
                     {warningsExpanded ? "Hide" : "Show"} {configOpStatus.warnings.length} warning
                     {configOpStatus.warnings.length !== 1 ? "s" : ""}
                   </button>
                   {warningsExpanded ? (
-                    <ul className="config-status-banner__warning-list">
+                    <ul className="mt-1.5 mb-0 pl-[18px] text-[0.84rem] text-foreground [overflow-wrap:anywhere]">
                       {configOpStatus.warnings.map((w, i) => (
                         <li key={i}>{w}</li>
                       ))}
@@ -805,7 +833,7 @@ export default function SettingsPage(props: Props) {
             </div>
             <button
               type="button"
-              className="config-status-banner__dismiss"
+              className="border-0 bg-transparent text-inherit"
               onClick={dismissConfigOpStatus}
               aria-label="Dismiss"
             >
@@ -821,74 +849,49 @@ export default function SettingsPage(props: Props) {
           </div>
         ) : null}
 
-        <div className="settings-shell">
-          <div className="settings-tags">
-            {settingsSections.map((section) => (
+        <div className="grid grid-cols-[180px_minmax(0,1fr)] gap-6 max-[960px]:grid-cols-1">
+          <nav
+            className="settings-tags sticky top-4 flex flex-col gap-1 self-start max-[960px]:static max-[960px]:flex-row max-[960px]:flex-wrap"
+            aria-label="Settings sections"
+          >
+            {[
+              ...settingsSections,
+              appearanceSection,
+              applicationDetailsSection,
+              apiTokensSection,
+              trackerAuthSection,
+            ].map((section) => (
               <button
                 key={section.key}
                 type="button"
+                aria-pressed={settingsSection === section.key}
                 className={cn(
-                  "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                  "flex min-h-9 w-auto shrink-0 items-center rounded-md px-3 text-left text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-[961px]:w-full",
                   settingsSection === section.key
-                    ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                    : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+                    ? "bg-accent text-accent-foreground"
+                    : "bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 )}
                 onClick={() => setSettingsSection(section.key)}
               >
                 {section.label}
               </button>
             ))}
-            <button
-              key={applicationDetailsSection.key}
-              type="button"
-              className={cn(
-                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
-                settingsSection === applicationDetailsSection.key
-                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
-              )}
-              onClick={() => setSettingsSection(applicationDetailsSection.key)}
-            >
-              {applicationDetailsSection.label}
-            </button>
-            <button
-              key={apiTokensSection.key}
-              type="button"
-              className={cn(
-                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
-                settingsSection === apiTokensSection.key
-                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
-              )}
-              onClick={() => setSettingsSection(apiTokensSection.key)}
-            >
-              {apiTokensSection.label}
-            </button>
-            <button
-              key={trackerAuthSection.key}
-              type="button"
-              className={cn(
-                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
-                settingsSection === trackerAuthSection.key
-                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
-              )}
-              onClick={() => setSettingsSection(trackerAuthSection.key)}
-            >
-              {trackerAuthSection.label}
-            </button>
-          </div>
-
-          <div className="settings-body">
+          </nav>
+          <div className="settings-body min-w-0">
+            {settingsSection === appearanceSection.key ? <AppearanceSettings /> : null}
             {settingsSection === applicationDetailsSection.key ? applicationDetailsPanel : null}
             {settingsSection === apiTokensSection.key ? <APITokensSettings /> : null}
             {settingsSection === trackerAuthSection.key ? trackerAuthPanel : null}
-            {settingsSection === applicationDetailsSection.key ||
+            {settingsSection === appearanceSection.key ||
+            settingsSection === applicationDetailsSection.key ||
             settingsSection === apiTokensSection.key ||
             settingsSection === trackerAuthSection.key ? null : configData ? (
-              <div className="settings-form">
+              <div className={settingsStyle.form}>
+                <h2 className="m-0 text-lg font-semibold">
+                  {settingsSections.find((section) => section.key === settingsSection)?.label}
+                </h2>
                 {showAdvancedToggle ? (
-                  <div className="settings-switch-row">
+                  <label className={`${settingsStyle.switchRow} self-start gap-6`}>
                     <span>Show advanced</span>
                     <Switch
                       aria-label="Show advanced"
@@ -900,7 +903,7 @@ export default function SettingsPage(props: Props) {
                         }))
                       }
                     />
-                  </div>
+                  </label>
                 ) : null}
                 {settingsSection === "image_hosting" ? (
                   renderImageHostingSection()
@@ -914,7 +917,7 @@ export default function SettingsPage(props: Props) {
                   typeof configData.TorrentClients === "object" ? (
                   renderTorrentClientsSection(advancedOpen)
                 ) : (
-                  <div className="settings-grid">
+                  <div className="grid min-w-0 gap-5">
                     {(() => {
                       const section = settingsSections.find((item) => item.key === settingsSection);
                       if (!section) return null;
@@ -927,27 +930,31 @@ export default function SettingsPage(props: Props) {
                         return null;
                       }
                       const meta = sectionFieldMeta[section.jsonKey] || {};
-                      return Object.entries(sectionData as ConfigMap)
-                        .filter(([key]) => {
-                          const fieldMeta = meta[key];
-                          if (fieldMeta?.advanced && !advancedOpen) return false;
-                          return true;
-                        })
-                        .map(([key, value]) =>
-                          renderField(key, value, [section.jsonKey, key], meta[key]),
-                        );
+                      return (
+                        <SettingsFieldGroups
+                          section={section.jsonKey}
+                          fields={Object.entries(sectionData as ConfigMap)
+                            .filter(([key]) => !meta[key]?.advanced || advancedOpen)
+                            .map(([key, value]) => [
+                              key,
+                              renderField(key, value, [section.jsonKey, key], meta[key]),
+                            ])}
+                        />
+                      );
                     })()}
                   </div>
                 )}
               </div>
             ) : (
-              <p className="muted">Loading configuration...</p>
+              <p className="text-muted-foreground">Loading configuration...</p>
             )}
           </div>
         </div>
 
-        {settingsSaved ? <p className="settings-saved">{settingsSaved}</p> : null}
-        {settingsError ? <p className="error">{settingsError}</p> : null}
+        {settingsSaved ? (
+          <p className="mt-[9px] text-[var(--status-success)]">{settingsSaved}</p>
+        ) : null}
+        {settingsError ? <p className={pageStyle.error}>{settingsError}</p> : null}
       </section>
 
       <AlertDialog.Root
@@ -957,9 +964,9 @@ export default function SettingsPage(props: Props) {
         }}
       >
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="import-confirm-overlay" />
-          <AlertDialog.Content className="import-confirm-dialog">
-            <div className="import-confirm-dialog__icon">
+          <AlertDialog.Overlay className={confirmationDialogStyle.overlay} />
+          <AlertDialog.Content className={confirmationDialogStyle.content}>
+            <div>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
                 <path d="M12 3 1.5 21h21L12 3Z" fill="currentColor" opacity=".12" />
                 <path
@@ -972,22 +979,22 @@ export default function SettingsPage(props: Props) {
                 <circle cx="12" cy="18" r="1" fill="currentColor" />
               </svg>
             </div>
-            <div className="import-confirm-dialog__body">
+            <div className="flex min-w-0 flex-col gap-2">
               <AlertDialog.Title asChild>
-                <h2 className="import-confirm-dialog__title">Replace current configuration?</h2>
+                <h2 className="m-0">Replace current configuration?</h2>
               </AlertDialog.Title>
               <AlertDialog.Description asChild>
-                <p className="import-confirm-dialog__message">
+                <p className="m-0">
                   Importing a configuration file will overwrite your current settings in the
                   database. This action cannot be undone.
                 </p>
               </AlertDialog.Description>
-              <p className="import-confirm-dialog__hint">
+              <p className="m-0">
                 We strongly recommend exporting your current configuration first so you can restore
                 it if the imported file isn&apos;t what you expected.
               </p>
             </div>
-            <div className="import-confirm-dialog__actions">
+            <div className={confirmationDialogStyle.actions}>
               <AlertDialog.Cancel asChild>
                 <Button type="button" disabled={settingsImporting}>
                   Cancel
@@ -1004,7 +1011,7 @@ export default function SettingsPage(props: Props) {
                 <Button
                   type="button"
                   variant="primary"
-                  className="import-confirm-dialog__confirm"
+                  className="bg-destructive text-destructive-foreground"
                   onClick={(event) => {
                     event.preventDefault();
                     void reloadTrackerAuthAfterConfigChange(handleImportConfigConfirm);
@@ -1064,13 +1071,13 @@ function statusBadgeClass(state?: string) {
   switch (state) {
     case "configured":
     case "has_cookies":
-      return "is-ready";
+      return settingsStyle.authReady;
     case "login_required":
     case "encrypted_storage_unavailable":
     case "error":
-      return "is-warning";
+      return settingsStyle.authWarning;
     default:
-      return "is-idle";
+      return settingsStyle.authIdle;
   }
 }
 

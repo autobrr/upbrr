@@ -140,6 +140,7 @@ func oeHasLinkedScreenshot(description string, screenshot api.ScreenshotImage) b
 	description = comparison.RemoveComparisonBlocks(description)
 	linkPrefix := "[url=" + screenshot.WebURL + "][img"
 	imgURL := cmp.Or(strings.TrimSpace(screenshot.ImgURL), strings.TrimSpace(screenshot.RawURL))
+	rawURL := strings.TrimSpace(screenshot.RawURL)
 	for remaining := description; ; {
 		start := strings.Index(remaining, linkPrefix)
 		if start < 0 {
@@ -151,7 +152,8 @@ func oeHasLinkedScreenshot(description string, screenshot api.ScreenshotImage) b
 			return false
 		}
 		content := remaining[closeTag+1:]
-		if strings.HasPrefix(content, imgURL+"[/img][/url]") {
+		if strings.HasPrefix(content, imgURL+"[/img][/url]") ||
+			(rawURL != "" && strings.HasPrefix(content, rawURL+"[/img][/url]")) {
 			return true
 		}
 		remaining = content

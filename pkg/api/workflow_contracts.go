@@ -596,6 +596,7 @@ type RenderedDescription struct {
 	TrackerIDs         []TrackerID         `json:"trackerIds"`
 	Source             string              `json:"source"`
 	Rendered           string              `json:"rendered"`
+	ImagePreviews      map[string]string   `json:"imagePreviews,omitempty"`
 	ContentFingerprint WorkflowFingerprint `json:"contentFingerprint"`
 }
 

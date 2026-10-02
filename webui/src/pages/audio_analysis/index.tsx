@@ -1,7 +1,9 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useMemo, useState } from "react";
+import { Select } from "../../components/ui/select";
 import type { AudioAnalysisFacet, AudioAnalysisGenerateInput } from "../../releaseSession/types";
 
 type Props = Readonly<{
@@ -77,32 +79,32 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
   return (
     <section className="grid gap-4">
       <header>
-        <p className="eyebrow">Audio Analysis</p>
+        <p className={pageStyle.eyebrow}>Audio Analysis</p>
         <h1>Waveforms, Spectrograms &amp; Statistics</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           Generate waveform, spectrogram, and amplitude statistics outputs for selected prepared
           audio tracks. Nothing runs until you choose Generate.
         </p>
       </header>
 
-      <section className="panel grid gap-3" aria-labelledby="audio-analysis-source">
+      <section className={`${pageStyle.panel} grid gap-3`} aria-labelledby="audio-analysis-source">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 id="audio-analysis-source" className="break-words">
               {view.sourceLabel}
             </h2>
-            <p className="muted">
+            <p className="text-muted-foreground">
               Generation {view.releaseGeneration}
               {view.sourceContext ? ` · ${view.sourceContext}` : ""}
             </p>
           </div>
-          <span className="muted">{view.enabled ? "Enabled" : "Disabled"}</span>
+          <span className="text-muted-foreground">{view.enabled ? "Enabled" : "Disabled"}</span>
         </div>
 
         {resourceIDs.length > 1 ? (
           <label className="grid gap-1">
             <span>Prepared resource</span>
-            <select
+            <Select
               value={effectiveResourceID}
               disabled={mutationsBlocked}
               onChange={(event) => {
@@ -115,14 +117,14 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                   Resource {index + 1}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         ) : null}
 
         <fieldset className="grid gap-2" disabled={mutationsBlocked}>
           <legend>Tracks</legend>
           <div className="flex flex-wrap items-center gap-4">
-            <label>
+            <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
                 name="audio-analysis-selection"
@@ -133,7 +135,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               />{" "}
               Primary
             </label>
-            <label>
+            <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
                 name="audio-analysis-selection"
@@ -143,7 +145,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               />{" "}
               All
             </label>
-            <label>
+            <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
                 name="audio-analysis-selection"
@@ -153,10 +155,10 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               />{" "}
               Selected
             </label>
-            <label className="flex items-center gap-2">
+            <label className="flex min-h-9 basis-full items-center gap-2 whitespace-nowrap sm:basis-auto">
               <span>Threads per decoder</span>
-              <select
-                className="w-20"
+              <Select
+                className="max-w-20 min-w-20"
                 value={decoderThreads}
                 onChange={(event) => setDecoderThreads(Number(event.target.value))}
               >
@@ -165,17 +167,17 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                     {value}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           </div>
           {selection === "selected" && requestedTrackIDs.length === 0 ? (
-            <p className="error" role="alert">
+            <p className={pageStyle.error} role="alert">
               Select at least one audio track.
             </p>
           ) : null}
           <div className="grid gap-2 sm:grid-cols-2">
             {tracks.map((track) => (
-              <label key={track.ID} className="panel min-w-0 p-3">
+              <label key={track.ID} className={`${pageStyle.panel} min-w-0 p-3`}>
                 {selection === "selected" ? (
                   <input
                     type="checkbox"
@@ -184,7 +186,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                   />
                 ) : null}{" "}
                 <strong className="break-words">{trackLabel(track.Ordinal, track.Title)}</strong>
-                <span className="mt-1 block break-words text-sm muted">
+                <span className="mt-1 block break-words text-sm text-muted-foreground">
                   {[
                     track.Codec,
                     track.ChannelLayout || `${track.Channels} channels`,
@@ -193,7 +195,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                     .filter(Boolean)
                     .join(" · ")}
                 </span>
-                <span className="block text-sm muted">
+                <span className="block text-sm text-muted-foreground">
                   {track.Languages.join(", ") || "Language unknown"}
                   {track.Default ? " · default" : ""}
                   {track.Commentary ? " · commentary" : ""}
@@ -211,7 +213,10 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               ["spectrogram", "Spectrogram"],
               ["stats", "Amplitude statistics"],
             ].map(([variant, label]) => (
-              <label key={variant}>
+              <label
+                key={variant}
+                className="inline-flex min-h-9 cursor-pointer items-center gap-2"
+              >
                 <input
                   type="checkbox"
                   checked={variants.includes(variant)}
@@ -222,7 +227,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
             ))}
           </div>
           {variants.length === 0 ? (
-            <p className="error" role="alert">
+            <p className={pageStyle.error} role="alert">
               Select at least one output type.
             </p>
           ) : null}
@@ -256,7 +261,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
           ) : null}
         </div>
         {busy ? (
-          <div role="status" className="grid gap-2 muted">
+          <div role="status" className="grid gap-2 text-muted-foreground">
             <p>
               Generating audio analysis… {view.completed}/{view.total || requestedTrackIDs.length}
             </p>
@@ -277,12 +282,12 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
           </div>
         ) : null}
         {view.mutationBlockedReason ? (
-          <p className="muted" role="status">
+          <p className="text-muted-foreground" role="status">
             {view.mutationBlockedReason}
           </p>
         ) : null}
         {view.error ? (
-          <p className="error" role="alert">
+          <p className={pageStyle.error} role="alert">
             {view.error}
           </p>
         ) : null}
@@ -292,14 +297,14 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
         <section className="grid gap-4" aria-labelledby="audio-analysis-results">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="audio-analysis-results">Results</h2>
-            <span className="muted">{view.result.status}</span>
+            <span className="text-muted-foreground">{view.result.status}</span>
           </div>
-          <div className="audio-analysis-result-grid">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] items-start gap-3">
             {view.result.tracks.map((track) => (
-              <article key={track.trackId} className="panel grid min-w-0 gap-3">
+              <article key={track.trackId} className={`${pageStyle.panel} grid min-w-0 gap-3`}>
                 <div>
                   <h3 className="break-words">{trackLabel(track.ordinal, track.title || "")}</h3>
-                  <p className="muted">
+                  <p className="text-muted-foreground">
                     {[
                       track.codec,
                       track.channelLayout || `${track.channels} channels`,
@@ -311,11 +316,11 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                   </p>
                 </div>
                 {track.failure ? (
-                  <p className="error">
+                  <p className={pageStyle.error}>
                     {track.failure.code}: {track.failure.message}
                   </p>
                 ) : null}
-                <div className="audio-analysis-artifact-grid">
+                <div className="grid grid-cols-[minmax(0,1fr)] gap-2.5 [&>section]:w-fit [&>section]:max-w-full">
                   {track.artifacts.map((artifact) => {
                     const url =
                       artifact.status === "completed" ? facet.artifactURL(artifact.id) : "";
@@ -339,7 +344,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                         {artifact.variant === "stats" ? (
                           artifact.status === "completed" && artifact.text !== undefined ? (
                             <pre
-                              className="panel max-h-40 max-w-full overflow-auto p-3 font-mono text-xs whitespace-pre"
+                              className={`${pageStyle.panel} max-h-40 max-w-full overflow-auto p-3 font-mono text-xs whitespace-pre`}
                               tabIndex={0}
                               role="region"
                               aria-label={`${trackLabel(track.ordinal, track.title || "")} amplitude statistics`}
@@ -347,16 +352,18 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                               {artifact.text}
                             </pre>
                           ) : artifact.failure ? (
-                            <p className="error">
+                            <p className={`error ${pageStyle.error}`}>
                               {artifact.failure.code}: {artifact.failure.message}
                             </p>
                           ) : (
-                            <p className="muted">No retained statistics are available.</p>
+                            <p className="text-muted-foreground">
+                              No retained statistics are available.
+                            </p>
                           )
                         ) : url ? (
                           <button
                             type="button"
-                            className="audio-analysis-thumbnail"
+                            className="audio-analysis-thumbnail h-auto w-fit max-w-full justify-self-start cursor-zoom-in overflow-hidden rounded-[10px] border border-foreground/10 bg-card/60 p-0 [&>img]:block [&>img]:h-auto [&>img]:max-h-40 [&>img]:w-auto [&>img]:max-w-full"
                             aria-label={`Open ${alt} full size`}
                             onClick={() => {
                               setLightboxImage(url);
@@ -366,11 +373,11 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                             <img src={url} alt={alt} loading="lazy" />
                           </button>
                         ) : artifact.failure ? (
-                          <p className="error">
+                          <p className={pageStyle.error}>
                             {artifact.failure.code}: {artifact.failure.message}
                           </p>
                         ) : (
-                          <p className="muted">No retained image is available.</p>
+                          <p className="text-muted-foreground">No retained image is available.</p>
                         )}
                       </section>
                     );

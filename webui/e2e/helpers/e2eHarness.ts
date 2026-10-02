@@ -77,6 +77,8 @@ type StartAppOptions = {
   baseURL?: string;
   /** Set false when restarting the same persisted workflow database. */
   seed?: boolean;
+  /** Use the isolated account created by the harness instead of the dev auth bypass. */
+  devNoAuth?: boolean;
 };
 
 type E2EWorkspaceOptions = {
@@ -353,14 +355,15 @@ async function startAppOnce(
     "127.0.0.1",
     "--port",
     String(port),
-    "--dev-no-auth",
   ];
+  if (options.devNoAuth !== false) args.push("--dev-no-auth");
   if (basePath) {
     args.push("--base-url", basePath);
   }
   const child = spawn(e2eBinary, args, {
     cwd: repoRoot,
-    env: workspace.env,
+    // Authenticated tests must not launch the OS browser and steal desktop focus.
+    env: { ...workspace.env, UPBRR_WEB_OPEN_BROWSER: "false" },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -685,6 +688,7 @@ function listen(server: Server): Promise<void> {
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
+    server.closeAllConnections();
   });
 }
 

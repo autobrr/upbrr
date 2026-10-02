@@ -422,8 +422,9 @@ func storedTrackerURLSlotsMatchCurrent(
 		if _, found := allowed[strings.TrimSpace(slot.OriginalURL)]; !found {
 			return false
 		}
+		delete(allowed, strings.TrimSpace(slot.OriginalURL))
 	}
-	return true
+	return len(allowed) == 0
 }
 
 func preserveStoredDescriptionAssets(rebuilt []api.ScreenshotSlot, stored []api.ScreenshotSlot) {
@@ -1385,6 +1386,21 @@ func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy i
 			RawURL: directURL,
 			WebURL: directURL,
 		}, host, globalImageUsageScope, true
+	}
+	rawURL := strings.TrimSpace(slot.OriginalURL)
+	if imagehost.IsWsrvProxyURL(rawURL) && policy.sourceOnlyAllowed != nil && policy.sourceOnlyAllowed(rawURL) {
+		proxyURL, _ := url.Parse(rawURL)
+		host = strings.ToLower(proxyURL.Hostname())
+		if host != "" && !hostInList(host, policy.failed) && (len(policy.allowed) == 0 || hostAllowed(host, policy.allowed)) {
+			return api.ScreenshotImage{
+				DiscID: slot.DiscID,
+				Path:   strings.TrimSpace(slot.ImagePath),
+				Host:   host,
+				ImgURL: rawURL,
+				RawURL: rawURL,
+				WebURL: rawURL,
+			}, host, globalImageUsageScope, true
+		}
 	}
 
 	return api.ScreenshotImage{}, "", "", false

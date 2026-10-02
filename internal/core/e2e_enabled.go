@@ -1682,6 +1682,7 @@ func (s e2eImageService) Upload(
 		links = append(links, api.UploadedImageLink{
 			DiscID:     image.DiscID,
 			ImagePath:  image.Path,
+			Purpose:    image.Purpose,
 			Host:       strings.ToLower(strings.TrimSpace(host)),
 			ImgURL:     base + ".jpg",
 			RawURL:     base + ".jpg",

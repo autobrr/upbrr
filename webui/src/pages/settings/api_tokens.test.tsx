@@ -2,12 +2,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { screen } from "@testing-library/dom";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render as testingRender, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearAppOperationMocks, installAppOperationMocks } from "../../test/appRequestMock";
 
 import APITokensSettings from "./api_tokens";
+
+const render = () =>
+  testingRender(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <APITokensSettings />
+    </QueryClientProvider>,
+  );
 
 const activeRecord = {
   id: "token-id-1",
@@ -34,7 +44,7 @@ describe("APITokensSettings", () => {
       CreateAPIToken: create,
     });
 
-    render(<APITokensSettings />);
+    render();
 
     await screen.findByText("token-id-1");
     expect(screen.queryByLabelText("Generated API token")).not.toBeInTheDocument();
@@ -67,13 +77,32 @@ describe("APITokensSettings", () => {
       RevokeAPIToken: revoke,
     });
 
-    render(<APITokensSettings />);
+    render();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Revoke Automation (token-id-1)" }),
+    );
     expect(screen.getByText("Revoke Automation?")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Revoke token" }));
 
     await waitFor(() => expect(revoke).toHaveBeenCalledWith("token-id-1"));
     await waitFor(() => expect(screen.getByText("Revoked")).toBeInTheDocument());
+  });
+
+  it("names each revoke action with its token identity", async () => {
+    installAppOperationMocks({
+      ListAPITokens: vi
+        .fn()
+        .mockResolvedValue([activeRecord, { ...activeRecord, id: "token-id-2" }]),
+    });
+
+    render();
+
+    expect(
+      await screen.findByRole("button", { name: "Revoke Automation (token-id-1)" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Revoke Automation (token-id-2)" }),
+    ).toBeInTheDocument();
   });
 });

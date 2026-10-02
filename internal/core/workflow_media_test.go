@@ -34,6 +34,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestMediaPlanSavedImagesRetainsPreviewURL(t *testing.T) {
+	t.Parallel()
+	plan := api.ScreenshotPlan{
+		FinalSelections: []api.ScreenshotImage{{Path: "synthetic.png", Purpose: api.ScreenshotPurposeFinal}},
+		TrackerImageLinks: []api.ScreenshotLinkedImage{{
+			Tracker:    "AITHER",
+			URL:        "https://images.example.invalid/full.png",
+			PreviewURL: "https://images.example.invalid/preview.png",
+			Path:       "synthetic.png",
+			Host:       "pixhost",
+		}},
+	}
+	images := mediaPlanSavedImages(plan)
+	if len(images) != 1 || images[0].URL != plan.TrackerImageLinks[0].URL || images[0].PreviewURL != plan.TrackerImageLinks[0].PreviewURL {
+		t.Fatalf("saved image projection = %#v", images)
+	}
+}
+
 type workflowMediaResolverFake struct {
 	screenshotSubject *api.ScreenshotSubject
 }
@@ -4264,6 +4282,7 @@ func TestWorkflowMediaReusesDifferentSavedHostsForSelectedTrackers(t *testing.T)
 	for _, definition := range []workflowImageHostPolicyDefinition{
 		{name: "ALPHA", policy: &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost"}}},
 		{name: "BETA", policy: &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbb"}}},
+		{name: "GAMMA", policy: &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb"}}},
 	} {
 		if err := registry.Register(definition); err != nil {
 			t.Fatal(err)
@@ -4326,6 +4345,73 @@ func TestWorkflowMediaReusesDifferentSavedHostsForSelectedTrackers(t *testing.T)
 		!slices.Equal(targets[0].Trackers, []string{"ALPHA"}) || targets[1].Host != "imgbb" ||
 		!targets[1].ReuseOnly || !slices.Equal(targets[1].Trackers, []string{"BETA"}) {
 		t.Fatalf("saved-image targets = %#v", targets)
+	}
+	if attempts, prepared := (workflowMediaBuilder{media: &mediaModule{registry: registry}}).restoredHostedImageAttemptsForSubject(
+		snapshot, retained, projections, api.UploadSubject{},
+	); !prepared || len(attempts) != 2 || len(attempts[0].Results) != 2 || len(attempts[1].Results) != 2 {
+		t.Fatalf("policy-specific saved image coverage: attempts=%#v prepared=%t", attempts, prepared)
+	}
+	mixedHostProjection := []api.TrackerReleaseProjection{{
+		TrackerID: "GAMMA", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2},
+	}}
+	if targets, err := (workflowMediaBuilder{media: &mediaModule{registry: registry}}).preferReusableImageTargets(
+		snapshot, retained, selected, mixedHostProjection, api.UploadSubject{}, nil, nil,
+	); err == nil || !strings.Contains(err.Error(), "configure an uploader") {
+		t.Fatalf("mixed eligible hosts without an uploader: targets=%#v err=%v", targets, err)
+	}
+	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}}
+	for hostedID, link := range retained.HostedImages {
+		accountScope, err := workflowMediaHostAccountScope(cfg, link.Host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		link.AccountScope = accountScope
+		retained.HostedImages[hostedID] = link
+	}
+	builder := workflowMediaBuilder{config: cfg, media: &mediaModule{cfg: cfg, registry: registry}}
+	targets, err = builder.preferReusableImageTargets(snapshot, retained, selected, mixedHostProjection,
+		api.UploadSubject{}, nil, []trackers.ImageUploadTarget{{
+			Host:       "pixhost",
+			UsageScope: "global",
+			Trackers:   []string{"GAMMA"},
+		}})
+	if err != nil || len(targets) != 1 || targets[0].Host != "pixhost" || targets[0].ReuseOnly {
+		t.Fatalf("mixed eligible hosts must upload all selected screenshots: targets=%#v err=%v", targets, err)
+	}
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(
+		snapshot, retained, mixedHostProjection, api.UploadSubject{},
+	); prepared || len(attempts) != 0 {
+		t.Fatalf("mixed eligible hosts restored as complete: attempts=%#v prepared=%t", attempts, prepared)
+	}
+	sharedHostProjection := []api.TrackerReleaseProjection{projections[0], mixedHostProjection[0]}
+	targets, err = builder.preferReusableImageTargets(snapshot, retained, selected, sharedHostProjection,
+		api.UploadSubject{}, nil, []trackers.ImageUploadTarget{{
+			Host:       "pixhost",
+			UsageScope: "global",
+			Trackers:   []string{"ALPHA", "GAMMA"},
+		}})
+	if err != nil || len(targets) != 1 || targets[0].Host != "pixhost" || targets[0].ReuseOnly ||
+		!slices.Equal(targets[0].Trackers, []string{"ALPHA", "GAMMA"}) {
+		t.Fatalf("shared host must upload GAMMA's remaining images: targets=%#v err=%v", targets, err)
+	}
+	images := make([]api.ScreenshotImage, 0, len(selected))
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Kind == api.MediaArtifactScreenshot {
+			images = append(images, retained.ArtifactImages[artifact.ID])
+		}
+	}
+	links := make([]api.UploadedImageLink, 0, len(retained.HostedImages))
+	for _, link := range retained.HostedImages {
+		links = append(links, link)
+	}
+	module := &mediaModule{
+		images:   &partialImageHostingService{published: len(images)},
+		logger:   api.NopLogger{},
+		registry: registry,
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), api.UploadSubject{}, "", nil, targets, images, links, nil)
+	if err != nil || len(result.Attempts) != 1 || len(result.Attempts[0].Links) != len(images) {
+		t.Fatalf("shared host omitted selected images: attempts=%#v err=%v", result.Attempts, err)
 	}
 }
 

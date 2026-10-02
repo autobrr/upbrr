@@ -233,15 +233,16 @@ func (b workflowDescriptionBuilder) Build(
 			rendered = strings.TrimSpace(entry.DescriptionHTML)
 		}
 		if rendered == "" {
-			rendered = description.Render(source)
+			rendered = description.RenderWithImagePreviews(source, entry.ImagePreviews)
 		}
 		contentFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-			GroupKey   string
-			TrackerIDs []api.TrackerID
-			Source     string
-			Rendered   string
-			ImageHost  api.ImageHostFeedback
-		}{entry.GroupKey, trackerIDs, source, rendered, entry.ImageHost})
+			GroupKey      string
+			TrackerIDs    []api.TrackerID
+			Source        string
+			Rendered      string
+			ImagePreviews map[string]string
+			ImageHost     api.ImageHostFeedback
+		}{entry.GroupKey, trackerIDs, source, rendered, entry.ImagePreviews, entry.ImageHost})
 		if err != nil {
 			return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: content fingerprint: %w", err)
 		}
@@ -250,6 +251,7 @@ func (b workflowDescriptionBuilder) Build(
 			TrackerIDs:         trackerIDs,
 			Source:             source,
 			Rendered:           rendered,
+			ImagePreviews:      entry.ImagePreviews,
 			ContentFingerprint: contentFingerprint,
 		})
 		for _, trackerID := range trackerIDs {

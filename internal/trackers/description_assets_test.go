@@ -1501,6 +1501,37 @@ func TestResolveDescriptionAssetsFallbackTrackerImages(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsRefreshesStoredTrackerImageSlots(t *testing.T) {
+	const sourcePath = "/tmp/source"
+	const firstURL = "https://imgbb.com/a.png"
+	const addedURL = "https://imgbb.com/b.png"
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{{
+			SourcePath: sourcePath,
+			Tracker:    "ANT",
+			ImageURLs:  []string{firstURL, addedURL},
+		}},
+		screenshotSlots: []api.ScreenshotSlot{{
+			SourcePath:          sourcePath,
+			SourceKind:          screenshotSlotSourceTracker,
+			OriginalURL:         firstURL,
+			RenderInScreenshots: true,
+		}},
+	}
+	meta := api.UploadSubject{SourcePath: sourcePath, Options: api.UploadOptions{KeepImages: true}}
+
+	assets, err := ResolveDescriptionAssets(t.Context(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve description assets: %v", err)
+	}
+	if len(assets.Screenshots) != 2 || assets.Screenshots[0].ImgURL != firstURL || assets.Screenshots[1].ImgURL != addedURL {
+		t.Fatalf("refreshed tracker screenshots = %#v", assets.Screenshots)
+	}
+	if len(assets.Slots) != 2 || len(repo.screenshotSlots) != 2 || repo.screenshotSlots[1].OriginalURL != addedURL {
+		t.Fatalf("refreshed tracker slots were not persisted: resolved=%#v stored=%#v", assets.Slots, repo.screenshotSlots)
+	}
+}
+
 func TestResolveDescriptionAssetsSkipsTrackerImagesWhenNotKeepingImages(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{{

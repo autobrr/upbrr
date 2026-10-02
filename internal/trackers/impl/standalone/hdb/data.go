@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -57,18 +58,23 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 			return trackers.DataLookupResult{}, nil
 		}
 	}
-	first, err := l.requestFirst(ctx, payload)
+	first, single, err := l.requestFirst(ctx, payload)
 	if err != nil || len(first) == 0 {
 		return trackers.DataLookupResult{}, err
 	}
+	responseID := hdbString(first["id"])
 	result := trackers.DataLookupResult{
-		TrackerID: hdbString(first["id"]),
+		TrackerID: responseID,
 		IMDBID:    hdbNestedInt(first, "imdb", "id"),
 		TVDBID:    hdbNestedInt(first, "tvdb", "id"),
 		InfoHash:  hdbString(first["hash"]),
 	}
 	if result.TrackerID == "" {
 		result.TrackerID = strings.TrimSpace(req.TrackerID)
+	}
+	requestedID := strings.TrimSpace(req.TrackerID)
+	if result.TrackerID != "" && (requestedID == "" && single || requestedID != "" && (responseID == "" || responseID == requestedID)) {
+		result.TorrentURL = strings.TrimSuffix(l.endpoint, "/api/torrents") + "/details.php?id=" + url.QueryEscape(result.TrackerID)
 	}
 	if req.OnlyID && !req.KeepImages {
 		return result, nil
@@ -83,37 +89,37 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	return result, nil
 }
 
-func (l *dataLookup) requestFirst(ctx context.Context, payload map[string]any) (map[string]any, error) {
+func (l *dataLookup) requestFirst(ctx context.Context, payload map[string]any) (map[string]any, bool, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("trackerdata: hdb encode request: %w", err)
+		return nil, false, fmt.Errorf("trackerdata: hdb encode request: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return nil, fmt.Errorf("trackerdata: hdb request: %w", err)
+		return nil, false, fmt.Errorf("trackerdata: hdb request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := l.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("trackerdata: hdb request: %w", err)
+		return nil, false, fmt.Errorf("trackerdata: hdb request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, nil
+		return nil, false, nil
 	}
 	result := map[string]any{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("trackerdata: hdb decode: %w", err)
+		return nil, false, fmt.Errorf("trackerdata: hdb decode: %w", err)
 	}
 	if hdbInt(result["status"]) != 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 	items, _ := result["data"].([]any)
 	if len(items) == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 	item, _ := items[0].(map[string]any)
-	return item, nil
+	return item, len(items) == 1, nil
 }
 
 func hdbCredentials(cfg config.Config) (string, string) {

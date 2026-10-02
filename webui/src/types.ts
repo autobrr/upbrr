@@ -434,6 +434,7 @@ export type TMDBMetadata = {
   Poster: string;
   TMDBPosterPath: string;
   Logo: string;
+  LogoLookupAttempted: boolean;
   TMDBLogo: string;
   Backdrop: string;
   TMDBType: string;
@@ -554,6 +555,8 @@ export type TVDBMetadata = {
   HasEnglish: boolean;
   Genres: string;
   Poster: string;
+  PosterThumbnail: string;
+  PosterThumbnailLookupAttempted: boolean;
   Aliases: string[];
   EpisodeSeason: number;
   EpisodeNumber: number;
@@ -609,6 +612,7 @@ export type TVmazeMetadata = {
   PosterMedium: string;
   Backdrop: string;
   BackdropMedium: string;
+  BackdropLookupAttempted: boolean;
   IMDBID: number;
   TVDBID: number;
 };
@@ -871,11 +875,13 @@ export type PreparedReleaseDisplay = {
   ReleaseName: string;
   Providers: ProviderDisplay[];
   TrackerData?: TrackerPreview[];
+  MediaInfoHTML?: string;
 };
 
 export type BlurayImage = {
   Kind: string;
   URL: string;
+  PreviewURL: string;
 };
 
 export type BluraySpecs = {
@@ -944,6 +950,7 @@ export type TrackerPreview = {
   Description: string;
   DescriptionHTML: string;
   ImageURLs: string[];
+  ImagePreviews?: Record<string, string>;
   Filename: string;
   Matched: boolean;
   UpdatedAt: string;
@@ -1188,7 +1195,7 @@ export type ScreenshotPlan = {
   FrameRate: number;
   SuggestedSelections: ScreenshotSelection[];
   /** Validated tracker image URLs available for explicit selection. */
-  SavedTrackerImages?: { TrackerID: string; Host: string; URL: string }[];
+  SavedTrackerImages?: { TrackerID: string; Host: string; URL: string; PreviewURL?: string }[];
   ExistingScreenshots: ScreenshotImage[];
   ExistingTrackerScreenshots: ScreenshotImage[];
   FinalSelections: ScreenshotImage[];
@@ -1210,6 +1217,7 @@ export type ScreenshotDiscPlan = {
 export type ScreenshotLinkedImage = {
   Tracker: string;
   URL: string;
+  PreviewURL?: string;
   Path: string;
   Host?: string;
 };

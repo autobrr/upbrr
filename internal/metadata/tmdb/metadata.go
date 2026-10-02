@@ -238,6 +238,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	} else if input.AddLogo && imagesErr != nil && c.logger != nil {
 		c.logger.Warnf("tmdb: logo lookup failed: %v", imagesErr)
 	}
+	result.LogoLookupAttempted = input.AddLogo && imagesErr == nil
 
 	result.Anime = input.Anime
 	if !result.Anime {

@@ -27,3 +27,12 @@ func TestBuildDescriptionRendersAudioAnalysisAfterNotes(t *testing.T) {
 		t.Fatalf("audio precedes notes: %q", got)
 	}
 }
+
+func TestBuildDescriptionAudioPayload(t *testing.T) {
+	t.Parallel()
+	got := buildDescription("Release notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]")
+	want := "Release notes<br>\n<details><summary>source_audio</summary><br /><img src=\"https://images.example.invalid/audio.png\" /><br /><pre><code>Peak: -1 dB</code></pre><br /></details>"
+	if got != want {
+		t.Fatalf("audio payload changed:\ngot:  %q\nwant: %q", got, want)
+	}
+}

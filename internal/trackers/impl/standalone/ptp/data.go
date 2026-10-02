@@ -26,6 +26,7 @@ type dataLookup struct {
 
 type ptpLookup struct {
 	trackerID string
+	groupID   string
 	imdbID    int
 	infoHash  string
 }
@@ -70,6 +71,9 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		IMDBID:    found.imdbID,
 		InfoHash:  found.infoHash,
 	}
+	if found.groupID != "" && foundID != "" {
+		result.TorrentURL = l.endpoint + "?id=" + url.QueryEscape(found.groupID) + "&torrentid=" + url.QueryEscape(foundID)
+	}
 	if foundID == "" || req.OnlyID && !req.KeepImages {
 		return result, nil
 	}
@@ -96,24 +100,43 @@ func (l *dataLookup) fetchByID(ctx context.Context, headers map[string]string, i
 }
 
 func (l *dataLookup) search(ctx context.Context, headers map[string]string, search string) (ptpLookup, error) {
-	if strings.TrimSpace(search) == "" {
+	search = ptpSearchName(search)
+	if search == "" {
 		return ptpLookup{}, nil
 	}
 	body, err := l.getJSON(ctx, url.Values{"searchstr": {search}}, headers)
 	if err != nil || len(body) == 0 {
 		return ptpLookup{}, err
 	}
+	var fallback ptpLookup
 	for _, raw := range ptpSlice(body["Movies"]) {
 		item := ptpMap(raw)
 		lookup := parsePTPResponse(item, "", search)
 		if id := ptpInt(item["ImdbId"]); id != 0 {
 			lookup.imdbID = id
 		}
-		if lookup.imdbID != 0 || lookup.trackerID != "" {
+		if lookup.groupID != "" {
 			return lookup, nil
 		}
+		if fallback.imdbID == 0 && fallback.trackerID == "" && (lookup.imdbID != 0 || lookup.trackerID != "") {
+			fallback = lookup
+		}
 	}
-	return ptpLookup{}, nil
+	return fallback, nil
+}
+
+func ptpSearchName(value string) string {
+	name := strings.TrimSpace(value)
+	dot := strings.LastIndexByte(name, '.')
+	if dot <= 0 {
+		return name
+	}
+	switch strings.ToLower(name[dot:]) {
+	case ".avi", ".mkv", ".mp4", ".ts", ".m4v", ".m2ts", ".wmv", ".mpeg", ".mpg", ".vob":
+		return name[:dot]
+	default:
+		return name
+	}
 }
 
 func (l *dataLookup) description(ctx context.Context, headers map[string]string, id string) (string, error) {
@@ -168,26 +191,38 @@ func (l *dataLookup) getJSON(ctx context.Context, params url.Values, headers map
 }
 
 func parsePTPResponse(body map[string]any, trackerID, searchTerm string) ptpLookup {
+	groupID, _, _ := ptpResolvedGroupID(body)
 	selectedID, infoHash := strings.TrimSpace(trackerID), ""
+	matched := false
+	fallbackID, fallbackHash := "", ""
 	needle := strings.ToLower(strings.TrimSpace(searchTerm))
 	for _, raw := range ptpSlice(body["Torrents"]) {
 		item := ptpMap(raw)
 		id := ptpString(item["Id"])
 		releaseName := strings.ToLower(ptpString(item["ReleaseName"]))
+		if fallbackID == "" {
+			fallbackID, fallbackHash = id, ptpString(item["InfoHash"])
+		}
 		if selectedID == "" && needle != "" && strings.Contains(releaseName, needle) {
 			selectedID, infoHash = id, ptpString(item["InfoHash"])
+			matched = true
 			break
 		}
 		if selectedID != "" && selectedID == id {
 			infoHash = ptpString(item["InfoHash"])
+			matched = true
 			break
 		}
-		if selectedID == "" {
-			selectedID, infoHash = id, ptpString(item["InfoHash"])
-		}
+	}
+	if selectedID == "" {
+		selectedID, infoHash = fallbackID, fallbackHash
+	}
+	if !matched {
+		groupID = ""
 	}
 	return ptpLookup{
 		trackerID: selectedID,
+		groupID:   groupID,
 		imdbID:    ptpInt(body["ImdbId"]),
 		infoHash:  infoHash,
 	}

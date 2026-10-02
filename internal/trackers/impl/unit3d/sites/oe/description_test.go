@@ -98,6 +98,23 @@ func TestDescriptionOwnsOEMarkupEvidenceAndScreenshots(t *testing.T) {
 	}
 }
 
+func TestDescriptionKeepsExistingLinkedScreenshotWithoutDuplicatingIt(t *testing.T) {
+	screenshots := oeTestScreenshots()
+	screenshots[1].ImgURL = "https://images.example/two-thumb.png"
+	linkedRaw := "[url=" + screenshots[0].WebURL + "][img=300]" + screenshots[0].RawURL + "[/img][/url]"
+	kept := "[center]Existing screenshot: " + linkedRaw + "[/center]"
+	got, err := buildDescription(t.Context(), oeTestSubject(), config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, screenshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(got, linkedRaw) != 1 || strings.Contains(got, screenshots[0].ImgURL) {
+		t.Fatalf("existing linked screenshot was duplicated: %s", got)
+	}
+	if !strings.Contains(got, "[img=350]"+screenshots[1].ImgURL+"[/img]") {
+		t.Fatalf("new screenshot did not use its hosted thumbnail: %s", got)
+	}
+}
+
 func TestDescriptionPreservesImportedComparisonMarkup(t *testing.T) {
 	comparison := "[comparison=Source,Encode]\r\nhttps://images.example/source.png https://images.example/encode.png\r\n[/comparison]"
 	meta := oeTestSubject()

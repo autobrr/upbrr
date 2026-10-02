@@ -5,6 +5,7 @@ import type { OperationFailure } from "../types";
 
 type EventCallback = (payload: unknown) => void;
 type EventConnectionCallback = () => void;
+type SessionLossReason = "lost" | "changed";
 type AppRequestOptions = Readonly<{
   signal?: AbortSignal;
   correlationID?: string;
@@ -23,14 +24,25 @@ declare global {
 
 const callbacks = new Map<string, Set<EventCallback>>();
 const eventConnectionCallbacks = new Set<EventConnectionCallback>();
+const sessionLossCallbacks = new Set<(reason: SessionLossReason) => void>();
+let notifiedSessionLoss: SessionLossReason | null = null;
 let eventStreamController: AbortController | null = null;
 let eventStreamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let csrfToken = "";
 let caseInsensitivePaths = navigator.platform.toLowerCase().startsWith("win");
 let testAppRequestHandler: AppRequestHandler | null = null;
 
-const sessionChangedMessage =
+/** Guidance when another tab has replaced the active browser session. */
+export const sessionChangedMessage =
   "Web session changed in another tab. Reload this tab to continue with the active login.";
+
+class SessionChangedError extends Error {}
+
+const notifySessionLoss = (reason: SessionLossReason) => {
+  if (notifiedSessionLoss) return;
+  notifiedSessionLoss = reason;
+  sessionLossCallbacks.forEach((callback) => callback(reason));
+};
 
 const parseJSONResponse = async <T>(response: Response): Promise<T | null> => {
   const text = await response.text();
@@ -74,6 +86,9 @@ const setPathCaseSensitivity = (caseInsensitive: unknown) => {
 };
 
 const refreshAuthState = async () => {
+  if (notifiedSessionLoss === "changed") throw new SessionChangedError(sessionChangedMessage);
+  if (notifiedSessionLoss === "lost" || !csrfToken) return false;
+  const expectedCSRFToken = csrfToken;
   const response = await fetch(withBasePath("/api/auth/status"), { credentials: "include" });
   const payload = await parseJSONResponse<
     Record<string, unknown> & {
@@ -82,16 +97,27 @@ const refreshAuthState = async () => {
       caseInsensitivePaths?: boolean;
     }
   >(response);
-  if (!response.ok || !payload?.authenticated) return false;
+  if (!response.ok) {
+    throw new Error(`Authentication status refresh failed (${response.status}).`);
+  }
+  if (payload?.authenticated === false) return false;
+  if (payload?.authenticated !== true || !payload.csrfToken) {
+    throw new Error("Authentication status response is incomplete.");
+  }
 
+  if (notifiedSessionLoss === "changed") throw new SessionChangedError(sessionChangedMessage);
+  if (notifiedSessionLoss === "lost") return false;
+  if (csrfToken !== expectedCSRFToken) {
+    throw new Error("Authentication changed during refresh.");
+  }
   const nextCSRFToken = String(payload.csrfToken || "");
-  if (csrfToken && nextCSRFToken && nextCSRFToken !== csrfToken) {
-    throw new Error(sessionChangedMessage);
+  if (nextCSRFToken !== expectedCSRFToken) {
+    throw new SessionChangedError(sessionChangedMessage);
   }
   csrfToken = nextCSRFToken;
   setPathCaseSensitivity(payload.caseInsensitivePaths);
   recreateEventStream();
-  return csrfToken !== "";
+  return true;
 };
 
 const closeEventStream = () => {
@@ -148,7 +174,17 @@ const runEventStream = async (controller: AbortController) => {
     });
     if (!response.ok) {
       if (isAuthFailureStatus(response.status)) {
-        reconnect = await refreshAuthState().catch(() => false);
+        let sessionLossReason: SessionLossReason | null = null;
+        try {
+          reconnect = await refreshAuthState();
+          if (!reconnect) sessionLossReason = "lost";
+        } catch (error) {
+          if (error instanceof SessionChangedError) sessionLossReason = "changed";
+        }
+        if (sessionLossReason) {
+          reconnect = false;
+          if (!controller.signal.aborted) notifySessionLoss(sessionLossReason);
+        }
       }
       return;
     }
@@ -204,9 +240,24 @@ const requestJSON = async <T>(path: string, requestInit: () => RequestInit): Pro
   let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
     response,
   );
-  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
-    response = await fetch(withBasePath(path), requestInit());
-    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
+  if (!response.ok && isAuthFailureStatus(response.status)) {
+    let refreshed = false;
+    try {
+      refreshed = await refreshAuthState();
+    } catch (error) {
+      if (error instanceof SessionChangedError && path.startsWith("/api/app/")) {
+        notifySessionLoss("changed");
+      }
+      throw error;
+    }
+    if (refreshed) {
+      response = await fetch(withBasePath(path), requestInit());
+      payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
+        response,
+      );
+    } else if (path.startsWith("/api/app/")) {
+      notifySessionLoss("lost");
+    }
   }
   if (!response.ok) {
     if (payload?.failure) throw new OperationFailureError(payload.failure);
@@ -263,6 +314,7 @@ const postForm = async <T>(
 
 /** Initializes cookie-bound WebUI requests and event delivery for one authenticated session. */
 export const initializeWebClient = (token: string, hostCaseInsensitivePaths?: boolean) => {
+  notifiedSessionLoss = null;
   csrfToken = token;
   setPathCaseSensitivity(hostCaseInsensitivePaths);
   recreateEventStream();
@@ -270,9 +322,18 @@ export const initializeWebClient = (token: string, hostCaseInsensitivePaths?: bo
 
 /** Updates the active session CSRF token and host path comparison semantics. */
 export const updateWebCSRFToken = (token: string, hostCaseInsensitivePaths?: boolean) => {
+  if (token) notifiedSessionLoss = null;
   csrfToken = token;
   setPathCaseSensitivity(hostCaseInsensitivePaths);
   recreateEventStream();
+};
+
+/** Signals whether the current Web session ended or another tab replaced it. */
+export const subscribeWebSessionLoss = (callback: (reason: SessionLossReason) => void) => {
+  sessionLossCallbacks.add(callback);
+  return () => {
+    sessionLossCallbacks.delete(callback);
+  };
 };
 
 /** Reports whether the WebUI host compares filesystem paths case-insensitively. */
