@@ -969,8 +969,8 @@ func TestBuildUploadDryRunDistinguishesReadyEmptyAndFailedScreenshots(t *testing
 				if inputs[0].Assets == nil || len(inputs[0].Assets.Screenshots) != 0 || strings.TrimSpace(inputs[0].Assets.Description) != "" {
 					t.Fatalf("expected ready empty screenshot assets, got %#v", inputs[0].Assets)
 				}
-				if test.repo.overrideCalls != 1 {
-					t.Fatalf("screenshot mode loaded description overrides %d time(s), want 1", test.repo.overrideCalls)
+				if test.repo.overrideCalls != 0 {
+					t.Fatalf("screenshot mode loaded description overrides %d time(s), want 0", test.repo.overrideCalls)
 				}
 			} else if entries[0].ContentFailure == nil || entries[0].ContentFailure.Code != api.TrackerContentFailureScreenshotPreparation {
 				t.Fatalf("expected structured screenshot failure, got %#v", entries[0].ContentFailure)
@@ -1012,15 +1012,15 @@ func TestBuildUploadDryRunScopesDescriptionPreloadFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build dry run: %v", err)
 	}
-	if len(entries) != 2 || entries[0].Tracker != "IMAGES" || entries[0].Status != "blocked" || entries[1].Tracker != "DESCRIPTION" || entries[1].Status != "blocked" {
+	if len(entries) != 2 || entries[0].Tracker != "IMAGES" || entries[0].Status != "ready" || entries[1].Tracker != "DESCRIPTION" || entries[1].Status != "blocked" {
 		t.Fatalf("unexpected mixed-mode results: %#v", entries)
 	}
-	if len(screenshotInputs) != 0 || len(descriptionInputs) != 0 {
-		t.Fatalf("failed override read must block both modes, screenshots=%d descriptions=%d", len(screenshotInputs), len(descriptionInputs))
+	if len(screenshotInputs) != 1 || len(descriptionInputs) != 0 {
+		t.Fatalf("failed override read must block only description mode, screenshots=%d descriptions=%d", len(screenshotInputs), len(descriptionInputs))
 	}
-	if entries[0].ContentFailure == nil || entries[0].ContentFailure.Code != api.TrackerContentFailureScreenshotPreparation ||
-		entries[1].ContentFailure == nil || entries[1].ContentFailure.Code != api.TrackerContentFailureDescriptionPreparation {
-		t.Fatalf("expected structured screenshot and description failures, got %#v and %#v", entries[0].ContentFailure, entries[1].ContentFailure)
+	if entries[0].ContentFailure != nil || entries[1].ContentFailure == nil ||
+		entries[1].ContentFailure.Code != api.TrackerContentFailureDescriptionPreparation {
+		t.Fatalf("expected only a structured description failure, got %#v and %#v", entries[0].ContentFailure, entries[1].ContentFailure)
 	}
 }
 
@@ -2896,6 +2896,37 @@ func TestBuildPreparationDoesNotImportUploadOutcomeBlocks(t *testing.T) {
 	}
 	if len(preview.Descriptions) != 2 {
 		t.Fatalf("expected both description-owned tracker groups, got %d", len(preview.Descriptions))
+	}
+}
+
+func TestBuildPreparationUsesStoredImagePreviews(t *testing.T) {
+	t.Parallel()
+	const full = "https://images.example.invalid/full.png"
+	const previewURL = "https://images.example.invalid/preview.png"
+	registry := NewRegistry()
+	if err := registry.Register(stubPreparationDefinition{
+		name: "AITHER",
+		group: "unit3d",
+		description: "[url=" + full + "][img]" + full + "[/img][/url]",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	repo := &stubRepo{trackerRecords: []api.TrackerMetadata{{
+		Tracker:       "AITHER",
+		Description:   "stored",
+		ImagePreviews: map[string]string{full: previewURL},
+	}}}
+	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	prepared, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv"),
+	}), []string{"AITHER"})
+	if err != nil || len(prepared.Descriptions) != 1 {
+		t.Fatalf("prepared descriptions = %#v, err = %v", prepared, err)
+	}
+	entry := prepared.Descriptions[0]
+	if entry.ImagePreviews[full] != previewURL || !strings.Contains(entry.DescriptionHTML, `src="`+previewURL+`"`) ||
+		!strings.Contains(entry.DescriptionHTML, `href="`+full+`"`) {
+		t.Fatalf("stored image preview lost from prepared description: %#v", entry)
 	}
 }
 

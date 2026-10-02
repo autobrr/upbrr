@@ -72,10 +72,10 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 			len(policy.allowed) > 0 && !hostAllowed(host, policy.allowed) ||
 			!reusableSelectionMatchesPolicy(host, policy) ||
 			(imagehost.IsSourceOnlyURL(directURL) && !reuseSourceURL(directURL)) {
-			return false
+			return reuseSourceURL(rawURL)
 		}
 		if owner := trackerForOwnedHost(s.registry, host); owner != "" && !strings.EqualFold(owner, tracker) {
-			return false
+			return reuseSourceURL(rawURL)
 		}
 		directReplacements[rawURL] = directURL
 		return true

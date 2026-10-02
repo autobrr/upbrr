@@ -50,6 +50,37 @@ const renderPage = (facet: DuplicatesFacet, trackers = ["EXAMPLE"]) =>
   );
 
 describe("DupeCheckPage", () => {
+  it.each([
+    { faviconOnly: false, useFavicons: true, visibleName: true },
+    { faviconOnly: true, useFavicons: true, visibleName: false },
+    { faviconOnly: true, useFavicons: false, visibleName: true },
+  ])(
+    "keeps tracker choices named with faviconOnly=$faviconOnly and useFavicons=$useFavicons",
+    ({ faviconOnly, useFavicons, visibleName }) => {
+      render(
+        <DupeCheckPage
+          facet={facetFor()}
+          sourcePath="C:\\media\\Example"
+          trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
+          trackerIconSrcByName={{}}
+          submissionExclusions={[]}
+          workflowComplete={false}
+          faviconOnly={faviconOnly}
+          useFavicons={useFavicons}
+        />,
+      );
+      const choice = screen.getByRole("checkbox", { name: "EXAMPLE" });
+      expect(choice).toHaveAttribute("aria-checked", "true");
+      const labels = choice.querySelectorAll("span.flex");
+      const label = labels[labels.length - 1];
+      expect(label).not.toBeNull();
+      expect(
+        [...(label?.childNodes ?? [])].some(
+          (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === "EXAMPLE",
+        ),
+      ).toBe(visibleName);
+    },
+  );
   it("forwards duplicate-check intent through the facet", () => {
     const run = vi.fn(async () => true);
     renderPage(facetFor({}, { run }));

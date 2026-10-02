@@ -7,6 +7,7 @@ import (
 	"fmt"
 	stdhtml "html"
 	"net/url"
+	"strconv"
 	"strings"
 
 	xhtml "golang.org/x/net/html"
@@ -24,6 +25,7 @@ var allowedTags = map[string]tagPolicy{
 	"blockquote": {},
 	"br":         {selfClosing: true},
 	"cite":       {},
+	"center":     {},
 	"code":       {},
 	"details":    {},
 	"div":        {},
@@ -71,11 +73,13 @@ var allowedAttrs = map[string]map[string]bool{
 	"figcaption": {"class": true},
 	"figure":     {"class": true},
 	"img": {
-		"src":   true,
-		"alt":   true,
-		"title": true,
-		"class": true,
-		"width": true,
+		"src":    true,
+		"alt":    true,
+		"title":  true,
+		"class":  true,
+		"width":  true,
+		"height": true,
+		"style":  true,
 	},
 	"p":       {"style": true, "align": true},
 	"section": {"class": true},
@@ -211,6 +215,9 @@ func sanitizeAttr(tag string, key string, value string) (string, bool) {
 		return sanitizeURL(trimmed, true)
 	}
 	if key == "style" {
+		if tag == "img" {
+			return sanitizeImageStyle(trimmed)
+		}
 		return sanitizeStyle(trimmed)
 	}
 	if key == "align" {
@@ -218,6 +225,10 @@ func sanitizeAttr(tag string, key string, value string) (string, bool) {
 	}
 	if key == "class" {
 		return sanitizeClass(trimmed)
+	}
+	if tag == "img" && key == "height" {
+		// HDT emits fixed-height screenshot thumbnails.
+		return trimmed, trimmed == "137"
 	}
 	return trimmed, true
 }
@@ -284,6 +295,38 @@ func sanitizeStyle(value string) (string, bool) {
 		return "", false
 	}
 	return strings.Join(allowed, "; "), true
+}
+
+func sanitizeImageStyle(value string) (string, bool) {
+	for part := range strings.SplitSeq(value, ";") {
+		pair := strings.SplitN(part, ":", 2)
+		if len(pair) != 2 || !strings.EqualFold(strings.TrimSpace(pair[0]), "max-width") {
+			continue
+		}
+		width := strings.ToLower(strings.TrimSpace(pair[1]))
+		if !strings.HasSuffix(width, "px") {
+			continue
+		}
+		digits := strings.TrimSuffix(width, "px")
+		if digits == "" || len(digits) > 4 {
+			continue
+		}
+		valid := true
+		for _, digit := range digits {
+			if digit < '0' || digit > '9' {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			continue
+		}
+		value, err := strconv.Atoi(digits)
+		if err == nil && value > 0 && value <= 4096 {
+			return fmt.Sprintf("max-width: min(100%%, %dpx)", value), true
+		}
+	}
+	return "", false
 }
 
 func sanitizeColor(value string) string {

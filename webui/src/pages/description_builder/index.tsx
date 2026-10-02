@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useState } from "react";
 import RenderedDescription from "../../components/RenderedDescription";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
@@ -14,6 +15,7 @@ type Props = {
   useFavicons?: boolean;
   faviconOnly?: boolean;
   trackerIconSrcByName?: TrackerIconCache;
+  onImageOpen?: (url: string, alt: string) => void;
 };
 
 const groupLabel = (groupKey: string, trackers: string[]) => {
@@ -29,6 +31,7 @@ export default function DescriptionBuilderPage(props: Props) {
     useFavicons = true,
     faviconOnly = false,
     trackerIconSrcByName = {},
+    onImageOpen,
   } = props;
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const { view } = facet;
@@ -40,18 +43,20 @@ export default function DescriptionBuilderPage(props: Props) {
   return (
     <section className="flex flex-col gap-3">
       <header className="max-w-3xl">
-        <p className="eyebrow">Description Builder</p>
+        <p className={pageStyle.eyebrow}>Description Builder</p>
         <h1>Customize Description</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           Edit tracker-group raw descriptions here. Tracker-specific formatting is applied from this
           builder.
         </p>
       </header>
 
-      <section className="panel flex flex-wrap items-center justify-between gap-3 py-3">
+      <section
+        className={`${pageStyle.panel} flex flex-wrap items-center justify-between gap-3 py-3`}
+      >
         <div className="min-w-0">
-          <p className="label">Source path</p>
-          <p className="value [overflow-wrap:anywhere] text-sm">
+          <p className={pageStyle.label}>Source path</p>
+          <p className={`${pageStyle.value} [overflow-wrap:anywhere] text-sm`}>
             {sourcePath || "No path selected"}
           </p>
         </div>
@@ -65,21 +70,21 @@ export default function DescriptionBuilderPage(props: Props) {
         </button>
       </section>
 
-      {builderError ? <p className="error">{builderError}</p> : null}
-      {builderSaved ? <p className="success">{builderSaved}</p> : null}
+      {builderError ? <p className={pageStyle.error}>{builderError}</p> : null}
+      {builderSaved ? <p className="mt-[9px] text-status-success">{builderSaved}</p> : null}
 
       {builderLoading && groups.length === 0 ? (
-        <section className="panel">
+        <section className={pageStyle.panel}>
           <div className="mb-2 flex flex-col gap-1">
             <h2>Building Descriptions</h2>
           </div>
-          <p className="muted">
+          <p className="text-muted-foreground">
             Preparing tracker-group descriptions and image-host adjustments...
           </p>
         </section>
       ) : groups.length === 0 ? (
-        <section className="panel">
-          <p className="muted">No tracker descriptions generated yet.</p>
+        <section className={pageStyle.panel}>
+          <p className="text-muted-foreground">No tracker descriptions generated yet.</p>
         </section>
       ) : (
         groups.map((group, i) => {
@@ -97,7 +102,7 @@ export default function DescriptionBuilderPage(props: Props) {
           const hideTrackerNames = faviconOnly && useFavicons && trackers.length > 0;
 
           return (
-            <section className="panel grid gap-3" key={reactKey}>
+            <section className={`${pageStyle.panel} grid gap-3`} key={reactKey}>
               <div className="mb-1 flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2>
@@ -116,11 +121,13 @@ export default function DescriptionBuilderPage(props: Props) {
                       {hideTrackerNames ? null : label}
                     </span>
                   </h2>
-                  <p className="muted">Workflow-owned generated description.</p>
+                  <p className="text-muted-foreground">Workflow-owned generated description.</p>
                 </div>
                 <button
                   className="ghost"
                   type="button"
+                  aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
+                  aria-expanded={expanded}
                   onClick={() =>
                     setExpandedGroups((prev) => ({
                       ...prev,
@@ -138,6 +145,7 @@ export default function DescriptionBuilderPage(props: Props) {
                     <button
                       className="ghost"
                       type="button"
+                      aria-label={`${builderLoading ? "Working..." : "Reset group"} ${label}`}
                       onClick={() => void facet.reset(groupKey)}
                       disabled={builderLoading || !sourcePath.trim()}
                     >
@@ -146,6 +154,7 @@ export default function DescriptionBuilderPage(props: Props) {
                     <button
                       className="ghost"
                       type="button"
+                      aria-label={`${builderLoading ? "Working..." : "Render"} ${label}`}
                       onClick={() => void facet.render(groupKey)}
                       disabled={builderLoading}
                     >
@@ -154,6 +163,7 @@ export default function DescriptionBuilderPage(props: Props) {
                     <button
                       className="primary"
                       type="button"
+                      aria-label={`${builderLoading ? "Working..." : "Save group"} ${label}`}
                       onClick={() => void facet.save(groupKey)}
                       disabled={builderLoading || !sourcePath.trim()}
                     >
@@ -161,16 +171,17 @@ export default function DescriptionBuilderPage(props: Props) {
                     </button>
                   </div>
 
-                  <section className="panel">
+                  <section className={pageStyle.panel}>
                     <div className="mb-2 flex flex-col gap-1">
                       <h2>Raw Description</h2>
-                      <p className="muted">
+                      <p className="text-muted-foreground">
                         This final raw description is the upload source of truth for{" "}
                         {hideTrackerNames ? "this group" : label}.
                       </p>
                     </div>
                     <textarea
-                      className="min-h-[170px] w-full resize-y rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[0.95rem] leading-6 text-[var(--text)]"
+                      aria-label={`Raw description for ${label}`}
+                      className="min-h-[170px] w-full resize-y rounded-lg border border-border bg-card px-3 py-2 text-[0.95rem] leading-6 text-foreground"
                       value={raw}
                       onChange={(event) => {
                         const nextValue = event.target.value;
@@ -179,14 +190,18 @@ export default function DescriptionBuilderPage(props: Props) {
                     />
                   </section>
 
-                  <section className="panel">
+                  <section className={pageStyle.panel}>
                     <div className="mb-2 flex flex-col gap-1">
                       <h2>Rendered Raw Preview</h2>
                     </div>
                     {renderedHTML ? (
-                      <RenderedDescription html={renderedHTML} />
+                      <RenderedDescription
+                        html={renderedHTML}
+                        imagePreviews={group.imagePreviews}
+                        onImageOpen={onImageOpen}
+                      />
                     ) : (
-                      <p className="muted">No rendered preview yet.</p>
+                      <p className="text-muted-foreground">No rendered preview yet.</p>
                     )}
                   </section>
                 </>

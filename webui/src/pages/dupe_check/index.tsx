@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { PillCheckbox } from "../../components/ui/checkbox";
@@ -181,13 +182,13 @@ function CandidateList({ matches }: Readonly<{ matches: readonly DupeMatchProjec
         const facts = candidateFacts(match);
         return (
           <div
-            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-[var(--border)] bg-black/10 px-2 py-1.5 text-sm"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
             key={`${match.id || ""}-${match.name}-${match.relation || ""}`}
           >
             <Badge tone={relationTone(match.relation)}>{relationLabel(match.relation)}</Badge>
             {match.link ? (
               <a
-                className="tracker-link min-w-0 break-all"
+                className="inline-flex items-center gap-[5px] font-semibold text-foreground underline min-w-0 break-all"
                 href={match.link}
                 onAuxClick={handleExternalLinkClick}
                 onClick={handleExternalLinkClick}
@@ -199,7 +200,9 @@ function CandidateList({ matches }: Readonly<{ matches: readonly DupeMatchProjec
             ) : (
               <span className="min-w-0 break-all">{match.name}</span>
             )}
-            {facts.length ? <span className="muted text-xs">{facts.join(" · ")}</span> : null}
+            {facts.length ? (
+              <span className="text-muted-foreground text-xs">{facts.join(" · ")}</span>
+            ) : null}
           </div>
         );
       })}
@@ -289,7 +292,7 @@ function WorkflowDupeAssessmentView({
           ).values(),
         );
         return (
-          <article className="panel grid gap-1 px-3 py-2" key={trackerID}>
+          <article className={`${pageStyle.panel} grid gap-1 px-3 py-2`} key={trackerID}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base">{projection?.displayName || trackerID}</h2>
               <Badge
@@ -311,7 +314,7 @@ function WorkflowDupeAssessmentView({
             {blockReasons.length ? (
               <div className="grid gap-1 text-sm">
                 {blockReasons.map((message) => (
-                  <p className="error" key={message}>
+                  <p className={pageStyle.error} key={message}>
                     {message}
                   </p>
                 ))}
@@ -319,7 +322,7 @@ function WorkflowDupeAssessmentView({
             ) : null}
 
             {ruleOverride ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300/25 bg-amber-300/5 p-2 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--status-warning)] bg-card p-2 text-sm">
                 <p>{ruleOverride.prompt}</p>
                 <Button
                   aria-label={`Upload to ${trackerID} anyway`}
@@ -338,8 +341,8 @@ function WorkflowDupeAssessmentView({
                 className="grid gap-1 text-sm"
               >
                 {namesModified ? (
-                  <p className="muted">
-                    <span className="font-semibold text-[var(--text)]">Canonical:</span>{" "}
+                  <p className="text-muted-foreground">
+                    <span className="font-semibold text-foreground">Canonical:</span>{" "}
                     {canonicalName}
                   </p>
                 ) : null}
@@ -354,7 +357,7 @@ function WorkflowDupeAssessmentView({
                 {releaseNameNotices.length ? (
                   <div
                     aria-label={`Tracker naming notices for ${trackerID}`}
-                    className="grid gap-1 rounded border border-amber-300/25 bg-amber-300/5 p-2"
+                    className="grid gap-1 rounded border border-[var(--status-warning)] bg-card p-2"
                   >
                     {releaseNameNotices.map((notice) => (
                       <p key={releaseNameOverrideKey(notice)}>{notice.message}</p>
@@ -369,7 +372,7 @@ function WorkflowDupeAssessmentView({
             {!strictBlocked && (nameConfirmation.pending || nameConfirmation.confirmed) ? (
               <div
                 aria-label={`Tracker naming for ${trackerID}`}
-                className="grid gap-2 rounded border border-[var(--border)] bg-black/10 p-2"
+                className="grid gap-2 rounded border border-border bg-muted p-2 text-foreground"
               >
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold">Tracker release name</span>
@@ -445,7 +448,6 @@ export default function DupeCheckPage({
   const selectedTrackers = new Set(view.selectedTrackers);
   const trackerSelectionRequired = selectedTrackers.size === 0;
   const dupeLoading = view.status === "running";
-  const hideTrackerNames = faviconOnly && useFavicons;
   const excludedTrackerIDs = new Set(submissionExclusions.map((exclusion) => exclusion.trackerId));
   const allSelectedTrackersAlreadyUploaded =
     workflowComplete &&
@@ -457,23 +459,28 @@ export default function DupeCheckPage({
   return (
     <section className="flex flex-col gap-3">
       <header className="max-w-3xl">
-        <p className="eyebrow">Dupe Checking</p>
+        <p className={pageStyle.eyebrow}>Dupe Checking</p>
         <h1>Check Trackers</h1>
-        <p className="subtitle">Scan selected trackers for potential dupes before upload.</p>
+        <p className={pageStyle.subtitle}>
+          Scan selected trackers for potential dupes before upload.
+        </p>
       </header>
 
-      <section className="panel flex flex-col gap-2 py-3">
+      <section className={`${pageStyle.panel} flex flex-col gap-2 py-3`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p className="label">Trackers</p>
-            <p className="muted text-sm">Select trackers for this duplicate check.</p>
+            <p className={pageStyle.label}>Trackers</p>
+            <p className="text-muted-foreground text-sm">
+              Select trackers for this duplicate check.
+            </p>
           </div>
-          <span className="muted text-xs">
+          <span className="text-muted-foreground text-xs">
             {selectedTrackers.size}/{trackerUploadItems.length} selected
           </span>
         </div>
         {trackerUploadItems.length ? (
-          <div className="tracker-pills">
+          <fieldset className="flex flex-wrap gap-2 m-0 min-w-0 border-0 p-0">
+            <legend className="sr-only">Trackers for duplicate check</legend>
             {trackerUploadItems.map((tracker) => {
               const normalized = tracker.name.trim().toUpperCase();
               return (
@@ -495,17 +502,19 @@ export default function DupeCheckPage({
                       iconSrc={trackerIconFor(trackerIconSrcByName, tracker.name)}
                       enabled={useFavicons}
                     />
-                    {hideTrackerNames ? null : tracker.name}
+                    {faviconOnly && useFavicons ? null : tracker.name}
                   </span>
                 </PillCheckbox>
               );
             })}
-          </div>
+          </fieldset>
         ) : (
-          <p className="muted">No configured tracker entries found.</p>
+          <p className="text-muted-foreground">No configured tracker entries found.</p>
         )}
         {trackerSelectionRequired ? (
-          <p className="muted text-sm">Select at least one tracker to run duplicate checking.</p>
+          <p className="text-muted-foreground text-sm">
+            Select at least one tracker to run duplicate checking.
+          </p>
         ) : null}
         <Button
           className="ml-auto"
@@ -518,22 +527,22 @@ export default function DupeCheckPage({
         </Button>
       </section>
 
-      {view.error ? <p className="error">{view.error}</p> : null}
+      {view.error ? <p className={pageStyle.error}>{view.error}</p> : null}
 
       {submissionExclusions.length ? (
-        <section className="panel grid gap-3" aria-label="Submission exclusions">
+        <section className={`${pageStyle.panel} grid gap-3`} aria-label="Submission exclusions">
           <h2>Already submitted</h2>
-          <p className="muted">
+          <p className="text-muted-foreground">
             Confirmed tracker submissions are excluded from duplicate checks and upload actions.
           </p>
           <ul className="grid gap-2">
             {submissionExclusions.map((exclusion) => (
               <li
-                className="rounded border border-white/10 bg-white/5 p-3"
+                className="rounded border border-border bg-muted p-3 text-foreground"
                 key={exclusion.trackerId}
               >
                 <strong>{exclusion.trackerId}</strong>
-                <span className="muted">
+                <span className="text-muted-foreground">
                   {exclusion.reason === "already_uploaded"
                     ? "Already uploaded"
                     : exclusion.reason.replaceAll("_", " ")}
@@ -562,7 +571,7 @@ export default function DupeCheckPage({
           setIgnored={facet.setIgnored}
         />
       ) : submissionExclusions.length === 0 ? (
-        <p className="muted">No dupe results yet.</p>
+        <p className="text-muted-foreground">No dupe results yet.</p>
       ) : null}
     </section>
   );

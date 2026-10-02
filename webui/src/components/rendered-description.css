@@ -1,0 +1,392 @@
+/* Copyright (c) 2025-2026, Audionut and the autobrr contributors. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
+.tracker-description.rendered {
+  white-space: normal;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.tracker-description.rendered .description-image-button {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.tracker-description.rendered :is(h1, h2, h3, h4) {
+  margin: 0.75em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tracker-description.rendered h1 {
+  font-size: 1.5rem;
+}
+
+.tracker-description.rendered h2 {
+  font-size: 1.3rem;
+}
+
+.tracker-description.rendered h3 {
+  font-size: 1.15rem;
+}
+
+.tracker-description.rendered p {
+  margin: 0.5em 0;
+}
+
+.tracker-description.rendered center {
+  display: block;
+  text-align: center;
+}
+
+.tracker-description.rendered :where(ul:not([class]), ol:not([class])) {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.tracker-description.rendered ul:not([class]) {
+  list-style: disc outside;
+}
+
+.tracker-description.rendered ol:not([class]) {
+  list-style: decimal outside;
+}
+
+.tracker-description.rendered details:not([class]) {
+  margin: 0.5em 0;
+}
+
+.tracker-description.rendered :where(details:not([class]) > summary) {
+  cursor: pointer;
+}
+
+.tracker-description.rendered table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.tracker-description.rendered :is(th, td) {
+  border: 1px solid var(--border);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+
+.tracker-description.rendered img {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+
+.tracker-description.rendered img[height="137"] {
+  max-height: 137px;
+}
+
+.tracker-description.rendered pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tracker-description.rendered a {
+  color: color-mix(in oklab, var(--chart-2) 50%, var(--foreground));
+  text-decoration: underline;
+}
+
+.tracker-description.rendered blockquote {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border-left: 3px solid color-mix(in oklab, var(--foreground) 20%, transparent);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border-radius: 12px;
+}
+
+.tracker-description.rendered blockquote cite {
+  display: block;
+  font-style: normal;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.tracker-description.rendered .size1 {
+  font-size: 0.75rem;
+}
+
+.tracker-description.rendered .size2 {
+  font-size: 0.85rem;
+}
+
+.tracker-description.rendered .size3 {
+  font-size: 0.95rem;
+}
+
+.tracker-description.rendered .size4 {
+  font-size: 1.05rem;
+}
+
+.tracker-description.rendered .size5 {
+  font-size: 1.2rem;
+}
+
+.tracker-description.rendered .size6 {
+  font-size: 1.35rem;
+}
+
+.tracker-description.rendered .size7 {
+  font-size: 1.5rem;
+}
+
+.tracker-description.rendered .comparison {
+  display: grid;
+  gap: 6px;
+}
+
+.tracker-description.rendered .comparison__text {
+  font-weight: 700;
+}
+
+.tracker-description.rendered .comparison__divider {
+  font-weight: 300;
+  color: var(--foreground);
+}
+
+.tracker-description.rendered .comparison__details {
+  display: inline;
+}
+
+.tracker-description.rendered .comparison__details > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 300;
+  background-color: transparent;
+  color: var(--comparison-button-fg, color-mix(in oklab, var(--chart-2) 50%, var(--foreground)));
+  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
+  padding: 4px 9px;
+  border-radius: 999px;
+}
+
+.tracker-description.rendered .comparison__details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tracker-description.rendered .mediainfo__raw > summary {
+  cursor: pointer;
+  color: color-mix(in oklab, var(--chart-2) 50%, var(--foreground));
+  font-weight: 600;
+}
+
+.tracker-description.rendered .mediainfo__raw > summary::marker {
+  color: var(--muted-foreground);
+}
+
+.tracker-description.rendered .comparison__details[open] > summary {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  z-index: 1101;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-color: color-mix(in oklab, var(--foreground) 40%, transparent);
+  color: #fff;
+}
+
+.tracker-description.rendered .comparison__screenshots {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: none;
+}
+
+.tracker-description.rendered .comparison--open .comparison__screenshots {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 1100;
+  background-color: #000;
+}
+
+.tracker-description.rendered .comparison__details[open] .comparison__screenshots {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 1100;
+  background-color: #000;
+}
+
+.tracker-description.rendered .comparison__row {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-left: max(0px, 50% - 50vw);
+}
+
+.tracker-description.rendered .comparison__image-container {
+  margin: 0;
+}
+
+.tracker-description.rendered .comparison__image--hidden,
+.tracker-description.rendered .comparison__image-container--hidden {
+  visibility: hidden;
+  width: 0;
+}
+
+.tracker-description.rendered .comparison__figure {
+  margin: 0;
+}
+
+.tracker-description.rendered .comparison__image {
+  image-rendering: crisp-edges;
+  max-width: max-content;
+  max-height: max-content;
+}
+
+.tracker-description.rendered .comparison__figcaption {
+  position: fixed;
+  width: 100%;
+  text-align: center;
+  top: 4px;
+  left: calc(50vw - 50%);
+  text-shadow:
+    -2px 0 #000,
+    0 2px #000,
+    2px 0 #000,
+    0 -2px #000;
+  color: #fff;
+  font-size: 18px;
+}
+
+.tracker-description.rendered .mediainfo-preview {
+  display: grid;
+  gap: 10px;
+  margin: 6px 0 14px;
+}
+
+.tracker-description.rendered .mediainfo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 40px;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.tracker-description.rendered .mediainfo h3 {
+  display: block;
+  margin: 6px 0;
+  padding: 0;
+  color: var(--muted-foreground);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.tracker-description.rendered .mediainfo h4 {
+  display: none;
+}
+
+.tracker-description.rendered .mediainfo dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 0;
+  margin: 0;
+}
+
+.tracker-description.rendered .mediainfo dt {
+  padding-right: 12px;
+  color: var(--muted-foreground);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tracker-description.rendered .mediainfo dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tracker-description.rendered .mediainfo__filename {
+  flex-basis: 100%;
+  padding-bottom: 8px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.tracker-description.rendered .mediainfo__filename h3 {
+  display: none;
+}
+
+.tracker-description.rendered .mediainfo__general,
+.tracker-description.rendered .mediainfo__video,
+.tracker-description.rendered .mediainfo__audio {
+  width: max-content;
+  max-width: 100%;
+}
+
+.tracker-description.rendered .mediainfo__subtitles {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.tracker-description.rendered .mediainfo__subtitles ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tracker-description.rendered .mediainfo__subtitles li {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  color: var(--foreground);
+  font-size: 0.78rem;
+}
+
+.tracker-description.rendered .mediainfo__raw pre {
+  max-width: 100%;
+  margin: 8px 0 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--card) 60%, transparent);
+  color: var(--foreground);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  .tracker-description.rendered .mediainfo {
+    gap: 10px 20px;
+  }
+}

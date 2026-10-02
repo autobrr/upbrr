@@ -166,12 +166,15 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("/api/app/RenderDescription", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct{ Raw string }
+		var req struct {
+			Raw           string
+			ImagePreviews map[string]string
+		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.RenderDescription(req.Raw)
+		value, err := s.backend.RenderDescription(req.Raw, req.ImagePreviews)
 		if err != nil {
 			writeAppError(w, err)
 			return

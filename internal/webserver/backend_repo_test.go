@@ -1074,7 +1074,7 @@ func TestBackendRequestCapabilitiesRejectPartialRuntimeBundles(t *testing.T) {
 			capabilities: incomplete,
 			want:         "description capability unavailable",
 			call: func(backend *Backend) error {
-				_, err := backend.RenderDescription("text")
+				_, err := backend.RenderDescription("text", nil)
 				return err
 			},
 		},
@@ -1129,7 +1129,7 @@ func (c *backendSnapshotGuardCore) check(req api.Request, method string) {
 	}
 }
 
-func (*backendSnapshotGuardCore) RenderDescription(context.Context, string) (string, error) {
+func (*backendSnapshotGuardCore) RenderDescription(context.Context, string, map[string]string) (string, error) {
 	return "", nil
 }
 

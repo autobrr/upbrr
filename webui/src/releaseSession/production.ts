@@ -295,6 +295,6 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
       ),
   },
   descriptions: {
-    render: (raw, signal) => descriptionClient.render(raw, signal),
+    render: (raw, previews, signal) => descriptionClient.render(raw, previews, signal),
   },
 });

@@ -10,6 +10,8 @@ import type {
   ProviderDisplay,
   ProviderDisplaySummary,
   TMDBMetadata,
+  TVDBMetadata,
+  TVmazeMetadata,
 } from "../../types";
 import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
 import { InputCorrectionEditor } from "./InputCorrectionEditor";
@@ -93,6 +95,7 @@ const inputFacet = (): InputFacet => ({
       search: { skip: false, client: "" },
     },
     corrections: null,
+    valueFields: [],
     resetFields: [],
     confirmFields: [],
     trackerInputAnswers: {},
@@ -137,6 +140,49 @@ const inputFacet = (): InputFacet => ({
   reset: vi.fn(async () => true),
   confirmBDMVRescan: vi.fn(async () => true),
   selectCandidate: vi.fn(async () => true),
+});
+
+it("shows an unanswered required tracker choice and preserves a saved unknown answer", () => {
+  const base = inputFacet();
+  const readiness = {
+    schemas: [
+      {
+        Tracker: "ANT",
+        Fields: [
+          {
+            Key: "type",
+            Label: "Type",
+            Kind: "select",
+            Options: ["Feature Film", "Short Film"],
+            Value: "",
+            Placeholder: "Select type",
+            Help: "",
+            Required: true,
+          },
+        ],
+      },
+    ],
+  } as unknown as NonNullable<InputFacet["view"]["readiness"]>;
+  const facet: InputFacet = { ...base, view: { ...base.view, readiness } };
+  const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+  fireEvent.click(screen.getByText("Tracker Input", { exact: true }));
+
+  const choice = screen.getByRole("combobox", { name: "ANT Type" });
+  expect(choice).toHaveValue("");
+  expect(within(choice).getByRole("option", { name: "Select type" })).toBeInTheDocument();
+  fireEvent.change(choice, { target: { value: "Feature Film" } });
+  expect(facet.changeTrackerInputAnswer).toHaveBeenCalledWith("ANT", "type", "Feature Film");
+
+  rerender(
+    <InputCorrectionEditor
+      facet={{
+        ...facet,
+        view: { ...facet.view, trackerInputAnswers: { ANT: { type: "Legacy" } } },
+      }}
+    />,
+  );
+  expect(choice).toHaveValue("Legacy");
+  expect(within(choice).getByRole("option", { name: "Legacy (saved)" })).toBeInTheDocument();
 });
 
 const inputPageProps = () => ({
@@ -309,6 +355,142 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it("shows source MediaInfo between release details and external IDs", () => {
+    const base = readyInputFacet(1);
+    const preview = base.view.preview!;
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        preview: {
+          ...preview,
+          Display: {
+            ...preview.Display,
+            MediaInfoHTML:
+              '<div class="mediainfo-preview"><section class="mediainfo"><h3>General</h3><p>Matroska</p></section></div>',
+          },
+        },
+      },
+    };
+    const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    const summary = screen.getByText("MediaInfo Preview");
+    const panel = summary.closest("details");
+    expect(panel).not.toBeNull();
+    expect(panel).not.toHaveAttribute("open");
+    expect(screen.getByText("Edit Release Details").compareDocumentPosition(summary)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(
+      summary.compareDocumentPosition(screen.getByRole("heading", { name: "External IDs" })),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    fireEvent.click(summary);
+    expect(panel).toHaveAttribute("open");
+    expect(screen.getByText("Matroska")).toBeVisible();
+
+    rerender(<InputPage facet={base} {...inputPageProps()} />);
+    expect(screen.getByText("No MediaInfo report is available for this source.")).toBeVisible();
+
+    const unnamed: InputFacet = {
+      ...facet,
+      view: {
+        ...facet.view,
+        preview: {
+          ...facet.view.preview!,
+          ReleaseName: "",
+          Identity: emptyExternalIdentity(),
+          Display: {
+            ReleaseName: "",
+            Providers: [],
+            MediaInfoHTML: facet.view.preview!.Display.MediaInfoHTML,
+          },
+        },
+      },
+    };
+    rerender(<InputPage facet={unnamed} {...inputPageProps()} />);
+    expect(screen.getByText("MediaInfo Preview")).toBeVisible();
+    expect(screen.getByText("Matroska")).toBeVisible();
+  });
+
+  it("shows the prepared BDInfo summary instead of MediaInfo for Blu-ray discs", () => {
+    const base = readyInputFacet(1);
+    const summary = "Disc Title: Example Movie\nPlaylist: 00001.MPLS\nVideo: <script>HEVC</script>";
+    const release = preparedRelease();
+    release.Disc = {
+      Type: "BDMV",
+      Summary: summary,
+      DurationSeconds: 0,
+      PlaylistCount: 1,
+      DVDVOBSet: "",
+    };
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        source: { discCount: 1, discType: "BDMV" },
+        release,
+        preview: {
+          ...base.view.preview!,
+          Display: {
+            ...base.view.preview!.Display,
+            MediaInfoHTML: "<p>MediaInfo should be hidden</p>",
+          },
+        },
+      },
+    };
+    const { rerender, container } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    const heading = screen.getByText("BDInfo Preview");
+    expect(heading.closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(heading);
+    expect(screen.getByText(/Disc Title: Example Movie/).textContent).toBe(summary);
+    expect(container.querySelector("script")).toBeNull();
+    expect(screen.queryByText("MediaInfo should be hidden")).toBeNull();
+
+    rerender(
+      <InputPage
+        facet={{
+          ...facet,
+          view: { ...facet.view, release: { ...release, Disc: { ...release.Disc, Summary: "" } } },
+        }}
+        {...inputPageProps()}
+      />,
+    );
+    expect(screen.getByText("No BDInfo summary is available for this source.")).toBeVisible();
+  });
+
+  it.each([
+    { faviconOnly: false, useFavicons: true, visibleName: true },
+    { faviconOnly: true, useFavicons: true, visibleName: false },
+    { faviconOnly: true, useFavicons: false, visibleName: true },
+  ])(
+    "keeps tracker choices named with faviconOnly=$faviconOnly and useFavicons=$useFavicons",
+    ({ faviconOnly, useFavicons, visibleName }) => {
+      const base = readyInputFacet(1);
+      const facet: InputFacet = {
+        ...base,
+        view: { ...base.view, selectedTrackers: ["HDS"] },
+      };
+      render(
+        <InputPage
+          facet={facet}
+          {...inputPageProps()}
+          trackerUploadItems={[{ name: "HDS", config: {} }]}
+          faviconOnly={faviconOnly}
+          useFavicons={useFavicons}
+        />,
+      );
+      fireEvent.click(screen.getByText(/Select Trackers/));
+      const choice = screen.getByRole("checkbox", { name: "HDS" });
+      expect(choice).toHaveAttribute("aria-checked", "true");
+      const labels = choice.querySelectorAll("span.flex");
+      const label = labels[labels.length - 1];
+      expect(label).not.toBeNull();
+      expect(
+        [...(label?.childNodes ?? [])].some(
+          (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === "HDS",
+        ),
+      ).toBe(visibleName);
+    },
+  );
   it("offers Blu-ray rescan confirmation only for a confirmation-required failure", () => {
     const base = inputFacet();
     const unknownOutcomeFacet: InputFacet = {
@@ -627,6 +809,180 @@ describe("InputPage", () => {
     expect(screen.getByText("TMDB generation 2")).toBeVisible();
   });
 
+  it("uses provider preview images while opening full-size artwork in the lightbox", () => {
+    const base = readyInputFacet(1);
+    const preview = base.view.preview!;
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        preview: {
+          ...preview,
+          Identity: {
+            ...preview.Identity,
+            TVDBID: 77,
+            TVmazeID: 55,
+            Provenance: { ...preview.Identity.Provenance, TVDB: "resolver", TVmaze: "resolver" },
+          },
+          Display: {
+            ...preview.Display,
+            Providers: [
+              ...preview.Display.Providers.map((provider) =>
+                provider.Provider === "tmdb"
+                  ? {
+                      ...provider,
+                      URL: `https://metadata.example/tmdb/${provider.ID}`,
+                      Summary: {
+                        ...provider.Summary,
+                        PosterURL: "https://image.tmdb.org/t/p/original/poster.jpg",
+                        BackdropURL: "https://image.tmdb.org/t/p/original/backdrop.jpg",
+                      },
+                      Details: {
+                        TMDB: {
+                          ...provider.Details.TMDB,
+                          Logo: "https://image.tmdb.org/t/p/original/logo.png",
+                        },
+                      },
+                    }
+                  : {
+                      ...provider,
+                      URL: `https://metadata.example/imdb/${provider.ID}`,
+                      Summary: {
+                        ...provider.Summary,
+                        PosterURL: "https://m.media-amazon.com/images/M/MV5BSYNTHETIC@._V1_.jpg",
+                      },
+                    },
+              ),
+              {
+                Provider: "tvdb",
+                ID: 77,
+                DisplayID: "77",
+                URL: "https://metadata.example/tvdb/77",
+                Provenance: "resolver",
+                SummaryAvailable: true,
+                Summary: {
+                  ...providerSummary("TVDB example"),
+                  PosterURL: "https://images.example/tvdb/poster-original.jpg",
+                },
+                Details: {
+                  TVDB: {
+                    PosterThumbnail: "https://images.example/tvdb/poster-small.jpg",
+                  } as TVDBMetadata,
+                },
+              },
+              {
+                Provider: "tvmaze",
+                ID: 55,
+                DisplayID: "55",
+                URL: "https://metadata.example/tvmaze/55",
+                Provenance: "resolver",
+                SummaryAvailable: true,
+                Summary: {
+                  ...providerSummary("TVmaze example"),
+                  PosterURL: "https://images.example/tvmaze/poster-original.jpg",
+                  BackdropURL: "https://images.example/tvmaze/backdrop-original.jpg",
+                },
+                Details: {
+                  TVmaze: {
+                    PosterMedium: "https://images.example/tvmaze/poster-medium.jpg",
+                    BackdropMedium: "https://images.example/tvmaze/backdrop-medium.jpg",
+                  } as TVmazeMetadata,
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const setLightboxImage = vi.fn();
+    const setLightboxAlt = vi.fn();
+    render(
+      <InputPage
+        facet={facet}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={setLightboxImage}
+        setLightboxAlt={setLightboxAlt}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Open TMDB" })).toHaveAttribute(
+      "href",
+      "https://metadata.example/tmdb/101",
+    );
+    expect(screen.getByRole("link", { name: "Open TMDB" })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("img", { name: "TMDB poster" })).toHaveAttribute(
+      "src",
+      "https://image.tmdb.org/t/p/w220_and_h330_face/poster.jpg",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TMDB poster" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://image.tmdb.org/t/p/original/poster.jpg",
+    );
+    expect(setLightboxAlt).toHaveBeenLastCalledWith("TMDB poster");
+    expect(screen.getByRole("img", { name: "TMDB backdrop" })).toHaveAttribute(
+      "src",
+      "https://image.tmdb.org/t/p/w500/backdrop.jpg",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TMDB backdrop" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://image.tmdb.org/t/p/original/backdrop.jpg",
+    );
+    expect(screen.getByRole("img", { name: "TMDB title logo" })).toHaveAttribute(
+      "src",
+      "https://image.tmdb.org/t/p/w300/logo.png",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TMDB title logo" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://image.tmdb.org/t/p/original/logo.png",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^IMDB/ }));
+    expect(screen.getByRole("link", { name: "Open IMDB" })).toHaveAttribute(
+      "href",
+      "https://metadata.example/imdb/1234567",
+    );
+    expect(screen.getByRole("img", { name: "IMDB poster" })).toHaveAttribute(
+      "src",
+      "https://m.media-amazon.com/images/M/MV5BSYNTHETIC@._V1_QL75_UX190_.jpg",
+    );
+    expect(screen.getByRole("img", { name: "IMDB poster" }).getAttribute("srcset")).toContain(
+      "_V1_QL75_UX285_.jpg 285w",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand IMDB poster" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://m.media-amazon.com/images/M/MV5BSYNTHETIC@._V1_.jpg",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^TVDB/ }));
+    expect(screen.getByRole("img", { name: "TVDB poster" })).toHaveAttribute(
+      "src",
+      "https://images.example/tvdb/poster-small.jpg",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TVDB poster" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://images.example/tvdb/poster-original.jpg",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^TVMAZE/ }));
+    expect(screen.getByRole("img", { name: "TVMAZE poster" })).toHaveAttribute(
+      "src",
+      "https://images.example/tvmaze/poster-medium.jpg",
+    );
+    expect(screen.getByRole("img", { name: "TVMAZE backdrop" })).toHaveAttribute(
+      "src",
+      "https://images.example/tvmaze/backdrop-medium.jpg",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand TVMAZE backdrop" }));
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://images.example/tvmaze/backdrop-original.jpg",
+    );
+  });
+
   it("forces generated release-name omissions", () => {
     const facet = readyInputFacet(1);
     render(
@@ -815,6 +1171,158 @@ describe("InputPage", () => {
     expect(facet.changeMetadata).toHaveBeenLastCalledWith({ OriginalLanguage: "ja" });
   });
 
+  it("resets an invalid provider draft on every Auto click without resetting another field", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: { ...release, Identity: { ...release.Identity, TMDBID: 101 } },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    fireEvent.change(screen.getByLabelText("IMDB ID"), { target: { value: "keep-invalid" } });
+    for (const invalid of ["invalid", "invalid-again"]) {
+      fireEvent.focus(screen.getByLabelText("TMDB ID"));
+      fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: invalid } });
+      fireEvent.click(screen.getByRole("button", { name: "Auto TMDB ID" }));
+      expect(screen.getByLabelText("TMDB ID")).toHaveValue("101");
+      expect(screen.getByLabelText("TMDB ID")).toHaveAttribute("aria-invalid", "false");
+      expect(screen.getByLabelText("IMDB ID")).toHaveValue("keep-invalid");
+    }
+    expect(facet.resetCorrection).toHaveBeenCalledTimes(2);
+  });
+
+  it("distinguishes pending edits and Auto resets from applied manual values", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const applied = {
+      ...base,
+      view: {
+        ...base.view,
+        release: { ...release, Media: { ...release.Media, OriginalLanguage: "es" } },
+        intent: { ...base.view.intent, metadata: { OriginalLanguage: "es" } },
+      },
+    };
+    const { container, rerender } = render(<InputCorrectionEditor facet={applied} />);
+    const row = () =>
+      within(
+        container.querySelector<HTMLElement>(
+          '[data-correction-field="metadata.original_language"]',
+        )!,
+      );
+    expect(row().getByText("Manual value · Applied")).toBeInTheDocument();
+    const pending = {
+      ...applied,
+      view: {
+        ...applied.view,
+        correctionDirty: true,
+        valueFields: [{ field: "metadata.original_language" }],
+        intent: { ...base.view.intent, metadata: { OriginalLanguage: "fr" } },
+      },
+    };
+    rerender(<InputCorrectionEditor facet={pending} />);
+    expect(row().getByText("Manual change pending")).toBeInTheDocument();
+    const reset = {
+      ...applied,
+      view: {
+        ...applied.view,
+        correctionDirty: true,
+        intent: { ...base.view.intent, metadata: {} },
+        resetFields: [{ field: "metadata.original_language" }],
+      },
+    };
+    rerender(<InputCorrectionEditor facet={reset} />);
+    expect(row().getByText("Auto reset pending")).toBeInTheDocument();
+    expect(row().queryByText("Automatic value")).not.toBeInTheDocument();
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...base,
+          view: {
+            ...base.view,
+            release: { ...release, Media: { ...release.Media, OriginalLanguage: "ja" } },
+          },
+        }}
+      />,
+    );
+    expect(row().getByText("Automatic value")).toBeInTheDocument();
+    expect(screen.getByLabelText("Original language")).toHaveValue("ja");
+  });
+
+  it("keeps explicit empty and false values visibly manual after refresh", () => {
+    const base = readyInputFacet(1);
+    const facet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: {
+          ...base.view.intent,
+          identity: { TMDBID: 0 },
+          metadata: { OriginalLanguage: "", AudioLanguages: [], HardcodedSubs: false },
+        },
+      },
+    };
+    const { container } = render(<InputCorrectionEditor facet={facet} />);
+    for (const field of [
+      "identity.tmdb",
+      "metadata.original_language",
+      "metadata.audio_languages",
+      "metadata.hardcoded_subs",
+    ]) {
+      expect(
+        within(
+          container.querySelector<HTMLElement>(`[data-correction-field="${field}"]`)!,
+        ).getByText("Manual value · Applied"),
+      ).toBeInTheDocument();
+    }
+    expect(screen.getByLabelText("TMDB ID")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Remove TMDB ID" })).toBeDisabled();
+    expect(screen.getByLabelText("Original language")).toHaveValue("");
+    expect(screen.getByLabelText("Audio languages")).toHaveValue("");
+    expect(screen.getByLabelText("Hardcoded subtitles")).toHaveValue("no");
+  });
+
+  it("clears only the selected language-list draft on Auto", () => {
+    const base = readyInputFacet(1);
+    render(
+      <InputCorrectionEditor
+        facet={{ ...base, view: { ...base.view, release: preparedRelease() } }}
+      />,
+    );
+    const automatic = screen.getByLabelText("Audio languages").getAttribute("value") || "";
+    fireEvent.focus(screen.getByLabelText("Audio languages"));
+    fireEvent.change(screen.getByLabelText("Audio languages"), { target: { value: "English, " } });
+    fireEvent.click(screen.getByRole("button", { name: "Auto Audio languages" }));
+    expect(screen.getByLabelText("Audio languages")).toHaveValue(automatic);
+  });
+
+  it("keeps the pending metadata notice visible when release details are collapsed", () => {
+    const base = readyInputFacet(1);
+    const props = {
+      sourcePathHistory: [],
+      handleBrowseFile: vi.fn(),
+      handleBrowseFolder: vi.fn(),
+      trackerUploadItems: [],
+      showExternalIDInputUI: false,
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+      trackerIconSrcByName: {},
+    };
+    const { rerender } = render(
+      <InputPage facet={{ ...base, view: { ...base.view, correctionDirty: true } }} {...props} />,
+    );
+    const notice = screen.getByText(/Metadata changes are pending/);
+    expect(notice).toBeVisible();
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    expect(notice).toBeVisible();
+    rerender(<InputPage facet={base} {...props} />);
+    expect(screen.queryByText(/Metadata changes are pending/)).not.toBeInTheDocument();
+  });
+
   it("keeps explicit false, empty, and Auto correction intents distinct", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {
@@ -903,11 +1411,13 @@ describe("InputPage", () => {
 
   it.each([
     ["movie", " TV ", true],
+    ["movie", "tV", true],
     ["movie", "television", true],
     ["movie", "series", true],
     ["movie", "episode", true],
     ["tv", "movie", false],
     ["tv", " Film ", false],
+    ["tv", "mOvIe", false],
     ["tv", "", true],
     ["tv", "unknown", true],
   ] as const)(

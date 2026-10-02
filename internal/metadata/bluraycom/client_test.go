@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/net/html"
+
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -189,6 +191,39 @@ func TestParseReleaseDetailsExtractsSpecsAndImages(t *testing.T) {
 	}
 	if len(release.CoverImages) != 1 || release.CoverImages[0].URL != "https://img.example/front.jpg" {
 		t.Fatalf("unexpected cover images: %#v", release.CoverImages)
+	}
+}
+
+func TestExtractCoverImagesPairsPreviewsWithFullImages(t *testing.T) {
+	htmlText := `<div id="triggers">
+		<img id="frontimage_overlay" src="https://img.example/front_large.jpg?t=1">
+		<img id="slipimage_overlay" src="https://img.example/slip_large.jpg?t=1">
+		<img id="unusedimage_overlay" src="https://img.example/unused_large.jpg?t=1">
+	</div>
+	<script>
+		$('#frontimage_container').append('<img id="frontimage" src="https://img.example/front.jpg?t=1">');
+		$('#backimage_container').append('<img id="largebackimage" src="https://img.example/back.jpg?t=1">');
+		$('#slipimage_container').append('<img id="slipimage" src="https://img.example/slip.jpg?t=1">');
+	</script>`
+	root, err := html.Parse(strings.NewReader(htmlText))
+	if err != nil {
+		t.Fatalf("parse html: %v", err)
+	}
+	want := []api.BlurayImage{
+		{
+			Kind:       "front",
+			URL:        "https://img.example/front.jpg",
+			PreviewURL: "https://img.example/front_large.jpg",
+		},
+		{Kind: "back", URL: "https://img.example/back.jpg"},
+		{
+			Kind:       "slip",
+			URL:        "https://img.example/slip.jpg",
+			PreviewURL: "https://img.example/slip_large.jpg",
+		},
+	}
+	if got := extractCoverImages(htmlText, root); !slices.Equal(got, want) {
+		t.Fatalf("cover images = %#v, want %#v", got, want)
 	}
 }
 

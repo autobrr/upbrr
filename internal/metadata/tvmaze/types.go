@@ -29,25 +29,27 @@ type SearchResult struct {
 }
 
 type Candidate struct {
-	ID             int
-	Name           string
-	Premiered      string
-	Ended          string
-	Summary        string
-	Status         string
-	Type           string
-	Language       string
-	Genres         []string
-	Runtime        int
-	AverageRuntime int
-	Rating         float64
-	Weight         int
-	OfficialSite   string
-	Country        string
-	Network        TVNetwork
-	WebChannel     TVNetwork
-	Image          Image
-	Externals      Externals
+	ID                      int
+	Name                    string
+	Premiered               string
+	Ended                   string
+	Summary                 string
+	Status                  string
+	Type                    string
+	Language                string
+	Genres                  []string
+	Runtime                 int
+	AverageRuntime          int
+	Rating                  float64
+	Weight                  int
+	OfficialSite            string
+	Country                 string
+	Network                 TVNetwork
+	WebChannel              TVNetwork
+	Image                   Image
+	Backdrop                Image
+	BackdropLookupAttempted bool
+	Externals               Externals
 }
 
 type TVNetwork struct {

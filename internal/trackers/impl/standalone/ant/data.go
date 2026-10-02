@@ -77,9 +77,9 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		return trackers.DataLookupResult{}, nil
 	}
 	return trackers.DataLookupResult{
-		TrackerID: "1",
-		IMDBID:    antIMDB(item["imdb"]),
-		TMDBID:    int(antInt(item["tmdb"])),
+		TorrentURL: antString(item["guid"]),
+		IMDBID:     antIMDB(item["imdb"]),
+		TMDBID:     int(antInt(item["tmdb"])),
 	}, nil
 }
 

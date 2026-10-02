@@ -44,6 +44,10 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
+
+After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
+
 ### Generate audio analysis
 
 **Audio Analysis** appears after Input has produced authoritative audio-track facts. Opening the page does not start FFmpeg. Choose the primary track, all tracks, or specific tracks; select waveform, spectrogram, or both; then click **Generate**.
@@ -58,7 +62,9 @@ See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and t
 
 Use **Input** to correct titles, genre, release naming fields, and languages before duplicate checking. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
 
-Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. **Auto** removes the saved correction. An empty list or explicit **No** remains a manual value.
+Edited fields show a pending change until you apply **Refresh metadata**. Applied overrides remain marked **Manual value · Applied** after refresh. **Auto** clears the local draft and queues removal of the saved correction; the field shows **Auto reset pending** until refresh derives the automatic value. The previous prepared value may remain visible while that reset is pending.
+
+Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. An empty list, an empty string, a removed provider ID, or explicit **No** remains a manual value until you choose **Auto**.
 
 **Refresh metadata** verifies the source again and fetches current provider facts. Compatible screenshot content, selection, order, and hosted links can be reused when media preparation runs again. Earlier duplicate decisions and upload approval must be renewed.
 
@@ -107,6 +113,8 @@ Use **Settings** to manage:
 Saving settings can remain **Pending** until current operations finish safely. Wait for activation status before using the change. Recheck tracker auth and run a dry run after changing credentials or upload behavior.
 
 See the [Settings reference](./settings/index.md) for every section, field behavior, and verification guidance.
+
+Use [Appearance](./settings/appearance.md) to choose a bundled theme and light or dark mode. The change applies immediately in this browser, including the sign-in screen.
 
 ## History
 

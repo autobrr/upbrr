@@ -493,7 +493,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTMDB) {
 			return true
 		}
-		return s.cfg.Description.AddLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !tmdbLogoFetchAttempted
+		return strings.TrimSpace(metadata.TMDB.Logo) == "" && !metadata.TMDB.LogoLookupAttempted && !tmdbLogoFetchAttempted
 	}
 	shouldFetchIMDBMetadata := func() bool {
 		if imdbClient == nil || ids.IMDBID == 0 || refreshProviders && imdbMetadataFetchedID == ids.IMDBID {
@@ -509,7 +509,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
 			!tvdbMetadataFetchAttempted &&
 			(refreshProviders || !usableTVDBMetadata(metadata.TVDB, ids.TVDBID) ||
-				requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVDB))
+				requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVDB) ||
+				!metadata.TVDB.PosterThumbnailLookupAttempted)
 	}
 	shouldRefreshTVDBDisambiguation := func() bool {
 		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
@@ -530,7 +531,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			return !tvmazeAnchorVerificationAttempted
 		}
 		return !usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID) ||
-			requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVmaze)
+			requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVmaze) ||
+			!metadata.TVmaze.BackdropLookupAttempted && !tvmazeMetadataFetchAttempted
 	}
 
 	shouldRunFetchPass := func() bool {
@@ -565,7 +567,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if fetchTMDB && overrideTMDB {
 			tmdbAnchorVerificationAttempted = true
 		}
-		if fetchTMDB && s.cfg.Description.AddLogo {
+		if fetchTMDB {
 			tmdbLogoFetchAttempted = true
 		}
 		fetchAniList := anilistClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted
@@ -626,7 +628,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					TVDBID:          ids.TVDBID,
 					ManualLanguage:  "",
 					SkipAnimeLookup: hasExplicitProviderAnchor || clearedMAL,
-					AddLogo:         s.cfg.Description.AddLogo,
+					AddLogo:         true,
 					LogoLanguages:   descriptionLogoLanguages(s.cfg.Description.LogoLanguage),
 					Filename:        filename,
 					Debug:           false,
@@ -2063,6 +2065,7 @@ func mapTMDBMetadata(ids api.ExternalIdentity, result tmdb.MetadataResult) *api.
 		Poster:              result.Poster,
 		TMDBPosterPath:      result.TMDBPosterPath,
 		Logo:                result.Logo,
+		LogoLookupAttempted: result.LogoLookupAttempted,
 		TMDBLogo:            result.TMDBLogo,
 		Backdrop:            result.Backdrop,
 		TMDBType:            result.TMDBType,
@@ -2392,26 +2395,28 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 
 	return &api.TVDBMetadata{
-		TVDBID:             id,
-		Name:               name,
-		Overview:           strings.TrimSpace(details.Overview),
-		NameEnglish:        strings.TrimSpace(details.NameEnglish),
-		OverviewEnglish:    strings.TrimSpace(details.OverviewEnglish),
-		FirstAired:         strings.TrimSpace(details.FirstAired),
-		Year:               year,
-		YearFromAlias:      yearFromAlias,
-		YearSource:         yearSource,
-		YearConfidence:     yearConfidence,
-		NameDisambiguation: mapTVDBNameDisambiguation(details.NameDisambiguation),
-		Type:               strings.TrimSpace(details.Type),
-		Status:             strings.TrimSpace(details.Status),
-		Network:            strings.TrimSpace(details.Network),
-		OriginalCountry:    strings.TrimSpace(details.OriginalCountry),
-		OriginalLanguage:   strings.TrimSpace(details.OriginalLanguage),
-		HasEnglish:         strings.TrimSpace(details.NameEnglish) != "" || strings.TrimSpace(details.OverviewEnglish) != "",
-		Genres:             strings.TrimSpace(strings.Join(details.Genres, ", ")),
-		Poster:             strings.TrimSpace(details.Poster),
-		Aliases:            aliases,
+		TVDBID:                         id,
+		Name:                           name,
+		Overview:                       strings.TrimSpace(details.Overview),
+		NameEnglish:                    strings.TrimSpace(details.NameEnglish),
+		OverviewEnglish:                strings.TrimSpace(details.OverviewEnglish),
+		FirstAired:                     strings.TrimSpace(details.FirstAired),
+		Year:                           year,
+		YearFromAlias:                  yearFromAlias,
+		YearSource:                     yearSource,
+		YearConfidence:                 yearConfidence,
+		NameDisambiguation:             mapTVDBNameDisambiguation(details.NameDisambiguation),
+		Type:                           strings.TrimSpace(details.Type),
+		Status:                         strings.TrimSpace(details.Status),
+		Network:                        strings.TrimSpace(details.Network),
+		OriginalCountry:                strings.TrimSpace(details.OriginalCountry),
+		OriginalLanguage:               strings.TrimSpace(details.OriginalLanguage),
+		HasEnglish:                     strings.TrimSpace(details.NameEnglish) != "" || strings.TrimSpace(details.OverviewEnglish) != "",
+		Genres:                         strings.TrimSpace(strings.Join(details.Genres, ", ")),
+		Poster:                         strings.TrimSpace(details.Poster),
+		PosterThumbnail:                strings.TrimSpace(details.PosterThumbnail),
+		PosterThumbnailLookupAttempted: details.PosterThumbnailLookupAttempted,
+		Aliases:                        aliases,
 	}
 }
 
@@ -2552,6 +2557,10 @@ func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
 	if strings.TrimSpace(target.Poster) == "" {
 		target.Poster = incoming.Poster
 	}
+	if strings.TrimSpace(target.Poster) == strings.TrimSpace(incoming.Poster) && strings.TrimSpace(incoming.PosterThumbnail) != "" {
+		target.PosterThumbnail = incoming.PosterThumbnail
+	}
+	target.PosterThumbnailLookupAttempted = target.PosterThumbnailLookupAttempted || incoming.PosterThumbnailLookupAttempted
 	if len(target.Aliases) == 0 && len(incoming.Aliases) > 0 {
 		target.Aliases = append([]string{}, incoming.Aliases...)
 	}
@@ -2602,34 +2611,37 @@ func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {
 	}
 	poster := metautil.FirstNonEmptyTrimmed(selected.Image.Original, selected.Image.Medium)
 	posterMedium := metautil.FirstNonEmptyTrimmed(selected.Image.Medium, selected.Image.Original)
+	backdrop := metautil.FirstNonEmptyTrimmed(selected.Backdrop.Original, selected.Backdrop.Medium)
+	backdropMedium := metautil.FirstNonEmptyTrimmed(selected.Backdrop.Medium, selected.Backdrop.Original)
 	return &api.TVmazeMetadata{
-		TVmazeID:       result.SelectedID,
-		Name:           strings.TrimSpace(selected.Name),
-		Premiered:      strings.TrimSpace(selected.Premiered),
-		Ended:          strings.TrimSpace(selected.Ended),
-		Summary:        strings.TrimSpace(selected.Summary),
-		Status:         strings.TrimSpace(selected.Status),
-		Type:           strings.TrimSpace(selected.Type),
-		Language:       strings.TrimSpace(selected.Language),
-		Genres:         strings.TrimSpace(strings.Join(genres, ", ")),
-		Runtime:        selected.Runtime,
-		AverageRuntime: selected.AverageRuntime,
-		Rating:         selected.Rating,
-		Weight:         selected.Weight,
-		OfficialSite:   strings.TrimSpace(selected.OfficialSite),
-		Country:        strings.TrimSpace(selected.Country),
-		Network:        strings.TrimSpace(selected.Network.Name),
-		NetworkCountry: strings.TrimSpace(selected.Network.Country),
-		NetworkLogo:    metautil.FirstNonEmptyTrimmed(selected.Network.Logo, selected.Network.LogoSmall),
-		WebChannel:     strings.TrimSpace(selected.WebChannel.Name),
-		WebCountry:     strings.TrimSpace(selected.WebChannel.Country),
-		WebLogo:        metautil.FirstNonEmptyTrimmed(selected.WebChannel.Logo, selected.WebChannel.LogoSmall),
-		Poster:         poster,
-		PosterMedium:   posterMedium,
-		Backdrop:       poster,
-		BackdropMedium: posterMedium,
-		IMDBID:         imdbID,
-		TVDBID:         tvdbID,
+		TVmazeID:                result.SelectedID,
+		Name:                    strings.TrimSpace(selected.Name),
+		Premiered:               strings.TrimSpace(selected.Premiered),
+		Ended:                   strings.TrimSpace(selected.Ended),
+		Summary:                 strings.TrimSpace(selected.Summary),
+		Status:                  strings.TrimSpace(selected.Status),
+		Type:                    strings.TrimSpace(selected.Type),
+		Language:                strings.TrimSpace(selected.Language),
+		Genres:                  strings.TrimSpace(strings.Join(genres, ", ")),
+		Runtime:                 selected.Runtime,
+		AverageRuntime:          selected.AverageRuntime,
+		Rating:                  selected.Rating,
+		Weight:                  selected.Weight,
+		OfficialSite:            strings.TrimSpace(selected.OfficialSite),
+		Country:                 strings.TrimSpace(selected.Country),
+		Network:                 strings.TrimSpace(selected.Network.Name),
+		NetworkCountry:          strings.TrimSpace(selected.Network.Country),
+		NetworkLogo:             metautil.FirstNonEmptyTrimmed(selected.Network.Logo, selected.Network.LogoSmall),
+		WebChannel:              strings.TrimSpace(selected.WebChannel.Name),
+		WebCountry:              strings.TrimSpace(selected.WebChannel.Country),
+		WebLogo:                 metautil.FirstNonEmptyTrimmed(selected.WebChannel.Logo, selected.WebChannel.LogoSmall),
+		Poster:                  poster,
+		PosterMedium:            posterMedium,
+		Backdrop:                backdrop,
+		BackdropMedium:          backdropMedium,
+		BackdropLookupAttempted: selected.BackdropLookupAttempted,
+		IMDBID:                  imdbID,
+		TVDBID:                  tvdbID,
 	}
 }
 

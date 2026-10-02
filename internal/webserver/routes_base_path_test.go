@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -119,6 +120,7 @@ func TestRegisterRoutesMountsConfiguredBasePath(t *testing.T) {
 			t.Fatalf("expected rewritten index to contain %q, got %s", want, index.Body.String())
 		}
 	}
+	assertUIFallbackContract(t, mux, "/upbrr")
 
 	manifest := serveBasePathTestRequest(t, mux, "/upbrr/site.webmanifest")
 	if manifest.Code != http.StatusOK {
@@ -194,6 +196,94 @@ func TestRegisterRoutesPreservesRootMode(t *testing.T) {
 	}
 	if len(document.Servers) != 1 || document.Servers[0].URL != "/api/v1" {
 		t.Fatalf("root OpenAPI servers = %#v", document.Servers)
+	}
+	assertUIFallbackContract(t, mux, "")
+}
+
+func assertUIFallbackContract(t *testing.T, mux *http.ServeMux, prefix string) {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/ui-route-paths.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routes []string
+	if err := json.Unmarshal(raw, &routes); err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != len(uiRoutePaths) {
+		t.Fatalf("UI route ledger has %d paths; server allows %d", len(routes), len(uiRoutePaths))
+	}
+	seen := make(map[string]bool, len(routes))
+	for _, route := range routes {
+		if seen[route] {
+			t.Fatalf("duplicate UI route in ledger: %s", route)
+		}
+		seen[route] = true
+		if _, ok := uiRoutePaths[route]; !ok {
+			t.Fatalf("UI route ledger path %s is absent from server allowlist", route)
+		}
+		for _, suffix := range []string{"", "/"} {
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				name := method + " " + prefix + route + suffix
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					request := httptest.NewRequestWithContext(t.Context(), method, prefix+route+suffix+"?filter=x", nil)
+					response := httptest.NewRecorder()
+					mux.ServeHTTP(response, request)
+					if response.Code != http.StatusOK {
+						t.Fatalf("UI route returned %d, want 200", response.Code)
+					}
+					if method == http.MethodGet && !strings.Contains(response.Body.String(), "__UPBRR_BASE_URL__") {
+						t.Fatalf("UI route did not serve shell: %s", response.Body.String())
+					}
+				})
+			}
+		}
+	}
+	for _, path := range []string{"/unknown", "/assets/missing.js", "/assets/missing.css", "/images/missing.png", "/fonts/missing.woff2", "/api/missing"} {
+		response := serveBasePathTestRequest(t, mux, prefix+path)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("%s returned %d, want 404", prefix+path, response.Code)
+		}
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		request := httptest.NewRequestWithContext(t.Context(), method, prefix+"/settings", nil)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s %s returned %d, want 405", method, prefix+"/settings", response.Code)
+		}
+	}
+}
+
+func TestRewriteIndexHTMLNormalizesRelativeAssets(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`<!doctype html><html><head>` +
+		`<script src="./appearance-bootstrap.js"></script>` +
+		`<script type="module" src="./assets/index.js"></script>` +
+		`<link rel="stylesheet" href="assets/index.css">` +
+		`<link rel="modulepreload" href="./assets/chunk.js">` +
+		`<link rel="icon" href="/favicon.ico">` +
+		`<script src="https://cdn.example.test/app.js"></script>` +
+		`<script src="//cdn.example.test/app.js"></script>` +
+		`<script type="application/json">{"src":"./assets/private.js"}</script>` +
+		`</head><body></body></html>`)
+	for _, base := range []string{"/", "/upbrr/"} {
+		result := string(rewriteIndexHTML(raw, base))
+		for _, want := range []string{
+			`src="` + base + `appearance-bootstrap.js"`,
+			`src="` + base + `assets/index.js"`,
+			`href="` + base + `assets/index.css"`,
+			`href="` + base + `assets/chunk.js"`,
+			`href="` + base + `favicon.ico"`,
+			`src="https://cdn.example.test/app.js"`,
+			`src="//cdn.example.test/app.js"`,
+			`{"src":"./assets/private.js"}`,
+		} {
+			if !strings.Contains(result, want) {
+				t.Errorf("base %q: missing %q in %s", base, want, result)
+			}
+		}
 	}
 }
 

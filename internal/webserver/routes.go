@@ -31,6 +31,24 @@ import (
 // subscriber before per-session log streams are stopped as idle.
 const eventSessionLogStopGracePeriod = 50 * time.Millisecond
 
+// uiRoutePaths mirrors the browser router's explicit paths. Only these paths
+// may fall back to the SPA shell when no embedded file exists.
+var uiRoutePaths = map[string]struct{}{
+	"/input":             {},
+	"/tracker-data":      {},
+	"/bluray-candidates": {},
+	"/audio-analysis":    {},
+	"/duplicates":        {},
+	"/screenshots":       {},
+	"/menu-images":       {},
+	"/uploaded-images":   {},
+	"/descriptions":      {},
+	"/upload":            {},
+	"/history":           {},
+	"/settings":          {},
+	"/logging":           {},
+}
+
 var sessionLogStopGenerations = struct {
 	mu     sync.Mutex
 	byServ map[*Server]map[string]uint64
@@ -113,13 +131,21 @@ func (s *Server) registerRootRoutes(mux *http.ServeMux) {
 			http.NotFound(w, r)
 			return
 		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		if r.URL.Path == "/" {
 			s.serveIndex(w, r)
 			return
 		}
 		assetName := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if _, err := fsStat(s.assets, assetName); err != nil {
-			s.serveIndex(w, r)
+			if _, ok := uiRoutePaths[strings.TrimSuffix(r.URL.Path, "/")]; ok {
+				s.serveIndex(w, r)
+				return
+			}
+			http.NotFound(w, r)
 			return
 		}
 		if assetName == "index.html" {
@@ -159,10 +185,10 @@ func (s *Server) serveWebManifest(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(rewriteRootAbsoluteAssetPaths(raw, s.externalBaseURLPath()))
 }
 
-// rewriteIndexHTML prefixes root-absolute asset links and injects
-// window.__UPBRR_BASE_URL__ before the closing head tag.
+// rewriteIndexHTML makes entry assets absolute for direct nested navigation and
+// injects window.__UPBRR_BASE_URL__ before the closing head tag.
 func rewriteIndexHTML(raw []byte, baseURLPath string) []byte {
-	rewritten := rewriteRootAbsoluteAssetPaths(raw, baseURLPath)
+	rewritten := rewriteHTMLAssetPaths(raw, externalBaseURLPath(baseURLPath), true)
 	baseScriptValue, err := json.Marshal(baseURLPath)
 	if err != nil {
 		return rewritten
@@ -198,11 +224,15 @@ func rewriteRootAbsoluteAssetPaths(raw []byte, baseURLPath string) []byte {
 // rewriteHTMLRootAbsoluteAssetPaths prefixes root-absolute href/src attributes
 // without inspecting script contents or other user-controlled text.
 func rewriteHTMLRootAbsoluteAssetPaths(raw []byte, baseURLPath string) []byte {
+	return rewriteHTMLAssetPaths(raw, baseURLPath, false)
+}
+
+func rewriteHTMLAssetPaths(raw []byte, baseURLPath string, includeRelative bool) []byte {
 	root, err := xhtml.Parse(bytes.NewReader(raw))
 	if err != nil {
 		return raw
 	}
-	if !rewriteHTMLNodeRootAbsoluteAssetPaths(root, baseURLPath) {
+	if !rewriteHTMLNodeAssetPaths(root, baseURLPath, includeRelative) {
 		return raw
 	}
 	var out bytes.Buffer
@@ -212,9 +242,9 @@ func rewriteHTMLRootAbsoluteAssetPaths(raw []byte, baseURLPath string) []byte {
 	return out.Bytes()
 }
 
-// rewriteHTMLNodeRootAbsoluteAssetPaths walks parsed HTML nodes in place and
-// reports whether any asset attribute changed.
-func rewriteHTMLNodeRootAbsoluteAssetPaths(node *xhtml.Node, baseURLPath string) bool {
+// rewriteHTMLNodeAssetPaths walks parsed HTML nodes in place and reports
+// whether an asset attribute changed.
+func rewriteHTMLNodeAssetPaths(node *xhtml.Node, baseURLPath string, includeRelative bool) bool {
 	if node == nil {
 		return false
 	}
@@ -222,14 +252,23 @@ func rewriteHTMLNodeRootAbsoluteAssetPaths(node *xhtml.Node, baseURLPath string)
 	if node.Type == xhtml.ElementNode {
 		for idx := range node.Attr {
 			key := strings.ToLower(node.Attr[idx].Key)
-			if (key == "href" || key == "src") && isRootAbsoluteAssetPath(node.Attr[idx].Val) {
-				node.Attr[idx].Val = baseURLPath + strings.TrimPrefix(node.Attr[idx].Val, "/")
-				changed = true
+			if key == "href" || key == "src" {
+				value := node.Attr[idx].Val
+				switch {
+				case isRootAbsoluteAssetPath(value) && baseURLPath != "/":
+					node.Attr[idx].Val = baseURLPath + strings.TrimPrefix(value, "/")
+					changed = true
+				case includeRelative && (strings.HasPrefix(value, "./") ||
+					(value != "" && !strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "#") &&
+						!strings.Contains(value, ":"))):
+					node.Attr[idx].Val = baseURLPath + strings.TrimPrefix(value, "./")
+					changed = true
+				}
 			}
 		}
 	}
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		if rewriteHTMLNodeRootAbsoluteAssetPaths(child, baseURLPath) {
+		if rewriteHTMLNodeAssetPaths(child, baseURLPath, includeRelative) {
 			changed = true
 		}
 	}

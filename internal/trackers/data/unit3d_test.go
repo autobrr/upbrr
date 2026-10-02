@@ -282,11 +282,16 @@ func TestExtractAttributesFromDataAndTopLevel(t *testing.T) {
 	t.Parallel()
 
 	resp := unit3dResponse{
-		Data: json.RawMessage(`[{"attributes":{"tmdb_id":12,"imdb_id":34,"tvdb_id":56,"mal_id":78,"description":"desc"}}]`),
+		Data: json.RawMessage(`[{"id":42,"attributes":{"tmdb_id":12,"imdb_id":34,"tvdb_id":56,"mal_id":78,"description":"desc"}}]`),
 	}
 	attrs := resp.extractAttributes(false)
-	if attrs == nil || attrs.tmdbID != 12 || attrs.imdbID != 34 || attrs.tvdbID != 56 || attrs.malID != 78 {
+	if attrs == nil || attrs.id != "42" || attrs.tmdbID != 12 || attrs.imdbID != 34 || attrs.tvdbID != 56 || attrs.malID != 78 {
 		t.Fatalf("unexpected attrs from data: %+v", attrs)
+	}
+	search := unit3dResponse{Data: json.RawMessage(`[{"id":42,"attributes":{"description":"first"}},{"id":43,"attributes":{"description":"second"}}]`)}
+	searchAttrs := search.extractAttributes(false)
+	if searchAttrs == nil || searchAttrs.id != "" || !searchAttrs.ambiguous {
+		t.Fatalf("ambiguous search retained torrent ID: %+v", searchAttrs)
 	}
 
 	top := unit3dResponse{

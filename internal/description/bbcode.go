@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/frustra/bbcode"
+	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 )
@@ -18,6 +19,7 @@ func renderBBCode(value string) string {
 	compiler := bbcode.NewCompiler(true, true)
 	compiler.SetTag("img", compileImg)
 	compiler.SetTag("spoiler", compileSpoiler)
+	compiler.SetTag("hide", compileSpoiler)
 	compiler.SetTag("quote", compileQuote)
 	compiler.SetTag("list", compileList)
 	compiler.SetTag("*", compileListItem)
@@ -27,14 +29,21 @@ func renderBBCode(value string) string {
 	compiler.SetTag("center", compileAlign)
 	compiler.SetTag("align", compileAlign)
 	compiler.SetTag("comparison", compileComparison)
-	normalized, codeBlocks := extractCodeBlocks(normalizeBBCode(value))
-	return replaceCodeBlockPlaceholders(compiler.Compile(normalized), codeBlocks)
-}
-
-func normalizeBBCode(value string) string {
-	value = strings.ReplaceAll(value, "\r\n", "\n")
-	value = normalizeImgTags(value)
-	return strings.TrimSpace(value)
+	normalized, blocks := extractLiteralBlocks(strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n")))
+	normalized, htmlLiteralBlocks := extractHTMLLiteralBlocks(normalized)
+	for i := range htmlLiteralBlocks {
+		for _, block := range blocks {
+			htmlLiteralBlocks[i].value = strings.ReplaceAll(htmlLiteralBlocks[i].value, block.token, block.raw)
+		}
+	}
+	normalized = normalizeImgTags(normalized)
+	normalized, htmlTags := extractHTMLTags(normalized)
+	normalized, htmlEntities := extractHTMLEntities(normalized)
+	rendered := compiler.Compile(normalized)
+	rendered = replaceHTMLTagPlaceholders(rendered, htmlTags)
+	rendered = replaceHTMLTagPlaceholders(rendered, htmlEntities)
+	rendered = replaceLiteralBlockPlaceholders(rendered, blocks)
+	return replaceHTMLTagPlaceholders(rendered, htmlLiteralBlocks)
 }
 
 // SplitTrailingSourceAudioSpoiler separates generated audio markup so
@@ -100,30 +109,79 @@ func renderCodeBBCode(value string) string {
 }
 
 var codeBlockPattern = regexp.MustCompile(`(?is)\[code\]([\s\S]*?)\[/code\]`)
+var preBlockPattern = regexp.MustCompile(`(?is)\[pre\]([\s\S]*?)\[/pre\]`)
 
 type codeBlockPlaceholder struct {
 	token string
 	value string
+	raw   string
+	pre   bool
 }
 
-func extractCodeBlocks(value string) (string, []codeBlockPlaceholder) {
+func extractLiteralBlocks(value string) (string, []codeBlockPlaceholder) {
 	placeholderPrefix := nextCodeBlockPlaceholderPrefix(value)
+	htmlTags := htmlTagRanges(value)
 	blocks := make([]codeBlockPlaceholder, 0)
-	index := 0
-	normalized := codeBlockPattern.ReplaceAllStringFunc(value, func(match string) string {
-		parts := codeBlockPattern.FindStringSubmatch(match)
-		if len(parts) != 2 {
-			return match
+	var normalized strings.Builder
+	for offset := 0; offset < len(value); {
+		code := codeBlockPattern.FindStringSubmatchIndex(value[offset:])
+		pre := preBlockPattern.FindStringSubmatchIndex(value[offset:])
+		if len(code) == 0 && len(pre) == 0 {
+			normalized.WriteString(value[offset:])
+			break
 		}
-		token := placeholderPrefix + strconv.Itoa(index) + "_END"
-		index++
+		selected := code
+		isPre := false
+		if len(pre) != 0 && (len(code) == 0 || pre[0] < code[0]) {
+			selected = pre
+			isPre = true
+		}
+		if end := htmlTagEndAt(htmlTags, offset+selected[0]); end > 0 {
+			normalized.WriteString(value[offset:end])
+			offset = end
+			continue
+		}
+		normalized.WriteString(value[offset : offset+selected[0]])
+		token := placeholderPrefix + strconv.Itoa(len(blocks)) + "_END"
 		blocks = append(blocks, codeBlockPlaceholder{
 			token: token,
-			value: parts[1],
+			value: value[offset+selected[2] : offset+selected[3]],
+			raw:   value[offset+selected[0] : offset+selected[1]],
+			pre:   isPre,
 		})
-		return token
-	})
-	return normalized, blocks
+		normalized.WriteString(token)
+		offset += selected[1]
+	}
+	return normalized.String(), blocks
+}
+
+type htmlTagRange struct{ start, end int }
+
+func htmlTagRanges(value string) []htmlTagRange {
+	tokenizer := xhtml.NewTokenizer(strings.NewReader(value))
+	ranges := make([]htmlTagRange, 0)
+	offset := 0
+	for kind := tokenizer.Next(); kind != xhtml.ErrorToken; kind = tokenizer.Next() {
+		raw := tokenizer.Raw()
+		if kind == xhtml.StartTagToken || kind == xhtml.EndTagToken || kind == xhtml.SelfClosingTagToken ||
+			kind == xhtml.CommentToken || kind == xhtml.DoctypeToken {
+			ranges = append(ranges, htmlTagRange{start: offset, end: offset + len(raw)})
+		}
+		offset += len(raw)
+	}
+	return ranges
+}
+
+func htmlTagEndAt(ranges []htmlTagRange, offset int) int {
+	for _, tag := range ranges {
+		if offset < tag.start {
+			break
+		}
+		if offset < tag.end {
+			return tag.end
+		}
+	}
+	return 0
 }
 
 func nextCodeBlockPlaceholderPrefix(value string) string {
@@ -135,19 +193,121 @@ func nextCodeBlockPlaceholderPrefix(value string) string {
 	}
 }
 
-func replaceCodeBlockPlaceholders(value string, blocks []codeBlockPlaceholder) string {
+func replaceLiteralBlockPlaceholders(value string, blocks []codeBlockPlaceholder) string {
 	if len(blocks) == 0 {
 		return value
 	}
 	replacements := make([]string, 0, len(blocks)*2)
 	for _, block := range blocks {
-		replacements = append(replacements, block.token, renderCodeBlockHTML(block.value))
+		rendered := renderCodeBlockHTML(block.value)
+		if block.pre {
+			rendered = "<pre>" + html.EscapeString(block.value) + "</pre>"
+		}
+		replacements = append(replacements, block.token, rendered)
 	}
 	return strings.NewReplacer(replacements...).Replace(value)
 }
 
 func renderCodeBlockHTML(value string) string {
 	return "<pre><code>" + renderCodeBBCode(value) + "</code></pre>"
+}
+
+func extractHTMLTags(value string) (string, []codeBlockPlaceholder) {
+	placeholderPrefix := "UPBRR_HTML_TAG_PLACEHOLDER_"
+	for strings.Contains(value, placeholderPrefix) {
+		placeholderPrefix += "_"
+	}
+	tags := make([]codeBlockPlaceholder, 0)
+	var normalized strings.Builder
+	tokenizer := xhtml.NewTokenizer(strings.NewReader(value))
+	offset := 0
+	for kind := tokenizer.Next(); kind != xhtml.ErrorToken; kind = tokenizer.Next() {
+		raw := string(tokenizer.Raw())
+		offset += len(raw)
+		switch kind {
+		case xhtml.StartTagToken, xhtml.EndTagToken, xhtml.SelfClosingTagToken, xhtml.CommentToken, xhtml.DoctypeToken:
+			token := placeholderPrefix + strconv.Itoa(len(tags)) + "_END"
+			tags = append(tags, codeBlockPlaceholder{token: token, value: raw})
+			normalized.WriteString(token)
+		case xhtml.TextToken:
+			normalized.WriteString(raw)
+		case xhtml.ErrorToken:
+		}
+	}
+	normalized.WriteString(value[offset:])
+	return normalized.String(), tags
+}
+
+func extractHTMLLiteralBlocks(value string) (string, []codeBlockPlaceholder) {
+	placeholderPrefix := "UPBRR_HTML_LITERAL_PLACEHOLDER_"
+	for strings.Contains(value, placeholderPrefix) {
+		placeholderPrefix += "_"
+	}
+	blocks := make([]codeBlockPlaceholder, 0)
+	var normalized strings.Builder
+	tokenizer := xhtml.NewTokenizer(strings.NewReader(value))
+	offset, copied, start, depth := 0, 0, 0, 0
+	active := ""
+	for kind := tokenizer.Next(); kind != xhtml.ErrorToken; kind = tokenizer.Next() {
+		raw := tokenizer.Raw()
+		tokenStart := offset
+		offset += len(raw)
+		if kind != xhtml.StartTagToken && kind != xhtml.EndTagToken {
+			continue
+		}
+		name, _ := tokenizer.TagName()
+		tag := strings.ToLower(string(name))
+		if active == "" {
+			if kind == xhtml.StartTagToken && (tag == "pre" || tag == "code") {
+				active, start, depth = tag, tokenStart, 1
+			}
+			continue
+		}
+		if tag != active {
+			continue
+		}
+		if kind == xhtml.StartTagToken {
+			depth++
+		} else if depth--; depth == 0 {
+			normalized.WriteString(value[copied:start])
+			token := placeholderPrefix + strconv.Itoa(len(blocks)) + "_END"
+			blocks = append(blocks, codeBlockPlaceholder{token: token, value: value[start:offset]})
+			normalized.WriteString(token)
+			copied, active = offset, ""
+		}
+	}
+	if active != "" {
+		normalized.WriteString(value[copied:start])
+		token := placeholderPrefix + strconv.Itoa(len(blocks)) + "_END"
+		blocks = append(blocks, codeBlockPlaceholder{token: token, value: value[start:]})
+		normalized.WriteString(token)
+		return normalized.String(), blocks
+	}
+	normalized.WriteString(value[copied:])
+	return normalized.String(), blocks
+}
+
+func replaceHTMLTagPlaceholders(value string, tags []codeBlockPlaceholder) string {
+	for _, tag := range tags {
+		value = strings.ReplaceAll(value, tag.token, tag.value)
+	}
+	return value
+}
+
+var htmlEntityPattern = regexp.MustCompile(`&(?:#[0-9]+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);`)
+
+func extractHTMLEntities(value string) (string, []codeBlockPlaceholder) {
+	placeholderPrefix := "UPBRR_HTML_ENTITY_PLACEHOLDER_"
+	for strings.Contains(value, placeholderPrefix) {
+		placeholderPrefix += "_"
+	}
+	entities := make([]codeBlockPlaceholder, 0)
+	normalized := htmlEntityPattern.ReplaceAllStringFunc(value, func(match string) string {
+		token := placeholderPrefix + strconv.Itoa(len(entities)) + "_END"
+		entities = append(entities, codeBlockPlaceholder{token: token, value: match})
+		return token
+	})
+	return normalized, entities
 }
 
 var codeColorTagPattern = regexp.MustCompile(`(?is)\[color=([#a-z0-9(),.%\s]+)\]([\s\S]*?)\[/color\]`)

@@ -1,8 +1,10 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/select";
 import type { UploadFacet } from "../../releaseSession/types";
 import { canExecuteUpload } from "../../releaseSession/uploadEligibility";
 import type {
@@ -138,9 +140,9 @@ export default function TrackerUploadPage({ facet }: Props) {
   return (
     <section className="flex flex-col gap-4">
       <header className="max-w-3xl">
-        <p className="eyebrow">Tracker Upload</p>
+        <p className={pageStyle.eyebrow}>Tracker Upload</p>
         <h1>Review &amp; Upload</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           {view.liveTest
             ? "Run a dry run with normal rules. Live testing disables tracker submission and client injection."
             : "Optionally run a dry run, or upload directly. A tracker failure does not stop unrelated uploads."}
@@ -148,68 +150,74 @@ export default function TrackerUploadPage({ facet }: Props) {
       </header>
 
       {questionnaireProjections.length ? (
-        <section className="panel grid gap-3">
+        <section className={`${pageStyle.panel} grid gap-3`}>
           <h2>Tracker questions</h2>
           {questionnaireProjections.map((projection) => (
             <fieldset className="grid gap-3" key={projection.trackerId}>
               <legend className="font-semibold">{projection.displayName}</legend>
-              {projection.questionnaire?.map((field) => (
-                <label className="grid gap-1" key={field.key}>
-                  <span className="label">
-                    {field.label || field.key}
-                    {field.required ? " *" : ""}
-                  </span>
-                  {field.options?.length ? (
-                    <select
-                      value={view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? ""}
-                      onChange={(event) =>
-                        facet.answerQuestionnaire(
-                          projection.trackerId,
-                          field.key,
-                          event.target.value,
-                        )
-                      }
-                    >
-                      <option value="">Select</option>
-                      {field.options.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? ""}
-                      onChange={(event) =>
-                        facet.answerQuestionnaire(
-                          projection.trackerId,
-                          field.key,
-                          event.target.value,
-                        )
-                      }
-                    />
-                  )}
-                </label>
-              ))}
+              {projection.questionnaire?.map((field) => {
+                const answer = view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? "";
+                return (
+                  <label className="grid gap-1" key={field.key}>
+                    <span className={pageStyle.label}>
+                      {field.label || field.key}
+                      {field.required ? " *" : ""}
+                    </span>
+                    {field.options?.length ? (
+                      <Select
+                        value={answer}
+                        onChange={(event) =>
+                          facet.answerQuestionnaire(
+                            projection.trackerId,
+                            field.key,
+                            event.target.value,
+                          )
+                        }
+                      >
+                        <option value="">Select</option>
+                        {answer && !field.options.includes(answer) ? (
+                          <option value={answer}>{answer} (saved)</option>
+                        ) : null}
+                        {field.options.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : (
+                      <input
+                        value={answer}
+                        onChange={(event) =>
+                          facet.answerQuestionnaire(
+                            projection.trackerId,
+                            field.key,
+                            event.target.value,
+                          )
+                        }
+                      />
+                    )}
+                  </label>
+                );
+              })}
             </fieldset>
           ))}
         </section>
       ) : null}
 
       {view.submissionExclusions.length ? (
-        <section className="panel grid gap-3" aria-label="Submission exclusions">
+        <section className={`${pageStyle.panel} grid gap-3`} aria-label="Submission exclusions">
           <h2>Already submitted</h2>
-          <p className="muted">
+          <p className="text-muted-foreground">
             Confirmed tracker submissions are excluded from duplicate checks and upload actions.
           </p>
           <ul className="grid gap-2">
             {view.submissionExclusions.map((exclusion) => (
               <li
-                className="rounded border border-white/10 bg-white/5 p-3"
+                className="rounded border border-border bg-muted p-3 text-foreground"
                 key={exclusion.trackerId}
               >
                 <strong>{exclusion.trackerId}</strong>
-                <span className="muted">
+                <span className="text-muted-foreground">
                   {exclusion.reason === "already_uploaded"
                     ? "Already uploaded"
                     : exclusion.reason.replaceAll("_", " ")}
@@ -224,10 +232,10 @@ export default function TrackerUploadPage({ facet }: Props) {
         </section>
       ) : null}
 
-      <section className="panel grid gap-3">
+      <section className={`${pageStyle.panel} grid gap-3`}>
         <h2>Run options</h2>
         <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2">
+          <label className="flex min-h-9 cursor-pointer items-center gap-2">
             <input
               type="checkbox"
               checked={view.options.noSeed}
@@ -237,8 +245,8 @@ export default function TrackerUploadPage({ facet }: Props) {
             Skip client injection
           </label>
           <label className="grid gap-1">
-            <span className="label">Log level</span>
-            <select
+            <span className={pageStyle.label}>Log level</span>
+            <Select
               value={view.options.runLogLevel}
               onChange={(event) => facet.changeOptions({ runLogLevel: event.target.value })}
             >
@@ -247,12 +255,12 @@ export default function TrackerUploadPage({ facet }: Props) {
                   {level}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
       </section>
 
-      <section className="panel grid gap-3">
+      <section className={`${pageStyle.panel} grid gap-3`}>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="primary"
@@ -297,17 +305,19 @@ export default function TrackerUploadPage({ facet }: Props) {
           ) : null}
         </div>
         {view.error ? (
-          <p className="error" role="alert">
+          <p className={pageStyle.error} role="alert">
             {view.error}
           </p>
         ) : null}
       </section>
 
       {trackerCards.length || view.dryRunResult ? (
-        <section className="panel grid gap-3">
+        <section className={`${pageStyle.panel} grid gap-3`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2>Tracker uploads</h2>
-            {view.dryRunResult ? <span className="muted">{view.dryRunResult.status}</span> : null}
+            {view.dryRunResult ? (
+              <span className="text-muted-foreground">{view.dryRunResult.status}</span>
+            ) : null}
           </div>
           {trackerCards.map(({ trackerId, projection, report, outcome }) => {
             const expansionKey = `dry-run-result:${trackerId}`;
@@ -323,19 +333,31 @@ export default function TrackerUploadPage({ facet }: Props) {
             const releaseNameNotices = releaseNameOverrideNotices(projection);
             return (
               <div
-                className="grid gap-2 rounded border border-white/10 bg-white/5 p-3"
+                className="grid gap-2 rounded border border-border bg-muted p-3 text-foreground"
                 key={trackerId}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <strong>{trackerLabel}</strong>
                     {eligibilityLabel ? (
-                      <span className={skipped ? "error" : "muted"}>{eligibilityLabel}</span>
+                      <span
+                        className={
+                          skipped ? "mt-[9px] text-destructive-text" : "text-muted-foreground"
+                        }
+                      >
+                        {eligibilityLabel}
+                      </span>
                     ) : null}
                   </div>
                   {report ? (
                     <div className="flex items-center gap-2">
-                      <span className={report.status === "blocked" ? "error" : "muted"}>
+                      <span
+                        className={
+                          report.status === "blocked"
+                            ? "mt-[9px] text-destructive-text"
+                            : "text-muted-foreground"
+                        }
+                      >
                         {report.status}
                       </span>
                       <button
@@ -350,13 +372,13 @@ export default function TrackerUploadPage({ facet }: Props) {
                     </div>
                   ) : null}
                 </div>
-                <p className="value break-all">
+                <p className={`${pageStyle.value} break-all`}>
                   <span className="font-semibold">Tracker upload:</span> {uploadName}
                 </p>
                 {releaseNameNotices.length ? (
                   <div
                     aria-label={`Tracker naming notices for ${trackerId}`}
-                    className="grid gap-1 rounded border border-amber-300/25 bg-amber-300/5 p-2 text-sm"
+                    className="grid gap-1 rounded border border-[var(--status-warning)] bg-card p-2 text-sm"
                   >
                     {releaseNameNotices.map((notice) => (
                       <p key={releaseNameOverrideKey(notice)}>{notice.message}</p>
@@ -364,34 +386,42 @@ export default function TrackerUploadPage({ facet }: Props) {
                   </div>
                 ) : null}
                 {canonicalName && canonicalName !== uploadName ? (
-                  <p className="muted break-all">
+                  <p className="text-muted-foreground break-all">
                     <span className="font-semibold">Canonical:</span> {canonicalName}
                   </p>
                 ) : null}
                 {report && expanded ? (
                   <div className="grid gap-2">
-                    {report.endpoint ? <p className="value break-all">{report.endpoint}</p> : null}
-                    <p className="muted">
+                    {report.endpoint ? (
+                      <p className={`${pageStyle.value} break-all`}>{report.endpoint}</p>
+                    ) : null}
+                    <p className="text-muted-foreground">
                       Files ready: {(report.files || []).filter((file) => file.present).length}/
                       {(report.files || []).length}
                     </p>
                     {report.fields?.map((field) => (
-                      <p className="value break-all" key={field.key}>
+                      <p className={`${pageStyle.value} break-all`} key={field.key}>
                         {field.key}: {field.value}
                       </p>
                     ))}
                     {report.warnings?.map((warning) => (
-                      <p className="muted" key={warning}>
+                      <p className="text-muted-foreground" key={warning}>
                         {warning}
                       </p>
                     ))}
                     {report.failures?.map((failure, index) => (
-                      <p className="error" key={`${failure.failure.Code}-${index}`}>
+                      <p className={pageStyle.error} key={`${failure.failure.Code}-${index}`}>
                         {failure.failure.Message}
                       </p>
                     ))}
                     {report.clientInjection.status ? (
-                      <p className={report.clientInjection.status === "failed" ? "error" : "muted"}>
+                      <p
+                        className={
+                          report.clientInjection.status === "failed"
+                            ? "mt-[9px] text-destructive-text"
+                            : "text-muted-foreground"
+                        }
+                      >
                         Client injection: {report.clientInjection.status}
                         {report.clientInjection.message
                           ? ` · ${report.clientInjection.message}`
@@ -407,14 +437,14 @@ export default function TrackerUploadPage({ facet }: Props) {
       ) : null}
 
       {view.result ? (
-        <section className="panel grid gap-2">
+        <section className={`${pageStyle.panel} grid gap-2`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2>Workflow upload result</h2>
-            <span className="muted">{view.result.status}</span>
+            <span className="text-muted-foreground">{view.result.status}</span>
           </div>
           {view.result.results.map((result) => (
             <div
-              className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
+              className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-muted p-2 text-foreground"
               key={result.trackerId}
             >
               <span>{result.trackerId}</span>
@@ -433,7 +463,10 @@ export default function TrackerUploadPage({ facet }: Props) {
               {result.failures
                 ?.filter((failure) => failure.failure.Message !== result.clientInjectionMessage)
                 .map((failure, index) => (
-                  <p className="error basis-full" key={`${failure.failure.Code}-${index}`}>
+                  <p
+                    className={`${pageStyle.error} basis-full`}
+                    key={`${failure.failure.Code}-${index}`}
+                  >
                     {failure.failure.Message}
                   </p>
                 ))}

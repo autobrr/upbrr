@@ -9,9 +9,13 @@ import { installAppOperationMocks } from "../../test/appRequestMock";
 
 import SettingsPage from ".";
 import { trackerAuthClient } from "../../api/app";
-import type { ConfigValue } from "../../types";
+import type { ApplicationInfo, ConfigValue } from "../../types";
 
 const baseProps = {
+  applicationInfo: null as ApplicationInfo | null,
+  applicationInfoFetchedAt: null as number | null,
+  applicationInfoLoading: false,
+  applicationInfoError: "",
   configData: { MainSettings: { Instance: "default" }, Trackers: {} },
   settingsLoading: false,
   settingsExporting: false,
@@ -105,7 +109,7 @@ describe("SettingsPage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders application details as the final tab", async () => {
+  it("lists appearance and application details with the settings sections", async () => {
     const setSettingsSection = vi.fn();
     const { container, rerender } = render(
       <SettingsPage {...baseProps} setSettingsSection={setSettingsSection} />,
@@ -117,7 +121,14 @@ describe("SettingsPage", () => {
       within(settingsTags as HTMLElement)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["Main", "Trackers", "Application Details", "API Tokens", "Tracker Auth"]);
+    ).toEqual([
+      "Main",
+      "Trackers",
+      "Appearance",
+      "Application Details",
+      "API Tokens",
+      "Tracker Auth",
+    ]);
     expect(screen.queryByText("autobrr/upbrr")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Application Details" }));
@@ -138,38 +149,38 @@ describe("SettingsPage", () => {
   });
 
   it("shows path-free DVD engine and FFmpeg capability diagnostics", async () => {
-    installAppOperationMocks({
-      GetApplicationInfo: vi.fn().mockResolvedValue({
-        version: "dev",
-        buildIdentifier: "abcdef123456-dirty",
-        buildTime: "2026-09-20T01:02:03Z",
-        dependencies: [
-          {
-            path: "github.com/autobrr/go-mediainfo",
-            version: "0b32d930ae1f (2026-09-11 07:21:19 UTC)",
-          },
-        ],
-        goVersion: "go1.26.4",
-        goos: "windows",
-        goarch: "amd64",
-        uptime: "1s",
-        uptimeSeconds: 1,
-        dvdMenuEngine: {
-          EngineVersion: "phase0a-1",
-          SchemaVersion: 1,
-          SupportedFeatures: ["ifo_inventory"],
-          FFmpegVersion: "ffmpeg version example",
-          FFmpegDVDVideo: true,
-          MissingFFmpegOptions: [],
+    const info: ApplicationInfo = {
+      version: "dev",
+      buildIdentifier: "abcdef123456-dirty",
+      buildTime: "2026-09-20T01:02:03Z",
+      dependencies: [
+        {
+          path: "github.com/autobrr/go-mediainfo",
+          version: "0b32d930ae1f (2026-09-11 07:21:19 UTC)",
         },
-        dvdMenuCapabilityStatus: "available",
-        dvdMenuCapabilityMessage: "Compatible FFmpeg dvdvideo menu support detected.",
-      }),
-    });
+      ],
+      goVersion: "go1.26.4",
+      goos: "windows",
+      goarch: "amd64",
+      uptime: "1s",
+      uptimeSeconds: 1,
+      dvdMenuEngine: {
+        EngineVersion: "phase0a-1",
+        SchemaVersion: 1,
+        SupportedFeatures: ["ifo_inventory"],
+        FFmpegVersion: "ffmpeg version example",
+        FFmpegDVDVideo: true,
+        MissingFFmpegOptions: [],
+      },
+      dvdMenuCapabilityStatus: "available",
+      dvdMenuCapabilityMessage: "Compatible FFmpeg dvdvideo menu support detected.",
+    };
 
     render(
       <SettingsPage
         {...baseProps}
+        applicationInfo={info}
+        applicationInfoFetchedAt={Date.now()}
         settingsSection="application_details"
         setSettingsSection={vi.fn()}
       />,
@@ -399,28 +410,28 @@ describe("SettingsPage", () => {
     expect(thrCard).not.toBeNull();
     expect(ascCard).not.toBeNull();
     expect(
-      within(btnCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(btnCard as HTMLElement).getByRole("button", { name: "Check Auth — BTN" }),
     ).toBeInTheDocument();
     expect(
-      within(arCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(arCard as HTMLElement).getByRole("button", { name: "Check Auth — AR" }),
     ).toBeInTheDocument();
     expect(
-      within(hdbCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(hdbCard as HTMLElement).getByRole("button", { name: "Check Auth — HDB" }),
     ).toBeInTheDocument();
     expect(
-      within(ffCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(ffCard as HTMLElement).getByRole("button", { name: "Check Auth — FF" }),
     ).toBeInTheDocument();
     expect(
-      within(flCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(flCard as HTMLElement).getByRole("button", { name: "Check Auth — FL" }),
     ).toBeInTheDocument();
     expect(
-      within(rtfCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(rtfCard as HTMLElement).getByRole("button", { name: "Check Auth — RTF" }),
     ).toBeInTheDocument();
     expect(
-      within(thrCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(thrCard as HTMLElement).getByRole("button", { name: "Check Auth — THR" }),
     ).toBeInTheDocument();
     expect(
-      within(ascCard as HTMLElement).queryByRole("button", { name: "Check Auth" }),
+      within(ascCard as HTMLElement).queryByRole("button", { name: "Check Auth — ASC" }),
     ).not.toBeInTheDocument();
   });
 
@@ -697,7 +708,7 @@ describe("SettingsPage", () => {
       );
 
       expect(await screen.findByText("BTN")).toBeInTheDocument();
-      await userEvent.click(screen.getByRole("button", { name: buttonName }));
+      await userEvent.click(screen.getByRole("button", { name: `${buttonName} — BTN` }));
 
       expect(action).toHaveBeenCalledWith("BTN");
       expect(await screen.findByText("action ready")).toBeInTheDocument();
@@ -733,7 +744,7 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("stale before validation")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth — BTN" }));
 
     await waitFor(() => {
       expect(screen.getByText("fresh validation ready")).toBeInTheDocument();
@@ -768,7 +779,7 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("initial ready")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Import Cookies" }));
+    await userEvent.click(screen.getByRole("button", { name: "Import Cookies — BTN" }));
     expect(await screen.findByText("action ready")).toBeInTheDocument();
 
     rerender(
@@ -798,7 +809,7 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("BTN")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Import Cookies" }));
+    await userEvent.click(screen.getByRole("button", { name: "Import Cookies — BTN" }));
     expect(await screen.findByText("action ready")).toBeInTheDocument();
 
     initialStatus.reject(new Error("stale failure"));
@@ -847,10 +858,10 @@ describe("SettingsPage", () => {
     expect(btnCard).not.toBeNull();
     expect(ptpCard).not.toBeNull();
     await userEvent.click(
-      within(btnCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(btnCard as HTMLElement).getByRole("button", { name: "Check Auth — BTN" }),
     );
     await userEvent.click(
-      within(ptpCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(ptpCard as HTMLElement).getByRole("button", { name: "Check Auth — PTP" }),
     );
     expect(await screen.findByText("new action ready")).toBeInTheDocument();
 
@@ -865,7 +876,7 @@ describe("SettingsPage", () => {
     });
 
     await userEvent.click(
-      within(ptpCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(ptpCard as HTMLElement).getByRole("button", { name: "Check Auth — PTP" }),
     );
 
     await waitFor(() => {
@@ -889,7 +900,7 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("initial ready")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth — BTN" }));
 
     rerender(
       <SettingsPage {...baseProps} settingsSection="main_settings" setSettingsSection={vi.fn()} />,
@@ -1031,8 +1042,8 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("initial ready")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
-    expect(screen.getByRole("button", { name: "Checking..." })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth — BTN" }));
+    expect(screen.getByRole("button", { name: "Check Auth — BTN" })).toBeDisabled();
 
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("after save")).toBeInTheDocument();
@@ -1042,7 +1053,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("after save")).toBeInTheDocument();
       expect(screen.queryByText("action stale")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Check Auth" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Check Auth — BTN" })).toBeEnabled();
     });
   });
 
@@ -1139,8 +1150,8 @@ describe("SettingsPage", () => {
     const { rerender } = render(<SettingsPage {...props} />);
 
     expect(await screen.findByText("initial ready")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
-    expect(screen.getByRole("button", { name: "Checking..." })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth — BTN" }));
+    expect(screen.getByRole("button", { name: "Check Auth — BTN" })).toBeDisabled();
 
     rerender(<SettingsPage {...props} importConfirmOpen />);
 
@@ -1154,7 +1165,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("after import")).toBeInTheDocument();
       expect(screen.queryByText("action stale")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Check Auth", hidden: true })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Check Auth — BTN", hidden: true })).toBeEnabled();
     });
   });
 

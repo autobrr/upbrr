@@ -6,9 +6,10 @@ package api
 // PreparedReleaseDisplay is the canonical presentation projection for one
 // exact prepared generation.
 type PreparedReleaseDisplay struct {
-	ReleaseName string
-	Providers   []ProviderDisplay
-	TrackerData []TrackerPreview
+	ReleaseName   string
+	Providers     []ProviderDisplay
+	TrackerData   []TrackerPreview
+	MediaInfoHTML string `json:",omitempty"`
 }
 
 // ProviderDisplay is one provider-local display projection. Details contains

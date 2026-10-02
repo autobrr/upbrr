@@ -13,6 +13,8 @@ import (
 type DataLookupResult struct {
 	// TrackerID is the tracker-side torrent or release identifier.
 	TrackerID string
+	// TorrentURL is the tracker page for the exact matched torrent, never a download URL.
+	TorrentURL string
 	// InfoHash is the normalized BitTorrent info hash when supplied by the tracker.
 	InfoHash string
 	// TMDBID is the resolved TMDB identifier.
@@ -42,7 +44,8 @@ func (r DataLookupResult) HasIDs() bool {
 
 // HasData reports whether the result contains any usable metadata or release identity.
 func (r DataLookupResult) HasData() bool {
-	return r.HasIDs() || strings.TrimSpace(r.Description) != "" || len(r.Images) > 0 || len(r.Validated) > 0 || strings.TrimSpace(r.InfoHash) != "" ||
+	return r.HasIDs() || strings.TrimSpace(r.TorrentURL) != "" || strings.TrimSpace(r.Description) != "" || len(r.Images) > 0 || len(r.Validated) > 0 ||
+		strings.TrimSpace(r.InfoHash) != "" ||
 		strings.TrimSpace(r.FileName) != "" ||
 		strings.TrimSpace(r.Category) != ""
 }

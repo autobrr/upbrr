@@ -18,8 +18,6 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	isimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
@@ -2141,7 +2139,7 @@ func TestThreeDFromMediaPreservesBDInfoAuthority(t *testing.T) {
 	}
 }
 
-func TestDeriveMediaFactsFromPersistedUHDDiscSummary(t *testing.T) {
+func TestDeriveMediaFactsFromCollectedUHDDiscSummary(t *testing.T) {
 	tests := []struct {
 		name       string
 		video      string
@@ -2169,14 +2167,10 @@ func TestDeriveMediaFactsFromPersistedUHDDiscSummary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dbPath := filepath.Join(t.TempDir(), "upbrr.db")
 			sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.2160p.UHD.BluRay.HEVC-GRP")
 			input := preparationstate.State{
 				SourcePath: sourcePath,
 				DiscType:   "BDMV",
-				SelectedBDMVPlaylists: []api.PlaylistInfo{
-					{File: "00001.MPLS"},
-				},
 				Release: api.ReleaseInfo{
 					Title:      "Example Movie",
 					Year:       2026,
@@ -2184,25 +2178,21 @@ func TestDeriveMediaFactsFromPersistedUHDDiscSummary(t *testing.T) {
 					Group:      "GRP",
 				},
 			}
-			tmpRoot, err := db.Subdir(dbPath, "tmp")
-			if err != nil {
-				t.Fatalf("create tmp root: %v", err)
-			}
-			tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, input, sourcePath)
-			if err != nil {
-				t.Fatalf("create release tmp dir: %v", err)
-			}
 			summary := strings.Join([]string{
 				"Disc Title: Example Movie",
 				"Playlist: 00001.MPLS",
 				"Length: 01:30:00.000",
 				"Video: " + tt.video,
 			}, "\n")
-			if err := os.WriteFile(paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), []byte(summary), 0o600); err != nil {
-				t.Fatalf("write persisted BDInfo summary: %v", err)
-			}
+			input.Discs = []preparationstate.DiscResource{{
+				Type: "BDMV",
+				Reports: []preparationstate.DiscReportResource{{
+					Playlist: api.PlaylistInfo{File: "00001.MPLS"},
+					Summary:  summary,
+				}},
+			}}
 
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}))
+			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
 			meta, err := svc.deriveMediaFacts(t.Context(), input)
 			if err != nil {
 				t.Fatalf("derive media facts: %v", err)

@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useEffect, useMemo, useRef } from "react";
 import { Button } from "../../components/ui/button";
 import type { UploadedImagesFacet } from "../../releaseSession/types";
@@ -44,14 +45,14 @@ export default function UploadImagesPage({
   return (
     <section className="flex flex-col gap-4">
       <header className="max-w-3xl">
-        <p className="eyebrow">Image Hosting</p>
+        <p className={pageStyle.eyebrow}>Image Hosting</p>
         <h1>Upload Images</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           Choose final images. Required hosts and fallbacks are derived from eligible trackers.
         </p>
       </header>
 
-      <section className="panel grid gap-3">
+      <section className={`${pageStyle.panel} grid gap-3`}>
         <div className="flex flex-wrap items-end gap-3">
           <Button
             type="button"
@@ -84,7 +85,7 @@ export default function UploadImagesPage({
         </div>
         {uploading ? (
           <div className="grid gap-2" aria-live="polite">
-            <p className="m-0 text-center text-sm text-[var(--muted)]">
+            <p className="m-0 text-center text-sm text-muted-foreground">
               {progressTotal > 0
                 ? `${progressCurrent} of ${progressTotal} image-host uploads processed across ${attempts.length} ${attempts.length === 1 ? "host" : "hosts"}.`
                 : "Resolving required image hosts..."}
@@ -104,18 +105,24 @@ export default function UploadImagesPage({
                         : `${attempt.completed}/${attempt.total} processed`;
                   return (
                     <div
-                      className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 px-3 py-2 text-sm"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-muted px-3 py-2 text-sm text-foreground"
                       key={attempt.attemptID}
                     >
                       <div>
                         <span className="font-semibold">{resolveImageHostLabel(attempt.host)}</span>
-                        <span className="muted">
+                        <span className="text-muted-foreground">
                           {" · "}
                           {trackerDetail || attempt.usageScope}
                           {attempt.fallback ? " · fallback" : ""}
                         </span>
                       </div>
-                      <span className={attempt.status === "failed" ? "error" : "muted"}>
+                      <span
+                        className={
+                          attempt.status === "failed"
+                            ? "mt-[9px] text-destructive-text"
+                            : "text-muted-foreground"
+                        }
+                      >
                         {resultDetail}
                       </span>
                     </div>
@@ -126,21 +133,21 @@ export default function UploadImagesPage({
           </div>
         ) : null}
         {view.error ? (
-          <p className="error" role="alert">
+          <p className={pageStyle.error} role="alert">
             {view.error}
           </p>
         ) : null}
         {view.failures.map((failure) => (
-          <p className="error" key={`${failure.Host}-${failure.UsageScope}`}>
+          <p className={pageStyle.error} key={`${failure.Host}-${failure.UsageScope}`}>
             {failure.Host || "Image host"}: {failure.Message}
           </p>
         ))}
       </section>
 
-      <section className="panel grid gap-3">
+      <section className={`${pageStyle.panel} grid gap-3`}>
         <div className="flex items-baseline justify-between gap-3">
           <h2>Available images</h2>
-          <span className="muted">{view.candidates.length} found</span>
+          <span className="text-muted-foreground">{view.candidates.length} found</span>
         </div>
         {view.candidates.length ? (
           <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
@@ -150,7 +157,7 @@ export default function UploadImagesPage({
               return (
                 <article className="grid gap-2" key={artifactID}>
                   <button
-                    className="screens-thumb"
+                    className="overflow-hidden rounded-[14px] border border-foreground/10 bg-card/60 p-0 text-left cursor-pointer [&>img]:block [&>img]:w-full"
                     type="button"
                     aria-label={`Preview image ${index + 1}`}
                     onClick={() => {
@@ -160,42 +167,42 @@ export default function UploadImagesPage({
                   >
                     <img src={item.contentURL} alt="" />
                   </button>
-                  <label className="flex items-center gap-2 text-sm">
+                  <label className="flex min-h-9 cursor-pointer items-center gap-2 text-sm">
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={(event) => facet.select(artifactID, event.target.checked)}
                     />
-                    Include
+                    Include image {index + 1}
                   </label>
                 </article>
               );
             })}
           </div>
         ) : (
-          <p className="muted">No screenshot candidates available.</p>
+          <p className="text-muted-foreground">No screenshot candidates available.</p>
         )}
       </section>
 
-      <section className="panel grid gap-3">
+      <section className={`${pageStyle.panel} grid gap-3`}>
         <div className="flex items-baseline justify-between gap-3">
           <h2>Published images</h2>
-          <span className="muted">{view.uploaded.length} saved</span>
+          <span className="text-muted-foreground">{view.uploaded.length} saved</span>
         </div>
         {view.uploaded.length ? (
           <div className="grid gap-2">
-            {view.uploaded.map((item) => {
+            {view.uploaded.map((item, index) => {
               const url = item.url;
               return (
                 <article
-                  className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-muted p-2 text-foreground"
                   key={`${item.host}-${item.artifactID}`}
                 >
                   <div className="min-w-0">
                     <p className="font-semibold">{resolveImageHostLabel(item.host)}</p>
                     {url ? (
                       <a
-                        className="tracker-link break-all"
+                        className="inline-flex items-center gap-[5px] font-semibold text-foreground underline break-all"
                         href={url}
                         target="_blank"
                         rel="noreferrer"
@@ -205,12 +212,13 @@ export default function UploadImagesPage({
                         {url}
                       </a>
                     ) : (
-                      <p className="muted break-all">Hosted image unavailable</p>
+                      <p className="text-muted-foreground break-all">Hosted image unavailable</p>
                     )}
                   </div>
                   <button
                     className="danger"
                     type="button"
+                    aria-label={`Remove published image ${index + 1} from ${resolveImageHostLabel(item.host)}`}
                     disabled={busy}
                     onClick={() => void facet.remove(item.artifactID, item.host)}
                   >
@@ -221,7 +229,7 @@ export default function UploadImagesPage({
             })}
           </div>
         ) : (
-          <p className="muted">No uploaded images yet.</p>
+          <p className="text-muted-foreground">No uploaded images yet.</p>
         )}
       </section>
     </section>
