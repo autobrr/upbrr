@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/imagehosting"
 	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
@@ -692,6 +693,18 @@ func (m *mediaModule) uploadImagesToTarget(
 	}
 	progressCtx := api.WithImageUploadProgressTarget(ctx, progressTarget)
 	emitCoreImageUploadProgress(progressCtx, progressTarget, api.ImageUploadProgressRunning, 0, 0, 0, "Preparing host upload.")
+	accountScope, err := imagehosting.AudioAccountScope(m.cfg, m.registry, target.Host)
+	if err != nil {
+		return nil, fmt.Errorf("core: fingerprint audio host account: %w", err)
+	}
+	compatibleLinks := func(links []api.UploadedImageLink) []api.UploadedImageLink {
+		return slices.DeleteFunc(slices.Clone(links), func(link api.UploadedImageLink) bool {
+			return slices.ContainsFunc(images, func(image api.ScreenshotImage) bool {
+				return image.Purpose == api.ScreenshotPurposeAudioAnalysis && normalizedUploadImagePath(image.Path) == normalizedUploadImagePath(link.ImagePath)
+			}) && (link.Purpose != api.ScreenshotPurposeAudioAnalysis || link.AccountScope != accountScope)
+		})
+	}
+	retainedLinks = compatibleLinks(retainedLinks)
 	results, missing := uploadedImageLinksForTarget(retainedLinks, target, images)
 	if len(missing) > 0 && m.repo != nil {
 		existing, err := m.repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
@@ -699,7 +712,7 @@ func (m *mediaModule) uploadImagesToTarget(
 			emitCoreImageUploadProgress(progressCtx, progressTarget, api.ImageUploadProgressFailed, 0, 0, 0, "Existing uploads could not be checked.")
 			return nil, fmt.Errorf("core: %w", err)
 		}
-		existing = excludeBlockedRetainedImageLinks(existing, blockedRetainedLinks, target)
+		existing = excludeBlockedRetainedImageLinks(compatibleLinks(existing), blockedRetainedLinks, target)
 		results, missing = uploadedImageLinksForTarget(append(existing, retainedLinks...), target, images)
 	}
 	progressTarget.Reused = len(results)

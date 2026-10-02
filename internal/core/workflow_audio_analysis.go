@@ -38,6 +38,7 @@ type audioAnalysisService interface {
 }
 
 type workflowAudioAnalysisBuilder struct {
+	uploads  api.MediaAssetRepository
 	resolver audioAnalysisSubjectResolver
 	service  audioAnalysisService
 	root     string
@@ -116,6 +117,10 @@ func (b workflowAudioAnalysisBuilder) Build(
 			Message: "an audio-analysis artifact could not be integrity-bound",
 		}, err))
 	}
+	if err := b.retainHostedUploads(ctx, subject, prior, priorResource, result, resource); err != nil {
+		_ = resource.Release()
+		return api.AudioAnalysisResult{}, nil, err
+	}
 	return result, resource, nil
 }
 
@@ -191,7 +196,66 @@ func (b workflowAudioAnalysisBuilder) RestoreCompatible(
 		_ = os.RemoveAll(attemptRoot)
 		return api.AudioAnalysisResult{}, nil, fmt.Errorf("retain restored audio-analysis artifacts: %w", err)
 	}
+	if err := b.retainHostedUploads(ctx, subject, &prior, retained, result, cloned); err != nil {
+		_ = cloned.Release()
+		return api.AudioAnalysisResult{}, nil, err
+	}
 	return result, cloned, nil
+}
+
+// retainHostedUploads carries verified hosted-image provenance to cloned audio
+// artifacts without reusing workflow authority or changing host/account scopes.
+func (b workflowAudioAnalysisBuilder) retainHostedUploads(ctx context.Context, subject api.AudioAnalysisSubject, prior *api.AudioAnalysisResult,
+	previous releaseworkflow.RetainedAudioAnalysisResource, result api.AudioAnalysisResult, current workflowAudioAnalysisResource) error {
+	if b.uploads == nil || prior == nil {
+		return nil
+	}
+	old, ok := previous.(workflowAudioAnalysisResource)
+	if !ok || prior.Release.SourcePath != subject.SourcePath || prior.ManifestFingerprint != subject.ManifestFingerprint ||
+		prior.ResourceID != subject.ResourceID {
+		return nil
+	}
+	type artifactKey struct {
+		track   string
+		variant api.AudioAnalysisVariant
+	}
+	previousArtifacts := make(map[artifactKey]api.PublicResourceID)
+	for _, track := range prior.Tracks {
+		for _, artifact := range track.Artifacts {
+			if artifact.Status == api.StageStatusCompleted {
+				previousArtifacts[artifactKey{track.TrackID, artifact.Variant}] = artifact.ID
+			}
+		}
+	}
+	paths := make(map[string]string)
+	for _, track := range result.Tracks {
+		for _, artifact := range track.Artifacts {
+			if artifact.Variant == api.AudioAnalysisStats || artifact.Status != api.StageStatusCompleted {
+				continue
+			}
+			previousID, exists := previousArtifacts[artifactKey{track.TrackID, artifact.Variant}]
+			if !exists {
+				continue
+			}
+			from, to := old.paths[previousID], current.paths[artifact.ID]
+			if from != "" && to != "" && from != to && old.integrity[previousID] == current.integrity[artifact.ID] {
+				paths[from] = to
+			}
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	// Canceled analyses still retain completed artifacts and their verified links.
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+	}
+	if err := b.uploads.CloneAudioAnalysisUploads(ctx, prior.Release, subject.MediaBinding, paths); err != nil {
+		return fmt.Errorf("retain hosted audio images: %w", err)
+	}
+	return nil
 }
 
 func (b workflowAudioAnalysisBuilder) buildTracks(
@@ -390,9 +454,12 @@ func (b workflowAudioAnalysisBuilder) revalidateSubject(
 	if err != nil {
 		return fmt.Errorf("resolve current audio analysis subject: %w", err)
 	}
-	if current.Release != expected.Release || current.SourcePath != expected.SourcePath || current.VideoPath != expected.VideoPath ||
-		current.SourceFingerprint != expected.SourceFingerprint || current.ResourceID != expected.ResourceID ||
-		current.ManifestFingerprint != expected.ManifestFingerprint || current.PrimaryTrackID != expected.PrimaryTrackID ||
+	if !current.MediaBinding.Equal(expected.MediaBinding) ||
+		current.Release != expected.Release || current.SourcePath != expected.SourcePath || current.VideoPath != expected.VideoPath ||
+		current.SourceFingerprint != expected.SourceFingerprint ||
+		current.ResourceID != expected.ResourceID ||
+		current.ManifestFingerprint != expected.ManifestFingerprint ||
+		current.PrimaryTrackID != expected.PrimaryTrackID ||
 		!sameAudioAnalysisTrackAuthority(current.Tracks, expected.Tracks) {
 		return fmt.Errorf("compare current audio analysis subject: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
 			Code:    api.AudioAnalysisFailureStaleSource,
@@ -1046,9 +1113,11 @@ func (r workflowAudioAnalysisResource) LocalArtifactPath(
 func newWorkflowAudioAnalysisBuilder(
 	resolver audioAnalysisSubjectResolver,
 	service *audioanalysis.Service,
+	uploads api.MediaAssetRepository,
 	root string,
 ) workflowAudioAnalysisBuilder {
 	return workflowAudioAnalysisBuilder{
+		uploads:  uploads,
 		resolver: resolver,
 		service:  service,
 		root:     filepath.Clean(strings.TrimSpace(root)),

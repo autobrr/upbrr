@@ -82,6 +82,8 @@ func (s *Scope) fail(err error) {
 // Lookup replays a detached typed result for the same actual query. Empty
 // results are eligible again on a fresh load; completed failures remain
 // suppressed until source history is removed. Cancellation is never retained.
+// Unreadable successful results are recollected; unreadable failed partial
+// results remain suppressed without replaying the partial value.
 // query is hashed before persistence and must contain every lookup-affecting input.
 func Lookup[T any](ctx context.Context, domain string, query any, fetch func() (T, error), empty func(T) bool) (T, error) {
 	return lookup(ctx, domain, query, fetch, empty, false)
@@ -175,8 +177,7 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 			if len(record.Payload) > 0 {
 				var partial T
 				if err := json.Unmarshal(record.Payload, &partial); err != nil {
-					scope.fail(err)
-					return zero, errors.New("metadata evidence partial result cannot be decoded")
+					return zero, ErrSuppressed
 				}
 				return partial, ErrSuppressed
 			}
@@ -184,14 +185,12 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 		}
 		if !refresh {
 			var result T
-			if err := json.Unmarshal(record.Payload, &result); err != nil {
-				scope.fail(err)
-				return zero, fmt.Errorf("decode metadata evidence: %w", err)
+			if err := json.Unmarshal(record.Payload, &result); err == nil {
+				if scope.logger != nil {
+					scope.logger.Debugf("metadata: evidence domain=%s decision=reuse", domain)
+				}
+				return result, nil
 			}
-			if scope.logger != nil {
-				scope.logger.Debugf("metadata: evidence domain=%s decision=reuse", domain)
-			}
-			return result, nil
 		}
 	}
 	if scope.logger != nil {

@@ -272,7 +272,7 @@ func TestLookupCanceledRefreshPreservesPriorEvidence(t *testing.T) {
 func TestLookupPersistenceFailuresReachScope(t *testing.T) {
 	t.Parallel()
 	storageErr := errors.New("storage unavailable")
-	for _, operation := range []string{"load", "save", "decode", "encode"} {
+	for _, operation := range []string{"load", "save", "encode"} {
 		t.Run(operation, func(t *testing.T) {
 			store := &memoryEvidenceStore{}
 			source := filepath.Join(t.TempDir(), "Example.Release.mkv")
@@ -283,14 +283,6 @@ func TestLookupPersistenceFailuresReachScope(t *testing.T) {
 				store.loadErr = storageErr
 			case "save":
 				store.saveErr = storageErr
-			case "decode":
-				if _, err := Lookup(ctx, "provider.metadata", 11, fetch, nil); err != nil {
-					t.Fatal(err)
-				}
-				for key, record := range store.records {
-					record.Payload = json.RawMessage("{")
-					store.records[key] = record
-				}
 			case "encode":
 				fetch = func() (any, error) { return make(chan int), nil }
 			}
@@ -565,6 +557,83 @@ func TestProviderRefreshRetainsIndependentSourceEvidence(t *testing.T) {
 			}
 			if calls != want {
 				t.Fatalf("domain=%s calls=%d want=%d", domain, calls, want)
+			}
+		})
+	}
+}
+
+func TestLookupUnreadableEvidenceDoesNotPoisonScope(t *testing.T) {
+	t.Parallel()
+	for _, outcome := range []api.MetadataEvidenceOutcome{api.MetadataEvidenceSuccess, api.MetadataEvidenceEmpty, api.MetadataEvidenceFailed} {
+		t.Run(string(outcome), func(t *testing.T) {
+			for _, payload := range []string{"{", `{"unexpected":"shape"}`} {
+				t.Run(payload, func(t *testing.T) {
+					store := &memoryEvidenceStore{}
+					source := filepath.Join(t.TempDir(), "Example.Release.mkv")
+					key, err := queryKey(11)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := store.SaveMetadataEvidence(t.Context(), api.MetadataEvidence{
+						SourcePath:        source,
+						SourceFingerprint: "fingerprint",
+						Domain:            "provider.metadata",
+						Key:               key,
+						Outcome:           outcome,
+						Payload:           json.RawMessage(payload),
+					}); err != nil {
+						t.Fatal(err)
+					}
+					calls := 0
+					fetch := func() (string, error) { calls++; return "Provider title", nil }
+					for _, freshness := range []api.ExternalFreshness{api.ExternalFreshnessReuse, api.ExternalFreshnessLoad, api.ExternalFreshnessRefresh} {
+						ctx, scope := WithScope(t.Context(), store, source, "fingerprint", freshness, nil)
+						for range 2 {
+							got, err := Lookup(ctx, "provider.metadata", 11, fetch, nil)
+							if outcome == api.MetadataEvidenceFailed {
+								if got != "" || !errors.Is(err, ErrSuppressed) || calls != 0 {
+									t.Fatalf("failed evidence = %q, %v; calls = %d", got, err, calls)
+								}
+							} else {
+								wantCalls := 1
+								if freshness == api.ExternalFreshnessRefresh {
+									wantCalls = 2
+								}
+								if got != "Provider title" || err != nil || calls != wantCalls {
+									t.Fatalf("recovered evidence = %q, %v; calls = %d, want %d", got, err, calls, wantCalls)
+								}
+							}
+							if err := scope.Err(); err != nil {
+								t.Fatalf("unreadable evidence poisoned collection: %v", err)
+							}
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestProviderRefreshRetainsIndependentEmptyEvidence(t *testing.T) {
+	t.Parallel()
+	for _, domain := range []string{"scene.word", "bluray.page", "tracker.lookup"} {
+		t.Run(domain, func(t *testing.T) {
+			store := &memoryEvidenceStore{}
+			source := filepath.Join(t.TempDir(), "Example.Movie.mkv")
+			calls := 0
+			fetch := func() ([]string, error) { calls++; return []string{}, nil }
+			for index, freshness := range []api.ExternalFreshness{api.ExternalFreshnessLoad, api.ExternalFreshnessReuse, api.ExternalFreshnessRefresh, api.ExternalFreshnessLoad} {
+				ctx, scope := WithScope(t.Context(), store, source, "fingerprint", freshness, nil)
+				for range 2 {
+					got, err := Lookup(ctx, domain, "query", fetch, func(value []string) bool { return len(value) == 0 })
+					wantCalls := 1
+					if index == 3 {
+						wantCalls = 2
+					}
+					if len(got) != 0 || err != nil || calls != wantCalls || scope.Err() != nil {
+						t.Fatalf("freshness=%s result=%v error=%v calls=%d want=%d scope=%v", freshness, got, err, calls, wantCalls, scope.Err())
+					}
+				}
 			}
 		})
 	}
