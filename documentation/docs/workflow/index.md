@@ -94,6 +94,8 @@ Depending on the source and trackers, upbrr can:
 
 Automatic screenshot plans distribute the requested images across all prepared discs, with at least one planned image per disc. Manual frame numbers apply to every disc. Screenshot previews, captures, and DVD menu images remain grouped by disc; DVD menu capture can warn about partial coverage when its collection-wide safety cap or the available menus leave a disc uncovered.
 
+Capturing an additional frame keeps previously generated screenshots, including their selection and order, without adding those images again.
+
 Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode.
 
 Compatible images retain their selection and order across refresh. Deleted images stay removed. upbrr verifies local image bytes before reuse and reuses hosted links only for a compatible host account and purpose. A hosted link can remain usable when its local preview is missing. Changed capture settings or stricter tracker requirements can require additional images.

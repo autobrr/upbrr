@@ -985,8 +985,9 @@ func mergeManualSelectionsWithDiscPlan(
 }
 
 // BuildIncremental keeps current media while capturing requested additions.
-// Already retained screenshot indexes are skipped, and the returned private
-// resource stays paired with the combined artifact snapshot.
+// Already retained screenshot indexes are skipped, including existing files
+// returned by the capture plan. The private resource stays paired with the
+// combined artifact snapshot.
 func (b workflowMediaBuilder) BuildIncremental(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -997,6 +998,7 @@ func (b workflowMediaBuilder) BuildIncremental(
 	now time.Time,
 ) (api.MediaArtifactSet, releaseworkflow.RetainedMediaResource, error) {
 	var retained workflowMediaPrivateArtifacts
+	indexes := make(map[discFrameKey]struct{})
 	if existing != nil {
 		var ok bool
 		retained, ok = privateExisting.(workflowMediaPrivateArtifacts)
@@ -1004,15 +1006,14 @@ func (b workflowMediaBuilder) BuildIncremental(
 			return api.MediaArtifactSet{}, nil, errors.New("workflow media retained resource is incompatible")
 		}
 		retained = cloneWorkflowMediaPrivateArtifacts(retained)
-	}
-	if instructions.Purpose == api.ScreenshotPurposeFinal && len(instructions.Selections) > 0 && existing != nil {
-		requestedScreenshotCount := max(instructions.ScreenshotCount, len(instructions.Selections))
-		indexes := make(map[discFrameKey]struct{})
 		for _, artifact := range existing.Artifacts {
 			if artifact.Kind == api.MediaArtifactScreenshot && !isImportedWorkflowScreenshot(artifact, retained) {
 				indexes[discFrameKey{discID: artifact.DiscID, index: artifact.Index}] = struct{}{}
 			}
 		}
+	}
+	if instructions.Purpose == api.ScreenshotPurposeFinal && len(instructions.Selections) > 0 && existing != nil {
+		requestedScreenshotCount := max(instructions.ScreenshotCount, len(instructions.Selections))
 		filtered := make([]api.ScreenshotSelection, 0, len(instructions.Selections))
 		for _, selection := range instructions.Selections {
 			key := discFrameKey{discID: selection.DiscID, index: selection.Index}
@@ -1092,6 +1093,13 @@ func (b workflowMediaBuilder) BuildIncremental(
 		capturedImportedURLs[link.RawURL] = struct{}{}
 	}
 	for _, artifact := range captured.Artifacts {
+		if artifact.Kind == api.MediaArtifactScreenshot && !isImportedWorkflowScreenshot(artifact, capturedRetained) {
+			key := discFrameKey{discID: artifact.DiscID, index: artifact.Index}
+			if _, exists := indexes[key]; exists {
+				continue
+			}
+			indexes[key] = struct{}{}
+		}
 		if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" {
 			if image, ok := capturedRetained.ArtifactImages[artifact.ID]; ok {
 				pathKey := strings.ToLower(normalizedUploadImagePath(image.Path))
