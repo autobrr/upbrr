@@ -13,7 +13,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestGeneratedDVDRipNamesOmitDVDSourceAcrossTrackers(t *testing.T) {
+func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *testing.T) {
 	registry, err := NewRegistry()
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +86,10 @@ func TestGeneratedDVDRipNamesOmitDVDSourceAcrossTrackers(t *testing.T) {
 				if name != want {
 					t.Fatalf("custom generated name=%q, want %q", name, want)
 				}
+			}
+			// ASC uploads a localized display title with separate video dimensions.
+			if tracker != "ASC" && !strings.Contains(name, "576p") {
+				t.Fatalf("tracker omitted known DVDRip resolution in %q", name)
 			}
 			tokens := strings.FieldsSeq(strings.ToUpper(strings.ReplaceAll(name, ".", " ")))
 			for token := range tokens {

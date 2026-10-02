@@ -189,16 +189,47 @@ func TestBuildReleaseNameTVDVDRipRetainsSeasonOnlyAndNormalizesWhitespace(t *tes
 		Year:        2026,
 		Season:      "S01",
 		Episode:     "E02",
+		Resolution:  "576p",
 		Source:      "DVD",
 		Audio:       "DD   2.0",
 		VideoEncode: "x264",
 	}, api.NopLogger{})
-	if got, want := result.NameNoTag, "Example Show S01 DVDRip DD 2.0 x264"; got != want {
+	if got, want := result.NameNoTag, "Example Show S01 576p DVDRip DD 2.0 x264"; got != want {
 		t.Fatalf("NameNoTag = %q, want %q", got, want)
 	}
 	season, ok := result.GeneratedName.Component(api.NameRoleSeason)
 	if !ok || season.Value != "S01" {
 		t.Fatalf("season component = %#v, found=%t", season, ok)
+	}
+}
+
+func TestDVDRipNamingHonorsResolutionCorrections(t *testing.T) {
+	for _, resolution := range []string{"480p", "576p", ""} {
+		t.Run("resolution="+resolution, func(t *testing.T) {
+			meta := preparationstate.State{
+				Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Type:        "DVDRIP",
+				Source:      "DVD",
+				Audio:       "DD 2.0",
+				VideoEncode: "x264",
+				Release: api.ReleaseInfo{
+					Title:      "576p Story",
+					Year:       2026,
+					Resolution: "480p",
+				},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Resolution: &resolution},
+			}
+			applyReleaseNameValueOverrides(&meta)
+			result := BuildReleaseName(releaseNameRequestFromMeta(meta, api.NopLogger{}), api.NopLogger{})
+			want := "576p Story 2026 "
+			if resolution != "" {
+				want += resolution + " "
+			}
+			want += "DVDRip DD 2.0 x264"
+			if result.NameNoTag != want {
+				t.Fatalf("corrected name = %q, want %q", result.NameNoTag, want)
+			}
+		})
 	}
 }
 
