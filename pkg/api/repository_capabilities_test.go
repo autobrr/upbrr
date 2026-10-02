@@ -56,12 +56,55 @@ func TestRepositoryCapabilitiesRejectMissingAndTypedNil(t *testing.T) {
 	}
 }
 
+type repositoryCapabilitiesWithoutEvidence struct {
+	ReleaseStateRepository
+	PreparedReleaseRepository
+	ReleaseSelectionRepository
+	HistoryRepository
+	UploadLedgerRepository
+	TrackerStateRepository
+	MediaAssetRepository
+	ReleaseWorkflowStateRepository
+}
+
+func TestRepositoryCapabilitiesRequireMetadataEvidence(t *testing.T) {
+	t.Parallel()
+
+	adapter := &repositoryCapabilitiesWithoutEvidence{}
+	capabilities := RepositoryCapabilitiesFrom(adapter)
+	if err := capabilities.Validate(); !errors.Is(err, ErrMissingMetadataEvidenceRepository) {
+		t.Fatalf("missing metadata evidence error = %v, want %v", err, ErrMissingMetadataEvidenceRepository)
+	}
+	if _, err := NewRepositoryCapabilities(adapter); !errors.Is(err, ErrMissingMetadataEvidenceRepository) {
+		t.Fatalf("constructor missing metadata evidence error = %v, want %v", err, ErrMissingMetadataEvidenceRepository)
+	}
+	var typedNil *struct{ MetadataEvidenceRepository }
+	capabilities.metadataEvidence = typedNil
+	if err := capabilities.Validate(); !errors.Is(err, ErrMissingMetadataEvidenceRepository) {
+		t.Fatalf("typed-nil metadata evidence error = %v, want %v", err, ErrMissingMetadataEvidenceRepository)
+	}
+}
+
+func TestRepositoryCapabilitiesMetadataEvidenceIsNotZero(t *testing.T) {
+	t.Parallel()
+
+	adapter := &struct{ MetadataEvidenceRepository }{}
+	capabilities := RepositoryCapabilitiesFrom(adapter)
+	if capabilities.IsZero() {
+		t.Fatal("metadata-evidence-only repository bundle is zero")
+	}
+	if capabilities.MetadataEvidence() != adapter {
+		t.Fatal("repository bundle lost the metadata evidence adapter")
+	}
+}
+
 func TestRepositoryCapabilityInterfacesDoNotExposeLifecycleOrSQL(t *testing.T) {
 	t.Parallel()
 
 	interfaces := []reflect.Type{
 		reflect.TypeFor[ReleaseStateRepository](),
 		reflect.TypeFor[PreparedReleaseRepository](),
+		reflect.TypeFor[MetadataEvidenceRepository](),
 		reflect.TypeFor[ReleaseSelectionRepository](),
 		reflect.TypeFor[HistoryRepository](),
 		reflect.TypeFor[UploadLedgerRepository](),
