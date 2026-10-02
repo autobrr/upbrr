@@ -466,6 +466,30 @@ func TestModuleTrackerProjectionPreservesAudioArtifactsUntilReleaseChanges(t *te
 	}
 }
 
+// completedAudioRecoverySnapshotRepository lets the resumed worker finish after a
+// query captures the old workflow but before restart recovery checks active work.
+type completedAudioRecoverySnapshotRepository struct {
+	Repository
+	armed         <-chan struct{}
+	afterSnapshot func()
+	once          sync.Once
+}
+
+func (r *completedAudioRecoverySnapshotRepository) Load(ctx context.Context, ownerID string, workflowID api.WorkflowID) (State, error) {
+	state, err := r.Repository.Load(ctx, ownerID, workflowID)
+	if err != nil {
+		return State{}, fmt.Errorf("load audio recovery snapshot: %w", err)
+	}
+	if recovered, _ := ctx.Value(recoveredOperationContextKey{}).(bool); !recovered {
+		select {
+		case <-r.armed:
+			r.once.Do(r.afterSnapshot)
+		default:
+		}
+	}
+	return state, nil
+}
+
 func TestModuleRecoveredAudioAnalysisDeletesUncommittedAttemptResource(t *testing.T) {
 	now := time.Date(2026, time.September, 21, 6, 0, 0, 0, time.UTC)
 	repository := NewMemoryRepository()
@@ -523,7 +547,8 @@ func TestModuleRecoveredAudioAnalysisDeletesUncommittedAttemptResource(t *testin
 	); err != nil {
 		t.Fatalf("retain orphaned audio attempt: %v", err)
 	}
-	resumedBuilder := &audioAnalysisBuilderFake{}
+	releaseResumed := make(chan struct{})
+	resumedBuilder := &audioAnalysisBuilderFake{block: releaseResumed, started: make(chan struct{})}
 	moduleB, err := New(
 		repository,
 		privateStore,
@@ -536,8 +561,45 @@ func TestModuleRecoveredAudioAnalysisDeletesUncommittedAttemptResource(t *testin
 	if err != nil {
 		t.Fatalf("new restarted audio module: %v", err)
 	}
-	if _, err := moduleB.Current(context.Background(), testOwnerID, prepared.Workflow.ID); err != nil {
-		t.Fatalf("trigger audio operation recovery: %v", err)
+	armed := make(chan struct{})
+	var resumedDone <-chan struct{}
+	moduleB.repository = &completedAudioRecoverySnapshotRepository{
+		Repository: repository,
+		armed:      armed,
+		afterSnapshot: func() {
+			close(releaseResumed)
+			select {
+			case <-resumedDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("recovered audio operation did not finish")
+			}
+		},
+	}
+	if err := moduleB.ensureOperationRecovery(t.Context()); err != nil {
+		t.Fatalf("dispatch audio operation recovery: %v", err)
+	}
+	moduleB.operationWorkersMu.Lock()
+	resumedDone = moduleB.operationWorkers[operation.ID].done
+	moduleB.operationWorkersMu.Unlock()
+
+	select {
+	case <-resumedBuilder.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("recovered audio builder did not start")
+	}
+
+	// Progress queries must stay available while the recovered builder is blocked.
+	progress, err := moduleB.Current(t.Context(), testOwnerID, prepared.Workflow.ID)
+	if err != nil || progress.Workflow.AudioAnalysis != nil {
+		t.Fatalf("query running audio recovery: result=%#v error=%v", progress, err)
+	}
+	close(armed)
+	current, err := moduleB.Current(t.Context(), testOwnerID, prepared.Workflow.ID)
+	if err != nil {
+		t.Fatalf("query completed audio recovery: %v", err)
+	}
+	if current.Workflow.AudioAnalysis == nil || current.AudioAnalysis == nil || current.Workflow.Revision != prepared.Workflow.Revision+1 {
+		t.Fatalf("completed audio recovery returned stale workflow: %#v", current)
 	}
 	resumed := waitForWorkflowOperation(t, moduleB, prepared.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
 		return isTerminalProgressStatus(status.Status)
