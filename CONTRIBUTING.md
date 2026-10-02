@@ -54,6 +54,10 @@ Notes:
 - **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes.
 - **Code review:** Be open to feedback during review.
 
+### Pull request Docker images
+
+Docker CI validates every pull request on Linux amd64. Same-repository, non-Dependabot pull requests also publish `ghcr.io/autobrr/upbrr:pr<number>` after a successful build. Fork and Dependabot pull requests remain build-only. The build job has read-only repository access; a separate job publishes the exported image without checking out or running pull request code. See the [installation guide](documentation/docs/getting-started/installation.md#test-a-pull-request-image) for testing instructions.
+
 ### Public documentation
 
 The Docusaurus site under `documentation/` is published at [upbrr.com](https://upbrr.com). Keep affected pages, navigation, and cross-links synchronized with user-visible CLI, configuration, Web UI, workflow, tracker, installation, upgrade, and API changes.
