@@ -370,6 +370,8 @@ type MediaAssetSnapshot struct {
 // MediaAssetRepository persists screenshot, selection, slot, variant, and
 // uploaded-image records. Screenshot lifecycle mutations are atomic.
 type MediaAssetRepository interface {
+	// CloneAudioAnalysisUploads copies hosted links for integrity-verified audio clones within one source; callers verify compatibility and pass exact artifact paths.
+	CloneAudioAnalysisUploads(ctx context.Context, prior ReleaseRef, binding PreparedMediaBinding, paths map[string]string) error
 	ScreenshotLifecycleRepository
 	LoadMediaAssetSnapshot(ctx context.Context, binding PreparedMediaBinding) (MediaAssetSnapshot, error)
 	SaveScreenshot(ctx context.Context, binding PreparedMediaBinding, screenshot Screenshot) error

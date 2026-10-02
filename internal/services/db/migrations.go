@@ -61,6 +61,11 @@ type migrationExecutor interface {
 var migrationRegistry = []migrationStep{
 	{id: baselineMigrationID, apply: createBaselineSchema},
 	{
+		id:        "2026_10_uploaded_image_account_scope",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateUploadedImageAccountScope,
+	},
+	{
 		id:        "2026_09_add_tracker_torrent_url",
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateAddTrackerTorrentURL,
@@ -1869,6 +1874,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			host TEXT NOT NULL,
 			usage_scope TEXT NOT NULL DEFAULT "global",
 			purpose TEXT NOT NULL DEFAULT 'final',
+			account_scope TEXT NOT NULL DEFAULT '',
 			img_url TEXT NOT NULL DEFAULT "",
 			raw_url TEXT NOT NULL DEFAULT "",
 			web_url TEXT NOT NULL DEFAULT "",
@@ -1922,5 +1928,22 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 		}
 	}
 
+	return nil
+}
+
+// migrateUploadedImageAccountScope leaves legacy uploads unverified for account-sensitive reuse.
+func migrateUploadedImageAccountScope(ctx context.Context, exec migrationExecutor) error {
+	present, err := tableExists(ctx, exec, "uploaded_images")
+	if err != nil || !present {
+		return err
+	}
+	exists, err := tableColumnExists(ctx, exec, "uploaded_images", "account_scope")
+	if err != nil || exists {
+		return err
+	}
+	_, err = exec.ExecContext(ctx, `ALTER TABLE uploaded_images ADD COLUMN account_scope TEXT NOT NULL DEFAULT ''`)
+	if err != nil {
+		return fmt.Errorf("db add uploaded image account scope: %w", err)
+	}
 	return nil
 }

@@ -310,7 +310,12 @@ func (m *Module) ResolveAudioAnalysisSubject(
 			Message: "the prepared resource has no decodable media path",
 		}, cause))
 	}
+	binding, err := release.MediaBinding()
+	if err != nil {
+		return api.AudioAnalysisSubject{}, fmt.Errorf("prepared release: audio media binding: %w", err)
+	}
 	return api.AudioAnalysisSubject{
+		MediaBinding:        binding,
 		Release:             normalized.Release,
 		SourcePath:          release.Source.SourcePath,
 		VideoPath:           videoPath,

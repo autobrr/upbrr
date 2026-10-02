@@ -346,6 +346,14 @@ func (s *Service) Upload(
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
+	accountScope := ""
+	if slices.ContainsFunc(images, func(image api.ScreenshotImage) bool { return image.Purpose == api.ScreenshotPurposeAudioAnalysis }) {
+		var err error
+		accountScope, err = AudioAccountScope(s.cfg, s.registry, normalizedHost)
+		if err != nil {
+			return nil, fmt.Errorf("image hosting: fingerprint audio host account: %w", err)
+		}
+	}
 	logTracker := s.imageHostLogTracker(normalizedHost)
 
 	s.logger.Infof("image hosting: uploading images count=%d host=%s tracker=%s", len(images), normalizedHost, logTracker)
@@ -501,6 +509,7 @@ func (s *Service) Upload(
 				Purpose:                  candidate.Purpose,
 				Host:                     normalizedHost,
 				UsageScope:               normalizedScope,
+				AccountScope:             accountScope,
 				ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
 				RawURL:                   strings.TrimSpace(uploaded.RawURL),
 				WebURL:                   strings.TrimSpace(uploaded.WebURL),
@@ -697,6 +706,7 @@ dispatchLoop:
 					Purpose:                  candidate.Purpose,
 					Host:                     normalizedHost,
 					UsageScope:               normalizedScope,
+					AccountScope:             accountScope,
 					ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
 					RawURL:                   strings.TrimSpace(uploaded.RawURL),
 					WebURL:                   strings.TrimSpace(uploaded.WebURL),

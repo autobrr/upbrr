@@ -2726,7 +2726,7 @@ func listUploadedImagesForImageTx(
 	imagePath string,
 ) ([]UploadedImageLink, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT disc_id, purpose, host, usage_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+		SELECT disc_id, purpose, host, usage_scope, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
 		FROM uploaded_images
 		WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ?
 		ORDER BY id ASC
@@ -2745,6 +2745,7 @@ func listUploadedImagesForImageTx(
 			&image.Purpose,
 			&image.Host,
 			&image.UsageScope,
+			&image.AccountScope,
 			&image.ImgURL,
 			&image.RawURL,
 			&image.WebURL,
@@ -3425,14 +3426,15 @@ func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, binding PreparedMed
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO uploaded_images (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-			image_path, host, usage_scope, purpose, img_url, raw_url, web_url, size_bytes, uploaded_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_path, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path, usage_scope, host, image_path)
 		DO UPDATE SET
 			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
 			prepared_generation = excluded.prepared_generation,
 			disc_id = excluded.disc_id,
 			purpose = excluded.purpose,
+			account_scope = excluded.account_scope,
 			img_url = excluded.img_url,
 			raw_url = excluded.raw_url,
 			web_url = excluded.web_url,
@@ -3479,6 +3481,7 @@ func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, binding PreparedMed
 			strings.TrimSpace(image.Host),
 			usageScope,
 			purpose,
+			image.AccountScope,
 			strings.TrimSpace(image.ImgURL),
 			strings.TrimSpace(image.RawURL),
 			strings.TrimSpace(image.WebURL),
@@ -3505,7 +3508,7 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, binding
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT disc_id, image_path, host, usage_scope, purpose, img_url, raw_url, web_url, size_bytes, uploaded_at
+		SELECT disc_id, image_path, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
 		FROM uploaded_images
 		WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
 		ORDER BY id ASC
@@ -3526,6 +3529,7 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, binding
 			&image.Host,
 			&image.UsageScope,
 			&purpose,
+			&image.AccountScope,
 			&image.ImgURL,
 			&image.RawURL,
 			&image.WebURL,

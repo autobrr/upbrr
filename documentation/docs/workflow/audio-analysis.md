@@ -96,6 +96,8 @@ Retry without changing the prepared release, selected tracks, image types, or an
 
 Generated PNGs and amplitude statistics text files from the upload workflow and Web UI live in upbrr-managed temporary storage. They have no time-based expiry, but workflow deletion, source changes, replacement analysis, or cleanup of the temporary directory can remove them. Files generated with `--audio-analysis-only` remain in the chosen output location.
 
+When compatible analysis images are restored for a reopened input or retried analysis, their hosted URLs can be reused for the same image host, account configuration, and usage scope. Older upload records without verified account provenance are uploaded again once; changing the hosting account also requires a new upload. Deleting the input from History removes its stored links, not the remote images.
+
 Browser and versioned API downloads remain bound to the workflow owner, analysis ID, artifact ID, and exact result revision. Artifact identifiers and URLs are opaque. See the [API reference](../api/index.md#audio-analysis-routes) for the versioned routes.
 
 For decoder, source, or channel-layout failures, see [Audio analysis fails or is incomplete](../troubleshooting/index.md#audio-analysis-fails-or-is-incomplete).
