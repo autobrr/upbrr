@@ -36,7 +36,16 @@ describe("BlurayCandidatesPage", () => {
                 Publisher: "Example Publisher",
                 URL: "https://example.com/releases/accepted-candidate",
                 CoverImages: [
-                  { Kind: "Front", URL: "https://example.com/images/accepted-cover.jpg" },
+                  {
+                    Kind: "Front",
+                    URL: "https://example.com/images/accepted-cover.jpg",
+                    PreviewURL: "https://example.com/images/accepted-cover-preview.jpg",
+                  },
+                  {
+                    Kind: "Back",
+                    URL: "https://example.com/images/accepted-back.jpg",
+                    PreviewURL: "",
+                  },
                 ],
               },
               {
@@ -50,6 +59,18 @@ describe("BlurayCandidatesPage", () => {
                 Region: "B",
                 Publisher: "Example Publisher",
                 URL: "https://example.com/releases/alternate-candidate",
+              },
+              {
+                ReleaseID: "third-candidate",
+                Accepted: false,
+                Title: "Example Release 2026 Budget Edition",
+                MovieTitle: "Example Release",
+                MovieYear: 2026,
+                Score: 87,
+                Country: "Exampleland",
+                Region: "C",
+                Publisher: "Example Publisher",
+                URL: "https://example.com/releases/third-candidate",
               },
             ],
           },
@@ -67,12 +88,47 @@ describe("BlurayCandidatesPage", () => {
     );
 
     expect(screen.getByText("Example Release 2026 Collector Edition")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Selected" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    expect(
+      screen.getByRole("button", {
+        name: "Selected candidate 1: Example Release 2026 Collector Edition",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Select candidate 3: Example Release 2026 Budget Edition",
+      }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Select candidate 2: Example Release 2026 Standard Edition",
+      }),
+    );
     expect(selectCandidate).toHaveBeenCalledWith("alternate-candidate");
 
-    fireEvent.click(screen.getByRole("img", { name: "Front" }));
+    expect(screen.getByAltText("Front")).toHaveAttribute(
+      "src",
+      "https://example.com/images/accepted-cover-preview.jpg",
+    );
+    expect(screen.getByAltText("Back")).toHaveAttribute(
+      "src",
+      "https://example.com/images/accepted-back.jpg",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Preview candidate 1: Example Release 2026 Collector Edition Front image 1",
+      }),
+    );
     expect(setLightboxImage).toHaveBeenCalledWith("https://example.com/images/accepted-cover.jpg");
     expect(setLightboxAlt).toHaveBeenCalledWith("Example Release 2026 Collector Edition Front");
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Preview candidate 1: Example Release 2026 Collector Edition Back image 2",
+      }),
+    );
+    expect(setLightboxImage).toHaveBeenLastCalledWith(
+      "https://example.com/images/accepted-back.jpg",
+    );
   });
 });

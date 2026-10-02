@@ -28,3 +28,4 @@ e2e/CLAUDE.md
 
 # Generated transport contracts
 src/api/generated/
+public/appearance-bootstrap.js

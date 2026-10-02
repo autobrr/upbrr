@@ -15,7 +15,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, addLogo bool, assets trackers.DescriptionAssets) string {
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
@@ -23,8 +23,10 @@ func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, assets t
 	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
 	assets.Description = baseDescription
 	parts := make([]string, 0, 6)
-	if logo := strings.TrimSpace(meta.ProviderMetadata.TMDB.Logo); logo != "" {
-		parts = append(parts, fmt.Sprintf("[center][img=%d]%s[/img][/center]", maxInt(cfg.ImageCount, 300), logo))
+	if addLogo {
+		if logo := strings.TrimSpace(meta.ProviderMetadata.TMDB.Logo); logo != "" {
+			parts = append(parts, fmt.Sprintf("[center][img=%d]%s[/img][/center]", maxInt(cfg.ImageCount, 300), logo))
+		}
 	}
 	if title := strings.TrimSpace(meta.EpisodeTitle); title != "" {
 		parts = append(parts, "[center][b]Episode Title:[/b] "+title+"[/center]")

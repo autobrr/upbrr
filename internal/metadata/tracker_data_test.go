@@ -40,12 +40,30 @@ import (
 
 const minTrackerTokenLen = 25
 
+func TestTrackerImageURLsFromResultKeepsPreviewPairs(t *testing.T) {
+	t.Parallel()
+	result := trackerdata.Result{Images: []bbcode.Image{
+		{RawURL: "https://images.example.invalid/full-one.png", ImgURL: "https://images.example.invalid/preview-one.png"},
+		{RawURL: "https://images.example.invalid/full-two.png", ImgURL: "javascript:alert(1)"},
+	}}
+	urls, previews := trackerImageURLsFromResult(result, []string{"https://images.example.invalid/full-one.png", ""}, true)
+	if len(urls) != 2 || urls[0] != result.Images[0].RawURL || urls[1] != "" ||
+		previews[result.Images[0].RawURL] != result.Images[0].ImgURL || previews[result.Images[1].RawURL] != "" {
+		t.Fatalf("tracker image URLs = %#v, previews = %#v", urls, previews)
+	}
+	urls, previews = trackerImageURLsFromResult(result, nil, false)
+	if urls != nil || previews[result.Images[0].RawURL] != result.Images[0].ImgURL {
+		t.Fatalf("description previews lost when image downloads are disabled: urls=%#v previews=%#v", urls, previews)
+	}
+}
+
 type stubTrackerLookup struct {
-	results map[string]trackerdata.Result
-	calls   []string
-	ids     map[string]string
-	delays  map[string]time.Duration
-	mu      sync.Mutex
+	results     map[string]trackerdata.Result
+	calls       []string
+	searchNames []string
+	ids         map[string]string
+	delays      map[string]time.Duration
+	mu          sync.Mutex
 }
 
 type coolingTrackerRepo struct {
@@ -73,12 +91,13 @@ func (s *stubTrackerLookup) Lookup(
 	tracker string,
 	trackerID string,
 	_ api.UploadSubject,
-	_ string,
+	searchName string,
 	_ bool,
 	_ bool,
 ) (trackerdata.Result, error) {
 	s.mu.Lock()
 	s.calls = append(s.calls, tracker)
+	s.searchNames = append(s.searchNames, searchName)
 	if s.ids == nil {
 		s.ids = make(map[string]string)
 	}
@@ -108,6 +127,12 @@ func (s *stubTrackerLookup) Calls() []string {
 	return cloned
 }
 
+func (s *stubTrackerLookup) SearchNames() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.searchNames...)
+}
+
 func (s *stubTrackerLookup) TrackerIDFor(tracker string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,12 +157,45 @@ func trackerDataTestRegistry(t *testing.T) *trackers.Registry {
 	return registry
 }
 
+func TestTrackerLookupKeepsExactPageWithoutTorrentID(t *testing.T) {
+	t.Parallel()
+	const torrentPage = "https://anthelion.me/torrents.php?id=42"
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+		"ANT": {TorrentURL: torrentPage, IMDBID: 1234567},
+	}}
+	svc := NewService(&fakeRepo{}, WithTrackerDataLookup(lookup))
+	record, persistable, _, err := svc.lookupTrackerData(t.Context(), preparationstate.State{SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv")}, "ANT", time.Now())
+	if err != nil || !persistable || record.TorrentURL != torrentPage || record.TrackerID != "" {
+		t.Fatalf("exact torrent page was not retained: record=%+v persistable=%t err=%v", record, persistable, err)
+	}
+}
+
+func TestTrackerLookupANTWorkingIDStillUsesFilename(t *testing.T) {
+	t.Parallel()
+	const torrentPage = "https://anthelion.me/torrents.php?id=42"
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+		"ANT": {TorrentURL: torrentPage, IMDBID: 1234567},
+	}}
+	svc := NewService(&fakeRepo{}, WithTrackerDataLookup(lookup))
+	meta := preparationstate.State{
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv"),
+		TrackerIDs: map[string]string{"ant": "1"},
+	}
+	record, persistable, _, err := svc.lookupTrackerData(t.Context(), meta, "ANT", time.Now())
+	if err != nil || !persistable || record.TorrentURL != torrentPage || record.TrackerID != "1" {
+		t.Fatalf("ANT working tracker lost exact page: record=%+v persistable=%t err=%v", record, persistable, err)
+	}
+	if got := lookup.SearchNames(); len(got) != 1 || got[0] != "Example.Release.mkv" {
+		t.Fatalf("ANT search filenames = %v", got)
+	}
+}
+
 func TestTrackerLookupFileNameHonorsSkipWithoutTrackerID(t *testing.T) {
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
-	if got := trackerLookupFileName(meta, "", true); got != "" {
+	if got := trackerLookupFileName(meta, true); got != "" {
 		t.Fatalf("expected filename lookup to be skipped, got %q", got)
 	}
 }
@@ -147,18 +205,42 @@ func TestTrackerLookupFileNameKeepsFilenameWhenDefaultEnabled(t *testing.T) {
 		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
-	if got := trackerLookupFileName(meta, "", false); got != "Example.Show.S04E01.2160p.WEB.h265-GRP.mkv" {
+	if got := trackerLookupFileName(meta, false); got != "Example.Show.S04E01.2160p.WEB.h265-GRP.mkv" {
 		t.Fatalf("expected filename lookup to remain enabled by default, got %q", got)
 	}
 }
 
-func TestTrackerLookupFileNameSkipsFilenameWithTrackerID(t *testing.T) {
+func TestTrackerLookupWithKnownIDPassesFilename(t *testing.T) {
+	t.Parallel()
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{"BLU": {TrackerID: "42"}}}
+	svc := NewService(&fakeRepo{}, WithTrackerDataLookup(lookup))
 	meta := preparationstate.State{
-		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv"),
+		TrackerIDs: map[string]string{"blu": "42"},
 	}
+	_, _, _, err := svc.lookupTrackerData(t.Context(), meta, "BLU", time.Now())
+	if err != nil {
+		t.Fatalf("tracker lookup: %v", err)
+	}
+	if got := lookup.SearchNames(); len(got) != 1 || got[0] != "Example.Release.mkv" {
+		t.Fatalf("lookup filenames with known ID = %v", got)
+	}
+}
 
-	if got := trackerLookupFileName(meta, "12345", false); got != "" {
-		t.Fatalf("expected filename lookup to stop when tracker id is known, got %q", got)
+func TestTrackerLookupFileNameHonorsSkipForANT(t *testing.T) {
+	t.Parallel()
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{"ANT": {TrackerID: "1"}}}
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{Metadata: config.MetadataConfig{SkipTrackerFilenameLookup: true}}), WithTrackerDataLookup(lookup))
+	meta := preparationstate.State{
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv"),
+		TrackerIDs: map[string]string{"ant": "1"},
+	}
+	_, _, _, err := svc.lookupTrackerData(t.Context(), meta, "ANT", time.Now())
+	if err != nil {
+		t.Fatalf("tracker lookup: %v", err)
+	}
+	if got := lookup.SearchNames(); len(got) != 1 || got[0] != "" {
+		t.Fatalf("expected ANT filename lookup to be skipped by config, got %v", got)
 	}
 }
 
@@ -1152,6 +1234,47 @@ func TestFreshAitherSnapshotKeepsStoredIDsWhenRefreshIsEmpty(t *testing.T) {
 	}
 	if len(repo.trackerMetadata) != 1 {
 		t.Fatalf("empty refresh overwrote stored tracker metadata: %#v", repo.trackerMetadata)
+	}
+}
+
+func TestFreshAitherPartialRefreshRetainsStoredImagePreviews(t *testing.T) {
+	t.Parallel()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv")
+	full := "https://images.example.invalid/full.png"
+	preview := "https://images.example.invalid/preview.png"
+	stored := api.TrackerMetadata{
+		SourcePath: sourcePath,
+		Tracker:    "AITHER",
+		TrackerID:  "72677",
+		InfoHash:   "example-hash",
+		TMDBID:     42,
+		Description: "[img]" + full + "[/img]",
+		ImageURLs: []string{full},
+		ImagePreviews: map[string]string{full: preview},
+	}
+	repo := &fakeRepo{
+		trackerMetadata: []api.TrackerMetadata{stored},
+		trackerTimestamps: []api.TrackerTimestamp{{
+			Tracker:   trackers.TrackerAssetProvenanceKey(stored),
+			UpdatedAt: time.Now(),
+		}},
+	}
+	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
+		"AITHER": {TrackerID: stored.TrackerID, TMDBID: stored.TMDBID},
+	}}
+	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
+		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
+		SourcePath: sourcePath,
+		StoredDataFresh: true,
+		InfoHash: stored.InfoHash,
+		TrackerIDs: map[string]string{"aither": stored.TrackerID},
+		Policy:     preparationstate.CollectionPolicy{KeepImages: true},
+	})
+	if err != nil || len(result.TrackerData) != 1 || len(repo.trackerMetadata) != 1 ||
+		result.TrackerData[0].ImagePreviews[full] != preview || repo.trackerMetadata[0].ImagePreviews[full] != preview {
+		t.Fatalf("partial refresh lost saved preview: result=%#v stored=%#v err=%v", result.TrackerData, repo.trackerMetadata, err)
 	}
 }
 

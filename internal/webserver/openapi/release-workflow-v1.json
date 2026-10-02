@@ -818,12 +818,16 @@
           "Kind": {
             "type": "string"
           },
+          "PreviewURL": {
+            "type": "string"
+          },
           "URL": {
             "type": "string"
           }
         },
         "required": [
           "Kind",
+          "PreviewURL",
           "URL"
         ]
       },
@@ -3579,6 +3583,9 @@
           "host": {
             "type": "string"
           },
+          "previewUrl": {
+            "type": "string"
+          },
           "trackerId": {
             "$ref": "#/components/schemas/TrackerID"
           },
@@ -4508,6 +4515,9 @@
       "PreparedReleaseDisplay": {
         "type": "object",
         "properties": {
+          "MediaInfoHTML": {
+            "type": "string"
+          },
           "Providers": {
             "type": "array",
             "items": {
@@ -7557,6 +7567,12 @@
           "groupKey": {
             "type": "string"
           },
+          "imagePreviews": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "rendered": {
             "type": "string"
           },
@@ -8431,6 +8447,9 @@
           "Logo": {
             "type": "string"
           },
+          "LogoLookupAttempted": {
+            "type": "boolean"
+          },
           "MALID": {
             "type": "integer"
           },
@@ -8526,6 +8545,7 @@
           "Localized",
           "LocalizedTitles",
           "Logo",
+          "LogoLookupAttempted",
           "MALID",
           "MismatchedIMDbID",
           "Networks",
@@ -8690,6 +8710,12 @@
           "Poster": {
             "type": "string"
           },
+          "PosterThumbnail": {
+            "type": "string"
+          },
+          "PosterThumbnailLookupAttempted": {
+            "type": "boolean"
+          },
           "Status": {
             "type": "string"
           },
@@ -8735,6 +8761,8 @@
           "Overview",
           "OverviewEnglish",
           "Poster",
+          "PosterThumbnail",
+          "PosterThumbnailLookupAttempted",
           "Status",
           "TVDBID",
           "Type",
@@ -8795,6 +8823,9 @@
           },
           "Backdrop": {
             "type": "string"
+          },
+          "BackdropLookupAttempted": {
+            "type": "boolean"
           },
           "BackdropMedium": {
             "type": "string"
@@ -8875,6 +8906,7 @@
         "required": [
           "AverageRuntime",
           "Backdrop",
+          "BackdropLookupAttempted",
           "BackdropMedium",
           "Country",
           "Ended",
@@ -9893,6 +9925,12 @@
           "IMDBID": {
             "type": "integer"
           },
+          "ImagePreviews": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "ImageURLs": {
             "type": "array",
             "items": {
@@ -9933,6 +9971,7 @@
           "DescriptionHTML",
           "Filename",
           "IMDBID",
+          "ImagePreviews",
           "ImageURLs",
           "InfoHash",
           "MALID",

@@ -605,8 +605,9 @@ test("restart stops at reconciliation after an uncertain client effect", async (
     app = await startApp(workspace, { seed: false });
     client = new ReleaseWorkflowV1Client(app.url, apiToken);
     // Plain reads do not claim a coordinator lease or recover external work.
-    // An explicit owner-authorized resume performs recovery and rejects the
-    // old revision so callers review the resulting reconciliation action.
+    // An explicit owner-authorized resume performs recovery. It can return
+    // while the interrupted operation is still being reconciled, or reject
+    // the old revision after recovery has already advanced the workflow.
     const beforeResumeResponse = await client.get(accepted.workflow.id);
     expect(beforeResumeResponse.status).toBe(200);
     const beforeResume = (await beforeResumeResponse.json()) as WorkflowV1Current;
@@ -622,7 +623,7 @@ test("restart stops at reconciliation after an uncertain client effect", async (
         intent: {},
       },
     });
-    expect(resumed.status, await resumed.clone().text()).toBe(409);
+    expect([202, 409], await resumed.clone().text()).toContain(resumed.status);
     const recoveredOperation = await waitForTerminalOperation(
       client,
       accepted.workflow.id,

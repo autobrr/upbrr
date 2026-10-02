@@ -4,10 +4,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import WebRoot from "./webRoot";
+import { AppearanceProvider } from "./themes/provider";
+import "./themes/palettes.css";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <WebRoot />
+    <AppearanceProvider>
+      <WebRoot />
+    </AppearanceProvider>
   </React.StrictMode>,
 );

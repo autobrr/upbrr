@@ -9,6 +9,7 @@ internal/webserver/assets/*
 !internal/webserver/assets/.keep
 dist/
 docs/*
+webui/public/appearance-bootstrap.js
 !docs/trackerdata/
 docs/trackerdata/*
 !docs/trackerdata/CONTEXT.md

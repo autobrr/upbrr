@@ -16,6 +16,34 @@ import (
 
 const expectedSchemaVersion = 8
 
+func TestMigrateAddTrackerImagePreviewsPreservesExistingRows(t *testing.T) {
+	t.Parallel()
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	ctx := t.Context()
+	if _, err := rawDB.ExecContext(ctx, `CREATE TABLE tracker_metadata (source_path TEXT, image_urls TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rawDB.ExecContext(ctx, `INSERT INTO tracker_metadata (source_path, image_urls) VALUES (?, ?)`, "synthetic", `["https://images.example.invalid/full.png"]`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := migrateAddTrackerImagePreviews(ctx, rawDB); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var urls, previews string
+	if err := rawDB.QueryRowContext(ctx, `SELECT image_urls, image_previews FROM tracker_metadata WHERE source_path = ?`, "synthetic").Scan(&urls, &previews); err != nil {
+		t.Fatal(err)
+	}
+	if urls != `["https://images.example.invalid/full.png"]` || previews != "{}" {
+		t.Fatalf("migrated image URLs = %q, previews = %q", urls, previews)
+	}
+}
+
 func TestBaselineSchemaIncludesCurrentMigrationColumns(t *testing.T) {
 	t.Parallel()
 

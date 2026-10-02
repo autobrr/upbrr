@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -108,6 +110,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 					s.logger.Tracef("metadata: clearing legacy tracker image provenance tracker=%s count=%d", record.Tracker, len(record.ImageURLs))
 				}
 				record.ImageURLs = nil
+				record.ImagePreviews = nil
 				if err := s.repo.SaveTrackerMetadata(ctx, *record); err != nil {
 					return preparationstate.State{}, fmt.Errorf("metadata: clear unverified tracker image urls: %w", err)
 				}
@@ -307,6 +310,12 @@ func (s *Service) enrichTrackerDataPriority(
 			if record.Description == "" {
 				record.Description = cached.Description
 			}
+			if !freshDescription {
+				previews := make(map[string]string, len(cached.ImagePreviews)+len(record.ImagePreviews))
+				maps.Copy(previews, cached.ImagePreviews)
+				maps.Copy(previews, record.ImagePreviews)
+				record.ImagePreviews = previews
+			}
 			if len(record.ImageURLs) == 0 && !freshDescription {
 				record.ImageURLs = append([]string(nil), cached.ImageURLs...)
 			}
@@ -332,6 +341,7 @@ func (s *Service) enrichTrackerDataPriority(
 				}
 				record.Description = ""
 				record.ImageURLs = nil
+				record.ImagePreviews = nil
 			}
 		}
 
@@ -433,6 +443,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 				}
 				outcome.record.Description = ""
 				outcome.record.ImageURLs = nil
+				outcome.record.ImagePreviews = nil
 			}
 		}
 
@@ -512,7 +523,7 @@ func (s *Service) lookupTrackerData(
 		tracker,
 		record.TrackerID,
 		trackerLookupSubject(meta),
-		trackerLookupFileName(meta, record.TrackerID, s.cfg.Metadata.SkipTrackerFilenameLookup),
+		trackerLookupFileName(meta, s.cfg.Metadata.SkipTrackerFilenameLookup),
 		meta.Policy.OnlyID,
 		meta.Policy.KeepImages,
 	)
@@ -541,7 +552,7 @@ func (s *Service) lookupTrackerData(
 			trackerdata.Result{Description: result.Description, Validated: result.Images},
 			meta.Policy.KeepImages,
 		)
-		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Policy.KeepImages)
+		record.ImageURLs, record.ImagePreviews = trackerImageURLsFromResult(result, downloadedImages, meta.Policy.KeepImages)
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
@@ -644,9 +655,19 @@ func trackerLookupSubject(meta preparationstate.State) api.UploadSubject {
 	}
 }
 
-func trackerImageURLsFromResult(_ trackerdata.Result, downloadedImages []string, keepImages bool) []string {
+func trackerImageURLsFromResult(result trackerdata.Result, downloadedImages []string, keepImages bool) ([]string, map[string]string) {
+	previews := make(map[string]string)
+	for _, image := range result.Images {
+		full := strings.TrimSpace(image.RawURL)
+		preview := strings.TrimSpace(image.ImgURL)
+		parsed, err := url.Parse(preview)
+		if full != "" && preview != "" && preview != full && err == nil &&
+			(parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Hostname() != "" {
+			previews[full] = preview
+		}
+	}
 	if !keepImages || len(downloadedImages) == 0 {
-		return nil
+		return nil, previews
 	}
 	urls := make([]string, len(downloadedImages))
 	hasUsable := false
@@ -659,13 +680,13 @@ func trackerImageURLsFromResult(_ trackerdata.Result, downloadedImages []string,
 		hasUsable = true
 	}
 	if !hasUsable {
-		return nil
+		return nil, previews
 	}
-	return urls
+	return urls, previews
 }
 
 func trackerRecordHasPathedData(record api.TrackerMetadata) bool {
-	return record.TrackerID != "" || record.InfoHash != "" || record.Matched
+	return record.TrackerID != "" || record.TorrentURL != "" || record.InfoHash != "" || record.Matched
 }
 
 func trackerRecordHasDescriptionAssets(record api.TrackerMetadata) bool {
@@ -921,6 +942,7 @@ func applyTrackerDataResult(record *api.TrackerMetadata, result trackerdata.Resu
 		return
 	}
 	record.TrackerID = metautil.FirstNonEmptyTrimmed(result.TrackerID, record.TrackerID)
+	record.TorrentURL = strings.TrimSpace(result.TorrentURL)
 	record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
 	record.TMDBID = result.TMDBID
 	record.IMDBID = result.IMDBID
@@ -1085,8 +1107,8 @@ func searchFileName(meta preparationstate.State) string {
 	return pathutil.Base(base)
 }
 
-func trackerLookupFileName(meta preparationstate.State, trackerID string, skipFilenameLookup bool) string {
-	if skipFilenameLookup || strings.TrimSpace(trackerID) != "" {
+func trackerLookupFileName(meta preparationstate.State, skipFilenameLookup bool) string {
+	if skipFilenameLookup {
 		return ""
 	}
 	return searchFileName(meta)

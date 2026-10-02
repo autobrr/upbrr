@@ -275,7 +275,7 @@ func TestNormalizeReleaseFactInstructionsCategory(t *testing.T) {
 	t.Parallel()
 
 	tv := CanonicalCategoryTV
-	television := "television"
+	television := "TeLeViSiOn"
 	instructions := ReleaseFactInstructions{Category: &tv}
 	if err := NormalizeReleaseFactInstructionsCategory(&instructions); err != nil || instructions.ReleaseName.Category == nil || *instructions.ReleaseName.Category != "tv" {
 		t.Fatalf("category-only normalization = %#v, %v", instructions, err)
@@ -283,6 +283,9 @@ func TestNormalizeReleaseFactInstructionsCategory(t *testing.T) {
 	instructions = ReleaseFactInstructions{Category: &tv, ReleaseName: ReleaseNameOverrides{Category: &television}}
 	if err := NormalizeReleaseFactInstructionsCategory(&instructions); err != nil || *instructions.Category != CanonicalCategoryTV {
 		t.Fatalf("matching normalization = %#v, %v", instructions, err)
+	}
+	if *instructions.ReleaseName.Category != "tv" {
+		t.Fatalf("release-name category = %q, want tv", *instructions.ReleaseName.Category)
 	}
 	movie := "movie"
 	instructions = ReleaseFactInstructions{Category: &tv, ReleaseName: ReleaseNameOverrides{Category: &movie}}

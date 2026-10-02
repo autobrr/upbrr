@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"path" //nolint:depguard // Builds URL paths, not local filesystem paths.
 	"path/filepath"
 	"strings"
 	"time"
@@ -359,7 +358,7 @@ func newCoreWithHooks(
 			for index := range records {
 				records[index].ImageURLs = trackers.ComparisonSafeTrackerImageURLs(records[index], registry)
 			}
-			display.TrackerData = buildTrackerPreview(records, cfg)
+			display.TrackerData = buildTrackerPreview(records, registry)
 			return display, nil
 		},
 		SubjectFunc:   preparedFacts.ResolveUploadSubject,
@@ -995,14 +994,14 @@ func (c *Core) Close() error {
 }
 
 // RenderDescription renders raw BBCode after rejecting a pre-canceled context.
-func (c *Core) RenderDescription(ctx context.Context, raw string) (string, error) {
+func (c *Core) RenderDescription(ctx context.Context, raw string, previews map[string]string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", classifyOperationError(api.OperationKindDescription, fmt.Errorf("core: render description canceled: %w", err))
 	}
-	return description.Render(raw), nil
+	return description.RenderWithImagePreviews(raw, previews), nil
 }
 
-func buildTrackerPreview(records []api.TrackerMetadata, cfg config.Config) []api.TrackerPreview {
+func buildTrackerPreview(records []api.TrackerMetadata, registry *trackers.Registry) []api.TrackerPreview {
 	if len(records) == 0 {
 		return nil
 	}
@@ -1044,10 +1043,11 @@ func buildTrackerPreview(records []api.TrackerMetadata, cfg config.Config) []api
 	result := make([]api.TrackerPreview, 0, len(byTracker))
 	for _, key := range orderedKeys {
 		record := byTracker[key]
+		imagePreviews := record.ImagePreviews
 		preview := api.TrackerPreview{
 			Tracker:         record.Tracker,
 			TrackerID:       record.TrackerID,
-			TorrentURL:      trackerTorrentURL(cfg, record.Tracker, record.TrackerID),
+			TorrentURL:      trackerPreviewURL(registry, record),
 			InfoHash:        record.InfoHash,
 			TMDBID:          record.TMDBID,
 			IMDBID:          record.IMDBID,
@@ -1055,8 +1055,9 @@ func buildTrackerPreview(records []api.TrackerMetadata, cfg config.Config) []api
 			MALID:           record.MALID,
 			Category:        string(record.Category),
 			Description:     record.Description,
-			DescriptionHTML: description.Render(record.Description),
+			DescriptionHTML: description.RenderWithImagePreviews(record.Description, imagePreviews),
 			ImageURLs:       append([]string{}, record.ImageURLs...),
+			ImagePreviews:   imagePreviews,
 			Filename:        record.Filename,
 			Matched:         record.Matched,
 		}
@@ -1068,49 +1069,28 @@ func buildTrackerPreview(records []api.TrackerMetadata, cfg config.Config) []api
 	return result
 }
 
-func trackerTorrentURL(cfg config.Config, tracker string, trackerID string) string {
+func trackerPreviewURL(registry *trackers.Registry, record api.TrackerMetadata) string {
+	if record.TorrentURL != "" {
+		parsed, err := url.Parse(record.TorrentURL)
+		if err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != "" && parsed.User == nil {
+			return parsed.String()
+		}
+		return ""
+	}
+	tracker, trackerID := record.Tracker, record.TrackerID
 	if strings.TrimSpace(tracker) == "" || strings.TrimSpace(trackerID) == "" {
 		return ""
 	}
-	base := trackerBaseURL(cfg, tracker)
-	if base == "" {
+	// Legacy Unit3D rows use the family URL shape. Other tracker rows need an
+	// exact page retained from lookup.
+	if family, ok := registry.LookupFamily(tracker); !ok || family != trackers.FamilyUnit3D {
 		return ""
 	}
-	parsed, err := url.Parse(base)
-	if err != nil {
+	base, ok := registry.LookupBaseURL(tracker)
+	if !ok {
 		return ""
 	}
-	parsed.Path = path.Join("/", "torrents", trackerID)
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String()
-}
-
-func trackerBaseURL(cfg config.Config, tracker string) string {
-	if strings.TrimSpace(tracker) == "" {
-		return ""
-	}
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(name, tracker) {
-			return baseFromAnnounce(entry.AnnounceURL)
-		}
-	}
-	return ""
-}
-
-func baseFromAnnounce(announce string) string {
-	trimmed := strings.TrimSpace(announce)
-	if trimmed == "" {
-		return ""
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return ""
-	}
-	parsed.Path = "/"
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String()
+	return strings.TrimRight(base, "/") + "/torrents/" + url.PathEscape(trackerID)
 }
 
 // migrateLegacyCookies performs automatic migration of cookies from file-based storage

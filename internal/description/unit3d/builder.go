@@ -338,6 +338,11 @@ func filterScreenshotDuplicates(images []api.ScreenshotImage, keptDescription st
 		if _, ok := seen[url]; ok {
 			continue
 		}
+		if rawURL := strings.TrimSpace(image.RawURL); rawURL != "" {
+			if _, ok := seen[rawURL]; ok {
+				continue
+			}
+		}
 		filtered = append(filtered, image)
 	}
 	return filtered

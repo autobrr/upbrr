@@ -1,10 +1,14 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { historyClient } from "../../api/app";
 import type { HistoryEntry, HistoryOverview, HistoryRuleFailure } from "../../types";
 import { cn } from "../../utils/cn";
+
+const emptyHistory: HistoryEntry[] = [];
 
 const formatDate = (value: string) => {
   if (!value) {
@@ -67,42 +71,21 @@ type Props = {
 
 /** Displays persisted history and optionally reopens a source through the active release session. */
 export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
-  const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const queryClient = useQueryClient();
+  const historyQuery = useQuery({
+    queryKey: ["history", "list"],
+    queryFn: ({ signal }) => historyClient.list(signal),
+  });
+  const entries = historyQuery.data ?? emptyHistory;
+  const loading = historyQuery.isPending;
   const [selectedPath, setSelectedPath] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [overview, setOverview] = useState<HistoryOverview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
   const [openFailure, setOpenFailure] = useState<{ sourcePath: string; message: string } | null>(
     null,
   );
-
-  useEffect(() => {
-    const listHistory = historyClient.list;
-    const load = async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const result = await listHistory();
-        setEntries(result || []);
-        if (result?.length) {
-          setSelectedPath((current) => current || result[0].SourcePath);
-        } else {
-          setSelectedPath("");
-          setOverview(null);
-        }
-      } catch (err) {
-        setError(String(err));
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void load();
-  }, []);
 
   const filteredEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -118,7 +101,6 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   useEffect(() => {
     if (!filteredEntries.length) {
       setSelectedPath("");
-      setOverview(null);
       return;
     }
     const selectionStillVisible = filteredEntries.some(
@@ -129,39 +111,13 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     }
   }, [filteredEntries, selectedPath]);
 
-  useEffect(() => {
-    setOpenFailure(null);
-    if (!selectedPath) {
-      setOverview(null);
-      return;
-    }
-    let active = true;
-    const getHistoryOverview = historyClient.getOverview;
-    const loadDetail = async () => {
-      setDetailLoading(true);
-      setOverview(null);
-      setError("");
-      try {
-        const next = await getHistoryOverview(selectedPath);
-        if (active) {
-          setOverview(next);
-        }
-      } catch (err) {
-        if (active) {
-          setError(String(err));
-        }
-      } finally {
-        if (active) {
-          setDetailLoading(false);
-        }
-      }
-    };
-
-    void loadDetail();
-    return () => {
-      active = false;
-    };
-  }, [selectedPath]);
+  const overviewQuery = useQuery({
+    queryKey: ["history", "overview", selectedPath],
+    queryFn: ({ signal }) => historyClient.getOverview(selectedPath, signal),
+    enabled: selectedPath !== "",
+  });
+  const overview: HistoryOverview | null = overviewQuery.data ?? null;
+  const detailLoading = selectedPath !== "" && overviewQuery.isPending;
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.SourcePath === selectedPath) || null,
@@ -180,7 +136,6 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
       return;
     }
     const deleteHistoryRelease = historyClient.removeRelease;
-    const listHistory = historyClient.list;
     const confirmed = window.confirm("Remove this stored release and all associated stored files?");
     if (!confirmed) {
       return;
@@ -193,11 +148,11 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
       const deletedPath = selectedPath;
       await deleteHistoryRelease(deletedPath);
       onReleaseDeleted?.(deletedPath);
-      const refreshed = (await listHistory()) || [];
-      setEntries(refreshed);
+      queryClient.removeQueries({ queryKey: ["history", "overview", deletedPath] });
+      await queryClient.invalidateQueries({ queryKey: ["history", "list"] });
+      const refreshed = queryClient.getQueryData<HistoryEntry[]>(["history", "list"]) ?? [];
       if (!refreshed.length) {
         setSelectedPath("");
-        setOverview(null);
       }
     } catch (err) {
       setError(String(err));
@@ -228,25 +183,30 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   };
 
   const displayedError =
-    error || (openFailure?.sourcePath === selectedPath ? openFailure.message : "");
+    error ||
+    (openFailure?.sourcePath === selectedPath ? openFailure.message : "") ||
+    (historyQuery.error ? String(historyQuery.error) : "") ||
+    (overviewQuery.error ? String(overviewQuery.error) : "");
 
   return (
-    <div className="content-stack">
-      <header className="hero">
-        <p className="eyebrow">upbrr</p>
+    <div className="flex flex-col gap-4">
+      <header className="relative z-[1] max-w-[720px]">
+        <p className={pageStyle.eyebrow}>upbrr</p>
         <h1>History</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           Review previously processed releases stored in SQLite and inspect full stored details.
         </p>
       </header>
 
-      <section className="panel grid min-h-[560px] gap-3 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
-        <aside className="rounded-lg border border-white/10 bg-white/5 p-3">
+      <section
+        className={`${pageStyle.panel} grid min-h-[560px] gap-3 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]`}
+      >
+        <aside className="rounded-lg border border-border bg-card p-3">
           <div className="mb-2">
-            <p className="label">Stored releases</p>
+            <p className={pageStyle.label}>Stored releases</p>
             <p className="helper">Most recently updated first</p>
             <label className="mt-2 grid gap-1.5">
-              <span className="label">Search by title</span>
+              <span className={pageStyle.label}>Search by title</span>
               <input
                 type="text"
                 value={searchQuery}
@@ -256,12 +216,12 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
             </label>
           </div>
 
-          {loading ? <p className="muted">Loading history...</p> : null}
+          {loading ? <p className="text-muted-foreground">Loading history...</p> : null}
           {!loading && entries.length === 0 ? (
-            <p className="muted">No stored releases found.</p>
+            <p className="text-muted-foreground">No stored releases found.</p>
           ) : null}
           {!loading && entries.length > 0 && filteredEntries.length === 0 ? (
-            <p className="muted">No releases match the current title filter.</p>
+            <p className="text-muted-foreground">No releases match the current title filter.</p>
           ) : null}
 
           <div className="grid max-h-[520px] gap-1.5 overflow-y-auto">
@@ -269,38 +229,31 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
               <button
                 key={entry.SourcePath}
                 type="button"
+                aria-pressed={entry.SourcePath === selectedPath}
                 className={cn(
-                  "grid w-full gap-1 rounded-md border px-3 py-2 text-left transition",
+                  "grid w-full min-w-0 gap-1 rounded-md border px-3 py-2 text-left transition [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                   entry.SourcePath === selectedPath
-                    ? "border-[var(--accent-2)] bg-[rgba(53,194,193,0.16)] text-[var(--text)] shadow-[inset_3px_0_0_var(--accent-2),0_0_16px_rgba(53,194,193,0.16)]"
-                    : "border-white/10 bg-black/15 text-[var(--muted)] hover:border-white/20 hover:bg-white/5 hover:text-[var(--text)]",
+                    ? "border-primary bg-accent text-accent-foreground"
+                    : "border-border bg-card text-card-foreground hover:border-primary hover:bg-accent hover:text-accent-foreground",
                 )}
                 onClick={() => setSelectedPath(entry.SourcePath)}
               >
-                <span
-                  className={cn(
-                    "font-semibold",
-                    entry.SourcePath === selectedPath ? "text-[var(--text)]" : "text-inherit",
-                  )}
-                >
+                <span className="font-semibold">
+                  {entry.SourcePath === selectedPath ? <span aria-hidden="true">✓ </span> : null}
                   {releaseLabel(entry)}
                 </span>
-                <span className="text-xs text-[var(--muted)]">
-                  {entry.LatestUploadStatus || "Stored"}
-                </span>
-                <span className="text-xs text-[var(--muted)]">
-                  Updated {formatDate(entry.MetadataUpdatedAt)}
-                </span>
+                <span className="text-xs">{entry.LatestUploadStatus || "Stored"}</span>
+                <span className="text-xs">Updated {formatDate(entry.MetadataUpdatedAt)}</span>
               </button>
             ))}
           </div>
         </aside>
 
-        <div className="overflow-y-auto rounded-lg border border-white/10 bg-white/5 p-3">
-          {detailLoading ? <p className="muted">Loading overview...</p> : null}
+        <div className="overflow-y-auto rounded-lg border border-border bg-card p-3">
+          {detailLoading ? <p className="text-muted-foreground">Loading overview...</p> : null}
 
           {!detailLoading && !overview ? (
-            <p className="muted">Select a stored release to view details.</p>
+            <p className="text-muted-foreground">Select a stored release to view details.</p>
           ) : null}
 
           {overview ? (
@@ -316,7 +269,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                 </button>
                 <button
                   type="button"
-                  className="ghost border-red-400/45 text-[var(--danger)]"
+                  className="ghost border-destructive text-destructive-text"
                   disabled={deleting || detailLoading || !selectedPath}
                   onClick={() => {
                     void handleDeleteRelease();
@@ -326,26 +279,26 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                 </button>
               </div>
 
-              <div className="summary">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 rounded-2xl border border-foreground/10 bg-card/80 p-4">
                 <div>
-                  <p className="label">Release</p>
-                  <p className="value">
+                  <p className={pageStyle.label}>Release</p>
+                  <p className={pageStyle.value}>
                     {selectedEntry
                       ? releaseLabel(selectedEntry)
                       : releaseLabelFromOverview(overview)}
                   </p>
                 </div>
                 <div>
-                  <p className="label">Status</p>
-                  <p className="value">{overview.StatusLabel || "Stored"}</p>
+                  <p className={pageStyle.label}>Status</p>
+                  <p className={pageStyle.value}>{overview.StatusLabel || "Stored"}</p>
                 </div>
                 <div>
-                  <p className="label">Metadata Updated</p>
-                  <p className="value">{formatDate(overview.MetadataUpdatedAt)}</p>
+                  <p className={pageStyle.label}>Metadata Updated</p>
+                  <p className={pageStyle.value}>{formatDate(overview.MetadataUpdatedAt)}</p>
                 </div>
                 <div>
-                  <p className="label">Last Upload</p>
-                  <p className="value">
+                  <p className={pageStyle.label}>Last Upload</p>
+                  <p className={pageStyle.value}>
                     {formatLastUpload(
                       overview.LatestUploadStatus,
                       overview.StatusLabel,
@@ -356,12 +309,14 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
               </div>
 
               <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2 [&_h3]:mb-2 [&_h3]:mt-0 [&_h3]:text-sm">
-                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="rounded-lg border border-border bg-muted p-2.5 text-foreground">
                   <h3>Path</h3>
-                  <p className="mono">{overview.SourcePath}</p>
+                  <p className="font-mono text-[0.95rem] [overflow-wrap:anywhere]">
+                    {overview.SourcePath}
+                  </p>
                 </article>
 
-                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
+                <article className="rounded-lg border border-border bg-muted p-2.5 text-foreground [&_p]:mb-1 [&_p]:mt-0">
                   <h3>External IDs</h3>
                   <p>TMDB: {overview.Identity?.TMDBID || 0}</p>
                   <p>IMDb: {overview.Identity?.IMDBID || 0}</p>
@@ -369,7 +324,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                   <p>TVmaze: {overview.Identity?.TVmazeID || 0}</p>
                 </article>
 
-                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
+                <article className="rounded-lg border border-border bg-muted p-2.5 text-foreground [&_p]:mb-1 [&_p]:mt-0">
                   <h3>Counts</h3>
                   <p>Tracker metadata: {overview.TrackerMetadata?.length || 0}</p>
                   <p>
@@ -402,7 +357,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                   <p>Upload history: {overview.UploadHistory?.length || 0}</p>
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-border bg-muted p-2.5 text-foreground">
                   <h3>Description Overrides</h3>
                   {descriptionOverrides.length ? (
                     <ul className="m-0 grid gap-1 pl-4">
@@ -411,7 +366,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                         return (
                           <li key={`${groupKey}-${override.UpdatedAt}-${index}`}>
                             <strong>{groupKey}</strong>
-                            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
+                            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-card p-2 text-xs text-card-foreground [overflow-wrap:anywhere]">
                               {override.Description?.trim() || "(empty)"}
                             </pre>
                           </li>
@@ -419,11 +374,11 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                       })}
                     </ul>
                   ) : (
-                    <p className="muted">(none)</p>
+                    <p className="text-muted-foreground">(none)</p>
                   )}
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-border bg-muted p-2.5 text-foreground">
                   <h3>Upload History</h3>
                   {overview.UploadHistory?.length ? (
                     <ul className="m-0 grid gap-1 pl-4">
@@ -435,11 +390,11 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                       ))}
                     </ul>
                   ) : (
-                    <p className="muted">No upload records.</p>
+                    <p className="text-muted-foreground">No upload records.</p>
                   )}
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-border bg-muted p-2.5 text-foreground">
                   <h3>Tracker Rule Results</h3>
                   {overview.TrackerRuleFailures?.length ? (
                     <ul className="m-0 grid gap-1 pl-4">
@@ -454,27 +409,27 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                       ))}
                     </ul>
                   ) : (
-                    <p className="muted">No tracker rule results stored.</p>
+                    <p className="text-muted-foreground">No tracker rule results stored.</p>
                   )}
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-border bg-muted p-2.5 text-foreground">
                   <h3>Provider Display (diagnostic)</h3>
-                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
+                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-card p-2 text-xs text-card-foreground [overflow-wrap:anywhere]">
                     {JSON.stringify(overview.Display || {}, null, 2)}
                   </pre>
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-border bg-muted p-2.5 text-foreground">
                   <h3>Release Overrides (raw)</h3>
-                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
+                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-card p-2 text-xs text-card-foreground [overflow-wrap:anywhere]">
                     {JSON.stringify(overview.ReleaseNameOverrides || {}, null, 2)}
                   </pre>
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-border bg-muted p-2.5 text-foreground">
                   <h3>Metadata (raw)</h3>
-                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
+                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-card p-2 text-xs text-card-foreground [overflow-wrap:anywhere]">
                     {JSON.stringify(overview.Metadata || {}, null, 2)}
                   </pre>
                 </article>
@@ -482,7 +437,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
             </div>
           ) : null}
 
-          {displayedError ? <p className="error">{displayedError}</p> : null}
+          {displayedError ? <p className={pageStyle.error}>{displayedError}</p> : null}
         </div>
       </section>
     </div>

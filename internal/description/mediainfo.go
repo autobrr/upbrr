@@ -38,18 +38,21 @@ type mediaInfoField struct {
 }
 
 var (
-	mediaInfoBBCodePattern     = regexp.MustCompile(`(?is)\[mediainfo\]([\s\S]*?)\[/mediainfo\]`)
-	mediaInfoSpoilerPattern    = regexp.MustCompile(`(?is)\[spoiler=([^\]]*mediainfo[^\]]*)\]\s*\[code\]([\s\S]*?)\[/code\]\s*\[/spoiler\]`)
-	mediaInfoHideCodePattern   = regexp.MustCompile(`(?is)\[hide(?:=([^\]]*mediainfo[^\]]*))?\]\s*\[code\]([\s\S]*?)\[/code\]\s*\[/hide\]`)
-	mediaInfoHideFontPattern   = regexp.MustCompile(`(?is)\[hide=([^\]]*mediainfo[^\]]*)\]\s*\[font=monospace\]([\s\S]*?)\[/font\]\s*\[/hide\]`)
-	mediaInfoQuotePattern      = regexp.MustCompile(`(?is)\[quote=([^\]]*mediainfo[^\]]*)\]([\s\S]*?)\[/quote\]`)
-	mediaInfoSectionPattern    = regexp.MustCompile(`(?i)^(general|video|audio|text)(?:\s*#\d+)?$`)
-	mediaInfoStripPathPattern  = regexp.MustCompile(`[\\/]+`)
-	mediaInfoWhitespacePattern = regexp.MustCompile(`\s+`)
+	mediaInfoBBCodePattern      = regexp.MustCompile(`(?is)\[mediainfo\]([\s\S]*?)\[/mediainfo\]`)
+	mediaInfoSpoilerPattern     = regexp.MustCompile(`(?is)\[spoiler=([^\]]*mediainfo[^\]]*)\]\s*\[code\]([\s\S]*?)\[/code\]\s*\[/spoiler\]`)
+	mediaInfoHideCodePattern    = regexp.MustCompile(`(?is)\[hide(?:=([^\]]*mediainfo[^\]]*))?\]\s*\[code\]([\s\S]*?)\[/code\]\s*\[/hide\]`)
+	mediaInfoHideFontPattern    = regexp.MustCompile(`(?is)\[hide=([^\]]*mediainfo[^\]]*)\]\s*\[font=monospace\]([\s\S]*?)\[/font\]\s*\[/hide\]`)
+	mediaInfoQuotePattern       = regexp.MustCompile(`(?is)\[quote=([^\]]*mediainfo[^\]]*)\]([\s\S]*?)\[/quote\]`)
+	mediaInfoHidePrePattern     = regexp.MustCompile(`(?is)\[hide=([^\]]*mediainfo[^\]]*)\]\s*\[pre\]([\s\S]*?)\[/pre\]\s*\[/hide\]`)
+	mediaInfoSpoilerFontPattern = regexp.MustCompile(`(?is)\[spoiler=([^\]]+)\]\s*\[left\]\s*\[font=[^\]]+\]([\s\S]*?)\[/font\]\s*\[/left\]\s*\[/spoiler\]`)
+	mediaInfoPrePattern         = regexp.MustCompile(`(?is)\[pre\]([\s\S]*?)\[/pre\]`)
+	mediaInfoSectionPattern     = regexp.MustCompile(`(?i)^(general|video|audio|text)(?:\s*#\d+)?$`)
+	mediaInfoStripPathPattern   = regexp.MustCompile(`[\\/]+`)
+	mediaInfoWhitespacePattern  = regexp.MustCompile(`\s+`)
 )
 
 func renderBBCodeWithMediaInfo(value string) (string, bool) {
-	normalized := normalizeBBCode(value)
+	normalized := strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
 	var builder strings.Builder
 	found := false
 	offset := 0
@@ -107,19 +110,43 @@ func nextMediaInfoBlock(value string) (mediaInfoBlock, bool) {
 			bestSet = true
 		}
 	}
-	for _, candidate := range mediaInfoBlocksFromPattern(value, mediaInfoHideCodePattern, "MediaInfo") {
+	for _, candidate := range mediaInfoBlocksFromPattern(value, mediaInfoHideCodePattern) {
 		if !bestSet || candidate.start < best.start {
 			best = candidate
 			bestSet = true
 		}
 	}
-	for _, candidate := range mediaInfoBlocksFromPattern(value, mediaInfoHideFontPattern, "MediaInfo") {
+	for _, candidate := range mediaInfoBlocksFromPattern(value, mediaInfoHideFontPattern) {
 		if !bestSet || candidate.start < best.start {
 			best = candidate
 			bestSet = true
 		}
 	}
-	for _, candidate := range mediaInfoBlocksFromPattern(value, mediaInfoQuotePattern, "MediaInfo") {
+	for _, candidate := range mediaInfoBlocksFromPattern(value, mediaInfoQuotePattern) {
+		if !bestSet || candidate.start < best.start {
+			best = candidate
+			bestSet = true
+		}
+	}
+	for _, candidate := range mediaInfoBlocksFromPattern(value, mediaInfoHidePrePattern) {
+		if !bestSet || candidate.start < best.start {
+			best = candidate
+			bestSet = true
+		}
+	}
+	for _, candidate := range mediaInfoBlocksFromPattern(value, mediaInfoSpoilerFontPattern) {
+		if !bestSet || candidate.start < best.start {
+			best = candidate
+			bestSet = true
+		}
+	}
+	if match := mediaInfoPrePattern.FindStringSubmatchIndex(value); len(match) == 4 {
+		candidate := mediaInfoBlock{
+			start: match[0],
+			end:   match[1],
+			label: "MediaInfo",
+			raw:   value[match[2]:match[3]],
+		}
 		if !bestSet || candidate.start < best.start {
 			best = candidate
 			bestSet = true
@@ -128,19 +155,19 @@ func nextMediaInfoBlock(value string) (mediaInfoBlock, bool) {
 	return best, bestSet
 }
 
-func mediaInfoBlocksFromPattern(value string, pattern *regexp.Regexp, fallbackLabel string) []mediaInfoBlock {
+func mediaInfoBlocksFromPattern(value string, pattern *regexp.Regexp) []mediaInfoBlock {
 	matches := pattern.FindAllStringSubmatchIndex(value, -1)
 	blocks := make([]mediaInfoBlock, 0, len(matches))
 	for _, match := range matches {
 		if len(match) != 6 {
 			continue
 		}
-		label := fallbackLabel
+		label := "MediaInfo"
 		if match[2] >= 0 && match[3] >= 0 {
 			label = strings.TrimSpace(value[match[2]:match[3]])
 		}
 		if label == "" {
-			label = fallbackLabel
+			label = "MediaInfo"
 		}
 		blocks = append(blocks, mediaInfoBlock{
 			start: match[0],
@@ -228,6 +255,17 @@ func renderMediaInfoBlock(label string, raw string) (string, bool) {
 	builder.WriteString(escapeHTML(summary.raw))
 	builder.WriteString(`</code></pre></details></div>`)
 	return builder.String(), true
+}
+
+// RenderMediaInfo returns sanitized HTML for a source-level MediaInfo preview.
+func RenderMediaInfo(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	if rendered, ok := renderMediaInfoBlock("MediaInfo", raw); ok {
+		return sanitizeHTML(rendered)
+	}
+	return sanitizeHTML("<pre><code>" + escapeHTML(raw) + "</code></pre>")
 }
 
 func parseMediaInfoSummary(label string, raw string) (mediaInfoSummary, bool) {

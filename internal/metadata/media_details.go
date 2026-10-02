@@ -23,9 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
-	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -121,7 +119,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	meta.AudioLanguages = append([]string(nil), meta.TrackAudioLanguages...)
 	meta.SubtitleLanguages = append([]string(nil), meta.TrackSubtitleLanguages...)
 
-	bdinfo := loadBDInfo(meta, s.cfg.MainSettings.DBPath)
+	bdinfo := loadBDInfo(meta)
 	bdAudioLanguages, bdSubtitleLanguages := extractBDInfoLanguages(bdinfo)
 	if len(meta.AudioLanguages) == 0 {
 		meta.AudioLanguages = bdAudioLanguages
@@ -424,31 +422,18 @@ func applyMetadataOverrides(meta *preparationstate.State) error {
 	return nil
 }
 
-func loadBDInfo(meta preparationstate.State, dbPath string) *discparse.BDInfo {
-	if !strings.EqualFold(meta.DiscType, "BDMV") && !strings.EqualFold(meta.DiscType, "DVD") {
+func loadBDInfo(meta preparationstate.State) *discparse.BDInfo {
+	if !strings.EqualFold(meta.DiscType, "BDMV") {
 		return nil
 	}
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return nil
+	for _, disc := range meta.Discs {
+		for _, report := range disc.Reports {
+			if summary := strings.TrimSpace(report.Summary); summary != "" {
+				return discparse.ParseBDInfoSummary(summary, "", meta.SourcePath)
+			}
+		}
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
-	if err != nil {
-		return nil
-	}
-	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
-	if strings.TrimSpace(path) == "" {
-		return nil
-	}
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	summary, files, _ := discparse.SplitBDInfoReport(string(payload))
-	if strings.TrimSpace(summary) == "" {
-		return nil
-	}
-	return discparse.ParseBDInfoSummary(summary, files, meta.SourcePath)
+	return nil
 }
 
 func containerFromMeta(meta preparationstate.State) string {

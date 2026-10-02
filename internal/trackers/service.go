@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -249,19 +250,27 @@ func (s *Service) preloadUploadContentData(
 	trackerNames []string,
 ) (*preloadedDescriptionAssetData, error, error) {
 	needsImages := false
+	needsDescription := false
 	for _, tracker := range trackerNames {
 		mode, ok := s.registry.LookupUploadContentMode(tracker)
 		if !ok {
 			continue
 		}
 		needsImages = needsImages || mode.UsesImages()
+		needsDescription = needsDescription || mode.UsesDescription()
 	}
 	if !needsImages {
 		return nil, nil, nil
 	}
-	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
+	preloaded, err := preloadUploadAssetData(ctx, meta, s.repo, s.registry)
 	if err != nil {
 		return nil, err, err
+	}
+	if !needsDescription {
+		return preloaded, nil, nil
+	}
+	if err := preloadDescriptionFields(ctx, meta, s.repo, preloaded); err != nil {
+		return preloaded, nil, err
 	}
 	return preloaded, nil, nil
 }
@@ -442,12 +451,34 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		}
 		groupKey = preparationGroupKey(groupKey, resolution.feedback.SelectedHost, resolution.usageScope)
 
-		descriptionHTML := description.Render(descriptionText)
+		imagePreviews := make(map[string]string)
+		for _, image := range append(append([]api.ScreenshotImage{}, assets.Screenshots...), assets.MenuImages...) {
+			if image.RawURL != "" && image.ImgURL != "" && image.RawURL != image.ImgURL {
+				imagePreviews[image.RawURL] = image.ImgURL
+			}
+		}
+		if trackerPreloaded != nil {
+			for _, record := range trackerPreloaded.trackerRecords {
+				maps.Copy(imagePreviews, record.ImagePreviews)
+			}
+		}
+		for _, record := range trackerMeta.TrackerData {
+			maps.Copy(imagePreviews, record.ImagePreviews)
+		}
+		if trackerMeta.ExactMedia != nil {
+			for _, image := range trackerMeta.ExactMedia.AudioUploads {
+				if image.RawURL != "" && image.ImgURL != "" && image.RawURL != image.ImgURL {
+					imagePreviews[image.RawURL] = image.ImgURL
+				}
+			}
+		}
+		descriptionHTML := description.RenderWithImagePreviews(descriptionText, imagePreviews)
 		candidate := api.PreparationDescription{
 			RawDescription:     descriptionText,
 			RawDescriptionHTML: descriptionHTML,
 			Description:        descriptionText,
 			DescriptionHTML:    descriptionHTML,
+			ImagePreviews:      imagePreviews,
 			HasOverride:        assets.Override,
 			ImageHost:          resolution.feedback,
 		}
@@ -1061,7 +1092,8 @@ func addPreparationDescriptionGroup(
 func preparationDescriptionsMatch(left api.PreparationDescription, right api.PreparationDescription) bool {
 	return left.RawDescription == right.RawDescription &&
 		left.Description == right.Description &&
-		left.HasOverride == right.HasOverride
+		left.HasOverride == right.HasOverride &&
+		maps.Equal(left.ImagePreviews, right.ImagePreviews)
 }
 
 func mergePreparationImageHostFeedback(left api.ImageHostFeedback, right api.ImageHostFeedback) api.ImageHostFeedback {

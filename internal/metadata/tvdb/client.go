@@ -417,6 +417,8 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 		Poster:           extractPosterURL(resp.Data),
 		Aliases:          mapAliases(resp.Data.Aliases),
 	}
+	metadata.PosterThumbnail = extractPosterThumbnailURL(resp.Data.Artworks, metadata.Poster)
+	metadata.PosterThumbnailLookupAttempted = true
 	seriesTranslation, translationErr := c.fetchSeriesTranslation(ctx, metadata.TVDBID, "eng")
 	if translationErr != nil && c.logger != nil {
 		c.logger.Debugf("tvdb: series english translation lookup failed series_id=%d: %v", metadata.TVDBID, translationErr)
@@ -1592,6 +1594,15 @@ func extractPosterURL(data seriesExtendedDataResponse) string {
 	return ""
 }
 
+func extractPosterThumbnailURL(artworks []artworkResponse, poster string) string {
+	for _, artwork := range artworks {
+		if strings.TrimSpace(artwork.Image) == poster {
+			return strings.TrimSpace(artwork.Thumbnail)
+		}
+	}
+	return ""
+}
+
 func episodeFromResponse(item episodeResponse) Episode {
 	return Episode{
 		ID:             item.ID,
@@ -2299,8 +2310,9 @@ type namedResponse struct {
 }
 
 type artworkResponse struct {
-	Image string `json:"image"`
-	Type  int    `json:"type"`
+	Image     string `json:"image"`
+	Thumbnail string `json:"thumbnail"`
+	Type      int    `json:"type"`
 }
 
 type companyTypeResponse struct {

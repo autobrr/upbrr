@@ -182,20 +182,22 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	}
 
 	if err := repo.SaveTrackerMetadata(ctx, TrackerMetadata{
-		SourcePath:  "/media/file.mkv",
-		Tracker:     "BLU",
-		TrackerID:   "123",
-		InfoHash:    "hash",
-		TMDBID:      1,
-		IMDBID:      2,
-		TVDBID:      3,
-		MALID:       4,
-		Category:    "MOVIE",
-		Description: "example",
-		ImageURLs:   []string{"https://example.com/a.jpg"},
-		Filename:    "example.mkv",
-		Matched:     true,
-		UpdatedAt:   now,
+		SourcePath:    "/media/file.mkv",
+		Tracker:       "BLU",
+		TrackerID:     "123",
+		TorrentURL:    "https://tracker.example.invalid/torrents/123",
+		InfoHash:      "hash",
+		TMDBID:        1,
+		IMDBID:        2,
+		TVDBID:        3,
+		MALID:         4,
+		Category:      "MOVIE",
+		Description:   "example",
+		ImageURLs:     []string{"https://example.com/a.jpg"},
+		ImagePreviews: map[string]string{"https://example.com/a.jpg": "https://example.com/a-preview.jpg"},
+		Filename:      "example.mkv",
+		Matched:       true,
+		UpdatedAt:     now,
 	}); err != nil {
 		t.Fatalf("save tracker metadata: %v", err)
 	}
@@ -207,8 +209,11 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	if len(trackerData) != 1 {
 		t.Fatalf("expected 1 tracker metadata row, got %d", len(trackerData))
 	}
-	if trackerData[0].TrackerID != "123" || trackerData[0].Tracker != "BLU" {
+	if trackerData[0].TrackerID != "123" || trackerData[0].Tracker != "BLU" || trackerData[0].TorrentURL != "https://tracker.example.invalid/torrents/123" {
 		t.Fatalf("unexpected tracker metadata: %#v", trackerData[0])
+	}
+	if got := trackerData[0].ImagePreviews["https://example.com/a.jpg"]; got != "https://example.com/a-preview.jpg" {
+		t.Fatalf("tracker image preview = %q", got)
 	}
 
 	idsStamp := time.Now().UTC().Truncate(time.Second)

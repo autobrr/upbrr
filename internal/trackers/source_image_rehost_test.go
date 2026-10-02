@@ -375,6 +375,39 @@ func TestRehostSourceOnlyDescriptionImagesKeepsOriginTrackerLinks(t *testing.T) 
 	}
 }
 
+func TestRehostSourceOnlyDescriptionImagesKeepsAuthorizedProxyWithPrivateSource(t *testing.T) {
+	t.Parallel()
+	for _, rawURL := range []string{
+		"https://wsrv.aither.cc/?url=https%3A%2F%2Fpassthepopcorn.me%2Fstatic%2Fshot.jpg",
+		"https://wsrv.nl/?url=https%3A%2F%2Fpassthepopcorn.me%2Fstatic%2Fshot.jpg",
+	} {
+		description := "[comparison=A|B]\n[img]" + rawURL + "[/img]\n[/comparison]"
+		registry := NewRegistry()
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:       "AITHER",
+			Definition: nativeSourceImageTestDefinition{stubDefinition: stubDefinition{name: "AITHER"}, reusableURL: rawURL},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
+			t.Fatal(err)
+		}
+		service := &Service{registry: registry}
+		meta := api.UploadSubject{TrackerData: []api.TrackerMetadata{{Tracker: "AITHER", Description: description}}}
+		assets := &DescriptionAssets{Description: description}
+		if err := service.rehostSourceOnlyDescriptionImages(t.Context(), "AITHER", meta, config.TrackerConfig{}, assets, nil); err != nil {
+			t.Fatalf("AITHER proxy %q: %v", rawURL, err)
+		}
+		if assets.Description != description {
+			t.Fatalf("AITHER proxy description = %q, want %q", assets.Description, description)
+		}
+		other := &DescriptionAssets{Description: description}
+		if err := service.rehostSourceOnlyDescriptionImages(t.Context(), "TL", meta, config.TrackerConfig{}, other, nil); err == nil || !strings.Contains(err.Error(), "image hosting is unavailable") {
+			t.Fatalf("cross-tracker proxy should require hosting: %v", err)
+		}
+	}
+}
+
 func TestPTPDoesNotRequireUnusedDVDMenuUpload(t *testing.T) {
 	t.Parallel()
 	assets := &DescriptionAssets{MenuImages: []api.ScreenshotImage{{Path: "unused-menu.png", Purpose: api.ScreenshotPurposeMenu}}}

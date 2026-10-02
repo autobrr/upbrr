@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { pageStyle } from "../../components/ui/pageStyle";
 import { useEffect, useRef, useState } from "react";
 import type { MenuImagesFacet } from "../../releaseSession/types";
 
@@ -80,20 +81,20 @@ export default function MenuImagesPage({
   return (
     <section className="grid gap-4">
       <header>
-        <p className="eyebrow">Disc Menus</p>
+        <p className={pageStyle.eyebrow}>Disc Menus</p>
         <h1>Menu Images</h1>
-        <p className="subtitle">
+        <p className={pageStyle.subtitle}>
           Capture DVD menus or import existing disc menu images for upload and descriptions.
         </p>
       </header>
 
       {view.artifacts ? (
-        <section className="panel grid gap-1" role="status">
+        <section className={`${pageStyle.panel} grid gap-1`} role="status">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2>Authoritative DVD menu set</h2>
-            <span className="muted">{view.artifacts.status}</span>
+            <span className="text-muted-foreground">{view.artifacts.status}</span>
           </div>
-          <p className="muted">
+          <p className="text-muted-foreground">
             {view.artifacts.artifacts.filter((artifact) => artifact.kind === "dvd_menu").length}{" "}
             captured menu image(s)
           </p>
@@ -101,10 +102,12 @@ export default function MenuImagesPage({
       ) : null}
 
       {automaticCaptureAvailable ? (
-        <section className="panel grid gap-3" aria-busy={running}>
+        <section className={`${pageStyle.panel} grid gap-3`} aria-busy={running}>
           <div>
             <h2>Automatic DVD capture</h2>
-            <p className="muted">Capture up to {resolvedMaxMenuItems} distinct DVD menu screens.</p>
+            <p className="text-muted-foreground">
+              Capture up to {resolvedMaxMenuItems} distinct DVD menu screens.
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -124,18 +127,18 @@ export default function MenuImagesPage({
           </div>
         </section>
       ) : (
-        <section className="panel">
-          <p className="muted">
+        <section className={pageStyle.panel}>
+          <p className="text-muted-foreground">
             Automatic capture is available for DVD sources. Manual disc menu import remains
             available for {currentDiscType || "this source"}.
           </p>
         </section>
       )}
 
-      <section className="panel grid gap-3">
+      <section className={`${pageStyle.panel} grid gap-3`}>
         <div>
           <h2>Import menu images</h2>
-          <p className="muted">Choose PNG, JPEG, or WebP files from this device.</p>
+          <p className="text-muted-foreground">Choose PNG, JPEG, or WebP files from this device.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <input
@@ -158,15 +161,16 @@ export default function MenuImagesPage({
         </div>
         {menuFiles.length > 0 ? (
           <ul className="m-0 grid list-none gap-1 p-0">
-            {menuFiles.map((file) => (
+            {menuFiles.map((file, index) => (
               <li
-                className="flex items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
+                className="flex items-center justify-between gap-2 rounded border border-border bg-muted p-2 text-foreground"
                 key={`${file.name}-${file.size}-${file.lastModified}`}
               >
                 <span className="min-w-0 break-all">{file.name}</span>
                 <button
                   className="ghost"
                   type="button"
+                  aria-label={`Remove file ${index + 1}: ${file.name}`}
                   onClick={() =>
                     setMenuFiles((previous) => previous.filter((item) => item !== file))
                   }
@@ -180,20 +184,22 @@ export default function MenuImagesPage({
       </section>
 
       {view.error ? (
-        <p className="error" role="alert">
+        <p className={pageStyle.error} role="alert">
           {view.error}
         </p>
       ) : null}
       {notice ? (
-        <p className="success" role="status" aria-live="polite">
+        <p className="mt-[9px] text-status-success" role="status" aria-live="polite">
           {notice}
         </p>
       ) : null}
 
-      <section className="panel grid gap-3">
+      <section className={`${pageStyle.panel} grid gap-3`}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2>Saved menu images</h2>
-          <p className="muted">{running ? "Loading..." : `${view.images.length} saved`}</p>
+          <p className="text-muted-foreground">
+            {running ? "Loading..." : `${view.images.length} saved`}
+          </p>
         </div>
         {view.images.length > 0 ? (
           <div className="grid gap-4">
@@ -207,7 +213,7 @@ export default function MenuImagesPage({
                     return (
                       <article className="grid gap-2" key={item.image.artifactID}>
                         <button
-                          className="screens-thumb"
+                          className="overflow-hidden rounded-[14px] border border-foreground/10 bg-card/60 p-0 text-left cursor-pointer [&>img]:block [&>img]:w-full"
                           type="button"
                           aria-label={`Preview DVD menu ${itemNumber} for ${group.discName}`}
                           onClick={() => {
@@ -239,7 +245,7 @@ export default function MenuImagesPage({
             ))}
           </div>
         ) : (
-          <p className="muted">No saved menu images yet.</p>
+          <p className="text-muted-foreground">No saved menu images yet.</p>
         )}
       </section>
 

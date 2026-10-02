@@ -31,7 +31,11 @@ func TestDataLookup(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil || rpc.Method != "getTorrents" || rpc.Params.Search["id"] != "42" {
 			t.Errorf("unexpected BTN lookup request: %#v err=%v", rpc, err)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{"42": map[string]any{"ImdbID": 1234567, "TvdbID": 76543}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{"42": map[string]any{
+			"GroupID": 99,
+			"ImdbID":  1234567,
+			"TvdbID":  76543,
+		}}}})
 	}))
 	defer server.Close()
 	token := strings.Repeat("a", 30)
@@ -44,7 +48,7 @@ func TestDataLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	if result.IMDBID != 1234567 || result.TVDBID != 76543 {
+	if result.IMDBID != 1234567 || result.TVDBID != 76543 || result.TorrentURL != "https://broadcasthe.net/torrents.php?id=99&torrentid=42" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }

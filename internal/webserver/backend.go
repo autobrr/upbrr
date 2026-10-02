@@ -233,7 +233,7 @@ func (b *Backend) DetectDiscType(ctx context.Context, path string) (string, erro
 }
 
 // RenderDescription converts tracker markup into sanitized preview HTML.
-func (b *Backend) RenderDescription(raw string) (string, error) {
+func (b *Backend) RenderDescription(raw string, previews map[string]string) (string, error) {
 	rt, err := b.requireRuntime()
 	if err != nil {
 		return "", err
@@ -244,7 +244,7 @@ func (b *Backend) RenderDescription(raw string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return wrapWebResult(descriptionCore.RenderDescription(ctx, raw))
+	return wrapWebResult(descriptionCore.RenderDescription(ctx, raw, previews))
 }
 
 // DiscoverPlaylists returns Blu-ray playlists available under the selected release path.

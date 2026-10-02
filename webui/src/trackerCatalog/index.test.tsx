@@ -3,6 +3,7 @@
 
 import type { ReactNode } from "react";
 import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearAppOperationMocks, installAppOperationMocks } from "../test/appRequestMock";
 import { TrackerCatalogProvider, useTrackerCatalog } from ".";
@@ -25,8 +26,11 @@ describe("TrackerCatalogProvider", () => {
       unsupported: [],
     }));
     installAppOperationMocks({ ListTrackerCatalog: list });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: Readonly<{ children: ReactNode }>) => (
-      <TrackerCatalogProvider>{children}</TrackerCatalogProvider>
+      <QueryClientProvider client={queryClient}>
+        <TrackerCatalogProvider>{children}</TrackerCatalogProvider>
+      </QueryClientProvider>
     );
 
     const { result } = renderHook(

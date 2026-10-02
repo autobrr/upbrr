@@ -49,6 +49,48 @@ const facet = (): DescriptionsFacet => ({
 });
 
 describe("DescriptionBuilderPage", () => {
+  it("distinguishes actions and raw editors for two generated groups", () => {
+    const base = facet();
+    const artifact = base.view.artifact!;
+    const descriptions: DescriptionsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        artifact: {
+          ...artifact,
+          descriptions: [
+            ...artifact.descriptions,
+            {
+              ...artifact.descriptions[0],
+              groupKey: "standalone",
+              trackerIds: ["BTN"],
+              source: "second raw",
+              rendered: "<p>second raw</p>",
+            },
+          ],
+        },
+      },
+    };
+    render(
+      <DescriptionBuilderPage
+        facet={descriptions}
+        sourcePath="C:\\media\\Example"
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Expand EXAMPLE" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Expand BTN" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Expand EXAMPLE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand BTN" }));
+    expect(screen.getByRole("textbox", { name: "Raw description for EXAMPLE" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Raw description for BTN" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Render EXAMPLE" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save group BTN" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Reset group BTN" }));
+    expect(descriptions.reset).toHaveBeenCalledWith("standalone");
+  });
+
   it("forwards edits and explicit save through the facet", () => {
     const descriptions = facet();
     render(
@@ -59,9 +101,11 @@ describe("DescriptionBuilderPage", () => {
       />,
     );
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "changed" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save group" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand EXAMPLE" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Raw description for EXAMPLE" }), {
+      target: { value: "changed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save group EXAMPLE" }));
     expect(descriptions.edit).toHaveBeenCalledWith("unit3d", "changed");
     expect(descriptions.save).toHaveBeenCalledWith("unit3d");
   });
@@ -107,10 +151,12 @@ describe("DescriptionBuilderPage", () => {
     );
 
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
-    expect(screen.getByRole("textbox")).toHaveValue("authoritative raw");
+    fireEvent.click(screen.getByRole("button", { name: "Expand EXAMPLE" }));
+    expect(screen.getByRole("textbox", { name: "Raw description for EXAMPLE" })).toHaveValue(
+      "authoritative raw",
+    );
     expect(screen.getByText("authoritative rendered")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Reset group" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset group EXAMPLE" }));
     expect(descriptions.reset).toHaveBeenCalledWith("unit3d");
   });
 });

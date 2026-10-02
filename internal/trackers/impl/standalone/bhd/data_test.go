@@ -102,7 +102,8 @@ func TestDataLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	if result.TrackerID != "99" || result.IMDBID != 1234567 || result.TMDBID != 765 || result.Category != "MOVIE" || result.Description != "hello" ||
+	if result.TrackerID != "99" || result.TorrentURL != "https://beyond-hd.me/details/99" || result.IMDBID != 1234567 ||
+		result.TMDBID != 765 || result.Category != "MOVIE" || result.Description != "hello" ||
 		len(result.Images) != 2 || result.Images[0].RawURL != "https://93.184.216.34/full.png" || result.Images[1].RawURL != "" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
@@ -115,8 +116,9 @@ func TestDataLookup(t *testing.T) {
 		SearchName: "release.mkv",
 		OnlyID:     true,
 	})
-	if err != nil || idsOnly.TrackerID != "99" || len(idsOnly.Images) != 0 || idsOnly.Description != "" {
-		t.Fatalf("ID-only lookup lost discovered tracker ID: result=%+v err=%v", idsOnly, err)
+	if err != nil || idsOnly.TrackerID != "99" || idsOnly.TorrentURL != "https://beyond-hd.me/details/99" ||
+		len(idsOnly.Images) != 0 || idsOnly.Description != "" {
+		t.Fatalf("ID-only lookup lost discovered tracker data: result=%+v err=%v", idsOnly, err)
 	}
 }
 
@@ -200,5 +202,55 @@ func TestDataLookupSkipsUnfilteredSearch(t *testing.T) {
 	result, err := lookup.Lookup(context.Background(), trackers.DataLookupRequest{Meta: api.UploadSubject{SourcePath: `D:\TV\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`, FileList: []string{"Example.Show.S04E01.2160p.WEB.h265-GRP.mkv"}}, KeepImages: true})
 	if err != nil || result.HasData() || requested {
 		t.Fatalf("err=%v data=%t requested=%t", err, result.HasData(), requested)
+	}
+}
+
+func TestDataLookupOmitsUnverifiedTorrentPages(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		requestedID string
+		results     []any
+		wantID      string
+	}{
+		{
+			name:    "multiple search results",
+			results: []any{map[string]any{"id": "41"}, map[string]any{"id": "42"}},
+			wantID:  "41",
+		},
+		{
+			name:        "mismatched ID result",
+			requestedID: "42",
+			results:     []any{map[string]any{"id": "41"}},
+			wantID:      "42",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status_code": 1,
+					"success":     true,
+					"results":     test.results,
+				})
+			}))
+			defer server.Close()
+			token := strings.Repeat("a", minDataTokenLength)
+			lookup := &dataLookup{
+				cfg:     config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BHD": {APIKey: token, BhdRSSKey: token}}}},
+				http:    server.Client(),
+				baseURL: server.URL,
+			}
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{
+				TrackerID:  test.requestedID,
+				Meta:       api.UploadSubject{FileList: []string{"Example.Release.mkv"}},
+				SearchName: "Example.Release.mkv",
+				OnlyID:     true,
+			})
+			if err != nil || result.TorrentURL != "" || result.TrackerID != test.wantID {
+				t.Fatalf("unverified torrent result = %+v, error = %v", result, err)
+			}
+		})
 	}
 }

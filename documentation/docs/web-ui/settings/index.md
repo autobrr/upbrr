@@ -35,8 +35,11 @@ Stored credentials appear as `[REDACTED]`. Leave that value unchanged to preserv
 Most sections stage edits until **Save**. These sections behave differently:
 
 - **Application Details** is read-only.
+- **Appearance** applies immediately and is saved in this browser; see [Appearance](./appearance.md).
 - **API Tokens** creates and revokes tokens immediately.
 - **Tracker Auth** imports, checks, and deletes auth state immediately.
+
+Unsaved settings edits stay in the draft while you use other Web UI pages or browser Back and Forward. **Reload** and **Log out** ask before discarding them. Reloading or closing the browser tab triggers the browser's own unsaved-changes warning. If the session expires, sign in again; the unsaved draft has been discarded.
 
 Use **Show advanced** only when a section offers it. Advanced fields are active settings unless their reference page identifies a compatibility-only field.
 
@@ -56,6 +59,7 @@ Use **Show advanced** only when a section offers it. Advanced fields are active 
 | [Client Handling](./client-handling.md)         | Default, search, and injection client selection.                 |
 | [Torrent Specific](./torrent-specific.md)       | Reusable torrent piece preference and rehash scheduling.         |
 | [Application Details](./application-details.md) | Build, platform, FFmpeg, and uptime diagnostics.                 |
+| [Appearance](./appearance.md)                   | Bundled themes, color mode, and optional accents.                |
 | [API Tokens](./api-tokens.md)                   | Scoped bearer-token creation and revocation.                     |
 | [Tracker Auth](./tracker-auth.md)               | Encrypted cookies, remote checks, relogin, and 2FA state.        |
 

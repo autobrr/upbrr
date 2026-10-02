@@ -191,6 +191,7 @@ export type BlurayDiscSpec = Readonly<{
 
 export type BlurayImage = Readonly<{
   Kind: string;
+  PreviewURL: string;
   URL: string;
 }>;
 
@@ -936,6 +937,7 @@ export type MediaPlanID = string;
 
 export type MediaPlanSavedImage = Readonly<{
   host: string;
+  previewUrl?: string;
   trackerId: TrackerID;
   url: string;
 }>;
@@ -1163,6 +1165,7 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
   TrackerData: readonly TrackerPreview[];
@@ -1782,6 +1785,7 @@ export type RemoveReleaseWorkflowHostedImagesRequest = Readonly<{
 export type RenderedDescription = Readonly<{
   contentFingerprint: WorkflowFingerprint;
   groupKey: string;
+  imagePreviews?: Readonly<Record<string, string>>;
   rendered: string;
   source: string;
   trackerIds: readonly TrackerID[];
@@ -2006,6 +2010,7 @@ export type TMDBMetadata = Readonly<{
   Localized: Readonly<Record<string, TMDBLocalizedData>>;
   LocalizedTitles: Readonly<Record<string, string>>;
   Logo: string;
+  LogoLookupAttempted: boolean;
   MALID: number;
   MismatchedIMDbID: number;
   Networks: readonly TMDBNetwork[];
@@ -2071,6 +2076,8 @@ export type TVDBMetadata = Readonly<{
   Overview: string;
   OverviewEnglish: string;
   Poster: string;
+  PosterThumbnail: string;
+  PosterThumbnailLookupAttempted: boolean;
   Status: string;
   TVDBID: number;
   Type: string;
@@ -2095,6 +2102,7 @@ export type TVDBNameDisambiguation = Readonly<{
 export type TVmazeMetadata = Readonly<{
   AverageRuntime: number;
   Backdrop: string;
+  BackdropLookupAttempted: boolean;
   BackdropMedium: string;
   Country: string;
   Ended: string;
@@ -2391,6 +2399,7 @@ export type TrackerPreview = Readonly<{
   DescriptionHTML: string;
   Filename: string;
   IMDBID: number;
+  ImagePreviews: Readonly<Record<string, string>>;
   ImageURLs: readonly string[];
   InfoHash: string;
   MALID: number;

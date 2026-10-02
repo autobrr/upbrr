@@ -6,9 +6,11 @@ package preparedrelease
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -20,7 +22,22 @@ func (m *Module) ResolveDisplay(ctx context.Context, ref api.ReleaseRef) (api.Pr
 	if err != nil {
 		return api.PreparedReleaseDisplay{}, err
 	}
-	return ProjectDisplay(owned.result.Release)
+	display, err := ProjectDisplay(owned.result.Release)
+	if err != nil {
+		return api.PreparedReleaseDisplay{}, err
+	}
+	resources := owned.resources
+	var mediaInfo string
+	if strings.EqualFold(firstNonEmpty(owned.result.Release.Disc.Type, owned.result.Release.Source.Classification.DiscType), "DVD") {
+		mediaInfo = api.AggregateDVDVOBMediaInfo(projectDiscResources(resources.discs), resources.dvdVOBMediaInfoText)
+	}
+	if mediaInfo == "" && strings.TrimSpace(resources.mediaInfoTextPath) != "" {
+		if payload, readErr := os.ReadFile(resources.mediaInfoTextPath); readErr == nil {
+			mediaInfo = string(payload)
+		}
+	}
+	display.MediaInfoHTML = description.RenderMediaInfo(mediaInfo)
+	return display, nil
 }
 
 // ProjectDisplay builds the canonical provider presentation from stored prepared facts.

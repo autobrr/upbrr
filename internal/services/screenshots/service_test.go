@@ -76,9 +76,10 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	repo := openScreenshotTestRepository(t)
 	urls := []string{"https://one.example/shared.png", "https://two.example/shared.png"}
 	if err := repo.SaveTrackerMetadata(t.Context(), api.TrackerMetadata{
-		SourcePath: sourcePath,
-		Tracker:    "AITHER",
-		ImageURLs:  urls,
+		SourcePath:    sourcePath,
+		Tracker:       "AITHER",
+		ImageURLs:     urls,
+		ImagePreviews: map[string]string{urls[0]: "https://one.example/preview.png"},
 	}); err != nil {
 		t.Fatalf("save tracker metadata: %v", err)
 	}
@@ -109,6 +110,9 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	}
 	if len(plan.TrackerImageLinks) != 2 || len(plan.FinalSelections) != 2 {
 		t.Fatalf("hashed tracker images absent from plan: links=%#v final=%#v", plan.TrackerImageLinks, plan.FinalSelections)
+	}
+	if plan.TrackerImageLinks[0].PreviewURL != "https://one.example/preview.png" || plan.TrackerImageLinks[1].PreviewURL != "" {
+		t.Fatalf("saved tracker image previews = %#v", plan.TrackerImageLinks)
 	}
 	reusable, err := service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
 	if err != nil || len(reusable) != 2 {

@@ -58,7 +58,7 @@ type ReleaseWorkflowCapability interface {
 
 // DescriptionCapability renders raw description markup without mutating release state.
 type DescriptionCapability interface {
-	RenderDescription(context.Context, string) (string, error)
+	RenderDescription(context.Context, string, map[string]string) (string, error)
 }
 
 // PlaylistCapability discovers BDMV playlists for one preparation source.

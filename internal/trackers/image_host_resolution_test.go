@@ -361,6 +361,30 @@ Host: "wsrv.nl",
 	}
 }
 
+func TestOriginTrackerSelectsAuthorizedProxyWhenDirectScreenshotIsPrivate(t *testing.T) {
+	t.Parallel()
+	const rawURL = "https://wsrv.nl/?url=https%3A%2F%2Fpassthepopcorn.me%2Fstatic%2Fshot.jpg"
+	imagePath := localTrackerArtifactPaths(filepath.Join(t.TempDir(), "aither"), rawURL, 0)[0]
+	slots := buildSelectionSlots("source.mkv", []api.ScreenshotFinalSelection{{ImagePath: imagePath}})
+	policy := imageHostPolicy{sourceOnlyAllowed: func(candidate string) bool { return candidate == rawURL }}
+	if !attachNativeSourceURLsToSlots(slots, []api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{rawURL}}}, policy) {
+		t.Fatal("native proxy URL was not matched to selected local image")
+	}
+	slots[0].Variants = []api.ScreenshotSlotVariant{{
+		Host:       "imgbb",
+		UsageScope: "global",
+		RawURL:     rawURL,
+		ImgURL:     rawURL,
+	}}
+	selected, host, _, err := selectScreenshotsFromSlots("AITHER", slots, policy)
+	if err != nil || len(selected) != 1 || selected[0].RawURL != rawURL || selected[0].Path != imagePath || host != "wsrv.nl" {
+		t.Fatalf("selected authorized proxy = %#v, host=%q, err=%v", selected, host, err)
+	}
+	if _, _, _, ok := selectSlotImageForTracker(slots[0], "TL", imageHostPolicy{}); ok {
+		t.Fatal("cross-tracker proxy was selected")
+	}
+}
+
 func TestLocalTrackerArtifactPathsUseProxySourceIdentity(t *testing.T) {
 	t.Parallel()
 	const proxyURL = "https://wsrv.aither.cc/?w=350&url=https%3A%2F%2Fimg.blutopia.cc%2Ffull.png"

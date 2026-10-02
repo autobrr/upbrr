@@ -56,7 +56,7 @@ export type ReleaseRoute =
   | "descriptions"
   | "upload";
 
-export type RouteAccess = Readonly<{ available: boolean; reason: string }>;
+export type RouteAccess = Readonly<{ available: boolean; reason: string; reasonCode?: string }>;
 export type FacetStatus = "idle" | "running" | "ready" | "error";
 
 /** Lifecycle of one correlation-scoped canonical preparation attempt. */
@@ -139,6 +139,8 @@ export type InputFacet = Readonly<{
     correctionDirty: boolean;
     intent: PreparationIntent;
     corrections: ReleaseCorrectionsSnapshot | null;
+    /** Manual fields changed locally but not yet applied by metadata refresh. */
+    valueFields: readonly CorrectionFieldRef[];
     resetFields: readonly CorrectionFieldRef[];
     confirmFields: readonly CorrectionFieldRef[];
     trackerInputAnswers: Readonly<Record<string, Readonly<Record<string, string | null>>>>;

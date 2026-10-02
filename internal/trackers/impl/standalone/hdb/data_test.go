@@ -36,7 +36,7 @@ func TestDataLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	if result.IMDBID != 998877 || result.TVDBID != 5544 || result.InfoHash != "deadbeef" || result.Description != "Text" || len(result.Images) != 1 {
+	if result.TorrentURL != server.URL+"/details.php?id=321" || result.IMDBID != 998877 || result.TVDBID != 5544 || result.InfoHash != "deadbeef" || result.Description != "Text" || len(result.Images) != 1 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
@@ -57,5 +57,44 @@ func TestDataLookupSkipsUnfilteredSearch(t *testing.T) {
 	result, err := lookup.Lookup(context.Background(), trackers.DataLookupRequest{Meta: api.UploadSubject{SourcePath: `D:\TV\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`, FileList: []string{"Example.Show.S04E01.2160p.WEB.h265-GRP.mkv"}}, KeepImages: true})
 	if err != nil || result.HasData() || requested {
 		t.Fatalf("err=%v data=%t requested=%t", err, result.HasData(), requested)
+	}
+}
+
+func TestDataLookupOmitsUnverifiedTorrentPages(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		requestedID string
+		results     []any
+	}{
+		{name: "multiple search results", results: []any{map[string]any{"id": "41"}, map[string]any{"id": "42"}}},
+		{
+			name:        "mismatched ID result",
+			requestedID: "42",
+			results:     []any{map[string]any{"id": "41"}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": 0, "data": test.results})
+			}))
+			defer server.Close()
+			lookup := &dataLookup{
+				cfg:      config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"HDB": {Username: "user", Passkey: "pass"}}}},
+				http:     server.Client(),
+				endpoint: server.URL,
+			}
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{
+				TrackerID:  test.requestedID,
+				Meta:       api.UploadSubject{FileList: []string{"Example.Release.mkv"}},
+				SearchName: "Example.Release.mkv",
+				OnlyID:     true,
+			})
+			if err != nil || result.TorrentURL != "" {
+				t.Fatalf("unverified torrent page = %q, error = %v", result.TorrentURL, err)
+			}
+		})
 	}
 }
