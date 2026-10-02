@@ -3140,7 +3140,7 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 		if err := workflow.Validate(); err != nil {
 			return fmt.Errorf("release workflow legacy auth restart recovery validate: %w", err)
 		}
-		if err := m.repository.Save(ctx, ownerID, expected, *state); err != nil {
+		if err := m.saveRecoveredState(ctx, ownerID, expected, state); err != nil {
 			return fmt.Errorf("release workflow legacy auth restart recovery save: %w", err)
 		}
 		return nil
@@ -3218,9 +3218,31 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	if err := workflow.Validate(); err != nil {
 		return fmt.Errorf("release workflow restart recovery validate: %w", err)
 	}
-	if err := m.repository.Save(ctx, ownerID, expected, *state); err != nil {
+	if err := m.saveRecoveredState(ctx, ownerID, expected, state); err != nil {
 		return fmt.Errorf("release workflow restart recovery save: %w", err)
 	}
+	return nil
+}
+
+// saveRecoveredState preserves a newer state when a current-process recovery
+// commits between a query's workflow snapshot and its active-operation check.
+func (m *Module) saveRecoveredState(ctx context.Context, ownerID string, expected api.WorkflowRevision, state *State) error {
+	err := m.repository.Save(ctx, ownerID, expected, *state)
+	if err == nil {
+		return nil
+	}
+	err = fmt.Errorf("save recovered workflow: %w", err)
+	if !errors.Is(err, ErrRevisionConflict) {
+		return err
+	}
+	current, loadErr := m.repository.Load(ctx, ownerID, state.Workflow.ID)
+	if loadErr != nil {
+		return fmt.Errorf("reload concurrent restart recovery: %w", loadErr)
+	}
+	if current.ProcessEpoch != m.processEpoch {
+		return err
+	}
+	*state = current
 	return nil
 }
 
