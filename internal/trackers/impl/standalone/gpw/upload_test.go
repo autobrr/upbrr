@@ -4,6 +4,7 @@
 package gpw
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -29,7 +30,7 @@ func TestBuildFieldsPersonalReleaseAndExclusiveFlags(t *testing.T) {
 
 	discMeta := base
 	discMeta.DiscType = "BDMV"
-	disc := buildFields(trackers.PreparationInput{Meta: discMeta}, config.TrackerConfig{}, "description", "group", nil)
+	disc := buildFields(trackers.PreparationInput{Meta: discMeta, Runtime: trackers.PreparationRuntime{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}, config.TrackerConfig{}, "description", "group", nil)
 	if disc["buy"] != "on" {
 		t.Fatalf("expected disc personal release to use buy flag, got %#v", disc)
 	}
