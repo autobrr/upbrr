@@ -12,8 +12,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// projectionRuleAuthorizationAction finds a pending authorization action bound
-// to a projection whose current waivable rules remain unauthorized.
+// projectionRuleAuthorizationAction finds the current pending or resolved rule
+// acknowledgement whose status matches the projection's exact rule authority.
 func projectionRuleAuthorizationAction(
 	projections *api.TrackerReleaseProjectionSet,
 	actionID api.RequiredActionID,
@@ -22,14 +22,21 @@ func projectionRuleAuthorizationAction(
 		return api.TrackerReleaseProjection{}, api.RequiredAction{}, false
 	}
 	for _, projection := range projections.Projections {
-		if projection.WaivableRuleFingerprint == "" || projection.RuleAuthorizationFingerprint != "" {
+		if projection.WaivableRuleFingerprint == "" {
 			continue
+		}
+		status := api.RequiredActionStatusPending
+		if projection.RuleAuthorizationFingerprint != "" {
+			if projection.RuleAuthorizationFingerprint != projection.WaivableRuleFingerprint {
+				continue
+			}
+			status = api.RequiredActionStatusResolved
 		}
 		index := slices.IndexFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
 			return action.ID == actionID &&
 				action.Kind == api.RequiredActionAuthorizeRules &&
 				action.TrackerID == projection.TrackerID &&
-				action.Status == api.RequiredActionStatusPending
+				action.Status == status
 		})
 		if index >= 0 {
 			return projection, projection.RequiredActions[index], true
@@ -38,8 +45,8 @@ func projectionRuleAuthorizationAction(
 	return api.TrackerReleaseProjection{}, api.RequiredAction{}, false
 }
 
-// authorizeTrackerRules validates explicit confirmation and current snapshot
-// lineage, then reprojects with server-held authority for the accepted rules.
+// authorizeTrackerRules grants or revokes an explicit acknowledgement bound to
+// current snapshot lineage, then reprojects and invalidates downstream authority.
 func (m *Module) authorizeTrackerRules(
 	ctx context.Context,
 	ownerID string,
@@ -50,8 +57,13 @@ func (m *Module) authorizeTrackerRules(
 	action api.RequiredAction,
 	answer api.RequiredActionAnswer,
 ) (CommandResult, error) {
-	if answer.Confirmed == nil || !*answer.Confirmed || answer.TextValue != nil || len(answer.SelectedValues) > 0 {
-		return CommandResult{}, fmt.Errorf("%w: rule authorization requires explicit confirmation", ErrInvalidTransition)
+	if answer.Confirmed == nil || answer.TextValue != nil || len(answer.SelectedValues) > 0 {
+		return CommandResult{}, fmt.Errorf("%w: rule authorization requires an exact confirmation state", ErrInvalidTransition)
+	}
+	confirmed := *answer.Confirmed
+	if (confirmed && action.Status != api.RequiredActionStatusPending) ||
+		(!confirmed && action.Status != api.RequiredActionStatusResolved) {
+		return CommandResult{}, fmt.Errorf("%w: rule authorization confirmation state is stale", ErrInvalidTransition)
 	}
 	workflow := state.Workflow
 	if workflow.Selection == nil || workflow.ProjectionInstructions == nil || workflow.TrackerProjections == nil {
@@ -60,6 +72,8 @@ func (m *Module) authorizeTrackerRules(
 	selection, selectionOK := state.Selections[workflow.Selection.ID]
 	instructionSnapshot, instructionsOK := state.ProjectionInstructions[workflow.ProjectionInstructions.ID]
 	currentProjections, projectionsOK := state.Projections[workflow.TrackerProjections.ID]
+	// Later stages can advance the workflow while this projection's action stays
+	// pending. Request freshness is checked against the current workflow revision.
 	workflowActionIndex := slices.IndexFunc(workflow.RequiredActions, func(candidate api.RequiredAction) bool {
 		return candidate.ID == action.ID &&
 			candidate.Kind == api.RequiredActionAuthorizeRules &&
@@ -71,13 +85,25 @@ func (m *Module) authorizeTrackerRules(
 		instructionSnapshot.Revision != workflow.ProjectionInstructions.Revision ||
 		currentProjections.Revision != workflow.TrackerProjections.Revision ||
 		currentProjections.Instructions == nil || *currentProjections.Instructions != *workflow.ProjectionInstructions ||
-		workflowActionIndex < 0 || workflow.RequiredActions[workflowActionIndex].WorkflowRevision != workflow.Revision ||
+		(confirmed && workflowActionIndex < 0) ||
 		action.TrackerID != projection.TrackerID {
 		return CommandResult{}, fmt.Errorf("%w: rule authorization dependencies are stale", ErrInvalidTransition)
 	}
 	authorizations := projectionRuleAuthorizations(currentProjections)
-	authorizations[projection.TrackerID] = projection.WaivableRuleFingerprint
-	m.logger.Infof("release workflow: accepted tracker rule authorization tracker=%s decision=authorized", projection.TrackerID)
+	decision := "revoked"
+	if confirmed {
+		authorizations[projection.TrackerID] = projection.WaivableRuleFingerprint
+		decision = "authorized"
+	} else {
+		delete(authorizations, projection.TrackerID)
+	}
+	m.logger.Infof("release workflow: tracker rule acknowledgement tracker=%s decision=%s", projection.TrackerID, decision)
+	if workflow.Dupes != nil {
+		state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *workflow.Dupes}
+	}
+	if pending := state.PendingDuplicateReuse; pending != nil && !slices.Contains(pending.InvalidatedTrackers, projection.TrackerID) {
+		pending.InvalidatedTrackers = append(pending.InvalidatedTrackers, projection.TrackerID)
+	}
 	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
 		WorkflowID:       workflow.ID,
 		ExpectedRevision: workflow.Revision,

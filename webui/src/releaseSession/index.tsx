@@ -2678,14 +2678,20 @@ export function ReleaseSessionProvider({
           }),
         );
       },
-      overrideRules: async (tracker) => {
+      acknowledgeRules: async (tracker, acknowledged) => {
         const normalizedTracker = tracker.trim().toUpperCase();
         const current = workflowView.current;
-        const action = current?.workflow.requiredActions?.find(
+        const projection = current?.projections?.projections.find(
+          (candidate) => candidate.trackerId === normalizedTracker,
+        );
+        const actions = acknowledged
+          ? current?.workflow.requiredActions
+          : projection?.requiredActions;
+        const action = actions?.find(
           (candidate) =>
             candidate.kind === "authorize_rules" &&
             candidate.trackerId === normalizedTracker &&
-            candidate.status === "pending",
+            candidate.status === (acknowledged ? "pending" : "resolved"),
         );
         if (!current || !action) return false;
         return runBackendWorkflow((latest, commandID, signal) =>
@@ -2694,7 +2700,7 @@ export function ReleaseSessionProvider({
               {
                 actionId: action.id,
                 workflowRevision: latest.workflow.revision,
-                confirmed: true,
+                confirmed: acknowledged,
               },
             ],
           }),

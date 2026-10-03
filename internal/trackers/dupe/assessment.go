@@ -130,6 +130,19 @@ func (a Assessment) Clone() Assessment {
 	return out
 }
 
+// RetainTrackers preserves evidence and decisions only for the selected trackers.
+// Unlike Merge, retaining unchanged evidence does not clear its authorization.
+func (a Assessment) RetainTrackers(selected []string) Assessment {
+	out := a.Clone()
+	selected = dedupeTrackers(selected)
+	for tracker := range out.entries {
+		if !slices.Contains(selected, tracker) {
+			delete(out.entries, tracker)
+		}
+	}
+	return out
+}
+
 // Merge replaces selected tracker entries represented by delta, clearing prior authorization for rechecked trackers.
 // Missing delta entries preserve prior state; a completed structural check represents a clear result with an entry.
 func (a Assessment) Merge(delta Assessment, selected []string) Assessment {

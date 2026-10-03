@@ -2852,7 +2852,7 @@ describe("useReleaseSession", () => {
     },
   );
 
-  it("accepts a tracker rule warning from the dupe facet", async () => {
+  it("acknowledges, revokes, and reacknowledges tracker warnings from the dupe facet", async () => {
     const workflowID = "workflow-dupe-rule-override";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
     const action = {
@@ -2886,7 +2886,46 @@ describe("useReleaseSession", () => {
         ],
       } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
     };
-    const continueWorkflow = vi.fn(async () => retained);
+    let current = retained;
+    const continueWorkflow = vi.fn(async (request: ContinueReleaseWorkflowRequest) => {
+      const acknowledged = request.answers?.[0]?.confirmed === true;
+      if (
+        Boolean(current.projections?.projections[0]?.ruleAuthorizationFingerprint) === acknowledged
+      ) {
+        return current;
+      }
+      const revision = current.workflow.revision + 1;
+      const updatedAction = {
+        ...action,
+        id: `action-authorize-alpha-${revision}`,
+        status: acknowledged ? ("resolved" as const) : ("pending" as const),
+        workflowRevision: revision,
+      };
+      current = {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          revision,
+          status: acknowledged ? "active" : "blocked",
+          requiredActions: acknowledged ? [] : [updatedAction],
+        },
+        continuation: {
+          ...current.continuation,
+          requiredActions: acknowledged ? [] : [updatedAction],
+        },
+        projections: {
+          ...current.projections!,
+          projections: current.projections!.projections.map((projection) => ({
+            ...projection,
+            waivableRuleFingerprint: "current-warnings",
+            ruleAuthorizationFingerprint: acknowledged ? "current-warnings" : "",
+            readiness: acknowledged ? ("ready" as const) : ("blocked" as const),
+            requiredActions: [updatedAction],
+          })),
+        },
+      };
+      return current;
+    });
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
@@ -2901,12 +2940,33 @@ describe("useReleaseSession", () => {
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
     await act(async () => {
-      expect(await result.current.duplicates.overrideRules("alpha")).toBe(true);
+      expect(await result.current.duplicates.acknowledgeRules("alpha", true)).toBe(true);
     });
     expect(continueWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({
         goal: "duplicates_decided",
         answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
+      }),
+      expect.any(AbortSignal),
+    );
+
+    await act(async () => {
+      expect(await result.current.duplicates.acknowledgeRules("alpha", false)).toBe(true);
+    });
+    expect(continueWorkflow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        goal: "duplicates_decided",
+        answers: [{ actionId: "action-authorize-alpha-8", workflowRevision: 8, confirmed: false }],
+      }),
+      expect.any(AbortSignal),
+    );
+    await act(async () => {
+      expect(await result.current.duplicates.acknowledgeRules("alpha", true)).toBe(true);
+    });
+    expect(continueWorkflow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        goal: "duplicates_decided",
+        answers: [{ actionId: "action-authorize-alpha-9", workflowRevision: 9, confirmed: true }],
       }),
       expect.any(AbortSignal),
     );
@@ -2957,7 +3017,7 @@ describe("useReleaseSession", () => {
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
     await act(async () => {
-      expect(await result.current.duplicates.overrideRules("alpha")).toBe(false);
+      expect(await result.current.duplicates.acknowledgeRules("alpha", true)).toBe(false);
     });
     expect(continueWorkflow).not.toHaveBeenCalled();
 

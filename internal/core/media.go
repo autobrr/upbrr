@@ -877,6 +877,12 @@ func (m *mediaModule) retainedFallbackImageUploadTargets(
 	covered := make([]trackers.ImageUploadTarget, 0, len(targets))
 	for _, target := range targets {
 		for _, tracker := range target.Trackers {
+			trackerConfig, _ := config.TrackerConfigByName(m.cfg.Trackers.Trackers, tracker)
+			configuredHost := strings.TrimSpace(trackerConfig.ImageHost)
+			// A cached fallback cannot replace a configured host before it fails.
+			if configuredHost != "" && strings.EqualFold(configuredHost, strings.TrimSpace(target.Host)) {
+				continue
+			}
 			failedHosts := make(map[string]struct{}, len(excludedHosts)+1)
 			for _, excludedHost := range excludedHosts {
 				if normalized := strings.ToLower(strings.TrimSpace(excludedHost)); normalized != "" {

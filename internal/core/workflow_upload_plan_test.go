@@ -895,6 +895,7 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 		ID:                 "media-1",
 		Revision:           1,
 		CaptureFingerprint: workflowTestFingerprint(t, "media"),
+		FailedHosts:        []string{"onlyimage"},
 		Artifacts: []api.MediaArtifact{
 			{
 				ID:       "screenshot-1",
@@ -977,7 +978,7 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 		media,
 		privateMedia,
 		descriptions,
-		api.DescriptionInstructions{},
+		api.DescriptionInstructions{ImageHost: api.ImageHostOverrides{FailedHosts: []string{"pixhost"}}},
 		releaseworkflow.UploadPlanBuildOptions{DryRun: true},
 		time.Now(),
 	)
@@ -998,6 +999,9 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 	}
 	if service.subject.ImageHostOverrides.SkipUpload == nil || !*service.subject.ImageHostOverrides.SkipUpload {
 		t.Fatalf("retained preparation allowed hidden image upload: %#v", service.subject.ImageHostOverrides)
+	}
+	if !slices.Equal(service.subject.ImageHostOverrides.FailedHosts, []string{"pixhost", "onlyimage"}) {
+		t.Fatalf("upload preparation lost current media or caller host exclusions: %#v", service.subject.ImageHostOverrides)
 	}
 	if service.subject.ExactMedia == nil || len(service.subject.ExactMedia.Screenshots) != 1 ||
 		service.subject.ExactMedia.Screenshots[0].Path != exactScreenshotPath ||

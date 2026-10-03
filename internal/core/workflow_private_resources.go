@@ -26,6 +26,7 @@ type persistedWorkflowDupeEvidence struct {
 	SearchContract string               `json:"searchContract"`
 	Summary        api.DupeCheckSummary `json:"summary"`
 	Assessment     json.RawMessage      `json:"assessment"`
+	SkipRemote     *bool                `json:"skipRemote,omitempty"`
 }
 
 // MarshalPrivateResource encodes duplicate evidence with the current search contract.
@@ -42,6 +43,7 @@ func (e workflowDupePrivateEvidence) MarshalPrivateResource() (string, []byte, e
 		SearchContract: trackers.DuplicateSearchContractID,
 		Summary:        e.Summary,
 		Assessment:     assessment,
+		SkipRemote:     e.SkipRemote,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal workflow duplicate evidence: %w", err)
@@ -67,6 +69,7 @@ func decodeWorkflowDupePrivateEvidence(payload []byte) (any, error) {
 	return workflowDupePrivateEvidence{
 		Summary:    persisted.Summary,
 		Assessment: assessment,
+		SkipRemote: persisted.SkipRemote,
 	}, nil
 }
 

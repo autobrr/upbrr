@@ -217,8 +217,8 @@ export type DuplicatesFacet = Readonly<{
   confirmReleaseName(tracker: string, value: string): void;
   /** Resolves or reopens the backend naming action using the current local edit. */
   acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
-  /** Accepts the current exact tracker rule warning and rechecks that tracker. */
-  overrideRules(tracker: string): Promise<boolean>;
+  /** Acknowledges or revokes the current exact tracker warnings through backend authority. */
+  acknowledgeRules(tracker: string, acknowledged: boolean): Promise<boolean>;
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 
