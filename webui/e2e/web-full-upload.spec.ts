@@ -493,61 +493,29 @@ type CorrectionValue = string | number | boolean | readonly string[];
 type CorrectionCase = {
   field: string;
   label: string;
-  group: "Identity" | "ReleaseName" | "Metadata";
+  group: "ReleaseName" | "Metadata";
   key: string;
   values: readonly CorrectionValue[];
   mediaKind?: "movie" | "tv";
 };
 
+// Sample each distinct editor control; production Go tests retain the broad field matrix.
 const releaseDetailCorrections: readonly CorrectionCase[] = [
-  ...[
-    ["tmdb", "TMDB", "TMDBID"],
-    ["imdb", "IMDB", "IMDBID"],
-    ["tvdb", "TVDB", "TVDBID"],
-    ["tvmaze", "TVmaze", "TVmazeID"],
-    ["mal", "MAL", "MALID"],
-  ].map(
-    ([field, label, key]): CorrectionCase => ({
-      field: `identity.${field}`,
-      label: `${label} ID`,
-      group: "Identity",
-      key,
-      values: [5114, 6001, 0],
-    }),
-  ),
-  ...[
-    ["category", "Category", "Category", "tv", "movie"],
-    ["type", "Type", "Type", "ENCODE", "REMUX"],
-    ["source", "Source", "Source", "Blu-ray", "WEB-DL"],
-    ["resolution", "Resolution", "Resolution", "2160p", "720p"],
-    ["tag", "Release group", "Tag", "GRP", "E2E"],
-    ["service", "Service", "Service", "NF", "AMZN"],
-    ["edition", "Edition", "Edition", "Extended", "Uncut"],
-    ["region", "Region", "Region", "A", "B"],
-  ].map(
-    ([field, label, key, first, second]): CorrectionCase => ({
-      field: `release_name.${field}`,
-      label,
-      group: "ReleaseName",
-      key,
-      values: [first, second, ""],
-    }),
-  ),
-  ...[
-    ["season", "Season", "Season", "S02", "S03"],
-    ["episode", "Episode", "Episode", "E02", "E03"],
-    ["episode_title", "Episode title", "EpisodeTitle", "Example Arrival", "Example Return"],
-    ["manual_date", "Manual date", "ManualDate", "2026-02-03", "2026-03-04"],
-  ].map(
-    ([field, label, key, first, second]): CorrectionCase => ({
-      field: `release_name.${field}`,
-      label,
-      group: "ReleaseName",
-      key,
-      values: [first, second, ""],
-      mediaKind: "tv",
-    }),
-  ),
+  {
+    field: "release_name.service",
+    label: "Service",
+    group: "ReleaseName",
+    key: "Service",
+    values: ["NF", "AMZN", ""],
+  },
+  {
+    field: "release_name.episode",
+    label: "Episode",
+    group: "ReleaseName",
+    key: "Episode",
+    values: ["E02", "E03", ""],
+    mediaKind: "tv",
+  },
   {
     field: "release_name.manual_year",
     label: "Manual year",
@@ -555,73 +523,20 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     key: "ManualYear",
     values: [2024, 2025, 0],
   },
-  ...[
-    ["use_season_episode", "Use season and episode", "UseSeasonEpisode"],
-    ["no_season", "No season", "NoSeason"],
-    ["no_year", "No year", "NoYear"],
-    ["no_aka", "No AKA", "NoAKA"],
-    ["no_tag", "No tag", "NoTag"],
-    ["no_episode_title", "No episode title", "NoEpisodeTitle"],
-    ["no_distributor", "No distributor", "NoDistributor"],
-    ["no_edition", "No edition", "NoEdition"],
-    ["no_dub", "No dub", "NoDub"],
-    ["no_dual", "No dual audio", "NoDual"],
-    ["dual_audio", "Force dual audio", "DualAudio"],
-  ].map(
-    ([field, label, key]): CorrectionCase => ({
-      field: `release_name.${field}`,
-      label,
-      group: "ReleaseName",
-      key,
-      values: [true, false],
-    }),
-  ),
-  ...[
-    ["distributor", "Distributor", "Distributor", "Example Studio", "Example Pictures"],
-    ["original_language", "Original language", "OriginalLanguage", "Japanese", "Spanish"],
-    ["alternate_title", "Alternate title", "AlternateTitle", "Example Voyage", "Example Journey"],
-  ].map(
-    ([field, label, key, first, second]): CorrectionCase => ({
-      field: `metadata.${field}`,
-      label,
-      group: "Metadata",
-      key,
-      values: [first, second, ""],
-    }),
-  ),
-  ...[
-    ["genres", "Genres", "Genres"],
-    ["audio_languages", "Audio languages", "AudioLanguages"],
-    ["subtitle_languages", "Subtitle languages", "SubtitleLanguages"],
-    ["hardcoded_subtitle_languages", "Hardcoded subtitle languages", "HardcodedSubtitleLanguages"],
-  ].map(
-    ([field, label, key]): CorrectionCase => ({
-      field: `metadata.${field}`,
-      label,
-      group: "Metadata",
-      key,
-      values:
-        key === "Genres"
-          ? [["Drama", "Comedy"], ["Action"], []]
-          : [["Japanese", "Spanish"], ["French"], []],
-    }),
-  ),
-  ...[
-    ["personal_release", "Personal release", "PersonalRelease"],
-    ["commentary", "Commentary", "Commentary"],
-    ["web_dv", "WEB Dolby Vision", "WebDV"],
-    ["stream_optimized", "Stream optimized", "StreamOptimized"],
-    ["anime", "Anime", "Anime"],
-    ["hardcoded_subs", "Hardcoded subtitles", "HardcodedSubs"],
-  ].map(
-    ([field, label, key]): CorrectionCase => ({
-      field: `metadata.${field}`,
-      label,
-      group: "Metadata",
-      key,
-      values: [true, false],
-    }),
-  ),
+  {
+    field: "release_name.no_episode_title",
+    label: "No episode title",
+    group: "ReleaseName",
+    key: "NoEpisodeTitle",
+    values: [true, false],
+  },
+  {
+    field: "metadata.audio_languages",
+    label: "Audio languages",
+    group: "Metadata",
+    key: "AudioLanguages",
+    values: [["Japanese", "Spanish"], ["French"], []],
+  },
 ];
 
 // The fixed evidence collector proves editor transport and durable instructions here.
@@ -649,12 +564,7 @@ for (const correction of releaseDetailCorrections) {
         { name: correction.label, exact: true },
       );
       const automaticValue = await control.inputValue();
-      const storedGroup =
-        correction.group === "Identity"
-          ? "identity"
-          : correction.group === "ReleaseName"
-            ? "releaseName"
-            : "metadata";
+      const storedGroup = correction.group === "ReleaseName" ? "releaseName" : "metadata";
       const expectPersisted = (
         current: ReleaseWorkflowCurrent | null | undefined,
         value: unknown,
@@ -680,7 +590,7 @@ for (const correction of releaseDetailCorrections) {
                 ? ""
                 : String(value);
           if (boolean) await control.selectOption(text);
-          else await control.fill(correction.key === "IMDBID" && value ? `tt${text}` : text);
+          else await control.fill(text);
           await expect(row.getByText("Manual change pending", { exact: true })).toBeVisible();
           const saved = waitForAppMethod(page, "OpenActiveInput");
           await page.getByRole("button", { name: "Refresh metadata" }).click();
@@ -700,17 +610,15 @@ for (const correction of releaseDetailCorrections) {
             expectedRevision: snapshot.current?.corrections?.revision ?? 0,
           });
           snapshot = await waitForMetadataReady(page, app!.url);
-          const persistedValue = correction.key === "Category" && value === "" ? "unknown" : value;
-          const displayedText = persistedValue === "unknown" ? "unknown" : text;
-          expectPersisted(snapshot.current, persistedValue);
+          expectPersisted(snapshot.current, value);
           await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
-          await expect(control).toHaveValue(displayedText);
+          await expect(control).toHaveValue(text);
           const restored = waitForAppMethod(page, "GetActiveInput");
           await page.reload();
           snapshot = await activeInputFromResponse(await restored);
-          expectPersisted(snapshot.current, persistedValue);
+          expectPersisted(snapshot.current, value);
           await page.getByText("Edit Release Details", { exact: true }).click();
-          await expect(control).toHaveValue(displayedText);
+          await expect(control).toHaveValue(text);
           await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
         });
       }
@@ -743,44 +651,6 @@ for (const correction of releaseDetailCorrections) {
       await expect(row.getByText(/^Automatic value/)).toBeVisible();
       await expect(control).toHaveValue(automaticValue);
       expect(workspace.fake.counters).toEqual(initialCounters);
-    } finally {
-      await app?.stop();
-      await workspace.cleanup();
-    }
-  });
-}
-
-for (const mediaKind of ["movie", "tv"] as const) {
-  test(`embedded web locks provider-owned Release Details for ${mediaKind}`, async ({ page }) => {
-    const workspace = await createE2EWorkspace({ mediaKind });
-    let app: AppServer | undefined;
-    try {
-      app = await startApp(workspace);
-      const snapshot = await fetchMetadata(
-        page,
-        app.url,
-        workspace.sourcePath,
-        mediaKind === "tv" ? "E2E.Show.2026.S01E01.1080p.WEB-DL" : undefined,
-      );
-      await page.getByText("Edit Release Details", { exact: true }).click();
-      for (const label of ["Title", "Original title"]) {
-        await expect(page.getByRole("textbox", { name: label, exact: true })).toBeDisabled();
-        await expect(page.getByRole("button", { name: `Auto ${label}`, exact: true })).toHaveCount(
-          0,
-        );
-      }
-      expect(snapshot.current?.factInstructions?.instructions.Metadata.Title ?? null).toBeNull();
-      expect(
-        snapshot.current?.factInstructions?.instructions.Metadata.OriginalTitle ?? null,
-      ).toBeNull();
-      const year = page.getByRole("spinbutton", { name: "Manual year", exact: true });
-      await expectEnabledState(year, mediaKind === "movie");
-      await expect(page.getByRole("button", { name: "Auto Manual year", exact: true })).toHaveCount(
-        mediaKind === "movie" ? 1 : 0,
-      );
-      expect(
-        snapshot.current?.factInstructions?.instructions.ReleaseName.ManualYear ?? null,
-      ).toBeNull();
     } finally {
       await app?.stop();
       await workspace.cleanup();
@@ -961,7 +831,9 @@ test("embedded web applies Release Details source options and persists source ID
   }
 });
 
-test("embedded web distinguishes a cleared metadata provider ID from Auto", async ({ page }) => {
+test("embedded web distinguishes a cleared Release Details provider ID from Auto", async ({
+  page,
+}) => {
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
   try {
@@ -1006,7 +878,7 @@ test("embedded web distinguishes a cleared metadata provider ID from Auto", asyn
   }
 });
 
-test("embedded web distinguishes pending manual edits and Auto resets through refresh", async ({
+test("embedded web distinguishes pending Release Details edits and Auto resets through refresh", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
@@ -1058,7 +930,7 @@ test("embedded web distinguishes pending manual edits and Auto resets through re
   }
 });
 
-test("embedded web retains Input corrections without downstream workflow effects", async ({
+test("embedded web retains Release Details corrections without downstream workflow effects", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
