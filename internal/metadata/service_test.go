@@ -177,7 +177,8 @@ func TestCollectSourceEvidencePublishesMeasuredDVDCapacity(t *testing.T) {
 	}
 
 	repo := &stubRepo{}
-	service := NewService(repo, WithMediaInfoExporter(stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	service := NewService(repo, WithConfig(cfg), WithMediaInfoExporter(stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{SourcePath: sourcePath}))
 	if err != nil {
 		t.Fatalf("collect source evidence: %v", err)
@@ -234,7 +235,8 @@ func TestCollectSourceEvidenceUsesResolvedInstructionsWithoutHistoryLookup(t *te
 		releaseNameOverrides:    api.ReleaseNameOverrides{Episode: new("E04")},
 		releaseNameOverridesErr: errors.New("collector must not read correction history"),
 	}
-	service := NewService(repo)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	service := NewService(repo, WithConfig(cfg))
 	meta, err := service.collectSourceEvidence(t.Context(), testCollectionRequest(t, api.Request{
 		SourcePath:           sourcePath,
 		ReleaseNameOverrides: incoming,

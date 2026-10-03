@@ -13,7 +13,7 @@ upbrr ships as a single binary with the Web UI embedded. Release automation buil
 | Linux            | amd64, arm64, armv7 |
 | macOS            | amd64, arm64        |
 
-Docker images are published for Linux amd64 and arm64.
+Release Docker images are published for Linux amd64 and arm64.
 
 ## Release binary
 
@@ -68,6 +68,18 @@ sudo chown -R 1000:1000 /path/to/config /path/to/torrents
 ```
 
 For production, replace `latest` with a specific release tag. If you publish port `7480` on all interfaces, finish first-run account setup promptly. Bind to `127.0.0.1:7480:7480` or use a reverse proxy when LAN access is not required.
+
+### Test a pull request image
+
+After the Docker workflow succeeds, same-repository pull requests publish a Linux amd64 image tagged `ghcr.io/autobrr/upbrr:pr<number>`. For example:
+
+```bash
+docker pull ghcr.io/autobrr/upbrr:pr123
+```
+
+Replace `123` with the pull request number and use that image in your test Compose configuration. The tag updates when the pull request is updated and the workflow succeeds. It contains the pull request merged with its target branch for testing, not a release. Use a separate configuration/data directory rather than your production installation.
+
+Fork and Dependabot pull requests build without publishing an image. The `.dockerbuild` artifact on a workflow run is a build record, not an image you can run.
 
 ## Next step
 
