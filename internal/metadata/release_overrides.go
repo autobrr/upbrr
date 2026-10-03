@@ -142,6 +142,10 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 
 	if overrides.Edition != nil {
+		meta.EditionSet = ""
+		meta.Cut = ""
+		meta.Presentation = ""
+		meta.Release.Cut = nil
 		meta.Edition = strings.TrimSpace(*overrides.Edition)
 		meta.Release.Edition = nil
 		if meta.Edition != "" {
@@ -150,6 +154,10 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		meta.Edition = ""
+		meta.EditionSet = ""
+		meta.Cut = ""
+		meta.Presentation = ""
+		meta.Release.Cut = nil
 		meta.Release.Edition = nil
 		meta.Repack = ""
 	}
@@ -243,6 +251,9 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		req.Edition = ""
+		req.EditionSet = ""
+		req.Cut = ""
+		req.Presentation = ""
 	}
 	return req
 }

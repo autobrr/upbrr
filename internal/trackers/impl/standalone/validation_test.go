@@ -147,3 +147,18 @@ func TestValidatePreparationDoesNotPromotePartialTypedBDInfo(t *testing.T) {
 		t.Fatalf("legacy singular BDInfo compatibility failed: %v", err)
 	}
 }
+
+func TestValidationAdapterPreservesEditionCategories(t *testing.T) {
+	t.Parallel()
+	original := api.UploadSubject{
+		EditionSet:   "2in1",
+		Cut:          "Extended",
+		Edition:      "Collector's",
+		Presentation: "Open Matte",
+	}
+	validated := api.NewTrackerValidationSubject(original, "EXAMPLE")
+	restored := UploadSubjectForValidation(validated)
+	if restored.EditionSet != original.EditionSet || restored.Cut != original.Cut || restored.Edition != original.Edition || restored.Presentation != original.Presentation {
+		t.Fatalf("adapter lost finalized edition categories: %#v", restored)
+	}
+}

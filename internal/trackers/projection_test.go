@@ -654,3 +654,16 @@ func TestProjectionIneligibleProgressMessageIncludesStablePolicyDetails(t *testi
 		}
 	}
 }
+
+func TestDuplicateTargetRetainsSeparatedEditionParts(t *testing.T) {
+	t.Parallel()
+	legacy := duplicateTarget(api.UploadSubject{Edition: "Extended Collector's Open Matte"})
+	structured := duplicateTarget(api.UploadSubject{
+		Cut:          "Extended",
+		Edition:      "Collector's",
+		Presentation: "Open Matte",
+	})
+	if structured.Edition != legacy.Edition || structured.Edition == "" {
+		t.Fatalf("structured target edition = %q, legacy = %q", structured.Edition, legacy.Edition)
+	}
+}

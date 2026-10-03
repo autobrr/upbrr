@@ -158,3 +158,32 @@ func TestReleaseNameElementPolicyNormalizedPreservesVersion(t *testing.T) {
 		t.Fatalf("normalized element policy = %#v", got)
 	}
 }
+
+func TestEditionLabelsJoinOnlyFinalizedCategories(t *testing.T) {
+	t.Parallel()
+	subject := UploadSubject{
+		Cut:          "Extended",
+		Edition:      "Collector's",
+		Presentation: "Open Matte",
+		ReleaseName:  "IMAX Director's Cut",
+	}
+	want := "Extended Collector's Open Matte"
+	if got := subject.EditionLabel(); got != want {
+		t.Fatalf("upload label = %q, want %q", got, want)
+	}
+	release := ReleaseInfo{
+		Cut:          []string{"Extended"},
+		Edition:      []string{"Collector's"},
+		Presentation: []string{"Open Matte"},
+		Title:        "IMAX Director's Cut",
+	}
+	if got := release.EditionLabel(); got != want {
+		t.Fatalf("release label = %q, want %q", got, want)
+	}
+	if got := (UploadSubject{Edition: "Custom  Edition"}).EditionLabel(); got != "Custom  Edition" {
+		t.Fatalf("manual wording changed: %q", got)
+	}
+	if got := (UploadSubject{ReleaseName: "IMAX Director's Cut"}).EditionLabel(); got != "" {
+		t.Fatalf("rendered name became evidence: %q", got)
+	}
+}

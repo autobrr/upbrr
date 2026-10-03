@@ -14,7 +14,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v3", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v4", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
 }
 
 func applyULCXNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -29,8 +29,7 @@ func applyULCXNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, 
 			return err
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") &&
-		(strings.Contains(strings.ToLower(strings.TrimSpace(meta.Edition)), "hybrid") || meta.WebDV) {
+	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") {
 		if err := editor.Omit(api.NameRoleHybrid); err != nil {
 			return fmt.Errorf("omit ULCX hybrid: %w", err)
 		}

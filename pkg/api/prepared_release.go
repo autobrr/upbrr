@@ -151,11 +151,15 @@ type NamingFacts struct {
 	Size                     string
 	Group                    string
 	Disc                     string
-	Editions                 []string
-	Other                    []string
-	Scene                    bool
-	SceneName                string
-	Personal                 bool
+	// EditionSet is the finalized multi-edition naming label; category facts remain separate.
+	EditionSet    string
+	Cuts          []string
+	Presentations []string
+	Editions      []string
+	Other         []string
+	Scene         bool
+	SceneName     string
+	Personal      bool
 }
 
 // EpisodeFacts contains canonical reusable episodic identity and schedule
@@ -212,14 +216,18 @@ type MediaFacts struct {
 	VideoEncode                          string
 	HasEncodeSettings                    bool
 	BitDepth                             string
-	Edition                              string
-	Repack                               string
-	WebDV                                bool
-	StreamOptimized                      int
-	Service                              string
-	ServiceLongName                      string
-	MediaInfoUniqueID                    string
-	Anime                                bool
+	// Cut, Edition, and Presentation are independently addressable naming facts.
+	EditionSet        string
+	Cut               string
+	Presentation      string
+	Edition           string
+	Repack            string
+	WebDV             bool
+	StreamOptimized   int
+	Service           string
+	ServiceLongName   string
+	MediaInfoUniqueID string
+	Anime             bool
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as

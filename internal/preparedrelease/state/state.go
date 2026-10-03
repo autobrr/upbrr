@@ -258,6 +258,9 @@ type State struct {
 	VideoEncode                          string
 	HasEncodeSettings                    bool
 	BitDepth                             string
+	EditionSet                           string
+	Cut                                  string
+	Presentation                         string
 	Edition                              string
 	Repack                               string
 	WebDV                                bool

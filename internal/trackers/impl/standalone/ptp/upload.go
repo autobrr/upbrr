@@ -484,7 +484,7 @@ func resolveRemasterTitle(meta api.UploadSubject) string {
 	case "MASTERS OF CINEMA", "MOC":
 		parts = append(parts, "Masters of Cinema")
 	}
-	edition := strings.TrimSpace(meta.Edition)
+	edition := meta.EditionLabel()
 	switch {
 	case strings.Contains(strings.ToLower(edition), "director's cut"):
 		parts = append(parts, "Director's Cut")

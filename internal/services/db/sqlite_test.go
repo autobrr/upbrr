@@ -101,7 +101,8 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 		Size:       "DVD5",
 		Group:      "GROUP",
 		Disc:       "Disc",
-		Edition:    []string{"Extended"},
+		Cut:        []string{"Extended.Cut"},
+		Edition:    []string{"Collectors.Edition"},
 		Other:      []string{"Remastered"},
 	}); err != nil {
 		t.Fatalf("save: %v", err)
@@ -110,6 +111,9 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	got, err := repo.GetByPath(ctx, "/media/file.mkv")
 	if err != nil {
 		t.Fatalf("get: %v", err)
+	}
+	if len(got.Cut) != 1 || got.Cut[0] != "Extended.Cut" || len(got.Edition) != 1 || got.Edition[0] != "Collectors.Edition" {
+		t.Fatalf("edition categories did not round trip: %#v", got)
 	}
 	if got.InfoHash != "abc" {
 		t.Fatalf("unexpected info hash: %s", got.InfoHash)

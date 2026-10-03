@@ -229,25 +229,44 @@ func TestAZFamilyStructuredReleaseNamePolicy(t *testing.T) {
 			want: "Example Film 2026 1080p WEB-DL DD 5.1 H.265-GRP",
 		},
 		{
-			name: "CinemaZ normalizes only the edition component",
+			name: "CinemaZ formats cuts separately from edition and presentation",
 			site: "CZ",
 			request: api.ReleaseNameRequest{
-				Category:    "MOVIE",
-				Type:        "WEBDL",
-				Title:       "Director's Cut Limited Story",
-				AltTitle:    "Original",
-				Year:        2026,
-				Edition:     "LIMITED Criterion Collection 25th Anniversary Edition Extended Cut Director's Cut Theatrical Cut 4K restored",
-				Resolution:  "1080p",
-				Source:      "WEB-DL",
-				Audio:       "DD 5.1",
-				VideoEncode: "H.265",
-				Tag:         "-GRP",
+				Category:     "MOVIE",
+				Type:         "WEBDL",
+				Title:        "Director's Cut Limited Story",
+				AltTitle:     "Original",
+				Year:         2026,
+				Cut:          "Extended Cut Director's Cut Theatrical Cut",
+				Edition:      "LIMITED Criterion Collection 25th Anniversary Edition 4K restored",
+				Presentation: "Open Matte IMAX",
+				Resolution:   "1080p",
+				Source:       "WEB-DL",
+				Audio:        "DD 5.1",
+				VideoEncode:  "H.265",
+				Tag:          "-GRP",
 			},
 			configure: func(subject *api.UploadSubject) {
 				subject.ProviderMetadata.IMDB = &api.IMDBMetadata{AKA: "Director's Cut Limited Story"}
 			},
-			want: "Director's Cut Limited Story 2026 EXT DC TC RESTORED 1080p WEB-DL DD 5.1 H.265-GRP",
+			want: "Director's Cut Limited Story 2026 EXT DC TC RESTORED Open Matte IMAX 1080p WEB-DL DD 5.1 H.265-GRP",
+		},
+		{
+			name: "PHD formats cuts separately from edition and presentation",
+			site: "PHD",
+			request: api.ReleaseNameRequest{
+				Category:     "MOVIE",
+				Type:         "WEBDL",
+				Title:        "Extended Cut Story",
+				Year:         2026,
+				Cut:          "Directors Cut Extended Cut Theatrical Cut",
+				Edition:      "LIMITED Criterion Collection 25th Anniversary Edition",
+				Presentation: "Open Matte IMAX",
+				Resolution:   "1080p",
+				VideoEncode:  "H.265",
+				Tag:          "-GRP",
+			},
+			want: "Extended Cut Story 2026 DC Extended Theatrical Open Matte IMAX 1080p WEB-DL H.265-GRP",
 		},
 		{
 			name: "CinemaZ does not invent DVD tokens without facts",
@@ -416,6 +435,39 @@ func TestAZFamilySceneNamingMatchesPreStructuredPolicy(t *testing.T) {
 	}
 }
 
+func TestAZFamilyCutFormattingPreservesManualChoices(t *testing.T) {
+	t.Parallel()
+	for _, site := range []string{"CZ", "PHD"} {
+		t.Run(site, func(t *testing.T) {
+			t.Parallel()
+			subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:     "MOVIE",
+				Type:         "WEBDL",
+				Title:        "Extended Cut Story",
+				Year:         2026,
+				Cut:          "Extended Cut",
+				Edition:      "LIMITED",
+				Presentation: "Open Matte",
+				Resolution:   "1080p",
+				VideoEncode:  "H.265",
+				Tag:          "-GRP",
+			})
+			markAZFamilyComponentManual(t, subject.GeneratedName, api.NameRoleCut, true)
+			if got, want := azFamilyReviewedName(t, site, subject, nil), "Extended Cut Story 2026 Extended Cut Open Matte 1080p WEB-DL H.265-GRP"; got != want {
+				t.Fatalf("manual cut = %q, want %q", got, want)
+			}
+			if cut, ok := subject.GeneratedName.Component(api.NameRoleCut); !ok || cut.AvailableValue != "Extended Cut" {
+				t.Fatalf("tracker projection changed available cut: %+v", cut)
+			}
+			markAZFamilyComponentManual(t, subject.GeneratedName, api.NameRoleCut, false)
+			subject.ReleaseName = subject.GeneratedName.Render().Name
+			if got, want := azFamilyReviewedName(t, site, subject, nil), "Extended Cut Story 2026 Open Matte 1080p WEB-DL H.265-GRP"; got != want {
+				t.Fatalf("manual cut omission = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestAZFamilySearchNameUsesFactsNotUploadName(t *testing.T) {
 	t.Parallel()
 	subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
@@ -483,8 +535,8 @@ func TestAZFamilyNamingPolicyVersions(t *testing.T) {
 		provider   api.IdentityProvider
 	}{
 		{"AZ", "azfamily/az/v4", api.IdentityProviderTMDB},
-		{"CZ", "azfamily/cz/v6", api.IdentityProviderIMDB},
-		{"PHD", "azfamily/phd/v3", api.IdentityProviderTMDB},
+		{"CZ", "azfamily/cz/v7", api.IdentityProviderIMDB},
+		{"PHD", "azfamily/phd/v4", api.IdentityProviderTMDB},
 	} {
 		t.Run(test.site, func(t *testing.T) {
 			policy := New(test.site).ReleaseNamePolicy()
