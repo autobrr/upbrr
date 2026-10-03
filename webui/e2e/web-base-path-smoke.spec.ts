@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   fetchMetadata,
   repoRoot,
   startApp,
+  test,
   type AppServer,
 } from "./helpers/e2eHarness";
 import { ReleaseWorkflowV1Client, type WorkflowV1Current } from "./helpers/releaseWorkflowV1Client";

@@ -6,11 +6,11 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
-  workers: 1,
+  workers: process.env.CI ? 2 : 8,
   expect: {
     timeout: 10_000,
   },
-  fullyParallel: false,
+  fullyParallel: true,
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
     baseURL: "http://localhost:7480",
@@ -19,6 +19,11 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   projects: [
+    // Start the lease-expiry scenario early so its wait can overlap browser work.
+    {
+      name: "api-full-upload",
+      testMatch: /api-full-upload\.spec\.ts/,
+    },
     {
       name: "web-smoke",
       testMatch: /web-smoke\.spec\.ts/,
@@ -37,10 +42,6 @@ export default defineConfig({
     {
       name: "cli-full-upload",
       testMatch: /cli-full-upload\.spec\.ts/,
-    },
-    {
-      name: "api-full-upload",
-      testMatch: /api-full-upload\.spec\.ts/,
     },
   ],
 });

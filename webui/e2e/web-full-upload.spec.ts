@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
+import { expect, type Locator, type Page, type Response } from "@playwright/test";
 import type {
   ActiveInputSnapshot,
   ReleaseWorkflowCurrent,
@@ -15,6 +15,7 @@ import {
   fetchMetadata,
   releaseWorkflowParityFixture,
   startApp,
+  test,
   waitForMetadataReady,
   type AppServer,
 } from "./helpers/e2eHarness";
@@ -335,6 +336,7 @@ test("embedded web tabs converge on active input switches and closes", async ({ 
     await expect(secondPage.getByLabel("Source path", { exact: true })).toHaveValue(
       alternateSourcePath,
     );
+    await waitForMetadataReady(secondPage, app.url);
 
     await page.route(
       "**/api/app/GetActiveInput",
@@ -412,7 +414,7 @@ for (const mode of ["rebuild", "reject"] as const) {
       await page.goto(app.url);
       await page.getByLabel("Source path").fill(workspace.sourcePath);
       await page.getByRole("button", { name: "Fetch metadata" }).click();
-      await expect(page.getByRole("button", { name: "Dupe Check" })).toBeEnabled();
+      await waitForMetadataReady(page, app.url);
       await page.getByRole("button", { name: "Dupe Check" }).click();
       await runDuplicateCheck(page, mode === "reject" ? "failed" : "completed");
       await expect.poll(() => suppliedName).toBe(true);

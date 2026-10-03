@@ -15,7 +15,7 @@ Always-loaded AI-agent repo rules. Keep short; nearest scoped `AGENTS.md` owns a
 - CLI flags/prompts/unattended behavior: `cmd/upbrr/AGENTS.md`.
 - Shared API/runtime contracts: `pkg/api/AGENTS.md`.
 - Frontend/React/CSS/TypeScript/browser checks: `webui/AGENTS.md`.
-- Playwright E2E, fake services, reports, manual workflow: `webui/e2e/AGENTS.md`.
+- Playwright E2E, fake services, reports, CI workflow: `webui/e2e/AGENTS.md`.
 - Public Docusaurus content, synchronization, checks, and publishing: `documentation/AGENTS.md`.
 
 Read scoped file before area edits. Simple grep/read-only work: load extra instructions only when needed.
@@ -42,7 +42,7 @@ Start narrow; expand for shared behavior, release, WebUI/API parity, or safety-s
 - CLI: `go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api`; add touched service/tracker packages; build sanity: `make backend`.
 - WebUI/API: `go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api`; request/response or browser-client changes: add frontend `typecheck`/unit checks.
 - Frontend: `pnpm --dir webui run lint`, `lint:dead`, `typecheck`, `test:unit`, `format:check`; CSS: `lint:style`; bundle/runtime: `build`.
-- E2E/browser: read `webui/e2e/AGENTS.md`; runtime-sensitive UI requires embedded-web, not Vite-only, checks.
+- E2E/browser: first inspect the PR-target merge-base diff plus staged, unstaged, and untracked files as described in `CONTRIBUTING.md`. Skip unrelated/docs-only changes; choose focused projects for narrow changes and all five for shared runtime/build changes. Read `webui/e2e/AGENTS.md`; runtime-sensitive UI requires embedded-web, not Vite-only, checks. Honor explicit full-suite requests regardless of diff.
 - Public documentation: read `documentation/AGENTS.md`; run `pnpm --dir documentation run check`.
 
 Before commit: `git diff --check`, changed-package `make gofix-check-changed`, optionally relevant hooks. `make fmt-go` applies 160-column formatting and expands keyed composite literals containing at least three elements. If Go files, generated dirs, or scratch paths affect package discovery, run `make lint`.

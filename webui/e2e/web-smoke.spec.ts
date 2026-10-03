@@ -1,8 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { expect, test } from "@playwright/test";
-import { createE2EWorkspace, startApp, type AppServer } from "./helpers/e2eHarness";
+import { expect } from "@playwright/test";
+import { createE2EWorkspace, startApp, test, type AppServer } from "./helpers/e2eHarness";
 import type { ApplicationInfo } from "../src/types";
 
 test("embedded web boots with dev auth, navigates core pages, and reports invalid paths", async ({
