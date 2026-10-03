@@ -355,6 +355,21 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it("shows source-season evidence after metadata fetch and clears it with the next preview", () => {
+    const facet = readyInputFacet(1);
+    const message =
+      'Multiple seasons detected: S00, S01. Trackers that do not allow multiple seasons may reject this release during duplicate checking.\nAdditional season file: "Example.Series.S00E01.mkv" — S00';
+    facet.view.preview!.Diagnostics = [
+      { Code: "multiple_source_seasons", Severity: "warning", Message: message, Candidates: [] },
+    ];
+    const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    const warning = screen.getByText(/Multiple seasons detected/);
+    expect(warning.textContent).toBe(message);
+    expect(warning).toHaveClass("whitespace-pre-line", "break-words");
+    rerender(<InputPage facet={readyInputFacet(2)} {...inputPageProps()} />);
+    expect(screen.queryByText(/Multiple seasons detected/)).not.toBeInTheDocument();
+  });
+
   it("shows source MediaInfo between release details and external IDs", () => {
     const base = readyInputFacet(1);
     const preview = base.view.preview!;
