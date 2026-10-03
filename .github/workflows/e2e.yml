@@ -46,7 +46,7 @@ jobs:
     name: Playwright E2E
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true') }}
-    runs-on: windows-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
@@ -76,13 +76,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install FFmpeg
-        run: choco install ffmpeg --version=9.0.2 --yes --no-progress
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
 
       - name: Verify E2E prerequisites and runner capacity
         run: |
           ffmpeg -version
-          $system = Get-CimInstance Win32_ComputerSystem
-          Write-Host ("Runner capacity: {0} logical CPUs, {1:N1} GiB RAM" -f $system.NumberOfLogicalProcessors, ($system.TotalPhysicalMemory / 1GB))
+          printf 'Runner capacity: %s logical CPUs\n' "$(nproc)"
+          free --human
 
       - name: Install Playwright browser
         working-directory: webui

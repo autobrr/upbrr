@@ -12,16 +12,16 @@ pnpm --dir webui run test:e2e:web
 pnpm --dir webui run test:e2e:full
 ```
 
-`make e2e` is preferred full local command. Installs frontend deps, builds frontend, syncs embedded assets, builds `dist/upbrr-e2e.exe` with `e2e` tag, runs all Playwright projects.
+`make e2e` is preferred full local command. Installs frontend deps, builds frontend, syncs embedded assets, builds `dist/upbrr-e2e` (`.exe` on Windows) with `e2e` tag, runs all Playwright projects.
 
-CI runs tests fully in parallel with two workers; the local default is eight. Developers on smaller or busy systems should reduce workers with `--workers=2` or `--workers=1`. The audio-analysis scenarios require FFmpeg on `PATH` (`ffmpeg -version`); CI installs the pinned Chocolatey package. To compare test-level parallel execution locally, build once with `make e2e-build`, then run these commands separately:
+CI runs tests fully in parallel with two workers; the local default is eight. Developers on smaller or busy systems should reduce workers with `--workers=2` or `--workers=1`. The audio-analysis scenarios require FFmpeg on `PATH` (`ffmpeg -version`); CI installs the Ubuntu distribution package. To compare test-level parallel execution locally, build once with `make e2e-build`, then run these commands separately:
 
 ```bash
 pnpm --dir webui exec playwright test --workers=1
 pnpm --dir webui exec playwright test --workers=2 --fully-parallel
 ```
 
-Each test owns its app process, local fakes, ports, and temp workspace. Do not run builds or separate Playwright invocations concurrently: they share the binary and report directories. Compare full Windows/browser runs when changing worker counts; API/CLI-only timings do not establish browser stability. The crash-recovery scenario intentionally waits for the production 60-second lease to expire.
+Each test owns its app process, local fakes, ports, and temp workspace. Do not run builds or separate Playwright invocations concurrently: they share the binary and report directories. Compare full browser runs on the target OS when changing worker counts; API/CLI-only timings do not establish browser stability. Local Windows runs remain supported. The crash-recovery scenario intentionally waits for the production 60-second lease to expire.
 
 ## Selecting local checks
 
@@ -72,7 +72,7 @@ Use `--grep` to run a focused visual scenario while iterating. The capture suite
 - Auth/questionnaire failure blocks only affected tracker; other runnable lanes continue. Across continuation/restart, assert downstream work uses exact approved or stage-controlled tracker subset. Never implement tracker semantics in fake frontend.
 - No real tracker, image host, torrent client, TMDB, or credentials in E2E.
 - Service seams test-only or config/test fixture driven; production defaults unchanged.
-- Process manager cleans up `dist/upbrr-e2e.exe serve --config <temp>\config.yaml --dev-no-auth`.
+- Process manager cleans up `dist/upbrr-e2e serve --config <temp>/config.yaml --dev-no-auth` (using the native `.exe` and path separators on Windows).
 
 ## Generated Artifacts
 
@@ -81,7 +81,7 @@ Ignored outputs:
 - `webui/playwright-report/`
 - `webui/test-results/`
 
-Never commit Playwright traces, videos, screenshots, reports, temp DBs, or `dist/upbrr-e2e.exe`.
+Never commit Playwright traces, videos, screenshots, reports, temp DBs, or `dist/upbrr-e2e` binaries.
 
 ## CI
 
@@ -89,7 +89,7 @@ Pull request and manual workflow:
 
 - `.github/workflows/e2e.yml`
 - `pull_request` (opened, reopened, and updated) and `workflow_dispatch`.
-- An always-present Linux gate tests `scripts/ci/e2e-scope.mjs` and reads the full base-to-head merge-base diff. Relevant changes run Windows E2E; unrelated/docs-only changes skip it without leaving an absent required check. Unreadable diffs or gate failures run the full suite; cancellation stays canceled. Manual dispatch always runs all projects.
+- An always-present Linux gate tests `scripts/ci/e2e-scope.mjs` and reads the full base-to-head merge-base diff. Relevant changes run Ubuntu 24.04 E2E; unrelated/docs-only changes skip it without leaving an absent required check. Unreadable diffs or gate failures run the full suite; cancellation stays canceled. Manual dispatch always runs all projects.
 - Builds frontend + embedded assets + CLI.
 - Installs Playwright Chromium.
 - Installs and verifies FFmpeg for the real audio-analysis decoder.

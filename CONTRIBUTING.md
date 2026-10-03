@@ -205,7 +205,7 @@ make frontend-bundle  # Vite bundle only
 
 ### End-to-end checks
 
-Every pull request gets a lightweight change-selection check. The full Windows Playwright job runs only when the complete PR diff touches runtime, frontend, normal E2E, dependency, asset, or shared build inputs. Documentation-only changes, the separate visual suites, and unrelated tooling skip that job. [`scripts/ci/e2e-scope.mjs`](scripts/ci/e2e-scope.mjs) owns the exact paths; source-tree unit-test changes are included conservatively. Deleted paths and both sides of renames count. An unreadable diff runs the full suite, and manual workflow dispatch always runs it. The workflow keeps read-only permissions and does not need repository secrets for forks.
+Every pull request gets a lightweight change-selection check. The full Ubuntu 24.04 Playwright job runs only when the complete PR diff touches runtime, frontend, normal E2E, dependency, asset, or shared build inputs. Documentation-only changes, the separate visual suites, and unrelated tooling skip that job. [`scripts/ci/e2e-scope.mjs`](scripts/ci/e2e-scope.mjs) owns the exact paths; source-tree unit-test changes are included conservatively. Deleted paths and both sides of renames count. An unreadable diff runs the full suite, and manual workflow dispatch always runs it. The workflow keeps read-only permissions and does not need repository secrets for forks.
 
 Before local E2E validation, fetch the PR target branch and inspect the branch diff from its merge base, staged changes, unstaged changes, and untracked files. For a target of `origin/main` (use `upstream/main` for a fork when appropriate):
 
