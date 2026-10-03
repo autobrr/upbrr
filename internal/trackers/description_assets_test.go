@@ -4593,34 +4593,3 @@ func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *te
 		t.Fatalf("unexpected rollback target: %#v", repo.deletedUploads)
 	}
 }
-
-func TestResolveDescriptionAssetsRetainsExactNFO(t *testing.T) {
-	t.Parallel()
-	for _, final := range []bool{false, true} {
-		meta := api.UploadSubject{DescriptionGroupsFinal: final, DescriptionGroups: []api.DescriptionBuilderGroup{
-			{
-				GroupKey:    "unit3d|pixhost|global",
-				Trackers:    []string{"AITHER"},
-				Description: "same description",
-				NFO:         "wrong NFO",
-			},
-			{
-				GroupKey:    "unit3d|aither|tracker:aither",
-				Trackers:    []string{"AITHER"},
-				Description: "same description",
-				NFO:         "selected NFO",
-			},
-		}}
-		assets, err := ResolveDescriptionAssets(t.Context(), "AITHER", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := ""
-		if final {
-			want = "selected NFO"
-		}
-		if assets.NFO != want {
-			t.Fatalf("final=%t NFO=%q want=%q", final, assets.NFO, want)
-		}
-	}
-}

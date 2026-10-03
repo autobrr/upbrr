@@ -7573,9 +7573,6 @@
               "type": "string"
             }
           },
-          "nfo": {
-            "type": "string"
-          },
           "rendered": {
             "type": "string"
           },

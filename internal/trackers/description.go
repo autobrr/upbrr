@@ -9,6 +9,4 @@ type DescriptionResult struct {
 	Group string
 	// Description is rendered tracker markup ready for preview or payload preparation.
 	Description string
-	// NFO is tracker-extracted content retained separately from rendered markup.
-	NFO string
 }

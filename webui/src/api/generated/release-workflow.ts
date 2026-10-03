@@ -1786,7 +1786,6 @@ export type RenderedDescription = Readonly<{
   contentFingerprint: WorkflowFingerprint;
   groupKey: string;
   imagePreviews?: Readonly<Record<string, string>>;
-  nfo?: string;
   rendered: string;
   source: string;
   trackerIds: readonly TrackerID[];

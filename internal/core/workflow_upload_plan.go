@@ -1480,7 +1480,6 @@ func workflowUploadDescriptionGroups(
 			Trackers:           trackerNames,
 			Description:        retained.Source,
 			DescriptionHTML:    retained.Rendered,
-			NFO:                retained.NFO,
 			RawDescription:     retained.Source,
 			RawDescriptionHTML: retained.Rendered,
 			HasOverride:        true,

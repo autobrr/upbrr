@@ -57,29 +57,24 @@ func resolveMediaPath(meta api.UploadSubject, dbPath string) string {
 // Match the size bound used when scene metadata downloads an NFO.
 const maxNFOBytes = 8 << 20
 
-// resolveNFO prefers a prepared local NFO, retaining the description's extracted
-// NFO when no local content exists. A supplied but unreadable file is an error.
-func resolveNFO(meta api.UploadSubject, fallback string) (string, error) {
-	nfo := fallback
-	if path := strings.TrimSpace(meta.SceneNFOPath); path != "" {
-		file, err := os.Open(path)
-		if err != nil {
-			return "", fmt.Errorf("trackers: BHD open NFO: %w", err)
-		}
-		defer file.Close()
-		payload, err := io.ReadAll(io.LimitReader(file, maxNFOBytes+1))
-		if err != nil {
-			return "", fmt.Errorf("trackers: BHD read NFO: %w", err)
-		}
-		if len(payload) > maxNFOBytes {
-			return "", errors.New("trackers: BHD NFO exceeds size limit")
-		}
-		if strings.TrimSpace(string(payload)) != "" {
-			nfo = string(payload)
-		}
+// resolveNFO captures the prepared local NFO without changing its formatting.
+// An absent path omits the optional NFO; unreadable or oversized content fails preparation.
+func resolveNFO(meta api.UploadSubject) (string, error) {
+	path := strings.TrimSpace(meta.SceneNFOPath)
+	if path == "" {
+		return "", nil
 	}
-	if len(nfo) > maxNFOBytes {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("trackers: BHD open NFO: %w", err)
+	}
+	defer file.Close()
+	payload, err := io.ReadAll(io.LimitReader(file, maxNFOBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("trackers: BHD read NFO: %w", err)
+	}
+	if len(payload) > maxNFOBytes {
 		return "", errors.New("trackers: BHD NFO exceeds size limit")
 	}
-	return nfo, nil
+	return string(payload), nil
 }

@@ -64,7 +64,7 @@ Tracker-specific categories, source/type mappings, descriptions, media selection
 
 ### BHD NFOs
 
-BHD sends an available local scene NFO through the dedicated `nfo` upload field. Without local NFO content, it uses NFO content retained during FraMeSToR description cleanup. The reviewed description stays unchanged. NFO content is captured during upload preparation; an unreadable supplied NFO or content larger than 8 MiB blocks preparation. Uploads without NFO content omit the optional field.
+BHD sends an available local scene NFO through the dedicated `nfo` upload field without changing the reviewed description. NFO content is captured during upload preparation; an unreadable supplied NFO or content larger than 8 MiB blocks preparation. Uploads without NFO content omit the optional field.
 
 ## Image hosts and clients
 

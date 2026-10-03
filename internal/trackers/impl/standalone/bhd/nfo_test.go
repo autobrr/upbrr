@@ -22,17 +22,10 @@ func TestPreparedUploadCapturesSceneNFO(t *testing.T) {
 	const nfo = "  SYNTHETIC SCENE NFO\r\n  Keep spacing.\r\n"
 	const description = "[code]Imported description NFO stays here[/code]"
 	for _, tc := range []struct {
-		name     string
-		local    bool
-		retained string
+		name  string
+		local bool
 	}{
 		{name: "local", local: true},
-		{name: "retained", retained: "retained NFO"},
-		{
-			name:     "local precedence",
-			local:    true,
-			retained: "retained NFO",
-		},
 		{name: "absent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -49,7 +42,7 @@ func TestPreparedUploadCapturesSceneNFO(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			wantNFO := tc.retained
+			wantNFO := ""
 			if tc.local {
 				wantNFO = nfo
 			}
@@ -105,7 +98,6 @@ func TestPreparedUploadCapturesSceneNFO(t *testing.T) {
 				},
 				Assets: &trackers.DescriptionAssets{
 					Description: description,
-					NFO:         tc.retained,
 					Final:       true,
 				},
 				TrackerConfig: config.TrackerConfig{APIKey: "synthetic-token"},
@@ -129,7 +121,6 @@ func TestPreparedUploadCapturesSceneNFO(t *testing.T) {
 				t.Fatal(err)
 			}
 			input.Assets.Description = "changed after preparation"
-			input.Assets.NFO = "changed after preparation"
 			summary, err := plan.Submit(context.Background())
 			if err != nil {
 				t.Fatal(err)
@@ -141,59 +132,18 @@ func TestPreparedUploadCapturesSceneNFO(t *testing.T) {
 	}
 }
 
-func TestDescriptionRetainsFramestorNFO(t *testing.T) {
-	t.Parallel()
-	const source = "[size=4]Synthetic release notes[/size]\r\nsecond line"
-	meta := api.UploadSubject{Tag: "-FraMeSToR"}
-	result, err := prepareDescription(t.Context(), trackers.PreparationInput{Meta: meta, Assets: &trackers.DescriptionAssets{Description: source}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := strings.ReplaceAll(source, "\r\n", "\n")
-	if result.NFO != want {
-		t.Fatalf("extracted NFO = %q, want %q", result.NFO, want)
-	}
-	if strings.Contains(result.Description, "[size=4]") {
-		t.Fatal("description cleanup changed")
-	}
-	retained, err := prepareDescription(t.Context(), trackers.PreparationInput{Meta: meta, Assets: &trackers.DescriptionAssets{
-		Description: result.Description,
-		NFO:         result.NFO,
-		Final:       true,
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retained != result {
-		t.Fatalf("final description/NFO rebuilt: %#v", retained)
-	}
-	nonFramestor, err := prepareDescription(t.Context(), trackers.PreparationInput{Assets: &trackers.DescriptionAssets{Description: source}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nonFramestor.NFO != "" {
-		t.Fatal("ordinary description incorrectly treated as NFO")
-	}
-	canceled, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := prepareDescription(canceled, trackers.PreparationInput{Meta: meta}); err == nil {
-		t.Fatal("canceled description preparation succeeded")
-	}
-}
-
 func TestResolveNFOBoundaries(t *testing.T) {
 	t.Parallel()
-	const fallback = "retained NFO"
 	for _, tc := range []struct {
 		name, content string
 		missing       bool
 		want, wantErr string
 	}{
-		{name: "empty", want: fallback},
+		{name: "empty"},
 		{
 			name:    "whitespace",
 			content: " \r\n ",
-			want:    fallback,
+			want:    " \r\n ",
 		},
 		{
 			name:    "missing",
@@ -218,7 +168,7 @@ func TestResolveNFOBoundaries(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := resolveNFO(api.UploadSubject{SceneNFOPath: path}, fallback)
+			got, err := resolveNFO(api.UploadSubject{SceneNFOPath: path})
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
@@ -229,20 +179,5 @@ func TestResolveNFOBoundaries(t *testing.T) {
 				t.Fatalf("NFO length=%d expected=%d err=%v", len(got), len(tc.want), err)
 			}
 		})
-	}
-	if _, err := resolveNFO(api.UploadSubject{}, strings.Repeat("x", maxNFOBytes+1)); err == nil {
-		t.Fatal("oversize retained NFO accepted")
-	}
-}
-
-func TestResolveNFOPrefersLocalOverOversizeFallback(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "scene.nfo")
-	if err := os.WriteFile(path, []byte("local NFO"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := resolveNFO(api.UploadSubject{SceneNFOPath: path}, strings.Repeat("x", maxNFOBytes+1))
-	if err != nil || got != "local NFO" {
-		t.Fatalf("local precedence: nfo=%q err=%v", got, err)
 	}
 }

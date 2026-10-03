@@ -695,7 +695,7 @@ func TestBuildDescriptionUsesAllSelectedScreenshotsByDefault(t *testing.T) {
 		{RawURL: "https://img.example/6.png", WebURL: "https://img.example/6"},
 	}
 
-	got, _ := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{
+	got := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{
 		Description: "Custom user description",
 		Override:    true,
 		Screenshots: images,
@@ -723,7 +723,7 @@ func TestBuildDescriptionKeepsAudioGraphsOutOfScreenshots(t *testing.T) {
 		MenuImages:  []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png", WebURL: "https://images.example.invalid/menu"}},
 		Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/shot.png", WebURL: "https://images.example.invalid/shot"}},
 	}
-	got, _ := buildDescription(api.UploadSubject{}, config.Config{}, assets)
+	got := buildDescription(api.UploadSubject{}, config.Config{}, assets)
 	for _, token := range []string{"Notes", "menu.png", sizedAudio, "shot.png"} {
 		if !strings.Contains(got, token) {
 			t.Fatalf("missing %q in %q", token, got)
@@ -734,7 +734,7 @@ func TestBuildDescriptionKeepsAudioGraphsOutOfScreenshots(t *testing.T) {
 	}
 	assets.MenuImages = nil
 	assets.Screenshots = nil
-	got, _ = buildDescription(api.UploadSubject{}, config.Config{}, assets)
+	got = buildDescription(api.UploadSubject{}, config.Config{}, assets)
 	if strings.Count(got, "audio.png") != 1 || strings.Contains(got, "[align=center]") {
 		t.Fatalf("audio graph became a screenshot: %q", got)
 	}
@@ -742,11 +742,11 @@ func TestBuildDescriptionKeepsAudioGraphsOutOfScreenshots(t *testing.T) {
 
 func TestBuildDescriptionReplacesImportedUpbrrSignature(t *testing.T) {
 	const original = "Release notes\n[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]"
-	got, _ := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{Description: original})
+	got := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{Description: original})
 	if strings.Count(got, "Uploaded by upbrr") != 1 || strings.Contains(got, "[size=4]") || !strings.Contains(got, "Release notes") {
 		t.Fatalf("unexpected cleaned description: %q", got)
 	}
-	got, _ = buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{Description: original, Final: true})
+	got = buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{Description: original, Final: true})
 	if got != original {
 		t.Fatalf("reviewed description changed: %q", got)
 	}
@@ -759,7 +759,7 @@ func TestBuildDescriptionHonorsExplicitScreenshotLimit(t *testing.T) {
 		{RawURL: "https://img.example/3.png", WebURL: "https://img.example/3"},
 	}
 
-	got, _ := buildDescription(api.UploadSubject{Options: api.UploadOptions{Screens: 2}}, config.Config{}, trackers.DescriptionAssets{
+	got := buildDescription(api.UploadSubject{Options: api.UploadOptions{Screens: 2}}, config.Config{}, trackers.DescriptionAssets{
 		Description: "Custom user description",
 		Override:    true,
 		Screenshots: images,
@@ -773,7 +773,7 @@ func TestBuildDescriptionHonorsExplicitScreenshotLimit(t *testing.T) {
 }
 
 func TestBuildDescriptionPreservesFinalDescription(t *testing.T) {
-	got, _ := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{
+	got := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{
 		Description: " [b]Reviewed tracker description[/b] ",
 		Final:       true,
 		Screenshots: []api.ScreenshotImage{{RawURL: "https://img.example/1.png", WebURL: "https://img.example/1"}},

@@ -319,7 +319,6 @@ func newWorkflowDescriptionReuseFixture(t *testing.T) workflowDescriptionReuseFi
 			{
 				GroupKey:           "beta",
 				TrackerIDs:         []api.TrackerID{"BETA"},
-				NFO:                "synthetic beta NFO",
 				Source:             "saved beta source",
 				Rendered:           "<p>saved beta source</p>",
 				ContentFingerprint: workflowTestFingerprint(t, "beta-description"),
@@ -327,7 +326,6 @@ func newWorkflowDescriptionReuseFixture(t *testing.T) workflowDescriptionReuseFi
 			{
 				GroupKey:           "alpha",
 				TrackerIDs:         []api.TrackerID{"ALPHA"},
-				NFO:                "synthetic alpha NFO",
 				Source:             "saved alpha source",
 				Rendered:           "<p>saved alpha source</p>",
 				ContentFingerprint: workflowTestFingerprint(t, "alpha-description"),

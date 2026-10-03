@@ -592,10 +592,8 @@ type DescriptionInstructions struct {
 
 // RenderedDescription contains one retained description group projection.
 type RenderedDescription struct {
-	GroupKey   string      `json:"groupKey"`
-	TrackerIDs []TrackerID `json:"trackerIds"`
-	// NFO retains tracker-extracted content alongside this exact description revision.
-	NFO                string              `json:"nfo,omitempty"`
+	GroupKey           string              `json:"groupKey"`
+	TrackerIDs         []TrackerID         `json:"trackerIds"`
 	Source             string              `json:"source"`
 	Rendered           string              `json:"rendered"`
 	ImagePreviews      map[string]string   `json:"imagePreviews,omitempty"`

@@ -63,10 +63,9 @@ func workflowDescriptionFingerprints(
 	exactMedia *api.ExactMediaAssets,
 ) (api.WorkflowFingerprint, api.WorkflowFingerprint, error) {
 	templateFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Template      string
-		Version       string
-		OutputVersion int
-	}{subject.DescriptionTemplate, strings.TrimSpace(instructions.TemplateVersion), 2})
+		Template string
+		Version  string
+	}{subject.DescriptionTemplate, strings.TrimSpace(instructions.TemplateVersion)})
 	if err != nil {
 		return "", "", fmt.Errorf("workflow description template fingerprint: %w", err)
 	}
@@ -240,19 +239,17 @@ func (b workflowDescriptionBuilder) Build(
 		contentFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 			GroupKey      string
 			TrackerIDs    []api.TrackerID
-			NFO           string `json:",omitempty"`
 			Source        string
 			Rendered      string
 			ImagePreviews map[string]string
 			ImageHost     api.ImageHostFeedback
-		}{entry.GroupKey, trackerIDs, entry.NFO, source, rendered, entry.ImagePreviews, entry.ImageHost})
+		}{entry.GroupKey, trackerIDs, source, rendered, entry.ImagePreviews, entry.ImageHost})
 		if err != nil {
 			return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: content fingerprint: %w", err)
 		}
 		snapshot.Descriptions = append(snapshot.Descriptions, api.RenderedDescription{
 			GroupKey:           strings.TrimSpace(entry.GroupKey),
 			TrackerIDs:         trackerIDs,
-			NFO:                entry.NFO,
 			Source:             source,
 			Rendered:           rendered,
 			ImagePreviews:      entry.ImagePreviews,
