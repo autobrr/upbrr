@@ -575,7 +575,8 @@ test("composite operation cancellation stops the active tracker stage", async ()
   }
 });
 
-test("restart stops at reconciliation after an uncertain client effect", async () => {
+test("restart interrupts an uncertain client effect without replay", async () => {
+  test.setTimeout(90_000);
   const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   workspace.fake.delayClientInjections(5_000);
   let app = await startApp(workspace);
@@ -601,29 +602,9 @@ test("restart stops at reconciliation after an uncertain client effect", async (
 
     await app.crash();
     workspace.fake.delayClientInjections(0);
-    workspace.env.UPBRR_E2E_CLOCK_OFFSET = "2m";
-    app = await startApp(workspace, { seed: false });
+    // Startup uses real time and must respect the crashed process's 60-second leases.
+    app = await startApp(workspace, { seed: false, startupTimeoutMs: 75_000 });
     client = new ReleaseWorkflowV1Client(app.url, apiToken);
-    // Plain reads do not claim a coordinator lease or recover external work.
-    // An explicit owner-authorized resume performs recovery. It can return
-    // while the interrupted operation is still being reconciled, or reject
-    // the old revision after recovery has already advanced the workflow.
-    const beforeResumeResponse = await client.get(accepted.workflow.id);
-    expect(beforeResumeResponse.status).toBe(200);
-    const beforeResume = (await beforeResumeResponse.json()) as WorkflowV1Current;
-    const resumed = await client.raw("/continuations", {
-      method: "POST",
-      idempotencyKey: "recover-uncertain-client-effect",
-      body: {
-        authority: {
-          workflowId: beforeResume.workflow.id,
-          expectedRevision: beforeResume.workflow.revision,
-        },
-        goal: "prepared",
-        intent: {},
-      },
-    });
-    expect([202, 409], await resumed.clone().text()).toContain(resumed.status);
     const recoveredOperation = await waitForTerminalOperation(
       client,
       accepted.workflow.id,
@@ -632,29 +613,16 @@ test("restart stops at reconciliation after an uncertain client effect", async (
     const currentResponse = await client.get(accepted.workflow.id);
     expect(currentResponse.status).toBe(200);
     const current = (await currentResponse.json()) as WorkflowV1Current;
-    if (
-      !current.workflow.requiredActions?.some((action) => action.kind === "reconcile_submission")
-    ) {
-      throw new Error(
-        JSON.stringify(
-          {
-            recoveredOperation: {
-              status: recoveredOperation.status,
-              message: recoveredOperation.message,
-              failures: recoveredOperation.failures,
-            },
-            workflow: current.workflow,
-            dryRun: current.dryRun,
-            output: app.output(),
-          },
-          undefined,
-          2,
-        ),
-      );
-    }
-    const reconciliation = pendingAction(current, "reconcile_submission");
-    expect(reconciliation.trackerId).toBe(releaseWorkflowParityFixture.trackerID);
-    expect(current.workflow.status).toBe("blocked");
+    expect(recoveredOperation.status).toBe("interrupted");
+    expect(recoveredOperation.failures).toEqual([
+      expect.objectContaining({
+        failure: expect.objectContaining({ Code: "stale_review", Recovery: "retry" }),
+      }),
+    ]);
+    expect(current.workflow.requiredActions ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "reconcile_submission" })]),
+    );
+    expect(workspace.fake.counters.clientInjections).toBe(1);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app.stop();

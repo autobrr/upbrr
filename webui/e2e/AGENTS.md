@@ -14,6 +14,15 @@ pnpm --dir webui run test:e2e:full
 
 `make e2e` is preferred full local command. Installs frontend deps, builds frontend, syncs embedded assets, builds `dist/upbrr-e2e.exe` with `e2e` tag, runs all Playwright projects.
 
+The default remains one worker. To compare test-level parallel execution, build once with `make e2e-build`, then run these commands separately:
+
+```bash
+pnpm --dir webui exec playwright test --workers=1
+pnpm --dir webui exec playwright test --workers=2 --fully-parallel
+```
+
+Each test owns its app process, local fakes, ports, and temp workspace. Do not run builds or separate Playwright invocations concurrently: they share the binary and report directories. Compare full Windows/browser runs before changing the default; API/CLI-only timings do not establish browser stability. The crash-recovery scenario intentionally waits for the production 60-second lease to expire.
+
 Missing Playwright browsers:
 
 ```bash
@@ -69,11 +78,13 @@ Never commit Playwright traces, videos, screenshots, reports, temp DBs, or `dist
 
 ## CI
 
-Manual workflow only:
+Pull request and manual workflow:
 
 - `.github/workflows/e2e.yml`
-- `workflow_dispatch`
+- `pull_request` (opened, reopened, and updated) and `workflow_dispatch`.
 - Builds frontend + embedded assets + CLI.
 - Installs Playwright Chromium.
 - Runs `make e2e`.
 - Uploads report/traces on failure.
+- Uses read-only repository permissions and local fakes; fork PRs need no repository secrets.
+- Cancels obsolete runs for the same PR and retains the 45-minute job timeout.

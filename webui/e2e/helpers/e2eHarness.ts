@@ -79,6 +79,8 @@ type StartAppOptions = {
   seed?: boolean;
   /** Use the isolated account created by the harness instead of the dev auth bypass. */
   devNoAuth?: boolean;
+  /** Allows crash-recovery scenarios to wait for live production leases to expire. */
+  startupTimeoutMs?: number;
 };
 
 type E2EWorkspaceOptions = {
@@ -371,7 +373,12 @@ async function startAppOnce(
   child.stdout?.on("data", (chunk) => output.push(String(chunk)));
   child.stderr?.on("data", (chunk) => output.push(String(chunk)));
   try {
-    await waitForHTTP(`${origin}${basePath}/api/auth/status`, child, output);
+    await waitForHTTP(
+      `${origin}${basePath}/api/auth/status`,
+      child,
+      output,
+      options.startupTimeoutMs,
+    );
   } catch (error) {
     await stopProcess(child);
     throw error;
@@ -706,8 +713,8 @@ function writeJSON(res: ServerResponse, status: number, payload: unknown) {
   res.end(JSON.stringify(payload));
 }
 
-async function waitForHTTP(url: string, child: ChildProcess, output: string[]) {
-  const deadline = Date.now() + 20_000;
+async function waitForHTTP(url: string, child: ChildProcess, output: string[], timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(`server exited with ${child.exitCode}:\n${output.join("")}`);

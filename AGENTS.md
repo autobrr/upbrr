@@ -15,7 +15,7 @@ Always-loaded AI-agent repo rules. Keep short; nearest scoped `AGENTS.md` owns a
 - CLI flags/prompts/unattended behavior: `cmd/upbrr/AGENTS.md`.
 - Shared API/runtime contracts: `pkg/api/AGENTS.md`.
 - Frontend/React/CSS/TypeScript/browser checks: `webui/AGENTS.md`.
-- Playwright E2E, fake services, reports, manual workflow: `webui/e2e/AGENTS.md`.
+- Playwright E2E, fake services, reports, CI workflow: `webui/e2e/AGENTS.md`.
 - Public Docusaurus content, synchronization, checks, and publishing: `documentation/AGENTS.md`.
 
 Read scoped file before area edits. Simple grep/read-only work: load extra instructions only when needed.
