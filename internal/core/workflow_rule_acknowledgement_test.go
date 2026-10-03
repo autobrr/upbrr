@@ -22,14 +22,30 @@ import (
 )
 
 func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t *testing.T) {
+	testContinueRuleAcknowledgementDuplicateScope(t, "OTW", otw.ValidationPolicy(), "genre")
+}
+
+func TestContinueReleaseWorkflowAcknowledgesOtherRulesAfterSiblingDuplicateCheck(t *testing.T) {
+	testContinueRuleAcknowledgementDuplicateScope(t, "WARN", trackerspkg.ValidationPolicyBinding{
+		ID: "warning-scope-test-v1",
+		Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
+			return []api.RuleFailure{
+				trackerspkg.NewRuleFailure("group", "Confirm this release group", api.RuleDispositionWaivable),
+				trackerspkg.NewRuleFailure("language", "Confirm this release language", api.RuleDispositionWaivable),
+			}, nil
+		},
+	}, "group")
+}
+
+func testContinueRuleAcknowledgementDuplicateScope(t *testing.T, tracker api.TrackerID, validation trackerspkg.ValidationPolicyBinding, rule string) {
 	t.Parallel()
 
 	registry := trackerspkg.NewRegistry()
 	for _, descriptor := range []trackerspkg.Descriptor{
 		{
-			Name:       "OTW",
-			Definition: workflowImageHostPolicyDefinition{name: "OTW"},
-			Validation: otw.ValidationPolicy(),
+			Name:       string(tracker),
+			Definition: workflowImageHostPolicyDefinition{name: string(tracker)},
+			Validation: validation,
 		},
 		{Name: "OE", Definition: workflowImageHostPolicyDefinition{name: "OE", policy: oe.Profile().ImageHost}},
 	} {
@@ -101,14 +117,16 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 	}
 	dupes := &workflowDupeServiceFake{results: []api.DupeCheckResult{
 		{
-			Tracker: "OTW",
+			Tracker: string(tracker),
 			Status:  "completed",
 			Search:  api.DupeSearchEvidence{Complete: true},
 		},
 		{
-			Tracker: "OE",
-			Status:  "completed",
-			Search:  api.DupeSearchEvidence{Complete: true},
+			Tracker:     "OE",
+			Status:      "completed",
+			Search:      api.DupeSearchEvidence{Complete: true},
+			HasDupes:    true,
+			Evaluations: []api.DupeCandidateEvaluation{{Name: "Example.Release.2026.1080p.WEB-DL-GRP", Relation: api.DupeRelationSameSlot}},
 		},
 	}}
 	module, err := releaseworkflow.New(
@@ -132,7 +150,7 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 	const owner = "rule-acknowledgement-owner"
 	intent := api.WorkflowIntent{
 		Preparation: &api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), releaseName+".mkv")},
-		TrackerIDs:  []api.TrackerID{"OTW", "OE"},
+		TrackerIDs:  []api.TrackerID{tracker, "OE"},
 	}
 	current, err := core.ContinueReleaseWorkflow(ctx, owner, api.ContinueReleaseWorkflowRequest{
 		IdempotencyKey: "open-rule-workflow",
@@ -189,7 +207,7 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 		t.Helper()
 		if current.Projections != nil {
 			for _, candidate := range current.Projections.Projections {
-				if candidate.TrackerID == "OTW" {
+				if candidate.TrackerID == tracker {
 					return candidate
 				}
 			}
@@ -206,7 +224,7 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 			status = api.RequiredActionStatusResolved
 		}
 		for _, candidate := range actions {
-			if candidate.Kind == api.RequiredActionAuthorizeRules && candidate.TrackerID == "OTW" && candidate.Status == status {
+			if candidate.Kind == api.RequiredActionAuthorizeRules && candidate.TrackerID == tracker && candidate.Status == status {
 				return candidate
 			}
 		}
@@ -220,12 +238,12 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 		t.Fatalf("fixture did not retain an earlier action: action=%d workflow=%d", pending.WorkflowRevision, current.Workflow.Revision)
 	}
 	if current.Dupes == nil || !slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
-		return result.TrackerID == "OE" && result.Decision == api.DupeDecisionNoMatch
+		return result.TrackerID == "OE" && result.Decision == api.DupeDecisionPending
 	}) || len(dupes.projections) != 1 || dupes.projections[0].TrackerID != "OE" {
 		t.Fatalf("eligible sibling did not finish its duplicate check: dupes=%#v checked=%#v", current.Dupes, dupes.projections)
 	}
 	if !slices.ContainsFunc(projection().PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
-		return decision.Code == "genre" && decision.Disposition == api.RuleDispositionWaivable && decision.Blocking
+		return decision.Code == rule && decision.Disposition == api.RuleDispositionWaivable && decision.Blocking
 	}) {
 		t.Fatalf("OTW genre warning missing: %#v", projection())
 	}
@@ -256,6 +274,32 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 		t.Fatalf("stale answer revision error = %v", err)
 	}
 
+	// Existing duplicate-risk controls change retained decisions without searching.
+	for _, decision := range []api.DupeDecision{api.DupeDecisionIgnored, api.DupeDecisionAccepted, api.DupeDecisionIgnored} {
+		intent.DuplicateDecisions = map[api.TrackerID]api.DupeDecision{"OE": decision}
+		settle("sibling-decision-" + string(decision))
+		if len(dupes.projections) != 1 {
+			t.Fatalf("duplicate decision reran searches: %v", dupes.projections)
+		}
+	}
+	intent.DuplicateDecisions = nil
+	var siblingEvidence api.TrackerDupeAssessment
+	for _, result := range current.Dupes.Results {
+		if result.TrackerID == "OE" {
+			siblingEvidence = result
+		}
+	}
+	otwChecks := 0
+	checkDuplicateCalls := func() {
+		t.Helper()
+		counts := make(map[api.TrackerID]int)
+		for _, checked := range dupes.projections {
+			counts[checked.TrackerID]++
+		}
+		if counts["OE"] != 1 || counts[tracker] != otwChecks {
+			t.Fatalf("duplicate service calls = %v, want OE=1 OTW=%d", counts, otwChecks)
+		}
+	}
 	for _, confirmed := range []bool{true, false, true} {
 		selectedAction := action(confirmed)
 		key := "acknowledge-" + string(selectedAction.ID)
@@ -264,6 +308,17 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 			WorkflowRevision: current.Workflow.Revision,
 			Confirmed:        &confirmed,
 		})
+		if confirmed {
+			otwChecks++
+		}
+		checkDuplicateCalls()
+		for _, result := range current.Dupes.Results {
+			if result.TrackerID == "OE" && (result.Decision != api.DupeDecisionIgnored ||
+				!result.CheckedAt.Equal(siblingEvidence.CheckedAt) || !result.FreshUntil.Equal(siblingEvidence.FreshUntil) ||
+				result.EvidenceFingerprint != siblingEvidence.EvidenceFingerprint) {
+				t.Fatalf("unaffected sibling evidence changed: before=%#v after=%#v", siblingEvidence, result)
+			}
+		}
 		otwProjection := projection()
 		if (otwProjection.RuleAuthorizationFingerprint != "") != confirmed || otwProjection.DupeReady != confirmed {
 			t.Fatalf("OTW acknowledgement confirmed=%t: %#v", confirmed, otwProjection)
@@ -272,13 +327,14 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 			t.Fatalf("OTW acknowledgement lost exact warning authority: %#v", otwProjection)
 		}
 		if current.Dupes == nil || !slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
-			return result.TrackerID == "OTW" && ((confirmed && result.Decision == api.DupeDecisionNoMatch) ||
+			return result.TrackerID == tracker && ((confirmed && result.Decision == api.DupeDecisionNoMatch) ||
 				(!confirmed && result.Decision == api.DupeDecisionSkipped))
 		}) {
 			t.Fatalf("OTW duplicate state after acknowledgement confirmed=%t: %#v", confirmed, current.Dupes)
 		}
 		checkImageHost(key)
 		settle("repeat-" + key)
+		checkDuplicateCalls()
 		checkImageHost("repeat-" + key)
 		if !confirmed {
 			settle("obsolete-grant-after-revocation", api.RequiredActionAnswer{
@@ -295,8 +351,17 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 	previousGeneration := current.Release.Release.Generation
 	obsoleteAction := action(false)
 	intent.Preparation = &api.PrepareInput{SourcePath: current.Release.Release.Source.SourcePath, Force: true}
-	intent.TrackerIDs = []api.TrackerID{"OTW", "OE"}
+	intent.TrackerIDs = []api.TrackerID{tracker, "OE"}
 	settle("new-prepared-generation")
+	siblingChecks := 0
+	for _, checked := range dupes.projections {
+		if checked.TrackerID == "OE" {
+			siblingChecks++
+		}
+	}
+	if siblingChecks != 2 {
+		t.Fatalf("new preparation did not refresh sibling evidence: calls=%d", siblingChecks)
+	}
 	if current.Release.Release.Generation <= previousGeneration || projection().RuleAuthorizationFingerprint != "" {
 		t.Fatalf("new preparation retained old authority: generation=%d projection=%#v", current.Release.Release.Generation, projection())
 	}

@@ -98,6 +98,12 @@ func (m *Module) authorizeTrackerRules(
 		delete(authorizations, projection.TrackerID)
 	}
 	m.logger.Infof("release workflow: tracker rule acknowledgement tracker=%s decision=%s", projection.TrackerID, decision)
+	if workflow.Dupes != nil {
+		state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *workflow.Dupes}
+	}
+	if pending := state.PendingDuplicateReuse; pending != nil && !slices.Contains(pending.InvalidatedTrackers, projection.TrackerID) {
+		pending.InvalidatedTrackers = append(pending.InvalidatedTrackers, projection.TrackerID)
+	}
 	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
 		WorkflowID:       workflow.ID,
 		ExpectedRevision: workflow.Revision,

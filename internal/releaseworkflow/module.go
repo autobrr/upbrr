@@ -445,6 +445,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 
 	priorWorkflow := state.Workflow
+	priorDuplicateReuse := state.PendingDuplicateReuse
 	now := m.clock.Now().UTC()
 	nextRevision := state.Workflow.Revision + 1
 	result, err := m.apply(ctx, ownerID, &state, nextRevision, now, command)
@@ -499,6 +500,10 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 	if result.Dupes != nil {
 		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
+	}
+	if priorDuplicateReuse != nil && (state.PendingDuplicateReuse == nil ||
+		priorDuplicateReuse.Assessment != state.PendingDuplicateReuse.Assessment) {
+		m.private.Delete(ownerID, state.Workflow.ID, dupePrivateResourceID(priorDuplicateReuse.Assessment.ID))
 	}
 	if result.Media != nil || result.Descriptions != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
@@ -3619,6 +3624,11 @@ func (m *Module) apply(
 	now time.Time,
 	command mutation,
 ) (CommandResult, error) {
+	switch command.(type) {
+	case PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand:
+	default:
+		state.PendingDuplicateReuse = nil
+	}
 	switch typed := command.(type) {
 	case ReplaceFactInstructionsCommand:
 		return m.replaceFactInstructions(ctx, ownerID, state, nextRevision, now, typed)
@@ -3699,6 +3709,9 @@ func (m *Module) invalidateWorkflowPrivateResources(
 	state *State,
 ) error {
 	var preserved []string
+	if pending := state.PendingDuplicateReuse; pending != nil {
+		preserved = append(preserved, dupePrivateResourceID(pending.Assessment.ID))
+	}
 	if state.Workflow.AudioAnalysis != nil {
 		if analysis, ok := state.AudioAnalyses[state.Workflow.AudioAnalysis.ID]; ok &&
 			analysis.Revision == state.Workflow.AudioAnalysis.Revision {
@@ -5125,7 +5138,17 @@ func (m *Module) checkDuplicates(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve duplicate subject: %w", err)
 	}
-	snapshot, privateEvidence, err := m.dupeBuilder.Build(ctx, subject, projections, preflight, now, command.SkipRemote)
+	reuse, err := m.pendingDuplicateReuse(ownerID, state, projections, command, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	var snapshot api.DupeAssessment
+	var privateEvidence any
+	if incremental, ok := m.dupeBuilder.(IncrementalDupeAssessmentBuilder); ok && reuse != nil {
+		snapshot, privateEvidence, err = incremental.BuildWithReuse(ctx, subject, projections, preflight, now, command.SkipRemote, *reuse)
+	} else {
+		snapshot, privateEvidence, err = m.dupeBuilder.Build(ctx, subject, projections, preflight, now, command.SkipRemote)
+	}
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build duplicate assessment: %w", err)
 	}
@@ -5162,6 +5185,7 @@ func (m *Module) checkDuplicates(
 			return CommandResult{}, fmt.Errorf("release workflow retain duplicate evidence: %w", err)
 		}
 	}
+	state.PendingDuplicateReuse = nil
 	return result, nil
 }
 
@@ -8278,6 +8302,8 @@ func (m *Module) resolveAction(
 	var currentDupes *api.DupeAssessment
 	if state.Workflow.Dupes != nil {
 		currentDupes = currentSnapshot(state.Dupes, state.Workflow.Dupes.ID)
+	} else if pending := state.PendingDuplicateReuse; pending != nil {
+		currentDupes = currentSnapshot(state.Dupes, pending.Assessment.ID)
 	}
 	if action, ok := releaseNameConfirmationAction(currentProjections, command.Answer.ActionID); ok {
 		if strictDuplicateForTracker(currentDupes, action.TrackerID) {
@@ -8291,6 +8317,7 @@ func (m *Module) resolveAction(
 		}
 		return m.authorizeTrackerRules(ctx, ownerID, state, nextRevision, now, projection, action, command.Answer)
 	}
+	state.PendingDuplicateReuse = nil
 	index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.ID == command.Answer.ActionID && action.Status == api.RequiredActionStatusPending
 	})

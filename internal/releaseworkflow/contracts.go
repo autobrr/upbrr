@@ -248,6 +248,29 @@ type DupeAssessmentBuilder interface {
 	) (api.DupeAssessment, any, error)
 }
 
+// IncrementalDupeAssessmentBuilder can retain fresh, unchanged tracker evidence
+// after a rule acknowledgement. Reuse never grants new upload authority.
+type IncrementalDupeAssessmentBuilder interface {
+	BuildWithReuse(context.Context, api.DuplicateSubject, api.TrackerReleaseProjectionSet,
+		api.TrackerPreflightAssessment, time.Time, bool, DuplicateAssessmentReuse) (api.DupeAssessment, any, error)
+}
+
+// DuplicateAssessmentReuse supplies the prior exact assessment and private evidence
+// for a rule-only change. InvalidatedTrackers must be checked again when eligible.
+type DuplicateAssessmentReuse struct {
+	Assessment          api.DupeAssessment
+	Projections         api.TrackerReleaseProjectionSet
+	PrivateEvidence     any
+	InvalidatedTrackers []api.TrackerID
+}
+
+// PendingDuplicateReuse retains evidence across the projection and preflight
+// stages of rule acknowledgement; it is not current duplicate authority.
+type PendingDuplicateReuse struct {
+	Assessment          api.DupeAssessmentRef
+	InvalidatedTrackers []api.TrackerID
+}
+
 // MediaArtifactBuilder captures generation- and projection-bound media while
 // keeping local paths and bytes in a private resource.
 type MediaArtifactBuilder interface {
@@ -587,6 +610,7 @@ type State struct {
 	Projections            map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet
 	Preflights             map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment
 	Dupes                  map[api.DupeAssessmentID]api.DupeAssessment
+	PendingDuplicateReuse  *PendingDuplicateReuse
 	TrackerApprovals       map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
 	Media                  map[api.MediaArtifactSetID]api.MediaArtifactSet
 	AudioAnalyses          map[api.AudioAnalysisResultID]api.AudioAnalysisResult
