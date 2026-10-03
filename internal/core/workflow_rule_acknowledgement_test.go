@@ -8,6 +8,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/oe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/otw"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -29,13 +31,20 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 			Definition: workflowImageHostPolicyDefinition{name: "OTW"},
 			Validation: otw.ValidationPolicy(),
 		},
-		{Name: "ALPHA", Definition: workflowImageHostPolicyDefinition{name: "ALPHA"}},
+		{Name: "OE", Definition: workflowImageHostPolicyDefinition{name: "OE", policy: oe.Profile().ImageHost}},
 	} {
 		if err := registry.RegisterDescriptor(descriptor); err != nil {
 			t.Fatal(err)
 		}
 	}
-	projector, err := trackerspkg.NewWorkflowProjector(registry, config.Config{}, api.NopLogger{})
+	cfg := config.Config{
+		ImageHosting:       config.ImageHostingConfig{Host1: "imgbb", Host2: "onlyimage"},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"OE": {ImageHost: "onlyimage"},
+		}},
+	}
+	projector, err := trackerspkg.NewWorkflowProjector(registry, cfg, api.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +106,7 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 			Search:  api.DupeSearchEvidence{Complete: true},
 		},
 		{
-			Tracker: "ALPHA",
+			Tracker: "OE",
 			Status:  "completed",
 			Search:  api.DupeSearchEvidence{Complete: true},
 		},
@@ -107,7 +116,11 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 		releaseworkflow.NewMemoryPrivateResourceStore(),
 		preparer,
 		releaseworkflow.WithTrackerProjectionBuilder(projector),
-		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}),
+		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{
+			auth:     workflowPreflightAuthFake{},
+			registry: registry,
+			config:   cfg,
+		}),
 		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: dupes}),
 	)
 	if err != nil {
@@ -119,7 +132,7 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 	const owner = "rule-acknowledgement-owner"
 	intent := api.WorkflowIntent{
 		Preparation: &api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), releaseName+".mkv")},
-		TrackerIDs:  []api.TrackerID{"OTW", "ALPHA"},
+		TrackerIDs:  []api.TrackerID{"OTW", "OE"},
 	}
 	current, err := core.ContinueReleaseWorkflow(ctx, owner, api.ContinueReleaseWorkflowRequest{
 		IdempotencyKey: "open-rule-workflow",
@@ -207,8 +220,8 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 		t.Fatalf("fixture did not retain an earlier action: action=%d workflow=%d", pending.WorkflowRevision, current.Workflow.Revision)
 	}
 	if current.Dupes == nil || !slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
-		return result.TrackerID == "ALPHA" && result.Decision == api.DupeDecisionNoMatch
-	}) || len(dupes.projections) != 1 || dupes.projections[0].TrackerID != "ALPHA" {
+		return result.TrackerID == "OE" && result.Decision == api.DupeDecisionNoMatch
+	}) || len(dupes.projections) != 1 || dupes.projections[0].TrackerID != "OE" {
 		t.Fatalf("eligible sibling did not finish its duplicate check: dupes=%#v checked=%#v", current.Dupes, dupes.projections)
 	}
 	if !slices.ContainsFunc(projection().PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
@@ -216,6 +229,13 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 	}) {
 		t.Fatalf("OTW genre warning missing: %#v", projection())
 	}
+	checkImageHost := func(stage string) {
+		t.Helper()
+		t.Run(stage, func(t *testing.T) {
+			checkRuleAcknowledgementImageHost(t, cfg, registry, current.Projections.Projections)
+		})
+	}
+	checkImageHost("before-acknowledgement")
 	intent = api.WorkflowIntent{Interaction: api.InteractionModeInteractive}
 	stale := request("stale-acknowledgement", api.RequiredActionAnswer{
 		ActionID:         pending.ID,
@@ -257,6 +277,9 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 		}) {
 			t.Fatalf("OTW duplicate state after acknowledgement confirmed=%t: %#v", confirmed, current.Dupes)
 		}
+		checkImageHost(key)
+		settle("repeat-" + key)
+		checkImageHost("repeat-" + key)
 		if !confirmed {
 			settle("obsolete-grant-after-revocation", api.RequiredActionAnswer{
 				ActionID:         pending.ID,
@@ -272,7 +295,7 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 	previousGeneration := current.Release.Release.Generation
 	obsoleteAction := action(false)
 	intent.Preparation = &api.PrepareInput{SourcePath: current.Release.Release.Source.SourcePath, Force: true}
-	intent.TrackerIDs = []api.TrackerID{"OTW", "ALPHA"}
+	intent.TrackerIDs = []api.TrackerID{"OTW", "OE"}
 	settle("new-prepared-generation")
 	if current.Release.Release.Generation <= previousGeneration || projection().RuleAuthorizationFingerprint != "" {
 		t.Fatalf("new preparation retained old authority: generation=%d projection=%#v", current.Release.Release.Generation, projection())
@@ -284,5 +307,175 @@ func TestContinueReleaseWorkflowAcknowledgesOTWRulesAfterSiblingDuplicateCheck(t
 	})
 	if projection().RuleAuthorizationFingerprint != "" || action(true).ID == obsoleteAction.ID {
 		t.Fatalf("obsolete generation action authorized current warnings: %#v", projection())
+	}
+}
+
+func checkRuleAcknowledgementImageHost(
+	t *testing.T,
+	cfg config.Config,
+	registry *trackerspkg.Registry,
+	projections []api.TrackerReleaseProjection,
+) {
+	t.Helper()
+	index := slices.IndexFunc(projections, func(projection api.TrackerReleaseProjection) bool { return projection.TrackerID == "OE" })
+	if index < 0 || !projections[index].DupeReady || projections[index].Artifacts.ScreenshotCount != 1 {
+		t.Fatalf("OE sibling lost readiness or screenshot requirements: %#v", projections)
+	}
+	projections = projections[index : index+1]
+	builder := workflowMediaBuilder{config: cfg, media: &mediaModule{
+		cfg:      cfg,
+		registry: registry,
+		logger:   api.NopLogger{},
+	}}
+	for _, test := range []struct {
+		name                string
+		cachedHosts         []string
+		extraDefaultImage   bool
+		failPreferredUpload bool
+		failedHosts         []string
+		wantHost            string
+		wantPrepared        bool
+	}{
+		{
+			name:        "default-only",
+			cachedHosts: []string{"imgbb"},
+			wantHost:    "onlyimage",
+		},
+		{
+			name:         "both-hosts-default-first",
+			cachedHosts:  []string{"imgbb", "onlyimage"},
+			wantHost:     "onlyimage",
+			wantPrepared: true,
+		},
+		{
+			name:              "preferred-cache-misses-selected-image",
+			cachedHosts:       []string{"onlyimage", "imgbb"},
+			extraDefaultImage: true,
+			wantHost:          "onlyimage",
+		},
+		{
+			name:                "preferred-upload-fails",
+			cachedHosts:         []string{"imgbb"},
+			failPreferredUpload: true,
+			wantHost:            "onlyimage",
+		},
+		{
+			name:         "recorded-preferred-host-failure",
+			cachedHosts:  []string{"imgbb"},
+			failedHosts:  []string{"onlyimage"},
+			wantHost:     "imgbb",
+			wantPrepared: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const sourceID api.PublicResourceID = "selected-screenshot"
+			pathValue := filepath.Join(t.TempDir(), "selected.png")
+			snapshot := api.MediaArtifactSet{
+				FailedHosts: test.failedHosts,
+				Artifacts: []api.MediaArtifact{{
+					ID:       sourceID,
+					Kind:     api.MediaArtifactScreenshot,
+					Selected: true,
+				}},
+			}
+			retained := workflowMediaPrivateArtifacts{
+				ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{sourceID: {Path: pathValue, Purpose: api.ScreenshotPurposeFinal}},
+				HostedImages:   make(map[api.PublicResourceID]api.UploadedImageLink),
+				HostedSources:  make(map[api.PublicResourceID]api.PublicResourceID),
+			}
+			selected := map[api.PublicResourceID]struct{}{sourceID: {}}
+			for _, host := range test.cachedHosts {
+				accountScope, err := workflowMediaHostAccountScope(cfg, host)
+				if err != nil {
+					t.Fatal(err)
+				}
+				hostedID := api.PublicResourceID("hosted-" + host)
+				url := "https://" + host + ".example.invalid/selected.png"
+				snapshot.Artifacts = append(snapshot.Artifacts, api.MediaArtifact{
+					ID:       hostedID,
+					Kind:     api.MediaArtifactHostedImage,
+					Selected: true,
+					Source:   string(sourceID),
+					Host:     host,
+					URL:      url,
+				})
+				retained.HostedSources[hostedID] = sourceID
+				retained.HostedImages[hostedID] = api.UploadedImageLink{
+					ImagePath:    pathValue,
+					Host:         host,
+					UsageScope:   "global",
+					AccountScope: accountScope,
+					RawURL:       url,
+				}
+			}
+			if test.extraDefaultImage {
+				const extraID api.PublicResourceID = "extra-screenshot"
+				const hostedID api.PublicResourceID = "extra-imgbb"
+				extraPath := filepath.Join(t.TempDir(), "extra.png")
+				link := retained.HostedImages["hosted-imgbb"]
+				link.ImagePath = extraPath
+				link.RawURL = "https://imgbb.example.invalid/extra.png"
+				retained.ArtifactImages[extraID] = api.ScreenshotImage{Path: extraPath, Purpose: api.ScreenshotPurposeFinal}
+				retained.HostedSources[hostedID] = extraID
+				retained.HostedImages[hostedID] = link
+				snapshot.Artifacts = append(snapshot.Artifacts,
+					api.MediaArtifact{
+						ID:       extraID,
+						Kind:     api.MediaArtifactScreenshot,
+						Selected: true,
+					},
+					api.MediaArtifact{
+						ID:       hostedID,
+						Kind:     api.MediaArtifactHostedImage,
+						Selected: true,
+						Source:   string(extraID),
+						Host:     "imgbb",
+						URL:      link.RawURL,
+					},
+				)
+				selected[extraID] = struct{}{}
+			}
+			subject := api.UploadSubject{}
+			targets, err := builder.media.resolveImageUploadTargets([]string{"OE"}, subject, "", test.failedHosts)
+			if err != nil || len(targets) != 1 || targets[0].Host != test.wantHost {
+				t.Fatalf("configured upload target = %#v, error=%v", targets, err)
+			}
+			targets, err = builder.preferReusableImageTargets(snapshot, retained, selected,
+				projections, subject, test.failedHosts, targets)
+			if err != nil || len(targets) != 1 || targets[0].Host != test.wantHost || targets[0].ReuseOnly != test.wantPrepared {
+				t.Errorf("cached image selection changed OE configured target: targets=%#v error=%v", targets, err)
+			}
+			attempts, prepared := builder.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, subject)
+			if prepared != test.wantPrepared || (prepared && (len(attempts) != 1 || attempts[0].Host != test.wantHost)) {
+				t.Errorf("restored image coverage changed OE configured target: attempts=%#v prepared=%t", attempts, prepared)
+			}
+			images := make([]api.ScreenshotImage, 0, len(selected))
+			sourceByPath := make(map[string]api.PublicResourceID)
+			sourcePaths := make(map[api.PublicResourceID]string)
+			for id := range selected {
+				image := retained.ArtifactImages[id]
+				images = append(images, image)
+				sourceByPath[strings.ToLower(normalizedUploadImagePath(image.Path))] = id
+				sourcePaths[id] = image.Path
+			}
+			links, blocked, _ := builder.retainedHostedImageLinks(snapshot, retained, selected, sourceByPath, sourcePaths, targets)
+			builder.media.images = &countingWorkflowImageHost{}
+			wantUploadedHost, wantAttempts := test.wantHost, 1
+			if test.failPreferredUpload {
+				builder.media.images = &partialImageHostingService{failHost: "onlyimage"}
+				wantUploadedHost, wantAttempts = "imgbb", 2
+			}
+			result, err := builder.media.uploadImagesToTargetsWithFallback(t.Context(), subject, "", test.failedHosts, targets, images, links, blocked)
+			if err != nil || len(result.Attempts) != wantAttempts {
+				t.Fatalf("image upload attempts: result=%#v error=%v", result, err)
+			}
+			if test.failPreferredUpload && (result.Attempts[0].Host != "onlyimage" || result.Attempts[0].Failure == nil) {
+				t.Errorf("configured host was not attempted before fallback: %#v", result.Attempts)
+			}
+			last := result.Attempts[len(result.Attempts)-1]
+			if last.Host != wantUploadedHost || len(last.Links) != len(images) || len(result.Failures) != 0 {
+				t.Errorf("image upload changed OE configured target or dropped selected images: result=%#v error=%v", result, err)
+			}
+		})
 	}
 }

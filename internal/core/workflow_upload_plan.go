@@ -294,6 +294,7 @@ func (b workflowUploadPlanBuilder) Build(
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: resolve subject: %w", err)
 	}
 	subject.ExactMedia = exactMedia
+	subject.ImageHostOverrides.FailedHosts = slices.Concat(subject.ImageHostOverrides.FailedHosts, media.FailedHosts)
 	skipImageUpload := true
 	subject.ImageHostOverrides.SkipUpload = &skipImageUpload
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
