@@ -351,13 +351,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 		return fmt.Errorf("clients: %s qbit host is required", name)
 	}
 	username := strings.TrimSpace(client.QbitUsername())
-	if username == "" && !client.UsesQuiProxy() {
-		return fmt.Errorf("clients: %s qbit username is required", name)
-	}
 	password := strings.TrimSpace(client.QbitPassword())
-	if password == "" && !client.UsesQuiProxy() {
-		return fmt.Errorf("clients: %s qbit password is required", name)
-	}
 
 	select {
 	case <-ctx.Done():
