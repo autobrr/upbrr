@@ -423,6 +423,10 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err := m.recoverAfterRestart(ctx, ownerID, &state); err != nil {
 		return CommandResult{}, err
 	}
+	ctx, err = m.withCommandRunLogLevel(ctx, ownerID, state, command)
+	if err != nil {
+		return CommandResult{}, err
+	}
 	receiptKey := commandReceiptKey(command.commandName(), idempotencyKey, fingerprint)
 	if receipt, ok := state.Receipts[receiptKey]; ok {
 		if receipt.Fingerprint != fingerprint {
@@ -697,6 +701,10 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow start load: %w", err)
 	}
 	if err := m.recoverAfterRestart(ctx, ownerID, &state); err != nil {
+		return api.WorkflowOperationStatus{}, err
+	}
+	ctx, err = m.withCommandRunLogLevel(ctx, ownerID, state, command)
+	if err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
 	if prior, found, loadErr := m.loadOperationReceipt(
@@ -1063,7 +1071,7 @@ func (m *Module) runOperation(
 	if runningErr != nil {
 		if m.failAcceptedOperation(ctx, record, true, "Operation could not begin. Retry the stage.") {
 			if err := m.finishCompositeSession(ctx, record.OwnerID, record.WorkflowID, record.OperationID, "admission_failed"); err != nil {
-				m.logger.Warnf(
+				logging.FromContext(ctx, m.logger).Warnf(
 					"releaseworkflow: workflow=%s operation=%s stage=admission_composite_cleanup state=retry_pending cause=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1115,7 +1123,7 @@ func (m *Module) runOperation(
 	privateErr := err
 	if err != nil {
 		err = m.operationErrorClassifier(record.Status.Operation, err)
-		m.logger.Errorf(
+		logging.FromContext(ctx, m.logger).Errorf(
 			"releaseworkflow: command=%s operation=%s stage=%s state=failed cause=%s",
 			command.commandName(),
 			record.Status.Operation,
@@ -1177,7 +1185,7 @@ func (m *Module) runOperation(
 			}
 		}
 	}); terminalErr != nil && !errors.Is(terminalErr, ErrOperationConflict) {
-		m.logger.Warnf(
+		logging.FromContext(ctx, m.logger).Warnf(
 			"releaseworkflow: workflow=%s operation=%s stage=work_completion state=retry_pending cause=%s",
 			record.WorkflowID,
 			record.OperationID,
@@ -1261,7 +1269,7 @@ func (m *Module) failAcceptedOperation(
 		}
 	}
 	if err := m.publishOperationAdmissionFailure(cleanupCtx, record, reason); err != nil {
-		m.logger.Warnf(
+		logging.FromContext(ctx, m.logger).Warnf(
 			"releaseworkflow: workflow=%s operation=%s stage=admission_cleanup state=failed cause=%s",
 			record.WorkflowID,
 			record.OperationID,
@@ -1287,7 +1295,7 @@ func (m *Module) finishCompositeAdmissionLocked(
 	state.Composite.LastOperationID = operationID
 	state.Composite.TerminalReason = "admission_failed"
 	if err := m.saveCompositeMetadata(context.WithoutCancel(ctx), ownerID, state); err != nil {
-		m.logger.Warnf(
+		logging.FromContext(ctx, m.logger).Warnf(
 			"releaseworkflow: workflow=%s operation=%s stage=admission_composite_cleanup state=retry_pending cause=%s",
 			state.Workflow.ID,
 			operationID,
@@ -1615,12 +1623,18 @@ func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted b
 	records, err := m.operations.ListActiveOperations(recoveryCtx)
 	if err != nil {
 		if discardInterrupted {
-			m.logger.Debugf("releaseworkflow: startup operation recovery state=failed stage=list cause=%s", logging.SanitizeMessage(err.Error()))
+			logging.FromContext(
+				ctx,
+				m.logger,
+			).Debugf(
+				"releaseworkflow: startup operation recovery state=failed stage=list cause=%s",
+				logging.SanitizeMessage(err.Error()),
+			)
 		}
 		return fmt.Errorf("release workflow recover operations: %w", err)
 	}
 	if discardInterrupted {
-		m.logger.Debugf("releaseworkflow: startup operation recovery state=started active_count=%d", len(records))
+		logging.FromContext(ctx, m.logger).Debugf("releaseworkflow: startup operation recovery state=started active_count=%d", len(records))
 	}
 	for _, record := range records {
 		if record.ProcessEpoch == m.processEpoch {
@@ -1628,7 +1642,7 @@ func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted b
 		}
 		if err := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); err != nil {
 			if discardInterrupted {
-				m.logger.Debugf(
+				logging.FromContext(ctx, m.logger).Debugf(
 					"releaseworkflow: startup operation recovery state=failed workflow=%s operation=%s cause=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1658,7 +1672,7 @@ func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted b
 		}
 	}
 	if discardInterrupted {
-		m.logger.Debugf("releaseworkflow: startup operation recovery state=completed active_count=%d", len(records))
+		logging.FromContext(ctx, m.logger).Debugf("releaseworkflow: startup operation recovery state=completed active_count=%d", len(records))
 		m.startupRecoveryCompleted = true
 	}
 	m.operationRecovered = true
@@ -1677,7 +1691,7 @@ func (m *Module) completeInterruptedWorkAfterLease(ctx context.Context, record a
 	}
 	now := m.clock.Now().UTC()
 	if work.LeaseExpiresAt.After(now) {
-		m.logger.Debugf(
+		logging.FromContext(ctx, m.logger).Debugf(
 			"releaseworkflow: startup operation recovery decision=wait_terminal_work_lease workflow=%s operation=%s remaining=%s",
 			record.WorkflowID,
 			record.OperationID,
@@ -1707,7 +1721,7 @@ func (m *Module) completeInterruptedWorkAfterLease(ctx context.Context, record a
 	if err := m.durability.CompleteWork(ctx, workflowWorkRecord(current, current.Status, now, &completedAt)); err != nil {
 		return fmt.Errorf("release workflow complete interrupted terminal work: %w", err)
 	}
-	m.logger.Debugf(
+	logging.FromContext(ctx, m.logger).Debugf(
 		"releaseworkflow: startup operation recovery decision=complete_terminal_work workflow=%s operation=%s",
 		record.WorkflowID,
 		record.OperationID,
@@ -1725,7 +1739,7 @@ func (m *Module) recoverOperationAfterLease(
 	if err != nil {
 		if errors.Is(err, ErrWorkflowNotFound) {
 			if discardInterrupted {
-				m.logger.Debugf(
+				logging.FromContext(ctx, m.logger).Debugf(
 					"releaseworkflow: startup operation recovery decision=interrupt reason=missing_work workflow=%s operation=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1739,7 +1753,7 @@ func (m *Module) recoverOperationAfterLease(
 		checkpoint, checkpointErr := completedOperationCheckpoint(record, work)
 		if checkpointErr != nil {
 			if discardInterrupted {
-				m.logger.Debugf(
+				logging.FromContext(ctx, m.logger).Debugf(
 					"releaseworkflow: startup operation recovery decision=interrupt reason=invalid_checkpoint workflow=%s operation=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1748,7 +1762,7 @@ func (m *Module) recoverOperationAfterLease(
 			return m.interruptRecoveredOperation(ctx, record, "The completed operation checkpoint failed its integrity check.")
 		}
 		if discardInterrupted {
-			m.logger.Debugf(
+			logging.FromContext(ctx, m.logger).Debugf(
 				"releaseworkflow: startup operation recovery decision=publish_checkpoint workflow=%s operation=%s",
 				record.WorkflowID,
 				record.OperationID,
@@ -1760,7 +1774,7 @@ func (m *Module) recoverOperationAfterLease(
 	if work.LeaseExpiresAt.After(now) {
 		delay := work.LeaseExpiresAt.Sub(now)
 		if discardInterrupted {
-			m.logger.Debugf(
+			logging.FromContext(ctx, m.logger).Debugf(
 				"releaseworkflow: startup operation recovery decision=wait_work_lease workflow=%s operation=%s remaining=%s",
 				record.WorkflowID,
 				record.OperationID,
@@ -1786,7 +1800,7 @@ func (m *Module) recoverOperationAfterLease(
 				return
 			}
 			if recoveryErr := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); recoveryErr != nil {
-				m.logger.Errorf(
+				logging.FromContext(ctx, m.logger).Errorf(
 					"releaseworkflow: workflow=%s operation=%s stage=restart_recovery state=failed cause=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1815,7 +1829,7 @@ func (m *Module) recoverOperationAfterLease(
 		return fmt.Errorf("release workflow claim interrupted work: %w", err)
 	}
 	if discardInterrupted {
-		m.logger.Debugf(
+		logging.FromContext(ctx, m.logger).Debugf(
 			"releaseworkflow: startup operation recovery decision=interrupt reason=expired_work workflow=%s operation=%s",
 			current.WorkflowID,
 			current.OperationID,
@@ -2453,7 +2467,7 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 		result.Media = currentSnapshot(state.Media, ref.ID)
 		if m.activeInputs == nil || admitted {
 			if err := m.finalizeRetainedMedia(ctx, ownerID, workflowID, result.Media, false); err != nil {
-				m.logger.Warnf(
+				logging.FromContext(ctx, m.logger).Warnf(
 					"releaseworkflow: workflow=%s stage=media_cleanup state=retry_pending cause=%s",
 					workflowID,
 					logging.SanitizeMessage(err.Error()),
@@ -2580,7 +2594,7 @@ func (m *Module) MediaPlan(
 			plan.ExistingArtifacts = append([]api.MediaArtifact(nil), media.Artifacts...)
 		}
 	}
-	m.logMediaInventory("plan", plan.ExistingArtifacts)
+	m.logMediaInventory(ctx, "plan", plan.ExistingArtifacts)
 	return plan, nil
 }
 
@@ -4059,7 +4073,13 @@ func (m *Module) restorePendingAudioAnalysis(
 	retained, err := m.private.Get(ownerID, sourceWorkflowID, audioAnalysisPrivateResourceID(analysis.AttemptID), now)
 	if err != nil {
 		if !errors.Is(err, ErrPrivateResourceUnavailable) {
-			m.logger.Warnf("release workflow audio analysis restore skipped workflow=%s state=retained_resource_unavailable", state.Workflow.ID)
+			logging.FromContext(
+				ctx,
+				m.logger,
+			).Warnf(
+				"release workflow audio analysis restore skipped workflow=%s state=retained_resource_unavailable",
+				state.Workflow.ID,
+			)
 		}
 		return nil, nil
 	}
@@ -6626,7 +6646,7 @@ func (m *Module) generateDescriptions(
 			if err != nil {
 				return CommandResult{}, fmt.Errorf("release workflow fingerprint restored descriptions: %w", err)
 			}
-			m.logger.Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
+			logging.FromContext(ctx, m.logger).Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
 		}
 	}
 	if len(snapshot.Descriptions) == 0 {
@@ -7569,7 +7589,7 @@ func (m *Module) executeUploads(
 	}
 	results = completeUploadExecutionResults(prepared.plan.Trackers, results, executionErr, trackerIDs)
 	authority := prepared.execution.RegisteredArtifactAuthority()
-	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, results, authority)
+	return m.publishUploadResult(ctx, ownerID, state, nextRevision, now, prepared, results, authority)
 }
 
 func uploadTrackerSelected(trackerID api.TrackerID, requested []api.TrackerID) bool {
@@ -7705,7 +7725,7 @@ func (m *Module) retryFailedUploads(
 	if priorAuthority, ok := m.registeredArtifactAuthority(ownerID, state.Workflow.ID, prior.ID, now); ok {
 		authority = mergeRegisteredArtifactAuthorities(priorAuthority, authority)
 	}
-	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, merged, authority)
+	return m.publishUploadResult(ctx, ownerID, state, nextRevision, now, prepared, merged, authority)
 }
 
 func (m *Module) retryClientInjections(
@@ -7785,7 +7805,7 @@ func (m *Module) retryClientInjections(
 	if err != nil {
 		return CommandResult{}, err
 	}
-	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, merged, authority)
+	return m.publishUploadResult(ctx, ownerID, state, nextRevision, now, prepared, merged, authority)
 }
 
 func (m *Module) registeredArtifactAuthority(
@@ -7975,6 +7995,7 @@ func validateUploadExecutionTrackerIDs(
 }
 
 func (m *Module) publishUploadResult(
+	ctx context.Context,
 	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
@@ -8015,7 +8036,7 @@ func (m *Module) publishUploadResult(
 			cloneRegisteredArtifactAuthority(authority),
 			now.Add(workflowCommandTTL),
 		); err != nil {
-			m.logger.Warnf(
+			logging.FromContext(ctx, m.logger).Warnf(
 				"releaseworkflow: registered artifact authority retention failed workflow=%s decision=unavailable",
 				state.Workflow.ID,
 			)

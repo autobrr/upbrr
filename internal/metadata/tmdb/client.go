@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -69,6 +70,8 @@ func NormalizeTitle(title string) string {
 // CategoryPreference disambiguates movie and TV matches; otherwise movie wins.
 // FilenameSearch reports that identifier lookup did not resolve the result.
 func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindResult, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	imdbID := metautil.NormalizeIMDbID(input.IMDbID)
 	var imdbMatches FindResponse
 	if imdbID != "" {
@@ -87,9 +90,7 @@ func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindRes
 		input.RequireExternalIDAgreement,
 	)
 	if externalResult.TMDBID != 0 {
-		if c.logger != nil {
-			c.logger.Infof("tmdb: external match selected=%s tmdb_id=%d", strings.ToLower(externalResult.Category), externalResult.TMDBID)
-		}
+		logger.Infof("tmdb: external match selected=%s tmdb_id=%d", strings.ToLower(externalResult.Category), externalResult.TMDBID)
 		return externalResult, nil
 	}
 
@@ -134,8 +135,8 @@ func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindRes
 	if err != nil {
 		return FindResult{}, err
 	}
-	if c.logger != nil && outcome.TMDBID != 0 {
-		c.logger.Infof("tmdb: search match title=%q year=%d category=%s tmdb_id=%d", title, searchYear, outcome.Category, outcome.TMDBID)
+	if outcome.TMDBID != 0 {
+		logger.Infof("tmdb: search match title=%q year=%d category=%s tmdb_id=%d", title, searchYear, outcome.Category, outcome.TMDBID)
 	}
 	return FindResult{
 		Category:           outcome.Category,
@@ -380,9 +381,11 @@ func applySearchHints(input SearchInput) SearchInput {
 }
 
 func (c *Client) searchTMDb(ctx context.Context, input SearchInput, category string) SearchOutcome {
+	logger := logging.FromContext(ctx, c.logger)
+
 	items, err := c.searchTitle(ctx, input.Filename, input.SearchYear, category)
-	if err != nil && c.logger != nil {
-		c.logger.Debugf("tmdb: title lookup failed category=%s year=%d error=%s", category, input.SearchYear, redaction.RedactValue(err.Error(), nil))
+	if err != nil {
+		logger.Debugf("tmdb: title lookup failed category=%s year=%d error=%s", category, input.SearchYear, redaction.RedactValue(err.Error(), nil))
 	}
 	if err != nil || len(items) == 0 {
 		return SearchOutcome{TMDBID: 0, Category: category}
@@ -597,6 +600,8 @@ func (c *Client) GetTranslations(ctx context.Context, tmdbID int, category, targ
 }
 
 func (c *Client) findByExternal(ctx context.Context, externalID, source string) (FindResponse, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if externalID == "" {
 		return FindResponse{}, errNotFound
 	}
@@ -607,9 +612,7 @@ func (c *Client) findByExternal(ctx context.Context, externalID, source string) 
 	path := "/find/" + url.PathEscape(externalID)
 	var resp FindResponse
 	if err := c.getJSON(ctx, path, params, &resp); err != nil {
-		if c.logger != nil {
-			c.logger.Debugf("tmdb: external lookup failed source=%s id=%s error=%s", source, externalID, redaction.RedactValue(err.Error(), nil))
-		}
+		logger.Debugf("tmdb: external lookup failed source=%s id=%s error=%s", source, externalID, redaction.RedactValue(err.Error(), nil))
 		return FindResponse{}, err
 	}
 	return resp, nil

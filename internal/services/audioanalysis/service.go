@@ -24,6 +24,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -81,6 +82,10 @@ func (s *Service) ValidateSelection(
 	subject api.AudioAnalysisSubject,
 	instructions api.AudioAnalysisInstructions,
 ) error {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	normalized, err := instructions.Normalize()
 	if err != nil {
 		return fmt.Errorf("audio analysis: normalize instructions: %w", err)
@@ -203,6 +208,10 @@ func (s *Service) Analyze(
 	attemptID string,
 	attemptRoot string,
 ) ([]TrackResult, error) {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	normalized, err := instructions.Normalize()
 	if err != nil {
 		s.logger.Warnf("audioanalysis: state=blocked reason=invalid_instructions")

@@ -298,7 +298,7 @@ func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Con
 	if b.media == nil {
 		return errors.New("image hosting service is unavailable")
 	}
-	targets, err := b.media.resolveImageUploadTargets(trackerNames, subject, "", nil)
+	targets, err := b.media.resolveImageUploadTargets(ctx, trackerNames, subject, "", nil)
 	if err != nil {
 		return err
 	}

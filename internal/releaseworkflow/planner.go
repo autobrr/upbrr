@@ -36,6 +36,13 @@ func (m *Module) Continue(
 	if err := request.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue: %w", err)
 	}
+	if request.Intent.Descriptions != nil {
+		var err error
+		ctx, err = m.withRunLogLevel(ctx, request.Intent.Descriptions.Options.RunLogLevel)
+		if err != nil {
+			return CommandResult{}, err
+		}
+	}
 	if request.Authority == nil && hasConfirmedNameProjectionInstruction(request.Intent.ProjectionInstructions) {
 		return CommandResult{}, fmt.Errorf("%w: confirmed tracker name authority is server-owned", ErrInvalidTransition)
 	}

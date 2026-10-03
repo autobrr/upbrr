@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -68,7 +70,7 @@ func (m *Module) restoreReusableMedia(
 			state.Workflow.Media = &api.MediaArtifactSetRef{ID: existing.ID, Revision: existing.Revision}
 			setWorkflowStageStatus(&state.Workflow, existing.Status, existing.RequiredActions, existing.Failures)
 			result.Media = existing
-			m.logMediaInventory("retained", existing.Artifacts)
+			m.logMediaInventory(ctx, "retained", existing.Artifacts)
 			return nil
 		}
 	}
@@ -88,11 +90,11 @@ func (m *Module) restoreReusableMedia(
 	if existing != nil {
 		stage = "rebound"
 	}
-	m.logMediaInventory(stage, snapshot.Artifacts)
+	m.logMediaInventory(ctx, stage, snapshot.Artifacts)
 	return nil
 }
 
-func (m *Module) logMediaInventory(stage string, artifacts []api.MediaArtifact) {
+func (m *Module) logMediaInventory(ctx context.Context, stage string, artifacts []api.MediaArtifact) {
 	var localImages, selectedLocalImages, hostedLinks, selectedHostedLinks int
 	for _, artifact := range artifacts {
 		switch artifact.Kind {
@@ -108,7 +110,7 @@ func (m *Module) logMediaInventory(stage string, artifacts []api.MediaArtifact) 
 			}
 		}
 	}
-	m.logger.Debugf(
+	logging.FromContext(ctx, m.logger).Debugf(
 		"release workflow: media inventory stage=%s artifacts=%d local_images=%d selected_local_images=%d hosted_links=%d selected_hosted_links=%d",
 		stage, len(artifacts), localImages, selectedLocalImages, hostedLinks, selectedHostedLinks,
 	)

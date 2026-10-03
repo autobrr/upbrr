@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -40,6 +41,8 @@ var seasonPattern = regexp.MustCompile(`(?i)(?:season\s*(\d+)|\bS(\d{1,2})\b)`)
 // and season similarity. Lookup failures are treated as no match; an explicit
 // MAL ID is retained even when no candidate resolves.
 func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input MetadataInput) (AnimeResult, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	result := AnimeResult{Demographic: "Mina"}
 	if input.MALManual != 0 {
 		result.MALID = input.MALManual
@@ -58,9 +61,7 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 		}
 		items, err := c.anilistSearch(ctx, term, result.MALID)
 		if err != nil {
-			if c.logger != nil {
-				c.logger.Warnf("tmdb: anilist search failed mal=%d err=%s", result.MALID, redaction.RedactValue(err.Error(), nil))
-			}
+			logger.Warnf("tmdb: anilist search failed mal=%d err=%s", result.MALID, redaction.RedactValue(err.Error(), nil))
 		} else if len(items) > 0 {
 			media = items
 			break
@@ -142,6 +143,8 @@ func (c *Client) FetchAniListMetadata(ctx context.Context, malID int) (AniListMe
 }
 
 func (c *Client) fetchAniListMetadata(ctx context.Context, malID int) (AniListMetadataResult, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if malID <= 0 {
 		return AniListMetadataResult{}, nil
 	}
@@ -176,9 +179,7 @@ func (c *Client) fetchAniListMetadata(ctx context.Context, malID int) (AniListMe
 		if delay > retryWaitRemaining {
 			return AniListMetadataResult{}, err
 		}
-		if c.logger != nil {
-			c.logger.Warnf("tmdb: anilist metadata request retrying mal=%d retry=%d/%d", malID, attempt+2, anilistRetryCount)
-		}
+		logger.Warnf("tmdb: anilist metadata request retrying mal=%d retry=%d/%d", malID, attempt+2, anilistRetryCount)
 		retryWaitRemaining -= delay
 		if err := waitForAniListRetry(ctx, delay); err != nil {
 			return AniListMetadataResult{}, err
@@ -206,6 +207,8 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 }
 
 func (c *Client) fetchAniListSearch(ctx context.Context, term string, malID int) ([]anilistMedia, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	query := anilistQuery(malID != 0)
 	variables := map[string]any{}
 	if malID != 0 {
@@ -237,9 +240,7 @@ func (c *Client) fetchAniListSearch(ctx context.Context, term string, malID int)
 		if delay > retryWaitRemaining {
 			return nil, err
 		}
-		if c.logger != nil {
-			c.logger.Warnf("tmdb: anilist request retrying mal=%d retry=%d/%d", malID, attempt+2, anilistRetryCount)
-		}
+		logger.Warnf("tmdb: anilist request retrying mal=%d retry=%d/%d", malID, attempt+2, anilistRetryCount)
 		retryWaitRemaining -= delay
 		if err := waitForAniListRetry(ctx, delay); err != nil {
 			return nil, err

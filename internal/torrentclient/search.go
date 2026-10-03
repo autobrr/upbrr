@@ -23,6 +23,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -119,6 +120,10 @@ type torrentDataValidation struct {
 // lookup failures degrade that candidate, while export failures reject only the
 // affected candidate.
 func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubject) (result api.ClientSearchResult, err error) {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	if shouldForceRecheck(meta.ClientOverrides) {
 		if err := s.liveTest.RejectMutation(api.OperationKindClientInjection); err != nil {
 			s.logger.Warnf("clients: recheck state=blocked reason=live_test")

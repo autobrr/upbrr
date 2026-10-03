@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -41,6 +43,8 @@ const (
 // lookups race and the first result with IDs wins. Lookup failures are soft,
 // while cancellation and persistence failures discard the result.
 func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	select {
 	case <-ctx.Done():
 		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -59,33 +63,27 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 	}
 
 	trackers := candidates
-	if s.logger != nil {
+	{
 		configured, missing := configuredTrackers(s.cfg, s.registry)
-		s.logger.Debugf("metadata: tracker candidates %v", trackers)
+		logger.Debugf("metadata: tracker candidates %v", trackers)
 		if len(configured) > 0 {
-			s.logger.Debugf("metadata: trackers configured %v", configured)
+			logger.Debugf("metadata: trackers configured %v", configured)
 		}
 		if len(missing) > 0 {
-			s.logger.Tracef("metadata: trackers missing api_key/announce_url %v", missing)
+			logger.Tracef("metadata: trackers missing api_key/announce_url %v", missing)
 		}
 	}
-	if s.logger != nil {
-		logPathedTrackerDetails(meta, s.logger)
-		logClientSearchIDs(meta, s.logger)
-	}
-	trackers = filterConfiguredTrackers(s.cfg, trackers, s.logger, s.registry)
+	logPathedTrackerDetails(meta, logger)
+	logClientSearchIDs(meta, logger)
+	trackers = filterConfiguredTrackers(s.cfg, trackers, logger, s.registry)
 	trackers = orderTrackersByPriority(trackers, s.registry)
 	trackers = reorderTrackersForMetadataNeeds(trackers, api.UploadOptions{OnlyID: meta.Policy.OnlyID, KeepImages: meta.Policy.KeepImages}, s.registry)
 	trackers = applyPreferredTracker(trackers, s.cfg.Trackers.PreferredTracker)
 	if len(trackers) == 0 {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: no configured trackers matched pathed search")
-		}
+		logger.Debugf("metadata: no configured trackers matched pathed search")
 		return meta, nil
 	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: using trackers %v", trackers)
-	}
+	logger.Debugf("metadata: using trackers %v", trackers)
 	var cached api.TrackerMetadata
 	cachedIndex := -1
 	refreshCachedAssets := false
@@ -107,9 +105,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 				if !errors.Is(provenanceErr, internalerrors.ErrNotFound) {
 					return preparationstate.State{}, fmt.Errorf("metadata: load tracker asset provenance: %w", provenanceErr)
 				}
-				if s.logger != nil {
-					s.logger.Tracef("metadata: clearing legacy tracker image provenance tracker=%s count=%d", record.Tracker, len(record.ImageURLs))
-				}
+				logger.Tracef("metadata: clearing legacy tracker image provenance tracker=%s count=%d", record.Tracker, len(record.ImageURLs))
 				record.ImageURLs = nil
 				record.ImagePreviews = nil
 				if err := s.repo.SaveTrackerMetadata(ctx, *record); err != nil {
@@ -171,13 +167,11 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 			}
 			if !needsAssets && cachedReusable && (cachedIndex == 0 || !strictPriority) {
 				meta.TrackerData = append(meta.TrackerData, cached)
-				if s.logger != nil {
-					s.logger.Debugf("metadata: reusing matching stored tracker IDs tracker=%s for %s", cached.Tracker, meta.SourcePath)
-				}
+				logger.Debugf("metadata: reusing matching stored tracker IDs tracker=%s for %s", cached.Tracker, meta.SourcePath)
 				return meta, nil
 			}
-			if needsAssets && s.logger != nil {
-				s.logger.Debugf(
+			if needsAssets {
+				logger.Debugf(
 					"metadata: refreshing stored tracker assets tracker=%s description_missing=%t images_missing=%t",
 					cached.Tracker, needsDescription, needsImages,
 				)
@@ -191,8 +185,8 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 			} else {
 				trackers = trackers[cachedIndex : cachedIndex+1]
 			}
-		} else if s.logger != nil {
-			s.logger.Debugf("metadata: stored source snapshot has no matching tracker IDs; checking trackers for %s", meta.SourcePath)
+		} else {
+			logger.Debugf("metadata: stored source snapshot has no matching tracker IDs; checking trackers for %s", meta.SourcePath)
 		}
 	}
 
@@ -213,8 +207,8 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 		if s.isTrackerCoolingDown(ctx, tracker, timestampKey, now) {
 			continue
 		}
-		if assetRefresh && s.logger != nil {
-			s.logger.Debugf("metadata: tracker asset refresh eligible tracker=%s", tracker)
+		if assetRefresh {
+			logger.Debugf("metadata: tracker asset refresh eligible tracker=%s", tracker)
 		}
 		eligible = append(eligible, tracker)
 	}
@@ -269,6 +263,8 @@ func (s *Service) enrichTrackerDataPriority(
 	now time.Time,
 	cached *api.TrackerMetadata,
 ) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	assetSourceTracker := ""
 	for _, tracker := range eligible {
 		select {
@@ -293,9 +289,7 @@ func (s *Service) enrichTrackerDataPriority(
 			}
 		}
 		if err != nil {
-			if s.logger != nil {
-				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", tracker, redaction.RedactValue(err.Error(), nil))
-			}
+			logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", tracker, redaction.RedactValue(err.Error(), nil))
 			continue
 		}
 		if !persistable {
@@ -341,17 +335,13 @@ func (s *Service) enrichTrackerDataPriority(
 		if trackerRecordHasDescriptionAssets(record) {
 			if assetSourceTracker == "" {
 				assetSourceTracker = strings.ToUpper(strings.TrimSpace(tracker))
-				if s.logger != nil {
-					s.logger.Debugf("metadata: description/image source tracker selected: %s", assetSourceTracker)
-				}
+				logger.Debugf("metadata: description/image source tracker selected: %s", assetSourceTracker)
 			} else if !strings.EqualFold(assetSourceTracker, tracker) {
-				if s.logger != nil {
-					s.logger.Debugf(
-						"metadata: ignoring description/images from %s (source=%s)",
-						strings.ToUpper(strings.TrimSpace(tracker)),
-						assetSourceTracker,
-					)
-				}
+				logger.Debugf(
+					"metadata: ignoring description/images from %s (source=%s)",
+					strings.ToUpper(strings.TrimSpace(tracker)),
+					assetSourceTracker,
+				)
 				record.Description = ""
 				record.ImageURLs = nil
 				record.ImagePreviews = nil
@@ -374,9 +364,7 @@ func (s *Service) enrichTrackerDataPriority(
 		}
 		meta.TrackerData = append(meta.TrackerData, record)
 		if hasIDs {
-			if s.logger != nil {
-				s.logger.Debugf("metadata: tracker lookup resolved ids via %s; stopping by priority order", tracker)
-			}
+			logger.Debugf("metadata: tracker lookup resolved ids via %s; stopping by priority order", tracker)
 			break
 		}
 	}
@@ -390,6 +378,8 @@ func (s *Service) enrichTrackerDataConcurrent(
 	eligible []string,
 	now time.Time,
 ) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	lookupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -428,9 +418,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 	for range eligible {
 		outcome := <-results
 		if outcome.err != nil {
-			if s.logger != nil {
-				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", outcome.tracker, redaction.RedactValue(outcome.err.Error(), nil))
-			}
+			logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", outcome.tracker, redaction.RedactValue(outcome.err.Error(), nil))
 			continue
 		}
 		if !outcome.persistable {
@@ -443,17 +431,13 @@ func (s *Service) enrichTrackerDataConcurrent(
 		if trackerRecordHasDescriptionAssets(outcome.record) {
 			if assetSourceTracker == "" {
 				assetSourceTracker = strings.ToUpper(strings.TrimSpace(outcome.tracker))
-				if s.logger != nil {
-					s.logger.Debugf("metadata: description/image source tracker selected: %s", assetSourceTracker)
-				}
+				logger.Debugf("metadata: description/image source tracker selected: %s", assetSourceTracker)
 			} else if !strings.EqualFold(assetSourceTracker, outcome.tracker) {
-				if s.logger != nil {
-					s.logger.Debugf(
-						"metadata: ignoring description/images from %s (source=%s)",
-						strings.ToUpper(strings.TrimSpace(outcome.tracker)),
-						assetSourceTracker,
-					)
-				}
+				logger.Debugf(
+					"metadata: ignoring description/images from %s (source=%s)",
+					strings.ToUpper(strings.TrimSpace(outcome.tracker)),
+					assetSourceTracker,
+				)
 				outcome.record.Description = ""
 				outcome.record.ImageURLs = nil
 				outcome.record.ImagePreviews = nil
@@ -481,9 +465,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 		if outcome.hasIDs {
 			winnerResolved = true
 			cancel()
-			if s.logger != nil {
-				s.logger.Debugf("metadata: tracker lookup resolved ids via %s; stopping at fastest winner", outcome.tracker)
-			}
+			logger.Debugf("metadata: tracker lookup resolved ids via %s; stopping at fastest winner", outcome.tracker)
 		}
 	}
 
@@ -506,6 +488,8 @@ func (s *Service) lookupTrackerData(
 	tracker string,
 	now time.Time,
 ) (api.TrackerMetadata, bool, bool, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	select {
 	case <-ctx.Done():
 		return api.TrackerMetadata{}, false, false, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -523,9 +507,7 @@ func (s *Service) lookupTrackerData(
 
 	if s.tracker == nil {
 		if !trackerRecordHasPathedData(record) {
-			if s.logger != nil {
-				s.logger.Debugf("metadata: tracker %s has no pathed data, skipping", tracker)
-			}
+			logger.Debugf("metadata: tracker %s has no pathed data, skipping", tracker)
 			return api.TrackerMetadata{}, false, false, nil
 		}
 		return record, true, false, nil
@@ -552,13 +534,9 @@ func (s *Service) lookupTrackerData(
 		}
 	}
 	if !result.HasData() {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: tracker lookup empty tracker=%s id=%q", tracker, record.TrackerID)
-		}
+		logger.Debugf("metadata: tracker lookup empty tracker=%s id=%q", tracker, record.TrackerID)
 		if !trackerRecordHasPathedData(record) {
-			if s.logger != nil {
-				s.logger.Debugf("metadata: tracker %s has no pathed data, skipping", tracker)
-			}
+			logger.Debugf("metadata: tracker %s has no pathed data, skipping", tracker)
 			return api.TrackerMetadata{}, false, false, nil
 		}
 		return record, true, false, nil
@@ -575,24 +553,20 @@ func (s *Service) lookupTrackerData(
 		)
 		record.ImageURLs, record.ImagePreviews = trackerImageURLsFromResult(result, downloadedImages, meta.Policy.KeepImages)
 	}
-	if s.logger != nil {
-		s.logger.Debugf(
-			"metadata: tracker lookup applied tracker=%s tmdb=%d imdb=%d tvdb=%d desc=%t images=%d infohash=%t file=%t",
-			tracker,
-			record.TMDBID,
-			record.IMDBID,
-			record.TVDBID,
-			record.Description != "",
-			len(record.ImageURLs),
-			record.InfoHash != "",
-			record.Filename != "",
-		)
-	}
+	logger.Debugf(
+		"metadata: tracker lookup applied tracker=%s tmdb=%d imdb=%d tvdb=%d desc=%t images=%d infohash=%t file=%t",
+		tracker,
+		record.TMDBID,
+		record.IMDBID,
+		record.TVDBID,
+		record.Description != "",
+		len(record.ImageURLs),
+		record.InfoHash != "",
+		record.Filename != "",
+	)
 
 	if !trackerRecordHasPathedData(record) {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: tracker %s has no pathed data, skipping", tracker)
-		}
+		logger.Debugf("metadata: tracker %s has no pathed data, skipping", tracker)
 		return api.TrackerMetadata{}, false, false, nil
 	}
 	return record, true, hasTrackerMetadataIDs(record), nil
@@ -719,14 +693,14 @@ func trackerAssetTimestampKey(tracker string) string {
 }
 
 func (s *Service) isTrackerCoolingDown(ctx context.Context, tracker string, timestampKey string, now time.Time) bool {
+	logger := logging.FromContext(ctx, s.logger)
+
 	last, err := s.repo.GetTrackerTimestamp(ctx, timestampKey)
 	if err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
 			return false
 		}
-		if s.logger != nil {
-			s.logger.Warnf("metadata: tracker timestamp lookup failed for %s: %v", tracker, err)
-		}
+		logger.Warnf("metadata: tracker timestamp lookup failed for %s: %v", tracker, err)
 		return false
 	}
 	cooldown := trackerCooldown(s.registry, tracker)
@@ -734,9 +708,7 @@ func (s *Service) isTrackerCoolingDown(ctx context.Context, tracker string, time
 		return false
 	}
 	if now.Sub(last) < cooldown {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: tracker %s cooldown active timestamp_key=%s", tracker, timestampKey)
-		}
+		logger.Debugf("metadata: tracker %s cooldown active timestamp_key=%s", tracker, timestampKey)
 		return true
 	}
 	return false

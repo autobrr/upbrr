@@ -20,6 +20,12 @@ These edits require **Save** before they become active.
 
 File logging requires positive **Max total size** and **Max files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled.
 
+## Upload run verbosity
+
+On **Upload**, choose **Run options → Log level** before starting a dry run or upload. The selected level applies to that run's application logs, including background work and resumed work. It reaches the live viewer, retained log entries, and file output when enabled.
+
+This choice does not save the global logging setting or change another operation's verbosity. The server console keeps its configured threshold. The live viewer's level checkboxes still control which retained entries are displayed.
+
 ## Live viewer
 
 **Connected** means the browser is receiving the live stream. The page first loads up to 1,000 recent sanitized entries, then appends new entries.

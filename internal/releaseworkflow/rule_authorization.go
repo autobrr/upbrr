@@ -9,6 +9,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -77,7 +79,7 @@ func (m *Module) authorizeTrackerRules(
 	}
 	authorizations := projectionRuleAuthorizations(currentProjections)
 	authorizations[projection.TrackerID] = projection.WaivableRuleFingerprint
-	m.logger.Infof("release workflow: accepted tracker rule authorization tracker=%s decision=authorized", projection.TrackerID)
+	logging.FromContext(ctx, m.logger).Infof("release workflow: accepted tracker rule authorization tracker=%s decision=authorized", projection.TrackerID)
 	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
 		WorkflowID:       workflow.ID,
 		ExpectedRevision: workflow.Revision,

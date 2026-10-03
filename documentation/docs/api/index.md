@@ -87,6 +87,12 @@ Invoke-RestMethod -Headers $headers -Uri "http://localhost:7480/api/v1/capabilit
 
 Keep the token in an environment variable or secret store. Do not paste it directly into scripts committed to source control.
 
+## Upload log level
+
+Set `execution.runLogLevel` on `POST /api/v1/uploads` to `error`, `warn`, `info`, `debug`, or `trace` to control that run's application logs. Omit it or send an empty value to inherit the application setting. Invalid levels are rejected before the workflow is accepted.
+
+The level follows asynchronous work and feedback-driven continuation. Stage-based workflows use `descriptions.options.RunLogLevel` in their continuation intent; upload execution and retries inherit the retained description options when no new run override is supplied. Global settings and the server console threshold are unchanged. See [Logging](../web-ui/logging.md) for application outputs and viewer filters.
+
 ## Browser session API
 
 Routes below `/api/auth`, `/api/app`, and `/api/events` serve the embedded Web UI and use browser-session authentication. They are not a substitute for the versioned bearer-token API. External integrations should use `/api/v1`.

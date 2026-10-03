@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -53,6 +54,8 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 // misses. ManualID remains selected even when its detail fetch fails; ManualDate
 // suppresses automatic selection from ordinary candidates.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	input = applyReleaseHints(input)
 	imdbID := metautil.ParseIMDbNumeric(input.ImdbID)
 	tvdbID := normalizeTVDBID(input.TVDBID)
@@ -70,9 +73,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 				tvdbID = cand.Externals.TVDB
 			}
 		}
-		if c.logger != nil {
-			c.logger.Infof("tvmaze: manual selected id=%d imdb=%d tvdb=%d", selected, imdbID, tvdbID)
-		}
+		logger.Infof("tvmaze: manual selected id=%d imdb=%d tvdb=%d", selected, imdbID, tvdbID)
 		return SearchResult{
 			SelectedID: selected,
 			IMDBID:     imdbID,
@@ -124,8 +125,8 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 			}
 		}
 	}
-	if c.logger != nil && selectedID != 0 {
-		c.logger.Tracef("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
+	if selectedID != 0 {
+		logger.Tracef("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
 	}
 
 	return SearchResult{
@@ -160,6 +161,8 @@ func applyReleaseHints(input SearchInput) SearchInput {
 // GetEpisodeByNumber falls back on a date lookup only when TVmaze returns 404.
 // The fallback date prefers ManualDate, then the matching TVDB episode air date.
 func (c *Client) GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episode int, lookup EpisodeLookupContext) (*EpisodeData, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if tvmazeID == 0 || season == 0 || episode == 0 {
 		return nil, errNotFound
 	}
@@ -177,8 +180,8 @@ func (c *Client) GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episo
 		return nil, err
 	}
 	data := c.buildEpisodeData(ctx, episodeResp)
-	if c.logger != nil && data != nil {
-		c.logger.Tracef("tvmaze: episode lookup id=%d season=%d episode=%d series=%q", tvmazeID, data.SeasonNumber, data.EpisodeNumber, data.SeriesName)
+	if data != nil {
+		logger.Tracef("tvmaze: episode lookup id=%d season=%d episode=%d series=%q", tvmazeID, data.SeasonNumber, data.EpisodeNumber, data.SeriesName)
 	}
 	return data, nil
 }
@@ -186,6 +189,8 @@ func (c *Client) GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episo
 // GetEpisodeByDate returns the first episode supplied for airdate. Invalid input,
 // a 404 response, or an empty episode list returns the package not-found error.
 func (c *Client) GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate string) (*EpisodeData, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if tvmazeID == 0 || strings.TrimSpace(airdate) == "" {
 		return nil, errNotFound
 	}
@@ -201,8 +206,8 @@ func (c *Client) GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate str
 		return nil, errNotFound
 	}
 	data := c.buildEpisodeData(ctx, episodes[0])
-	if c.logger != nil && data != nil {
-		c.logger.Tracef("tvmaze: episode lookup id=%d airdate=%s series=%q", tvmazeID, data.AirDate, data.SeriesName)
+	if data != nil {
+		logger.Tracef("tvmaze: episode lookup id=%d airdate=%s series=%q", tvmazeID, data.AirDate, data.SeriesName)
 	}
 	return data, nil
 }
@@ -254,30 +259,30 @@ func (c *Client) buildEpisodeData(ctx context.Context, episode episodeResponse) 
 }
 
 func (c *Client) lookupShow(ctx context.Context, key, value string) (Candidate, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	endpoint := c.baseURL + "/lookup/shows"
 	params := url.Values{}
 	params.Set(key, value)
 
 	var show showResponse
 	if err := c.getJSON(ctx, endpoint, params, &show); err != nil {
-		if c.logger != nil {
-			c.logger.Debugf("tvmaze: external lookup failed source=%s id=%s error=%s", key, value, redaction.RedactValue(err.Error(), nil))
-		}
+		logger.Debugf("tvmaze: external lookup failed source=%s id=%s error=%s", key, value, redaction.RedactValue(err.Error(), nil))
 		return Candidate{}, err
 	}
 	return candidateFromShow(show), nil
 }
 
 func (c *Client) searchShows(ctx context.Context, query string) ([]Candidate, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	endpoint := c.baseURL + "/search/shows"
 	params := url.Values{}
 	params.Set("q", query)
 
 	var items []searchResponse
 	if err := c.getJSON(ctx, endpoint, params, &items); err != nil {
-		if c.logger != nil {
-			c.logger.Debugf("tvmaze: title lookup failed error=%s", redaction.RedactValue(err.Error(), nil))
-		}
+		logger.Debugf("tvmaze: title lookup failed error=%s", redaction.RedactValue(err.Error(), nil))
 		return nil, err
 	}
 
@@ -289,6 +294,8 @@ func (c *Client) searchShows(ctx context.Context, query string) ([]Candidate, er
 }
 
 func (c *Client) getShow(ctx context.Context, id int) (Candidate, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if id == 0 {
 		return Candidate{}, errNotFound
 	}
@@ -296,21 +303,19 @@ func (c *Client) getShow(ctx context.Context, id int) (Candidate, error) {
 
 	var show showResponse
 	if err := c.getJSON(ctx, endpoint, nil, &show); err != nil {
-		if c.logger != nil {
-			c.logger.Debugf("tvmaze: show lookup failed id=%d error=%s", id, redaction.RedactValue(err.Error(), nil))
-		}
+		logger.Debugf("tvmaze: show lookup failed id=%d error=%s", id, redaction.RedactValue(err.Error(), nil))
 		return Candidate{}, err
 	}
 	return candidateFromShow(show), nil
 }
 
 func (c *Client) showBackdrop(ctx context.Context, id int) (Image, bool) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	endpoint := fmt.Sprintf("%s/shows/%d/images", c.baseURL, id)
 	var images []artworkResponse
 	if err := c.getJSON(ctx, endpoint, nil, &images); err != nil {
-		if c.logger != nil {
-			c.logger.Debugf("tvmaze: show artwork lookup failed id=%d error=%s", id, redaction.RedactValue(err.Error(), nil))
-		}
+		logger.Debugf("tvmaze: show artwork lookup failed id=%d error=%s", id, redaction.RedactValue(err.Error(), nil))
 		return Image{}, false
 	}
 	for _, image := range images {

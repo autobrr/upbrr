@@ -621,7 +621,7 @@ func TestResolveImageUploadTargetsUsesExactWorkflowTrackerSelection(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			targets, err := module.resolveImageUploadTargets([]string{"ONE", "LST"}, test.subject, "", nil)
+			targets, err := module.resolveImageUploadTargets(t.Context(), []string{"ONE", "LST"}, test.subject, "", nil)
 			if err != nil {
 				t.Fatalf("resolve image upload targets: %v", err)
 			}
@@ -650,7 +650,7 @@ func TestResolveImageUploadTargetsHonorsExplicitHost(t *testing.T) {
 		registry: mediaImageHostRegistry(t),
 	}
 
-	targets, err := module.resolveImageUploadTargets([]string{"ONE"}, api.UploadSubject{}, "imgbb", nil)
+	targets, err := module.resolveImageUploadTargets(t.Context(), []string{"ONE"}, api.UploadSubject{}, "imgbb", nil)
 	if err != nil {
 		t.Fatalf("resolve explicit image host: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestResolveImageUploadTargetsHonorsExplicitHost(t *testing.T) {
 		t.Fatalf("explicit image host targets = %v, targets=%#v", got, targets)
 	}
 
-	targets, err = module.resolveImageUploadTargets([]string{"ONE"}, api.UploadSubject{}, "", nil)
+	targets, err = module.resolveImageUploadTargets(t.Context(), []string{"ONE"}, api.UploadSubject{}, "", nil)
 	if err != nil {
 		t.Fatalf("resolve planned image host: %v", err)
 	}
@@ -666,7 +666,7 @@ func TestResolveImageUploadTargetsHonorsExplicitHost(t *testing.T) {
 		t.Fatalf("planned image host targets = %v, targets=%#v", got, targets)
 	}
 
-	if _, err := module.resolveImageUploadTargets([]string{"ONE"}, api.UploadSubject{}, "sharex", nil); err == nil {
+	if _, err := module.resolveImageUploadTargets(t.Context(), []string{"ONE"}, api.UploadSubject{}, "sharex", nil); err == nil {
 		t.Fatal("unconfigured explicit image host accepted")
 	}
 }

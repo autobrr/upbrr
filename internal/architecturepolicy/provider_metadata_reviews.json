@@ -8,8 +8,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.Search": {
-    "sha256": "0fa7294286002985944d5fbb2d95b766cddf74a08cb1b1d5dd83d7a8016a5e88",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "fd46ad42c09999ae46d47a9fec93e390f368f5459b70546fd83bae7a6e9fb3a1",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Operation-local logger binding leaves these selectors and search filters unchanged."
   },
   "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.lookupMediaCode": {
     "sha256": "8e86b095232e58be925fea611c751b366d5151902d467dad1ccc250442fb821b",
@@ -168,8 +168,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/ar/dupe.go:dupeSearcher.Search": {
-    "sha256": "ab7275b3788fe020b9a5340faf407bf580834f16420e059ee993d494fdb72449",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "0b22314039761630425b696cd742d8ca96758dd81563d99496927425f80dd7df",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Operation-local logger binding leaves these selectors and search filters unchanged."
   },
   "internal/trackers/impl/standalone/ar/name.go:resolveARSearchName": {
     "sha256": "6e07007565ec8021484e78e2239781e61dc9e71f21c60d5258287472b7e325df",
@@ -252,8 +252,8 @@
     "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
   },
   "internal/trackers/impl/standalone/asc/dupe.go:dupeSearcher.Search": {
-    "sha256": "e796c895ae476c0d3bf7aa5aa3418294c4014ba8dce7e90b23baa5412a36aa1f",
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+    "sha256": "9d980e208aca3b561e6a3a3050b96017f514e532b534bb7d14c9aba2bf8c8014",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged. Operation-local logger binding leaves these selectors and search filters unchanged."
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
     "sha256": "61597eab2253ff8202fbfa974f6d1173dc1fd5e705818783538f8d742b124715",
@@ -500,8 +500,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/bt/dupe.go:dupeSearcher.Search": {
-    "sha256": "5809b4bd42f607a009e26782c970dfffbb7e082cf9db8e27e6dc931bba653357",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "ffd015cf41fb93b98d3eb9e21b2d34d8bbf10a571dca920decf67324402d6058",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Operation-local logger binding leaves these selectors and search filters unchanged."
   },
   "internal/trackers/impl/standalone/bt/media.go:resolveRuntime": {
     "sha256": "8d6e9b9cdfeeaf09abc7299c2aab9722cd4f9a589662e9a28a63d1865a874fb5",
@@ -620,8 +620,8 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/btn/dupe.go:*dupeSearcher.Search": {
-    "sha256": "ee62bd5fe64304d1518b02f6a3a25645678663794c90bec2afd228dac1dd1bfe",
-    "reason": "Explicit identity IDs precede source-torrent identity lookup; the existing manual-aware title helper remains an incomplete search fallback."
+    "sha256": "44b1639803c2e19e250dfb34657057fb7b9c12626ef32115de2d9f9719b5a87d",
+    "reason": "Explicit identity IDs precede source-torrent identity lookup; the existing manual-aware title helper remains an incomplete search fallback. Operation-local logger binding leaves these selectors and search filters unchanged."
   },
   "internal/trackers/impl/standalone/btn/dupe.go:btnDupeFilter": {
     "sha256": "5144602664e824f0dd18448384e92a26c806fed4739aed7a458f9186a60e0062",
@@ -820,8 +820,8 @@
     "reason": "Matches claim title and note aliases against the reviewed canonical/provider candidate helper while preserving all conflicting ownership rows. It does not select effective metadata."
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:*dupeSearcher.Search": {
-    "sha256": "b39220b64c79075ec7f985147b281a70262f4cd3dbe8d034f7558213fb7c8307",
-    "reason": "TRACE request logging review: removing the DEBUG payload dump preserves hdbDupeCategoryID manual precedence, IMDb/TVDB priority, and manual-aware title fallback."
+    "sha256": "0644b520661d845dabd378cd543207464cadcc8c4db3e272fd8bec01882bf0e4",
+    "reason": "TRACE request logging review: removing the DEBUG payload dump preserves hdbDupeCategoryID manual precedence, IMDb/TVDB priority, and manual-aware title fallback. Operation-local logger binding leaves these selectors and search filters unchanged."
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:hdbDupeCategoryID": {
     "sha256": "1f6d6b4de4085b49135f2f0bc4cc7d1c2be5697e6ad3ff67d7ffa85d162caf45",
@@ -1012,8 +1012,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/nbl/dupe.go:*dupeSearcher.Search": {
-    "sha256": "9b7bf8bf390c60ac891d22fc7d7d7bf395d94b7814d451b5ed0f278b206b2945",
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+    "sha256": "908b6f516b68c90705f5310a197cf9346db4927cf51ef69ee190550b1fad9df7",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged. Operation-local logger binding leaves these selectors and search filters unchanged."
   },
   "internal/trackers/impl/standalone/ptp/description.go:resolveDirectors": {
     "sha256": "53d065bfbe4bf3171c0d8db3f4022015d37d28ea86d7e0b215b6385c48de4150",
@@ -1192,8 +1192,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:*dupeSearcher.Search": {
-    "sha256": "98ee1c9dc611fab0777be4dbc9c4e201636775e834384ea9d4e915ef48789b3f",
-    "reason": "TRACE request logging review: the existing finalized/projected title fallback still applies EffectiveMetadata.PreferredTitle before the unchanged request."
+    "sha256": "074c73998561f450398adfe3eafbaccc8c0f0d7940e5810a4b6fc535e5eaf6c2",
+    "reason": "TRACE request logging review: the existing finalized/projected title fallback still applies EffectiveMetadata.PreferredTitle before the unchanged request. Operation-local logger binding leaves these selectors and search filters unchanged."
   },
   "internal/trackers/impl/standalone/tl/taxonomy.go:resolveCategory": {
     "sha256": "f79f27d1a41d6b892ad3553524f497832020d485ba637b878e9924bf9ed2bcc2",

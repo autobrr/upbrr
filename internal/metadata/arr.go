@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -50,6 +52,8 @@ type httpArrLookupClient struct {
 }
 
 func (s *Service) collectArrIdentityEvidence(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	select {
 	case <-ctx.Done():
 		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -84,9 +88,7 @@ func (s *Service) collectArrIdentityEvidence(ctx context.Context, meta preparati
 		return meta, nil
 	}
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: arr client unavailable category=%s: %v", category, err)
-		}
+		logger.Warnf("metadata: arr client unavailable category=%s: %v", category, err)
 		return meta, nil
 	}
 
@@ -112,9 +114,7 @@ func (s *Service) collectArrIdentityEvidence(ctx context.Context, meta preparati
 		},
 	)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: arr lookup failed category=%s path=%q: %v", category, meta.SourcePath, err)
-		}
+		logger.Warnf("metadata: arr lookup failed category=%s path=%q: %v", category, meta.SourcePath, err)
 		return meta, nil
 	}
 	if result.TMDBID == 0 && result.IMDBID == 0 && result.TVDBID == 0 && result.TVmazeID == 0 && result.Year == 0 && len(result.Genres) == 0 &&
@@ -134,17 +134,15 @@ func (s *Service) collectArrIdentityEvidence(ctx context.Context, meta preparati
 		meta.Anime = true
 	}
 
-	if s.logger != nil {
-		s.logger.Infof(
-			"metadata: arr resolved source=%s tmdb=%d imdb=%d tvdb=%d tvmaze=%d year=%d",
-			meta.ArrSource,
-			meta.ArrTMDBID,
-			meta.ArrIMDBID,
-			meta.ArrTVDBID,
-			meta.ArrTVmazeID,
-			meta.ArrYear,
-		)
-	}
+	logger.Infof(
+		"metadata: arr resolved source=%s tmdb=%d imdb=%d tvdb=%d tvmaze=%d year=%d",
+		meta.ArrSource,
+		meta.ArrTMDBID,
+		meta.ArrIMDBID,
+		meta.ArrTVDBID,
+		meta.ArrTVmazeID,
+		meta.ArrYear,
+	)
 
 	return meta, nil
 }
@@ -187,6 +185,8 @@ func (c *httpArrLookupClient) Lookup(ctx context.Context, meta preparationstate.
 	if c == nil {
 		return ArrLookupResult{}, errors.New("arr client not configured")
 	}
+	logger := logging.FromContext(ctx, c.logger)
+
 	httpClient := c.client
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -197,9 +197,7 @@ func (c *httpArrLookupClient) Lookup(ctx context.Context, meta preparationstate.
 		result, err := c.lookupInstance(ctx, httpClient, instance, meta)
 		if err != nil {
 			lastErr = err
-			if c.logger != nil {
-				c.logger.Warnf("metadata: %s lookup failed instance=%s: %v", c.service, instance.name, err)
-			}
+			logger.Warnf("metadata: %s lookup failed instance=%s: %v", c.service, instance.name, err)
 			continue
 		}
 		if result.TMDBID != 0 || result.IMDBID != 0 || result.TVDBID != 0 || result.TVmazeID != 0 || result.Year != 0 || len(result.Genres) != 0 ||
