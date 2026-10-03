@@ -284,6 +284,14 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if err != nil {
 		return preparationstate.State{}, err
 	}
+	if !strings.EqualFold(meta.DiscType, "BDMV") {
+		// Encode spelling follows the final naming type, including corrections,
+		// while the measured codec and other media evidence remain unchanged.
+		effective := meta
+		applyReleaseNameValueOverrides(&effective)
+		typeValue := releaseNameRequestFromMeta(effective, s.logger).Type
+		meta.VideoEncode, _, _, _ = videoEncodeFromMedia(miDoc, typeValue)
+	}
 	captureAvailableGeneratedName(&meta, s.logger)
 	// Fold fact-producing name instructions into canonical prepared state
 	// exactly once, after all evidence resolution, so explicit values and
