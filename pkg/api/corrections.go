@@ -79,6 +79,7 @@ const (
 	CorrectionFieldReleaseNameTag              CorrectionField = "release_name.tag"
 	CorrectionFieldReleaseNameService          CorrectionField = "release_name.service"
 	CorrectionFieldReleaseNameEdition          CorrectionField = "release_name.edition"
+	CorrectionFieldReleaseNameRepack           CorrectionField = "release_name.repack"
 	CorrectionFieldReleaseNameSeason           CorrectionField = "release_name.season"
 	CorrectionFieldReleaseNameEpisode          CorrectionField = "release_name.episode"
 	CorrectionFieldReleaseNameEpisodeTitle     CorrectionField = "release_name.episode_title"
@@ -400,7 +401,7 @@ func correctionValueRefs(values ReleaseCorrectionValues) (map[string]CorrectionF
 		{CorrectionFieldIdentityMAL, values.Identity.MALID != nil}, {CorrectionFieldReleaseNameCategory, values.ReleaseName.Category != nil},
 		{CorrectionFieldReleaseNameType, values.ReleaseName.Type != nil}, {CorrectionFieldReleaseNameSource, values.ReleaseName.Source != nil},
 		{CorrectionFieldReleaseNameResolution, values.ReleaseName.Resolution != nil}, {CorrectionFieldReleaseNameTag, values.ReleaseName.Tag != nil},
-		{CorrectionFieldReleaseNameService, values.ReleaseName.Service != nil}, {CorrectionFieldReleaseNameEdition, values.ReleaseName.Edition != nil},
+		{CorrectionFieldReleaseNameService, values.ReleaseName.Service != nil}, {CorrectionFieldReleaseNameEdition, values.ReleaseName.Edition != nil}, {CorrectionFieldReleaseNameRepack, values.ReleaseName.Repack != nil},
 		{CorrectionFieldReleaseNameSeason, values.ReleaseName.Season != nil}, {CorrectionFieldReleaseNameEpisode, values.ReleaseName.Episode != nil},
 		{CorrectionFieldReleaseNameEpisodeTitle, values.ReleaseName.EpisodeTitle != nil}, {CorrectionFieldReleaseNameManualYear, values.ReleaseName.ManualYear != nil},
 		{CorrectionFieldReleaseNameManualDate, values.ReleaseName.ManualDate != nil}, {CorrectionFieldReleaseNameUseSeasonEpisode, values.ReleaseName.UseSeasonEpisode != nil},
@@ -544,17 +545,51 @@ var correctionFields = func() map[CorrectionField]struct{} {
 }()
 
 var allCorrectionFields = []CorrectionField{
-	CorrectionFieldIdentityTMDB, CorrectionFieldIdentityIMDB, CorrectionFieldIdentityTVDB, CorrectionFieldIdentityTVmaze, CorrectionFieldIdentityMAL,
-	CorrectionFieldReleaseNameCategory, CorrectionFieldReleaseNameType, CorrectionFieldReleaseNameSource, CorrectionFieldReleaseNameResolution,
-	CorrectionFieldReleaseNameTag, CorrectionFieldReleaseNameService, CorrectionFieldReleaseNameEdition, CorrectionFieldReleaseNameSeason,
-	CorrectionFieldReleaseNameEpisode, CorrectionFieldReleaseNameEpisodeTitle, CorrectionFieldReleaseNameManualYear, CorrectionFieldReleaseNameManualDate,
-	CorrectionFieldReleaseNameUseSeasonEpisode, CorrectionFieldReleaseNameNoSeason, CorrectionFieldReleaseNameNoYear, CorrectionFieldReleaseNameNoAKA,
-	CorrectionFieldReleaseNameNoTag, CorrectionFieldReleaseNameNoEpisodeTitle, CorrectionFieldReleaseNameNoDistributor, CorrectionFieldReleaseNameNoEdition,
-	CorrectionFieldReleaseNameNoDub, CorrectionFieldReleaseNameNoDual, CorrectionFieldReleaseNameDualAudio, CorrectionFieldReleaseNameRegion,
-	CorrectionFieldMetadataDistributor, CorrectionFieldMetadataOriginalLanguage, CorrectionFieldMetadataPersonalRelease, CorrectionFieldMetadataCommentary,
-	CorrectionFieldMetadataWebDV, CorrectionFieldMetadataStreamOptimized, CorrectionFieldMetadataAnime, CorrectionFieldMetadataTitle,
-	CorrectionFieldMetadataAlternateTitle, CorrectionFieldMetadataOriginalTitle, CorrectionFieldMetadataGenres, CorrectionFieldMetadataAudioLanguages,
-	CorrectionFieldMetadataSubtitleLanguages, CorrectionFieldMetadataHardcodedSubs, CorrectionFieldMetadataHardcodedSubtitleLanguages,
+	CorrectionFieldIdentityTMDB,
+	CorrectionFieldIdentityIMDB,
+	CorrectionFieldIdentityTVDB,
+	CorrectionFieldIdentityTVmaze,
+	CorrectionFieldIdentityMAL,
+	CorrectionFieldReleaseNameCategory,
+	CorrectionFieldReleaseNameType,
+	CorrectionFieldReleaseNameSource,
+	CorrectionFieldReleaseNameResolution,
+	CorrectionFieldReleaseNameTag,
+	CorrectionFieldReleaseNameService,
+	CorrectionFieldReleaseNameEdition,
+	CorrectionFieldReleaseNameRepack,
+	CorrectionFieldReleaseNameSeason,
+	CorrectionFieldReleaseNameEpisode,
+	CorrectionFieldReleaseNameEpisodeTitle,
+	CorrectionFieldReleaseNameManualYear,
+	CorrectionFieldReleaseNameManualDate,
+	CorrectionFieldReleaseNameUseSeasonEpisode,
+	CorrectionFieldReleaseNameNoSeason,
+	CorrectionFieldReleaseNameNoYear,
+	CorrectionFieldReleaseNameNoAKA,
+	CorrectionFieldReleaseNameNoTag,
+	CorrectionFieldReleaseNameNoEpisodeTitle,
+	CorrectionFieldReleaseNameNoDistributor,
+	CorrectionFieldReleaseNameNoEdition,
+	CorrectionFieldReleaseNameNoDub,
+	CorrectionFieldReleaseNameNoDual,
+	CorrectionFieldReleaseNameDualAudio,
+	CorrectionFieldReleaseNameRegion,
+	CorrectionFieldMetadataDistributor,
+	CorrectionFieldMetadataOriginalLanguage,
+	CorrectionFieldMetadataPersonalRelease,
+	CorrectionFieldMetadataCommentary,
+	CorrectionFieldMetadataWebDV,
+	CorrectionFieldMetadataStreamOptimized,
+	CorrectionFieldMetadataAnime,
+	CorrectionFieldMetadataTitle,
+	CorrectionFieldMetadataAlternateTitle,
+	CorrectionFieldMetadataOriginalTitle,
+	CorrectionFieldMetadataGenres,
+	CorrectionFieldMetadataAudioLanguages,
+	CorrectionFieldMetadataSubtitleLanguages,
+	CorrectionFieldMetadataHardcodedSubs,
+	CorrectionFieldMetadataHardcodedSubtitleLanguages,
 	CorrectionFieldMetadataTrackLanguages,
 }
 
@@ -601,7 +636,7 @@ func applyReleaseNameOverrides(destination *ReleaseNameOverrides, source Release
 		source      *string
 	}{
 		{&destination.Category, source.Category}, {&destination.Type, source.Type}, {&destination.Source, source.Source}, {&destination.Resolution, source.Resolution},
-		{&destination.Tag, source.Tag}, {&destination.Service, source.Service}, {&destination.Edition, source.Edition}, {&destination.Season, source.Season},
+		{&destination.Tag, source.Tag}, {&destination.Service, source.Service}, {&destination.Edition, source.Edition}, {&destination.Repack, source.Repack}, {&destination.Season, source.Season},
 		{&destination.Episode, source.Episode}, {&destination.EpisodeTitle, source.EpisodeTitle}, {&destination.ManualDate, source.ManualDate}, {&destination.Region, source.Region},
 	} {
 		if item.source != nil {
@@ -701,6 +736,8 @@ func resetStoredCorrectionField(stored *StoredReleaseCorrectionsV1, ref Correcti
 		stored.ReleaseName.Service = nil
 	case CorrectionFieldReleaseNameEdition:
 		stored.ReleaseName.Edition = nil
+	case CorrectionFieldReleaseNameRepack:
+		stored.ReleaseName.Repack = nil
 	case CorrectionFieldReleaseNameSeason:
 		stored.ReleaseName.Season = nil
 	case CorrectionFieldReleaseNameEpisode:

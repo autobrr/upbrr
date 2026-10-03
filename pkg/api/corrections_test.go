@@ -63,8 +63,8 @@ func TestReleaseCorrectionPatchAcceptsClosedResetFields(t *testing.T) {
 	if err := (ReleaseCorrectionPatch{ResetFields: refs}).Validate(); err != nil {
 		t.Fatalf("full reset enum validation: %v", err)
 	}
-	if len(refs) != 45 {
-		t.Fatalf("reset enum count = %d, want 45", len(refs))
+	if len(refs) != 46 {
+		t.Fatalf("reset enum count = %d, want 46", len(refs))
 	}
 }
 
@@ -383,5 +383,37 @@ func TestWithoutResetPinsPreservesOtherIdentityEvidence(t *testing.T) {
 		} else if reset.TMDBID != original.TMDBID || reset.Provenance.TMDB != provenance {
 			t.Fatal("reset discarded automatic evidence")
 		}
+	}
+}
+
+func TestReleaseVersionCorrectionClearAndAuto(t *testing.T) {
+	t.Parallel()
+	snapshot := ReleaseCorrectionsSnapshot{Corrections: StoredReleaseCorrectionsV1{Version: 1, ReleaseName: ReleaseNameOverrides{Edition: new("Uncut"), Repack: new("PROPER")}}}
+	cleared, err := ApplyReleaseCorrectionUpdate(snapshot, ReleaseCorrectionUpdate{Mode: ReleaseCorrectionUpdatePatch, Patch: &ReleaseCorrectionPatch{Values: ReleaseCorrectionValues{ReleaseName: ReleaseNameOverrides{Repack: new("")}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.ReleaseName.Repack == nil || *cleared.ReleaseName.Repack != "" || *cleared.ReleaseName.Edition != "Uncut" {
+		t.Fatalf("clear = %#v", cleared.ReleaseName)
+	}
+	snapshot.Corrections = cleared
+	automatic, err := ApplyReleaseCorrectionUpdate(snapshot, ReleaseCorrectionUpdate{Mode: ReleaseCorrectionUpdatePatch, Patch: &ReleaseCorrectionPatch{ResetFields: []CorrectionFieldRef{{Field: CorrectionFieldReleaseNameRepack}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if automatic.ReleaseName.Repack != nil || *automatic.ReleaseName.Edition != "Uncut" {
+		t.Fatalf("auto = %#v", automatic.ReleaseName)
+	}
+	snapshot.Revision = 2
+	_, err = ApplyReleaseCorrectionUpdate(snapshot, ReleaseCorrectionUpdate{
+		Mode: ReleaseCorrectionUpdatePatch,
+		Patch: &ReleaseCorrectionPatch{
+			ExpectedRevision: new(uint64(1)),
+			Values:           ReleaseCorrectionValues{ReleaseName: ReleaseNameOverrides{Repack: new("REPACK")}},
+		},
+	})
+	var conflict *CorrectionRevisionConflictError
+	if !errors.As(err, &conflict) || conflict.Expected != 1 || conflict.Actual != 2 {
+		t.Fatalf("stale version correction error=%v", err)
 	}
 }

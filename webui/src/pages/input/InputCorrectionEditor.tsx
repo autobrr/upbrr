@@ -296,6 +296,12 @@ const releaseStringFields: ReadonlyArray<{
     automatic: (r) => r?.Media?.Edition || "",
   },
   {
+    field: "release_name.repack",
+    label: "Release version",
+    key: "Repack",
+    automatic: (r) => r?.Media?.Repack || "",
+  },
+  {
     field: "release_name.season",
     label: "Season",
     key: "Season",
@@ -647,29 +653,49 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
-                <input
-                  id={`correction-${field}-value`}
-                  aria-label={label}
-                  type={numeric ? "number" : "text"}
-                  readOnly={readOnly}
-                  disabled={readOnly}
-                  value={
-                    rawValue === null || rawValue === undefined || rawValue === 0
-                      ? ""
-                      : String(rawValue)
-                  }
-                  onChange={(event) => {
-                    if (readOnly) return;
-                    setReleaseName(
-                      key,
-                      numeric
-                        ? event.target.value
-                          ? Number(event.target.value)
-                          : 0
-                        : event.target.value,
-                    );
-                  }}
-                />
+                {key === "Repack" ? (
+                  <Select
+                    id={`correction-${field}-value`}
+                    aria-label={label}
+                    value={String(rawValue ?? "")
+                      .trim()
+                      .toUpperCase()}
+                    onChange={(event) => setReleaseName(key, event.target.value)}
+                  >
+                    <option value="">None</option>
+                    {["REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP"].map(
+                      (value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ),
+                    )}
+                  </Select>
+                ) : (
+                  <input
+                    id={`correction-${field}-value`}
+                    aria-label={label}
+                    type={numeric ? "number" : "text"}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                    value={
+                      rawValue === null || rawValue === undefined || rawValue === 0
+                        ? ""
+                        : String(rawValue)
+                    }
+                    onChange={(event) => {
+                      if (readOnly) return;
+                      setReleaseName(
+                        key,
+                        numeric
+                          ? event.target.value
+                            ? Number(event.target.value)
+                            : 0
+                          : event.target.value,
+                      );
+                    }}
+                  />
+                )}
               </CorrectionRow>
             );
           })}

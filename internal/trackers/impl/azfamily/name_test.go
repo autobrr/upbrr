@@ -579,3 +579,48 @@ func markAZFamilyComponentManual(t *testing.T, document *api.ReleaseNameDocument
 	}
 	t.Fatalf("generated name is missing %s", role)
 }
+
+func TestAZFamilyReleaseVersionPosition(t *testing.T) {
+	t.Parallel()
+	for _, site := range []string{"AZ", "CZ", "PHD"} {
+		t.Run(site, func(t *testing.T) {
+			for _, version := range []string{"PROPER", "REPACK", "REPACK2"} {
+				for _, edition := range []string{"", "Uncut"} {
+					subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
+						Category:   "MOVIE",
+						Type:       "ENCODE",
+						Source:     "BluRay",
+						Title:      "Example Film",
+						Year:       2026,
+						Edition:    edition,
+						Repack:     version,
+						Resolution: "1080p",
+						Tag:        "-GRP",
+					})
+					want := strings.Join(strings.Fields("Example Film 2026 "+edition+" "+version+" 1080p BluRay-GRP"), " ")
+					if got := azFamilyReviewedName(t, site, subject, nil); got != want {
+						t.Fatalf("name = %q, want %q", got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAZFamilyDVDRipReleaseVersion(t *testing.T) {
+	for _, site := range []string{"AZ", "CZ", "PHD"} {
+		subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
+			Category:   "MOVIE",
+			Type:       "DVDRIP",
+			Title:      "Example Film",
+			Year:       2026,
+			Repack:     "REPACK2",
+			Resolution: "480p",
+			Source:     "DVD",
+			Tag:        "-GRP",
+		})
+		if got, want := azFamilyReviewedName(t, site, subject, nil), "Example Film 2026 REPACK2 480p DVDRip-GRP"; got != want {
+			t.Fatalf("%s name = %q, want %q", site, got, want)
+		}
+	}
+}

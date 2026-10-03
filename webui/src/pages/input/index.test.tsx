@@ -1451,6 +1451,92 @@ describe("InputPage", () => {
     },
   );
 
+  it("keeps Repack explicit, cleared, automatic, and saved values separate from Edition", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: { ...release, Media: { ...release.Media, Repack: "REPACK2" } },
+        intent: { ...base.view.intent, releaseName: { Edition: "Extended" } },
+      },
+    };
+    const { container, rerender } = render(<InputCorrectionEditor facet={facet} />);
+    const row = () =>
+      within(
+        container.querySelector<HTMLElement>('[data-correction-field="release_name.repack"]')!,
+      );
+    expect(screen.getByRole("combobox", { name: "Release version" })).toHaveValue("REPACK2");
+    expect(row().getByText("Automatic value")).toBeInTheDocument();
+    expect(
+      row()
+        .getAllByRole("option")
+        .map((option) => option.getAttribute("value")),
+    ).toEqual(["", "REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP"]);
+    for (const value of ["PROPER3", ""]) {
+      fireEvent.change(screen.getByLabelText("Release version"), { target: { value } });
+      expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+        Edition: "Extended",
+        Repack: value,
+      });
+      rerender(
+        <InputCorrectionEditor
+          facet={{
+            ...facet,
+            view: {
+              ...facet.view,
+              intent: { ...facet.view.intent, releaseName: { Edition: "Extended", Repack: value } },
+            },
+          }}
+        />,
+      );
+      expect(screen.getByLabelText("Release version")).toHaveValue(value);
+      expect(screen.getByLabelText("Edition")).toHaveValue("Extended");
+      expect(row().getByText("Manual value · Applied")).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Auto Release version" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.repack" });
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            resetFields: [{ field: "release_name.repack" }],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("Release version")).toHaveValue("REPACK2");
+    expect(row().getByText("Auto reset pending")).toBeInTheDocument();
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            intent: {
+              ...facet.view.intent,
+              releaseName: { Edition: "Extended", Repack: " proper " },
+            },
+            corrections: {
+              revision: 1,
+              corrections: {
+                version: 1,
+                identity: {},
+                releaseName: { Repack: " proper " },
+                metadata: {},
+              },
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("Release version")).toHaveValue("PROPER");
+    expect(row().getByText("Manual value · Applied")).toBeInTheDocument();
+  });
+
   it("renders the complete source-level correction inventory", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {
@@ -1475,6 +1561,7 @@ describe("InputPage", () => {
       "release_name.tag",
       "release_name.service",
       "release_name.edition",
+      "release_name.repack",
       "release_name.season",
       "release_name.episode",
       "release_name.episode_title",

@@ -132,12 +132,14 @@ type ReleaseNameResult struct {
 }
 
 type ReleaseNameOverrides struct {
-	Category     *string
-	Type         *string
-	Source       *string
-	Resolution   *string
-	Tag          *string
-	Service      *string
+	Category   *string
+	Type       *string
+	Source     *string
+	Resolution *string
+	Tag        *string
+	Service    *string
+	// Repack replaces the detected release version; empty clears it and nil keeps automatic detection.
+	Repack       *string
 	Edition      *string
 	Season       *string
 	Episode      *string

@@ -159,6 +159,7 @@ type ReleaseWorkflowUploadReleaseName struct {
 	Tag              *string `json:"tag,omitempty"`
 	Service          *string `json:"service,omitempty"`
 	Edition          *string `json:"edition,omitempty"`
+	Repack           *string `json:"repack,omitempty"`
 	Season           *string `json:"season,omitempty"`
 	Episode          *string `json:"episode,omitempty"`
 	EpisodeTitle     *string `json:"episodeTitle,omitempty"`
