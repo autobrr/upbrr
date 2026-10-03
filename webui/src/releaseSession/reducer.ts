@@ -460,6 +460,14 @@ const normalizeNames = (values: readonly string[]) =>
 const sameTrackers = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((tracker) => right.includes(tracker));
 
+const workflowReleaseRef = (current: ReleaseWorkflowCurrent | null): ReleaseRef | null => {
+  const release = current?.release?.release;
+  return release ? { SourcePath: release.Source.SourcePath, Generation: release.Generation } : null;
+};
+
+const releaseRefChanged = (previous: ReleaseRef | null, next: ReleaseRef) =>
+  previous?.SourcePath !== next.SourcePath || previous?.Generation !== next.Generation;
+
 const preparationMatches = (
   state: SessionState,
   sourcePath: string,
@@ -824,8 +832,15 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       ) {
         return state;
       }
+      const release = workflowReleaseRef(action.current);
+      const previousRelease = workflowReleaseRef(previous) ?? state.release;
+      const releaseChanged = release && releaseRefChanged(previousRelease, release);
       return {
         ...state,
+        sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
+        descriptions: releaseChanged
+          ? invalidateDescriptions(state.descriptions, "Prepared generation changed.")
+          : state.descriptions,
         workflowView: {
           status: action.status,
           current: action.current,
@@ -1016,10 +1031,13 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         sameDraftKey &&
         (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);
       const base = sameDraftKey ? state : initialSessionState();
+      // Commands may publish a generation before the next active-input poll.
       const releaseChanged =
         !sameDraftKey ||
-        base.release?.SourcePath !== sourcePath ||
-        base.release.Generation !== release.Generation;
+        releaseRefChanged(workflowReleaseRef(previousCurrent) ?? base.release, {
+          SourcePath: sourcePath,
+          Generation: release.Generation,
+        });
       const selectedTrackers = retainDraft
         ? state.selectedTrackers
         : normalizeNames(action.selectedTrackers || []);
@@ -1037,7 +1055,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         commandRevision: Math.max(base.commandRevision, current.workflow.revision),
         sourceVerification: null,
         sourceDraft:
-          retainDraft || (sameDraftKey && state.sourceDraft !== state.selectedSource)
+          retainDraft ||
+          (sameDraftKey &&
+            (state.sourceDraft !== state.selectedSource ||
+              (state.preparation.status === "running" &&
+                state.sourceDraft !== state.preparation.sourcePath)))
             ? state.sourceDraft
             : sourcePath,
         selectedSource: sourcePath,
@@ -1084,10 +1106,10 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       };
     }
     case "draft_changed":
+      // Source text is retained separately from preparation and tracker intent.
       return {
         ...state,
         sourceDraft: action.value,
-        inputEditRevision: state.inputEditRevision + 1,
       };
     case "source_selected": {
       const sourcePath = action.sourcePath.trim();

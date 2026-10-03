@@ -1297,7 +1297,7 @@ export function ReleaseSessionProvider({
     const intent = cloneIntent(requestedIntent);
     const existingSource = sourcePath === state.selectedSource;
     const sourceChanged = Boolean(state.selectedSource) && !existingSource;
-    const inputEditRevision = existingSource ? state.inputEditRevision : 0;
+    const inputEditRevision = state.inputEditRevision;
     const update: PendingInputUpdate = {
       inputEditRevision,
       correctionDirty: existingSource ? state.correctionDirty : false,

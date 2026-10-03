@@ -3765,6 +3765,97 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
+  it.each(["none", "metadata", "clear source"])(
+    "restores saved corrections after early input discovery (later edit: %s)",
+    async (laterEdit) => {
+      const editDuringPreparation = laterEdit === "metadata";
+      const sourcePath = "C:\\media\\Saved.Release.2026.mkv";
+      const workflowID = "workflow-reopened";
+      const restored = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 3),
+        preview(sourcePath, 1),
+      );
+      const saved = {
+        ...restored,
+        factInstructions: {
+          ...restored.factInstructions!,
+          instructions: {
+            ...restored.factInstructions!.instructions,
+            Metadata: { Commentary: false },
+          },
+        },
+      };
+      const workflow = workflowPorts({
+        create: async () => workflowCurrent(workflowID, 1),
+        prepare: async () => saved,
+      });
+      const response = createDeferred<void>();
+      let snapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
+      let refresh: () => void = () => undefined;
+      const get = vi.fn(async () => snapshot);
+      const open = vi.fn(
+        async (
+          request: Parameters<ReleaseSessionPorts["activeInput"]["open"]>[0],
+          signal: AbortSignal,
+        ) => {
+          snapshot = {
+            state: "active",
+            revision: 2,
+            inputId: "input-reopened",
+            sourceVersion: "source-one",
+            current: await workflow.continue(request.request, signal),
+          };
+          await response.promise;
+          return snapshot;
+        },
+      );
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            workflow,
+            activeInput: {
+              get,
+              open,
+              subscribe: (callback) => {
+                refresh = callback;
+                return () => undefined;
+              },
+            },
+          }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(get).toHaveBeenCalledOnce());
+        act(() => result.current.input.updateSourceDraft(sourcePath));
+        act(() => result.current.input.chooseTrackers(["AITHER"]));
+        let preparation!: Promise<boolean>;
+        act(() => {
+          preparation = result.current.input.prepare();
+        });
+        await waitFor(() => expect(snapshot.current).toBeDefined());
+        await act(async () => {
+          refresh();
+        });
+        await waitFor(() =>
+          expect(result.current.workflow.view.current?.workflow.id).toBe(workflowID),
+        );
+        if (editDuringPreparation)
+          act(() => result.current.input.changeMetadata({ Commentary: true }));
+        if (laterEdit === "clear source") act(() => result.current.input.updateSourceDraft(""));
+        response.resolve();
+        await act(() => preparation);
+        expect(result.current.input.view.intent.metadata.Commentary).toBe(editDuringPreparation);
+        expect(result.current.input.view.preparationDirty).toBe(editDuringPreparation);
+        expect(result.current.input.view.sourceDraft).toBe(
+          laterEdit === "clear source" ? "" : sourcePath,
+        );
+      } finally {
+        response.resolve();
+        unmount();
+      }
+    },
+  );
+
   it("resumes the backend playlist required action with the captured draft source", async () => {
     const sourcePath = "C:\\media\\Example Disc";
     const withRelease = (
