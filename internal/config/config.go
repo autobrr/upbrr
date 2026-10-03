@@ -347,16 +347,11 @@ type TrackerConfig struct {
 	ImageCount          int    `yaml:"image_count" json:"ImageCount"`
 	Channel             string `yaml:"channel" json:"Channel"`
 	ImgAPI              string `yaml:"img_api" json:"ImgAPI"`
-	// Pronfo fields are compatibility-only: preserve legacy config and its
-	// secret encryption without advertising a supported tracker feature.
-	PronfoAPIKey  string `yaml:"pronfo_api_key" json:"PronfoAPIKey"`
-	PronfoTheme   string `yaml:"pronfo_theme" json:"PronfoTheme"`
-	PronfoRAPIID  string `yaml:"pronfo_rapi_id" json:"PronfoRAPIID"`
-	APIUpload     bool   `yaml:"api_upload" json:"APIUpload"`
-	Exclusive     bool   `yaml:"exclusive" json:"Exclusive"`
-	LoginQuestion string `yaml:"login_question" json:"LoginQuestion"`
-	LoginAnswer   string `yaml:"login_answer" json:"LoginAnswer"`
-	UserID        string `yaml:"user_id" json:"UserID"`
+	APIUpload           bool   `yaml:"api_upload" json:"APIUpload"`
+	Exclusive           bool   `yaml:"exclusive" json:"Exclusive"`
+	LoginQuestion       string `yaml:"login_question" json:"LoginQuestion"`
+	LoginAnswer         string `yaml:"login_answer" json:"LoginAnswer"`
+	UserID              string `yaml:"user_id" json:"UserID"`
 	// Internal is a deprecated compatibility field. Group-list matches alone
 	// determine tracker-specific internal handling.
 	Internal              bool           `yaml:"internal" json:"Internal"`
@@ -492,7 +487,7 @@ func mergeUnknownKeys(target map[string]any, unknown map[string]any) {
 		return
 	}
 	for key, value := range unknown {
-		if strings.EqualFold(strings.TrimSpace(key), "url") {
+		if isDeprecatedTrackerField(key) {
 			continue
 		}
 		if _, exists := target[key]; exists {
@@ -582,7 +577,7 @@ func extractTrackerUnknown(raw map[string]any) map[string]any {
 	initTrackerTagMetadata()
 	unknown := make(map[string]any)
 	for key, value := range raw {
-		if strings.EqualFold(strings.TrimSpace(key), "url") {
+		if isDeprecatedTrackerField(key) {
 			continue
 		}
 		if _, ok := trackerKnownJSONKeys[key]; ok {
@@ -599,16 +594,16 @@ func extractTrackerUnknown(raw map[string]any) map[string]any {
 	return unknown
 }
 
-func stripDeprecatedTrackerURL(raw map[string]any) {
+func stripDeprecatedTrackerFields(raw map[string]any) {
 	for key := range raw {
-		if strings.EqualFold(strings.TrimSpace(key), "url") {
+		if isDeprecatedTrackerField(key) {
 			delete(raw, key)
 		}
 	}
 }
 
 func decodeTrackerConfigFromJSON(raw map[string]any) (TrackerConfig, error) {
-	stripDeprecatedTrackerURL(raw)
+	stripDeprecatedTrackerFields(raw)
 	payload, err := json.Marshal(raw)
 	if err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from json: %w", err)
@@ -623,7 +618,7 @@ func decodeTrackerConfigFromJSON(raw map[string]any) (TrackerConfig, error) {
 }
 
 func decodeTrackerConfigFromYAML(raw map[string]any) (TrackerConfig, error) {
-	stripDeprecatedTrackerURL(raw)
+	stripDeprecatedTrackerFields(raw)
 	payload, err := yaml.Marshal(raw)
 	if err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from yaml: %w", err)
@@ -667,6 +662,7 @@ func normalizeTrackerGroupList(values CSVList) CSVList {
 }
 
 func (t TrackersConfig) MarshalJSON() ([]byte, error) {
+	RemoveRetiredTrackerSettings(&t)
 	trackers := make(map[string]map[string]any, len(t.Trackers))
 	for trackerName, trackerCfg := range t.Trackers {
 		normalizeTrackerGroupLists(&trackerCfg)
@@ -685,14 +681,10 @@ func (t TrackersConfig) MarshalJSON() ([]byte, error) {
 		Trackers         map[string]map[string]any `json:"Trackers"`
 	}
 
-	defaultTrackers := t.DefaultTrackers
-	if defaultTrackers == nil {
-		defaultTrackers = CSVList{}
-	}
 	preferredTracker := strings.TrimSpace(t.PreferredTracker)
 
 	payload, err := json.Marshal(trackersJSON{
-		DefaultTrackers:  defaultTrackers,
+		DefaultTrackers:  t.DefaultTrackers,
 		PreferredTracker: preferredTracker,
 		Trackers:         trackers,
 	})
@@ -757,6 +749,9 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	for trackerName, raw := range rawTrackers {
+		if isRemovedTracker(trackerName) {
+			continue
+		}
 		entry := map[string]any{}
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			continue
@@ -768,16 +763,14 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 		t.Trackers[trackerName] = cfg
 	}
 
+	RemoveRetiredTrackerSettings(t)
 	return nil
 }
 
 func (t TrackersConfig) MarshalYAML() (any, error) {
+	RemoveRetiredTrackerSettings(&t)
 	root := map[string]any{}
-	defaultTrackers := t.DefaultTrackers
-	if defaultTrackers == nil {
-		defaultTrackers = CSVList{}
-	}
-	root["default_trackers"] = []string(defaultTrackers)
+	root["default_trackers"] = []string(t.DefaultTrackers)
 	root["preferred_tracker"] = strings.TrimSpace(t.PreferredTracker)
 
 	for trackerName, trackerCfg := range t.Trackers {
@@ -818,6 +811,9 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	for key, raw := range root {
+		if isRemovedTracker(key) {
+			continue
+		}
 		if strings.EqualFold(key, "default_trackers") || strings.EqualFold(key, "preferred_tracker") || strings.EqualFold(key, "trackers") {
 			continue
 		}
@@ -832,6 +828,7 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 		t.Trackers[key] = cfg
 	}
 
+	RemoveRetiredTrackerSettings(t)
 	return nil
 }
 
@@ -1066,8 +1063,7 @@ func (c Config) Validate() error {
 		}
 
 		imageHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
-		// Unsupported saved entries are inert, so obsolete hosts must not block startup.
-		if imageHost != "" && len(trackerAllowedYAMLKeys(strings.ToUpper(strings.TrimSpace(trackerName)))) > 0 {
+		if imageHost != "" {
 			if !imagehostpolicy.IsUploadHost(imageHost) {
 				return fmt.Errorf("config: trackers.%s.image_host %q is not supported", trackerName, trackerCfg.ImageHost)
 			}

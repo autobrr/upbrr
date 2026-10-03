@@ -415,7 +415,7 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 
 	overlayKeys := make([]string, 0, len(overlay))
 	for key := range overlay {
-		if isDeprecatedTrackerURLField(path, key) {
+		if isDeprecatedStoredTrackerSetting(path, key) {
 			deprecatedPath := configMapPath(path, key)
 			report.deprecatedPaths = append(report.deprecatedPaths, deprecatedPath)
 			report.markChanged(deprecatedPath)
@@ -436,6 +436,25 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 
 	for _, key := range overlayKeys {
 		overlayValue := overlay[key]
+		if path == "Trackers" {
+			switch key {
+			case "DefaultTrackers":
+				names := parseDefaultTrackersValue(overlayValue)
+				cleaned := TrackersConfig{DefaultTrackers: names}
+				RemoveRetiredTrackerSettings(&cleaned)
+				if len(names) != len(cleaned.DefaultTrackers) {
+					overlayValue = cleaned.DefaultTrackers
+					report.deprecatedPaths = append(report.deprecatedPaths, configMapPath(path, key))
+					report.markChanged(configMapPath(path, key))
+				}
+			case "PreferredTracker":
+				if name, ok := overlayValue.(string); ok && isRemovedTracker(name) {
+					overlayValue = ""
+					report.deprecatedPaths = append(report.deprecatedPaths, configMapPath(path, key))
+					report.markChanged(configMapPath(path, key))
+				}
+			}
+		}
 		baseValue, exists := base[key]
 		if !exists {
 			if allowsStoredDynamicConfigEntry(path) || isStoredTrackerEntryPath(path) {
@@ -616,10 +635,13 @@ func shouldDiscardStoredTrackerField(path string, key string, values map[string]
 	return hasKnownFoldPeer
 }
 
-func isDeprecatedTrackerURLField(path string, key string) bool {
+func isDeprecatedStoredTrackerSetting(path string, key string) bool {
+	if path == "Trackers.Trackers" && isRemovedTracker(key) {
+		return true
+	}
 	const trackerPathPrefix = "Trackers.Trackers."
 	trackerName, ok := strings.CutPrefix(path, trackerPathPrefix)
-	return ok && trackerName != "" && !strings.Contains(trackerName, ".") && strings.EqualFold(strings.TrimSpace(key), "URL")
+	return ok && trackerName != "" && !strings.Contains(trackerName, ".") && isDeprecatedTrackerField(key)
 }
 
 // validateStoredOverlayKeys rejects duplicate stored keys that would fold into
@@ -775,7 +797,7 @@ func mergeStoredUnknownConfigValues(current, stored any, path string) error {
 		return nil
 	}
 	for key, storedValue := range storedMap {
-		if isDeprecatedTrackerURLField(path, key) {
+		if isDeprecatedStoredTrackerSetting(path, key) {
 			continue
 		}
 		if shouldDiscardStoredTrackerField(path, key, storedMap) {

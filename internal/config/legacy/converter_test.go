@@ -685,7 +685,10 @@ func TestImportUnsupportedTrackerPreservesFieldsAfterJSONClone(t *testing.T) {
 	input := []byte(`
 config = {
     'TRACKERS': {
-        'THR': {
+        'default_trackers': ['THR', 'AITHER'],
+        'preferred_tracker': 'THR',
+        'THR': {'password': 'upbrr-enc:v1:unreadable'},
+        'RETIRED': {
             'pronfo_api_key': 'synthetic-pronfo-key',
             'pronfo_rapi_id': 'synthetic-pronfo-id',
             'pronfo_theme': 'legacy-theme',
@@ -700,8 +703,17 @@ config = {
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if !slices.Contains(warnings, "preserved unsupported tracker entry: THR") {
+	if !slices.Contains(warnings, "preserved unsupported tracker entry: RETIRED") {
 		t.Fatalf("missing unsupported tracker warning: %v", warnings)
+	}
+	if _, ok := cfg.Trackers.Trackers["THR"]; ok {
+		t.Fatal("removed tracker retained")
+	}
+	if !slices.Equal(cfg.Trackers.DefaultTrackers, []string{"AITHER"}) || cfg.Trackers.PreferredTracker != "" {
+		t.Fatal("removed tracker selection retained")
+	}
+	if !slices.Contains(warnings, "ignored removed tracker entry: THR") {
+		t.Fatal("removed tracker warning missing")
 	}
 	payload, err := json.Marshal(cfg)
 	if err != nil {
@@ -712,11 +724,10 @@ config = {
 		t.Fatalf("unmarshal config: %v", err)
 	}
 	for stage, tracker := range map[string]config.TrackerConfig{
-		"imported": cfg.Trackers.Trackers["THR"],
-		"cloned":   cloned.Trackers.Trackers["THR"],
+		"imported": cfg.Trackers.Trackers["RETIRED"],
+		"cloned":   cloned.Trackers.Trackers["RETIRED"],
 	} {
-		if tracker.PronfoAPIKey != "synthetic-pronfo-key" || tracker.PronfoRAPIID != "synthetic-pronfo-id" ||
-			tracker.PronfoTheme != "legacy-theme" || tracker.ImgAPI != "synthetic-image-key" {
+		if tracker.ImgAPI != "synthetic-image-key" {
 			t.Errorf("%s config lost known tracker fields", stage)
 		}
 		if len(tracker.Unknown) != 2 || tracker.Unknown["keep_me"] != "retained" {

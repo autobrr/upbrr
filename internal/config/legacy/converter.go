@@ -198,6 +198,7 @@ func Convert(legacy *Config, template *config.Config) (*config.Config, []string,
 	clientWarnings := migrateTorrentClients(legacy.TorrentClients, out)
 	warnings = append(warnings, clientWarnings...)
 
+	config.RemoveRetiredTrackerSettings(&out.Trackers)
 	return out, warnings, nil
 }
 
@@ -220,6 +221,10 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 	}
 
 	for trackerName, raw := range legacyTrackers {
+		if strings.EqualFold(strings.TrimSpace(trackerName), "THR") {
+			warnings = append(warnings, "ignored removed tracker entry: "+trackerName)
+			continue
+		}
 		if trackerName == "default_trackers" || trackerName == "preferred_tracker" {
 			continue
 		}

@@ -442,8 +442,6 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 			{name: "OTPURI", field: &entry.OTPURI},
 			{name: "PTGenAPI", field: &entry.PTGenAPI},
 			{name: "ImgAPI", field: &entry.ImgAPI},
-			{name: "PronfoAPIKey", field: &entry.PronfoAPIKey},
-			{name: "PronfoRAPIID", field: &entry.PronfoRAPIID},
 			{name: "LoginQuestion", field: &entry.LoginQuestion},
 			{name: "LoginAnswer", field: &entry.LoginAnswer},
 		}
