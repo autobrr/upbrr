@@ -1293,9 +1293,13 @@ func TestFreshAitherSnapshotDoesNotPairNewDescriptionWithOldImages(t *testing.T)
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"AITHER": {Description: "new description"},
 	}}
-	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
-		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
-	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1326,9 +1330,13 @@ func TestFreshAitherSnapshotRefreshesByStoredTrackerIDWhenOnlyInfoHashIsPathed(t
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"AITHER": {TMDBID: 42, Description: "fetched description"},
 	}}
-	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
-		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
-	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:       sourcePath,
 		StoredDataFresh:  true,
@@ -1364,9 +1372,13 @@ func TestFreshAitherSnapshotCompletesAssetsDuringIDCooldown(t *testing.T) {
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"AITHER": {TrackerID: "72677", Description: "fetched description"},
 	}}
-	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
-		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
-	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1602,6 +1614,7 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("b", minTrackerTokenLen)},
@@ -1648,6 +1661,7 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("b", minTrackerTokenLen)},
@@ -1697,6 +1711,7 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 		},
 	}
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"ANT": {APIKey: "ant-key"},

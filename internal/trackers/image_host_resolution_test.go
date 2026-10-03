@@ -271,7 +271,10 @@ func TestOptionalTrackerRehostsSourceOnlyScreenshotFromExactMedia(t *testing.T) 
 	if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbox"}}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
+	}
 	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
 	if err != nil {
 		t.Fatal(err)
@@ -317,7 +320,8 @@ func TestOriginTrackerKeepsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, registry, preloaded)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "AITHER", meta, cfg, config.TrackerConfig{}, repo, nil, api.NopLogger{}, registry, preloaded)
 	if err != nil || resolution.blocking || len(resolution.screenshots) != 1 || resolution.screenshots[0].RawURL != "https://example.org/shot.png" ||
 		resolution.screenshots[0].Host != "example.org" {
 		t.Fatalf("origin screenshot = %#v, err=%v", resolution, err)
@@ -331,7 +335,7 @@ func TestOriginTrackerKeepsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, otherRegistry, otherPreloaded)
+	other, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, cfg, config.TrackerConfig{}, repo, nil, api.NopLogger{}, otherRegistry, otherPreloaded)
 	if err != nil || len(other.screenshots) != 1 || other.screenshots[0].RawURL != "https://example.org/shot.png" {
 		t.Fatalf("cross-tracker direct source screenshot = %#v, err=%v", other, err)
 	}
@@ -442,7 +446,10 @@ func TestOptionalTrackerRehostsSelectedScreenshotWithLegacySourceOnlyUpload(t *t
 	if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbox"}}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
+	}
 	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, cfg, config.TrackerConfig{}, repo, images, api.NopLogger{}, registry, nil)
 	if err != nil || len(resolution.screenshots) != 1 || len(images.calls) != 1 || images.calls[0] != "imgbox" || resolution.screenshots[0].ImgURL == "https://passthepopcorn.me/static/shot.png" {
 		t.Fatalf("legacy selected screenshot rehost = %#v, calls=%#v, err=%v", resolution, images.calls, err)
@@ -549,7 +556,10 @@ func TestExactMediaPreservesLocalScreenshotWhenAnotherHasUsableHost(t *testing.T
 				t.Fatal(err)
 			}
 			images := &stubImageService{repo: repo}
-			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbb"}}
+			cfg := config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+				ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
+			}
 			resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "ALPHA", meta, cfg, config.TrackerConfig{}, repo, images, api.NopLogger{}, registry, preloaded)
 			if err != nil || len(resolution.screenshots) != 2 || len(images.calls) != 1 || images.calls[0] != "imgbb" {
 				t.Fatalf("partly hosted screenshot rehost = %#v, calls=%#v, err=%v", resolution, images.calls, err)
