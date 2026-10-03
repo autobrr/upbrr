@@ -353,7 +353,7 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 
 func TestPrepareRecomputesPreviousDVDRipNameAfterRestart(t *testing.T) {
 	t.Parallel()
-	for _, version := range []string{"prepared-release-v16", "prepared-release-v19", "prepared-release-v20"} {
+	for _, version := range []string{"prepared-release-v16", "prepared-release-v19", "prepared-release-v20", "prepared-release-v21", "prepared-release-v22"} {
 		t.Run(version, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "Example.Movie.2026.DVDRip.x264-GRP.mkv")
 			if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {

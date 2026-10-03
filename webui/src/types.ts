@@ -160,6 +160,9 @@ export type NamingFacts = {
   Size: string;
   Group: string;
   Disc: string;
+  EditionSet: string;
+  Cuts: string[];
+  Presentations: string[];
   Editions: string[];
   Other: string[];
   Scene: boolean;
@@ -216,6 +219,9 @@ export type MediaFacts = {
   VideoEncode: string;
   HasEncodeSettings: boolean;
   BitDepth: string;
+  EditionSet: string;
+  Cut: string;
+  Presentation: string;
   Edition: string;
   Repack: string;
   WebDV: boolean;

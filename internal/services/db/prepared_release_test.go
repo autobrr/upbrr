@@ -21,6 +21,9 @@ func TestPreparedReleaseCommitExactReadback(t *testing.T) {
 	repo := openPreparedReleaseTestRepo(t)
 	release := preparedReleaseDBFixture(filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv"), 7)
 
+	release.Media.EditionSet, release.Naming.EditionSet = "2in1", "2in1"
+	release.Media.Cut, release.Media.Edition, release.Media.Presentation = "Extended Cut", "Collector's", "Open Matte"
+	release.Naming.Cuts, release.Naming.Editions, release.Naming.Presentations = []string{release.Media.Cut}, []string{release.Media.Edition}, []string{release.Media.Presentation}
 	if err := repo.CommitPreparedRelease(context.Background(), release); err != nil {
 		t.Fatalf("commit prepared release: %v", err)
 	}

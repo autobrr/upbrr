@@ -91,6 +91,9 @@ type ReleaseNameRequest struct {
 	DiscType           string
 	Region             string
 	DVDSize            string
+	EditionSet         string
+	Cut                string
+	Presentation       string
 	Edition            string
 	SearchYear         string
 	DailyDate          string
@@ -157,4 +160,34 @@ type ReleaseNameOverrides struct {
 	NoDual           *bool
 	DualAudio        *bool
 	Region           *string
+}
+
+// EditionLabel returns the finalized edition wording used by tracker payloads
+// and duplicate comparison. EditionSet only controls rendered naming; this
+// label retains detailed categories for validation. Naming policies should use
+// their independent components in the generated document.
+func (s UploadSubject) EditionLabel() string {
+	return releaseEditionLabel(s.Cut, s.Edition, s.Presentation)
+}
+
+// EditionLabel returns the same finalized label used by upload payloads, so
+// preflight validation evaluates the exact cut, edition, and presentation facts.
+func (s TrackerValidationSubject) EditionLabel() string {
+	return releaseEditionLabel(s.Cut, s.Edition, s.Presentation)
+}
+
+// EditionLabel joins finalized release categories for duplicate subjects that
+// do not carry the upload projection. It never reads a rendered release name.
+func (r ReleaseInfo) EditionLabel() string {
+	return releaseEditionLabel(strings.Join(r.Cut, " "), strings.Join(r.Edition, " "), strings.Join(r.Presentation, " "))
+}
+
+func releaseEditionLabel(cut, edition, presentation string) string {
+	parts := make([]string, 0, 3)
+	for _, value := range []string{cut, edition, presentation} {
+		if value = strings.TrimSpace(value); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, " ")
 }

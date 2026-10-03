@@ -96,17 +96,17 @@ func lstValidationSubject() api.TrackerValidationSubject {
 			MediaFileCount: 1,
 		},
 		AssetFacts: api.AssetFacts{
-			Status:            api.MetadataEvidenceStatusComplete,
-			MediaInfoText:     api.AssetEvidence{
-Status: api.MetadataEvidenceStatusComplete,
- Ready: true,
- Count: 1,
-},
+			Status: api.MetadataEvidenceStatusComplete,
+			MediaInfoText: api.AssetEvidence{
+				Status: api.MetadataEvidenceStatusComplete,
+				Ready:  true,
+				Count:  1,
+			},
 			HostedScreenshots: api.AssetEvidence{
-Status: api.MetadataEvidenceStatusComplete,
- Ready: true,
- Count: 3,
-},
+				Status: api.MetadataEvidenceStatusComplete,
+				Ready:  true,
+				Count:  3,
+			},
 		},
 	}
 }
@@ -125,4 +125,29 @@ func requireLSTValidationFailure(
 		}
 	}
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
+}
+
+func TestLSTValidationChecksCanonicalCut(t *testing.T) {
+	for _, test := range []struct {
+		cut         string
+		wantFailure bool
+	}{{"Director's Cut", false}, {"Unsupported Cut", true}} {
+		t.Run(test.cut, func(t *testing.T) {
+			subject := lstValidationSubject()
+			subject.Cut = test.cut
+			failures, err := validationPolicy().Check(t.Context(), subject, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, failure := range failures {
+				if failure.Rule == "unsupported_edition" {
+					found = true
+				}
+			}
+			if found != test.wantFailure {
+				t.Fatalf("cut %q failures = %#v", test.cut, failures)
+			}
+		})
+	}
 }

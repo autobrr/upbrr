@@ -589,7 +589,7 @@ func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 		VideoCodec:  strings.TrimSpace(subject.VideoCodec),
 		VideoEncode: strings.TrimSpace(subject.VideoEncode),
 		HDR:         subject.HDRFacts,
-		Edition:     strings.TrimSpace(subject.Edition),
+		Edition:     subject.EditionLabel(),
 		Region:      strings.TrimSpace(subject.Region),
 		ThreeD:      strings.TrimSpace(subject.Is3D),
 		Group:       strings.TrimSpace(subject.Tag),

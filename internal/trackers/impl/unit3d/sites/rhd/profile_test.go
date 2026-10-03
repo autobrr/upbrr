@@ -14,7 +14,7 @@ import (
 
 func TestProfileNameParity(t *testing.T) {
 	profile := Profile().Site
-	if profile.BuildNameVersion != "v4" {
+	if profile.BuildNameVersion != "v5" {
 		t.Fatalf("RHD build-name version = %q", profile.BuildNameVersion)
 	}
 	build := profile.BuildName
@@ -117,6 +117,56 @@ func TestProfileNameParity(t *testing.T) {
 		if strings.Contains(ignored, marker) {
 			t.Fatalf("unexpected marker %s in %q", marker, ignored)
 		}
+	}
+}
+
+func TestBuildNamePreservesStructuredEditionParts(t *testing.T) {
+	t.Parallel()
+	legacy := api.UploadSubject{
+		Release: api.ReleaseInfo{
+			Title:      "Extended Open Matte Story",
+			Year:       2026,
+			Resolution: "1080p",
+		},
+		Type:        "WEBDL",
+		VideoEncode: "H.264",
+		Tag:         "-GRP",
+		Edition:     "Extended Collector's Open Matte",
+	}
+	structured := legacy
+	structured.Cut, structured.Edition, structured.Presentation = "Extended", "Collector's", "Open Matte"
+	want := "Extended Open Matte Story 2026 Extended Collector's Open Matte ENGLISH 1080p WEB-DL H.264-GRP"
+	for _, subject := range []api.UploadSubject{legacy, structured} {
+		if got := buildName(subject, config.TrackerConfig{}); got != want {
+			t.Fatalf("name = %q, want %q", got, want)
+		}
+	}
+	manual := legacy
+	manual.Edition = "Open Matte Collector's Extended"
+	manual.ReleaseNameOverrides.Edition = &manual.Edition
+	if got, want := buildName(manual, config.TrackerConfig{}), "Extended Open Matte Story 2026 Open Matte Collector's Extended ENGLISH 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("manual edition name = %q, want %q", got, want)
+	}
+}
+
+func TestBuildNamePrefersEditionSet(t *testing.T) {
+	t.Parallel()
+	subject := api.UploadSubject{
+		Release: api.ReleaseInfo{
+			Title:      "2in1 Extended Collector's Open Matte Story",
+			Year:       2026,
+			Resolution: "1080p",
+		},
+		Type:         "WEBDL",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+		EditionSet:   "2in1",
+		Cut:          "Extended",
+		Edition:      "Collector's",
+		Presentation: "Open Matte",
+	}
+	if got, want := buildName(subject, config.TrackerConfig{}), "2in1 Extended Collector's Open Matte Story 2026 2in1 ENGLISH 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("edition set = %q, want %q", got, want)
 	}
 }
 

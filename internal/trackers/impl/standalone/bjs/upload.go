@@ -382,7 +382,7 @@ func resolveYearLabel(meta api.UploadSubject) string {
 func resolveRemasterTitle(meta api.UploadSubject) string {
 	var tags []string
 
-	edition := strings.TrimSpace(meta.Edition)
+	edition := meta.EditionLabel()
 	editionLower := strings.ToLower(edition)
 	editionEntries := []struct{ keyword, label string }{
 		{"director's cut", "Director's Cut"},

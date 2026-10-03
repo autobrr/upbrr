@@ -265,7 +265,7 @@ func resolveBitrate(meta api.UploadSubject) string {
 }
 
 func resolveEdition(meta api.UploadSubject) string {
-	edition := strings.ToLower(strings.TrimSpace(meta.Edition))
+	edition := strings.ToLower(meta.EditionLabel())
 	switch {
 	case strings.Contains(edition, "director"):
 		return "Director's Cut"
