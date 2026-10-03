@@ -191,6 +191,10 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	if err != nil {
 		return uploadState{}, err
 	}
+	nfo, err := resolveNFO(req.Meta)
+	if err != nil {
+		return uploadState{}, err
+	}
 	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
@@ -220,6 +224,9 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	}
 	if req.Runtime.Internal {
 		fields["internal"] = "1"
+	}
+	if strings.TrimSpace(nfo) != "" {
+		fields["nfo"] = nfo
 	}
 	if req.Meta.TVPack {
 		fields["pack"] = "1"

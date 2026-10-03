@@ -62,6 +62,10 @@ Generated DVDRip release names include the known resolution, such as `480p` or `
 
 Tracker-specific categories, source/type mappings, descriptions, media selection, questionnaires, and auth flows remain owned by the tracker adapter. A successful mapping does not prove the upload complies with every current site rule.
 
+### BHD NFOs
+
+BHD sends an available local scene NFO through the dedicated `nfo` upload field without changing the reviewed description. NFO content is captured during upload preparation; an unreadable supplied NFO or content larger than 8 MiB blocks preparation. Uploads without NFO content omit the optional field.
+
 ## Image hosts and clients
 
 Trackers can restrict usable image hosts or select tracker-specific image/client overrides. Configure a compatible host before media preparation. Confirm the final hosted links and client injection settings per tracker.
