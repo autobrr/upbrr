@@ -27,6 +27,89 @@ const current = (workflowID: string, revision: number): ReleaseWorkflowCurrent =
   }) as unknown as ReleaseWorkflowCurrent;
 
 describe("sessionReducer upload intent", () => {
+  it("retains description drafts for unchanged normalized tracker receipts", () => {
+    let state = sessionReducer(initialSessionState(), {
+      type: "trackers_received",
+      trackers: ["BLU", "AITHER"],
+    });
+    state = sessionReducer(state, {
+      type: "description_edited",
+      groupKey: "unit3d",
+      raw: "unsaved",
+    });
+    state = {
+      ...state,
+      descriptions: { ...state.descriptions, renderedByGroup: { unit3d: "<p>unsaved</p>" } },
+    };
+    const refreshed = sessionReducer(state, {
+      type: "trackers_received",
+      trackers: [" aither ", "BLU", "AITHER"],
+    });
+    expect(refreshed.descriptions).toBe(state.descriptions);
+    const changed = sessionReducer(state, { type: "trackers_received", trackers: ["AITHER"] });
+    expect(changed.descriptions.rawByGroup).toEqual({});
+    expect(changed.descriptions.dirtyGroups).toEqual([]);
+    expect(changed.descriptions.renderedByGroup).toEqual({});
+  });
+
+  it.each(["tracker", "generation", "input", "workflow", "unfinished workflow"])(
+    "clears description drafts for a real %s change",
+    (change) => {
+      const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+      const initial = initialSessionState();
+      const snapshot = {
+        state: "active" as const,
+        revision: 1,
+        inputId: "input-one",
+        sourceVersion: "source-one",
+        current: current("workflow-one", 3),
+      };
+      const action = {
+        type: "active_input_applied" as const,
+        snapshot,
+        status: "ready" as const,
+        preview: preview(sourcePath, 1),
+        intent: initial.preparationIntent,
+        capturedInputEditRevision: 0,
+        selectedTrackers: ["AITHER"],
+      };
+      let state = sessionReducer(initial, action);
+      state = sessionReducer(state, {
+        type: "description_edited",
+        groupKey: "unit3d",
+        raw: "unsaved",
+      });
+      const refreshed = sessionReducer(state, action);
+      expect(refreshed.descriptions.rawByGroup.unit3d).toBe("unsaved");
+      const nextSnapshot = change.includes("workflow")
+        ? { ...snapshot, revision: 2, current: current("workflow-two", 1) }
+        : snapshot;
+      const changed = sessionReducer(state, {
+        ...action,
+        snapshot: nextSnapshot,
+        ...(change === "unfinished workflow" ? { preview: null, status: "running" as const } : {}),
+        ...(change === "tracker" ? { selectedTrackers: ["BLU"] } : {}),
+        ...(change === "generation" ? { preview: preview(sourcePath, 2) } : {}),
+        ...(change === "input"
+          ? {
+              snapshot: {
+                ...snapshot,
+                revision: 2,
+                inputId: "input-two",
+                sourceVersion: "source-two",
+              },
+            }
+          : {}),
+      });
+      expect(changed.descriptions.rawByGroup).toEqual({});
+      expect(changed.descriptions.dirtyGroups).toEqual([]);
+      if (change === "unfinished workflow") {
+        const completed = sessionReducer(changed, { ...action, snapshot: nextSnapshot });
+        expect(completed.descriptions.rawByGroup).toEqual({});
+      }
+    },
+  );
+
   it("retains an explicit source ID clear until preparation resolves the source again", () => {
     let state = initialSessionState();
     for (const value of ["123", ""]) {

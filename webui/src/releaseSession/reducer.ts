@@ -457,6 +457,9 @@ export const initialSessionState = (): SessionState => ({
 const normalizeNames = (values: readonly string[]) =>
   Array.from(new Set(values.map((value) => value.trim().toUpperCase()).filter(Boolean)));
 
+const sameTrackers = (left: readonly string[], right: readonly string[]) =>
+  left.length === right.length && left.every((tracker) => right.includes(tracker));
+
 const preparationMatches = (
   state: SessionState,
   sourcePath: string,
@@ -490,6 +493,15 @@ const invalidateAssetConsumers = (state: SessionState) => ({
   },
 });
 
+const invalidateDescriptions = (previous: DescriptionState, reason: string): DescriptionState => ({
+  ...invalidate(previous, reason, true),
+  inputRevision: previous.inputRevision + 1,
+  rawByGroup: {},
+  renderedByGroup: {},
+  dirtyGroups: [],
+  notice: "",
+});
+
 const invalidateReleaseWork = (state: SessionState, reason: string) => ({
   screenshots: {
     ...invalidate(state.screenshots, reason, true),
@@ -505,14 +517,7 @@ const invalidateReleaseWork = (state: SessionState, reason: string) => ({
     failedHosts: [],
     progress: { correlationID: "", attempts: [] },
   },
-  descriptions: {
-    ...invalidate(state.descriptions, reason, true),
-    inputRevision: state.descriptions.inputRevision + 1,
-    rawByGroup: {},
-    renderedByGroup: {},
-    dirtyGroups: [],
-    notice: "",
-  },
+  descriptions: invalidateDescriptions(state.descriptions, reason),
 });
 
 const workflowFor = (state: SessionState, facet: FacetName): WorkflowState<unknown> => state[facet];
@@ -756,30 +761,28 @@ const trackerSelectionChanged = (
   state: SessionState,
   trackers: readonly string[],
   touched: boolean,
-): SessionState => ({
-  ...state,
-  preparationDirty: touched ? Boolean(state.release) : state.preparationDirty,
-  inputEditRevision: touched ? state.inputEditRevision + 1 : state.inputEditRevision,
-  screenshots:
-    state.screenshots.status === "error"
-      ? {
-          ...state.screenshots,
-          status: "idle",
-          error: "",
-        }
-      : state.screenshots,
-  descriptions: {
-    ...invalidate(state.descriptions, "Tracker selection changed.", true),
-    inputRevision: state.descriptions.inputRevision + 1,
-    rawByGroup: {},
-    renderedByGroup: {},
-    dirtyGroups: [],
-    notice: "",
-  },
-  selectedTrackers: normalizeNames(trackers),
-  trackerSelectionTouched: touched,
-  trackerSelectionInitialized: true,
-});
+): SessionState => {
+  const selectedTrackers = normalizeNames(trackers);
+  return {
+    ...state,
+    preparationDirty: touched ? Boolean(state.release) : state.preparationDirty,
+    inputEditRevision: touched ? state.inputEditRevision + 1 : state.inputEditRevision,
+    screenshots:
+      state.screenshots.status === "error"
+        ? {
+            ...state.screenshots,
+            status: "idle",
+            error: "",
+          }
+        : state.screenshots,
+    descriptions: sameTrackers(state.selectedTrackers, selectedTrackers)
+      ? state.descriptions
+      : invalidateDescriptions(state.descriptions, "Tracker selection changed."),
+    selectedTrackers,
+    trackerSelectionTouched: touched,
+    trackerSelectionInitialized: true,
+  };
+};
 
 /** Applies one transition, ignoring stale revision- or correlation-scoped completions. */
 export const sessionReducer = (state: SessionState, action: SessionAction): SessionState => {
@@ -936,6 +939,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       ) {
         return state;
       }
+      const sameDraftKey =
+        Boolean(previousActive.inputID) &&
+        previousActive.inputID === activeInput.inputID &&
+        previousActive.sourceVersion === activeInput.sourceVersion &&
+        previousCurrent?.workflow.id === current.workflow.id;
       if (snapshot.state === "recovering") {
         const reset = initialSessionState();
         return {
@@ -953,11 +961,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       }
       if (!action.preview || !action.intent) {
         const requestedSourcePath = action.requestedSourcePath?.trim() || "";
-        if (
-          requestedSourcePath &&
-          action.intent &&
-          previousActive.inputID !== activeInput.inputID
-        ) {
+        if (requestedSourcePath && action.intent && !sameDraftKey) {
           const reset = initialSessionState();
           return {
             ...reset,
@@ -988,9 +992,14 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             trackerSelectionInitialized: Boolean(action.selectedTrackers),
           };
         }
+        // First discovery can precede our own Open response; retain its in-flight preparation.
+        const replacePreviousWorkflow = !sameDraftKey && Boolean(previousCurrent || state.release);
         return {
-          ...state,
+          ...(replacePreviousWorkflow ? initialSessionState() : state),
           activeInput,
+          sessionRevision: replacePreviousWorkflow
+            ? state.sessionRevision + 1
+            : state.sessionRevision,
           workflowView: {
             status: action.status,
             current,
@@ -1003,10 +1012,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         action.preview.Release?.SourcePath?.trim() || action.preview.SourcePath.trim();
       const release = action.preview.Release;
       if (!sourcePath || !release?.Generation) return state;
-      const sameDraftKey =
-        Boolean(previousActive.inputID) &&
-        previousActive.inputID === activeInput.inputID &&
-        previousActive.sourceVersion === activeInput.sourceVersion;
       const retainDraft =
         sameDraftKey &&
         (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);
@@ -1015,6 +1020,9 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         !sameDraftKey ||
         base.release?.SourcePath !== sourcePath ||
         base.release.Generation !== release.Generation;
+      const selectedTrackers = retainDraft
+        ? state.selectedTrackers
+        : normalizeNames(action.selectedTrackers || []);
       return {
         ...base,
         ...(sameDraftKey ? {} : invalidateReleaseWork(state, "Active input changed.")),
@@ -1028,7 +1036,10 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
         commandRevision: Math.max(base.commandRevision, current.workflow.revision),
         sourceVerification: null,
-        sourceDraft: retainDraft ? state.sourceDraft : sourcePath,
+        sourceDraft:
+          retainDraft || (sameDraftKey && state.sourceDraft !== state.selectedSource)
+            ? state.sourceDraft
+            : sourcePath,
         selectedSource: sourcePath,
         preparation: {
           correlationID: "",
@@ -1058,9 +1069,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
               ),
         release: { SourcePath: sourcePath, Generation: release.Generation },
         preview: action.preview,
-        selectedTrackers: retainDraft
-          ? state.selectedTrackers
-          : normalizeNames(action.selectedTrackers || []),
+        selectedTrackers,
+        descriptions: releaseChanged
+          ? invalidateDescriptions(state.descriptions, "Prepared generation changed.")
+          : sameTrackers(base.selectedTrackers, selectedTrackers)
+            ? base.descriptions
+            : invalidateDescriptions(base.descriptions, "Tracker selection changed."),
         trackerSelectionTouched: retainDraft ? state.trackerSelectionTouched : false,
         trackerSelectionInitialized: retainDraft ? state.trackerSelectionInitialized : true,
         releaseNameOverrides: sameDraftKey ? state.releaseNameOverrides : {},

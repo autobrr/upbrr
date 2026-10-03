@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ReactNode } from "react";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
@@ -17,6 +17,7 @@ import type {
   WorkflowContinuation,
 } from "../api/generated/release-workflow";
 import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
+import DescriptionBuilderPage from "../pages/description_builder";
 import type { ReleaseSessionPorts } from "./ports";
 
 const preview = (sourcePath: string, generation: number): MetadataPreview => ({
@@ -3366,6 +3367,130 @@ describe("useReleaseSession", () => {
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it.each(["C:\\media\\Next.Release.2026.mkv", ""])(
+    "preserves an unsubmitted source path %j until the active input changes",
+    async (draft) => {
+      const workflowID = "workflow-source-draft";
+      const current = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 3),
+        preview("C:\\media\\Example.Release.2026.mkv", 1),
+      );
+      let snapshot: ActiveInputSnapshot = {
+        state: "active",
+        revision: 1,
+        inputId: "input-one",
+        sourceVersion: "source-one",
+        current,
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({ activeInput: { get: async () => structuredClone(snapshot) } }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+        act(() => result.current.input.updateSourceDraft(draft));
+        await act(() => result.current.workflow.reload());
+        expect(result.current.input.view.sourceDraft).toBe(draft);
+        expect(result.current.input.view.preparationDirty).toBe(false);
+        const nextPath = "C:\\media\\Other.Release.2026.mkv";
+        snapshot = {
+          state: "active",
+          revision: 2,
+          inputId: "input-two",
+          sourceVersion: "source-two",
+          current: workflowCurrentFromPreview(
+            workflowCurrent("workflow-two", 3),
+            preview(nextPath, 1),
+          ),
+        };
+        await act(() => result.current.workflow.reload());
+        expect(result.current.input.view.sourceDraft).toBe(nextPath);
+      } finally {
+        unmount();
+      }
+    },
+  );
+
+  it("preserves description drafts when the active input refreshes unchanged trackers", async () => {
+    const workflowID = "workflow-description-refresh";
+    const current: ReleaseWorkflowCurrent = {
+      ...workflowCurrentFromPreview(
+        workflowCurrentWithDescriptions(workflowID, 7, "generated source"),
+        preview("C:\\media\\Example.Release.2026.1080p-GRP.mkv", 1),
+      ),
+      selection: {
+        id: "selection-1",
+        workflowId: workflowID,
+        revision: 1,
+        catalog: { id: "catalog-1", revision: 1 },
+        runtime: { id: "runtime-1", revision: 1 },
+        trackerIds: ["AITHER"],
+        fingerprint: "1".repeat(64),
+        createdAt: "2026-07-21T00:00:00Z",
+      },
+    };
+    let refresh: () => void = () => undefined;
+    vi.useFakeTimers();
+    const ports = portsFor({
+      resumeWorkflowID: workflowID,
+      workflow: workflowPorts({ current: async () => structuredClone(current) }),
+      activeInput: {
+        subscribe: (callback) => {
+          refresh = callback;
+          return () => undefined;
+        },
+      },
+    });
+    function DescriptionEditor() {
+      const session = useReleaseSession();
+      return (
+        <DescriptionBuilderPage
+          facet={session.descriptions}
+          sourcePath={current.release!.release.Source.SourcePath}
+        />
+      );
+    }
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <DescriptionEditor />
+        </ReleaseSessionProvider>
+      ),
+    });
+    try {
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(result.current.workflow.view.status).toBe("ready");
+      fireEvent.click(screen.getByRole("button", { name: "Expand AITHER" }));
+      const editor = screen.getByRole("textbox", { name: "Raw description for AITHER" });
+      fireEvent.change(editor, { target: { value: "unsaved description" } });
+      for (const reload of [
+        () => result.current.workflow.reload(),
+        refresh,
+        () => window.dispatchEvent(new Event("focus")),
+        () => window.dispatchEvent(new Event("online")),
+        () => document.dispatchEvent(new Event("visibilitychange")),
+        () => vi.advanceTimersByTimeAsync(15_000),
+        () => vi.advanceTimersByTimeAsync(15_000),
+      ]) {
+        await act(async () => {
+          await reload();
+        });
+        expect(editor).toHaveValue("unsaved description");
+        expect(result.current.descriptions.view.dirtyGroups).toEqual(["unit3d"]);
+      }
+      fireEvent.change(editor, { target: { value: "" } });
+      await act(async () => {
+        await result.current.workflow.reload();
+      });
+      expect(editor).toHaveValue("");
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("saves and resets authoritative descriptions through revisioned workflow commands", async () => {

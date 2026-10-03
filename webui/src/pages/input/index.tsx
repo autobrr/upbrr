@@ -1065,13 +1065,21 @@ export default function InputPage(props: Props) {
     return hasTVDBEnglishDisplay(selectedPreview);
   }, [selectedPreview]);
 
+  const selectedPreviewProvider = selectedPreview?.Provider;
+  const selectedPreviewID = selectedPreview?.ID;
   useEffect(() => {
-    if (selectedPreview?.Provider !== "tvdb") {
+    if (selectedPreviewProvider !== "tvdb") {
       setTVDBDisplayMode("original");
       return;
     }
     setTVDBDisplayMode(tvdbToggleEnabled ? "english" : "original");
-  }, [selectedPreview, tvdbToggleEnabled]);
+  }, [
+    selectedPreviewProvider,
+    selectedPreviewID,
+    preview.Release.SourcePath,
+    preview.Release.Generation,
+    tvdbToggleEnabled,
+  ]);
 
   const selectedPreviewTitle = useMemo(() => {
     if (!selectedPreview) return "";

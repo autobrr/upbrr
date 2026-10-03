@@ -1471,6 +1471,7 @@ test("embedded web restores edited descriptions after reopening an input", async
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
   try {
+    await page.clock.install();
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Dupe Check" }).click();
@@ -1498,6 +1499,10 @@ test("embedded web restores edited descriptions after reopening an input", async
 <blockquote>HTML and [b]custom notes[/b] together.</blockquote>
 [right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]`;
     await page.getByRole("textbox").fill(editedDescription);
+    const refreshed = waitForAppMethod(page, "GetActiveInput");
+    await page.clock.runFor(15_000);
+    expect((await refreshed).ok()).toBe(true);
+    await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
     await page.getByRole("button", { name: "Render" }).click();
     const renderedPreview = page
       .getByRole("heading", { name: "Rendered Raw Preview" })
