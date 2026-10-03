@@ -611,3 +611,51 @@ func TestWorkflowDescriptionBuilderHonorsCancellation(t *testing.T) {
 		t.Fatalf("canceled description build error = %v", err)
 	}
 }
+
+func TestWorkflowDescriptionRetainsAndFingerprintsNFO(t *testing.T) {
+	t.Parallel()
+	preview := api.PreparationPreview{Descriptions: []api.PreparationDescription{{
+		GroupKey:    "bhd",
+		Trackers:    []string{"BHD"},
+		Description: "final markup",
+		NFO:         "first NFO",
+	}}}
+	service := &workflowDescriptionServiceFake{preview: &preview}
+	builder := workflowDescriptionBuilder{resolver: &workflowDescriptionResolverFake{}, trackers: service}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID:        "BHD",
+		DescriptionGroup: "bhd",
+		Artifacts:        api.TrackerArtifactRequirements{Description: true},
+	}}}
+	build := func() api.DescriptionSet {
+		t.Helper()
+		snapshot, err := builder.Build(t.Context(), api.ReleaseRef{SourcePath: filepath.Join(t.TempDir(), "Example.mkv"), Generation: 1}, projections, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionInstructions{}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot.Descriptions) != 1 {
+			t.Fatalf("descriptions=%#v", snapshot.Descriptions)
+		}
+		return snapshot
+	}
+	first := build()
+	if first.Descriptions[0].NFO != "first NFO" {
+		t.Fatal("rendered NFO lost")
+	}
+	cloned, err := first.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := workflowUploadDescriptionGroups(cloned, projections.Projections)
+	if len(groups) != 1 || groups[0].NFO != "first NFO" {
+		t.Fatalf("upload NFO lost: %#v", groups)
+	}
+	preview.Descriptions[0].NFO = "second NFO"
+	second := build()
+	if first.Descriptions[0].ContentFingerprint == second.Descriptions[0].ContentFingerprint {
+		t.Fatal("content fingerprint ignored NFO")
+	}
+	if first.Descriptions[0].NFO != "first NFO" {
+		t.Fatal("retained NFO mutated")
+	}
+}

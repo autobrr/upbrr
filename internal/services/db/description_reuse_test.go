@@ -142,6 +142,7 @@ func reusableDescriptionForTest(fingerprintCharacter, rendered string) api.Reusa
 		Descriptions: []api.RenderedDescription{{
 			GroupKey:           "main",
 			TrackerIDs:         []api.TrackerID{"AITHER"},
+			NFO:                "synthetic NFO " + rendered,
 			Source:             "source",
 			Rendered:           rendered,
 			ContentFingerprint: api.WorkflowFingerprint(strings.Repeat("f", 64)),

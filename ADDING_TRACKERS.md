@@ -342,6 +342,11 @@ for `none`, ANT/RTF for `screenshots`, and most other standalone trackers for `d
 Changing a standalone tracker's workflow later should require only its profile and tracker-local
 adapter implementation; do not add tracker-name branches to core or tracker orchestration.
 
+Tracker-extracted NFO text belongs in `DescriptionResult.NFO`, separately from rendered
+markup. The description workflow retains it with the exact description revision and content
+fingerprint; final upload preparation receives it through `DescriptionAssets.NFO`. Do not
+reconstruct NFO text from a reviewed description or reread it during submission.
+
 ## Add a Unit3D tracker
 
 ### 1. Confirm that shared Unit3D behavior fits

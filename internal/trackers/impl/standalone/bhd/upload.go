@@ -186,8 +186,12 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description := buildDescription(req.Meta, req.Runtime.DescriptionConfig(), assets)
+	description, descriptionNFO := buildDescription(req.Meta, req.Runtime.DescriptionConfig(), assets)
 	mediaDump, err := resolveMediaDump(req.Meta, req.Runtime.DBPath)
+	if err != nil {
+		return uploadState{}, err
+	}
+	nfo, err := resolveNFO(req.Meta, descriptionNFO)
 	if err != nil {
 		return uploadState{}, err
 	}
@@ -220,6 +224,9 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	}
 	if req.Runtime.Internal {
 		fields["internal"] = "1"
+	}
+	if strings.TrimSpace(nfo) != "" {
+		fields["nfo"] = nfo
 	}
 	if req.Meta.TVPack {
 		fields["pack"] = "1"

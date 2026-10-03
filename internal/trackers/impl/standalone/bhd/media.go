@@ -6,6 +6,7 @@ package bhd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -51,4 +52,34 @@ func resolveMediaPath(meta api.UploadSubject, dbPath string) string {
 	default:
 		return strings.TrimSpace(meta.MediaInfoTextPath)
 	}
+}
+
+// Match the size bound used when scene metadata downloads an NFO.
+const maxNFOBytes = 8 << 20
+
+// resolveNFO prefers a prepared local NFO, retaining the description's extracted
+// NFO when no local content exists. A supplied but unreadable file is an error.
+func resolveNFO(meta api.UploadSubject, fallback string) (string, error) {
+	nfo := fallback
+	if path := strings.TrimSpace(meta.SceneNFOPath); path != "" {
+		file, err := os.Open(path)
+		if err != nil {
+			return "", fmt.Errorf("trackers: BHD open NFO: %w", err)
+		}
+		defer file.Close()
+		payload, err := io.ReadAll(io.LimitReader(file, maxNFOBytes+1))
+		if err != nil {
+			return "", fmt.Errorf("trackers: BHD read NFO: %w", err)
+		}
+		if len(payload) > maxNFOBytes {
+			return "", errors.New("trackers: BHD NFO exceeds size limit")
+		}
+		if strings.TrimSpace(string(payload)) != "" {
+			nfo = string(payload)
+		}
+	}
+	if len(nfo) > maxNFOBytes {
+		return "", errors.New("trackers: BHD NFO exceeds size limit")
+	}
+	return nfo, nil
 }

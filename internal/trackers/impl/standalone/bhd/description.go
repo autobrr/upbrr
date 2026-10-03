@@ -16,10 +16,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets) (string, string) {
 	base := strings.TrimSpace(assets.Description)
 	if assets.Final {
-		return base
+		return base, assets.NFO
 	}
 	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(base)
 
@@ -27,6 +27,14 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 		Framestor: hasGroup(meta.Tag, "framestor"),
 		Flux:      hasGroup(meta.Tag, "flux"),
 	})
+
+	nfo := ""
+	for _, artifact := range cleaned.Artifacts {
+		if artifact.Kind == "nfo" {
+			nfo = artifact.Content
+			break
+		}
+	}
 
 	descriptionBody := strings.TrimSpace(cleaned.Description)
 	maskedDescription, comparisonBlocks := maskBHDComparisonBlocks(descriptionBody)
@@ -60,7 +68,7 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 		parts = append(parts, screenshots)
 	}
 	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`)
-	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+	return strings.TrimSpace(strings.Join(parts, "\n\n")), nfo
 }
 
 func buildDiscSection(meta api.UploadSubject, dbPath string) string {

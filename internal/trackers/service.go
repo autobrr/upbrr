@@ -474,6 +474,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		}
 		descriptionHTML := description.RenderWithImagePreviews(descriptionText, imagePreviews)
 		candidate := api.PreparationDescription{
+			NFO:                result.NFO,
 			RawDescription:     descriptionText,
 			RawDescriptionHTML: descriptionHTML,
 			Description:        descriptionText,
@@ -1090,7 +1091,8 @@ func addPreparationDescriptionGroup(
 }
 
 func preparationDescriptionsMatch(left api.PreparationDescription, right api.PreparationDescription) bool {
-	return left.RawDescription == right.RawDescription &&
+	return left.NFO == right.NFO &&
+		left.RawDescription == right.RawDescription &&
 		left.Description == right.Description &&
 		left.HasOverride == right.HasOverride &&
 		maps.Equal(left.ImagePreviews, right.ImagePreviews)

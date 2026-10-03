@@ -309,6 +309,7 @@ type stubPreparationDefinition struct {
 	name                string
 	group               string
 	description         string
+	nfo                 string
 	useAssetDescription bool
 }
 
@@ -583,7 +584,11 @@ func (s stubPreparationDefinition) prepareDescription(_ context.Context, input P
 	if s.useAssetDescription && input.Assets != nil {
 		description = input.Assets.Description
 	}
-	return DescriptionResult{Group: s.group, Description: description}, nil
+	return DescriptionResult{
+		Group:       s.group,
+		Description: description,
+		NFO:         s.nfo,
+	}, nil
 }
 
 func (s *blockingImageService) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
@@ -3260,5 +3265,40 @@ func assertTrackerArtifact(t *testing.T, torrentPath string, wantAnnounce string
 	}
 	if info.Source != wantSource {
 		t.Fatalf("expected source %q, got %q", wantSource, info.Source)
+	}
+}
+
+func TestPreparationDescriptionsDoNotMergeDifferentNFOs(t *testing.T) {
+	t.Parallel()
+	first := api.PreparationDescription{
+		RawDescription: "same",
+		Description:    "same",
+		NFO:            "first NFO",
+	}
+	second := first
+	second.NFO = "second NFO"
+	if preparationDescriptionsMatch(first, second) {
+		t.Fatal("distinct NFOs collapsed into one description")
+	}
+}
+
+func TestBuildPreparationRetainsDescriptionNFO(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	if err := registry.Register(stubPreparationDefinition{
+		name:        "BHD",
+		group:       "bhd",
+		description: "final markup",
+		nfo:         "synthetic NFO",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewServiceWithRegistry(config.Config{}, nil, &stubRepo{}, registry)
+	preview, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: filepath.Join(t.TempDir(), "Example.mkv")}), []string{"BHD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Descriptions) != 1 || preview.Descriptions[0].NFO != "synthetic NFO" {
+		t.Fatalf("description NFO lost: %#v", preview.Descriptions)
 	}
 }

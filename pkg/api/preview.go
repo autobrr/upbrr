@@ -34,11 +34,13 @@ type DescriptionBuilderPreview struct {
 }
 
 type DescriptionBuilderGroup struct {
-	GroupKey           string
-	Trackers           []string
-	Description        string
-	DescriptionHTML    string
-	RawDescription     string
+	GroupKey        string
+	Trackers        []string
+	Description     string
+	DescriptionHTML string
+	RawDescription  string
+	// NFO is tracker-extracted content retained separately from rendered markup.
+	NFO                string
 	RawDescriptionHTML string
 	HasOverride        bool
 	ImageHost          ImageHostFeedback
@@ -107,9 +109,11 @@ type TrackerDryRunFile struct {
 }
 
 type PreparationDescription struct {
-	GroupKey           string
-	Trackers           []string
-	RawDescription     string
+	GroupKey       string
+	Trackers       []string
+	RawDescription string
+	// NFO is tracker-extracted content retained separately from rendered markup.
+	NFO                string
 	RawDescriptionHTML string
 	Description        string
 	DescriptionHTML    string

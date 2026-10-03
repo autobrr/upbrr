@@ -216,7 +216,7 @@ func workflowReusableDescriptionFingerprint(
 		LocalResources   workflowReusableDescriptionLocalResources
 		ExactMedia       workflowReusableDescriptionMedia
 	}{
-		Version:          "description-reuse-v1",
+		Version:          "description-reuse-v2",
 		Config:           cfg,
 		CompatibilityKey: compatibilityKey,
 		Projections:      reusableDescriptionProjections(projections.Projections),
