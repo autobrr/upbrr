@@ -41,6 +41,8 @@ export type WorkflowState<T> = Readonly<{
 
 type ScreenshotState = WorkflowState<ScreenshotPlan> &
   Readonly<{
+    /** Preserve existing frame drafts when replacing an expired plan. */
+    planStale: boolean;
     previewImage: string;
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
@@ -429,6 +431,7 @@ export const initialSessionState = (): SessionState => ({
   uploadError: "",
   screenshots: {
     ...emptyWorkflow<ScreenshotPlan>(),
+    planStale: false,
     previewImage: "",
     selections: [],
     finalSelectionArtifactIDs: [],
@@ -457,6 +460,17 @@ export const initialSessionState = (): SessionState => ({
 const normalizeNames = (values: readonly string[]) =>
   Array.from(new Set(values.map((value) => value.trim().toUpperCase()).filter(Boolean)));
 
+const sameTrackers = (left: readonly string[], right: readonly string[]) =>
+  left.length === right.length && left.every((tracker) => right.includes(tracker));
+
+const workflowReleaseRef = (current: ReleaseWorkflowCurrent | null): ReleaseRef | null => {
+  const release = current?.release?.release;
+  return release ? { SourcePath: release.Source.SourcePath, Generation: release.Generation } : null;
+};
+
+const releaseRefChanged = (previous: ReleaseRef | null, next: ReleaseRef) =>
+  previous?.SourcePath !== next.SourcePath || previous?.Generation !== next.Generation;
+
 const preparationMatches = (
   state: SessionState,
   sourcePath: string,
@@ -479,6 +493,33 @@ const invalidate = <T>(
   error: "",
 });
 
+// Saved-image plan IDs bind exact release/projection authority, unlike reusable media.
+const invalidateStaleScreenshotPlan = (state: SessionState, current: ReleaseWorkflowCurrent) => {
+  if (
+    !state.screenshots.value &&
+    state.screenshots.status !== "running" &&
+    !state.screenshots.planStale
+  )
+    return state.screenshots;
+  const previous = state.workflowView.current;
+  const release = workflowReleaseRef(current);
+  const previousRelease = workflowReleaseRef(previous);
+  const projections = current.workflow.trackerProjections;
+  if (
+    previousRelease?.SourcePath === release?.SourcePath &&
+    previousRelease?.Generation === release?.Generation &&
+    previous?.workflow.trackerProjections?.id === projections?.id &&
+    previous?.workflow.trackerProjections?.revision === projections?.revision
+  ) {
+    return state.screenshots;
+  }
+  return {
+    ...state.screenshots,
+    ...invalidate(state.screenshots, "Screenshot plan changed.", true),
+    planStale: state.screenshots.planStale || state.screenshots.value !== null,
+  };
+};
+
 const invalidateAssetConsumers = (state: SessionState) => ({
   descriptions: {
     ...invalidate(state.descriptions, "Image assets changed.", false),
@@ -490,9 +531,19 @@ const invalidateAssetConsumers = (state: SessionState) => ({
   },
 });
 
+const invalidateDescriptions = (previous: DescriptionState, reason: string): DescriptionState => ({
+  ...invalidate(previous, reason, true),
+  inputRevision: previous.inputRevision + 1,
+  rawByGroup: {},
+  renderedByGroup: {},
+  dirtyGroups: [],
+  notice: "",
+});
+
 const invalidateReleaseWork = (state: SessionState, reason: string) => ({
   screenshots: {
     ...invalidate(state.screenshots, reason, true),
+    planStale: false,
     previewImage: "",
     selections: [],
     finalSelectionArtifactIDs: [],
@@ -505,14 +556,7 @@ const invalidateReleaseWork = (state: SessionState, reason: string) => ({
     failedHosts: [],
     progress: { correlationID: "", attempts: [] },
   },
-  descriptions: {
-    ...invalidate(state.descriptions, reason, true),
-    inputRevision: state.descriptions.inputRevision + 1,
-    rawByGroup: {},
-    renderedByGroup: {},
-    dirtyGroups: [],
-    notice: "",
-  },
+  descriptions: invalidateDescriptions(state.descriptions, reason),
 });
 
 const workflowFor = (state: SessionState, facet: FacetName): WorkflowState<unknown> => state[facet];
@@ -756,30 +800,28 @@ const trackerSelectionChanged = (
   state: SessionState,
   trackers: readonly string[],
   touched: boolean,
-): SessionState => ({
-  ...state,
-  preparationDirty: touched ? Boolean(state.release) : state.preparationDirty,
-  inputEditRevision: touched ? state.inputEditRevision + 1 : state.inputEditRevision,
-  screenshots:
-    state.screenshots.status === "error"
-      ? {
-          ...state.screenshots,
-          status: "idle",
-          error: "",
-        }
-      : state.screenshots,
-  descriptions: {
-    ...invalidate(state.descriptions, "Tracker selection changed.", true),
-    inputRevision: state.descriptions.inputRevision + 1,
-    rawByGroup: {},
-    renderedByGroup: {},
-    dirtyGroups: [],
-    notice: "",
-  },
-  selectedTrackers: normalizeNames(trackers),
-  trackerSelectionTouched: touched,
-  trackerSelectionInitialized: true,
-});
+): SessionState => {
+  const selectedTrackers = normalizeNames(trackers);
+  return {
+    ...state,
+    preparationDirty: touched ? Boolean(state.release) : state.preparationDirty,
+    inputEditRevision: touched ? state.inputEditRevision + 1 : state.inputEditRevision,
+    screenshots:
+      state.screenshots.status === "error"
+        ? {
+            ...state.screenshots,
+            status: "idle",
+            error: "",
+          }
+        : state.screenshots,
+    descriptions: sameTrackers(state.selectedTrackers, selectedTrackers)
+      ? state.descriptions
+      : invalidateDescriptions(state.descriptions, "Tracker selection changed."),
+    selectedTrackers,
+    trackerSelectionTouched: touched,
+    trackerSelectionInitialized: true,
+  };
+};
 
 /** Applies one transition, ignoring stale revision- or correlation-scoped completions. */
 export const sessionReducer = (state: SessionState, action: SessionAction): SessionState => {
@@ -821,8 +863,16 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       ) {
         return state;
       }
+      const release = workflowReleaseRef(action.current);
+      const previousRelease = workflowReleaseRef(previous) ?? state.release;
+      const releaseChanged = release && releaseRefChanged(previousRelease, release);
       return {
         ...state,
+        sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
+        screenshots: invalidateStaleScreenshotPlan(state, action.current),
+        descriptions: releaseChanged
+          ? invalidateDescriptions(state.descriptions, "Prepared generation changed.")
+          : state.descriptions,
         workflowView: {
           status: action.status,
           current: action.current,
@@ -936,6 +986,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       ) {
         return state;
       }
+      const sameDraftKey =
+        Boolean(previousActive.inputID) &&
+        previousActive.inputID === activeInput.inputID &&
+        previousActive.sourceVersion === activeInput.sourceVersion &&
+        previousCurrent?.workflow.id === current.workflow.id;
       if (snapshot.state === "recovering") {
         const reset = initialSessionState();
         return {
@@ -953,11 +1008,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       }
       if (!action.preview || !action.intent) {
         const requestedSourcePath = action.requestedSourcePath?.trim() || "";
-        if (
-          requestedSourcePath &&
-          action.intent &&
-          previousActive.inputID !== activeInput.inputID
-        ) {
+        if (requestedSourcePath && action.intent && !sameDraftKey) {
           const reset = initialSessionState();
           return {
             ...reset,
@@ -988,9 +1039,15 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             trackerSelectionInitialized: Boolean(action.selectedTrackers),
           };
         }
+        // First discovery can precede our own Open response; retain its in-flight preparation.
+        const replacePreviousWorkflow = !sameDraftKey && Boolean(previousCurrent || state.release);
         return {
-          ...state,
+          ...(replacePreviousWorkflow ? initialSessionState() : state),
+          ...(sameDraftKey ? { screenshots: invalidateStaleScreenshotPlan(state, current) } : {}),
           activeInput,
+          sessionRevision: replacePreviousWorkflow
+            ? state.sessionRevision + 1
+            : state.sessionRevision,
           workflowView: {
             status: action.status,
             current,
@@ -1003,21 +1060,25 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         action.preview.Release?.SourcePath?.trim() || action.preview.SourcePath.trim();
       const release = action.preview.Release;
       if (!sourcePath || !release?.Generation) return state;
-      const sameDraftKey =
-        Boolean(previousActive.inputID) &&
-        previousActive.inputID === activeInput.inputID &&
-        previousActive.sourceVersion === activeInput.sourceVersion;
       const retainDraft =
         sameDraftKey &&
         (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);
       const base = sameDraftKey ? state : initialSessionState();
+      // Commands may publish a generation before the next active-input poll.
       const releaseChanged =
         !sameDraftKey ||
-        base.release?.SourcePath !== sourcePath ||
-        base.release.Generation !== release.Generation;
+        releaseRefChanged(workflowReleaseRef(previousCurrent) ?? base.release, {
+          SourcePath: sourcePath,
+          Generation: release.Generation,
+        });
+      const selectedTrackers = retainDraft
+        ? state.selectedTrackers
+        : normalizeNames(action.selectedTrackers || []);
       return {
         ...base,
-        ...(sameDraftKey ? {} : invalidateReleaseWork(state, "Active input changed.")),
+        ...(sameDraftKey
+          ? { screenshots: invalidateStaleScreenshotPlan(state, current) }
+          : invalidateReleaseWork(state, "Active input changed.")),
         activeInput,
         workflowView: {
           status: action.status,
@@ -1028,7 +1089,14 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
         commandRevision: Math.max(base.commandRevision, current.workflow.revision),
         sourceVerification: null,
-        sourceDraft: retainDraft ? state.sourceDraft : sourcePath,
+        sourceDraft:
+          retainDraft ||
+          (sameDraftKey &&
+            (state.sourceDraft !== state.selectedSource ||
+              (state.preparation.status === "running" &&
+                state.sourceDraft !== state.preparation.sourcePath)))
+            ? state.sourceDraft
+            : sourcePath,
         selectedSource: sourcePath,
         preparation: {
           correlationID: "",
@@ -1058,9 +1126,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
               ),
         release: { SourcePath: sourcePath, Generation: release.Generation },
         preview: action.preview,
-        selectedTrackers: retainDraft
-          ? state.selectedTrackers
-          : normalizeNames(action.selectedTrackers || []),
+        selectedTrackers,
+        descriptions: releaseChanged
+          ? invalidateDescriptions(state.descriptions, "Prepared generation changed.")
+          : sameTrackers(base.selectedTrackers, selectedTrackers)
+            ? base.descriptions
+            : invalidateDescriptions(base.descriptions, "Tracker selection changed."),
         trackerSelectionTouched: retainDraft ? state.trackerSelectionTouched : false,
         trackerSelectionInitialized: retainDraft ? state.trackerSelectionInitialized : true,
         releaseNameOverrides: sameDraftKey ? state.releaseNameOverrides : {},
@@ -1070,10 +1141,10 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       };
     }
     case "draft_changed":
+      // Source text is retained separately from preparation and tracker intent.
       return {
         ...state,
         sourceDraft: action.value,
-        inputEditRevision: state.inputEditRevision + 1,
       };
     case "source_selected": {
       const sourcePath = action.sourcePath.trim();
@@ -1620,6 +1691,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         screenshots: {
           ...readyWorkflow(state.screenshots),
           value: action.plan,
+          planStale: false,
           selections: action.reseedDrafts
             ? action.plan.SuggestedSelections || []
             : state.screenshots.selections,
