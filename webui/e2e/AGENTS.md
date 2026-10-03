@@ -14,14 +14,14 @@ pnpm --dir webui run test:e2e:full
 
 `make e2e` is preferred full local command. Installs frontend deps, builds frontend, syncs embedded assets, builds `dist/upbrr-e2e.exe` with `e2e` tag, runs all Playwright projects.
 
-The default remains one worker. To compare test-level parallel execution, build once with `make e2e-build`, then run these commands separately:
+CI runs tests fully in parallel with three workers; the local default remains one worker. The audio-analysis scenarios require FFmpeg on `PATH` (`ffmpeg -version`); CI installs the pinned Chocolatey package. To compare test-level parallel execution locally, build once with `make e2e-build`, then run these commands separately:
 
 ```bash
 pnpm --dir webui exec playwright test --workers=1
 pnpm --dir webui exec playwright test --workers=2 --fully-parallel
 ```
 
-Each test owns its app process, local fakes, ports, and temp workspace. Do not run builds or separate Playwright invocations concurrently: they share the binary and report directories. Compare full Windows/browser runs before changing the default; API/CLI-only timings do not establish browser stability. The crash-recovery scenario intentionally waits for the production 60-second lease to expire.
+Each test owns its app process, local fakes, ports, and temp workspace. Do not run builds or separate Playwright invocations concurrently: they share the binary and report directories. Compare full Windows/browser runs when changing worker counts; API/CLI-only timings do not establish browser stability. The crash-recovery scenario intentionally waits for the production 60-second lease to expire.
 
 Missing Playwright browsers:
 
@@ -84,6 +84,7 @@ Pull request and manual workflow:
 - `pull_request` (opened, reopened, and updated) and `workflow_dispatch`.
 - Builds frontend + embedded assets + CLI.
 - Installs Playwright Chromium.
+- Installs and verifies FFmpeg for the real audio-analysis decoder.
 - Runs `make e2e`.
 - Uploads report/traces on failure.
 - Uses read-only repository permissions and local fakes; fork PRs need no repository secrets.

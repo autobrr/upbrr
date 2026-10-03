@@ -203,7 +203,7 @@ make frontend-bundle  # Vite bundle only
 
 ## Tests and checks
 
-Pull requests run all five Playwright E2E projects on Windows against the embedded application and isolated local fake services. Run `make e2e` locally before submitting workflow or browser changes; no real service credentials are needed. The [E2E workflow](.github/workflows/e2e.yml) also supports manual dispatch and uploads the Playwright report and test results when a check fails.
+Pull requests run all five Playwright E2E projects on Windows with three parallel workers against the embedded application and isolated local fake services. Run `make e2e` locally before submitting workflow or browser changes; install FFmpeg on `PATH` for the audio-analysis scenarios, but no real service credentials are needed. The local default remains one worker. The [E2E workflow](.github/workflows/e2e.yml) also supports manual dispatch and uploads the Playwright report and test results when a check fails.
 
 For opt-in checks against configured services and local media, see the [live testing runner](scripts/live-testing/README.md). It uses an isolated profile and production build, blocks tracker submission and client writes, and defaults to no image uploads. Private media, credentials, screenshots, and run evidence stay outside the repository. These checks are separate from ordinary tests and CI.
 

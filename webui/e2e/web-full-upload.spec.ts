@@ -412,7 +412,7 @@ for (const mode of ["rebuild", "reject"] as const) {
       await page.goto(app.url);
       await page.getByLabel("Source path").fill(workspace.sourcePath);
       await page.getByRole("button", { name: "Fetch metadata" }).click();
-      await expect(page.getByRole("button", { name: "Dupe Check" })).toBeEnabled();
+      await waitForMetadataReady(page, app.url);
       await page.getByRole("button", { name: "Dupe Check" }).click();
       await runDuplicateCheck(page, mode === "reject" ? "failed" : "completed");
       await expect.poll(() => suppliedName).toBe(true);
