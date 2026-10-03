@@ -41,6 +41,8 @@ export type WorkflowState<T> = Readonly<{
 
 type ScreenshotState = WorkflowState<ScreenshotPlan> &
   Readonly<{
+    /** Preserve existing frame drafts when replacing an expired plan. */
+    planStale: boolean;
     previewImage: string;
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
@@ -429,6 +431,7 @@ export const initialSessionState = (): SessionState => ({
   uploadError: "",
   screenshots: {
     ...emptyWorkflow<ScreenshotPlan>(),
+    planStale: false,
     previewImage: "",
     selections: [],
     finalSelectionArtifactIDs: [],
@@ -490,6 +493,33 @@ const invalidate = <T>(
   error: "",
 });
 
+// Saved-image plan IDs bind exact release/projection authority, unlike reusable media.
+const invalidateStaleScreenshotPlan = (state: SessionState, current: ReleaseWorkflowCurrent) => {
+  if (
+    !state.screenshots.value &&
+    state.screenshots.status !== "running" &&
+    !state.screenshots.planStale
+  )
+    return state.screenshots;
+  const previous = state.workflowView.current;
+  const release = workflowReleaseRef(current);
+  const previousRelease = workflowReleaseRef(previous);
+  const projections = current.workflow.trackerProjections;
+  if (
+    previousRelease?.SourcePath === release?.SourcePath &&
+    previousRelease?.Generation === release?.Generation &&
+    previous?.workflow.trackerProjections?.id === projections?.id &&
+    previous?.workflow.trackerProjections?.revision === projections?.revision
+  ) {
+    return state.screenshots;
+  }
+  return {
+    ...state.screenshots,
+    ...invalidate(state.screenshots, "Screenshot plan changed.", true),
+    planStale: state.screenshots.planStale || state.screenshots.value !== null,
+  };
+};
+
 const invalidateAssetConsumers = (state: SessionState) => ({
   descriptions: {
     ...invalidate(state.descriptions, "Image assets changed.", false),
@@ -513,6 +543,7 @@ const invalidateDescriptions = (previous: DescriptionState, reason: string): Des
 const invalidateReleaseWork = (state: SessionState, reason: string) => ({
   screenshots: {
     ...invalidate(state.screenshots, reason, true),
+    planStale: false,
     previewImage: "",
     selections: [],
     finalSelectionArtifactIDs: [],
@@ -838,6 +869,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
+        screenshots: invalidateStaleScreenshotPlan(state, action.current),
         descriptions: releaseChanged
           ? invalidateDescriptions(state.descriptions, "Prepared generation changed.")
           : state.descriptions,
@@ -1011,6 +1043,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         const replacePreviousWorkflow = !sameDraftKey && Boolean(previousCurrent || state.release);
         return {
           ...(replacePreviousWorkflow ? initialSessionState() : state),
+          ...(sameDraftKey ? { screenshots: invalidateStaleScreenshotPlan(state, current) } : {}),
           activeInput,
           sessionRevision: replacePreviousWorkflow
             ? state.sessionRevision + 1
@@ -1043,7 +1076,9 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         : normalizeNames(action.selectedTrackers || []);
       return {
         ...base,
-        ...(sameDraftKey ? {} : invalidateReleaseWork(state, "Active input changed.")),
+        ...(sameDraftKey
+          ? { screenshots: invalidateStaleScreenshotPlan(state, current) }
+          : invalidateReleaseWork(state, "Active input changed.")),
         activeInput,
         workflowView: {
           status: action.status,
@@ -1656,6 +1691,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         screenshots: {
           ...readyWorkflow(state.screenshots),
           value: action.plan,
+          planStale: false,
           selections: action.reseedDrafts
             ? action.plan.SuggestedSelections || []
             : state.screenshots.selections,

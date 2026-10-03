@@ -1493,6 +1493,8 @@ export function ReleaseSessionProvider({
   });
 
   const loadScreenshotPlan = async (): Promise<boolean> => {
+    // Authority invalidation can leave an older plan request pending.
+    if (state.screenshots.status !== "running") abortController("screenshots");
     setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command || !workflowView.current) return false;
@@ -1539,7 +1541,7 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         plan,
-        reseedDrafts: true,
+        reseedDrafts: !state.screenshots.planStale,
         finalSelectionArtifactIDs: selectedArtifactIDs,
       });
       return !command.controller.signal.aborted;

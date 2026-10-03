@@ -18,6 +18,7 @@ import type {
 } from "../api/generated/release-workflow";
 import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
 import DescriptionBuilderPage from "../pages/description_builder";
+import ScreenshotsPage from "../pages/screenshots";
 import type { ReleaseSessionPorts } from "./ports";
 
 const preview = (sourcePath: string, generation: number): MetadataPreview => ({
@@ -4478,9 +4479,14 @@ describe("useReleaseSession", () => {
 
     await act(() => result.current.input.prepare());
     expect(result.current.identity.view.release?.Generation).toBe(2);
-    expect(result.current.screenshots.view.revision).toBe(firstRevision);
-    expect(result.current.screenshots.view.plan).toBe(firstPlan);
-    expect(result.current.screenshots.view.staleReason).toBe("");
+    expect(result.current.screenshots.view.revision).toBeGreaterThan(firstRevision);
+    expect(result.current.screenshots.view.plan).toBeNull();
+    expect(result.current.screenshots.view.staleReason).toBe("Screenshot plan changed.");
+    expect(result.current.screenshots.view.selections).toEqual(firstPlan?.SuggestedSelections);
+    await act(() => result.current.duplicates.run());
+    await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.plan).not.toBeNull();
+    expect(result.current.screenshots.view.selections).toEqual(firstPlan?.SuggestedSelections);
   });
 
   it("aborts and suppresses stale preparation completion after source replacement", async () => {
@@ -5745,5 +5751,142 @@ describe("useReleaseSession", () => {
         uploadReady: true,
       }),
     );
+  });
+});
+
+describe("saved-image plan authority", () => {
+  it.each([
+    "metadata refresh",
+    "tracker reassessment",
+    "another tab",
+    "another tab during plan load",
+  ])("refreshes saved-image authority after %s without resetting frame drafts", async (change) => {
+    const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+    let planID = "plan-before";
+    let externalSnapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
+    let notifyChange: () => void = () => undefined;
+    const deferredPlan =
+      createDeferred<Awaited<ReturnType<ReleaseSessionPorts["workflow"]["mediaPlan"]>>>();
+    let deferNextPlan = false;
+    const mediaPlan = vi.fn(async (workflowID: string) => {
+      if (deferNextPlan) {
+        deferNextPlan = false;
+        return deferredPlan.promise;
+      }
+      return {
+        id: planID,
+        workflowId: workflowID,
+        revision: 1,
+        release: { id: "release-one", revision: 1 },
+        projectionSet: { id: "projections-one", revision: 1 },
+        durationSeconds: 120,
+        frameRate: 24,
+        suggestedSelections: [
+          { DiscID: "", Index: 0, TimestampSeconds: 10, Frame: 240, Source: "auto" },
+        ],
+        savedTrackerImages: [
+          { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
+        ],
+        createdAt: "2026-07-20T00:00:00Z",
+      };
+    });
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const ports = portsFor({
+      workflow: workflowPorts({ mediaPlan, captureMedia }),
+      activeInput: {
+        get: async () => externalSnapshot,
+        subscribe: (callback) => {
+          notifyChange = callback;
+          return () => undefined;
+        },
+      },
+    });
+    function ScreenshotEditor() {
+      const session = useReleaseSession();
+      return session.navigation.view.access.screenshots.available ? (
+        <ScreenshotsPage
+          facet={session.screenshots}
+          setLightboxImage={() => undefined}
+          setLightboxAlt={() => undefined}
+        />
+      ) : null;
+    }
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <ScreenshotEditor />
+        </ReleaseSessionProvider>
+      ),
+    });
+    try {
+      await selectAndPrepare(result, sourcePath);
+      await waitFor(() =>
+        expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("plan-before"),
+      );
+      act(() =>
+        result.current.screenshots.changeSelection(0, { TimestampSeconds: 42, Frame: 1008 }),
+      );
+      const selections = result.current.screenshots.view.selections;
+      let pendingLoad: Promise<boolean> | undefined;
+      const initialPlan = await mediaPlan.mock.results[0].value;
+      if (change === "another tab during plan load") {
+        deferNextPlan = true;
+        act(() => {
+          pendingLoad = result.current.screenshots.load();
+        });
+      }
+      planID = "plan-after";
+      if (change.startsWith("another tab")) {
+        const current = result.current.workflow.view.current!;
+        const active = result.current.input.view.activeInput;
+        externalSnapshot = {
+          state: "active",
+          revision: active.revision,
+          inputId: active.inputID,
+          sourceVersion: active.sourceVersion,
+          current: {
+            ...current,
+            workflow: {
+              ...current.workflow,
+              revision: current.workflow.revision + 1,
+              trackerProjections: {
+                id: current.workflow.trackerProjections!.id,
+                revision: current.workflow.trackerProjections!.revision + 1,
+              },
+            },
+          },
+        };
+        act(notifyChange);
+      } else {
+        if (change === "metadata refresh") {
+          await act(() =>
+            result.current.input.prepareSource(sourcePath, result.current.input.view.intent),
+          );
+        }
+        await act(() => result.current.duplicates.run());
+      }
+      await waitFor(() =>
+        expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("plan-after"),
+      );
+      if (pendingLoad) {
+        deferredPlan.resolve(initialPlan);
+        await act(() => pendingLoad);
+        expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("plan-after");
+      }
+      expect(result.current.screenshots.view.selections).toEqual(selections);
+      expect(mediaPlan).toHaveBeenCalledTimes(pendingLoad ? 3 : 2);
+      fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
+      await waitFor(() =>
+        expect(captureMedia).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ savedImagePlanId: "plan-after", selections: [] }),
+          expect.any(String),
+          expect.any(AbortSignal),
+        ),
+      );
+    } finally {
+      unmount();
+    }
   });
 });
