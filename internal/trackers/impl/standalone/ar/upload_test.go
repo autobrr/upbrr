@@ -52,7 +52,7 @@ func TestSubmitPreparedUploadPreservesLateHTMLFailure(t *testing.T) {
 
 	_, err := submitPreparedUpload(
 		t.Context(),
-		trackers.PreparationInput{},
+		trackers.PreparationInput{Runtime: trackers.PreparationRuntime{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}},
 		uploadState{},
 		client,
 		nil,

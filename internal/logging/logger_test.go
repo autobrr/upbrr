@@ -169,8 +169,8 @@ func TestSanitizeMessageDoesntCensorPathsSimilarToTmp(t *testing.T) {
 		t.Fatalf("could got get an absolute path for temporary directory %q", os.TempDir())
 	}
 	absTempDirParts := strings.Split(absTempDir, string(os.PathSeparator))
-	pathPartsSimilarToTmp := []string{absTempDirParts[0], absTempDirParts[1] + "-similar"}
-	pathPartsSimilarToTmp = append(pathPartsSimilarToTmp[:], absTempDirParts[2:]...)
+	pathPartsSimilarToTmp := []string{absTempDirParts[0] + string(os.PathSeparator), absTempDirParts[1] + "-similar"}
+	pathPartsSimilarToTmp = append(pathPartsSimilarToTmp, absTempDirParts[2:]...)
 	pathSimilarToTmp := filepath.Join(pathPartsSimilarToTmp...)
 	savePath := filepath.Join(absTempDir, "Example.Release.2026-GRP")
 	sourcePath := filepath.Join(pathSimilarToTmp, "Example.Release.2026.Source-GRP")

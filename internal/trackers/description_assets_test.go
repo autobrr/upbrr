@@ -679,11 +679,12 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 	images := &stubImageService{repo: repo}
 	meta := api.UploadSubject{MediaBinding: binding, SourcePath: sourcePath}
 
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
 	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
-		config.Config{},
+		cfg,
 		config.TrackerConfig{},
 		repo,
 		images,
@@ -3669,7 +3670,8 @@ func TestEnsureDescriptionImageHostReusesAllowedHost(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, cfg, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3793,7 +3795,8 @@ func TestEnsureDescriptionImageHostReusesAllowedHostForRequiredTracker(t *testin
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, cfg, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3841,7 +3844,8 @@ func TestEnsureDescriptionImageHostReuploadsWhenAllowedHostCoverageIsPartial(t *
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, cfg, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3953,7 +3957,8 @@ func TestImageHostPreflightKeepsOtherTrackerSharedSlots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preload screenshots: %v", err)
 	}
-	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "PTP", meta, config.Config{}, config.TrackerConfig{},
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "PTP", meta, cfg, config.TrackerConfig{},
 		repo, images, api.NopLogger{}, registry, preloaded)
 	if err != nil || len(resolution.screenshots) != 1 {
 		t.Fatalf("PTP preflight: resolution=%#v err=%v", resolution, err)
@@ -4059,11 +4064,12 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 		errs: map[string]error{"onlyimage": errors.New("onlyimage unavailable")},
 	}
 
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
 	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"OE",
 		meta,
-		config.Config{},
+		cfg,
 		config.TrackerConfig{ImageHost: "onlyimage"},
 		repo,
 		images,
@@ -4106,11 +4112,15 @@ func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTra
 		errs: map[string]error{"pixhost": errors.New("pixhost unavailable")},
 	}
 
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"},
+	}
 	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"HHD",
 		meta,
-		config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}},
+		cfg,
 		config.TrackerConfig{ImageHost: "pixhost"},
 		repo,
 		images,
@@ -4154,11 +4164,15 @@ func TestEnsureDescriptionImageHostUploadsPreferredHostForUnrestrictedTracker(t 
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{}
 
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbb", Host2: "pixhost"},
+	}
 	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(
 		context.Background(),
 		"RHD",
 		meta,
-		config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbb", Host2: "pixhost"}},
+		cfg,
 		config.TrackerConfig{},
 		repo,
 		images,
@@ -4213,11 +4227,15 @@ func TestEnsureDescriptionImageHostSkipsHostThatFailedEarlierInRun(t *testing.T)
 	}
 	images := &stubImageService{}
 
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbox", Host2: "imgbb"},
+	}
 	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(
 		context.Background(),
 		"OE",
 		meta,
-		config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbox", Host2: "imgbb"}},
+		cfg,
 		config.TrackerConfig{},
 		repo,
 		images,
@@ -4262,11 +4280,12 @@ func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 		},
 	}
 
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
 	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
-		config.Config{},
+		cfg,
 		config.TrackerConfig{},
 		repo,
 		images,
@@ -4346,7 +4365,8 @@ func TestEnsureDescriptionImageHostUsesPreferredOverrideWhenAllowed(t *testing.T
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "OE", meta, cfg, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4410,7 +4430,8 @@ func TestEnsureDescriptionImageHostReusesGlobalUploadsInsteadOfOtherTrackerScope
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "OE", meta, cfg, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4507,7 +4528,8 @@ func TestEnsureDescriptionImageHostWarnsOnPartialAllowedHostCoverageWithoutUploa
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, cfg, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4550,7 +4572,8 @@ func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *te
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, cfg, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

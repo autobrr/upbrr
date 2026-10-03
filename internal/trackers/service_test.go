@@ -953,7 +953,8 @@ func TestBuildUploadDryRunDistinguishesReadyEmptyAndFailedScreenshots(t *testing
 			}); err != nil {
 				t.Fatalf("register stub: %v", err)
 			}
-			svc := NewServiceWithRegistry(config.Config{}, nil, test.repo, registry)
+			cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+			svc := NewServiceWithRegistry(cfg, nil, test.repo, registry)
 
 			entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"}, []string{"IMAGES"})
 			if err != nil {
@@ -1002,7 +1003,8 @@ func TestBuildUploadDryRunScopesDescriptionPreloadFailure(t *testing.T) {
 		}
 	}
 	repo := &stubRepo{descriptionOverrideErr: errors.New("description overrides unavailable")}
-	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
 	entries, err := svc.BuildUploadDryRun(
 		context.Background(),
@@ -1051,7 +1053,8 @@ func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
 			"pixhost": errors.New("pixhost unavailable"),
 		},
 	}
-	svc := NewServiceWithRegistryAndImages(config.Config{}, nil, repo, registry, images)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
 
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"}, []string{"PTP"})
 	if err != nil {
@@ -1103,7 +1106,8 @@ func TestBuildPreparationBlocksWhenImageHostFallbacksFail(t *testing.T) {
 			"pixhost": errors.New("pixhost unavailable"),
 		},
 	}
-	svc := NewServiceWithRegistryAndImages(config.Config{}, nil, repo, registry, images)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
 
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: "/tmp/source"}), []string{"PTP"})
 	if err != nil {
@@ -1162,10 +1166,14 @@ func TestBuildPreparationDoesNotRetryFailedImageHostForLaterTrackers(t *testing.
 		errs: map[string]error{"imgbox": errors.New("imgbox unavailable")},
 		repo: repo,
 	}
-	svc := NewServiceWithRegistryAndImages(config.Config{ImageHosting: config.ImageHostingConfig{
-		Host1: "imgbox",
-		Host2: "imgbb",
-	}}, nil, repo, registry, images)
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbox",
+			Host2: "imgbb",
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
 
 	preview, err := svc.BuildPreparation(
 		context.Background(),
@@ -1222,6 +1230,7 @@ func TestBuildPreparationBlocksWhenUploadedImagesDoNotCoverRHDSlots(t *testing.T
 	}
 	images := &stubImageService{}
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"RHD": {ImageHost: "imgbb"},
@@ -1498,7 +1507,8 @@ func TestBuildPreparationGroupsSameFinalDescriptionWhenExtractedDescriptionDiffe
 		},
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: sourcePath}), []string{"AITHER", "BLU"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1573,6 +1583,7 @@ func TestBuildPreparationGroupsUnit3DWhenImageHostMessageOnlyDiffers(t *testing.
 	}
 
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"AITHER": {ImageHost: "imgbox", ImgRehost: true},
@@ -1676,6 +1687,7 @@ func TestBuildPreparationUnit3DGroupsOnConfiguredHostPreference(t *testing.T) {
 	}
 
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "pixhost",
 			Host2: "imgbb",
@@ -1831,6 +1843,7 @@ func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
 	}
 	images := &stubImageService{repo: repo}
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			DefaultTrackers: config.CSVList{"PTP", "STC"},
 			Trackers: map[string]config.TrackerConfig{
@@ -1892,6 +1905,7 @@ func TestUploadPreflightsUnrestrictedTrackerToFirstConfiguredImageHost(t *testin
 	}
 	images := &blockingImageService{repo: repo}
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbb", Host2: "pixhost"},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"RHD"}},
 	}
@@ -2035,6 +2049,7 @@ func TestBuildPreparationPreflightsMultipleConfiguredImageHostsConcurrently(t *t
 	release := make(chan struct{})
 	images := &blockingImageService{started: started, release: release}
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"PTP": {ImageHost: "pixhost"},
@@ -2237,8 +2252,9 @@ func TestUploadCancellationKeepsCompletedTrackerOnly(t *testing.T) {
 
 	repo := &stubRepo{}
 	cfg := config.Config{
-		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 1},
-		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		PostUpload:   config.PostUploadConfig{MaxConcurrentTrackers: 1},
+		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
 	}
 	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
@@ -2287,8 +2303,9 @@ func TestUploadStatusFailureDoesNotCancelCompletedTracker(t *testing.T) {
 
 	repo := &failingStatusUpdateRepo{failTracker: "AITHER", failStatus: "uploaded"}
 	cfg := config.Config{
-		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 1},
-		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		PostUpload:   config.PostUploadConfig{MaxConcurrentTrackers: 1},
+		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
 	}
 	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
@@ -2348,8 +2365,9 @@ func TestUploadCancellationFinalizesPendingWithCleanupContext(t *testing.T) {
 
 	repo := &recordingStatusContextRepo{}
 	cfg := config.Config{
-		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 1},
-		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		PostUpload:   config.PostUploadConfig{MaxConcurrentTrackers: 1},
+		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
 	}
 	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
@@ -2396,7 +2414,10 @@ func TestUploadLateCancellationUsesCleanupContextForStatusWrites(t *testing.T) {
 	}
 
 	repo := &recordingStatusContextRepo{cancel: cancel}
-	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}},
+	}
 	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
 	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "/tmp/file"})
@@ -2474,8 +2495,9 @@ func TestUploadBestEffortWithFailuresAndRepoReturnsError(t *testing.T) {
 
 	repo := &stubRepo{}
 	cfg := config.Config{
-		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 3},
-		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD", "AITHER"}},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		PostUpload:   config.PostUploadConfig{MaxConcurrentTrackers: 3},
+		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD", "AITHER"}},
 	}
 	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
@@ -2529,7 +2551,10 @@ func TestUploadRetriesTransientUploadedStatusFailure(t *testing.T) {
 		failTracker:      "AITHER",
 		failStatus:       "uploaded",
 	}
-	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}},
+	}
 	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
 	ctx := context.Background()
@@ -2657,6 +2682,7 @@ func TestBuildPreparationSeparatesScopedImageHostGroups(t *testing.T) {
 		},
 	}
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"HDB": {ImgRehost: true},
@@ -2841,7 +2867,8 @@ func TestBuildPreparationPreloadsDescriptionAssetQueriesOnce(t *testing.T) {
 		},
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 	_, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: "/tmp/source"}), []string{"HDB", "AITHER", "BHD"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2905,8 +2932,8 @@ func TestBuildPreparationUsesStoredImagePreviews(t *testing.T) {
 	const previewURL = "https://images.example.invalid/preview.png"
 	registry := NewRegistry()
 	if err := registry.Register(stubPreparationDefinition{
-		name: "AITHER",
-		group: "unit3d",
+		name:        "AITHER",
+		group:       "unit3d",
 		description: "[url=" + full + "][img]" + full + "[/img][/url]",
 	}); err != nil {
 		t.Fatal(err)
@@ -2916,7 +2943,8 @@ func TestBuildPreparationUsesStoredImagePreviews(t *testing.T) {
 		Description:   "stored",
 		ImagePreviews: map[string]string{full: previewURL},
 	}}}
-	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 	prepared, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv"),
 	}), []string{"AITHER"})
@@ -3095,7 +3123,10 @@ func TestUploadSkipsBlockedTrackersBeforePendingRecords(t *testing.T) {
 	}
 
 	repo := &stubRepo{}
-	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"HDB", "AITHER"}}}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"HDB", "AITHER"}},
+	}
 	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{
@@ -3177,7 +3208,8 @@ func TestBuildUploadDryRunPreloadsDescriptionAssetQueriesOnce(t *testing.T) {
 		},
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 	_, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"}, []string{"HDB", "AITHER", "BHD"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
