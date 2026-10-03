@@ -1684,3 +1684,22 @@ func TestCLITrackerInputPreservesTextEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintMetadataPreviewShowsSourceSeasonEvidence(t *testing.T) {
+	t.Parallel()
+	const warning = "Multiple seasons detected: S00, S01. Trackers that do not allow multiple seasons may reject this release during duplicate checking.\nAdditional season file: \"Example.Series.S00E01.mkv\" — S00"
+	var output bytes.Buffer
+	printMetadataPreview(&output, api.MetadataPreview{Diagnostics: []api.PreparationDiagnostic{{
+		Code:     "multiple_source_seasons",
+		Severity: api.DiagnosticSeverityWarning,
+		Message:  warning,
+	}}}, false)
+	if !strings.Contains(output.String(), warning) {
+		t.Fatalf("source season warning missing: %s", output.String())
+	}
+	output.Reset()
+	printMetadataPreview(&output, api.MetadataPreview{}, false)
+	if strings.Contains(output.String(), "Multiple seasons") {
+		t.Fatalf("stale source season warning: %s", output.String())
+	}
+}

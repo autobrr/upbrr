@@ -1408,7 +1408,10 @@ export default function InputPage(props: Props) {
         {(preview.Diagnostics || [])
           .filter((diagnostic) => diagnostic.Severity === "warning")
           .map((diagnostic) => (
-            <p key={`${diagnostic.Code}-${diagnostic.Message}`} className="text-muted-foreground">
+            <p
+              key={`${diagnostic.Code}-${diagnostic.Message}`}
+              className="whitespace-pre-line break-words text-muted-foreground"
+            >
               {diagnostic.Message}
             </p>
           ))}

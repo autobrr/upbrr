@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { expect, type Locator, type Page, type Response } from "@playwright/test";
 import type {
   ActiveInputSnapshot,
@@ -1826,6 +1828,41 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
       "VIDEO_TS",
       "VTS_01_1.VOB",
     ]);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded metadata warns about mixed source seasons and clears after switching source", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    const mixed = path.join(workspace.root, "Example.Series.S01");
+    await mkdir(mixed);
+    for (const name of [
+      "Example.Series.S00E01.mkv",
+      "Example.Series.S01E01.mkv",
+      "Example.Series.S01E02.mkv",
+    ]) {
+      await writeFile(path.join(mixed, name), "synthetic episode");
+    }
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, mixed, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    const warning = page.getByText(/Multiple seasons detected: S00, S01/);
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText(
+      'Additional season file: "Example.Series.S00E01.mkv" — S00',
+    );
+    await expect(warning).not.toContainText("Example.Series.S01E");
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+    ).toBeLessThanOrEqual(0);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await expect(page.getByText(/Multiple seasons detected/)).toHaveCount(0);
   } finally {
     await app?.stop();
     await workspace.cleanup();

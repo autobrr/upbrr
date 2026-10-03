@@ -62,6 +62,12 @@ Explicit corrections win over history and provider metadata. Auto removes a corr
 
 If a provider fails or selects the wrong title, supply a correct ID or [clear that provider](../cli/index.md#clear-a-metadata-provider). Clearing suppresses its ID and metadata for this source, including later reloads. Other providers remain available, but trackers that require the cleared provider may be blocked.
 
+### Mixed-season source files
+
+After metadata fetch, the CLI and Web UI input page warn when the source files contain more than one detected season, such as S00 and S01. The warning lists the season numbers and up to five files from seasons other than the selected metadata season, with an omitted count when needed. If that season is unknown or absent from the files, the most represented season is used instead. Nested files use paths relative to the selected source folder.
+
+Review the listed files for unintended specials or episodes. Correct the source selection and fetch metadata again to update or clear the warning. Editing the release title or season does not change the file-derived evidence. The warning does not change tracker restrictions: trackers that reject multi-season packages can still block the release during duplicate checking.
+
 ## 3. Resolve tracker names and eligibility
 
 Each tracker can project its own upload and duplicate-search names from the reviewed source facts. upbrr resolves those names before duplicate checks so the search evidence and eventual payload refer to the same reviewed identity.

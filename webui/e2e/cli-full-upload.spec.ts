@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import { expect, test } from "@playwright/test";
 import {
@@ -210,3 +212,36 @@ function runCLI(
     child.on("close", (code) => resolve({ code, output: chunks.join("") }));
   });
 }
+
+test("CLI metadata reports mixed source seasons", async () => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  try {
+    const mixed = path.join(workspace.root, "Example.Series.S01");
+    await mkdir(mixed);
+    for (const name of [
+      "Example.Series.S00E01.mkv",
+      "Example.Series.S01E01.mkv",
+      "Example.Series.S01E02.mkv",
+    ]) {
+      await writeFile(path.join(mixed, name), "synthetic episode");
+    }
+    const result = await runCLI(
+      [
+        "--config",
+        workspace.configPath,
+        "--trackers",
+        releaseWorkflowParityFixture.trackerID,
+        "--no-seed",
+        "--keep-folder",
+        "--unattended",
+        mixed,
+      ],
+      workspace.env,
+    );
+    expect(result.output).toContain("Multiple seasons detected: S00, S01");
+    expect(result.output).toContain('Additional season file: "Example.Series.S00E01.mkv" — S00');
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await workspace.cleanup();
+  }
+});

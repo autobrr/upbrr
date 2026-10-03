@@ -337,6 +337,14 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		meta.PrimaryAudioTrackID = audioTrackID
 		meta.TrackCoverageComplete = true
 	}
+	if request.Layout.DiscType == "" {
+		video, files, err := filesystem.CollectVideoFiles(ctx, sourcePath, false)
+		if err != nil {
+			return preparationstate.State{}, fmt.Errorf("e2e metadata: collect source files: %w", err)
+		}
+		meta.VideoPath = video
+		meta.FileList = files
+	}
 	if namingFixture {
 		meta.Edition = "Uncut"
 		meta.GeneratedName = generatedName.GeneratedName.Clone()
