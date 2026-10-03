@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -613,6 +614,25 @@ type graphQLErrorEnvelope struct {
 }
 
 func (c *Client) postGraphQL(ctx context.Context, operationName string, query string, variables map[string]any, target any) error {
+	if !evidence.Enabled(ctx) {
+		return c.uncachedGraphQL(ctx, operationName, query, variables, target)
+	}
+	err := evidence.JSON(
+		ctx,
+		"imdb.graphql.v1",
+		[]any{c.baseURL, operationName, query, variables},
+		target,
+		nil,
+		nil,
+		func() error { return c.uncachedGraphQL(ctx, operationName, query, variables, target) },
+	)
+	if err != nil {
+		return fmt.Errorf("metadata evidence response: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) uncachedGraphQL(ctx context.Context, operationName string, query string, variables map[string]any, target any) error {
 	queryHash := sha256.Sum256([]byte(query))
 	hash := hex.EncodeToString(queryHash[:])
 	payload := graphQLRequest{

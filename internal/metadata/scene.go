@@ -20,6 +20,7 @@ import (
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -333,7 +334,23 @@ func (d *srrdbDetector) detectViaR(ctx context.Context, cands sceneCandidates) (
 }
 
 // searchExactR performs a single exact r: search and returns the first result.
+type sceneExactResult struct {
+	Release srrdbSearchResult
+	Found   bool
+}
+
 func (d *srrdbDetector) searchExactR(ctx context.Context, name string) (srrdbSearchResult, bool, error) {
+	result, err := evidence.Lookup(ctx, "scene.exact", []any{d.baseURL, strings.TrimSpace(name)}, func() (sceneExactResult, error) {
+		value, found, err := d.uncachedSearchExactR(ctx, name)
+		return sceneExactResult{Release: value, Found: found}, err
+	}, func(v sceneExactResult) bool { return !v.Found })
+	if err != nil {
+		return result.Release, result.Found, fmt.Errorf("scene: retained exact query: %w", err)
+	}
+	return result.Release, result.Found, nil
+}
+
+func (d *srrdbDetector) uncachedSearchExactR(ctx context.Context, name string) (srrdbSearchResult, bool, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
 		return srrdbSearchResult{}, false, nil
@@ -351,6 +368,9 @@ func (d *srrdbDetector) searchExactR(ctx context.Context, name string) (srrdbSea
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != http.StatusNotFound {
+			return srrdbSearchResult{}, false, fmt.Errorf("scene: upstream HTTP status %d", resp.StatusCode)
+		}
 		d.log().Tracef("metadata: scene r search candidate=%q status=%d", trimmed, resp.StatusCode)
 		return srrdbSearchResult{}, false, nil
 	}
@@ -367,10 +387,24 @@ func (d *srrdbDetector) searchExactR(ctx context.Context, name string) (srrdbSea
 }
 
 // searchWord performs one SRRDB word:<query> search and returns the raw result
-// list. Non-OK HTTP statuses are treated as no results; request and JSON decode
+// list. HTTP 404 is a no-result response; other HTTP, request and JSON decode
 // failures are returned so the caller can apply the scene-detection soft-fail
 // policy.
 func (d *srrdbDetector) searchWord(ctx context.Context, query string) ([]srrdbSearchResult, error) {
+	result, err := evidence.Lookup(
+		ctx,
+		"scene.searchWord",
+		[]any{d.baseURL, strings.TrimSpace(query)},
+		func() ([]srrdbSearchResult, error) { return d.uncachedsearchWord(ctx, query) },
+		func(v []srrdbSearchResult) bool { return len(v) == 0 },
+	)
+	if err != nil {
+		return result, fmt.Errorf("metadata evidence lookup: %w", err)
+	}
+	return result, nil
+}
+
+func (d *srrdbDetector) uncachedsearchWord(ctx context.Context, query string) ([]srrdbSearchResult, error) {
 	trimmed := strings.TrimSpace(query)
 	if trimmed == "" {
 		return nil, nil
@@ -387,6 +421,9 @@ func (d *srrdbDetector) searchWord(ctx context.Context, query string) ([]srrdbSe
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != http.StatusNotFound {
+			return nil, fmt.Errorf("scene: upstream HTTP status %d", resp.StatusCode)
+		}
 		d.log().Tracef("metadata: scene word search query=%q status=%d", trimmed, resp.StatusCode)
 		return nil, nil
 	}
@@ -817,26 +854,37 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 		detailsErr != nil,
 	)
 	nfoURL := fmt.Sprintf("https://www.srrdb.com/download/file/%s/%s.nfo", url.PathEscape(trimmed), url.PathEscape(fileBase))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nfoURL, nil)
+	data, err := evidence.Lookup(ctx, "scene.nfo", nfoURL, func() ([]byte, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nfoURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("scene: build nfo request: %w", err)
+		}
+		setSRRDBHeaders(req)
+		resp, err := d.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("scene: nfo request: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("scene: nfo HTTP status %d", resp.StatusCode)
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+		if err != nil {
+			return nil, fmt.Errorf("scene: read nfo: %w", err)
+		}
+		if len(data) > 8<<20 {
+			return nil, errors.New("scene: nfo exceeds size limit")
+		}
+		return data, nil
+	}, func(value []byte) bool { return len(value) == 0 })
 	if err != nil {
-		d.log().Debugf("metadata: scene nfo request build failed release=%q: %v", trimmed, err)
-		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: build nfo request: %w", err))
+		return "", false, errors.Join(detailsErr, err)
 	}
-	setSRRDBHeaders(req)
-	resp, err := d.client.Do(req)
-	if err != nil {
-		d.log().Debugf("metadata: scene nfo request failed release=%q: %v", trimmed, err)
-		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: nfo request: %w", err))
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		d.log().Debugf("metadata: scene nfo unavailable release=%q status=%d details_error=%t", trimmed, resp.StatusCode, detailsErr != nil)
+	if len(data) == 0 {
 		return "", false, detailsErr
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		d.log().Debugf("metadata: scene nfo read failed release=%q: %v", trimmed, err)
-		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: read nfo: %w", err))
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		d.log().Debugf("metadata: scene nfo write failed release=%q path=%s: %v", trimmed, path, err)
@@ -847,7 +895,24 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 }
 
 func (d *srrdbDetector) fetchDetails(ctx context.Context, release string) (srrdbDetailsResponse, error) {
+	result, err := evidence.Lookup(
+		ctx,
+		"scene.fetchDetails",
+		[]any{d.baseURL, release},
+		func() (srrdbDetailsResponse, error) { return d.uncachedfetchDetails(ctx, release) },
+		func(v srrdbDetailsResponse) bool { return len(v.Files) == 0 && len(v.ArchivedFiles) == 0 },
+	)
+	if err != nil {
+		return result, fmt.Errorf("metadata evidence lookup: %w", err)
+	}
+	return result, nil
+}
+
+func (d *srrdbDetector) uncachedfetchDetails(ctx context.Context, release string) (srrdbDetailsResponse, error) {
 	cacheDir := d.cacheDir
+	if evidence.Enabled(ctx) {
+		cacheDir = ""
+	}
 	cachePath := ""
 	if cacheDir != "" {
 		if err := os.MkdirAll(cacheDir, 0o700); err == nil {
@@ -875,6 +940,9 @@ func (d *srrdbDetector) fetchDetails(ctx context.Context, release string) (srrdb
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != http.StatusNotFound {
+			return srrdbDetailsResponse{}, fmt.Errorf("scene: upstream HTTP status %d", resp.StatusCode)
+		}
 		d.log().Tracef("metadata: scene details fetch status release=%q status=%d", release, resp.StatusCode)
 		return srrdbDetailsResponse{}, nil
 	}
@@ -892,6 +960,20 @@ func (d *srrdbDetector) fetchDetails(ctx context.Context, release string) (srrdb
 }
 
 func (d *srrdbDetector) fetchIMDB(ctx context.Context, release string) (srrdbIMDBResponse, error) {
+	result, err := evidence.Lookup(
+		ctx,
+		"scene.fetchIMDB",
+		[]any{d.baseURL, strings.TrimSpace(release)},
+		func() (srrdbIMDBResponse, error) { return d.uncachedfetchIMDB(ctx, release) },
+		func(v srrdbIMDBResponse) bool { return len(v.Releases) == 0 },
+	)
+	if err != nil {
+		return result, fmt.Errorf("metadata evidence lookup: %w", err)
+	}
+	return result, nil
+}
+
+func (d *srrdbDetector) uncachedfetchIMDB(ctx context.Context, release string) (srrdbIMDBResponse, error) {
 	trimmed := strings.TrimSpace(release)
 	if trimmed == "" {
 		return srrdbIMDBResponse{}, nil
@@ -908,6 +990,9 @@ func (d *srrdbDetector) fetchIMDB(ctx context.Context, release string) (srrdbIMD
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != http.StatusNotFound {
+			return srrdbIMDBResponse{}, fmt.Errorf("scene: upstream HTTP status %d", resp.StatusCode)
+		}
 		return srrdbIMDBResponse{}, nil
 	}
 	var payload srrdbIMDBResponse
@@ -1010,6 +1095,22 @@ func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, meta preparations
 }
 
 func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, meta preparationstate.State, imdbID, page int) (srrdbIMDBSearchResponse, error) {
+	result, err := evidence.Lookup(
+		ctx,
+		"scene.fetchIMDBReleasePage",
+		[]any{d.baseURL, imdbID, page, srrdbIMDBForeignFilterPath(meta)},
+		func() (srrdbIMDBSearchResponse, error) {
+			return d.uncachedfetchIMDBReleasePage(ctx, meta, imdbID, page)
+		},
+		func(v srrdbIMDBSearchResponse) bool { return len(v.Results) == 0 },
+	)
+	if err != nil {
+		return result, fmt.Errorf("metadata evidence lookup: %w", err)
+	}
+	return result, nil
+}
+
+func (d *srrdbDetector) uncachedfetchIMDBReleasePage(ctx context.Context, meta preparationstate.State, imdbID, page int) (srrdbIMDBSearchResponse, error) {
 	imdb := formatSRRDBIMDbID(imdbID)
 	if imdb == "" {
 		return srrdbIMDBSearchResponse{}, nil
@@ -1026,6 +1127,9 @@ func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, meta preparati
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != http.StatusNotFound {
+			return srrdbIMDBSearchResponse{}, fmt.Errorf("scene: upstream HTTP status %d", resp.StatusCode)
+		}
 		d.log().Tracef("metadata: scene imdb search status imdb=%d page=%d status=%d", imdbID, page, resp.StatusCode)
 		return srrdbIMDBSearchResponse{}, nil
 	}

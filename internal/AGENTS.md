@@ -53,6 +53,7 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 - Runtime config may change after `SaveConfig` delegates activation to `RuntimeActivator`.
 - Read WebUI config/core/logger through `currentConfig()`, `requireRuntime()`, or snapshots.
 - Never read `Backend.cfg` directly outside helpers.
+- Production metadata service views must retain the required `MetadataEvidenceRepository` from validated `RepositoryCapabilities`; verify default Core construction for both owned CLI and borrowed WebUI repositories when changing these seams.
 - `Server.cfg` is startup-only.
 - Config schema changes require `internal/config.Config`, embedded defaults, import/export, relevant env overrides, settings UI/web parity, secret redaction/encryption review.
 

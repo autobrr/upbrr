@@ -118,6 +118,7 @@ type coreConstructionHooks struct {
 }
 
 type metadataRepositoryView struct {
+	api.MetadataEvidenceRepository
 	api.ReleaseStateRepository
 	api.ReleaseSelectionRepository
 	api.TrackerStateRepository
@@ -234,6 +235,7 @@ func newCoreWithHooks(
 
 		services.Metadata = metadata.NewService(
 			metadataRepositoryView{
+				MetadataEvidenceRepository: repositories.MetadataEvidence(),
 				ReleaseStateRepository:     repositories.ReleaseState(),
 				ReleaseSelectionRepository: repositories.Selections(),
 				TrackerStateRepository:     repositories.Trackers(),

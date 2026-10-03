@@ -6,8 +6,10 @@ package ant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -42,5 +44,72 @@ func TestDataLookupSendsAPIKeyHeader(t *testing.T) {
 	}
 	if result.IMDBID != 1234567 || result.TMDBID != 765 || result.TorrentURL != "https://anthelion.me/torrents.php?id=42" || result.TrackerID != "" {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestDataLookupResponseOutcomes(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name      string
+		status    int
+		body      string
+		wantError bool
+	}{
+		{
+			name:      "server error",
+			status:    http.StatusInternalServerError,
+			body:      `private response`,
+			wantError: true,
+		},
+		{
+			name:   "empty",
+			status: http.StatusOK,
+			body:   `{"item":[]}`,
+		},
+		{
+			name:   "not found",
+			status: http.StatusNotFound,
+			body:   `private response`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			lookup := &dataLookup{
+				cfg:      config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ANT": {APIKey: "token"}}}},
+				http:     server.Client(),
+				endpoint: server.URL,
+			}
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{SearchName: "Example.Release.mkv"})
+			if (err != nil) != tt.wantError || result.HasData() {
+				t.Fatalf("response outcome: result=%+v err=%v, wantError=%t", result, err, tt.wantError)
+			}
+			if err != nil && strings.Contains(err.Error(), "private response") {
+				t.Fatalf("response content leaked: %v", err)
+			}
+		})
+	}
+}
+
+func TestDataLookupPreservesCancellation(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	lookup := &dataLookup{
+		cfg:      config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ANT": {APIKey: "token"}}}},
+		http:     server.Client(),
+		endpoint: server.URL,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	result, err := lookup.Lookup(ctx, trackers.DataLookupRequest{SearchName: "Example.Release.mkv"})
+	if !errors.Is(err, context.Canceled) || result.HasData() {
+		t.Fatalf("canceled lookup: result=%+v err=%v", result, err)
 	}
 }

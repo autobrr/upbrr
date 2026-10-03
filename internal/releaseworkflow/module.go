@@ -3442,6 +3442,7 @@ func (m *Module) create(
 	}
 	state := newState(ownerID, workflow)
 	state.SourcePath = strings.TrimSpace(command.SourcePath)
+	state.PreparationInput = command.PreparationInput
 	if state.SourcePath == "" && command.Composite != nil && command.Composite.Intent.Preparation != nil {
 		state.SourcePath = strings.TrimSpace(command.Composite.Intent.Preparation.SourcePath)
 	}
@@ -4010,7 +4011,9 @@ func (m *Module) prepareRelease(
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
-	state.PreparationInput = &command.Input
+	retainedInput := command.Input
+	retainedInput.ExternalFreshness = api.ExternalFreshnessReuse
+	state.PreparationInput = &retainedInput
 	state.PreparationDemand = command.Input.MetadataRequirements
 	state.PendingCorrectionConfirmation = nil
 	return CommandResult{

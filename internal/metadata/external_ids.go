@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
@@ -47,7 +48,7 @@ var (
 	tvdbAliasYearCleanup   = regexp.MustCompile(`\s*\(?\b(?:19\d{2}|20\d{2})\b\)?\s*`)
 	tvPathHintPattern      = regexp.MustCompile(`(?i)[\\/](tv|tvshows?|series)[\\/]`)
 	tvNameHintPattern      = regexp.MustCompile(
-		`(?i)\bS\d{1,2}(?:E\d{1,3})?\b|\b\d{1,2}x\d{2,3}\b|\b(?:season|series)\s*\d+\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
+		`(?i)\bS\d{1,4}(?:E\d{1,3})?\b|\b\d{1,4}x\d{2,3}\b|\b(?:season|series)\s*\d+\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
 	)
 	subsPleaseHintPattern = regexp.MustCompile(`(?i)subsplease`)
 	animeEpisodeHint      = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)
@@ -148,12 +149,16 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return preparationstate.State{}, fmt.Errorf("metadata: load stored external identity: %w", err)
 	}
 	metadata := api.SourceScopedMetadata{SourcePath: meta.SourcePath}
-	if !refreshProviders && meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) {
+	replayProviders := evidence.Enabled(ctx) && meta.ExternalFreshness == api.ExternalFreshnessLoad
+	if replayProviders {
+		metadata.Bluray = meta.ProviderMetadata.Bluray
+	}
+	if !refreshProviders && !replayProviders && meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) {
 		metadata = meta.ProviderMetadata
 		if strings.TrimSpace(metadata.SourcePath) == "" {
 			metadata.SourcePath = meta.SourcePath
 		}
-	} else if !refreshProviders {
+	} else if !refreshProviders && !replayProviders {
 		storedMeta, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath)
 		if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
 			return preparationstate.State{}, fmt.Errorf("metadata: load stored external metadata: %w", err)

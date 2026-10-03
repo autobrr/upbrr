@@ -110,6 +110,7 @@ var (
 // candidate. Implementations receive the operation's ID-only and image-retention
 // policy; persistence and cross-tracker selection remain owned by [Service].
 type TrackerDataLookup interface {
+	CacheKey(tracker, trackerID string, subject api.UploadSubject, searchFileName string, onlyID, keepImages bool) any
 	Lookup(
 		ctx context.Context,
 		tracker string,
@@ -397,6 +398,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		SourceFingerprint:    request.SourceFingerprint,
 		SourcePath:           primary,
 		SourceLookupURL:      strings.TrimSpace(input.Instructions.SourceLookup),
+		BlurayReleaseID:      strings.TrimSpace(input.Instructions.BlurayReleaseID),
 		Paths:                normalizedPaths,
 		Policy: preparationstate.CollectionPolicy{
 			OnlyID:          input.Policy.OnlyID,

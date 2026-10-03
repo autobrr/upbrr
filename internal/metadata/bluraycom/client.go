@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -158,6 +159,29 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 }
 
 func (c *Client) fetch(ctx context.Context, targetURL string, referer string) (string, error) {
+	result, err := evidence.Lookup(
+		ctx,
+		"bluray.page",
+		[]string{targetURL, referer},
+		func() (string, error) { return c.fetchPage(ctx, targetURL, referer) },
+		func(value string) bool {
+			if strings.Contains(targetURL, "/search/") {
+				movies, err := parseMovieLinks(value)
+				return err == nil && len(movies) == 0
+			}
+			if strings.Contains(targetURL, "menu_ajax.php") {
+				return !releaseIDPattern.MatchString(value)
+			}
+			return strings.TrimSpace(value) == ""
+		},
+	)
+	if err != nil {
+		return result, fmt.Errorf("metadata evidence lookup: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) fetchPage(ctx context.Context, targetURL string, referer string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("bluray.com: create request: %w", err)

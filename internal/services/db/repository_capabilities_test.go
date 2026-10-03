@@ -25,7 +25,8 @@ func TestRepositoryCapabilitiesShareSQLiteOwner(t *testing.T) {
 	}
 	if capabilities.ReleaseState() != repo || capabilities.Selections() != repo || capabilities.History() != repo ||
 		capabilities.Uploads() != repo || capabilities.Trackers() != repo || capabilities.Media() != repo ||
-		capabilities.MediaReuse() != repo || capabilities.DescriptionReuse() != repo || capabilities.Workflows() != repo {
+		capabilities.MediaReuse() != repo || capabilities.DescriptionReuse() != repo || capabilities.Workflows() != repo ||
+		capabilities.MetadataEvidence() != repo {
 		t.Fatal("repository capabilities do not share one SQLite owner")
 	}
 }

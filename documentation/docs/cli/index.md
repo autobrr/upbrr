@@ -179,6 +179,8 @@ Saved corrections use a newer database format. Older binaries do not support wri
 
 ### Naming fields
 
+Season tokens accept up to four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S2026E03` for an episode or `S2026` for a season pack.
+
 | Option                        | Aliases                                           | Purpose                                           |
 | ----------------------------- | ------------------------------------------------- | ------------------------------------------------- |
 | `--category <value>`          | `-category`, `-c`                                 | Override category.                                |
@@ -216,6 +218,8 @@ Saved corrections use a newer database format. Older binaries do not support wri
 | `--mal <id>`    | `-mal`    | Override MAL ID.    |
 | `--tvdb <id>`   | `-tvdb`   | Override TVDB ID.   |
 | `--tvmaze <id>` | `-tvmaze` | Override TVmaze ID. |
+
+During the **Metadata correct?** loop, correcting the same active input reuses provider lookups for unchanged inputs, including lookups that returned no result. A later run can retry those empty results. Completed fetch failures remain retained until the input is removed from **History**. Changing the source, provider ID, or lookup query requests its own result.
 
 ### Clear a metadata provider
 

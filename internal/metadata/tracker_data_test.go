@@ -1243,13 +1243,13 @@ func TestFreshAitherPartialRefreshRetainsStoredImagePreviews(t *testing.T) {
 	full := "https://images.example.invalid/full.png"
 	preview := "https://images.example.invalid/preview.png"
 	stored := api.TrackerMetadata{
-		SourcePath: sourcePath,
-		Tracker:    "AITHER",
-		TrackerID:  "72677",
-		InfoHash:   "example-hash",
-		TMDBID:     42,
-		Description: "[img]" + full + "[/img]",
-		ImageURLs: []string{full},
+		SourcePath:    sourcePath,
+		Tracker:       "AITHER",
+		TrackerID:     "72677",
+		InfoHash:      "example-hash",
+		TMDBID:        42,
+		Description:   "[img]" + full + "[/img]",
+		ImageURLs:     []string{full},
 		ImagePreviews: map[string]string{full: preview},
 	}
 	repo := &fakeRepo{
@@ -1266,11 +1266,11 @@ func TestFreshAitherPartialRefreshRetainsStoredImagePreviews(t *testing.T) {
 		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
 	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
-		SourcePath: sourcePath,
+		SourcePath:      sourcePath,
 		StoredDataFresh: true,
-		InfoHash: stored.InfoHash,
-		TrackerIDs: map[string]string{"aither": stored.TrackerID},
-		Policy:     preparationstate.CollectionPolicy{KeepImages: true},
+		InfoHash:        stored.InfoHash,
+		TrackerIDs:      map[string]string{"aither": stored.TrackerID},
+		Policy:          preparationstate.CollectionPolicy{KeepImages: true},
 	})
 	if err != nil || len(result.TrackerData) != 1 || len(repo.trackerMetadata) != 1 ||
 		result.TrackerData[0].ImagePreviews[full] != preview || repo.trackerMetadata[0].ImagePreviews[full] != preview {
@@ -1293,9 +1293,13 @@ func TestFreshAitherSnapshotDoesNotPairNewDescriptionWithOldImages(t *testing.T)
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"AITHER": {Description: "new description"},
 	}}
-	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
-		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
-	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1326,9 +1330,13 @@ func TestFreshAitherSnapshotRefreshesByStoredTrackerIDWhenOnlyInfoHashIsPathed(t
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"AITHER": {TMDBID: 42, Description: "fetched description"},
 	}}
-	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
-		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
-	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:       sourcePath,
 		StoredDataFresh:  true,
@@ -1364,9 +1372,13 @@ func TestFreshAitherSnapshotCompletesAssetsDuringIDCooldown(t *testing.T) {
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"AITHER": {TrackerID: "72677", Description: "fetched description"},
 	}}
-	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
-		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
-	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1602,6 +1614,7 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("b", minTrackerTokenLen)},
@@ -1648,6 +1661,7 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("b", minTrackerTokenLen)},
@@ -1697,6 +1711,7 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 		},
 	}
 	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"ANT": {APIKey: "ant-key"},
@@ -2362,4 +2377,11 @@ func writeBTNClaimedCacheFixture(path string, fetchedAt int64, titles map[string
 		return fmt.Errorf("write BTN claimed cache fixture: %w", err)
 	}
 	return nil
+}
+
+func (s *stubTrackerLookup) CacheKey(tracker, trackerID string, _ api.UploadSubject, searchFileName string, onlyID, keepImages bool) any {
+	if trackerID != "" {
+		searchFileName = ""
+	}
+	return []any{tracker, trackerID, searchFileName, onlyID, keepImages}
 }

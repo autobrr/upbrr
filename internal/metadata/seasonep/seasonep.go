@@ -19,11 +19,11 @@ import (
 )
 
 var (
-	seasonEpisodePattern   = regexp.MustCompile(`(?i)\bS(\d{1,2})[ ._-]*E(\d{1,3}(?:[ ._-]*E\d{1,3})*)\b`)
+	seasonEpisodePattern   = regexp.MustCompile(`(?i)\bS(\d{1,4})[ ._-]*E(\d{1,3}(?:[ ._-]*E\d{1,3})*)\b`)
 	episodeTokenPattern    = regexp.MustCompile(`(?i)E(\d{1,3})`)
 	multiEpisodePattern    = regexp.MustCompile(`(?i)E\d{1,3}\s*[-+&]\s*(?:E)?\d{1,3}`)
-	altSeasonEpisode       = regexp.MustCompile(`(?i)\b(\d{1,2})x(\d{2,3})\b`)
-	seasonOnlyPattern      = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
+	altSeasonEpisode       = regexp.MustCompile(`(?i)\b(\d{1,4})x(\d{2,3})\b`)
+	seasonOnlyPattern      = regexp.MustCompile(`(?i)\bS(\d{1,4})\b`)
 	seasonWordPattern      = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d+)\b`)
 	episodeOnlyPattern     = regexp.MustCompile(`(?i)\bE(\d{2,3})\b`)
 	dailyPattern           = regexp.MustCompile(`\b(19\d{2}|20\d{2})[.-](\d{2})[.-](\d{2})\b`)
@@ -136,12 +136,12 @@ func Extract(path string, meta preparationstate.State) Result {
 }
 
 // ParseSeasonInstruction parses one explicit caller-supplied season token: a
-// bare number or an S-prefixed number of at most two digits ("5", "05",
-// "S05"). An empty value means an explicit clear and returns zero. Combined,
+// bare number or an S-prefixed number of at most four digits ("5", "05",
+// "S05", "S2026"). An empty value means an explicit clear and returns zero. Combined,
 // ranged, zero, overflowing, or otherwise malformed values are rejected with a
 // typed invalid-input error.
 func ParseSeasonInstruction(value string) (int, error) {
-	return parseInstructionToken(value, "S", 2, "season")
+	return parseInstructionToken(value, "S", 4, "season")
 }
 
 // ParseEpisodeInstruction parses one explicit caller-supplied episode token: a

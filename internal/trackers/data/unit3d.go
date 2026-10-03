@@ -247,9 +247,11 @@ func TrackerAPIKey(cfg config.Config, tracker string) string {
 	return ""
 }
 
-// TorrentInfo fetches by tracker ID or, when absent, filename. Non-success and
-// no-match responses return an empty result without error. onlyID skips cleaned
-// description text; keepImages enables bounded public-image validation.
+// TorrentInfo fetches by tracker ID or, when absent, filename. No-match and
+// not-found responses return an empty result without error; other HTTP failures
+// return an error. onlyID skips cleaned description text; keepImages enables
+// bounded public-image validation. Image failures retain any identifiers,
+// description, and usable images alongside the error.
 func (c *Client) TorrentInfo(ctx context.Context, tracker string, id string, fileName string, onlyID bool, keepImages bool) (Result, error) {
 	return c.lookupUnit3D(ctx, tracker, id, fileName, onlyID, keepImages)
 }
@@ -291,9 +293,11 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 		return Result{}, fmt.Errorf("unit3d: request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		c.logger.Debugf("unit3d: %s request failed (status=%d id=%q file=%q)", tracker, resp.StatusCode, strings.TrimSpace(id), strings.TrimSpace(fileName))
+	if resp.StatusCode == http.StatusNotFound {
 		return Result{}, nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return Result{}, fmt.Errorf("unit3d: request failed status=%d", resp.StatusCode)
 	}
 
 	var payload unit3dResponse
@@ -343,8 +347,9 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	cleanedLen := len(cleaned)
 	imageCount := len(images)
 	validated := []bbcode.Image(nil)
+	var imageErr error
 	if keepImages {
-		validated = PrepareDescriptionImages(ctx, c.http, tracker, c.logger, images)
+		validated, imageErr = PrepareDescriptionImages(ctx, c.http, tracker, c.logger, images)
 		images = validated
 	} else {
 		images = nil
@@ -374,12 +379,23 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 		}
 	}
 
-	return result, nil
+	return result, imageErr
 }
 
 // PrepareDescriptionImages resolves supported linked originals and validates
-// public image responses while retaining source positions for failed images.
-func PrepareDescriptionImages(ctx context.Context, client *http.Client, tracker string, logger api.Logger, images []bbcode.Image) []bbcode.Image {
+// public image responses while preserving the positions of surviving images.
+// Dropped nonempty entries return an error alongside any usable images;
+// cancellation preserves its context cause. An empty image list succeeds.
+func PrepareDescriptionImages(ctx context.Context, client *http.Client, tracker string, logger api.Logger, images []bbcode.Image) ([]bbcode.Image, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("trackerdata: image preparation canceled: %w", err)
+	}
+	expected := 0
+	for _, image := range images {
+		if image != (bbcode.Image{}) {
+			expected++
+		}
+	}
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
@@ -393,7 +409,19 @@ func PrepareDescriptionImages(ctx context.Context, client *http.Client, tracker 
 			images[index].WebURL = images[index].RawURL
 		}
 	}
-	return validateImages(ctx, safeClient, images, tracker, logger)
+	validated := validateImages(ctx, safeClient, images, tracker, logger)
+	if err := ctx.Err(); err != nil {
+		return validated, fmt.Errorf("trackerdata: image preparation canceled: %w", err)
+	}
+	for _, image := range validated {
+		if image != (bbcode.Image{}) {
+			expected--
+		}
+	}
+	if expected != 0 {
+		return validated, errors.New("trackerdata: description image preparation failed")
+	}
+	return validated, nil
 }
 
 func convertCleanedUnit3DImages(images []descriptionunit3d.Image) []bbcode.Image {

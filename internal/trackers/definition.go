@@ -392,6 +392,10 @@ type DataLookupRequest struct {
 
 // DataLookup resolves tracker-owned metadata for a release.
 type DataLookup interface {
+	// CacheKey describes the effective query and asset demands, including relevant
+	// endpoint/configuration. A nil key means no lookup is possible. The caller
+	// must hash the returned value before persistence because it may hold secrets.
+	CacheKey(req DataLookupRequest) any
 	// Lookup resolves tracker-owned metadata for one prepared release.
 	Lookup(ctx context.Context, req DataLookupRequest) (DataLookupResult, error)
 }

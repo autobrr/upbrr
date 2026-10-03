@@ -62,7 +62,7 @@ export const workflowFactInstructions = (
 export const workflowPrepareInput = (input: PrepareInput): WorkflowPrepareInput => ({
   SourcePath: input.SourcePath,
   Intent: input.Intent,
-  ExternalFreshness: "refresh",
+  ExternalFreshness: "",
   Instructions: workflowFactInstructions(input.Instructions),
   Policy: {
     KeepFolder: input.Policy.KeepFolder,

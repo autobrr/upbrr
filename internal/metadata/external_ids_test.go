@@ -684,7 +684,7 @@ func TestResolveExternalIDsExplicitRefreshReconcilesProvidersWithoutRetainedAuth
 func TestResolveExternalIDsExplicitRefreshDoesNotRetainFailedProviderAuthority(t *testing.T) {
 	const sourcePath = "/media/Example.Movie.2026.1080p-GRP.mkv"
 	tmdbClient := &stubTMDB{metadataErr: errors.New("provider unavailable")}
-	result, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient)).resolveExternalIdentity(t.Context(), preparationstate.State{
+	result, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(t.Context(), preparationstate.State{
 		SourcePath:        sourcePath,
 		ExternalFreshness: api.ExternalFreshnessRefresh,
 		StoredDataFresh:   true,
@@ -731,7 +731,7 @@ func TestResolveExternalIDsExplicitRefreshPropagatesCancellation(t *testing.T) {
 		cancel()
 		return tmdb.MetadataResult{}, context.Canceled
 	}}
-	_, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient)).resolveExternalIdentity(ctx, preparationstate.State{
+	_, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(ctx, preparationstate.State{
 		SourcePath:        "/media/Example.Movie.2026.1080p-GRP.mkv",
 		ExternalFreshness: api.ExternalFreshnessRefresh,
 		MediaInfoTMDBID:   10,
@@ -4468,30 +4468,35 @@ func TestApplyTVEpisodeMetadataUseSeasonEpisodePrefersTMDBDateMapping(t *testing
 }
 
 func TestApplyTVEpisodeMetadataManualSeasonEpisodeInstructionsBecomeCanonical(t *testing.T) {
-	svc := NewService(&fakeRepo{})
-	tmdbClient := &stubTMDB{dailySeason: 9, dailyEpisode: 9}
-	tvmazeClient := &stubTVmaze{episodeData: &tvmaze.EpisodeData{SeasonNumber: 7, EpisodeNumber: 8}}
+	for _, season := range []int{2, 2026} {
+		seasonLabel := fmt.Sprintf("S%02d", season)
+		t.Run(seasonLabel, func(t *testing.T) {
+			svc := NewService(&fakeRepo{})
+			tmdbClient := &stubTMDB{dailySeason: 9, dailyEpisode: 9}
+			tvmazeClient := &stubTVmaze{episodeData: &tvmaze.EpisodeData{SeasonNumber: 7, EpisodeNumber: 8}}
 
-	meta := preparationstate.State{
-		SourcePath:       "/media/Show.2024-01-15.mkv",
-		DailyEpisodeDate: "2024-01-15",
-		ReleaseNameOverrides: api.ReleaseNameOverrides{
-			Season:  new("S02"),
-			Episode: new("5"),
-		},
-	}
-	ids := &api.ExternalIdentity{
-		TMDBID:   100,
-		TVmazeID: 200,
-		Category: "TV",
-	}
+			meta := preparationstate.State{
+				SourcePath:       "/media/Show.2024-01-15.mkv",
+				DailyEpisodeDate: "2024-01-15",
+				ReleaseNameOverrides: api.ReleaseNameOverrides{
+					Season:  new(seasonLabel),
+					Episode: new("5"),
+				},
+			}
+			ids := &api.ExternalIdentity{
+				TMDBID:   100,
+				TVmazeID: 200,
+				Category: "TV",
+			}
 
-	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, nil, tmdbClient, &stubTVDB{}, tvmazeClient)
-	if updated.SeasonInt != 2 || updated.EpisodeInt != 5 {
-		t.Fatalf("expected manual season/episode 2/5 to stay canonical over date mapping, got %d/%d", updated.SeasonInt, updated.EpisodeInt)
-	}
-	if updated.SeasonStr != "S02" || updated.EpisodeStr != "E05" {
-		t.Fatalf("expected formatted manual season/episode S02/E05, got %q/%q", updated.SeasonStr, updated.EpisodeStr)
+			updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, nil, tmdbClient, &stubTVDB{}, tvmazeClient)
+			if updated.SeasonInt != season || updated.EpisodeInt != 5 {
+				t.Fatalf("expected manual season/episode to stay canonical over date mapping, got %d/%d", updated.SeasonInt, updated.EpisodeInt)
+			}
+			if updated.SeasonStr != seasonLabel || updated.EpisodeStr != "E05" {
+				t.Fatalf("expected formatted manual season/episode, got %q/%q", updated.SeasonStr, updated.EpisodeStr)
+			}
+		})
 	}
 }
 

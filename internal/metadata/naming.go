@@ -20,7 +20,7 @@ import (
 var (
 	namingTVPathHintPattern = regexp.MustCompile(`(?i)[\\/](tv|tvshows?|series)[\\/]`)
 	namingTVNameHintPattern = regexp.MustCompile(
-		`(?i)\bS\d{1,2}(?:E\d{1,3})?\b|\b\d{1,2}x\d{2,3}\b|\b(?:season|series)\s*\d+\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
+		`(?i)\bS\d{1,4}(?:E\d{1,3})?\b|\b\d{1,4}x\d{2,3}\b|\b(?:season|series)\s*\d+\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
 	)
 	namingSubsPleaseHintPattern = regexp.MustCompile(`(?i)subsplease`)
 	namingAnimeEpisodeHint      = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)

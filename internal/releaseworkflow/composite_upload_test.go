@@ -53,7 +53,7 @@ func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	}
 }
 
-func TestCompositeUploadInitialOpenRequestsExternalProviderRefresh(t *testing.T) {
+func TestCompositeUploadInitialOpenRequestsExternalProviderLoad(t *testing.T) {
 	t.Parallel()
 	module, _, _ := newCompositeUploadTestModule(t)
 	activeInputs, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
@@ -87,7 +87,7 @@ func TestCompositeUploadInitialOpenRequestsExternalProviderRefresh(t *testing.T)
 	if err != nil {
 		t.Fatalf("start composite upload: %v", err)
 	}
-	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessRefresh {
+	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessLoad {
 		t.Fatalf("verified preparation inputs = %#v", verified)
 	}
 }

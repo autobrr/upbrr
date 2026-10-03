@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -325,6 +326,16 @@ func (c *Client) showBackdrop(ctx context.Context, id int) (Image, bool) {
 }
 
 func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values, target any) error {
+	err := evidence.JSON(ctx, "provider.tvmaze", []any{endpoint, params.Encode()}, target, errNotFound, nil, func() error {
+		return c.fetchJSON(ctx, endpoint, params, target)
+	})
+	if err != nil {
+		return fmt.Errorf("metadata evidence response: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) fetchJSON(ctx context.Context, endpoint string, params url.Values, target any) error {
 	reqURL := endpoint
 	if params != nil {
 		parsed, err := url.Parse(endpoint)

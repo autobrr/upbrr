@@ -110,3 +110,27 @@ func TestBuildUnit3DSearchParamsUsesEMUWPaired1080Resolution(t *testing.T) {
 		t.Fatalf("expected no canonical season number without prepared coordinates, got %q", got)
 	}
 }
+
+func TestBuildUnit3DSearchParamsPreservesYearSeason(t *testing.T) {
+	meta := api.DuplicateSubject{
+		Identity:    api.ExternalIdentity{TMDBID: 123, Category: api.CanonicalCategoryTV},
+		ReleaseName: "Example.Show.S2026E03.1080p.WEB-DL.H264-GRP",
+		SeasonInt:   2026,
+		EpisodeInt:  3,
+	}
+	params := buildDupeSearchParams(meta, SiteProfile{})
+	if params.Get("name") != " S2026" || params.Get("seasonNumber") != "2026" {
+		t.Fatalf("year-numbered season search was truncated: %v", params)
+	}
+	if params.Get("episodeNumber") != "" {
+		t.Fatal("episode filter can hide a season pack")
+	}
+}
+
+func TestResolveSeasonValueRejectsOversizedSeason(t *testing.T) {
+	for _, name := range []string{"Example.Show.S20260E03.1080p-GRP", "Example.Show.S20260.1080p-GRP"} {
+		if got := resolveSeasonValue(api.DuplicateSubject{ReleaseName: name}); got != "" {
+			t.Fatalf("oversized season in %q was truncated to %q", name, got)
+		}
+	}
+}

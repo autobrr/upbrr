@@ -118,7 +118,15 @@ func (c *Core) OpenActiveInput(ctx context.Context, owner string, request api.Op
 	if err := request.Validate(); err != nil {
 		return api.ActiveInputSnapshot{}, fmt.Errorf("validate active input request: %w", err)
 	}
-	request.Request.Intent.Preparation.ExternalFreshness = api.ExternalFreshnessRefresh
+	prior, err := c.workflow.ActiveInput(ctx, owner)
+	if err != nil {
+		return api.ActiveInputSnapshot{}, classifyOperationError(api.OperationKindPreparation, err)
+	}
+	input, err := c.workflow.PreparationForInputOpen(ctx, prior, *request.Request.Intent.Preparation)
+	if err != nil {
+		return api.ActiveInputSnapshot{}, classifyOperationError(api.OperationKindPreparation, err)
+	}
+	request.Request.Intent.Preparation = &input
 	slot, err := c.workflow.OpenInput(ctx, owner, releaseworkflow.OpenInputRequest{
 		ExpectedRevision: request.ExpectedRevision,
 		Input:            *request.Request.Intent.Preparation,

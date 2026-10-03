@@ -5,6 +5,9 @@ package metadata
 
 import (
 	"context"
+	"fmt"
+
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -13,7 +16,22 @@ import (
 // CollectPreparationEvidence owns the complete ordered metadata collection
 // sequence. Canonical preparation sees one deep collection port; intermediate
 // mutable evidence and step ordering do not escape this package.
-func (s *Service) CollectPreparationEvidence(ctx context.Context, request preparationstate.Request) (preparationstate.State, error) {
+func (s *Service) CollectPreparationEvidence(ctx context.Context, request preparationstate.Request) (result preparationstate.State, resultErr error) {
+	store, _ := s.repo.(api.MetadataEvidenceRepository)
+	fingerprint := request.SourceFingerprint
+	if fingerprint == "" || request.Manifest.SourcePath == "" {
+		store = nil
+	}
+	if request.Input.VerifiedSource != nil {
+		fingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
+	}
+	ctx, scope := evidence.WithScope(ctx, store, request.Manifest.SourcePath, fingerprint, request.Input.ExternalFreshness, s.logger)
+	defer func() {
+		if err := scope.Err(); err != nil {
+			result = preparationstate.State{}
+			resultErr = fmt.Errorf("metadata: evidence persistence: %w", err)
+		}
+	}()
 	state, err := collectPreparationStage(ctx, api.PreparationPhaseSourceEvidence, func() (preparationstate.State, error) {
 		return s.collectSourceEvidence(ctx, request)
 	})

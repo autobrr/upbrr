@@ -1041,6 +1041,13 @@ Rare dynamic interfaces stay on a small local wrapper embedding `*standalone.Def
 only for `NewDataLookup`, `DataLookupConfigured`, or `NewClaimChecker`; do not create an empty local
 definition type for static capabilities.
 
+A `DataLookup` implementation must also implement `CacheKey` from the exact query inputs and
+asset demands it uses. Include its endpoint and relevant configuration; return `nil` when no
+lookup is possible. Keys may contain credentials: the shared evidence cache hashes them before
+storage, and callers must never log them. Return usable partial metadata alongside an asset
+error so IDs survive while the failed dependency remains suppressed. A successful empty result
+can retry on a fresh input load; a completed failure retries only after History deletion.
+
 For auth:
 
 - Every tracker must bind explicit effective requirements through `AuthPolicy`; the standard

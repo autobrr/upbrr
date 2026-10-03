@@ -22,6 +22,7 @@ import (
 	"time"
 
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -180,9 +181,14 @@ func (s *Service) persistTrackerArtifacts(
 					continue
 				}
 
-				if reason := downloadImage(ctx, client, task.url, outPath, expectedHeight, isDVD); reason != "" {
+				if err := evidence.Attempt(ctx, "tracker.image", []any{tracker, task.url, expectedHeight, isDVD}, func() error {
+					if reason := downloadImage(ctx, client, task.url, outPath, expectedHeight, isDVD); reason != "" {
+						return errors.New(reason)
+					}
+					return nil
+				}); err != nil {
 					if s.logger != nil {
-						s.logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=%s", tracker, task.index+1, reason)
+						s.logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=%s", tracker, task.index+1, err.Error())
 					}
 					continue
 				}

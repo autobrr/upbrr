@@ -489,7 +489,351 @@ for (const mode of ["rebuild", "reject"] as const) {
   });
 }
 
-test("embedded web distinguishes a cleared metadata provider ID from Auto", async ({ page }) => {
+type CorrectionValue = string | number | boolean | readonly string[];
+type CorrectionCase = {
+  field: string;
+  label: string;
+  group: "ReleaseName" | "Metadata";
+  key: string;
+  values: readonly CorrectionValue[];
+  mediaKind?: "movie" | "tv";
+};
+
+// Sample each distinct editor control; production Go tests retain the broad field matrix.
+const releaseDetailCorrections: readonly CorrectionCase[] = [
+  {
+    field: "release_name.service",
+    label: "Service",
+    group: "ReleaseName",
+    key: "Service",
+    values: ["NF", "AMZN", ""],
+  },
+  {
+    field: "release_name.episode",
+    label: "Episode",
+    group: "ReleaseName",
+    key: "Episode",
+    values: ["E02", "E03", ""],
+    mediaKind: "tv",
+  },
+  {
+    field: "release_name.manual_year",
+    label: "Manual year",
+    group: "ReleaseName",
+    key: "ManualYear",
+    values: [2024, 2025, 0],
+  },
+  {
+    field: "release_name.no_episode_title",
+    label: "No episode title",
+    group: "ReleaseName",
+    key: "NoEpisodeTitle",
+    values: [true, false],
+  },
+  {
+    field: "metadata.audio_languages",
+    label: "Audio languages",
+    group: "Metadata",
+    key: "AudioLanguages",
+    values: [["Japanese", "Spanish"], ["French"], []],
+  },
+];
+
+// The fixed evidence collector proves editor transport and durable instructions here.
+// Production preparation tests separately verify regenerated names and media facts.
+for (const correction of releaseDetailCorrections) {
+  test(`embedded web persists Release Details ${correction.label} edits, clear and Auto`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace({ mediaKind: correction.mediaKind });
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace);
+      let snapshot = await fetchMetadata(
+        page,
+        app.url,
+        workspace.sourcePath,
+        correction.mediaKind === "tv" ? "E2E.Show.2026.S01E01.1080p.WEB-DL" : undefined,
+      );
+      const initialCounters = { ...workspace.fake.counters };
+      await page.getByText("Edit Release Details", { exact: true }).click();
+      const row = page.locator(`[data-correction-field="${correction.field}"]`);
+      const boolean = typeof correction.values[0] === "boolean";
+      const control = row.getByRole(
+        boolean ? "combobox" : correction.key === "ManualYear" ? "spinbutton" : "textbox",
+        { name: correction.label, exact: true },
+      );
+      const automaticValue = await control.inputValue();
+      const storedGroup = correction.group === "ReleaseName" ? "releaseName" : "metadata";
+      const expectPersisted = (
+        current: ReleaseWorkflowCurrent | null | undefined,
+        value: unknown,
+      ) => {
+        expect(current?.corrections?.corrections[storedGroup]).toHaveProperty(
+          correction.key,
+          value,
+        );
+        expect(current?.factInstructions?.instructions[correction.group]).toHaveProperty(
+          correction.key,
+          value,
+        );
+      };
+      for (const value of correction.values) {
+        await test.step(`apply ${JSON.stringify(value)} and reload`, async () => {
+          const text = Array.isArray(value)
+            ? value.join(", ")
+            : typeof value === "boolean"
+              ? value
+                ? "yes"
+                : "no"
+              : value === 0
+                ? ""
+                : String(value);
+          if (boolean) await control.selectOption(text);
+          else await control.fill(text);
+          await expect(row.getByText("Manual change pending", { exact: true })).toBeVisible();
+          const saved = waitForAppMethod(page, "OpenActiveInput");
+          await page.getByRole("button", { name: "Refresh metadata" }).click();
+          const response = await saved;
+          expect(response.ok()).toBe(true);
+          const command = workflowCommandBody("OpenActiveInput", response.request().postDataJSON());
+          expect(command.goal).toBe("input_ready");
+          expect((command.intent as { correctionPatch: unknown }).correctionPatch).toEqual({
+            values: {
+              Identity: {},
+              ReleaseName: {},
+              Metadata: {},
+              [correction.group]: { [correction.key]: value },
+            },
+            resetFields: [],
+            confirmFields: [],
+            expectedRevision: snapshot.current?.corrections?.revision ?? 0,
+          });
+          snapshot = await waitForMetadataReady(page, app!.url);
+          expectPersisted(snapshot.current, value);
+          await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
+          await expect(control).toHaveValue(text);
+          const restored = waitForAppMethod(page, "GetActiveInput");
+          await page.reload();
+          snapshot = await activeInputFromResponse(await restored);
+          expectPersisted(snapshot.current, value);
+          await page.getByText("Edit Release Details", { exact: true }).click();
+          await expect(control).toHaveValue(text);
+          await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
+        });
+      }
+      if (boolean) await control.selectOption("auto");
+      else await row.getByRole("button", { name: `Auto ${correction.label}`, exact: true }).click();
+      await expect(row.getByText("Auto reset pending", { exact: true })).toBeVisible();
+      const reset = waitForAppMethod(page, "OpenActiveInput");
+      await page.getByRole("button", { name: "Refresh metadata" }).click();
+      const resetResponse = await reset;
+      expect(resetResponse.ok()).toBe(true);
+      const resetCommand = workflowCommandBody(
+        "OpenActiveInput",
+        resetResponse.request().postDataJSON(),
+      );
+      expect((resetCommand.intent as { correctionPatch: unknown }).correctionPatch).toEqual({
+        values: { Identity: {}, ReleaseName: {}, Metadata: {} },
+        resetFields: [{ field: correction.field }],
+        confirmFields: [],
+        expectedRevision: snapshot.current?.corrections?.revision ?? 0,
+      });
+      snapshot = await waitForMetadataReady(page, app.url);
+      expectPersisted(snapshot.current, null);
+      await expect(row.getByText(/^Automatic value/)).toBeVisible();
+      await expect(control).toHaveValue(automaticValue);
+      const resetReload = waitForAppMethod(page, "GetActiveInput");
+      await page.reload();
+      snapshot = await activeInputFromResponse(await resetReload);
+      expectPersisted(snapshot.current, null);
+      await page.getByText("Edit Release Details", { exact: true }).click();
+      await expect(row.getByText(/^Automatic value/)).toBeVisible();
+      await expect(control).toHaveValue(automaticValue);
+      expect(workspace.fake.counters).toEqual(initialCounters);
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
+
+test("embedded web persists Release Details audio track language edits, clear and Auto", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ audioAnalysis: true });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    let snapshot = await fetchMetadata(page, app.url, workspace.sourcePath);
+    const track = snapshot.current?.release?.release.Media.Tracks.find(
+      (value) => value.Kind === "audio",
+    );
+    if (!track) throw new Error("audio fixture did not expose an inspected track");
+    const initialCounters = { ...workspace.fake.counters };
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const tracks = page.getByTestId("input-track-coverage");
+    await tracks.locator("summary").click();
+    const row = tracks.locator(`[data-track-id="${track.ID}"]`);
+    const languages = row.getByRole("textbox", { name: "Audio track 1 languages", exact: true });
+    for (const value of [["Japanese", "Spanish"], ["French"], []]) {
+      await languages.fill(value.join(", "));
+      await expect(row.getByText("Manual change pending", { exact: true })).toBeVisible();
+      const saved = waitForAppMethod(page, "OpenActiveInput");
+      await page.getByRole("button", { name: "Refresh metadata" }).click();
+      const response = await saved;
+      expect(response.ok()).toBe(true);
+      const command = workflowCommandBody("OpenActiveInput", response.request().postDataJSON());
+      const expected = [
+        { trackId: track.ID, manifestFingerprint: track.ManifestFingerprint, languages: value },
+      ];
+      expect((command.intent as { correctionPatch: unknown }).correctionPatch).toEqual({
+        values: { Identity: {}, ReleaseName: {}, Metadata: { TrackLanguages: expected } },
+        resetFields: [],
+        confirmFields: [],
+        expectedRevision: snapshot.current?.corrections?.revision ?? 0,
+      });
+      snapshot = await waitForMetadataReady(page, app.url);
+      expect(snapshot.current?.corrections?.corrections.metadata.TrackLanguages).toEqual(expected);
+      expect(snapshot.current?.factInstructions?.instructions.Metadata.TrackLanguages).toEqual(
+        expected,
+      );
+      await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
+      const restored = waitForAppMethod(page, "GetActiveInput");
+      await page.reload();
+      snapshot = await activeInputFromResponse(await restored);
+      expect(snapshot.current?.corrections?.corrections.metadata.TrackLanguages).toEqual(expected);
+      expect(snapshot.current?.factInstructions?.instructions.Metadata.TrackLanguages).toEqual(
+        expected,
+      );
+      await page.getByText("Edit Release Details", { exact: true }).click();
+      await tracks.locator("summary").click();
+      await expect(languages).toHaveValue(value.join(", "));
+      await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
+    }
+    await row.getByRole("button", { name: "Auto Audio track 1 languages", exact: true }).click();
+    await expect(row.getByText("Auto reset pending", { exact: true })).toBeVisible();
+    const reset = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    const response = await reset;
+    expect(response.ok()).toBe(true);
+    const command = workflowCommandBody("OpenActiveInput", response.request().postDataJSON());
+    expect((command.intent as { correctionPatch: unknown }).correctionPatch).toEqual({
+      values: { Identity: {}, ReleaseName: {}, Metadata: {} },
+      resetFields: [{ field: "metadata.track_languages", trackId: track.ID }],
+      confirmFields: [],
+      expectedRevision: snapshot.current?.corrections?.revision ?? 0,
+    });
+    snapshot = await waitForMetadataReady(page, app.url);
+    expect(snapshot.current?.corrections?.corrections.metadata.TrackLanguages ?? []).toEqual([]);
+    expect(snapshot.current?.factInstructions?.instructions.Metadata.TrackLanguages ?? []).toEqual(
+      [],
+    );
+    const restored = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    snapshot = await activeInputFromResponse(await restored);
+    expect(snapshot.current?.corrections?.corrections.metadata.TrackLanguages ?? []).toEqual([]);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await tracks.locator("summary").click();
+    await expect(row.getByText("Automatic value", { exact: true })).toBeVisible();
+    await expect(languages).toHaveValue(track.Languages.join(", "));
+    expect(workspace.fake.counters).toEqual(initialCounters);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web applies Release Details source options and persists source IDs", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const sourceOptions = page.getByTestId("input-source-options");
+    const sourceID = sourceOptions.getByRole("textbox", { name: "BTN source ID", exact: true });
+    const client = sourceOptions.getByRole("textbox", { name: "Client search name", exact: true });
+    const skip = sourceOptions.getByRole("checkbox", { name: "Skip client search", exact: true });
+    for (const values of [
+      { sourceID: "12345", policy: true, skip: true, client: "example-client" },
+      { sourceID: "23456", policy: false, skip: false, client: "second-client" },
+      { sourceID: "", policy: true, skip: true, client: "" },
+    ]) {
+      await page.getByText("Edit Release Details", { exact: true }).click();
+      await sourceOptions.locator("summary").click();
+      await sourceID.fill(values.sourceID);
+      for (const label of ["Keep source folder", "Keep images", "Only resolve IDs"]) {
+        await sourceOptions
+          .getByRole("checkbox", { name: label, exact: true })
+          .setChecked(values.policy);
+      }
+      await client.fill(values.client);
+      await skip.setChecked(values.skip);
+      await expectEnabledState(client, !values.skip);
+      const previousCounters = { ...workspace.fake.counters };
+      const saved = waitForAppMethod(page, "OpenActiveInput");
+      await page.getByRole("button", { name: "Refresh metadata" }).click();
+      const response = await saved;
+      expect(response.ok()).toBe(true);
+      const command = workflowCommandBody("OpenActiveInput", response.request().postDataJSON());
+      expect(command.goal).toBe("input_ready");
+      expect(command.intent).toHaveProperty(
+        "preparation.Instructions.TrackerIDs",
+        values.sourceID ? { BTN: values.sourceID } : {},
+      );
+      expect(command.intent).toHaveProperty("preparation.Policy", {
+        KeepFolder: values.policy,
+        KeepImages: values.policy,
+        OnlyID: values.policy,
+      });
+      expect(command.intent).toHaveProperty(
+        "preparation.Search",
+        values.client ? { Skip: values.skip, Client: values.client } : { Skip: values.skip },
+      );
+      const current = await waitForMetadataReady(page, app.url);
+      expect(current.current?.factInstructions?.instructions.TrackerIDs?.BTN ?? "").toBe(
+        values.sourceID,
+      );
+      const restored = waitForAppMethod(page, "GetActiveInput");
+      await page.reload();
+      const snapshot = await activeInputFromResponse(await restored);
+      expect(snapshot.current?.factInstructions?.instructions.TrackerIDs?.BTN ?? "").toBe(
+        values.sourceID,
+      );
+      await page.getByText("Edit Release Details", { exact: true }).click();
+      await sourceOptions.locator("summary").click();
+      await expect(sourceID).toHaveValue(values.sourceID);
+      // Preparation/search options are per-command choices; source IDs are durable facts.
+      for (const label of [
+        "Keep source folder",
+        "Keep images",
+        "Only resolve IDs",
+        "Skip client search",
+      ]) {
+        await expect(
+          sourceOptions.getByRole("checkbox", { name: label, exact: true }),
+        ).not.toBeChecked();
+      }
+      await expect(client).toHaveValue("");
+      await sourceOptions.locator("summary").click();
+      await page.getByText("Edit Release Details", { exact: true }).click();
+      if (values.skip)
+        expect(workspace.fake.counters.clientSearches).toBe(previousCounters.clientSearches);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      expect(workspace.fake.counters.imageUploads).toBe(0);
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+    }
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web distinguishes a cleared Release Details provider ID from Auto", async ({
+  page,
+}) => {
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
   try {
@@ -534,7 +878,7 @@ test("embedded web distinguishes a cleared metadata provider ID from Auto", asyn
   }
 });
 
-test("embedded web distinguishes pending manual edits and Auto resets through refresh", async ({
+test("embedded web distinguishes pending Release Details edits and Auto resets through refresh", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
@@ -586,7 +930,7 @@ test("embedded web distinguishes pending manual edits and Auto resets through re
   }
 });
 
-test("embedded web retains Input corrections without downstream workflow effects", async ({
+test("embedded web retains Release Details corrections without downstream workflow effects", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
@@ -948,7 +1292,7 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     await expect(page.getByRole("button", { name: "Refresh metadata" })).toBeEnabled();
     await expect
       .poll(() => workspace.fake.counters.clientSearches)
-      .toBe(effectsAfterUpload.clientSearches + 1);
+      .toBe(effectsAfterUpload.clientSearches);
     expect(workspace.fake.counters.imageUploads).toBe(effectsAfterUpload.imageUploads);
     expect(workspace.fake.counters.trackerUploads).toBe(1);
     expect(workspace.fake.counters.clientInjections).toBe(effectsAfterUpload.clientInjections);
@@ -975,10 +1319,7 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     await expect(
       page.getByText("All selected trackers were already uploaded. No upload is needed."),
     ).toBeVisible();
-    expect(workspace.fake.counters).toEqual({
-      ...effectsAfterUpload,
-      clientSearches: effectsAfterUpload.clientSearches + 1,
-    });
+    expect(workspace.fake.counters).toEqual(effectsAfterUpload);
     expect(workspace.fake.trackerUploadBodies).toHaveLength(1);
 
     const deletedWorkflowID = excluded.current?.workflow.id;

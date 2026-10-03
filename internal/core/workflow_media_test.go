@@ -1131,7 +1131,8 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if err := os.WriteFile(sourcePath, []byte("verified source bytes"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	repository, err := db.Open(filepath.Join(t.TempDir(), "workflow.db"))
+	dbPath := filepath.Join(t.TempDir(), "workflow.db")
+	repository, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repository: %v", err)
 	}
@@ -1174,6 +1175,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		Host2: "imgbb",
 		Host3: "onlyimage",
 	}}
+	cfg.MainSettings.DBPath = dbPath
 	builder := workflowMediaBuilder{
 		config:      cfg,
 		resolver:    prepared,
@@ -1325,6 +1327,11 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	restoredPrivate, ok := restoredResource.(workflowMediaPrivateArtifacts)
 	if !ok || len(restoredPrivate.HostedImages) != 1 {
 		t.Fatalf("restored private media = %#v", restoredResource)
+	}
+	for _, image := range restoredPrivate.Screenshots {
+		if !pathing.IsWithinRoot(filepath.Dir(dbPath), image.Path) {
+			t.Fatalf("restored image escaped temporary database directory: %s", image.Path)
+		}
 	}
 	for _, link := range restoredPrivate.HostedImages {
 		if link.AccountScope != currentAccountScope {

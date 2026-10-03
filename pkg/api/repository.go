@@ -543,6 +543,8 @@ var (
 	ErrMissingReleaseStateRepository = errors.New("api: release state repository is required")
 	// ErrMissingPreparedReleaseRepository indicates incomplete prepared-generation persistence.
 	ErrMissingPreparedReleaseRepository = errors.New("api: prepared release repository is required")
+	// ErrMissingMetadataEvidenceRepository indicates incomplete lookup-evidence persistence.
+	ErrMissingMetadataEvidenceRepository = errors.New("api: metadata evidence repository is required")
 	// ErrMissingReleaseSelectionRepository indicates incomplete repository composition.
 	ErrMissingReleaseSelectionRepository = errors.New("api: release selection repository is required")
 	// ErrMissingHistoryRepository indicates incomplete repository composition.
@@ -583,6 +585,7 @@ var (
 type RepositoryCapabilities struct {
 	releaseState     ReleaseStateRepository
 	prepared         PreparedReleaseRepository
+	metadataEvidence MetadataEvidenceRepository
 	selections       ReleaseSelectionRepository
 	history          HistoryRepository
 	uploads          UploadLedgerRepository
@@ -598,6 +601,7 @@ type RepositoryCapabilities struct {
 func RepositoryCapabilitiesFrom(adapter any) RepositoryCapabilities {
 	releaseState, _ := adapter.(ReleaseStateRepository)
 	prepared, _ := adapter.(PreparedReleaseRepository)
+	metadataEvidence, _ := adapter.(MetadataEvidenceRepository)
 	selections, _ := adapter.(ReleaseSelectionRepository)
 	history, _ := adapter.(HistoryRepository)
 	uploads, _ := adapter.(UploadLedgerRepository)
@@ -609,6 +613,7 @@ func RepositoryCapabilitiesFrom(adapter any) RepositoryCapabilities {
 	return RepositoryCapabilities{
 		releaseState:     releaseState,
 		prepared:         prepared,
+		metadataEvidence: metadataEvidence,
 		selections:       selections,
 		history:          history,
 		uploads:          uploads,
@@ -638,6 +643,7 @@ func (c RepositoryCapabilities) Validate() error {
 	}{
 		{value: c.releaseState, err: ErrMissingReleaseStateRepository},
 		{value: c.prepared, err: ErrMissingPreparedReleaseRepository},
+		{value: c.metadataEvidence, err: ErrMissingMetadataEvidenceRepository},
 		{value: c.selections, err: ErrMissingReleaseSelectionRepository},
 		{value: c.history, err: ErrMissingHistoryRepository},
 		{value: c.uploads, err: ErrMissingUploadLedgerRepository},
@@ -656,7 +662,7 @@ func (c RepositoryCapabilities) Validate() error {
 // IsZero reports whether no repository capabilities were supplied.
 func (c RepositoryCapabilities) IsZero() bool {
 	return c.releaseState == nil && c.prepared == nil && c.selections == nil && c.history == nil && c.uploads == nil &&
-		c.trackers == nil && c.media == nil && c.workflows == nil
+		c.metadataEvidence == nil && c.trackers == nil && c.media == nil && c.workflows == nil
 }
 
 // ReleaseState returns the borrowed release-state capability.
@@ -664,6 +670,11 @@ func (c RepositoryCapabilities) ReleaseState() ReleaseStateRepository { return c
 
 // Prepared returns the borrowed whole-generation prepared-release capability.
 func (c RepositoryCapabilities) Prepared() PreparedReleaseRepository { return c.prepared }
+
+// MetadataEvidence returns the borrowed source-scoped lookup-evidence capability.
+func (c RepositoryCapabilities) MetadataEvidence() MetadataEvidenceRepository {
+	return c.metadataEvidence
+}
 
 // Selections returns the borrowed release-selection capability.
 func (c RepositoryCapabilities) Selections() ReleaseSelectionRepository { return c.selections }
