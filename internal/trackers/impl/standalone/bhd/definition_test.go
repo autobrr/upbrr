@@ -892,3 +892,72 @@ func TestDefinitionBuildDescriptionDoesNotRestoreBotOnlyBody(t *testing.T) {
 		t.Fatalf("expected single current footer, got %q", result.Description)
 	}
 }
+
+func TestDefinitionDVDRipDryRunIncludesResolution(t *testing.T) {
+	for _, category := range []string{"MOVIE", "TV"} {
+		for _, resolution := range []string{"480p", "576p"} {
+			t.Run(category+"/"+resolution, func(t *testing.T) {
+				request := api.ReleaseNameRequest{
+					Category:    category,
+					Type:        "DVDRIP",
+					Title:       "Example Release",
+					Year:        2026,
+					SearchYear:  "2026",
+					Source:      "DVD",
+					Resolution:  resolution,
+					Audio:       "DD 2.0",
+					VideoEncode: "x264",
+					Tag:         "-GRP",
+				}
+				if category == "TV" {
+					request.Season = "S01"
+				}
+				subject := bhdGeneratedSubject(t, request)
+				subject.Identity = api.ExternalIdentity{
+					Category: api.CanonicalCategory(category),
+					TMDBID:   123,
+					IMDBID:   456,
+				}
+				subject.Type, subject.Source = request.Type, request.Source
+				subject.Audio, subject.VideoEncode = request.Audio, request.VideoEncode
+				subject.Container = "mkv"
+				dir := t.TempDir()
+				subject.SourcePath = filepath.Join(dir, "Example.mkv")
+				subject.TorrentPath = filepath.Join(dir, "Example.torrent")
+				subject.MediaInfoTextPath = filepath.Join(dir, "MEDIAINFO.txt")
+				for _, path := range []string{subject.TorrentPath, subject.MediaInfoTextPath} {
+					if err := os.WriteFile(path, []byte("synthetic fixture"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				input := trackers.PreparationInput{
+					Tracker:       "BHD",
+					Meta:          subject,
+					TrackerConfig: config.TrackerConfig{APIKey: "synthetic-token"},
+					Logger:        api.NopLogger{},
+				}
+				entry, err := New().prepareDryRun(context.Background(), input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if entry.Payload["type"] != resolution {
+					t.Fatalf("lost resolution fact: %q", entry.Payload["type"])
+				}
+				prefix := "Example Release 2026 "
+				if category == "TV" {
+					prefix += "S01 "
+				}
+				want := prefix + resolution + " DVDRip DD2.0 x264-GRP"
+				if entry.Payload["name"] != want || entry.ReleaseName != want {
+					t.Fatalf("payload/preview names = %q / %q, want %q", entry.Payload["name"], entry.ReleaseName, want)
+				}
+				manual := "Exact Manual DVDRip Name-GRP"
+				input.RequestedUploadName = &manual
+				entry, err = New().prepareDryRun(context.Background(), input)
+				if err != nil || entry.Payload["name"] != manual {
+					t.Fatalf("manual name = %q, err=%v", entry.Payload["name"], err)
+				}
+			})
+		}
+	}
+}

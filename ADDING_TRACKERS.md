@@ -86,6 +86,11 @@ the exact prepared generation. Prepared naming facts store it in `api.NamingFact
 The versioned document is retained through prepared-state persistence and transport; it is not
 reconstructed by parsing `ReleaseName`.
 
+The canonical DVDRip layout includes a known resolution after the movie year or rendered TV
+season/episode segment, while omitting the DVD/PAL/NTSC source label. Reuse these components
+instead of inserting resolution into a rendered name. Exact-name and display-title policies
+retain their own contracts; an unknown resolution must not be inferred from the source label.
+
 Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete supported role set is:
 
 | Name object | Role |

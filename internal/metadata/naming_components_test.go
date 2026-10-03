@@ -17,14 +17,19 @@ import (
 
 func TestBuildReleaseNameDVDRipLayout(t *testing.T) {
 	for _, test := range []struct {
-		name, category, source, encode, codec, want string
+		name, category, source, encode, codec, resolution, want string
 	}{
-		{"movie", "MOVIE", "DVD", "x264", "AVC", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
-		{"PAL movie", "MOVIE", "PAL DVD", "x264", "AVC", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
-		{"NTSC movie", "MOVIE", "NTSC DVD", "x264", "AVC", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
-		{"TV", "TV", "DVD", "x264", "AVC", "DVD Story 2026 S01 DVDRip DD 2.0 x264-DVDGRP"},
-		{"missing source", "MOVIE", "", "x264", "AVC", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
-		{"codec fallback", "MOVIE", "DVD", "", "MPEG-4 Visual", "DVD Story 2026 DVDRip DD 2.0 MPEG-4 Visual-DVDGRP"},
+		{"movie", "MOVIE", "DVD", "x264", "AVC", "", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
+		{"PAL movie", "MOVIE", "PAL DVD", "x264", "AVC", "", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
+		{"NTSC movie", "MOVIE", "NTSC DVD", "x264", "AVC", "", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
+		{"TV", "TV", "DVD", "x264", "AVC", "", "DVD Story 2026 S01 DVDRip DD 2.0 x264-DVDGRP"},
+		{"missing source", "MOVIE", "", "x264", "AVC", "", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
+		{"codec fallback", "MOVIE", "DVD", "", "MPEG-4 Visual", "", "DVD Story 2026 DVDRip DD 2.0 MPEG-4 Visual-DVDGRP"},
+		{"480p movie", "MOVIE", "NTSC DVD", "x264", "AVC", "480p", "DVD Story 2026 480p DVDRip DD 2.0 x264-DVDGRP"},
+		{"576p movie", "MOVIE", "PAL DVD", "x264", "AVC", "576p", "DVD Story 2026 576p DVDRip DD 2.0 x264-DVDGRP"},
+		{"480p TV", "TV", "DVD", "x264", "AVC", "480p", "DVD Story 2026 S01 480p DVDRip DD 2.0 x264-DVDGRP"},
+		{"576p TV", "TV", "DVD", "x264", "AVC", "576p", "DVD Story 2026 S01 576p DVDRip DD 2.0 x264-DVDGRP"},
+		{"unknown resolution", "MOVIE", "DVD", "x264", "AVC", "OTHER", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := api.ReleaseNameRequest{
@@ -36,6 +41,7 @@ func TestBuildReleaseNameDVDRipLayout(t *testing.T) {
 				Season:      "S01",
 				Episode:     "E02",
 				Source:      test.source,
+				Resolution:  test.resolution,
 				Audio:       "DD 2.0",
 				VideoEncode: test.encode,
 				VideoCodec:  test.codec,
