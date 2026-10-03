@@ -12,25 +12,25 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func validationPolicy() trackers.ValidationPolicyBinding {
+func validationPolicy(regionID, distributorID func(string) string) trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "unit3d-acm-payload-v1",
+		ID: "unit3d-acm-payload-v2",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
 			}
 			failures := make([]api.RuleFailure, 0, 2)
-			if strings.TrimSpace(subject.Region) != "" && numericValue(subject.Region) == "" {
+			if strings.TrimSpace(subject.Region) != "" && regionID(subject.Region) == "" {
 				failures = append(failures, trackers.NewRuleFailure(
 					"unsupported_region",
-					"ACM region must be a numeric tracker ID",
+					"ACM region must be a known country code or positive tracker ID",
 					api.RuleDispositionStrict,
 				))
 			}
-			if strings.TrimSpace(subject.Distributor) != "" && numericValue(subject.Distributor) == "" {
+			if strings.TrimSpace(subject.Distributor) != "" && distributorID(subject.Distributor) == "" {
 				failures = append(failures, trackers.NewRuleFailure(
 					"unsupported_distributor",
-					"ACM distributor must be a numeric tracker ID",
+					"ACM distributor must be a known publisher or positive tracker ID",
 					api.RuleDispositionStrict,
 				))
 			}

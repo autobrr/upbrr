@@ -363,6 +363,18 @@ If the site changes only rules, IDs, naming, description formatting, payload fie
 policies, keep it as a Unit3D profile. If it replaces the protocol substantially, implement it as
 a standalone tracker instead of filling shared Unit3D code with site-name branches.
 
+For disc uploads, the family maps region codes and publisher names using the official
+UNIT3D default catalogs. Add site-only extensions or overrides with
+`SiteProfile.ResolveRegionID` and `ResolveDistributorID`, implemented in the site's
+`taxonomy.go`. Return a positive numeric ID for a verified name, or an empty string
+to use the family default. Explicit positive numeric inputs retain their value.
+Do not use fuzzy matching or assume a partial site dropdown is a complete catalog.
+Unknown optional names are omitted with diagnostics; retain any stricter site validation.
+Bind site validation and payload callbacks to the same effective `SiteProfile.RegionID`
+and `DistributorID` methods so an extension is neither rejected nor overwritten by defaults.
+Configure callbacks in the site taxonomy/profile constructor before binding those methods;
+treat the returned profile as immutable rather than changing its resolver fields afterward.
+
 ### 2. Create the site package
 
 Create:
@@ -374,7 +386,8 @@ internal/trackers/impl/unit3d/sites/example/
   validation.go            # when the site has payload constructibility/resource checks
   banned_groups.go         # when the site has a static list
   name.go                  # only for custom naming
-  taxonomy.go              # only for custom category/type/resolution/keywords
+  taxonomy.go              # only for custom IDs, keywords, region/distributor mappings
+  dupe.go                  # only for search API dialect adjustments
   description.go           # only for a replacement/finalizer
   payload.go               # only for additional payload fields
   profile_test.go          # when profile behavior differs from defaults
@@ -497,6 +510,9 @@ Available site callbacks are:
 | `ResolveResolutionID`    | Map prepared release facts to a site resolution ID                           |
 | `ResolveCategoryID`      | Map canonical category and site facts to a site category ID                  |
 | `CategoryIDs`            | Declare every native category ID in a canonical movie or TV family           |
+| `ResolveRegionID`        | Extend or override the shared disc country catalog                           |
+| `ResolveDistributorID`   | Extend or override the shared disc publisher catalog                         |
+| `AdjustSearchParams`     | Adapt a validated work/category query to a site API dialect                  |
 | `ApplyAdditionalPayload` | Add site-only upload fields after the common payload is built                |
 | `FinalizeDescription`    | Transform the completed shared description without replacing its build       |
 
@@ -526,10 +542,17 @@ ordinary TV `2` and anime TV `3` declares `{"2", "3"}` and searches both for eve
 Include a category in both families only when the site's taxonomy actually shares it between
 movies and TV. Keep native IDs and category algorithms out of the shared query builder.
 
-Preserve authoritative provider-ID work binding, season scoping, and complete pagination.
+Preserve authoritative provider-ID work binding, content-scope evaluation, and complete pagination.
 Unit3D duplicate gathering omits `types[]`, `resolutions[]`, and episode-number filters so that
 the shared evaluator can compare all relevant release variants and season packs. Custom type
 and resolution callbacks still select upload payload fields.
+
+For a legacy API dialect, implement `AdjustSearchParams` in the site's `dupe.go` and wire it
+in `profile.go`. It runs after work/category validation and must preserve that identity and the
+full category family. It may remove narrowing filters when the API requires a broader work
+search; the shared evaluator still checks content scope. ACM, for example, renames `tmdbId` to
+`tmdb` and removes name/season filters. Test the actual outgoing request, pagination, and
+wrong-work filtering rather than only the callback's map mutations.
 
 The shared Unit3D data client emits a TRACE request record for every filter or pending API
 request, including the work ID, full repeated category list, other selected filters, and paging.

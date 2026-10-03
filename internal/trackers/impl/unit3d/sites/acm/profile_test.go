@@ -359,3 +359,57 @@ func markACMManual(t *testing.T, document *api.ReleaseNameDocument, role api.Rel
 	}
 	t.Fatalf("generated name is missing %s", role)
 }
+
+func TestACMPayloadDiagnosticsExcludeContent(t *testing.T) {
+	logger := &acmRecordingLogger{}
+	meta := api.UploadSubject{
+		Region:            "3",
+		Distributor:       "42",
+		SourceSize:        1024,
+		SubtitleLanguages: []string{"English"},
+	}
+	data := map[string]string{
+		"category_id":   "1",
+		"type_id":       "9",
+		"resolution_id": "2",
+		"name":          "Private release",
+		"description":   "Private description",
+		"mediainfo":     "Private media",
+		"bdinfo":        "Private BDInfo",
+	}
+	Profile().Site.ApplyAdditionalPayload(trackers.PreparationInput{Meta: meta, Logger: logger}, data)
+	logs := strings.Join(logger.messages, "\n")
+	for _, want := range []string{"tracker=ACM", "category_id=1 type_id=9 resolution_id=2 region_id=3 distributor_id=42", "source_bytes=1024 subtitle_languages=1"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("diagnostics missing %q", want)
+		}
+	}
+	if strings.Contains(logs, "Private") {
+		t.Fatal("diagnostics exposed payload content")
+	}
+}
+
+func TestACMNamedDiscTaxonomy(t *testing.T) {
+	subject := api.TrackerValidationSubject{Region: "GBR", Distributor: "Arrow"}
+	failures, err := Profile().ValidationPolicy.Check(t.Context(), subject, api.NopLogger{})
+	if err != nil || len(failures) != 0 {
+		t.Fatalf("known named taxonomy rejected: failures=%+v err=%v", failures, err)
+	}
+	data := map[string]string{}
+	Profile().Site.ApplyAdditionalPayload(trackers.PreparationInput{Meta: api.UploadSubject{Region: subject.Region, Distributor: subject.Distributor}}, data)
+	if data["region_id"] != "78" || data["distributor_id"] != "75" {
+		t.Fatalf("payload=%v", data)
+	}
+}
+
+func TestACMUnknownTaxonomyRemainsStrict(t *testing.T) {
+	failures, err := Profile().ValidationPolicy.Check(t.Context(), api.TrackerValidationSubject{Region: "B", Distributor: "Unknown publisher"}, api.NopLogger{})
+	if err != nil || len(failures) != 2 {
+		t.Fatalf("unknown taxonomy accepted: failures=%+v err=%v", failures, err)
+	}
+	for _, failure := range failures {
+		if failure.Disposition != api.RuleDispositionStrict {
+			t.Fatalf("unknown taxonomy is not strict: %+v", failure)
+		}
+	}
+}

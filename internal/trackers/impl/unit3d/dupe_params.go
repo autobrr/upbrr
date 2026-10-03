@@ -50,6 +50,9 @@ func buildDupeSearchParams(meta api.DuplicateSubject, profile SiteProfile) url.V
 		}
 	}
 
+	if profile.AdjustSearchParams != nil {
+		profile.AdjustSearchParams(params)
+	}
 	return params
 }
 

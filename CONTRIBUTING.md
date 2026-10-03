@@ -342,6 +342,7 @@ This project uses [AGENTS.md](https://agents.md/) — an open standard for guidi
 
 - [`webui/AGENTS.md`](./webui/AGENTS.md) for frontend, React, CSS, TypeScript, and browser checks.
 - [`internal/AGENTS.md`](./internal/AGENTS.md) for Go, path/log policy, trackers/config/domain rules, runtime architecture, lint/check policy, and generated/scratch path risks.
+- [`internal/trackers/AGENTS.md`](./internal/trackers/AGENTS.md) for tracker semantic ownership, shared Unit3D defaults, site extensions, and duplicate-search contracts.
 - [`cmd/upbrr/AGENTS.md`](./cmd/upbrr/AGENTS.md) for CLI flags, prompts, and unattended behavior.
 - [`pkg/api/AGENTS.md`](./pkg/api/AGENTS.md) for cross-entrypoint API/runtime contracts.
 - [`webui/e2e/AGENTS.md`](./webui/e2e/AGENTS.md) for Playwright E2E harness rules and commands.

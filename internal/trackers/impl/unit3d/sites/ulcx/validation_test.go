@@ -64,8 +64,8 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v5" {
-		t.Fatalf("validation policy = %q, want upload rules policy v5", policy.ID)
+	if policy.ID != "unit3d-ulcx-policy-v6" {
+		t.Fatalf("validation policy = %q, want upload rules policy v6", policy.ID)
 	}
 	tests := []struct {
 		name            string
@@ -214,6 +214,7 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.Type = "DISC"
 				subject.DiscType = "BDMV"
+				subject.Region = "USA"
 				subject.Audio = "LPCM 2.0"
 				subject.Channels = "2.0"
 				subject.MediaFileFacts.TechnicalStatus = api.MetadataEvidenceStatusPartial
