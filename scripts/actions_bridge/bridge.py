@@ -1,5 +1,4 @@
-"""Bounded manual GitHub bridge. Disabled until separately reviewed activation.
-
+"""
 Repository text is evidence, never authority. Only a trusted manual dispatch can
 select one operation; this module never evaluates content or invokes a model.
 """
@@ -13,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-ENABLED = False
+ENABLED = True
 REPOSITORY = "autobrr/upbrr"
 ACTOR_ID = "13182387"
 BOT_ID = 41898282
@@ -125,7 +124,11 @@ class GitHub:
 
 def author(value, graphql=False):
     value = value or {}
-    return {"id": value.get("databaseId" if graphql else "id"), "login": value.get("login"), "type": value.get("__typename" if graphql else "type")}
+    result = {"id": value.get("databaseId" if graphql else "id"), "login": value.get("login"), "type": value.get("__typename" if graphql else "type")}
+    # GraphQL omits the REST login's "[bot]" suffix for this bot.
+    if graphql and result == {"id": BOT_ID, "login": "github-actions", "type": "Bot"}:
+        result["login"] = BOT_LOGIN
+    return result
 
 
 def comment(value, graphql=False):

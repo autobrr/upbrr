@@ -1,4 +1,3 @@
-# INACTIVE TEMPLATE. Do not rename or enable before provider clearance and approval.
 name: Bounded repository bridge
 on:
   workflow_dispatch:

@@ -1,8 +1,11 @@
 """Offline contract tests: no network, credentials, or repository mutation."""
 
 import copy
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -45,7 +48,7 @@ class FakeAPI:
     def graphql(self, query, variables):
         if query.startswith("mutation"):
             return self.call("POST", "/graphql", {"body": variables["body"]})
-        nodes = [{"id": str(entry["id"]), "body": entry["body"], "updatedAt": entry["updated_at"], "author": {"databaseId": entry["user"]["id"], "login": entry["user"]["login"], "__typename": entry["user"]["type"]}, "replies": {"pageInfo": {"hasNextPage": False}, "nodes": []}} for entry in self.comments]
+        nodes = [{"id": str(entry["id"]), "body": entry["body"], "updatedAt": entry["updated_at"], "author": {"databaseId": entry["user"]["id"], "login": entry["user"]["login"].removesuffix("[bot]") if entry["user"]["type"] == "Bot" else entry["user"]["login"], "__typename": entry["user"]["type"]}, "replies": {"pageInfo": {"hasNextPage": False}, "nodes": []}} for entry in self.comments]
         return {"repository": {"discussion": {"id": "D_example", "number": 7, "title": "Example", "body": "Discussion", "updatedAt": "now", "author": None, "comments": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}}}}
 
 
@@ -60,10 +63,43 @@ class BridgeTests(unittest.TestCase):
         return bridge.execute(api, request, request["kind"] + "_comment", "main", HEAD)
 
     def test_disabled_main_never_opens_network(self):
-        with patch.object(bridge, "GitHub") as api:
+        with patch.object(bridge, "ENABLED", False), patch.object(bridge, "GitHub") as api:
             with self.assertRaises(bridge.Rejected):
                 bridge.main()
             api.assert_not_called()
+
+    def test_enabled_main_publishes_and_detects_duplicates(self):
+        for kind in ("issue", "discussion"):
+            with self.subTest(kind=kind), TemporaryDirectory() as directory:
+                api = FakeAPI()
+                operation = kind + "_comment"
+                event = {
+                    "repository": {"full_name": bridge.REPOSITORY, "default_branch": "main"},
+                    "sender": {"id": int(bridge.ACTOR_ID)},
+                    "inputs": {"operation": operation, "request": json.dumps(self.request(api, kind))},
+                }
+                event_path = Path(directory) / "event.json"
+                event_path.write_text(json.dumps(event), encoding="utf-8")
+                env = {
+                    "GITHUB_EVENT_NAME": "workflow_dispatch",
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_REPOSITORY": bridge.REPOSITORY,
+                    "GITHUB_ACTOR_ID": bridge.ACTOR_ID,
+                    "GITHUB_REF": "refs/heads/main",
+                    "GITHUB_WORKFLOW_REF": bridge.REPOSITORY + "/.github/workflows/actions-bridge.yml@refs/heads/main",
+                    "GITHUB_SHA": HEAD,
+                    "GITHUB_WORKFLOW_SHA": HEAD,
+                    "GITHUB_RUN_ATTEMPT": "1",
+                    "GITHUB_TOKEN": "synthetic-offline-token",
+                    "BRIDGE_OPERATION": operation,
+                }
+                with patch.dict("os.environ", env, clear=True), patch.object(bridge, "GitHub", return_value=api):
+                    for expected in ("published", "already_published"):
+                        output = io.StringIO()
+                        with redirect_stdout(output):
+                            self.assertEqual(bridge.main(), 0)
+                        self.assertEqual(json.loads(output.getvalue())["status"], expected)
+                        self.assertEqual(api.posts, 1)
 
     def test_strict_request_rejects_injected_authority_and_commands(self):
         valid = self.request(FakeAPI())
@@ -154,14 +190,15 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(api.posts, 0)
 
     def test_forged_marker_or_bot_login_not_receipt(self):
-        api = FakeAPI()
-        req = self.request(api)
-        self.run_write(api, req)
-        for forged in ({"id": 5, "login": bridge.BOT_LOGIN, "type": "Bot"}, {"id": bridge.BOT_ID, "login": "other", "type": "Bot"}, {"id": bridge.BOT_ID, "login": bridge.BOT_LOGIN, "type": "User"}):
-            api.comments[0]["user"] = forged
-            with self.subTest(forged=forged), self.assertRaises(bridge.Rejected):
-                self.run_write(api, req)
-            self.assertEqual(api.posts, 1)
+        for kind in ("issue", "discussion"):
+            api = FakeAPI()
+            req = self.request(api, kind)
+            self.run_write(api, req)
+            for forged in ({"id": 5, "login": bridge.BOT_LOGIN, "type": "Bot"}, {"id": bridge.BOT_ID, "login": "other", "type": "Bot"}, {"id": bridge.BOT_ID, "login": bridge.BOT_LOGIN, "type": "User"}):
+                api.comments[0]["user"] = forged
+                with self.subTest(kind=kind, forged=forged), self.assertRaises(bridge.Rejected):
+                    self.run_write(api, req)
+                self.assertEqual(api.posts, 1)
 
     def test_bounds_and_pr_rejected(self):
         for mode in ("pr", "comments", "size"):
@@ -203,13 +240,15 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(api.posts, 0)
 
     def test_duplicate_bot_receipts_fail_closed(self):
-        api = FakeAPI()
-        req = self.request(api)
-        self.run_write(api, req)
-        api.comments.append(copy.deepcopy(api.comments[0]))
-        with self.assertRaises(bridge.Rejected):
-            self.run_write(api, req)
-        self.assertEqual(api.posts, 1)
+        for kind in ("issue", "discussion"):
+            with self.subTest(kind=kind):
+                api = FakeAPI()
+                req = self.request(api, kind)
+                self.run_write(api, req)
+                api.comments.append(copy.deepcopy(api.comments[0]))
+                with self.assertRaises(bridge.Rejected):
+                    self.run_write(api, req)
+                self.assertEqual(api.posts, 1)
 
     def test_discussion_truncation_fails_closed(self):
         api = FakeAPI()
@@ -232,20 +271,23 @@ class BridgeTests(unittest.TestCase):
                 api.call("GET", "/repos/autobrr/upbrr/issues/7")
 
     def test_offline_hash_matches_publisher_snapshot(self):
-        api = FakeAPI()
-        req = {"repository": bridge.REPOSITORY, "kind": "issue", "number": 7}
-        source = bridge.collect(api, req, "main")
-        result = hash_snapshot.hash_snapshot(bridge.canonical(source).encode())
-        self.assertEqual(result, {"head": HEAD, "source_hash": bridge.digest(source)})
+        for kind in ("issue", "discussion"):
+            with self.subTest(kind=kind):
+                api = FakeAPI()
+                api.comments.append({"id": 9, "body": "Existing comment", "updated_at": "now", "user": BOT})
+                req = {"repository": bridge.REPOSITORY, "kind": kind, "number": 7}
+                source = bridge.collect(api, req, "main")
+                result = hash_snapshot.hash_snapshot(bridge.canonical(source).encode())
+                self.assertEqual(result, {"head": HEAD, "source_hash": bridge.digest(source)})
         for raw in (b"{", b"[]", b"x" * (bridge.MAX_SNAPSHOT + 1), b'{"repository":"other/repo"}'):
             with self.subTest(raw=raw[:30]), self.assertRaises((bridge.Rejected, ValueError)):
                 hash_snapshot.hash_snapshot(raw)
 
-    def test_workflow_least_privilege_and_inactive(self):
+    def test_workflow_least_privilege_and_active(self):
         root = Path(__file__).resolve().parents[2]
-        path = root / ".github/workflows/actions-bridge.yml22"
+        path = root / ".github/workflows/actions-bridge.yml"
         self.assertTrue(path.exists())
-        self.assertFalse(path.with_suffix(".yml").exists())
+        self.assertFalse(path.with_suffix(".yml22").exists())
         source = path.read_text()
         self.assertIn("permissions: {}", source)
         self.assertNotIn("pull_request_target:", source)
@@ -264,7 +306,7 @@ class BridgeTests(unittest.TestCase):
             self.assertIn("persist-credentials: false", job)
             self.assertIn("environment: actions-bridge", job)
             self.assertIn("vars.ACTIONS_BRIDGE_ENABLED == 'approved'", job)
-        self.assertFalse(bridge.ENABLED)
+        self.assertTrue(bridge.ENABLED)
 
 
 if __name__ == "__main__":
