@@ -60,7 +60,7 @@ See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and t
 
 ### Correct Input facts
 
-Use **Input** to correct titles, genre, release naming fields, and languages before duplicate checking. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
+Use **Input** to correct provider IDs, genre, release naming fields, and languages before duplicate checking. **Title** and **Original title** are read-only; **Manual year** is editable for movies and locked for TV. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
 
 Edited fields show a pending change until you apply **Refresh metadata**. Applied overrides remain marked **Manual value · Applied** after refresh. **Auto** clears the local draft and queues removal of the saved correction; the field shows **Auto reset pending** until refresh derives the automatic value. The previous prepared value may remain visible while that reset is pending.
 
