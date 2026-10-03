@@ -437,7 +437,7 @@ func releaseWorkflowImageHostConfigured(cfg config.ImageHostingConfig, host stri
 		return strings.TrimSpace(cfg.UTPPMAPI) != ""
 	case "zipline":
 		return strings.TrimSpace(cfg.ZiplineURL) != "" && strings.TrimSpace(cfg.ZiplineAPIKey) != ""
-	case "hdb", "imgbox", "pixhost", "thr":
+	case "bothpics", "hdb", "imgbox", "pixhost", "thr":
 		return true
 	}
 	return false

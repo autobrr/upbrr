@@ -109,6 +109,7 @@ const settingsSections: SettingsSection[] = [
 const imageHostOptions = [
   { value: "", label: "None" },
   { value: "imgbb", label: "ImgBB" },
+  { value: "bothpics", label: "both.pics" },
   { value: "imgbox", label: "ImgBox" },
   { value: "pixhost", label: "Pixhost" },
   { value: "lensdump", label: "Lensdump" },
@@ -144,6 +145,7 @@ const imageHostOptionFor = (host: string) => {
 
 const imageHostKeyMap: Record<string, string[]> = {
   imgbb: ["ImgBBAPI"],
+  bothpics: ["BothPicsAPI"],
   lensdump: ["LensdumpAPI"],
   ptscreens: ["PTScreensAPI"],
   onlyimage: ["OnlyImageAPI"],
@@ -255,6 +257,10 @@ const selectConfiguredTrackerNames = (
 };
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   ImageHosting: {
+    BothPicsAPI: stringField("BothPicsAPI", {
+      label: "both.pics API token (optional)",
+      sensitive: true,
+    }),
     LostimgAPI: stringField("LostimgAPI", { label: "API key", sensitive: true }),
     ReelflixAPI: stringField("ReelflixAPI", {
       label: "ReelFliX API key",

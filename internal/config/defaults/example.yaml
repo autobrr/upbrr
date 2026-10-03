@@ -15,6 +15,7 @@ image_hosting:
   img_host_5: ""
   img_host_6: ""
   imgbb_api: ""
+  bothpics_api: ""
   lensdump_api: ""
   ptscreens_api: ""
   onlyimage_api: ""

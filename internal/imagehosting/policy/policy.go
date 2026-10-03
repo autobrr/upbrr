@@ -21,6 +21,7 @@ type Metadata struct {
 }
 
 var uploadHosts = map[string]struct{}{
+	"bothpics":     {},
 	"dalexni":      {},
 	"hdb":          {},
 	"imgbb":        {},

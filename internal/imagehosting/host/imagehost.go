@@ -12,6 +12,7 @@ import (
 // [ExtractHost]. Treat it as read-only after startup; ExtractHost reads it
 // without synchronization.
 var HostMapping = map[string]string{
+	"both.pics":            "bothpics",
 	"ibb.co":               "imgbb",
 	"pixhost.cc":           "pixhost",
 	"pixhost.to":           "pixhost",

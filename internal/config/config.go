@@ -100,6 +100,7 @@ type ImageHostingConfig struct {
 	Host5             string `yaml:"img_host_5"`
 	Host6             string `yaml:"img_host_6"`
 	ImgBBAPI          string `yaml:"imgbb_api"`
+	BothPicsAPI       string `yaml:"bothpics_api"`
 	LensdumpAPI       string `yaml:"lensdump_api"`
 	PTScreensAPI      string `yaml:"ptscreens_api"`
 	OnlyImageAPI      string `yaml:"onlyimage_api"`

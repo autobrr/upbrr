@@ -1164,10 +1164,22 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           ) : (
             <div className={settingsStyle.grid}>
               {Array.from(requiredKeys).map((key) =>
-                renderField(key, imageCfg[key] as ConfigValue, ["ImageHosting", key]),
+                renderField(
+                  key,
+                  imageCfg[key] as ConfigValue,
+                  ["ImageHosting", key],
+                  sectionFieldMeta.ImageHosting[key],
+                ),
               )}
             </div>
           )}
+          {requiredKeys.has("BothPicsAPI") ? (
+            <p className="text-muted-foreground">
+              The both.pics token is optional (it needs the read and upload scopes). Without one,
+              upbrr uploads as a guest, which accepts the both.pics content policy; guest uploads
+              can&apos;t be deleted and are limited to 10 an hour.
+            </p>
+          ) : null}
         </div>
 
         <div className={settingsStyle.subgroup}>
