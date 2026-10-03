@@ -23,7 +23,7 @@ Install the following on your machine:
 
 - [Git](https://git-scm.com/)
 - [Go](https://golang.org/dl/) — see [go.mod](./go.mod) for the required version
-- [Node.js](https://nodejs.org) (`>=24` for the frontend and public documentation)
+- [Node.js](https://nodejs.org) (`>=24` for the frontend and public documentation; Node 26 is within this range, while CI stays on Node 24 for a consistent baseline)
 - [pnpm](https://pnpm.io/installation) — use the version pinned in `webui/package.json` and `documentation/package.json` via `packageManager`
 - [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
 - [golangci-lint](https://golangci-lint.run/) — use the version pinned in the [CI workflow](./.github/workflows/golangci-lint.yml) for hooks and local checks
@@ -203,7 +203,25 @@ make frontend-bundle  # Vite bundle only
 
 ## Tests and checks
 
-Pull requests run all five Playwright E2E projects on Windows with three parallel workers against the embedded application and isolated local fake services. Run `make e2e` locally before submitting workflow or browser changes; install FFmpeg on `PATH` for the audio-analysis scenarios, but no real service credentials are needed. The local default remains one worker. The [E2E workflow](.github/workflows/e2e.yml) also supports manual dispatch and uploads the Playwright report and test results when a check fails.
+### End-to-end checks
+
+Every pull request gets a lightweight change-selection check. The full Windows Playwright job runs only when the complete PR diff touches runtime, frontend, normal E2E, dependency, asset, or shared build inputs. Documentation-only changes, the separate visual suites, and unrelated tooling skip that job. [`scripts/ci/e2e-scope.mjs`](scripts/ci/e2e-scope.mjs) owns the exact paths; source-tree unit-test changes are included conservatively. Deleted paths and both sides of renames count. An unreadable diff runs the full suite, and manual workflow dispatch always runs it. The workflow keeps read-only permissions and does not need repository secrets for forks.
+
+Before local E2E validation, fetch the PR target branch and inspect the branch diff from its merge base, staged changes, unstaged changes, and untracked files. For a target of `origin/main` (use `upstream/main` for a fork when appropriate):
+
+```sh
+git fetch origin main
+git diff --name-only --no-renames "$(git merge-base HEAD origin/main)" HEAD
+git diff --cached --name-only --no-renames
+git diff --name-only --no-renames
+git ls-files --others --exclude-standard
+```
+
+Skip local E2E for documentation-only or unrelated changes. Run the affected project or `--grep` for a narrow browser/test change; shared runtime, workflow/API, build, and dependency changes need all five projects. A unit-test-only edit needs its unit checks and E2E only when its behavior also warrants an integration check. Selector-only changes need `node --test scripts/ci/e2e-scope.test.mjs` and workflow validation. These are selection guidelines: an explicit `make e2e`, full validation request, or benchmark command still runs the complete requested suite, even with no diff.
+
+`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg on `PATH` for the audio-analysis scenarios; no real service credentials are needed. Normal local runs default to eight fully parallel workers, while CI uses two. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads reports and test results on failure. The separate visual suites retain their own configuration.
+
+### Other checks
 
 For opt-in checks against configured services and local media, see the [live testing runner](scripts/live-testing/README.md). It uses an isolated profile and production build, blocks tracker submission and client writes, and defaults to no image uploads. Private media, credentials, screenshots, and run evidence stay outside the repository. These checks are separate from ordinary tests and CI.
 

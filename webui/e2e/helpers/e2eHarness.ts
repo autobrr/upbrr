@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, type Page } from "@playwright/test";
+import { expect, test as base, type Page } from "@playwright/test";
 import type { ActiveInputSnapshot } from "../../src/api/generated/release-workflow";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +30,17 @@ const png1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
   "base64",
 );
+
+/** Browser scenarios use synthetic icons instead of contacting real tracker sites. */
+export const test = base.extend({
+  context: async ({ context }, use) => {
+    await context.route("**/api/app/GetTrackerIcon", (route) =>
+      route.fulfill({ json: `data:image/png;base64,${png1x1.toString("base64")}` }),
+    );
+    await use(context);
+  },
+});
+
 const e2eTorrentFixture =
   "d8:announce13:http://e2e.ee4:infod6:lengthi0e4:name8:test.txt12:piece lengthi16384e6:pieces0:ee";
 const startAppBindAttempts = 5;
@@ -520,17 +531,18 @@ export async function waitForMetadataReady(
         const current = await page
           .context()
           .request.get(new URL("api/app/GetActiveInput", appUrl).toString());
-        if (!current.ok()) return "";
+        if (!current.ok()) return { httpStatus: current.status() };
         authoritative = (await current.json()) as ActiveInputSnapshot;
         const workflow = authoritative.current;
-        return workflow?.inputReadiness?.status === "completed" &&
-          workflow.operation?.status === "completed"
-          ? "ready"
-          : "";
+        return {
+          readiness: workflow?.inputReadiness?.status,
+          operation: workflow?.operation?.status,
+          phase: workflow?.operation?.phase,
+        };
       },
       { timeout: 10_000 },
     )
-    .toBe("ready");
+    .toMatchObject({ readiness: "completed", operation: "completed" });
   await expect(page.getByRole("button", { name: "Fetch metadata", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeEnabled();
   if (!authoritative) throw new Error("active input did not become ready");

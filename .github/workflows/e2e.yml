@@ -12,8 +12,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select E2E checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      e2e: ${{ steps.scope.outputs.e2e }}
+    steps:
+      - name: Checkout complete PR history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Test E2E change selection
+        run: node --test scripts/ci/e2e-scope.test.mjs
+
+      - name: Select relevant PR changes or manual full run
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          scope=$(node scripts/ci/e2e-scope.mjs "$BASE_SHA" "$HEAD_SHA")
+          echo "e2e=$scope" >> "$GITHUB_OUTPUT"
+
   e2e:
     name: Playwright E2E
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 45
 
