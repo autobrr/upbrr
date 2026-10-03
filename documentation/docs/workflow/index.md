@@ -70,7 +70,7 @@ Tracker group policies are evaluated separately for each selected tracker and tr
 
 Tracker rules and constructibility checks can mark a lane ready, blocked, skipped, or requiring manual review. A tracker-specific block need not stop other eligible trackers.
 
-For warnings that permit an override, turn on **Acknowledge tracker warnings** on the tracker's **Dupe Check** card or answer the CLI prompt. Approval covers the current warnings; changed warnings require renewed approval. Strict failures cannot be overridden. See [tracker warning approval](../trackers/index.md#approve-tracker-warnings) for unattended and debug behavior.
+For warnings that permit an override, turn on **Acknowledge tracker warnings** on the tracker's **Dupe Check** card or answer the CLI prompt. Approval covers the current warnings. Turn the toggle off to withdraw approval. Changed warnings or a new prepared generation require renewed approval. Strict failures cannot be overridden. See [tracker warning approval](../trackers/index.md#approve-tracker-warnings) for unattended and debug behavior.
 
 ## 4. Review duplicate evidence
 
