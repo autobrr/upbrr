@@ -72,6 +72,8 @@ func (m *Module) authorizeTrackerRules(
 	selection, selectionOK := state.Selections[workflow.Selection.ID]
 	instructionSnapshot, instructionsOK := state.ProjectionInstructions[workflow.ProjectionInstructions.ID]
 	currentProjections, projectionsOK := state.Projections[workflow.TrackerProjections.ID]
+	// Later stages can advance the workflow while this projection's action stays
+	// pending. Request freshness is checked against the current workflow revision.
 	workflowActionIndex := slices.IndexFunc(workflow.RequiredActions, func(candidate api.RequiredAction) bool {
 		return candidate.ID == action.ID &&
 			candidate.Kind == api.RequiredActionAuthorizeRules &&
@@ -83,7 +85,7 @@ func (m *Module) authorizeTrackerRules(
 		instructionSnapshot.Revision != workflow.ProjectionInstructions.Revision ||
 		currentProjections.Revision != workflow.TrackerProjections.Revision ||
 		currentProjections.Instructions == nil || *currentProjections.Instructions != *workflow.ProjectionInstructions ||
-		(confirmed && (workflowActionIndex < 0 || workflow.RequiredActions[workflowActionIndex].WorkflowRevision != workflow.Revision)) ||
+		(confirmed && workflowActionIndex < 0) ||
 		action.TrackerID != projection.TrackerID {
 		return CommandResult{}, fmt.Errorf("%w: rule authorization dependencies are stale", ErrInvalidTransition)
 	}
