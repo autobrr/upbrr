@@ -1159,7 +1159,7 @@ func TestMergeStoredConfigMapPreservesLoneLegacyTrackerFieldAlias(t *testing.T) 
 
 	base := map[string]any{"APIKey": ""}
 	overlay := map[string]any{"ApiKey": "legacy-token"}
-	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.MNS"); err != nil {
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, []string{"Trackers", "Trackers", "MNS"}); err != nil {
 		t.Fatalf("merge lone legacy alias: %v", err)
 	}
 	if base["APIKey"] != "legacy-token" {
@@ -1172,7 +1172,7 @@ func TestMergeStoredConfigMapPreservesPopulatedLegacyTrackerFieldAlias(t *testin
 
 	base := map[string]any{"APIKey": ""}
 	overlay := map[string]any{"APIKey": "", "ApiKey": "legacy-token"}
-	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.MNS"); err != nil {
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, []string{"Trackers", "Trackers", "MNS"}); err != nil {
 		t.Fatalf("merge populated legacy alias: %v", err)
 	}
 	if base["APIKey"] != "legacy-token" {
@@ -1341,7 +1341,7 @@ func TestMergeStoredDynamicConfigValueSkipsNonObjectCaseFoldedTrackerEntry(t *te
 		},
 	}
 
-	report, err := mergeStoredDynamicConfigValue(base, "btn", "not-an-object", "Trackers.Trackers")
+	report, err := mergeStoredDynamicConfigValue(base, "btn", "not-an-object", []string{"Trackers", "Trackers"})
 	if err != nil {
 		t.Fatalf("merge stored dynamic config value: %v", err)
 	}
@@ -1390,7 +1390,7 @@ func TestMergeStoredConfigMapSkipsNonObjectDynamicEntries(t *testing.T) {
 				test.key: test.overlayValue,
 			}
 
-			report, err := mergeStoredConfigMapWithReport(base, overlay, test.path)
+			report, err := mergeStoredConfigMapWithReport(base, overlay, strings.Split(test.path, "."))
 			if err != nil {
 				t.Fatalf("merge stored config map: %v", err)
 			}
@@ -1416,7 +1416,7 @@ func TestMergeStoredConfigMapMergesCaseInsensitiveStoredTrackerField(t *testing.
 		"apikey": "stored-token",
 	}
 
-	report, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.BTN")
+	report, err := mergeStoredConfigMapWithReport(base, overlay, []string{"Trackers", "Trackers", "BTN"})
 	if err != nil {
 		t.Fatalf("merge stored config map: %v", err)
 	}
@@ -1452,7 +1452,7 @@ func TestMergeStoredConfigMapRejectsDuplicateTrackerCaseVariants(t *testing.T) {
 		},
 	}
 
-	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers"); err == nil {
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, []string{"Trackers", "Trackers"}); err == nil {
 		t.Fatalf("expected duplicate case-folded tracker keys to fail")
 	}
 }
@@ -1468,7 +1468,7 @@ func TestMergeStoredConfigMapRejectsAmbiguousTrackerField(t *testing.T) {
 		"apikey": "stored-token",
 	}
 
-	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.BTN"); err == nil {
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, []string{"Trackers", "Trackers", "BTN"}); err == nil {
 		t.Fatalf("expected ambiguous tracker field to fail")
 	}
 }
@@ -1483,7 +1483,7 @@ func TestMergeStoredConfigMapDoesNotUnicodeFoldTrackerField(t *testing.T) {
 		"API\u212Aey": "stored-token",
 	}
 
-	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.BTN"); err != nil {
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, []string{"Trackers", "Trackers", "BTN"}); err != nil {
 		t.Fatalf("merge stored config map: %v", err)
 	}
 	if got := base["APIKey"]; got != "" {
@@ -2103,5 +2103,72 @@ func TestRepoDBPath(t *testing.T) {
 	}
 	if got := repoDBPath(struct{}{}); got != "" {
 		t.Fatalf("repoDBPath for repo without DBPath got %q, want empty", got)
+	}
+}
+
+func TestDottedTrackerRetirementRepair(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"loaded", "missing"} {
+		t.Run(mode, func(t *testing.T) {
+			omitEntry := mode == "missing"
+			requireMap := func(value any) map[string]any {
+				t.Helper()
+				object, ok := value.(map[string]any)
+				if !ok {
+					t.Fatalf("expected config object, got %T", value)
+				}
+				return object
+			}
+			raw := defaultDatabaseConfigMap(t)
+			trackers := requireMap(requireMap(raw["Trackers"])["Trackers"])
+			trackers["legacy.foo"] = map[string]any{
+				"PronfoAPIKey": "upbrr-enc:v1:unreadable",
+				"Url":          "retired-url",
+				"keep_me":      "retained",
+				"extension":    map[string]any{"PronfoAPIKey": "nested-value", "Url": "nested-url"},
+			}
+			repo := &sectionBatchPreserveRepo{raw: raw}
+			for attempt := range 2 {
+				loaded, report, err := LoadFromDatabaseWithRepairReport(t.Context(), repo)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if attempt == 0 && !slices.Contains(report.DeprecatedPaths, "Trackers.Trackers.legacy.foo.PronfoAPIKey") {
+					t.Error("retired field under dotted tracker name was not reported")
+				}
+				if attempt == 0 && !slices.Contains(report.ChangedSections, "Trackers") {
+					t.Error("retired field did not trigger tracker section repair")
+				}
+				entry := loaded.Trackers.Trackers["legacy.foo"]
+				if entry.Unknown["keep_me"] != "retained" {
+					t.Error("dotted tracker extension was lost")
+				}
+				if omitEntry {
+					delete(loaded.Trackers.Trackers, "legacy.foo")
+					if attempt == 1 {
+						stored := requireMap(requireMap(requireMap(repo.raw["Trackers"])["Trackers"])["legacy.foo"])
+						stored["KeepMe"] = "upper"
+						stored["keepme"] = "lower"
+					}
+				}
+				if err := SaveSectionsToDatabase(t.Context(), loaded, []string{"Trackers"}, repo); err != nil {
+					t.Fatal(err)
+				}
+				persisted := requireMap(requireMap(requireMap(repo.raw["Trackers"])["Trackers"])["legacy.foo"])
+				if omitEntry && attempt == 1 && (persisted["KeepMe"] != "upper" || persisted["keepme"] != "lower") {
+					t.Error("missing entry preservation folded unrelated extension keys")
+				}
+				if _, ok := persisted["Url"]; ok {
+					t.Error("repair save restored retired URL")
+				}
+				if _, ok := persisted["PronfoAPIKey"]; ok {
+					t.Error("repair save restored retired field")
+				}
+				extension, ok := persisted["extension"].(map[string]any)
+				if !ok || extension["PronfoAPIKey"] != "nested-value" || extension["Url"] != "nested-url" {
+					t.Error("nested extension fields were changed")
+				}
+			}
+		})
 	}
 }
