@@ -1047,6 +1047,9 @@ func (s DescriptionSet) Clone() (DescriptionSet, error) { return cloneWorkflowVa
 
 // Validate verifies transport-safe description generation choices.
 func (i DescriptionInstructions) Validate() error {
+	if _, err := ParseLogLevel(i.Options.RunLogLevel); err != nil {
+		return fmt.Errorf("description run log level: %w", err)
+	}
 	seen := make(map[string]struct{}, len(i.Overrides))
 	for _, override := range i.Overrides {
 		key := strings.ToLower(strings.TrimSpace(override.GroupKey))

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -32,10 +33,12 @@ func NewValidatorWithLogger(logger api.Logger) *Validator {
 // ValidatePaths validates paths in input order and returns their absolute host
 // forms without deduplication. It stops at the first invalid path or cancellation.
 func (v *Validator) ValidatePaths(ctx context.Context, paths []string) ([]string, error) {
+	logger := logging.FromContext(ctx, v.logger)
+
 	if len(paths) == 0 {
 		return nil, internalerrors.ErrInvalidInput
 	}
-	v.logger.Debugf("filesystem: validating %d paths", len(paths))
+	logger.Debugf("filesystem: validating %d paths", len(paths))
 
 	result := make([]string, 0, len(paths))
 
@@ -55,7 +58,7 @@ func (v *Validator) ValidatePaths(ctx context.Context, paths []string) ([]string
 		if err != nil {
 			return nil, fmt.Errorf("filesystem: resolve path: %w", err)
 		}
-		v.logger.Tracef("filesystem: resolved %s", abs)
+		logger.Tracef("filesystem: resolved %s", abs)
 
 		if _, err := os.Stat(abs); err != nil {
 			if os.IsNotExist(err) {
@@ -66,7 +69,7 @@ func (v *Validator) ValidatePaths(ctx context.Context, paths []string) ([]string
 
 		result = append(result, abs)
 	}
-	v.logger.Debugf("filesystem: validated %d paths", len(result))
+	logger.Debugf("filesystem: validated %d paths", len(result))
 
 	return result, nil
 }

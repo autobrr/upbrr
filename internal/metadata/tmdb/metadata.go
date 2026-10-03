@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 )
 
@@ -30,6 +31,8 @@ var yearPattern = regexp.MustCompile(`(18|19|20)\d{2}`)
 // primary-record failure returns no result; optional TMDB and AniList lookup
 // failures are logged and omitted.
 func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (MetadataResult, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if input.TMDBID == 0 {
 		return MetadataResult{}, errNotFound
 	}
@@ -189,26 +192,26 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 
 	if externalErr == nil {
 		result = applyExternalIDs(result, external, input, media)
-	} else if c.logger != nil {
-		c.logger.Warnf("tmdb: external ids lookup failed: %v", externalErr)
+	} else {
+		logger.Warnf("tmdb: external ids lookup failed: %v", externalErr)
 	}
 
 	if videosErr == nil {
 		result.YouTube = findTrailer(videos.Results)
-	} else if c.logger != nil {
-		c.logger.Warnf("tmdb: video lookup failed: %v", videosErr)
+	} else {
+		logger.Warnf("tmdb: video lookup failed: %v", videosErr)
 	}
 
 	if keywordsErr == nil {
 		result.Keywords = keywordsString(category, keywords)
-	} else if c.logger != nil {
-		c.logger.Warnf("tmdb: keywords lookup failed: %v", keywordsErr)
+	} else {
+		logger.Warnf("tmdb: keywords lookup failed: %v", keywordsErr)
 	}
 
 	if creditsErr == nil {
 		result.Directors, result.Cast = collectCredits(credits)
-	} else if c.logger != nil {
-		c.logger.Warnf("tmdb: credits lookup failed: %v", creditsErr)
+	} else {
+		logger.Warnf("tmdb: credits lookup failed: %v", creditsErr)
 	}
 
 	if translationsErr == nil {
@@ -216,18 +219,16 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		if !hasUsableLocalizedTitle(result.LocalizedTitles, "de") {
 			if title, err := c.fetchLocalizedTitle(requestCtx, path, "de-DE"); err == nil && title != "" {
 				result.LocalizedTitles["de"] = title
-			} else if err != nil && c.logger != nil {
-				c.logger.Warnf("tmdb: german title fallback lookup failed: %v", err)
+			} else if err != nil {
+				logger.Warnf("tmdb: german title fallback lookup failed: %v", err)
 			}
 		}
 	} else {
-		if c.logger != nil {
-			c.logger.Warnf("tmdb: translations lookup failed: %v", translationsErr)
-		}
+		logger.Warnf("tmdb: translations lookup failed: %v", translationsErr)
 		if title, err := c.fetchLocalizedTitle(requestCtx, path, "de-DE"); err == nil && title != "" {
 			result.LocalizedTitles = map[string]string{"de": title}
-		} else if err != nil && c.logger != nil {
-			c.logger.Warnf("tmdb: german title fallback lookup failed: %v", err)
+		} else if err != nil {
+			logger.Warnf("tmdb: german title fallback lookup failed: %v", err)
 		}
 	}
 
@@ -235,8 +236,8 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		logo, logoName := selectLogo(images.Logos, input.LogoLanguages)
 		result.Logo = logo
 		result.TMDBLogo = logoName
-	} else if input.AddLogo && imagesErr != nil && c.logger != nil {
-		c.logger.Warnf("tmdb: logo lookup failed: %v", imagesErr)
+	} else if input.AddLogo && imagesErr != nil {
+		logger.Warnf("tmdb: logo lookup failed: %v", imagesErr)
 	}
 	result.LogoLookupAttempted = input.AddLogo && imagesErr == nil
 
@@ -267,9 +268,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		}
 	}
 
-	if c.logger != nil {
-		c.logger.Tracef("tmdb: metadata loaded id=%d title=%q year=%d type=%s", input.TMDBID, result.Title, result.Year, result.TMDBType)
-	}
+	logger.Tracef("tmdb: metadata loaded id=%d title=%q year=%d type=%s", input.TMDBID, result.Title, result.Year, result.TMDBType)
 
 	return result, nil
 }

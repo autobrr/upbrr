@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -291,7 +293,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow load input admission: %w", err)
 	}
 	admissionRevision := prior.Revision
-	m.logger.Debugf("active input: open admission decision=check state=%s revision=%d", prior.State, prior.Revision)
+	logging.FromContext(ctx, m.logger).Debugf("active input: open admission decision=check state=%s revision=%d", prior.State, prior.Revision)
 	if prior.State != api.ActiveInputEmpty && !prior.LeaseExpiresAt.After(m.clock.Now()) {
 		foreignOwner := prior.OwnerID != owner
 		prior, err = m.recoverActiveInput(ctx, prior, owner, false)
@@ -356,7 +358,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		rollback.OwnerID, rollback.CoordinatorID = owner, m.processEpoch
 		rollback.LeaseExpiresAt = m.clock.Now().Add(workflowWorkLeaseTTL)
 		if cleanupErr := m.activeInputs.CompareAndSwapActiveInput(cleanup, pending, rollback, m.clock.Now()); cleanupErr != nil {
-			m.logger.Warnf("active input: rollback failed state=recovery_required")
+			logging.FromContext(ctx, m.logger).Warnf("active input: rollback failed state=recovery_required")
 		}
 	}()
 	if err := m.cancelPriorInputWork(ctx, owner, prior.WorkflowID); err != nil {

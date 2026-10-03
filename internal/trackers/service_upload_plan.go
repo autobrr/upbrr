@@ -350,6 +350,10 @@ func (s *Service) PrepareRetainedUploadPlan(
 	if s == nil || s.registry == nil {
 		return nil, errors.New("trackers: retained upload preparation registry is unavailable")
 	}
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	resolved := make([]string, 0, len(projections))
 	projectionByTracker := make(map[string]api.TrackerReleaseProjection, len(projections))
 	for _, projection := range projections {

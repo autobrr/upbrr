@@ -314,7 +314,7 @@ func (m *mediaModule) resolveAcceptedImageUpload(
 	if err != nil {
 		return api.UploadSubject{}, nil, fmt.Errorf("core: resolve image upload subject: %w", err)
 	}
-	targets, err := m.resolveImageUploadTargets(input.Trackers, subject, input.Host, input.ExcludedHosts)
+	targets, err := m.resolveImageUploadTargets(ctx, input.Trackers, subject, input.Host, input.ExcludedHosts)
 	if err != nil {
 		return api.UploadSubject{}, nil, err
 	}
@@ -322,6 +322,7 @@ func (m *mediaModule) resolveAcceptedImageUpload(
 }
 
 func (m *mediaModule) resolveImageUploadTargets(
+	ctx context.Context,
 	trackerNames []string,
 	subject api.UploadSubject,
 	host string,
@@ -331,7 +332,7 @@ func (m *mediaModule) resolveImageUploadTargets(
 
 	// The workflow already supplied its exact downstream-eligible projection set.
 	// Do not reapply legacy prepared-subject removals or client matches here.
-	resolvedTrackers := trackers.ResolveExplicitTrackersWithRegistry(trackerNames, m.logger, m.registry)
+	resolvedTrackers := trackers.ResolveExplicitTrackersWithRegistry(trackerNames, logging.FromContext(ctx, m.logger), m.registry)
 	var targets []trackers.ImageUploadTarget
 	var err error
 	if normalizedHost == "" {
@@ -414,6 +415,10 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	retainedLinks []api.UploadedImageLink,
 	blockedRetainedLinks []api.UploadedImageLink,
 ) (api.UploadImagesResult, error) {
+	view := *m
+	view.logger = logging.FromContext(ctx, m.logger)
+	m = &view
+
 	type scheduledAttempt struct {
 		target   trackers.ImageUploadTarget
 		fallback bool
@@ -681,6 +686,10 @@ func (m *mediaModule) uploadImagesToTarget(
 	blockedRetainedLinks []api.UploadedImageLink,
 	fallback bool,
 ) ([]api.UploadedImageLink, error) {
+	view := *m
+	view.logger = logging.FromContext(ctx, m.logger)
+	m = &view
+
 	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
 	target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
 	progressTarget := api.ImageUploadProgressTarget{

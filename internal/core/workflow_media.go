@@ -1477,10 +1477,11 @@ func (b workflowMediaBuilder) restoredHostedImageAttempts(
 	if err != nil {
 		return nil, false
 	}
-	return b.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, subject)
+	return b.restoredHostedImageAttemptsForSubject(ctx, snapshot, retained, projections, subject)
 }
 
 func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
+	ctx context.Context,
 	snapshot api.MediaArtifactSet,
 	retained workflowMediaPrivateArtifacts,
 	projections []api.TrackerReleaseProjection,
@@ -1538,7 +1539,7 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 		}
 		excludedHosts := make([]string, 0)
 		for {
-			targets, err := b.media.resolveImageUploadTargets([]string{tracker}, subject, "", excludedHosts)
+			targets, err := b.media.resolveImageUploadTargets(ctx, []string{tracker}, subject, "", excludedHosts)
 			if err != nil {
 				return nil, false
 			}

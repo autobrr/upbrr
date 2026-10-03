@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -25,6 +27,8 @@ type mediaInfoIDs struct {
 }
 
 func (s *Service) collectMediaInfoIdentityEvidence(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	select {
 	case <-ctx.Done():
 		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -37,9 +41,7 @@ func (s *Service) collectMediaInfoIdentityEvidence(ctx context.Context, meta pre
 
 	ids, err := loadMediaInfoIDs(meta.MediaInfoJSONPath, meta.MediaInfoTextPath)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: mediainfo id lookup failed: %v", err)
-		}
+		logger.Warnf("metadata: mediainfo id lookup failed: %v", err)
 		return meta, nil
 	}
 	if ids == nil || (ids.TMDBID == 0 && ids.IMDBID == 0 && ids.TVDBID == 0 && ids.Category == "") {

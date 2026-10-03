@@ -23,6 +23,7 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -78,6 +79,8 @@ func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *tracker
 // cleanup is attempted before return. Cancellation is checked before selection
 // and creation but does not interrupt mkbrr after hashing starts.
 func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	select {
 	case <-ctx.Done():
 		return api.TorrentResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -90,14 +93,14 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	}
 	meta.SourcePath = source
 
-	s.logger.Debugf("torrent: preparing for %s", source)
+	logger.Debugf("torrent: preparing for %s", source)
 	forceRehash := torrentOverrideEnabled(meta.TorrentOverrides.Rehash)
 	reuseOnly := torrentOverrideEnabled(meta.TorrentOverrides.NoHash)
 	if forceRehash && reuseOnly {
-		s.logger.Debugf("torrent: ignoring nohash because rehash is enabled for %s", source)
+		logger.Debugf("torrent: ignoring nohash because rehash is enabled for %s", source)
 		reuseOnly = false
 	}
-	s.logger.Debugf("torrent: reuse decision=scan source=%s force_rehash=%t reuse_only=%t", source, forceRehash, reuseOnly)
+	logger.Debugf("torrent: reuse decision=scan source=%s force_rehash=%t reuse_only=%t", source, forceRehash, reuseOnly)
 	emitTorrentProgress(ctx, meta, "running", "Checking reusable torrent")
 
 	// If user already provided a .torrent file, re-use it directly.
@@ -109,10 +112,10 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		if info.IsDir() {
 			return api.TorrentResult{}, internalerrors.ErrInvalidInput
 		}
-		if err := validateCandidateTorrent(source, resolveTrackerPolicy(meta, s.registry), meta, s.logger); err != nil {
+		if err := validateCandidateTorrent(source, resolveTrackerPolicy(meta, s.registry), meta, logger); err != nil {
 			return api.TorrentResult{}, fmt.Errorf("torrent: provided torrent %q: %w", source, err)
 		}
-		s.logger.Debugf("torrent: using provided torrent %s", source)
+		logger.Debugf("torrent: using provided torrent %s", source)
 		return resultFromExistingTorrent(ctx, meta, source, "Using provided torrent")
 	}
 
@@ -123,7 +126,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	validationCache := make(map[string]error, len(candidates))
 	policy := resolveTrackerPolicy(meta, s.registry)
 	if !forceRehash {
-		if reusable := findReusableTorrent(candidates, policy, meta, validationCache, s.logger); reusable != "" {
+		if reusable := findReusableTorrent(candidates, policy, meta, validationCache, logger); reusable != "" {
 			return resultFromExistingTorrent(ctx, meta, reusable, "Reusing existing torrent")
 		}
 	}
@@ -135,7 +138,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		meta.Trackers = removeTrackerNames(meta.Trackers, skippedTrackers)
 		rehashedTrackers = normalizedTrackerNames(meta.Trackers)
 	} else if hasExistingTorrentCandidate(candidates) {
-		compatible := reusableTrackers(candidates, meta, validationCache, s.logger, s.registry)
+		compatible := reusableTrackers(candidates, meta, validationCache, logger, s.registry)
 		for _, tracker := range selectedTrackerNames(meta.Trackers, meta.SkipIfRehashTrackers) {
 			if _, ok := compatible[tracker]; !ok {
 				skippedTrackers = append(skippedTrackers, tracker)
@@ -143,7 +146,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		meta.Trackers = removeTrackerNames(meta.Trackers, skippedTrackers)
 		policy = resolveTrackerPolicy(meta, s.registry)
-		if reusable := findReusableTorrent(candidates, policy, meta, validationCache, s.logger); reusable != "" {
+		if reusable := findReusableTorrent(candidates, policy, meta, validationCache, logger); reusable != "" {
 			result, resultErr := resultFromExistingTorrent(ctx, meta, reusable, "Reusing existing torrent")
 			result.SkippedTrackers = skippedTrackers
 			return result, resultErr
@@ -158,7 +161,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 	}
 	for _, tracker := range skippedTrackers {
-		s.logger.Infof("torrent: skipping tracker=%s decision=skip_if_rehash", tracker)
+		logger.Infof("torrent: skipping tracker=%s decision=skip_if_rehash", tracker)
 	}
 	if len(meta.Trackers) == 0 && len(skippedTrackers) > 0 {
 		return api.TorrentResult{SkippedTrackers: skippedTrackers}, nil
@@ -169,12 +172,12 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		return api.TorrentResult{}, fmt.Errorf("torrent: no reusable torrent found with nohash enabled: %w", internalerrors.ErrNotFound)
 	}
 
-	s.logger.Debugf("torrent: resolving create spec for %s", source)
+	logger.Debugf("torrent: resolving create spec for %s", source)
 	createSpec, err := resolveCreateSpec(meta, source, s.tmpRoot)
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
-	s.logger.Debugf(
+	logger.Debugf(
 		"torrent: create spec path=%s name=%q include_patterns=%d staged=%t",
 		createSpec.path,
 		createSpec.name,
@@ -184,7 +187,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	if createSpec.cleanupPath != "" {
 		defer func() {
 			if err := os.RemoveAll(createSpec.cleanupPath); err != nil {
-				s.logger.Warnf("torrent: failed to remove staging path path=%s err=%s", createSpec.cleanupPath, redaction.RedactValue(err.Error(), nil))
+				logger.Warnf("torrent: failed to remove staging path path=%s err=%s", createSpec.cleanupPath, redaction.RedactValue(err.Error(), nil))
 			}
 		}()
 	}
@@ -215,7 +218,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 			return api.TorrentResult{}, fmt.Errorf("torrent: resolve tracker piece size: %w", err)
 		}
 	}
-	s.logger.Infof("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
+	logger.Infof("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
 	emitTorrentProgress(ctx, meta, "running", "Creating torrent with mkbrr")
 
 	trackerURLs := []string(nil)
@@ -243,20 +246,20 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	}
 	if policy != nil {
 		trackerCount := len(normalizedTrackerNames(meta.Trackers))
-		s.logger.Infof("torrent: tracker policy validation tracker=%s state=start decision=validate count=%d", policy.name, trackerCount)
+		logger.Infof("torrent: tracker policy validation tracker=%s state=start decision=validate count=%d", policy.name, trackerCount)
 		if err := policy.validateTorrent(info.Path, meta); err != nil {
-			s.logger.Warnf("torrent: tracker policy validation tracker=%s state=completed decision=rejected count=%d", policy.name, trackerCount)
+			logger.Warnf("torrent: tracker policy validation tracker=%s state=completed decision=rejected count=%d", policy.name, trackerCount)
 			emitTorrentProgress(ctx, meta, "failed", "Torrent policy validation failed")
 			return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent policy %q: %w", info.Path, err)
 		}
-		s.logger.Infof("torrent: tracker policy validation tracker=%s state=completed decision=accepted count=%d", policy.name, trackerCount)
+		logger.Infof("torrent: tracker policy validation tracker=%s state=completed decision=accepted count=%d", policy.name, trackerCount)
 	}
 	if err := setUploadMetadata(info.Path); err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
 		return api.TorrentResult{}, err
 	}
 	emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
-	s.logger.Infof("torrent: created torrent %s", info.Path)
+	logger.Infof("torrent: created torrent %s", info.Path)
 
 	return api.TorrentResult{
 		Path:             info.Path,

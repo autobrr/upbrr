@@ -33,6 +33,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -257,6 +258,8 @@ func (c *Client) TorrentInfo(ctx context.Context, tracker string, id string, fil
 }
 
 func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fileName string, onlyID bool, keepImages bool) (Result, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	baseURL, ok := baseURLForTrackerWithConfig(c.cfg, c.registry, tracker)
 	if !ok {
 		return Result{}, fmt.Errorf("unit3d: unknown tracker %q", tracker)
@@ -265,7 +268,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	apiKey := strings.TrimSpace(TrackerAPIKey(c.cfg, tracker))
 	params := url.Values{}
 	if apiKey == "" {
-		c.logger.Debugf("unit3d: %s missing API key; request will be unauthenticated", tracker)
+		logger.Debugf("unit3d: %s missing API key; request will be unauthenticated", tracker)
 	}
 
 	var endpoint string
@@ -306,7 +309,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	}
 	attrs := payload.extractAttributes(strings.TrimSpace(id) != "")
 	if attrs == nil {
-		c.logger.Debugf("unit3d: %s response contained no attributes (id=%q file=%q)", tracker, strings.TrimSpace(id), strings.TrimSpace(fileName))
+		logger.Debugf("unit3d: %s response contained no attributes (id=%q file=%q)", tracker, strings.TrimSpace(id), strings.TrimSpace(fileName))
 		return Result{}, nil
 	}
 
@@ -349,7 +352,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	validated := []bbcode.Image(nil)
 	var imageErr error
 	if keepImages {
-		validated, imageErr = PrepareDescriptionImages(ctx, c.http, tracker, c.logger, images)
+		validated, imageErr = PrepareDescriptionImages(ctx, c.http, tracker, logger, images)
 		images = validated
 	} else {
 		images = nil
@@ -363,7 +366,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 			validatedCount++
 		}
 	}
-	c.logger.Debugf(
+	logger.Debugf(
 		"unit3d: %s description raw=%d cleaned=%d images=%d validated=%d onlyID=%t keepImages=%t",
 		tracker,
 		len(description),
@@ -375,7 +378,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	)
 	for _, report := range reports {
 		for _, note := range report.Notes {
-			c.logger.Debugf("unit3d: %s description note kind=%s msg=%s", tracker, note.Kind, note.Message)
+			logger.Debugf("unit3d: %s description note kind=%s msg=%s", tracker, note.Kind, note.Message)
 		}
 	}
 
@@ -630,6 +633,10 @@ func (c *Client) SearchTorrentsWithEvidenceBound(
 	isDisc bool,
 	maxPages int,
 ) (Unit3DSearchResult, error) {
+	view := *c
+	view.logger = logging.FromContext(ctx, c.logger)
+	c = &view
+
 	if maxPages <= 0 {
 		maxPages = 100
 	}

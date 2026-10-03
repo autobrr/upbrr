@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
@@ -95,6 +97,8 @@ func videoBitrateAssessment(doc mediaInfoDoc) api.VideoBitrateAssessment {
 // deriveMediaFacts enriches prepared evidence from MediaInfo, BDInfo, and filename
 // tokens, overrides, and tracker rules, then rebuilds the release name.
 func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	select {
 	case <-ctx.Done():
 		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -108,8 +112,8 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 
 	meta.MediaInfoUniqueID, meta.MediaInfoUniqueIDPresent = validateMediaInfoUniqueID(meta, miDoc)
 	meta.VideoBitrate = videoBitrateAssessment(miDoc)
-	if !meta.MediaInfoUniqueIDPresent && s.logger != nil {
-		s.logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
+	if !meta.MediaInfoUniqueIDPresent {
+		logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
 	meta.MediaTracks, meta.PrimaryAudioTrackID, meta.TrackAudioLanguages, meta.TrackSubtitleLanguages, err = mediaTrackFacts(meta, miDoc)
 	if err != nil {
@@ -127,27 +131,21 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if len(meta.SubtitleLanguages) == 0 {
 		meta.SubtitleLanguages = bdSubtitleLanguages
 	}
-	if s.logger != nil && (len(meta.AudioLanguages) > 0 || len(meta.SubtitleLanguages) > 0) {
-		s.logger.Debugf("metadata: media languages audio=%v subs=%v", meta.AudioLanguages, meta.SubtitleLanguages)
+	if len(meta.AudioLanguages) > 0 || len(meta.SubtitleLanguages) > 0 {
+		logger.Debugf("metadata: media languages audio=%v subs=%v", meta.AudioLanguages, meta.SubtitleLanguages)
 	}
 
 	meta.Container = containerFromMeta(meta)
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details container=%q", meta.Container)
-	}
+	logger.Debugf("metadata: media details container=%q", meta.Container)
 
 	audio, channels, hasCommentary := audioFromMedia(meta, miDoc, bdinfo)
 	meta.Audio = audio
 	meta.Channels = channels
 	meta.HasCommentary = hasCommentary
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
-	}
+	logger.Debugf("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
 
 	meta.Is3D = threeDFromMedia(miDoc, bdinfo)
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details 3d=%q", meta.Is3D)
-	}
+	logger.Debugf("metadata: media details 3d=%q", meta.Is3D)
 
 	source, typeValue := sourceAndType(meta, miDoc)
 	if source != "" {
@@ -181,28 +179,22 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if strings.TrimSpace(meta.Release.Resolution) == "" && !strings.EqualFold(meta.DiscType, "DVD") {
 		if res := resolutionFromMediaInfo(miDoc, meta.SourcePath); res != "" {
 			meta.Release.Resolution = res
-			if s.logger != nil {
-				s.logger.Debugf("metadata: resolution derived from mediainfo %q", res)
-			}
+			logger.Debugf("metadata: resolution derived from mediainfo %q", res)
 		}
 	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)
-	}
+	logger.Debugf("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)
 
 	meta.UHD = uhdFromMeta(meta)
 	meta.HDRFacts = hdrFactsFromMedia(miDoc, bdinfo, meta)
 	meta.HDR = hdrFactsDisplay(meta.HDRFacts)
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
-	}
+	logger.Debugf("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 
 	meta = s.applyBlurayMetadata(ctx, meta, bdinfo)
 	if err := ctx.Err(); err != nil {
 		return preparationstate.State{}, fmt.Errorf("metadata: blu-ray provider refresh canceled: %w", err)
 	}
-	if s.logger != nil && meta.ProviderMetadata.Bluray != nil {
-		s.logger.Debugf(
+	if meta.ProviderMetadata.Bluray != nil {
+		logger.Debugf(
 			"metadata: blu-ray.com candidates=%d selected=%q score=%.1f threshold=%.1f",
 			len(meta.ProviderMetadata.Bluray.Candidates),
 			meta.ProviderMetadata.Bluray.SelectedReleaseID,
@@ -212,9 +204,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	}
 
 	meta.Distributor = normalizeDistributor(meta.Distributor)
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details distributor=%q", meta.Distributor)
-	}
+	logger.Debugf("metadata: media details distributor=%q", meta.Distributor)
 
 	if strings.EqualFold(meta.DiscType, "BDMV") {
 		meta.Region = regionFromBDInfo(bdinfo, meta.Region)
@@ -225,36 +215,30 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	} else {
 		meta.VideoEncode, meta.VideoCodec, meta.HasEncodeSettings, meta.BitDepth = videoEncodeFromMedia(miDoc, meta.Type)
 	}
-	if s.logger != nil {
-		s.logger.Debugf(
-			"metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q",
-			meta.Region,
-			meta.VideoEncode,
-			meta.VideoCodec,
-			meta.BitDepth,
-		)
-	}
+	logger.Debugf(
+		"metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q",
+		meta.Region,
+		meta.VideoEncode,
+		meta.VideoCodec,
+		meta.BitDepth,
+	)
 
 	meta.Edition, meta.Repack = editionFromMeta(meta, miDoc)
 	meta.WebDV = false
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
-	}
+	logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
 
 	meta.MediaInfoEncodeSettingsPresent = true
 	if !strings.EqualFold(meta.DiscType, "BDMV") && strings.EqualFold(meta.Type, "ENCODE") && !strings.EqualFold(meta.VideoCodec, "AV1") {
 		meta.MediaInfoEncodeSettingsPresent = validateMediaInfoSettings(miDoc)
-		if !meta.MediaInfoEncodeSettingsPresent && s.logger != nil {
-			s.logger.Warnf("metadata: mediainfo validation failed (missing encode settings)")
+		if !meta.MediaInfoEncodeSettingsPresent {
+			logger.Warnf("metadata: mediainfo validation failed (missing encode settings)")
 		}
 	}
 
 	if meta.StreamOptimized != 0 {
 		meta.StreamOptimized = 1
 	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details stream_optimized=%d", meta.StreamOptimized)
-	}
+	logger.Debugf("metadata: media details stream_optimized=%d", meta.StreamOptimized)
 
 	service, longName, filename := resolveService(meta)
 	if meta.Service == "" && service != "" {
@@ -266,15 +250,13 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if meta.Filename == "" && filename != "" {
 		meta.Filename = filename
 	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: media details service=%q service_longname=%q", meta.Service, meta.ServiceLongName)
-	}
+	logger.Debugf("metadata: media details service=%q service_longname=%q", meta.Service, meta.ServiceLongName)
 
 	if err := applyMetadataOverrides(&meta); err != nil {
 		return preparationstate.State{}, err
 	}
 	meta.Audio = applyAudioLanguagePrefix(meta.Audio, meta)
-	RebuildReleaseName(&meta, s.logger)
+	RebuildReleaseName(&meta, logger)
 
 	// Scene detection runs here — after external IDs are resolved and the release
 	// name is rebuilt — so the srrdb imdb: lookup has a resolved IMDb id and full
@@ -284,7 +266,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if err != nil {
 		return preparationstate.State{}, err
 	}
-	captureAvailableGeneratedName(&meta, s.logger)
+	captureAvailableGeneratedName(&meta, logger)
 	// Fold fact-producing name instructions into canonical prepared state
 	// exactly once, after all evidence resolution, so explicit values and
 	// clears win over derived evidence and the final name cannot diverge from
@@ -293,7 +275,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	// Scene detection can supply the service (from the NFO), which WEB release
 	// names embed, so rebuild once more to fold in scene-derived metadata and
 	// the effective instruction values.
-	RebuildReleaseName(&meta, s.logger)
+	RebuildReleaseName(&meta, logger)
 
 	return meta, nil
 }
@@ -304,6 +286,8 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 // pipeline aborts rather than continuing into tracker rules. Detection is gated
 // by config (scene_detection) via a nil detector.
 func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	if s.scene == nil {
 		return meta, nil
 	}
@@ -313,9 +297,7 @@ func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate
 		case isContextError(ctx, err):
 			return meta, fmt.Errorf("metadata: scene detect: %w", err)
 		case isSceneNFOError(err):
-			if s.logger != nil {
-				s.logger.Warnf("metadata: scene nfo side effect failed: %s", redaction.RedactValue(err.Error(), nil))
-			}
+			logger.Warnf("metadata: scene nfo side effect failed: %s", redaction.RedactValue(err.Error(), nil))
 			// The primary match may still be present alongside a recoverable NFO
 			// side-effect error; apply it when it carries data.
 			if !sceneResultHasData(result) {
@@ -323,9 +305,7 @@ func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate
 			}
 		default:
 			// Transient srrdb/network failure: skip scene, never block the upload.
-			if s.logger != nil {
-				s.logger.Debugf("metadata: scene detect skipped: %s", redaction.RedactValue(err.Error(), nil))
-			}
+			logger.Debugf("metadata: scene detect skipped: %s", redaction.RedactValue(err.Error(), nil))
 			return meta, nil
 		}
 	}
@@ -337,16 +317,14 @@ func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate
 		!hasPositiveProviderOverride(effectiveOverrides) {
 		meta.Identity.IMDBID = result.IMDBID
 	}
-	if s.logger != nil {
-		if meta.Scene {
-			s.logger.Debugf("metadata: scene release detected name=%q imdb=%d renamed=%t", meta.SceneName, meta.SceneIMDB, meta.SceneRenamed)
-		}
-		if meta.SceneNFOPath != "" {
-			if meta.SceneNFONew {
-				s.logger.Debugf("metadata: scene nfo downloaded %s", meta.SceneNFOPath)
-			} else {
-				s.logger.Debugf("metadata: scene nfo found %s", meta.SceneNFOPath)
-			}
+	if meta.Scene {
+		logger.Debugf("metadata: scene release detected name=%q imdb=%d renamed=%t", meta.SceneName, meta.SceneIMDB, meta.SceneRenamed)
+	}
+	if meta.SceneNFOPath != "" {
+		if meta.SceneNFONew {
+			logger.Debugf("metadata: scene nfo downloaded %s", meta.SceneNFOPath)
+		} else {
+			logger.Debugf("metadata: scene nfo found %s", meta.SceneNFOPath)
 		}
 	}
 	return meta, nil

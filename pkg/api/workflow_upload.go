@@ -295,6 +295,11 @@ func (r CreateReleaseWorkflowUploadRequest) Validate() error {
 	default:
 		return fmt.Errorf("unsupported upload execution mode %q", r.Execution.Mode)
 	}
+	if r.Execution.RunLogLevel != nil {
+		if _, err := ParseLogLevel(*r.Execution.RunLogLevel); err != nil {
+			return fmt.Errorf("upload run log level: %w", err)
+		}
+	}
 	switch r.Execution.PreparedRelease {
 	case "", ReleaseWorkflowPreparedReleaseAllow, ReleaseWorkflowPreparedReleaseRequire:
 	default:

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
@@ -101,8 +103,8 @@ var (
 	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
 		return svc.ExecuteFullScan(ctx, bdmvPath, outputDir)
 	}
-	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]any, error) {
-		return svc.ParseOutput(filePath)
+	parseBDInfoOutput = func(svc *bdinfo.Service, ctx context.Context, filePath string) (map[string]any, error) {
+		return svc.ParseOutput(ctx, filePath)
 	}
 )
 
@@ -351,6 +353,8 @@ func cloneTrackerIDs(values map[string]string) map[string]string {
 // collectSourceEvidence validates source resources, resolves Blu-ray selection,
 // and gathers filesystem evidence before provider and client enrichment.
 func (s *Service) collectSourceEvidence(ctx context.Context, request preparationstate.Request) (meta preparationstate.State, err error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	bdinfoActive := false
 	bdinfoTerminal := false
 	reportBDInfo := func(status api.PreparationProgressStatus, message string) {
@@ -361,7 +365,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 			if bdinfoActive && !bdinfoTerminal {
 				reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
 			}
-			s.logger.Warnf("metadata: preparation blocked err=%s", redaction.RedactValue(err.Error(), nil))
+			logger.Warnf("metadata: preparation blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -371,7 +375,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	default:
 	}
 
-	s.logger.Debugf("metadata: preparing source")
+	logger.Debugf("metadata: preparing source")
 	if s.repo == nil {
 		return preparationstate.State{}, errors.New("metadata: repository not configured")
 	}
@@ -387,10 +391,10 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		return preparationstate.State{}, fmt.Errorf("metadata: resolve path: %w", err)
 	}
 	primary = absPath
-	s.logger.Debugf("metadata: primary path resolved to %s", primary)
+	logger.Debugf("metadata: primary path resolved to %s", primary)
 
 	normalizedPaths := []string{primary}
-	s.logger.Tracef("metadata: normalized path %s", primary)
+	logger.Tracef("metadata: normalized path %s", primary)
 
 	meta = preparationstate.State{
 		MetadataRequirements: input.MetadataRequirements,
@@ -421,7 +425,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	discType := request.Layout.DiscType
 	meta.DiscType = discType
 	if discType != "" {
-		s.logger.Debugf("metadata: detected disc type %s", discType)
+		logger.Debugf("metadata: detected disc type %s", discType)
 	}
 
 	if discType != "" {
@@ -453,10 +457,10 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		}
 		meta.VideoPath = video
 		meta.FileList = filelist
-		s.logger.Debugf("metadata: collected %d video files", len(filelist))
+		logger.Debugf("metadata: collected %d video files", len(filelist))
 	}
 
-	applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), s.logger)
+	applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), logger)
 	if discType == "" && meta.TVPack {
 		// Select before MediaInfo so timing and all screenshot paths use the
 		// same first episode, even with unpadded numbers or differing prefixes.
@@ -471,7 +475,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 				meta.VideoPath = file
 			}
 		}
-		s.logger.Debugf("metadata: TV pack media source selected path=%s season=%d episode=%d", meta.VideoPath, first.Season, first.Episode)
+		logger.Debugf("metadata: TV pack media source selected path=%s season=%d episode=%d", meta.VideoPath, first.Season, first.Episode)
 	}
 	release := ParseReleaseInfo(primary)
 	meta.Release = release
@@ -482,7 +486,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	}
 	meta.SourceSize = size
 	applyDVDCapacity(&meta)
-	s.logger.Debugf("metadata: source size %d bytes", size)
+	logger.Debugf("metadata: source size %d bytes", size)
 
 	storedInfoHash := ""
 	if existing, err := s.repo.GetByPath(ctx, primary); err == nil {
@@ -491,11 +495,9 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 			meta.StoredDataFresh = true
 			meta.StoredInfoHash = strings.TrimSpace(existing.InfoHash)
 			storedInfoHash = meta.StoredInfoHash
-			if s.logger != nil {
-				s.logger.Debugf("metadata: reusing stored metadata snapshot for %s", primary)
-			}
-		} else if s.logger != nil {
-			s.logger.Debugf("metadata: stored metadata stale for %s; recomputing", primary)
+			logger.Debugf("metadata: reusing stored metadata snapshot for %s", primary)
+		} else {
+			logger.Debugf("metadata: stored metadata stale for %s; recomputing", primary)
 		}
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
 		return preparationstate.State{}, fmt.Errorf("metadata: lookup: %w", err)
@@ -535,7 +537,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		len(release.Audio) > 0 ||
 		len(release.HDR) > 0 ||
 		len(release.Language) > 0 {
-		s.logger.Debugf(
+		logger.Debugf(
 			"metadata: release parsed category=%q type=%q artist=%q title=%q subtitle=%q alt=%q year=%d month=%d day=%d source=%q resolution=%q codec=%v audio=%v hdr=%v ext=%q language=%v site=%q genre=%q channels=%q collection=%q region=%q size=%q group=%q disc=%q",
 			release.Category,
 			release.Type,
@@ -564,7 +566,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		)
 	}
 	if len(release.Edition) > 0 || len(release.Other) > 0 {
-		s.logger.Tracef("metadata: release editions=%v other=%v", release.Edition, release.Other)
+		logger.Tracef("metadata: release editions=%v other=%v", release.Edition, release.Other)
 	}
 	if release.Group != "" {
 		meta.Tag = "-" + release.Group
@@ -618,7 +620,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 			meta.Tag = tag
 			meta.TagOverride = override
 			if override != nil {
-				s.logger.Debugf("metadata: tag override applied")
+				logger.Debugf("metadata: tag override applied")
 				if strings.TrimSpace(override.Source) != "" {
 					meta.Release.Source = override.Source
 				}
@@ -683,7 +685,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	}); err != nil {
 		return preparationstate.State{}, fmt.Errorf("metadata: persist: %w", err)
 	}
-	s.logger.Debugf("metadata: persisted metadata for %s", primary)
+	logger.Debugf("metadata: persisted metadata for %s", primary)
 
 	return meta, nil
 }
@@ -694,6 +696,8 @@ func (s *Service) collectDiscEvidence(
 	meta *preparationstate.State,
 	reportBDInfo func(api.PreparationProgressStatus, string),
 ) error {
+	logger := logging.FromContext(ctx, s.logger)
+
 	if meta == nil || len(request.Layout.Discs) == 0 {
 		return fmt.Errorf("metadata: disc resources are unavailable: %w", internalerrors.ErrInvalidInput)
 	}
@@ -753,9 +757,9 @@ func (s *Service) collectDiscEvidence(
 				return &api.InvalidPlaylistSelectionError{Reason: "at least one playlist must be selected for every disc"}
 			}
 			playlistFiles := playlistNames(resource.SelectedPlaylists)
-			files, video, err := s.extractM2TSFromPlaylist(disc.Root, playlistFiles)
+			files, video, err := s.extractM2TSFromPlaylist(ctx, disc.Root, playlistFiles)
 			if err != nil {
-				s.logger.Debugf("metadata: failed to extract selected streams disc=%s err=%s", disc.Name, redaction.RedactValue(err.Error(), nil))
+				logger.Debugf("metadata: failed to extract selected streams disc=%s err=%s", disc.Name, redaction.RedactValue(err.Error(), nil))
 			} else {
 				resource.FileList = files
 				resource.VideoPath = video
@@ -774,7 +778,7 @@ func (s *Service) collectDiscEvidence(
 					return err
 				}
 				if meta.BDInfo == nil && strings.TrimSpace(outputPath) != "" {
-					parsed, err := parseBDInfoOutput(s.bdinfo, outputPath)
+					parsed, err := parseBDInfoOutput(s.bdinfo, ctx, outputPath)
 					if err != nil {
 						return fmt.Errorf("metadata: parse BDInfo: %w", err)
 					}
@@ -964,7 +968,9 @@ func applySceneResult(meta *preparationstate.State, result SceneResult) {
 
 // extractM2TSFromPlaylist parses selected playlist files and extracts m2ts file references.
 // Returns all m2ts files and the largest one to use as VideoPath.
-func (s *Service) extractM2TSFromPlaylist(bdmvPath string, playlistFiles []string) ([]string, string, error) {
+func (s *Service) extractM2TSFromPlaylist(ctx context.Context, bdmvPath string, playlistFiles []string) ([]string, string, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	playlistDir := filepath.Join(bdmvPath, "PLAYLIST")
 	if _, err := os.Stat(playlistDir); err != nil {
 		return nil, "", fmt.Errorf("playlist directory not found: %w", err)
@@ -984,10 +990,10 @@ func (s *Service) extractM2TSFromPlaylist(bdmvPath string, playlistFiles []strin
 		// Parse the playlist file
 		duration, items, err := parseBDMVPlaylist(playlistPath)
 		if err != nil {
-			s.logger.Debugf("metadata: failed to parse playlist %s: %v", playlistFile, err)
+			logger.Debugf("metadata: failed to parse playlist %s: %v", playlistFile, err)
 			continue
 		}
-		s.logger.Debugf("metadata: parsed playlist %s (duration=%.1fs, items=%d)", playlistFile, duration, len(items))
+		logger.Debugf("metadata: parsed playlist %s (duration=%.1fs, items=%d)", playlistFile, duration, len(items))
 
 		// Collect m2ts files from this playlist
 		for _, item := range items {
@@ -1014,7 +1020,7 @@ func (s *Service) extractM2TSFromPlaylist(bdmvPath string, playlistFiles []strin
 		m2tsFiles = append(m2tsFiles, fullPath)
 	}
 
-	s.logger.Debugf("metadata: extracted %d m2ts files from playlists, largest is %s (%d bytes)", len(m2tsFiles), filepath.Base(largestFile), largestSize)
+	logger.Debugf("metadata: extracted %d m2ts files from playlists, largest is %s (%d bytes)", len(m2tsFiles), filepath.Base(largestFile), largestSize)
 	return m2tsFiles, largestFile, nil
 }
 
@@ -1226,6 +1232,8 @@ func (s *Service) resolveOrCreateBDMVSummaries(
 	playlistPath string,
 	selected []string,
 ) (string, bool, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	cache, err := discoverBDMVSummaryCache(tmpDir)
 	if err != nil {
 		return "", false, fmt.Errorf("metadata: discover bdmv tmp cache: %w", err)
@@ -1253,7 +1261,7 @@ func (s *Service) resolveOrCreateBDMVSummaries(
 	}
 
 	if len(selected) > 1 {
-		s.logger.Debugf("metadata: executing full-disc bdinfo for %d selected playlists", len(selected))
+		logger.Debugf("metadata: executing full-disc bdinfo for %d selected playlists", len(selected))
 		scanResult, berr := executeFullBDInfoScan(s.bdinfo, ctx, playlistPath, tmpDir)
 		if berr != nil {
 			return "", false, fmt.Errorf("metadata: bdinfo full scan failed: %w", berr)
@@ -1266,7 +1274,7 @@ func (s *Service) resolveOrCreateBDMVSummaries(
 	}
 
 	playlistName := selected[0]
-	s.logger.Debugf("metadata: executing bdinfo for playlist %s in path %s", playlistName, playlistPath)
+	logger.Debugf("metadata: executing bdinfo for playlist %s in path %s", playlistName, playlistPath)
 	fullPath := paths.BDMVFullSummaryPath(tmpDir, playlistName)
 	_, berr := executePlaylistBDInfo(s.bdinfo, ctx, playlistPath, playlistName, fullPath, false)
 	if berr != nil {
