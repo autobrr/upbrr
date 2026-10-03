@@ -13,11 +13,12 @@ import (
 
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate.State, bdinfo *discparse.BDInfo) preparationstate.State {
-	if meta.ExternalFreshness.RequiresRefresh() {
+	if meta.ExternalFreshness.RequiresRefresh() && !evidence.Enabled(ctx) {
 		meta.ProviderMetadata.Bluray = nil
 	}
 	if reason := s.blurayLookupSkipReason(meta); reason != "" {
@@ -36,11 +37,11 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate
 		return meta
 	}
 
-	selectedID := ""
-	if meta.ProviderMetadata.Bluray != nil {
+	selectedID := strings.TrimSpace(meta.BlurayReleaseID)
+	if selectedID == "" && meta.ProviderMetadata.Bluray != nil && !meta.ProviderMetadata.Bluray.AutoSelected && meta.ProviderMetadata.Bluray.IMDBID == imdbID {
 		selectedID = strings.TrimSpace(meta.ProviderMetadata.Bluray.SelectedReleaseID)
 	}
-	if cached := s.reusableBlurayMetadata(meta, imdbID, bdinfo); cached != nil {
+	if cached := s.reusableBlurayMetadata(meta, imdbID, bdinfo); cached != nil && !evidence.Enabled(ctx) {
 		if selectedID != "" {
 			cached.SelectCandidate(selectedID, false, "manual")
 		}

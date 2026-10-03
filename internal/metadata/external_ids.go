@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
@@ -148,12 +149,16 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return preparationstate.State{}, fmt.Errorf("metadata: load stored external identity: %w", err)
 	}
 	metadata := api.SourceScopedMetadata{SourcePath: meta.SourcePath}
-	if !refreshProviders && meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) {
+	replayProviders := evidence.Enabled(ctx) && meta.ExternalFreshness == api.ExternalFreshnessLoad
+	if replayProviders {
+		metadata.Bluray = meta.ProviderMetadata.Bluray
+	}
+	if !refreshProviders && !replayProviders && meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) {
 		metadata = meta.ProviderMetadata
 		if strings.TrimSpace(metadata.SourcePath) == "" {
 			metadata.SourcePath = meta.SourcePath
 		}
-	} else if !refreshProviders {
+	} else if !refreshProviders && !replayProviders {
 		storedMeta, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath)
 		if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
 			return preparationstate.State{}, fmt.Errorf("metadata: load stored external metadata: %w", err)

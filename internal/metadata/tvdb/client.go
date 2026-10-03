@@ -27,6 +27,7 @@ import (
 	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -614,7 +615,7 @@ func (c *Client) searchSeriesNameDisambiguation(
 		seriesYear:   metadata.Year,
 		country:      cases.Fold().String(norm.NFKC.String(strings.TrimSpace(metadata.OriginalCountry))),
 	}
-	if cached, ok := c.cachedNameDisambiguation(cacheKey); ok {
+	if cached, ok := c.cachedNameDisambiguation(cacheKey); ok && !evidence.Enabled(ctx) {
 		c.logNameDisambiguation(metadata.TVDBID, cacheKey.canonicalKey, cached.resultCount, cached.evidence, true)
 		return cached.evidence
 	}
@@ -1866,6 +1867,29 @@ func toMatch(ep Episode) EpisodeMatch {
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, params map[string]string, target any) error {
+	if !evidence.Enabled(ctx) {
+		return c.uncachedJSON(ctx, path, params, target)
+	}
+	var empty func() bool
+	if response, ok := target.(*episodesResponse); ok {
+		empty = func() bool { return len(response.Data.Episodes) == 0 }
+	}
+	err := evidence.JSON(
+		ctx,
+		"tvdb.response.v1",
+		[]any{c.baseURL, c.apiKey, path, params},
+		target,
+		errNotFound,
+		empty,
+		func() error { return c.uncachedJSON(ctx, path, params, target) },
+	)
+	if err != nil {
+		return fmt.Errorf("metadata evidence response: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) uncachedJSON(ctx context.Context, path string, params map[string]string, target any) error {
 	if strings.TrimSpace(c.apiKey) == "" {
 		return errors.New("tvdb: api key missing")
 	}
@@ -1899,7 +1923,7 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		if err := c.refreshToken(ctx); err != nil {
 			return err
 		}
-		return c.getJSON(ctx, path, params, target)
+		return c.uncachedJSON(ctx, path, params, target)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return errNotFound

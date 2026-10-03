@@ -3552,7 +3552,7 @@ describe("useReleaseSession", () => {
           intent: expect.objectContaining({
             preparation: expect.objectContaining({
               SourcePath: sourcePath,
-              ExternalFreshness: "refresh",
+              ExternalFreshness: "",
               Force: false,
             }),
           }),
@@ -3570,7 +3570,7 @@ describe("useReleaseSession", () => {
           intent: expect.objectContaining({
             preparation: expect.objectContaining({
               SourcePath: sourcePath,
-              ExternalFreshness: "refresh",
+              ExternalFreshness: "",
               Force: true,
             }),
           }),

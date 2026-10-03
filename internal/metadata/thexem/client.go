@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -31,6 +32,8 @@ const thexemUserAgent = "upbrr"
 
 // ErrUnavailable reports that XEM blocked or refused an otherwise valid lookup.
 var ErrUnavailable = errors.New("thexem: unavailable")
+
+var errMappingNotFound = errors.New("thexem: mapping not found")
 
 var (
 	htmlScriptStylePattern = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
@@ -66,6 +69,20 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 // and episode numbers. Missing mappings return an error; Cloudflare refusal
 // wraps [ErrUnavailable].
 func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int) (int, int, error) {
+	result, err := evidence.Lookup(ctx, "thexem.absolute", []any{c.baseURL, tvdbID, absoluteEp}, func() ([2]int, error) {
+		season, episode, err := c.mapAbsoluteEpisode(ctx, tvdbID, absoluteEp)
+		if errors.Is(err, errMappingNotFound) {
+			err = nil
+		}
+		return [2]int{season, episode}, err
+	}, func(value [2]int) bool { return value[0] == 0 || value[1] == 0 })
+	if err == nil && (result[0] == 0 || result[1] == 0) {
+		err = errMappingNotFound
+	}
+	return result[0], result[1], err
+}
+
+func (c *Client) mapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int) (int, int, error) {
 	if tvdbID <= 0 || absoluteEp <= 0 {
 		return 0, 0, errors.New("thexem: invalid ids")
 	}
@@ -107,7 +124,7 @@ func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int)
 
 	season, episode := parseSeasonEpisode(payload)
 	if season == 0 || episode == 0 {
-		return 0, 0, errors.New("thexem: mapping not found")
+		return 0, 0, errMappingNotFound
 	}
 	return season, episode, nil
 }
@@ -115,6 +132,20 @@ func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int)
 // GetSeasonNames returns trimmed, case-insensitively deduplicated names keyed by
 // positive season number. Cloudflare refusal wraps [ErrUnavailable].
 func (c *Client) GetSeasonNames(ctx context.Context, tvdbID int) (map[int][]string, error) {
+	result, err := evidence.Lookup(
+		ctx,
+		"thexem.names",
+		[]any{c.baseURL, tvdbID},
+		func() (map[int][]string, error) { return c.getSeasonNames(ctx, tvdbID) },
+		func(value map[int][]string) bool { return len(value) == 0 },
+	)
+	if err != nil {
+		return result, fmt.Errorf("metadata evidence lookup: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) getSeasonNames(ctx context.Context, tvdbID int) (map[int][]string, error) {
 	if tvdbID <= 0 {
 		return nil, errors.New("thexem: invalid tvdb id")
 	}

@@ -17,6 +17,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -89,7 +90,27 @@ func (s *Service) collectArrIdentityEvidence(ctx context.Context, meta preparati
 		return meta, nil
 	}
 
-	result, err := client.Lookup(ctx, meta)
+	title, _ := resolveSearchTitles(meta)
+	result, err := evidence.Lookup(
+		ctx,
+		"arr.lookup",
+		[]any{
+			category,
+			s.cfg.ArrIntegration,
+			meta.SourcePath,
+			title,
+			meta.ArrTVDBID,
+			meta.MediaInfoTVDBID,
+			meta.Identity.TVDBID,
+			meta.Identity.TMDBID,
+			meta.Identity.IMDBID,
+		},
+		func() (ArrLookupResult, error) { return client.Lookup(ctx, meta) },
+		func(value ArrLookupResult) bool {
+			return value.TMDBID == 0 && value.IMDBID == 0 && value.TVDBID == 0 && value.TVmazeID == 0 && value.Year == 0 && len(value.Genres) == 0 &&
+				value.ReleaseGroup == ""
+		},
+	)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warnf("metadata: arr lookup failed category=%s path=%q: %v", category, meta.SourcePath, err)

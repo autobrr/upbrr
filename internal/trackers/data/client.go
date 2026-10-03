@@ -57,10 +57,47 @@ func NewClientWithRegistry(cfg config.Config, logger api.Logger, httpClient *htt
 	return client
 }
 
+// CacheKey delegates query dependencies to the adapter. The returned value may
+// contain credentials and must be hashed before persistence or diagnostics.
+// Unsupported or inapplicable lookups return nil.
+func (c *Client) CacheKey(tracker, trackerID string, meta api.UploadSubject, searchFileName string, onlyID, keepImages bool) any {
+	normalized := strings.ToUpper(strings.TrimSpace(tracker))
+	req := trackers.DataLookupRequest{
+		TrackerID:  trackerID,
+		Meta:       meta,
+		SearchName: searchFileName,
+		OnlyID:     onlyID,
+		KeepImages: keepImages,
+	}
+	if lookup, ok := c.lookups[normalized]; ok {
+		key := lookup.CacheKey(req)
+		if key == nil {
+			return nil
+		}
+		return []any{"tracker-data-v1", normalized, key}
+	}
+	family, registered := c.registry.LookupFamily(normalized)
+	if !registered || family != trackers.FamilyUnit3D {
+		return nil
+	}
+	baseURL, ok := baseURLForTrackerWithConfig(c.cfg, c.registry, normalized)
+	if !ok {
+		return nil
+	}
+	filter, value := "id", strings.TrimSpace(trackerID)
+	if value == "" {
+		filter, value = "file_name", searchFileName
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+	}
+	return []any{"tracker-data-v1", normalized, baseURL, TrackerAPIKey(c.cfg, normalized), filter, value, onlyID, keepImages}
+}
+
 // Lookup dispatches to a registered tracker lookup, then falls back to generic
 // Unit3D lookup for Unit3D-family trackers. Unknown or unsupported trackers
 // return an empty result without error; tracker lookup errors are wrapped with
-// the normalized tracker name.
+// the normalized tracker name while preserving any partial result.
 func (c *Client) Lookup(
 	ctx context.Context,
 	tracker string,
@@ -80,7 +117,7 @@ func (c *Client) Lookup(
 			KeepImages: keepImages,
 		})
 		if err != nil {
-			return Result{}, fmt.Errorf("trackerdata: %s lookup: %w", normalized, err)
+			return result, fmt.Errorf("trackerdata: %s lookup: %w", normalized, err)
 		}
 		return result, nil
 	}

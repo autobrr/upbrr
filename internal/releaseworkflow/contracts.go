@@ -625,10 +625,12 @@ type Command interface {
 }
 
 // CreateWorkflowCommand creates fact instructions and a draft aggregate.
-// Composite, when set, installs retained composite state in the same mutation.
+// PreparationInput and Composite, when set, install admitted preparation and
+// retained composite state in the same mutation.
 type CreateWorkflowCommand struct {
 	WorkflowID          api.WorkflowID
 	SourcePath          string
+	PreparationInput    *api.PrepareInput
 	Instructions        api.ReleaseFactInstructions
 	IdempotencyKey      string
 	RequestFingerprint  api.WorkflowFingerprint
@@ -641,12 +643,14 @@ func (CreateWorkflowCommand) userIntent()                      {}
 func (CreateWorkflowCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
 func (c CreateWorkflowCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
 	return canonicalCommandFingerprint(struct {
-		SourcePath          string `json:",omitempty"`
+		SourcePath          string            `json:",omitempty"`
+		PreparationInput    *api.PrepareInput `json:",omitempty"`
 		Instructions        api.ReleaseFactInstructions
 		RequestFingerprint  api.WorkflowFingerprint
 		TrackerDecisionMode TrackerDecisionMode
 	}{
 		SourcePath:          strings.TrimSpace(c.SourcePath),
+		PreparationInput:    c.PreparationInput,
 		Instructions:        c.Instructions,
 		RequestFingerprint:  c.RequestFingerprint,
 		TrackerDecisionMode: normalizeTrackerDecisionMode(c.TrackerDecisionMode),

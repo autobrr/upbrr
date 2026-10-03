@@ -25,7 +25,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v19"
+const ContractVersion = "prepared-release-v20"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -236,6 +236,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
 	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
+		(input.ExternalFreshness != api.ExternalFreshnessLoad || input.RequirePrepared) &&
 		current.Compatibility == compatibility {
 		// Public prepared rows omit private byte-verification evidence. Restore
 		// it only from the current active input's validated private manifest.
@@ -614,15 +615,17 @@ func (m *Module) retainedClientEvidence(
 	compatibility api.PreparationCompatibility,
 	generation api.PreparedGeneration,
 ) *preparationstate.ClientEvidenceSnapshot {
-	if input.Force || input.ExternalFreshness.RequiresRefresh() || input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck {
+	if input.Force || input.ExternalFreshness == api.ExternalFreshnessLoad || input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck {
 		return nil
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	current, ok := m.envelopes[canonicalSourceKey(input.SourcePath)]
-	if !ok || current.result.Release.Generation != generation || current.resources.policy != input.Policy ||
+	if !ok || current.result.Release.Generation != generation || current.resources.policy.KeepFolder != input.Policy.KeepFolder ||
 		current.result.Release.Compatibility.SourceFingerprint != compatibility.SourceFingerprint ||
-		current.result.Release.Compatibility.FactInstructionFingerprint != compatibility.FactInstructionFingerprint {
+		current.resources.playlist.Set != input.Instructions.Playlist.Set || current.resources.playlist.UseAll != input.Instructions.Playlist.UseAll ||
+		!slices.Equal(current.resources.playlist.Selected, input.Instructions.Playlist.Selected) ||
+		input.VerifiedSource != nil && current.result.Release.SourceIdentity.Digest != input.VerifiedSource.Identity.Digest {
 		return nil
 	}
 	evidence := current.resources.clientEvidence

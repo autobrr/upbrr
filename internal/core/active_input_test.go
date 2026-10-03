@@ -124,7 +124,7 @@ func TestVerifyWorkflowInputUsesPreparedReleaseCanonicalSourceKeyOnWindows(t *te
 	}
 }
 
-func TestOpenActiveInputRequestsExternalProviderRefresh(t *testing.T) {
+func TestOpenActiveInputDistinguishesLoadFromCorrectionApply(t *testing.T) {
 	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +185,7 @@ func TestOpenActiveInputRequestsExternalProviderRefresh(t *testing.T) {
 			ExpectedRevision: activeRevision,
 		})
 	})
-	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessRefresh {
+	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessLoad {
 		t.Fatalf("verified preparation inputs = %#v", verified)
 	}
 	select {
@@ -212,7 +212,7 @@ func TestOpenActiveInputRequestsExternalProviderRefresh(t *testing.T) {
 	}
 	activeRevision = refreshed.Revision
 	if refreshed.Revision <= opened.Revision || len(verified) != 2 ||
-		verified[1].ExternalFreshness != api.ExternalFreshnessRefresh {
+		verified[1].ExternalFreshness != api.ExternalFreshnessReuse {
 		t.Fatalf("refreshed active input = %#v, verified preparations = %#v", refreshed, verified)
 	}
 }

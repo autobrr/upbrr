@@ -223,8 +223,8 @@ func TestLookupUnit3DRejectsLinkedPrivateRawURLBeforeFetch(t *testing.T) {
 
 	client := newUnit3DDataClient(t, httpClient)
 	result, err := client.Lookup(context.Background(), "BLU", "777", api.UploadSubject{}, "release.mkv", false, true)
-	if err != nil {
-		t.Fatalf("unit3d lookup failed: %v", err)
+	if err == nil || result.TMDBID != 100 {
+		t.Fatalf("expected image-preparation failure with retained TMDB ID, got result=%+v err=%v", result, err)
 	}
 	if len(result.Images) != 0 || len(result.Validated) != 0 {
 		t.Fatalf("expected private linked image to be rejected, got images=%+v validated=%+v", result.Images, result.Validated)

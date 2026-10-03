@@ -19,6 +19,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -156,7 +157,19 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 			needsAssets := needsDescription || needsImages
 			refreshCachedAssets = needsAssets
 			strictPriority := shouldUseStrictPriorityLookup(meta, trackers, s.cfg.Trackers.PreferredTracker)
-			if !needsAssets && (cachedIndex == 0 || !strictPriority) {
+			cachedReusable := !evidence.Enabled(ctx) || s.tracker == nil
+			if !cachedReusable {
+				query := s.tracker.CacheKey(
+					cached.Tracker,
+					cached.TrackerID,
+					trackerLookupSubject(meta),
+					trackerLookupFileName(meta, s.cfg.Metadata.SkipTrackerFilenameLookup),
+					meta.Policy.OnlyID,
+					meta.Policy.KeepImages,
+				)
+				cachedReusable = evidence.Reusable(ctx, "tracker.lookup", query)
+			}
+			if !needsAssets && cachedReusable && (cachedIndex == 0 || !strictPriority) {
 				meta.TrackerData = append(meta.TrackerData, cached)
 				if s.logger != nil {
 					s.logger.Debugf("metadata: reusing matching stored tracker IDs tracker=%s for %s", cached.Tracker, meta.SourcePath)
@@ -171,7 +184,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 			}
 			if strictPriority {
 				limit := cachedIndex
-				if needsAssets {
+				if needsAssets || !cachedReusable {
 					limit++
 				}
 				trackers = trackers[:limit]
@@ -518,17 +531,25 @@ func (s *Service) lookupTrackerData(
 		return record, true, false, nil
 	}
 
-	result, err := s.tracker.Lookup(
-		ctx,
-		tracker,
-		record.TrackerID,
-		trackerLookupSubject(meta),
-		trackerLookupFileName(meta, s.cfg.Metadata.SkipTrackerFilenameLookup),
-		meta.Policy.OnlyID,
-		meta.Policy.KeepImages,
-	)
-	if err != nil {
+	searchName := trackerLookupFileName(meta, s.cfg.Metadata.SkipTrackerFilenameLookup)
+	query := s.tracker.CacheKey(tracker, record.TrackerID, trackerLookupSubject(meta), searchName, meta.Policy.OnlyID, meta.Policy.KeepImages)
+	if query == nil {
+		return record, trackerRecordHasPathedData(record), hasTrackerMetadataIDs(record), nil
+	}
+
+	result, err := evidence.Lookup(ctx, "tracker.lookup", query, func() (trackerdata.Result, error) {
+		return s.tracker.Lookup(ctx, tracker, record.TrackerID, trackerLookupSubject(meta), searchName, meta.Policy.OnlyID, meta.Policy.KeepImages)
+	}, func(value trackerdata.Result) bool {
+		return !value.HasData() || !meta.Policy.OnlyID && strings.TrimSpace(value.Description) == "" || meta.Policy.KeepImages && len(value.Images) == 0
+	})
+	if err != nil && (isContextError(ctx, err) || !result.HasData()) {
 		return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
+	}
+	if record.TrackerID == "" && result.TrackerID != "" {
+		canonical := s.tracker.CacheKey(tracker, result.TrackerID, trackerLookupSubject(meta), searchName, meta.Policy.OnlyID, meta.Policy.KeepImages)
+		if err := evidence.RetainAlias(ctx, "tracker.lookup", query, canonical); err != nil {
+			return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: retain tracker lookup identity: %w", err)
+		}
 	}
 	if !result.HasData() {
 		if s.logger != nil {

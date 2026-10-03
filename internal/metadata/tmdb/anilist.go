@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
@@ -127,6 +128,20 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 // are retried only when the provider delay fits within a one-minute cumulative
 // wait budget.
 func (c *Client) FetchAniListMetadata(ctx context.Context, malID int) (AniListMetadataResult, error) {
+	result, err := evidence.Lookup(
+		ctx,
+		"anilist.metadata.v1",
+		[]any{c.anilistURL, malID},
+		func() (AniListMetadataResult, error) { return c.fetchAniListMetadata(ctx, malID) },
+		func(value AniListMetadataResult) bool { return value.AniListID == 0 && value.MALID == 0 },
+	)
+	if err != nil {
+		return result, fmt.Errorf("metadata evidence lookup: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) fetchAniListMetadata(ctx context.Context, malID int) (AniListMetadataResult, error) {
 	if malID <= 0 {
 		return AniListMetadataResult{}, nil
 	}
@@ -173,6 +188,24 @@ func (c *Client) FetchAniListMetadata(ctx context.Context, malID int) (AniListMe
 }
 
 func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]anilistMedia, error) {
+	query := cleanAnilistSearch(term)
+	if malID != 0 {
+		query = ""
+	}
+	result, err := evidence.Lookup(
+		ctx,
+		"anilist.search.v1",
+		[]any{c.anilistURL, malID, query},
+		func() ([]anilistMedia, error) { return c.fetchAniListSearch(ctx, term, malID) },
+		func(value []anilistMedia) bool { return len(value) == 0 },
+	)
+	if err != nil {
+		return result, fmt.Errorf("metadata evidence lookup: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) fetchAniListSearch(ctx context.Context, term string, malID int) ([]anilistMedia, error) {
 	query := anilistQuery(malID != 0)
 	variables := map[string]any{}
 	if malID != 0 {
