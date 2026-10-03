@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -326,6 +327,79 @@ func TestExactMediaForTrackerHostDropsSourceOnlyDVDMenuUpload(t *testing.T) {
 	menus, _ := exactDescriptionMedia("BTN", api.UploadSubject{ExactMedia: filtered}, nil)
 	if len(menus) != 1 || menus[0].RawURL != "" || menus[0].Path != menuPath {
 		t.Fatalf("legacy DVD menu image = %#v", menus)
+	}
+}
+
+func TestPreparedExactMediaExcludesFailedHosts(t *testing.T) {
+	t.Parallel()
+	for _, required := range []bool{false, true} {
+		t.Run(fmt.Sprintf("required=%t", required), func(t *testing.T) {
+			t.Parallel()
+			registry := NewRegistry()
+			descriptor := Descriptor{
+				Name:              "ALPHA",
+				Definition:        menuScreenshotTestDefinition{menuImageTestDefinition{stubDefinition{name: "ALPHA"}}},
+				UploadContentMode: UploadContentModeScreenshots,
+			}
+			if required {
+				descriptor.ImageHost = &ImageHostPolicy{AllowedHosts: []string{"onlyimage"}}
+			}
+			if err := registry.RegisterDescriptor(descriptor); err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			imagePath := filepath.Join(root, "screen.png")
+			menuPath := filepath.Join(root, "menu.png")
+			uploads := func(path string) []api.UploadedImageLink {
+				return []api.UploadedImageLink{
+					{
+						ImagePath:  path,
+						Host:       "imgbb",
+						UsageScope: "global",
+						RawURL:     "https://images.example.invalid/failed.png",
+					},
+					{
+						ImagePath:  path,
+						Host:       "pixhost",
+						UsageScope: "global",
+						RawURL:     "https://passthepopcorn.me/static/source.png",
+					},
+					{
+						ImagePath:  path,
+						Host:       "onlyimage",
+						UsageScope: "global",
+						RawURL:     "https://images.example.invalid/ready.png",
+					},
+				}
+			}
+			exact := &api.ExactMediaAssets{
+				Screenshots:       []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}},
+				ScreenshotUploads: uploads(imagePath),
+				DVDMenus:          []api.DVDMenuCaptureImage{{Path: menuPath, Purpose: api.ScreenshotPurposeMenu}},
+				DVDMenuUploads:    uploads(menuPath),
+			}
+			subject := api.UploadSubject{
+				SourcePath:         filepath.Join(root, "Example.Release.2026-GRP.mkv"),
+				ExactMedia:         exact,
+				ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true), FailedHosts: []string{" IMGBB "}},
+			}
+			subject.MediaBinding = trackerTestMediaBinding(subject.SourcePath)
+			original := exact.Clone()
+			service := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, &stubRepo{}, registry)
+			prepared := service.prepareUploadContent(t.Context(), "ALPHA", subject, config.TrackerConfig{}, nil, nil)
+			if prepared.State != preparedUploadContentReady || prepared.Assets == nil ||
+				len(prepared.Assets.MenuImages) != 1 || len(prepared.Assets.Screenshots) != 1 {
+				t.Fatalf("prepared exact media = %#v", prepared)
+			}
+			for _, image := range append(prepared.Assets.MenuImages, prepared.Assets.Screenshots...) {
+				if image.Host != "onlyimage" || image.RawURL != "https://images.example.invalid/ready.png" {
+					t.Fatalf("prepared asset retained an unavailable host: %#v", image)
+				}
+			}
+			if !reflect.DeepEqual(exact, original) {
+				t.Fatal("tracker preparation mutated the shared exact media")
+			}
+		})
 	}
 }
 

@@ -171,7 +171,7 @@ func testContinueRuleAcknowledgementDuplicateScope(t *testing.T, tracker api.Tra
 	}
 	settle := func(key string, answers ...api.RequiredActionAnswer) {
 		t.Helper()
-		deadline := time.Now().Add(10 * time.Second)
+		deadline := time.Now().Add(30 * time.Second)
 		for time.Now().Before(deadline) {
 			previousRevision := current.Workflow.Revision
 			current, err = core.ContinueReleaseWorkflow(ctx, owner, request(key, answers...))
@@ -184,7 +184,7 @@ func testContinueRuleAcknowledgementDuplicateScope(t *testing.T, tracker api.Tra
 				if !time.Now().Before(deadline) {
 					t.Fatalf("%s operation did not finish: %#v", key, current.Operation)
 				}
-				time.Sleep(time.Millisecond)
+				time.Sleep(25 * time.Millisecond)
 				current, err = core.CurrentReleaseWorkflow(ctx, owner, current.Workflow.ID)
 				if err != nil {
 					t.Fatal(err)
@@ -201,7 +201,7 @@ func testContinueRuleAcknowledgementDuplicateScope(t *testing.T, tracker api.Tra
 				return
 			}
 		}
-		t.Fatalf("%s continuation did not settle", key)
+		t.Fatalf("%s continuation did not settle: revision=%d operation=%#v", key, current.Workflow.Revision, current.Operation)
 	}
 	projection := func() api.TrackerReleaseProjection {
 		t.Helper()

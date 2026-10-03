@@ -39,8 +39,8 @@ type descriptionImageHostResolution struct {
 	blocking    bool
 }
 
-// exactMediaForTrackerHost keeps only screenshots on a reusable host accepted
-// by this tracker. The prepared workflow may contain other trackers' images.
+// exactMediaForTrackerHost selects reusable screenshots and excludes source-only
+// or failed-host DVD menu uploads. The workflow may contain other trackers' images.
 // Available configured-host links take precedence over other hosts' coverage.
 // Equal coverage otherwise retains the resolved host preference.
 func exactMediaForTrackerHost(
@@ -53,8 +53,11 @@ func exactMediaForTrackerHost(
 ) (*api.ExactMediaAssets, error) {
 	exact := meta.ExactMedia.Clone()
 	if exact != nil {
+		failedHosts := normalizeImageHostNames(meta.ImageHostOverrides.FailedHosts)
 		exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, sourceOnlyUploadedImage)
-		exact.DVDMenuUploads = slices.DeleteFunc(exact.DVDMenuUploads, sourceOnlyUploadedImage)
+		exact.DVDMenuUploads = slices.DeleteFunc(exact.DVDMenuUploads, func(upload api.UploadedImageLink) bool {
+			return sourceOnlyUploadedImage(upload) || hostInList(upload.Host, failedHosts)
+		})
 	}
 	if exact == nil || len(exact.Screenshots) == 0 || len(exact.ScreenshotUploads) == 0 {
 		return exact, nil
