@@ -2403,3 +2403,25 @@ func TestCompositeUploadResultFallsBackToDuplicateAssessment(t *testing.T) {
 		t.Fatalf("blocked duplicate composite result = %#v, want nil", got)
 	}
 }
+
+func TestCompositeUploadFactInstructionsReleaseVersion(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"PROPER", "REPACK2", ""} {
+		facts := api.ReleaseWorkflowUploadFacts{ReleaseName: api.ReleaseWorkflowUploadReleaseName{Edition: new("Uncut"), Repack: new(value)}}
+		got, err := compositeUploadFactInstructions(facts, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ReleaseName.Repack == nil || *got.ReleaseName.Repack != value || *got.ReleaseName.Edition != "Uncut" {
+			t.Fatalf("instructions=%#v", got.ReleaseName)
+		}
+		*facts.ReleaseName.Repack = "REPACK3"
+		if *got.ReleaseName.Repack != value {
+			t.Fatal("mapped version aliases request")
+		}
+	}
+	got, err := compositeUploadFactInstructions(api.ReleaseWorkflowUploadFacts{}, nil)
+	if err != nil || got.ReleaseName.Repack != nil {
+		t.Fatalf("automatic=%#v error=%v", got.ReleaseName, err)
+	}
+}

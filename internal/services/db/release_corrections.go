@@ -214,6 +214,7 @@ var releaseNameCorrectionFields = []struct {
 	{api.CorrectionFieldReleaseNameTag, "Tag"},
 	{api.CorrectionFieldReleaseNameService, "Service"},
 	{api.CorrectionFieldReleaseNameEdition, "Edition"},
+	{api.CorrectionFieldReleaseNameRepack, "Repack"},
 	{api.CorrectionFieldReleaseNameSeason, "Season"},
 	{api.CorrectionFieldReleaseNameEpisode, "Episode"},
 	{api.CorrectionFieldReleaseNameEpisodeTitle, "EpisodeTitle"},

@@ -64,6 +64,8 @@ Use **Input** to correct provider IDs, genre, release naming fields, and languag
 
 Edited fields show a pending change until you apply **Refresh metadata**. Applied overrides remain marked **Manual value · Applied** after refresh. **Auto** clears the local draft and queues removal of the saved correction; the field shows **Auto reset pending** until refresh derives the automatic value. The previous prepared value may remain visible while that reset is pending.
 
+Use **Release version** to set `PROPER`, `REPACK`, their supported numbered variants, or `RERIP` independently of **Edition**. Choose **None** to remove the detected version, or **Auto** to restore detection. Leave cut or edition text in **Edition**. The legacy **No edition** option also suppresses an automatic release version; an explicit **Release version** selection takes precedence.
+
 Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. An empty list, an empty string, a removed provider ID, or explicit **No** remains a manual value until you choose **Auto**.
 
 **Refresh metadata** verifies the source again and applies your corrections, reusing provider lookups for unchanged inputs. It does not repeat lookups that returned no result while the same input remains active. Loading the input again after closing it can retry those empty results; completed fetch failures remain retained until you remove the input from **History**. A changed source, provider ID, or lookup query requests its own result. Compatible screenshot content, selection, order, and hosted links can be reused when media preparation runs again. Earlier duplicate decisions and upload approval must be renewed.

@@ -360,6 +360,7 @@ export type ReleaseNameOverrides = {
   Tag?: string | null;
   Service?: string | null;
   Edition?: string | null;
+  Repack?: string | null;
   Season?: string | null;
   Episode?: string | null;
   EpisodeTitle?: string | null;

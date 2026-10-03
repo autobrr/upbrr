@@ -345,6 +345,7 @@ func assertCoreCorrectionName(t *testing.T, correction api.ReleaseCorrectionValu
 		{correction.ReleaseName.Resolution, before.Naming.Resolution},
 		{correction.ReleaseName.Tag, before.Naming.Group},
 		{correction.ReleaseName.Edition, before.Media.Edition},
+		{correction.ReleaseName.Repack, before.Media.Repack},
 		{correction.ReleaseName.EpisodeTitle, before.Episode.Title},
 		{correction.Metadata.AlternateTitle, before.Naming.AlternateTitle},
 	} {
@@ -399,6 +400,9 @@ func TestDefaultCoreLocalCorrectionMatrix(t *testing.T) {
 		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameEdition, []string{"Extended", "Uncut", ""}, []string{"Extended", "Uncut", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Edition },
 			func(r api.PreparedRelease) string { return r.Media.Edition }),
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameRepack, []string{"PROPER", "REPACK2", ""}, []string{"PROPER", "REPACK2", ""},
+			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Repack },
+			func(r api.PreparedRelease) string { return r.Media.Repack }),
 		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameEpisodeTitle, []string{"A New Signal", "A Later Signal", ""}, []string{"A New Signal", "A Later Signal", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.EpisodeTitle },
 			func(r api.PreparedRelease) string { return r.Episode.Title }),

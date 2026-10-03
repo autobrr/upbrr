@@ -604,6 +604,7 @@ func compositeUploadFactInstructions(
 			Tag:              cloneStringPointer(releaseName.Tag),
 			Service:          cloneStringPointer(releaseName.Service),
 			Edition:          cloneStringPointer(releaseName.Edition),
+			Repack:           cloneStringPointer(releaseName.Repack),
 			Season:           cloneStringPointer(releaseName.Season),
 			Episode:          cloneStringPointer(releaseName.Episode),
 			EpisodeTitle:     cloneStringPointer(releaseName.EpisodeTitle),

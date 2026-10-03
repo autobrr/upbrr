@@ -91,6 +91,7 @@ func cloneReleaseNameOverrides(value ReleaseNameOverrides) ReleaseNameOverrides 
 		Tag:              cloneString(value.Tag),
 		Service:          cloneString(value.Service),
 		Edition:          cloneString(value.Edition),
+		Repack:           cloneString(value.Repack),
 		Season:           cloneString(value.Season),
 		Episode:          cloneString(value.Episode),
 		EpisodeTitle:     cloneString(value.EpisodeTitle),

@@ -331,3 +331,77 @@ func markAitherManual(t *testing.T, document *api.ReleaseNameDocument, role api.
 	}
 	t.Fatalf("generated name is missing %s", role)
 }
+
+func TestAitherReleaseVersionAfterCut(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		nameType string
+		discType string
+		source   string
+		wantTail string
+	}{
+		{
+			nameType: "ENCODE",
+			source:   "BluRay",
+			wantTail: "1080p BluRay-GRP",
+		},
+		{
+			nameType: "REMUX",
+			source:   "BluRay",
+			wantTail: "1080p BluRay REMUX-GRP",
+		},
+		{nameType: "WEBDL", wantTail: "1080p WEB-DL-GRP"},
+		{
+			nameType: "DISC",
+			discType: "BDMV",
+			source:   "BluRay",
+			wantTail: "1080p BluRay-GRP",
+		},
+		{
+			nameType: "DISC",
+			discType: "DVD",
+			source:   "PAL DVD",
+			wantTail: "1080p PAL DVD9-GRP",
+		},
+	} {
+		t.Run(tc.nameType+tc.discType, func(t *testing.T) {
+			for _, version := range []string{"REPACK", "PROPER", "REPACK2"} {
+				subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
+					Category:   "MOVIE",
+					Type:       tc.nameType,
+					DiscType:   tc.discType,
+					Source:     tc.source,
+					Title:      "Example Film",
+					Year:       2026,
+					Edition:    "Uncut",
+					Repack:     version,
+					Resolution: "1080p",
+					DVDSize:    "DVD9",
+					Tag:        "-GRP",
+				}, []string{"English"})
+				markAitherManual(t, subject.GeneratedName, api.NameRoleRepack)
+				want := "Example Film 2026 Uncut " + version + " " + tc.wantTail
+				if got := aitherReviewedName(t, subject, nil); got != want {
+					t.Fatalf("name = %q, want %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestAitherDVDRipReleaseVersion(t *testing.T) {
+	subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "DVDRIP",
+		Title:      "Example Film",
+		Year:       2026,
+		Repack:     "PROPER",
+		Resolution: "480p",
+		Source:     "DVD",
+		Tag:        "-GRP",
+	}, []string{"English"})
+	markAitherManual(t, subject.GeneratedName, api.NameRoleRepack)
+	if got, want := aitherReviewedName(t, subject, nil), "Example Film 2026 PROPER 480p DVDRip-GRP"; got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+}
