@@ -4857,7 +4857,7 @@ func applyPreflightInteractionPolicy(
 	}
 	for index := range assessment.Results {
 		result := &assessment.Results[index]
-		if len(result.RequiredActions) == 0 {
+		if !hasPendingRequiredAction(result.RequiredActions) {
 			continue
 		}
 		projectionIndex, ok := projectionIndexes[result.TrackerID]
@@ -5017,7 +5017,9 @@ func (m *Module) stampPreflightActions(
 				}
 				action.ID = api.RequiredActionID(id)
 			}
-			action.Status = api.RequiredActionStatusPending
+			if action.Status != api.RequiredActionStatusResolved {
+				action.Status = api.RequiredActionStatusPending
+			}
 			action.WorkflowRevision = revision
 			action.TrackerID = result.TrackerID
 			action.CreatedAt = now

@@ -480,7 +480,9 @@ func (m *Module) resolveContinuationAnswer(
 	trackerDecisionMode TrackerDecisionMode,
 ) (CommandResult, bool, error) {
 	for _, answer := range request.Answers {
-		if _, ok := releaseNameConfirmationAction(current.Projections, answer.ActionID); !ok {
+		_, nameReview := releaseNameConfirmationAction(current.Projections, answer.ActionID)
+		_, ruleAction, ruleReview := projectionRuleAuthorizationAction(current.Projections, answer.ActionID)
+		if !nameReview && (!ruleReview || ruleAction.Status != api.RequiredActionStatusResolved) {
 			continue
 		}
 		result, err := m.Execute(ctx, ownerID, ResolveActionCommand{

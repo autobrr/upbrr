@@ -569,14 +569,15 @@ func TestApplyProjectionRuleFailuresRequiresExactNormalAuthorization(t *testing.
 	if normal.WaivableRuleFingerprint != waivableFingerprint || normal.RuleAuthorizationFingerprint != "" {
 		t.Fatalf("normal rule authority = %#v", normal)
 	}
-	if prompt := normal.RequiredActions[0].Prompt; prompt != "EXAMPLE rule warning: runtime_gate: waivable gate. Upload to this tracker anyway?" {
+	if prompt := normal.RequiredActions[0].Prompt; prompt != "EXAMPLE rule warning: runtime_gate: waivable gate. Acknowledge these tracker warnings?" {
 		t.Fatalf("normal rule prompt = %q", prompt)
 	}
 
 	authorized := readyProjection()
 	apply(&authorized, waivable, api.WorkflowExecutionModeNormal, waivableFingerprint, nil)
 	if authorized.Readiness != api.ReadinessStatusReady || !authorized.DupeReady || !authorized.UploadReady ||
-		len(authorized.RequiredActions) != 0 || authorized.PolicyDecisions[0].Decision != "authorized" ||
+		len(authorized.RequiredActions) != 1 || authorized.RequiredActions[0].Status != api.RequiredActionStatusResolved ||
+		authorized.RequiredActions[0].Kind != api.RequiredActionAuthorizeRules || authorized.PolicyDecisions[0].Decision != "authorized" ||
 		authorized.PolicyDecisions[0].Blocking || authorized.RuleAuthorizationFingerprint != waivableFingerprint {
 		t.Fatalf("authorized waivable outcome = %#v", authorized)
 	}

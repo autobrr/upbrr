@@ -629,8 +629,10 @@ Choose dispositions deliberately:
 - `strict` blocks in every execution mode.
 
 The workflow emits one tracker-scoped override for the exact current warning set. WebUI places it
-on that tracker's duplicate-review card; interactive CLI prompts for it. A changed set invalidates
-that authority and requires new approval. Strict failures cannot be overridden.
+on that tracker's duplicate-review card as a reversible acknowledgement toggle; interactive CLI
+prompts for it. A changed warning set or prepared generation invalidates that authority and requires
+new approval. Revocation clears dependent checks and preparation through the shared workflow.
+Strict failures cannot be overridden.
 
 Every constructibility predicate whose result depends on a required mapping or resource, including
 a missing resolution, category, type, questionnaire answer, or prepared media fact, must be

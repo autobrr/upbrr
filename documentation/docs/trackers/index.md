@@ -46,9 +46,9 @@ Tracker settings can restrict duplicate competition by incoming release group. W
 
 ### Approve tracker warnings
 
-Some tracker warnings permit an explicit override. On **Dupe Check**, read the warnings on the affected tracker's card. Choose **Upload anyway** only after deciding that the release is appropriate for that tracker.
+Some tracker warnings permit an explicit override. On **Dupe Check**, read the warnings on the affected tracker's card. Turn on **Acknowledge tracker warnings** only after deciding that the release is appropriate for that tracker. The warning details remain visible while acknowledged.
 
-Approval applies only to that tracker and its current warning set. Changed warnings require renewed approval. Strict failures remain blocked and cannot be overridden, including in debug mode.
+Approval applies only to that tracker and its current warning set. Turn the toggle off to withdraw it and require fresh checks before continuing. Changed warnings or a new prepared generation require renewed approval. Strict failures remain blocked and cannot be overridden, including in debug mode.
 
 The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override.
 

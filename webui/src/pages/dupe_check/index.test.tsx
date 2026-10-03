@@ -32,7 +32,7 @@ const facetFor = (
   chooseTrackers: vi.fn(),
   confirmReleaseName: vi.fn(),
   acknowledgeReleaseName: vi.fn(async () => true),
-  overrideRules: vi.fn(async () => true),
+  acknowledgeRules: vi.fn(async () => true),
   setIgnored: vi.fn(),
   ...commands,
 });
@@ -561,50 +561,110 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByText("Tracker upload:")).not.toBeInTheDocument();
   });
 
-  it("keeps tracker rule overrides in the owning dupe card", () => {
-    const overrideRules = vi.fn(async () => true);
+  it.each(["OE", "DVL", "OTW", "AITHER"])(
+    "uses the same warning acknowledgement toggle for %s",
+    (tracker) => {
+      const acknowledgeRules = vi.fn(async () => true);
+      const projection = {
+        trackerId: tracker,
+        displayName: tracker,
+        readiness: "blocked",
+        waivableRuleFingerprint: "current-warnings",
+        policyDecisions: [
+          {
+            code: "site_warning",
+            decision: "authorization_required",
+            blocking: true,
+            disposition: "waivable",
+            message: "Review this tracker's upload requirements.",
+          },
+        ],
+        requiredActions: [
+          {
+            id: `authorize-${tracker}-rules`,
+            kind: "authorize_rules",
+            trackerId: tracker,
+            status: "pending",
+            workflowRevision: 4,
+            prompt: "Review this tracker's upload requirements. Acknowledge these warnings?",
+            createdAt: "2026-08-15T00:00:00Z",
+          },
+        ],
+      };
+      const view = {
+        projections: {
+          projections: [projection],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      };
+      const { unmount } = renderPage(facetFor(view, { acknowledgeRules }), [tracker]);
+
+      expect(screen.getByText("Tracker acknowledgement needed")).toBeInTheDocument();
+      const toggle = screen.getByRole("switch", { name: `Acknowledge warnings for ${tracker}` });
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      expect(screen.queryByRole("button", { name: /Upload .*anyway/ })).not.toBeInTheDocument();
+      fireEvent.click(toggle);
+      expect(acknowledgeRules).toHaveBeenLastCalledWith(tracker, true);
+      unmount();
+
+      projection.readiness = "ready";
+      Object.assign(projection, { ruleAuthorizationFingerprint: "current-warnings" });
+      projection.policyDecisions[0]!.decision = "authorized";
+      projection.policyDecisions[0]!.blocking = false;
+      projection.requiredActions[0]!.status = "resolved";
+      renderPage(facetFor(view, { acknowledgeRules }), [tracker]);
+
+      const acknowledged = screen.getByRole("switch", {
+        name: `Acknowledge warnings for ${tracker}`,
+      });
+      expect(acknowledged).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByText(projection.requiredActions[0]!.prompt)).toBeInTheDocument();
+      expect(screen.queryByText("Tracker acknowledgement needed")).not.toBeInTheDocument();
+      fireEvent.click(acknowledged);
+      expect(acknowledgeRules).toHaveBeenLastCalledWith(tracker, false);
+    },
+  );
+
+  it.each(["strict", "stale", "busy"])("protects %s rule acknowledgement state", (state) => {
+    const acknowledgeRules = vi.fn(async () => true);
     renderPage(
       facetFor(
         {
+          status: state === "busy" ? "running" : "ready",
           projections: {
             projections: [
               {
                 trackerId: "EXAMPLE",
-                displayName: "Example Tracker",
-                readiness: "blocked",
-                policyDecisions: [
-                  {
-                    code: "genre",
-                    decision: "authorization_required",
-                    blocking: true,
-                    disposition: "waivable",
-                    message: "Genre does not match Animation or Family.",
-                  },
-                ],
+                readiness: state === "strict" ? "ineligible" : "ready",
+                waivableRuleFingerprint: "current-warnings",
+                ruleAuthorizationFingerprint: state === "stale" ? "previous-warnings" : "",
+                policyDecisions:
+                  state === "strict"
+                    ? [{ code: "strict_rule", disposition: "strict", blocking: true }]
+                    : [],
                 requiredActions: [
                   {
-                    id: "authorize-example-rules",
+                    id: "authorize-example",
                     kind: "authorize_rules",
                     trackerId: "EXAMPLE",
-                    status: "pending",
-                    workflowRevision: 4,
-                    prompt:
-                      "Example Tracker rule warning: genre: Genre does not match Animation or Family. Upload to this tracker anyway?",
-                    createdAt: "2026-08-15T00:00:00Z",
+                    status: state === "stale" ? "resolved" : "pending",
+                    prompt: "Review tracker warnings.",
                   },
                 ],
               },
             ],
           } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
         },
-        { overrideRules },
+        { acknowledgeRules },
       ),
     );
-
-    expect(screen.getByText("Upload approval needed")).toBeInTheDocument();
-    expect(screen.queryByText("Genre does not match Animation or Family.")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Upload to EXAMPLE anyway" }));
-    expect(overrideRules).toHaveBeenCalledWith("EXAMPLE");
+    const toggle = screen.queryByRole("switch", { name: "Acknowledge warnings for EXAMPLE" });
+    if (state === "busy") {
+      expect(toggle).toBeDisabled();
+      fireEvent.click(toggle!);
+    } else {
+      expect(toggle).not.toBeInTheDocument();
+    }
+    expect(acknowledgeRules).not.toHaveBeenCalled();
   });
 
   it("renders auth failure as retryable blocked lane evidence without an action card", () => {
@@ -769,7 +829,7 @@ describe("DupeCheckPage", () => {
     expect(screen.getByText("In client")).toBeInTheDocument();
     expect(screen.getByText("Already in client: Strict match")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Upload to AITHER anyway" }),
+      screen.queryByRole("switch", { name: "Acknowledge warnings for AITHER" }),
     ).not.toBeInTheDocument();
     const inClientCard = screen.getByRole("heading", { name: "AITHER" }).closest("article");
     expect(inClientCard).toHaveClass("gap-1", "px-3", "py-2");
