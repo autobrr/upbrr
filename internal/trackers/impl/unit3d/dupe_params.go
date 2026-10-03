@@ -12,7 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var dupeSeasonPattern = regexp.MustCompile(`(?i)\bS(\d{1,2})`)
+var dupeSeasonPattern = regexp.MustCompile(`(?i)\bS(\d{1,4})(?:E|\b)`)
 
 // buildDupeSearchParams binds a TMDB work to the site's full category family and
 // optional TV season. Missing work or category scope returns nil. Type, resolution

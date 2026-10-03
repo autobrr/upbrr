@@ -885,6 +885,8 @@ func TestValidateReleaseNameFactInstructions(t *testing.T) {
 		{Season: new("S05"), Episode: new("E07")},
 		{Season: new("s5"), Episode: new("e7")},
 		{Season: new("99"), Episode: new("999")},
+		{Season: new("2026"), Episode: new("03")},
+		{Season: new("S2026"), Episode: new("E03")},
 		{ManualDate: new("2026-02-03")},
 	}
 	for _, overrides := range valid {
@@ -899,7 +901,7 @@ func TestValidateReleaseNameFactInstructions(t *testing.T) {
 		{Season: new("1x05")},
 		{Season: new("0")},
 		{Season: new("S00")},
-		{Season: new("100")},
+		{Season: new("10000")},
 		{Season: new("abc")},
 		{Season: new("S")},
 		{Season: new("-1")},
@@ -1907,4 +1909,13 @@ func (l *captureLogger) contains(value string) bool {
 		}
 	}
 	return false
+}
+
+func TestYearNumberedSeasonCategoryHints(t *testing.T) {
+	for _, path := range []string{"Example.Show.S2026E03.1080p.mkv", "Example.Show.S2026.1080p", "Example.Show.2026x03.1080p.mkv"} {
+		meta := preparationstate.State{SourcePath: path}
+		if !isLikelyTV(meta) || inferCategoryFromMetadata(meta) != "TV" {
+			t.Errorf("year-numbered season %q was not classified as TV", path)
+		}
+	}
 }

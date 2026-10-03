@@ -1868,3 +1868,35 @@ func TestPreparationEnrichmentReusesOnlyCompatibleClientEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareRecomputesV19YearSeasonAfterRestart(t *testing.T) {
+	path := writePreparedTestFile(t, "Example.Show.S2026.1080p.WEB-DL-GRP.mkv", "video")
+	store := newMemoryStore()
+	input := api.PrepareInput{SourcePath: path}
+	previous, err := newTestModule(t, store, &recordingCollector{}).Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := previous.Release
+	old.Compatibility.ContractVersion = "prepared-release-v19"
+	store.mu.Lock()
+	store.current[canonicalSourceKey(path)] = old
+	store.mu.Unlock()
+	collector := &recordingCollector{facts: &CollectedFacts{Episode: api.EpisodeFacts{
+		Season:      2026,
+		SeasonLabel: "S2026",
+		Pack:        true,
+	}}}
+	restarted := newTestModule(t, store, collector)
+	result, err := restarted.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if collector.callCount() != 1 || result.Release.Generation != old.Generation+1 || result.Release.Episode.Season != 2026 {
+		t.Fatalf("stale year-season generation reused: generation=%d calls=%d episode=%#v", result.Release.Generation, collector.callCount(), result.Release.Episode)
+	}
+	reused, err := restarted.Prepare(t.Context(), input)
+	if err != nil || reused.Release.Generation != result.Release.Generation || collector.callCount() != 1 {
+		t.Fatalf("updated generation was not reused: generation=%d calls=%d err=%v", reused.Release.Generation, collector.callCount(), err)
+	}
+}
