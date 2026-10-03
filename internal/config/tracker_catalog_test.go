@@ -90,3 +90,15 @@ func TestTrackerConfiguredUsesOnlyActivationFields(t *testing.T) {
 		t.Fatal("one non-empty activation field should mark tracker configured before readiness")
 	}
 }
+
+func TestRemovedTHRIsAbsentFromCatalog(t *testing.T) {
+	t.Parallel()
+
+	schemas, err := OrderedTrackerSchemas()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(schemas, func(schema TrackerSchema) bool { return schema.Name == "THR" }) {
+		t.Fatal("obsolete THR settings must not be advertised")
+	}
+}

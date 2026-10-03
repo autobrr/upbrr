@@ -86,8 +86,8 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	if _, ok := registry.Lookup("SPD"); !ok {
 		t.Fatal("expected SPD definition to be registered")
 	}
-	if _, ok := registry.Lookup("THR"); !ok {
-		t.Fatal("expected THR definition to be registered")
+	if _, ok := registry.Lookup("THR"); ok {
+		t.Fatal("obsolete THR definition must not be registered")
 	}
 	if _, ok := registry.Lookup("TL"); !ok {
 		t.Fatal("expected TL definition to be registered")
@@ -872,7 +872,6 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 		"PHD": {Source: "PrivateHD", DefaultAnnounce: "https://tracker.privatehd.to/announce"},
 		"PTS": {Source: "[www.ptskit.org] PTSKIT", RequireAnnounce: true},
 		"RTF": {Source: "sunshine", RequireAnnounce: true},
-		"THR": {Source: "[https://www.torrenthr.org] TorrentHR.org", RequireAnnounce: true},
 		"TL":  {Source: "TorrentLeech.org"},
 		"TOS": {Source: "TheOldSchool"},
 		"TVC": {Source: "TVCHAOS", RequireAnnounce: true},
@@ -890,7 +889,7 @@ func TestNewRegistryOwnsMetadataPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	for _, name := range []string{"AR", "AZ", "BJS", "CZ", "CZT", "NBL", "PHD", "PTP", "SPD", "THR", "TL", "TVC", "AITHER"} {
+	for _, name := range []string{"AR", "AZ", "BJS", "CZ", "CZT", "NBL", "PHD", "PTP", "SPD", "TL", "TVC", "AITHER"} {
 		if _, ok := registry.LookupMetadataPolicy(name); !ok {
 			t.Errorf("expected %s tracker-owned metadata policy", name)
 		}
@@ -1038,7 +1037,6 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 		host                 string
 		conditionalHost      string
 		disableWithoutRehost bool
-		disableWithoutAPI    bool
 	}{
 		{
 			tracker:              "HDB",
@@ -1046,11 +1044,6 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 			disableWithoutRehost: true,
 		},
 		{tracker: "PTP", host: "passtheimage"},
-		{
-			tracker:           "THR",
-			host:              "thr",
-			disableWithoutAPI: true,
-		},
 		{tracker: "LST", conditionalHost: "lostimg"},
 		{tracker: "RF", conditionalHost: "reelflix"},
 	}
@@ -1060,7 +1053,7 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 			t.Errorf("%s image policy = %#v, %t", test.tracker, policy, ok)
 			continue
 		}
-		if policy.DisableWithoutRehost != test.disableWithoutRehost || policy.DisableWithoutAPI != test.disableWithoutAPI {
+		if policy.DisableWithoutRehost != test.disableWithoutRehost {
 			t.Errorf("%s image policy flags = %#v", test.tracker, policy)
 		}
 		if policy.ConditionalHost != test.conditionalHost {
@@ -1070,7 +1063,7 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 	bhdPolicy, ok := registry.LookupImageHostPolicy("BHD")
 	if !ok ||
 		!slices.Equal(bhdPolicy.AllowedHosts, []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"}) ||
-		bhdPolicy.DisableWithoutRehost || bhdPolicy.DisableWithoutAPI || bhdPolicy.ConditionalHost != "" {
+		bhdPolicy.DisableWithoutRehost || bhdPolicy.ConditionalHost != "" {
 		t.Errorf("BHD image policy = %#v, %t", bhdPolicy, ok)
 	}
 }

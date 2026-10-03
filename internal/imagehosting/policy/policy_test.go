@@ -15,10 +15,13 @@ func TestKnownUploadHostsAreDeterministic(t *testing.T) {
 	if !slices.IsSorted(hosts) {
 		t.Fatalf("upload hosts are not sorted: %v", hosts)
 	}
-	for _, host := range []string{"hdb", "lostimg", "pixhost", "reelflix", "samaritano", "thr"} {
+	for _, host := range []string{"hdb", "lostimg", "pixhost", "reelflix", "samaritano"} {
 		if !IsUploadHost(host) {
 			t.Errorf("expected upload host %q", host)
 		}
+	}
+	if IsUploadHost("thr") || slices.Contains(hosts, "thr") {
+		t.Error("obsolete THR host is advertised as supported")
 	}
 }
 

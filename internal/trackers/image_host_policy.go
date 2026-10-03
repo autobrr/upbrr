@@ -46,9 +46,6 @@ func policyForTrackerWithRegistry(registry *Registry, tracker string, trackerCfg
 		if declared.DisableWithoutRehost && !trackerCfg.ImgRehost {
 			return imageHostPolicy{}
 		}
-		if declared.DisableWithoutAPI && strings.TrimSpace(trackerCfg.ImgAPI) == "" {
-			return imageHostPolicy{}
-		}
 		return newImageHostPolicy(declared.AllowedHosts...)
 	}
 	return imageHostPolicy{}

@@ -4,12 +4,15 @@
 package legacy
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/config"
 )
 
 func TestCoerceToBool(t *testing.T) {
@@ -672,6 +675,66 @@ config = {
 		found := slices.Contains(warnings, want)
 		if !found {
 			t.Fatalf("missing warning %q in %#v", want, warnings)
+		}
+	}
+}
+
+func TestImportUnsupportedTrackerPreservesFieldsAfterJSONClone(t *testing.T) {
+	t.Parallel()
+
+	input := []byte(`
+config = {
+    'TRACKERS': {
+        'default_trackers': ['THR', 'AITHER'],
+        'preferred_tracker': 'THR',
+        'THR': {'password': 'upbrr-enc:v1:unreadable'},
+        'RETIRED': {
+            'pronfo_api_key': 'synthetic-pronfo-key',
+            'pronfo_rapi_id': 'synthetic-pronfo-id',
+            'pronfo_theme': 'legacy-theme',
+            'img_api': 'synthetic-image-key',
+            '-': None,
+            'keep_me': 'retained',
+        },
+    },
+}
+`)
+	cfg, warnings, err := ImportFromContent(input)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if !slices.Contains(warnings, "preserved unsupported tracker entry: RETIRED") {
+		t.Fatalf("missing unsupported tracker warning: %v", warnings)
+	}
+	if _, ok := cfg.Trackers.Trackers["THR"]; ok {
+		t.Fatal("removed tracker retained")
+	}
+	if !slices.Equal(cfg.Trackers.DefaultTrackers, []string{"AITHER"}) || cfg.Trackers.PreferredTracker != "" {
+		t.Fatal("removed tracker selection retained")
+	}
+	if !slices.Contains(warnings, "ignored removed tracker entry: THR") {
+		t.Fatal("removed tracker warning missing")
+	}
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	var cloned config.Config
+	if err := json.Unmarshal(payload, &cloned); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	for stage, tracker := range map[string]config.TrackerConfig{
+		"imported": cfg.Trackers.Trackers["RETIRED"],
+		"cloned":   cloned.Trackers.Trackers["RETIRED"],
+	} {
+		if tracker.ImgAPI != "synthetic-image-key" {
+			t.Errorf("%s config lost known tracker fields", stage)
+		}
+		if len(tracker.Unknown) != 2 || tracker.Unknown["keep_me"] != "retained" {
+			t.Errorf("%s config did not retain only the unknown extension fields", stage)
+		}
+		if value, ok := tracker.Unknown["-"]; !ok || value != nil {
+			t.Errorf("%s config lost the unknown '-' extension field", stage)
 		}
 	}
 }

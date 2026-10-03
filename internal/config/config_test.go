@@ -371,6 +371,17 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "removed image host is rejected for supported tracker",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				Trackers: TrackersConfig{Trackers: map[string]TrackerConfig{
+					"aither": {ImageHost: "thr"},
+				}},
+			},
+			wantErr: true,
+		},
+		{
 			name: "tracker image host policy is validated at runtime",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
