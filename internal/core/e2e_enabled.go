@@ -338,12 +338,21 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		meta.TrackCoverageComplete = true
 	}
 	if request.Layout.DiscType == "" {
-		video, files, err := filesystem.CollectVideoFiles(ctx, sourcePath, false)
-		if err != nil {
-			return preparationstate.State{}, fmt.Errorf("e2e metadata: collect source files: %w", err)
+		// The validated manifest includes nested videos; avoid a shallower rescan.
+		meta.FileList = nil
+		for _, entry := range request.Manifest.Entries {
+			if entry.Type != api.SourceEntryTypeFile {
+				continue
+			}
+			name := strings.ToLower(filepath.Base(entry.Path))
+			if entry.Path != sourcePath && (!filesystem.IsVideoFile(name) || (strings.Contains(name, "sample") && !strings.Contains(name, "!sample"))) {
+				continue
+			}
+			meta.FileList = append(meta.FileList, entry.Path)
 		}
-		meta.VideoPath = video
-		meta.FileList = files
+		if len(meta.FileList) > 0 {
+			meta.VideoPath = meta.FileList[0]
+		}
 	}
 	if namingFixture {
 		meta.Edition = "Uncut"
