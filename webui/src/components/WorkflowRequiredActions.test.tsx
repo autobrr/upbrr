@@ -132,6 +132,20 @@ describe("WorkflowRequiredActions", () => {
     expect(navigate).toHaveBeenCalledWith("input");
   });
 
+  it("routes saved correction review directly to Input", () => {
+    const navigate = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([action({ kind: "confirm_corrections", trackerId: undefined })])}
+        onConfirm={vi.fn()}
+        onNavigate={navigate}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Review saved values" }));
+    expect(navigate).toHaveBeenCalledWith("input");
+    expect(screen.queryByText("Continue from the relevant workflow page.")).not.toBeInTheDocument();
+  });
+
   it("renders unsupported actions without inventing navigation", () => {
     const navigate = vi.fn();
     const { rerender } = render(

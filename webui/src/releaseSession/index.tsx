@@ -29,7 +29,7 @@ import type {
 } from "../api/generated/release-workflow";
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
-import { initialSessionState, sessionReducer } from "./reducer";
+import { initialSessionState, pendingCorrectionReview, sessionReducer } from "./reducer";
 import { canExecuteUpload } from "./uploadEligibility";
 import { routeAccess, type TrackerWorkflowRequirements } from "./navigation";
 import {
@@ -608,7 +608,9 @@ export function ReleaseSessionProvider({
     const controller = new AbortController();
     controllers.current.activeInput = controller;
     const capturedInputEditRevision = stateRef.current.inputEditRevision;
-    const preserveCurrentDraft = preserveInputDraft || stateRef.current.preparationDirty;
+    // Correction choices can exist before the first prepared release.
+    const preserveCurrentDraft =
+      preserveInputDraft || stateRef.current.preparationDirty || stateRef.current.correctionDirty;
     const draftInputID = stateRef.current.activeInput.inputID;
     const draftSourceVersion = stateRef.current.activeInput.sourceVersion;
     const keepLocalDraft = (snapshot: ActiveInputSnapshot) =>
@@ -1213,6 +1215,18 @@ export function ReleaseSessionProvider({
       }
       if (dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
         publishWorkflowCurrent(current, "ready");
+        return false;
+      }
+      if (pendingCorrectionReview(current)) {
+        applyActiveInputSnapshot(
+          activeSnapshotWithCurrent(current),
+          "ready",
+          update.inputEditRevision,
+          false,
+          intent,
+          sourcePath,
+          update.selectedTrackers,
+        );
         return false;
       }
       const trackerInputAnswers = Object.fromEntries(
@@ -2474,6 +2488,7 @@ export function ReleaseSessionProvider({
         correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
         corrections: workflowView.current?.corrections || null,
+        correctionReview: pendingCorrectionReview(workflowView.current),
         valueFields: state.correctionValueFields,
         resetFields: state.correctionResetFields,
         confirmFields: state.correctionConfirmFields,

@@ -13,6 +13,7 @@ export type ActiveInputSnapshot = Readonly<{
   inputId?: string;
   recoveryWorkflowIds?: readonly WorkflowID[];
   revision: number;
+  sourcePath?: string;
   sourceVersion?: string;
   state: ActiveInputState;
 }>;

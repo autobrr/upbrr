@@ -23,6 +23,7 @@ import type {
   AudioAnalysisSelectionMode,
   AudioAnalysisVariant,
   MediaTrackFacts,
+  CorrectionConfirmation,
   CorrectionFieldRef,
   DupeAssessment,
   DupeDecision,
@@ -139,6 +140,8 @@ export type InputFacet = Readonly<{
     correctionDirty: boolean;
     intent: PreparationIntent;
     corrections: ReleaseCorrectionsSnapshot | null;
+    /** Saved content corrections awaiting review, including before a release exists. */
+    correctionReview: CorrectionConfirmation | null;
     /** Manual fields changed locally but not yet applied by metadata refresh. */
     valueFields: readonly CorrectionFieldRef[];
     resetFields: readonly CorrectionFieldRef[];

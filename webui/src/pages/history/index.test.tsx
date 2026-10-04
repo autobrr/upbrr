@@ -206,30 +206,114 @@ describe("HistoryPage", () => {
     expect(screen.queryByText(storedPath)).not.toBeInTheDocument();
   });
 
-  it("refreshes the history cache after deleting a stored release", async () => {
-    const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
-    let stored = [entry(sourcePath, "Stored Release 2026")];
-    const onReleaseDeleted = vi.fn();
-    const list = vi.fn(async () => stored);
-    installAppOperationMocks({
-      ListHistory: list,
-      GetHistoryOverview: async () => overview(sourcePath, "Stored Release 2026"),
-      DeleteHistoryRelease: async () => {
+  it.each(["loaded", "failed", "pending"])(
+    "deletes a stored release and refreshes the cache with a %s overview",
+    async (overviewState) => {
+      const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
+      let stored = [entry(sourcePath, "Stored Release 2026")];
+      const onReleaseDeleted = vi.fn();
+      const list = vi.fn(async () => stored);
+      const remove = vi.fn(async () => {
         stored = [];
         return {};
+      });
+      installAppOperationMocks({
+        ListHistory: list,
+        GetHistoryOverview: async () => {
+          if (overviewState === "failed") throw new Error("stored preparation unavailable");
+          if (overviewState === "pending") return new Promise<HistoryOverview>(() => undefined);
+          return overview(sourcePath, "Stored Release 2026");
+        },
+        DeleteHistoryRelease: remove,
+      });
+      vi.stubGlobal(
+        "confirm",
+        vi.fn(() => true),
+      );
+      try {
+        renderHistory({ onReleaseDeleted });
+        const user = userEvent.setup();
+        if (overviewState === "failed") {
+          expect(
+            await screen.findByText("Error: stored preparation unavailable"),
+          ).toBeInTheDocument();
+        } else if (overviewState === "pending") {
+          expect(await screen.findByText("Loading overview...")).toBeInTheDocument();
+        }
+        await user.click(await screen.findByRole("button", { name: "Remove from database" }));
+        expect(await screen.findByText("No stored releases found.")).toBeInTheDocument();
+        expect(remove).toHaveBeenCalledExactlyOnceWith(sourcePath);
+        expect(onReleaseDeleted).toHaveBeenCalledWith(sourcePath);
+        expect(list).toHaveBeenCalledTimes(2);
+        expect(
+          screen.queryByRole("button", { name: "Remove from database" }),
+        ).not.toBeInTheDocument();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("still requires confirmation when stored details cannot be loaded", async () => {
+    const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
+    const remove = vi.fn(async () => ({}));
+    installAppOperationMocks({
+      ListHistory: async () => [entry(sourcePath, "Stored Release 2026")],
+      GetHistoryOverview: async () => {
+        throw new Error("stored preparation unavailable");
       },
+      DeleteHistoryRelease: remove,
+    });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    try {
+      renderHistory();
+      const user = userEvent.setup();
+      expect(await screen.findByText("Error: stored preparation unavailable")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Remove from database" }));
+
+      expect(confirm).toHaveBeenCalledExactlyOnceWith(
+        "Remove this stored release and all associated stored files?",
+      );
+      expect(remove).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: /Stored Release 2026/ })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("blocks duplicate deletion requests and permits retry after a deletion error", async () => {
+    const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
+    let failDelete: () => void = () => undefined;
+    const pendingDelete = new Promise((_, reject) => {
+      failDelete = () => reject(new Error("database unavailable"));
+    });
+    const remove = vi.fn(() => pendingDelete);
+    installAppOperationMocks({
+      ListHistory: async () => [entry(sourcePath, "Stored Release 2026")],
+      GetHistoryOverview: async () => {
+        throw new Error("stored preparation unavailable");
+      },
+      DeleteHistoryRelease: remove,
     });
     vi.stubGlobal(
       "confirm",
       vi.fn(() => true),
     );
     try {
-      renderHistory({ onReleaseDeleted });
+      renderHistory();
       const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: "Remove from database" }));
-      expect(await screen.findByText("No stored releases found.")).toBeInTheDocument();
-      expect(onReleaseDeleted).toHaveBeenCalledWith(sourcePath);
-      expect(list).toHaveBeenCalledTimes(2);
+      expect(await screen.findByText("Error: stored preparation unavailable")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Remove from database" }));
+
+      const removing = screen.getByRole("button", { name: "Removing..." });
+      expect(removing).toBeDisabled();
+      await user.click(removing);
+      expect(remove).toHaveBeenCalledTimes(1);
+
+      await act(async () => failDelete());
+      expect(await screen.findByText("Error: database unavailable")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Remove from database" })).toBeEnabled();
     } finally {
       vi.unstubAllGlobals();
     }

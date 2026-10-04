@@ -35,6 +35,7 @@ func WithActiveInputs(repository api.ActiveInputRepository, verifier InputVerifi
 type OpenInputRequest struct {
 	ExpectedRevision    uint64
 	Input               api.PrepareInput
+	CorrectionPatch     *api.ReleaseCorrectionPatch
 	IdempotencyKey      string
 	TrackerDecisionMode TrackerDecisionMode
 	Composite           *compositeUploadSession
@@ -61,6 +62,16 @@ func (m *Module) ActiveInput(ctx context.Context, owner string) (api.ActiveInput
 // Callers use it to avoid loading a foreign persisted input during startup.
 func (m *Module) OwnsActiveInput(slot api.ActiveInputRecord) bool {
 	return m != nil && slot.State != api.ActiveInputEmpty && slot.Fence != 0 && slot.CoordinatorID == m.processEpoch
+}
+
+// InputSourcePath reads the canonical source for an already authorized input ID.
+// Callers must enforce input ownership before projecting the path to a client.
+func (m *Module) InputSourcePath(ctx context.Context, inputID string) (string, error) {
+	record, err := m.activeInputs.LoadInputRecordByID(ctx, inputID)
+	if err != nil {
+		return "", fmt.Errorf("release workflow read input source: %w", err)
+	}
+	return record.CanonicalPath, nil
 }
 
 // PreparationForInputOpen distinguishes a new input load from reapplying the
@@ -280,9 +291,10 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		fingerprintInput.ExternalFreshness = api.ExternalFreshnessReuse
 	}
 	fingerprint, err := canonicalCommandFingerprint(struct {
-		Input   api.PrepareInput
-		Request api.WorkflowFingerprint
-	}{fingerprintInput, request.RequestFingerprint})
+		Input           api.PrepareInput
+		CorrectionPatch *api.ReleaseCorrectionPatch `json:",omitempty"`
+		Request         api.WorkflowFingerprint
+	}{fingerprintInput, request.CorrectionPatch, request.RequestFingerprint})
 	if err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -447,6 +459,26 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		if loadErr != nil {
 			return api.ActiveInputRecord{}, fmt.Errorf("release workflow load refreshed workflow: %w", loadErr)
 		}
+		var correctionReview *api.CorrectionConfirmation
+		if patch := request.CorrectionPatch; patch != nil && state.Corrections != nil {
+			expected := state.Corrections.Revision
+			if patch.ExpectedRevision != nil {
+				expected = *patch.ExpectedRevision
+			}
+			// The verified input ID already binds this workflow to the same canonical
+			// source; its preparation may still contain the originally submitted alias.
+			if len(patch.ConfirmFields) > 0 {
+				correctionReview, err = pendingCorrectionConfirmation(&state, currentWorkflowSourcePath(&state), *patch)
+				if err != nil {
+					return api.ActiveInputRecord{}, err
+				}
+			} else {
+				correctionReview, _ = currentCorrectionConfirmation(&state, currentWorkflowSourcePath(&state), expected)
+			}
+			if prior.SourceVersion != record.SourceVersion {
+				correctionReview = nil
+			}
+		}
 		state.SourcePath = strings.TrimSpace(record.CanonicalPath)
 		state.PreparationInput = &request.Input
 		if request.Composite != nil && (state.Composite == nil || state.Composite.RequestFingerprint != request.Composite.RequestFingerprint) {
@@ -457,7 +489,15 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		state.Workflow.Status = api.WorkflowStatusDraft
 		state.Workflow.SubmissionExclusions = nil
 		state.Workflow.RequiredActions, state.Workflow.Failures = nil, nil
+		if correctionReview != nil {
+			// Reverification retains only valid correction review, bound to the new
+			// workflow revision. Preparation still checks the final provider identity.
+			if err := m.blockForCorrectionConfirmation(&state, state.Workflow.Revision, state.Workflow.UpdatedAt, correctionReview.CurrentBinding); err != nil {
+				return api.ActiveInputRecord{}, err
+			}
+		}
 		if prior.SourceVersion != record.SourceVersion {
+			state.PendingCorrectionConfirmation = nil
 			state.PendingAudioAnalysis = nil
 			state.PendingAudioAnalysisWorkflowID = ""
 		} else if state.Workflow.AudioAnalysis != nil {

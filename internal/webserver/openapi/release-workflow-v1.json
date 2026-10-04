@@ -173,6 +173,9 @@
           "revision": {
             "type": "integer"
           },
+          "sourcePath": {
+            "type": "string"
+          },
           "sourceVersion": {
             "type": "string"
           },
