@@ -337,6 +337,23 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		meta.PrimaryAudioTrackID = audioTrackID
 		meta.TrackCoverageComplete = true
 	}
+	if request.Layout.DiscType == "" {
+		// The validated manifest includes nested videos; avoid a shallower rescan.
+		meta.FileList = nil
+		for _, entry := range request.Manifest.Entries {
+			if entry.Type != api.SourceEntryTypeFile {
+				continue
+			}
+			name := strings.ToLower(filepath.Base(entry.Path))
+			if entry.Path != sourcePath && (!filesystem.IsVideoFile(name) || (strings.Contains(name, "sample") && !strings.Contains(name, "!sample"))) {
+				continue
+			}
+			meta.FileList = append(meta.FileList, entry.Path)
+		}
+		if len(meta.FileList) > 0 {
+			meta.VideoPath = meta.FileList[0]
+		}
+	}
 	if namingFixture {
 		meta.Edition = "Uncut"
 		meta.GeneratedName = generatedName.GeneratedName.Clone()

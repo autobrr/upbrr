@@ -1077,15 +1077,24 @@ func validationLocalPathsEqual(left string, right string) bool {
 	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
 }
 
-func collectValidationSeasonEpisodes(fileName string, detected map[int]map[int]struct{}) {
-	seasonMatch := validationSeasonPattern.FindStringSubmatch(fileName)
+// DetectedFileSeason returns the first season token in a source file's basename.
+// It shares tracker package validation semantics, including season zero; release
+// titles and metadata overrides do not participate in this evidence.
+func DetectedFileSeason(fileName string) (int, bool) {
+	seasonMatch := validationSeasonPattern.FindStringSubmatch(filepath.Base(fileName))
 	if len(seasonMatch) < 2 {
-		return
+		return 0, false
 	}
 	season, err := strconv.Atoi(seasonMatch[1])
-	if err != nil || season < 0 {
+	return season, err == nil && season >= 0
+}
+
+func collectValidationSeasonEpisodes(fileName string, detected map[int]map[int]struct{}) {
+	season, ok := DetectedFileSeason(fileName)
+	if !ok {
 		return
 	}
+
 	if detected[season] == nil {
 		detected[season] = make(map[int]struct{})
 	}
