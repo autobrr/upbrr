@@ -472,6 +472,13 @@ type InputSchemaProvider interface {
 	InputSchema(api.UploadSubject) *api.TrackerQuestionnaire
 }
 
+// ProjectionQuestionnaireProvider supplies tracker-local review questions from
+// finalized facts without payload preparation or I/O. Unanswered required fields
+// block only this tracker through the shared questionnaire action policy.
+type ProjectionQuestionnaireProvider interface {
+	ProjectionQuestionnaire(api.UploadSubject) *api.TrackerQuestionnaire
+}
+
 // UploadArtifactPolicy declares tracker torrent personalization fields.
 type UploadArtifactPolicy struct {
 	// Source replaces the torrent info dictionary's private-tracker source field.

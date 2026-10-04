@@ -30,7 +30,11 @@ export const routeAccess = (
   const trackerAssessment = goal("trackers_assessed");
   const media = goal("media_ready");
   const descriptions = goal("descriptions_ready");
-  const upload = goal("upload_reviewed");
+  const upload = continuation?.requiredActions?.some(
+    (action) => action.kind === "answer_questionnaire" && action.status === "pending",
+  )
+    ? { available: true, reason: "" }
+    : goal("upload_reviewed");
   return {
     input: { available: true, reason: "" },
     trackerData: {

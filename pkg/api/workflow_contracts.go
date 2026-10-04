@@ -234,6 +234,11 @@ type TrackerArtifactRequirements struct {
 
 // TrackerQuestionnaireRequirement describes one non-secret tracker input requirement.
 type TrackerQuestionnaireRequirement struct {
+	// Kind identifies the renderer; multiselect values use comma-separated option labels.
+	Kind string `json:"kind,omitempty"`
+	// Value is the validated answer captured with this exact projection.
+	Value    string   `json:"value,omitempty"`
+	Help     string   `json:"help,omitempty"`
 	Key      string   `json:"key"`
 	Label    string   `json:"label"`
 	Required bool     `json:"required"`

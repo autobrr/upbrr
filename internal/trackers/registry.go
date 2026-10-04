@@ -92,6 +92,9 @@ func (r *Registry) Register(def Definition) error {
 			descriptor.Family = provider.TrackerFamily()
 		}
 		descriptor.ProjectorVersion = strings.ToLower(string(descriptor.Family)) + "-v2"
+		if _, ok := def.(ProjectionQuestionnaireProvider); ok {
+			descriptor.ProjectorVersion += "-questionnaire-v1"
+		}
 		if provider, ok := def.(ReleaseNamePolicyProvider); ok {
 			descriptor.ReleaseNamePolicy = provider.ReleaseNamePolicy()
 		} else {

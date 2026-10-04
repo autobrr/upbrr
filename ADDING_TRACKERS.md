@@ -1054,6 +1054,15 @@ missing required questionnaire answers, or unavailable prepared media. Add combi
 validation behavior to `internal/trackers/rules_test.go`; add tracker-package tests for
 protocol-specific pure mapping or complex validation.
 
+Tracker-local reviews that must occur before payload preparation can implement
+`ProjectionQuestionnaireProvider` in `questionnaire.go`. The method must be pure and return
+backend-owned fields with stable keys, validated retained values, and empty values for unanswered
+required fields. The projector emits a tracker-scoped questionnaire action; do not turn an upload
+review into a global Input prerequisite. CLI and WebUI render select, text, and comma-separated
+multiselect answers. Multiselect option labels must not contain commas. Accepted values travel in
+the exact projection and are reused during payload preparation. Keep canonical fact corrections
+in the separate Input schema rather than mutating media facts from a tracker answer.
+
 ### 7. Add optional capabilities
 
 Declare static capabilities directly in `standalone.Profile`:

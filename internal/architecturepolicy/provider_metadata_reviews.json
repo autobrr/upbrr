@@ -1032,7 +1032,7 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
-    "sha256": "0eebff6e96066f841747c804aada352ac3f10cd02bb2061824d521dcc45db344",
+    "sha256": "2054a5eb968bbde96d354e24d7eaa2250e9e28ad1a4805029f0b9860d041759d",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveTags": {
@@ -1044,11 +1044,11 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:buildUploadFields": {
-    "sha256": "0ebd39d321f8299bba67ceb8d1c9c737d37078dd6f41d6f242035464564c7988",
+    "sha256": "e2a7b1446f23a8e9497d37d60a0c2949a895c54bf4245be19353fbc7a52bd6dc",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
-    "sha256": "c18499be471ea708cbbc33dc5060235013ffdf60f225ed2449cdce76f8b76ddc",
+    "sha256": "9455217c49ca0fdfb19e266e7b17a9c2ca5fd87fb2ac81f86f5f9689fab17338",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:resolveGroupTitleYear": {
@@ -1208,8 +1208,8 @@
     "reason": "Passes the runtime AddLogo setting into the reviewed TVC description builder; payload facts and manual precedence are unchanged."
   },
   "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
-    "sha256": "b57d57edac45a5a154548adbaff6e095c57a60031a5fa1ce27aad02c33c3147d",
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together."
+    "sha256": "fb1b8cfec611043b6a093daab69461ae67bdb8dee55b152728c9903b13bea503",
+    "reason": "Canonical hardcoded-subtitle coverage is cloned alongside finalized language facts; provider and manual-precedence behavior is unchanged. The mapping and its callers were reviewed together."
   },
   "internal/trackers/impl/unit3d/additional_rules.go:Anime": {
     "sha256": "b0963b0520f2ab2c7ddf838ff6db4a01c086322786a58aecf9c6409243c0468f",

@@ -4,6 +4,7 @@
 package languageutil
 
 import (
+	"slices"
 	"strings"
 	"sync"
 
@@ -44,14 +45,16 @@ func NormalizeLanguageDisplay(value string) string {
 }
 
 // NormalizeLanguageCode resolves a complete language code or English display
-// name to its ISO 639 base code. Blank and unrecognized inputs return empty.
+// name to its ISO 639 base code, ignoring an explicit subtitle Full/Forced
+// suffix for language matching. Blank and unrecognized inputs return empty.
 func NormalizeLanguageCode(value string) string {
-	langTag, ok := resolveCompleteLanguageTag(value)
+	base, _ := SubtitleLanguageParts(value)
+	langTag, ok := resolveCompleteLanguageTag(base)
 	if !ok {
 		return ""
 	}
-	base, _ := langTag.Base()
-	return base.String()
+	code, _ := langTag.Base()
+	return code.String()
 }
 
 // NormalizeLanguageList splits comma-separated entries, normalizes recognized
@@ -80,13 +83,52 @@ func NormalizeLanguageList(values []string) []string {
 }
 
 // NormalizeLanguageLabel resolves a complete language code or English display
-// name to its complete English base-language label. Blank and unrecognized
-// inputs return empty.
+// name to its complete English label, preserving an explicit subtitle Full/Forced
+// suffix. Blank and unrecognized inputs return empty.
 func NormalizeLanguageLabel(value string) string {
-	if tag, ok := resolveCompleteLanguageTag(value); ok {
-		return languageDisplayName(tag)
+	base, coverage := SubtitleLanguageParts(value)
+	if tag, ok := resolveCompleteLanguageTag(base); ok {
+		label := languageDisplayName(tag)
+		if coverage != "" {
+			label += " (" + coverage + ")"
+		}
+		return label
 	}
 	return ""
+}
+
+// SubtitleLanguageParts separates an explicit Full/Forced suffix from a language
+// without guessing coverage for unqualified labels or discarding custom text.
+func SubtitleLanguageParts(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	for _, coverage := range []string{"Full", "Forced"} {
+		mode := strings.ToLower(coverage)
+		for _, suffix := range []string{" (" + mode + ")", " - " + mode, " " + mode} {
+			if strings.HasSuffix(lower, suffix) {
+				return strings.TrimSpace(value[:len(value)-len(suffix)]), coverage
+			}
+		}
+	}
+	return value, ""
+}
+
+// KnownLanguageLabels returns the sorted base-language vocabulary already used
+// by metadata normalization. Suggestions never limit custom corrections.
+func KnownLanguageLabels() []string {
+	languageNameMapOnce.Do(buildLanguageNameMap)
+	seen := make(map[string]bool)
+	for _, tag := range languageNameMap {
+		seen[languageDisplayName(tag)] = true
+	}
+	labels := make([]string, 0, len(seen))
+	for label := range seen {
+		if label != "" {
+			labels = append(labels, label)
+		}
+	}
+	slices.Sort(labels)
+	return labels
 }
 
 func languageDisplayName(langTag language.Tag) string {

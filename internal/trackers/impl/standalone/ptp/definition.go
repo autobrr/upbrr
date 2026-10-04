@@ -47,18 +47,13 @@ func (d *Definition) InputReadiness(meta api.UploadSubject) []api.InputReadiness
 	if !meta.HardcodedSubs {
 		return validateNoEnglishSubtitles(meta)
 	}
+	// The tracker-local review can identify full/forced English or request other
+	// hardcoded languages. Missing review input must not block unrelated lanes.
 	if len(meta.HardcodedSubtitleLanguages) == 0 {
-		field := api.CorrectionFieldMetadataHardcodedSubtitleLanguages
-		return append([]api.InputReadinessFieldOutcome{{
-			Key:             "metadata.hardcoded_subtitle_languages",
-			CorrectionField: &field,
-			Status:          api.InputReadinessFieldMissing,
-			Disposition:     api.RuleDispositionStrict,
-			Message:         "PTP requires hardcoded subtitle languages when hardcoded subtitles are enabled",
-		}}, validateNoEnglishSubtitles(meta)...)
+		return validateNoEnglishSubtitles(meta)
 	}
 	for _, language := range meta.HardcodedSubtitleLanguages {
-		if _, ok := subtitleIDs[strings.ToLower(strings.TrimSpace(language))]; !ok {
+		if _, ok := subtitleID(language); !ok {
 			field := api.CorrectionFieldMetadataHardcodedSubtitleLanguages
 			return append([]api.InputReadinessFieldOutcome{{
 				Key:             "metadata.hardcoded_subtitle_languages",

@@ -144,21 +144,21 @@ Exit code `0` means Input is ready. Exit code `2` means required input prevents 
 
 ### Correct descriptive fields and languages
 
-| Option                                            | Purpose                                                                        |
-| ------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `--title <text>`                                  | Override the resolved title.                                                   |
-| `--alternate-title <text>`                        | Override the alternate title.                                                  |
-| `--original-title <text>`                         | Override the original title.                                                   |
-| `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                     |
-| `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                 |
-| `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                    |
-| `--hardcoded-subs` / `-hc`                        | Explicitly enable hardcoded subtitles; `--hardcoded-subs=false` disables them. |
-| `--hardcoded-subtitle-languages "English"`        | Supply a separate hardcoded-subtitle language list.                            |
-| `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.         |
-| `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                   |
-| `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                       |
-| `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.      |
-| `--tracker-input "PTP:no_english_subtitles=yes"`  | Answer a tracker Input field; `no` and `auto` are also supported.              |
+| Option                                            | Purpose                                                                                                |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `--title <text>`                                  | Override the resolved title.                                                                           |
+| `--alternate-title <text>`                        | Override the alternate title.                                                                          |
+| `--original-title <text>`                         | Override the original title.                                                                           |
+| `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                             |
+| `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                         |
+| `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                            |
+| `--hardcoded-subs` / `-hc`                        | Enable hardcoded subtitles; `-hc Spanish` supplies a language; `--hardcoded-subs=false` disables them. |
+| `--hardcoded-subtitle-languages "English"`        | Set hardcoded languages and enable them; an empty list disables them.                                  |
+| `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.                                 |
+| `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                           |
+| `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                               |
+| `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                              |
+| `--tracker-input "PTP:no_english_subtitles=yes"`  | Answer a tracker Input field; `no` and `auto` are also supported.                                      |
 
 Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages.
 
@@ -176,6 +176,20 @@ Apply fact corrections before tracker answers in separate commands. Combining th
 Generated descriptions include manually supplied audio, subtitle, and hardcoded language lines. User-supplied descriptions pass through each tracker's normal formatting. Selected screenshots still appear in the tracker's usual location, including separate screenshot fields where applicable.
 
 Saved corrections use a newer database format. Older binaries do not support writing this correction state.
+
+### PTP subtitle review
+
+Supply known hardcoded languages directly: `-hc English Forced`, `-hc "English Full"`, or `-hc Spanish`. Coverage is retained as `English (Forced)` or `English (Full)`. Explicit hardcoded languages enable hardcoded handling and let PTP derive the correct subtitle/trumpable fields without asking again. `--hardcoded-subtitle-languages "English (Forced), Spanish"` also accepts a language list.
+
+Custom names are allowed: use the attached form `-hc="Custom Dialect"` (quote multiword names). Unknown space-separated values remain source paths, so bare `-hc` never consumes a custom-named source folder. If a source name could be confused with a language, end the options explicitly, for example `-hc -- "Spanish"`. Put other options before `--`.
+
+Bare `-hc` or `-hc=""` explicitly marks unknown hardcoded languages, clearing saved language choices and requiring PTP's additional review. Legacy boolean forms such as `-hc=true`, `-hc=false`, and `--hardcoded-subs=false` remain supported; explicit false disables hardcoded handling.
+
+PTP also asks for a decision when English subtitles or a first English audio track are not established. Select all applicable review choices by comma-separated numbers or labels. A hardcoded choice is explicit PTP-local intent even when hardcoded subtitles were not detected automatically; full English uses subtitle 3, forced English uses subtitle 50, and either uses the hardcoded trumpable tag. Non-English hardcoded choices require their language names when missing. Contradictory English/no-English claims cannot proceed.
+
+The review is tracker-specific. Strict `--unattended` never prompts and skips PTP when its required review is unanswered; other eligible trackers remain available. `--unattended_confirm` permits the required questions. Existing global tracker-approval requirements still apply.
+
+The PTP `no_english_subtitles=yes/no` Input answer remains an explicit override for non-hardcoded releases. Correct mislabeled media tracks using the language corrections above; a tracker tagging answer does not rewrite the source media or canonical track languages.
 
 ### Naming fields
 

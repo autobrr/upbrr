@@ -925,7 +925,9 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const checkBackendDuplicates = async (): Promise<boolean> => {
+  const checkBackendDuplicates = async (
+    goal: "trackers_assessed" | "duplicates_decided" = "duplicates_decided",
+  ): Promise<boolean> => {
     if (
       !workflowView.current ||
       controllers.current.workflow ||
@@ -960,12 +962,14 @@ export function ReleaseSessionProvider({
           return [
             tracker,
             {
-              questionnaire: Object.fromEntries(
-                Object.entries(state.questionnaireAnswers[tracker] || {}).map(([key, value]) => [
-                  key,
-                  value,
-                ]),
-              ),
+              questionnaire: {
+                ...Object.fromEntries(
+                  (projection?.questionnaire || [])
+                    .filter((field) => field.value !== undefined)
+                    .map((field) => [field.key, field.value!]),
+                ),
+                ...state.questionnaireAnswers[tracker],
+              },
               ...(confirmedName !== undefined ? { uploadReleaseName: confirmedName } : {}),
             },
           ];
@@ -973,7 +977,7 @@ export function ReleaseSessionProvider({
       );
       const current = await continueBackendGoal(
         workflowView.current,
-        "duplicates_decided",
+        goal,
         {
           trackerIds: [...state.selectedTrackers],
           projectionInstructions,
@@ -1899,8 +1903,18 @@ export function ReleaseSessionProvider({
     );
   };
 
+  const questionnaireDirty = (workflowView.current?.projections?.projections || []).some(
+    (projection) =>
+      state.selectedTrackers.includes(projection.trackerId) &&
+      (projection.questionnaire || []).some((field) => {
+        const draft = state.questionnaireAnswers[projection.trackerId]?.[field.key];
+        return draft !== undefined && draft.trim() !== (field.value ?? "").trim();
+      }),
+  );
+
   const runDryRun = async (): Promise<boolean> => {
-    if (!workflowView.current || !hasDryRunCandidate(workflowView.current)) return false;
+    if (!workflowView.current || questionnaireDirty || !hasDryRunCandidate(workflowView.current))
+      return false;
     return runBackendWorkflow((current, commandID, signal) =>
       continueBackendGoal(
         current,
@@ -1913,7 +1927,7 @@ export function ReleaseSessionProvider({
   };
 
   const executeExactUpload = async (): Promise<boolean> => {
-    if (!mutationsAllowed) return false;
+    if (!mutationsAllowed || questionnaireDirty) return false;
     if (
       !workflowView.current ||
       controllers.current.workflow ||
@@ -3008,6 +3022,7 @@ export function ReleaseSessionProvider({
         projections: workflowView.current?.projections || null,
         ignoredDupesFor: state.ignoredDupesFor,
         questionnaireAnswers: state.questionnaireAnswers,
+        questionnaireDirty,
         options: uploadOptions,
         liveTest,
         mutationsAllowed: mutationsAllowed && state.activeInput.state !== "recovering",
@@ -3022,6 +3037,7 @@ export function ReleaseSessionProvider({
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
       answerQuestionnaire: (tracker, key, value) =>
         dispatch({ type: "questionnaire_answered", tracker, key, value }),
+      applyQuestionnaireAnswers: () => checkBackendDuplicates("trackers_assessed"),
       changeOptions: (options: Partial<UploadRunOptions>) =>
         dispatch({
           type: "upload_options_changed",
@@ -3054,7 +3070,7 @@ export function ReleaseSessionProvider({
         return cancelBackendWorkflow("upload canceled");
       },
       retry: async () => {
-        if (!mutationsAllowed) return false;
+        if (!mutationsAllowed || questionnaireDirty) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
           .filter((item) => item.submissionStatus === "failed")

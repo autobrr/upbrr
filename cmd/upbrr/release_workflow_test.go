@@ -2027,3 +2027,34 @@ func TestCLIConfirmInputUsesCanonicalSourceForNoTrackerCompletion(t *testing.T) 
 		t.Fatalf("composite source = %#v", coreSvc.uploadRequests)
 	}
 }
+
+func TestCLIWorkflowCollectsBackendMultiselectAndRetainsPriorDecision(t *testing.T) {
+	projections := &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "PTP", Questionnaire: []api.TrackerQuestionnaireRequirement{
+		{
+			Key:      "review",
+			Label:    "Review",
+			Required: true,
+			Value:    "yes",
+			Options:  []string{"yes", "no"},
+		},
+		{
+			Key:      "choices",
+			Label:    "Choices",
+			Required: true,
+			Kind:     "multiselect",
+			Options:  []string{"First", "Second", "Third"},
+		},
+	}}}}
+	instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
+	var output strings.Builder
+	changed, err := collectCLIWorkflowQuestionnaires(bufio.NewReader(strings.NewReader("1,3,1\n")), &output, api.InteractionModeInteractive, projections, instructions)
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if got := instructions["PTP"].Questionnaire; got["review"] == nil || *got["review"] != "yes" || got["choices"] == nil || *got["choices"] != "First,Third" {
+		t.Fatalf("answers=%#v", got)
+	}
+	if strings.Contains(output.String(), "PTP Review:") {
+		t.Fatal("repeated saved decision")
+	}
+}

@@ -240,6 +240,7 @@ type State struct {
 	SubtitleLanguagesProvenance          api.FactProvenance
 	HardcodedSubs                        bool
 	HardcodedSubtitleLanguages           []string
+	HardcodedSubtitleCoverage            []api.SubtitleLanguageCoverage
 	HardcodedSubsProvenance              api.FactProvenance
 	HardcodedSubtitleLanguagesProvenance api.FactProvenance
 	Container                            string

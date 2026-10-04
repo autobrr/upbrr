@@ -18,6 +18,7 @@ const uploadFacet = (
     projections: null,
     ignoredDupesFor: [],
     questionnaireAnswers: {},
+    questionnaireDirty: false,
     options: { noSeed: false, runLogLevel: "info" },
     liveTest: false,
     mutationsAllowed: true,
@@ -32,6 +33,7 @@ const uploadFacet = (
   },
   chooseTrackers: vi.fn(),
   answerQuestionnaire: vi.fn(),
+  applyQuestionnaireAnswers: vi.fn(async () => true),
   changeOptions: vi.fn(),
   runDryRun: vi.fn(async () => true),
   start: vi.fn(async () => true),
@@ -284,6 +286,44 @@ describe("TrackerUploadPage", () => {
     fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Synthetic note" } });
     expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "edition", "Extended");
     expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "note", "Synthetic note");
+  });
+
+  it("blocks preview and upload while questionnaire drafts are unapplied", () => {
+    const facet = uploadFacet({ questionnaireDirty: true });
+    renderPage(facet);
+    expect(screen.getByRole("button", { name: "Run dry run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start upload" })).toBeDisabled();
+  });
+
+  it("renders backend multiselect choices and applies them without uploading", () => {
+    const answerQuestionnaire = vi.fn();
+    const applyQuestionnaireAnswers = vi.fn(async () => true);
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            {
+              key: "choices",
+              label: "Subtitle choices",
+              kind: "multiselect",
+              required: true,
+              options: ["Full", "Forced"],
+              value: "Full",
+            },
+          ],
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const facet = uploadFacet({ projections }, { answerQuestionnaire, applyQuestionnaireAnswers });
+    renderPage(facet);
+    expect(screen.getByRole("checkbox", { name: "Full" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Forced" }));
+    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "choices", "Full,Forced");
+    fireEvent.click(screen.getByRole("button", { name: "Apply tracker answers" }));
+    expect(applyQuestionnaireAnswers).toHaveBeenCalledOnce();
+    expect(facet.start).not.toHaveBeenCalled();
   });
 
   it("shows a saved questionnaire answer missing from current options", () => {

@@ -392,6 +392,8 @@ export type UploadFacet = Readonly<{
     projections: TrackerReleaseProjectionSet | null;
     ignoredDupesFor: readonly string[];
     questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    /** Local displayed answers differ from the exact reviewed projection. */
+    questionnaireDirty: boolean;
     options: UploadRunOptions;
     /** Whether the owning process enforces live-testing restrictions. */
     liveTest: boolean;
@@ -409,6 +411,8 @@ export type UploadFacet = Readonly<{
   }>;
   chooseTrackers(trackers: readonly string[]): void;
   answerQuestionnaire(tracker: string, key: string, value: string): void;
+  /** Apply tracker answers and refresh their required questions without uploading. */
+  applyQuestionnaireAnswers(): Promise<boolean>;
   changeOptions(options: Partial<UploadRunOptions>): void;
   runDryRun(): Promise<boolean>;
   start(): Promise<boolean>;

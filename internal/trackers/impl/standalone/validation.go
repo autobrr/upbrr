@@ -45,6 +45,7 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		},
 		HardcodedSubs:               subject.HardcodedSubs,
 		HardcodedSubtitleLanguages:  append([]string(nil), subject.HardcodedSubtitleLanguages...),
+		HardcodedSubtitleCoverage:   append([]api.SubtitleLanguageCoverage(nil), subject.HardcodedSubtitleCoverage...),
 		SourcePath:                  subject.SourcePath,
 		VideoPath:                   subject.VideoPath,
 		FileList:                    append([]string(nil), subject.FileList...),

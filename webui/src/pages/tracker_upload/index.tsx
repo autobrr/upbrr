@@ -152,11 +152,52 @@ export default function TrackerUploadPage({ facet }: Props) {
       {questionnaireProjections.length ? (
         <section className={`${pageStyle.panel} grid gap-3`}>
           <h2>Tracker questions</h2>
+          {view.questionnaireDirty ? (
+            <p role="status">Apply tracker answers before running a dry run or upload.</p>
+          ) : null}
+          <Button
+            onClick={() => void facet.applyQuestionnaireAnswers()}
+            disabled={uploadRunning || view.dryRunStatus === "running"}
+          >
+            Apply tracker answers
+          </Button>
           {questionnaireProjections.map((projection) => (
             <fieldset className="grid gap-3" key={projection.trackerId}>
               <legend className="font-semibold">{projection.displayName}</legend>
               {projection.questionnaire?.map((field) => {
-                const answer = view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? "";
+                const answer =
+                  view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? field.value ?? "";
+                if (field.kind === "multiselect") {
+                  const selected = answer.split(",").filter(Boolean);
+                  return (
+                    <fieldset className="grid gap-2" key={field.key}>
+                      <legend>
+                        {field.label || field.key}
+                        {field.required ? " *" : ""}
+                      </legend>
+                      {field.help ? <p className="text-muted-foreground">{field.help}</p> : null}
+                      {(field.options || []).map((option) => (
+                        <label className="flex items-center gap-2" key={option}>
+                          <input
+                            type="checkbox"
+                            checked={selected.includes(option)}
+                            onChange={(event) =>
+                              facet.answerQuestionnaire(
+                                projection.trackerId,
+                                field.key,
+                                (event.target.checked
+                                  ? [...selected, option]
+                                  : selected.filter((value) => value !== option)
+                                ).join(","),
+                              )
+                            }
+                          />
+                          {option}
+                        </label>
+                      ))}
+                    </fieldset>
+                  );
+                }
                 return (
                   <label className="grid gap-1" key={field.key}>
                     <span className={pageStyle.label}>
@@ -265,7 +306,9 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={view.dryRunStatus === "running" || !hasDryRunCandidate}
+            disabled={
+              view.questionnaireDirty || view.dryRunStatus === "running" || !hasDryRunCandidate
+            }
             onClick={() => void facet.runDryRun()}
           >
             {view.dryRunStatus === "running" ? "Running dry run..." : "Run dry run"}
@@ -273,7 +316,12 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={!view.mutationsAllowed || uploadRunning || !hasExecutableUpload}
+            disabled={
+              view.questionnaireDirty ||
+              !view.mutationsAllowed ||
+              uploadRunning ||
+              !hasExecutableUpload
+            }
             onClick={() => void facet.start()}
           >
             {uploadRunning ? "Uploading..." : "Start upload"}
@@ -287,7 +335,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             <button
               className="ghost"
               type="button"
-              disabled={!view.mutationsAllowed}
+              disabled={view.questionnaireDirty || !view.mutationsAllowed}
               onClick={() => void facet.retry()}
             >
               Retry failed uploads

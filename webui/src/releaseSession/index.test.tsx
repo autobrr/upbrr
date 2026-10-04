@@ -760,6 +760,17 @@ const selectAndPrepare = async (
 };
 
 describe("tracker workflow capabilities", () => {
+  it("opens the questionnaire surface without opening unrelated blocked stages", () => {
+    const continuation = {
+      availableGoals: [{ goal: "upload_reviewed", available: false }],
+      requiredActions: [{ kind: "answer_questionnaire", status: "pending", trackerId: "PTP" }],
+    } as unknown as WorkflowContinuation;
+    const access = routeAccess(continuation, false, { needsImages: true, needsDescriptions: true });
+    expect(access.upload.available).toBe(true);
+    expect(access.screenshots.available).toBe(false);
+    expect(access.descriptions.available).toBe(false);
+  });
+
   it("opens only applicable pages and keeps tracker-scoped content failures local", () => {
     const available = (
       overrides: Readonly<Record<string, boolean>> = {},
@@ -5015,6 +5026,76 @@ describe("useReleaseSession", () => {
     await act(() => firstResult);
 
     expect(result.current.identity.view.release).toEqual({ SourcePath: sourcePath, Generation: 2 });
+  });
+
+  it("blocks stale reviewed uploads until changed answers are applied", async () => {
+    const active = workflowPorts();
+    const project: TestWorkflowPorts["project"] = async (...args) => {
+      const current = await active.project(...args);
+      return {
+        ...current,
+        projections: current.projections
+          ? {
+              ...current.projections,
+              projections: current.projections.projections.map((projection) => ({
+                ...projection,
+                questionnaire: [
+                  {
+                    key: "choices",
+                    label: "Choices",
+                    kind: "select",
+                    required: true,
+                    options: ["First", "Second", "French"],
+                    value: (
+                      args[2][projection.trackerId]?.questionnaire?.choices ?? "First"
+                    ).trim(),
+                  },
+                ],
+              })),
+            }
+          : undefined,
+      };
+    };
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ project }) })),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    act(() => result.current.upload.answerQuestionnaire("AITHER", "choices", "Second"));
+    expect(result.current.upload.view.questionnaireDirty).toBe(true);
+    await act(async () => {
+      expect(await result.current.upload.runDryRun()).toBe(false);
+      expect(await result.current.upload.start()).toBe(false);
+    });
+    await act(() => result.current.upload.applyQuestionnaireAnswers());
+    expect(result.current.upload.view.questionnaireDirty).toBe(false);
+    act(() => result.current.upload.answerQuestionnaire("AITHER", "choices", " French "));
+    expect(result.current.upload.view.questionnaireDirty).toBe(true);
+    await act(() => result.current.upload.applyQuestionnaireAnswers());
+    expect(result.current.upload.view.questionnaireDirty).toBe(false);
+  });
+
+  it("applies tracker questionnaire drafts without uploading or starting duplicate searches", async () => {
+    const active = workflowPorts();
+    const project = vi.fn(active.project);
+    const checkDuplicates = vi.fn(active.checkDuplicates);
+    const executeUploads = vi.fn(active.executeUploads);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({ workflow: workflowPorts({ project, checkDuplicates, executeUploads }) }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    project.mockClear();
+    checkDuplicates.mockClear();
+    executeUploads.mockClear();
+    act(() => result.current.upload.answerQuestionnaire("AITHER", "choices", "First,Second"));
+    await act(() => result.current.upload.applyQuestionnaireAnswers());
+    expect(project).toHaveBeenCalled();
+    expect(project.mock.calls[project.mock.calls.length - 1]?.[2].AITHER?.questionnaire).toEqual({
+      choices: "First,Second",
+    });
+    expect(checkDuplicates).not.toHaveBeenCalled();
+    expect(executeUploads).not.toHaveBeenCalled();
   });
 
   it("carries workflow drafts across refreshes and clears them after another input opens", async () => {

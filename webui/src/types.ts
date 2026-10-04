@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { SubtitleLanguageCoverage } from "./api/generated/release-workflow";
+
 /** Editable identity projection derived from the canonical prepared release. */
 export type ExternalIdentityDraft = {
   TMDBID: number;
@@ -199,6 +201,7 @@ export type MediaFacts = {
   SubtitleLanguagesProvenance: FactProvenance;
   HardcodedSubs: boolean;
   HardcodedSubtitleLanguages: string[];
+  HardcodedSubtitleCoverage?: readonly SubtitleLanguageCoverage[];
   HardcodedSubsProvenance: FactProvenance;
   HardcodedSubtitleLanguagesProvenance: FactProvenance;
   OriginalLanguage: string;

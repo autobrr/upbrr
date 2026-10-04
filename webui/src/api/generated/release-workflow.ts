@@ -894,6 +894,7 @@ export type MediaFacts = Readonly<{
   HDRFacts: HDRFacts;
   HardcodedSubs: boolean;
   HardcodedSubsProvenance: FactProvenance;
+  HardcodedSubtitleCoverage?: readonly SubtitleLanguageCoverage[];
   HardcodedSubtitleLanguages: readonly string[];
   HardcodedSubtitleLanguagesProvenance: FactProvenance;
   HasEncodeSettings: boolean;
@@ -1972,6 +1973,13 @@ export type SubmissionExclusion = Readonly<{
   trackerId: TrackerID;
 }>;
 
+export type SubtitleCoverage = string;
+
+export type SubtitleLanguageCoverage = Readonly<{
+  Coverage: SubtitleCoverage;
+  Language: string;
+}>;
+
 export type TIKOverrides = Readonly<{
   Asian?: boolean | null;
   DiscType?: string | null;
@@ -2471,10 +2479,13 @@ export type TrackerQuestionnaireField = Readonly<{
 }>;
 
 export type TrackerQuestionnaireRequirement = Readonly<{
+  help?: string;
   key: string;
+  kind?: string;
   label: string;
   options?: readonly string[];
   required: boolean;
+  value?: string;
 }>;
 
 export type TrackerReleaseName = Readonly<{

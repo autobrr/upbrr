@@ -532,6 +532,7 @@ func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubje
 		ManualLanguages:             subject.ManualLanguages,
 		HardcodedSubs:               subject.HardcodedSubs,
 		HardcodedSubtitleLanguages:  append([]string(nil), subject.HardcodedSubtitleLanguages...),
+		HardcodedSubtitleCoverage:   append([]api.SubtitleLanguageCoverage(nil), subject.HardcodedSubtitleCoverage...),
 		MediaBinding:                subject.MediaBinding,
 		SourcePath:                  subject.SourcePath,
 		DiscType:                    subject.DiscType,

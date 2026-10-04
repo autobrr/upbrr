@@ -235,7 +235,7 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 		"container":               "MKV",
 		"source":                  "WEB",
 		"subtitles[]":             "54,52,55",
-		"trumpable[]":             "4",
+		"trumpable[]":             "4,14",
 	} {
 		if got := fields[key]; got != want {
 			t.Fatalf("field %s=%q, want %q", key, got, want)
@@ -291,7 +291,7 @@ func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
 		Container:     "mkv",
 	}
 	questionnaire := buildQuestionnaire(meta, "123")
-	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "hardcoded_subtitle_languages" {
+	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "subtitle_tags" {
 		t.Fatalf("questionnaire=%#v", questionnaire)
 	}
 	if _, err := buildUploadFields(meta, "description", "123", nil, ""); err == nil {
@@ -313,7 +313,7 @@ func TestPTPInputReadinessUsesFinalizedHardcodedLanguages(t *testing.T) {
 
 	definition := New()
 	missing := definition.InputReadiness(api.UploadSubject{HardcodedSubs: true})
-	if len(missing) != 1 || missing[0].Status != api.InputReadinessFieldMissing || missing[0].Key != "metadata.hardcoded_subtitle_languages" {
+	if len(missing) != 0 {
 		t.Fatalf("missing=%#v", missing)
 	}
 	invalid := definition.InputReadiness(api.UploadSubject{
@@ -392,7 +392,7 @@ func TestPTPUploadUsesPreparedHardcodedLanguages(t *testing.T) {
 		Container:                  "mkv",
 	}
 	if questionnaire := buildQuestionnaire(meta, "123"); questionnaire != nil {
-		t.Fatalf("prepared languages still require input: %#v", questionnaire)
+		t.Fatalf("explicit hardcoded languages should not prompt again: %#v", questionnaire)
 	}
 	for _, answers := range []map[string]string{nil, {"hardcoded_subtitle_languages": "French"}} {
 		fields, err := buildUploadFields(meta, "description", "123", answers, "")
@@ -549,8 +549,8 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	if _, exists := entry.Payload["title"]; exists {
 		t.Fatal("did not expect new-group title field when group already exists")
 	}
-	if entry.Questionnaire != nil {
-		t.Fatal("did not expect questionnaire for existing group upload")
+	if entry.Questionnaire == nil || entry.Questionnaire.Fields[0].Key != "trumpable_review" {
+		t.Fatalf("expected subtitle review for unknown audio, got %#v", entry.Questionnaire)
 	}
 }
 
@@ -647,13 +647,14 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	markTorrentWithPrivateMetadata(t, baseTorrentPath)
 	announceURL := "https://please.passthepopcorn.me/passkey/announce"
 	meta := api.UploadSubject{
-		SourcePath:  filepath.Join(tmp, "Movie.mkv"),
-		ReleaseName: "Movie.2026.1080p.BluRay.x264",
-		Release:     api.ReleaseInfo{Resolution: "1080p"},
-		Container:   "mkv",
-		Source:      "BluRay",
-		VideoCodec:  "AVC",
-		Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": {"trumpable_review": "no"}},
+		SourcePath:                  filepath.Join(tmp, "Movie.mkv"),
+		ReleaseName:                 "Movie.2026.1080p.BluRay.x264",
+		Release:                     api.ReleaseInfo{Resolution: "1080p"},
+		Container:                   "mkv",
+		Source:                      "BluRay",
+		VideoCodec:                  "AVC",
+		Identity:                    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				Title:    "Movie",

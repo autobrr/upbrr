@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -174,6 +175,22 @@ func applyReviewedProjection(input PreparationInput) PreparationInput {
 	}
 	projection := *input.Projection
 	input.Projection = &projection
+	if len(projection.Questionnaire) > 0 {
+		input.Meta.TrackerQuestionnaireAnswers = maps.Clone(input.Meta.TrackerQuestionnaireAnswers)
+		if input.Meta.TrackerQuestionnaireAnswers == nil {
+			input.Meta.TrackerQuestionnaireAnswers = make(map[string]map[string]string)
+		}
+		answers := maps.Clone(input.Meta.TrackerQuestionnaireAnswers[string(projection.TrackerID)])
+		if answers == nil {
+			answers = make(map[string]string)
+		}
+		for _, field := range projection.Questionnaire {
+			if field.Value != "" {
+				answers[field.Key] = field.Value
+			}
+		}
+		input.Meta.TrackerQuestionnaireAnswers[string(projection.TrackerID)] = answers
+	}
 	if value := strings.TrimSpace(projection.Taxonomy.Type.Label); value != "" {
 		input.Meta.Type = value
 	}
@@ -323,6 +340,9 @@ func projectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.Tracker
 	for index, field := range questionnaire.Fields {
 		result[index] = api.TrackerQuestionnaireRequirement{
 			Key:      strings.TrimSpace(field.Key),
+			Kind:     field.Kind,
+			Value:    field.Value,
+			Help:     field.Help,
 			Label:    strings.TrimSpace(field.Label),
 			Required: field.Required,
 			Options:  append([]string(nil), field.Options...),
@@ -549,6 +569,24 @@ func (r *Registry) ProjectRelease(
 				Blocking: false,
 				Message:  fmt.Sprintf("Non-scene release name confirmed for %s.", trackerName),
 			})
+		}
+	}
+	if failure == nil {
+		if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); ok {
+			projection.Questionnaire = projectQuestionnaire(provider.ProjectionQuestionnaire(input.Meta))
+			if projection.Readiness == api.ReadinessStatusReady &&
+				slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+					return field.Required && strings.TrimSpace(field.Value) == ""
+				}) {
+				projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+					Kind:      api.RequiredActionAnswerQuestionnaire,
+					TrackerID: projection.TrackerID,
+					Prompt:    "Review tracker inputs for " + projection.DisplayName + ".",
+				})
+				projection.UploadReady = false
+				projection.DupeReady = false
+				projection.Readiness = api.ReadinessStatusBlocked
+			}
 		}
 	}
 	return projection, failure

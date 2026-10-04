@@ -3386,6 +3386,12 @@
           "HardcodedSubsProvenance": {
             "$ref": "#/components/schemas/FactProvenance"
           },
+          "HardcodedSubtitleCoverage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubtitleLanguageCoverage"
+            }
+          },
           "HardcodedSubtitleLanguages": {
             "type": "array",
             "items": {
@@ -8315,6 +8321,24 @@
           "trackerId"
         ]
       },
+      "SubtitleCoverage": {
+        "type": "string"
+      },
+      "SubtitleLanguageCoverage": {
+        "type": "object",
+        "properties": {
+          "Coverage": {
+            "$ref": "#/components/schemas/SubtitleCoverage"
+          },
+          "Language": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Coverage",
+          "Language"
+        ]
+      },
       "TIKOverrides": {
         "type": "object",
         "properties": {
@@ -10237,7 +10261,13 @@
       "TrackerQuestionnaireRequirement": {
         "type": "object",
         "properties": {
+          "help": {
+            "type": "string"
+          },
           "key": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           },
           "label": {
@@ -10251,6 +10281,9 @@
           },
           "required": {
             "type": "boolean"
+          },
+          "value": {
+            "type": "string"
           }
         },
         "required": [

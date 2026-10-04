@@ -173,6 +173,10 @@ func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDr
 	} else {
 		message += " for new group"
 	}
+	blockedReason := ""
+	if subtitleReviewPending(meta, standalone.QuestionnaireAnswers(meta, "PTP")) {
+		blockedReason = "PTP subtitle and trumpable review is required"
+	}
 	fields := maps.Clone(state.fields)
 	if _, ok := fields["AntiCsrfToken"]; ok {
 		fields["AntiCsrfToken"] = "[redacted]"
@@ -180,6 +184,7 @@ func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDr
 	return standalone.BuildPreview(standalone.PreviewSpec{
 		Tracker:          "PTP",
 		ReadyMessage:     message,
+		BlockedReason:    blockedReason,
 		ReleaseName:      state.releaseName,
 		DescriptionGroup: "ptp",
 		Description:      state.description,
@@ -195,6 +200,8 @@ func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDr
 }
 
 func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dryRun bool, baseURL string) (uploadState, error) {
+	answers := standalone.QuestionnaireAnswers(req.Meta, "PTP")
+
 	var nameFailure *trackers.PreparationFailure
 	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
 	if nameFailure != nil {
@@ -203,6 +210,9 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 	announceURL := normalizedAnnounceURL(req.TrackerConfig.AnnounceURL)
 	if !dryRun && announceURL == "" {
 		return uploadState{}, errors.New("trackers: PTP required announce URL is missing")
+	}
+	if !dryRun && subtitleReviewPending(req.Meta, answers) {
+		return uploadState{}, errors.New("trackers: PTP subtitle and trumpable review is required")
 	}
 	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
@@ -222,7 +232,6 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 	if err != nil {
 		return uploadState{}, err
 	}
-	answers := standalone.QuestionnaireAnswers(req.Meta, "PTP")
 	poster := metautil.FirstNonEmptyTrimmed(answers["poster"], resolvePoster(req.Meta))
 	if !dryRun {
 		poster = rehostPosterToSelectedHost(ctx, req, poster)
@@ -309,7 +318,13 @@ func ipInPrefixes(ip netip.Addr, prefixes []netip.Prefix) bool {
 
 func buildUploadFields(meta api.UploadSubject, description string, groupID string, answers map[string]string, poster string) (map[string]string, error) {
 	var err error
-	meta, err = withHardcodedSubtitleLanguages(meta, answers["hardcoded_subtitle_languages"])
+	if answers["subtitle_tags"] == "" {
+		meta, err = withHardcodedSubtitleLanguages(meta, answers["hardcoded_subtitle_languages"])
+	}
+	if err != nil {
+		return nil, err
+	}
+	subtitles, trumpable, err := reviewedSubtitles(meta, answers)
 	if err != nil {
 		return nil, err
 	}
@@ -339,8 +354,8 @@ func buildUploadFields(meta api.UploadSubject, description string, groupID strin
 		"other_source":    otherSource,
 		"release_desc":    description,
 		"nfo_text":        "",
-		"subtitles[]":     joinInts(resolveSubtitles(meta)),
-		"trumpable[]":     joinInts(resolveTrumpable(meta)),
+		"subtitles[]":     joinInts(subtitles),
+		"trumpable[]":     joinInts(trumpable),
 	}
 	if resolution == "Other" {
 		fields["other_resolution_width"] = resolutionWidth

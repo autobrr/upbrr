@@ -530,6 +530,14 @@ func partitionUploadArgs(fs *pflag.FlagSet, args []string) ([]string, []string) 
 			continue
 		}
 
+		if name == "hc" && !strings.HasPrefix(arg, "---") {
+			flags, consumed := hardcodedLanguageFlags(args[i:])
+			if flags != nil {
+				flagArgs = append(flagArgs, flags...)
+				i += consumed - 1
+				continue
+			}
+		}
 		flagArgs = append(flagArgs, normalized)
 		if strings.Contains(arg, "=") || isBoolFlag(flagDef) {
 			continue
@@ -540,6 +548,39 @@ func partitionUploadArgs(fs *pflag.FlagSet, args []string) ([]string, []string) 
 		}
 	}
 	return flagArgs, positionalArgs
+}
+
+// hardcodedLanguageFlags extends the legacy boolean -hc alias without consuming
+// ordinary source paths or following flags. Attached values are unambiguous;
+// custom language names therefore require attached values.
+func hardcodedLanguageFlags(args []string) ([]string, int) {
+	if _, value, attached := strings.Cut(args[0], "="); attached {
+		if _, err := strconv.ParseBool(value); err == nil {
+			return nil, 0
+		}
+		return []string{"--hc", "--hardcoded-subtitle-languages=" + value}, 1
+	}
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return nil, 0
+	}
+	value := args[1]
+	if boolean, err := strconv.ParseBool(value); err == nil {
+		return []string{"--hc=" + strconv.FormatBool(boolean)}, 2
+	}
+	first := strings.TrimSpace(strings.Split(value, ",")[0])
+	known := languageutil.NormalizeLanguageCode(first) != ""
+	if value != "" && !known {
+		return nil, 0
+	}
+	consumed := 2
+	if known && len(args) > 2 {
+		coverage := strings.Trim(args[2], "()")
+		if strings.EqualFold(coverage, "Full") || strings.EqualFold(coverage, "Forced") {
+			value += " " + coverage
+			consumed++
+		}
+	}
+	return []string{"--hc", "--hardcoded-subtitle-languages=" + value}, consumed
 }
 
 func normalizeNonInterspersedArgs(fs *pflag.FlagSet, args []string) []string {
@@ -1049,6 +1090,12 @@ func buildMetadataOverrides(opts cliOptions, visited map[string]bool) api.Metada
 	}
 	if visited["hardcoded-subtitle-languages"] {
 		values := languageutil.NormalizeLanguageList([]string{opts.HardcodedSubtitleLanguages})
+		overrides.HardcodedSubtitleLanguages = &values
+		if !visited["hardcoded-subs"] {
+			overrides.HardcodedSubs = boolPtr(len(values) > 0)
+		}
+	} else if visited["hardcoded-subs"] && opts.HardcodedSubs {
+		values := []string{}
 		overrides.HardcodedSubtitleLanguages = &values
 	}
 	return overrides

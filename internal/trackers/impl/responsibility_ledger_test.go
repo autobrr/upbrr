@@ -396,7 +396,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"title", "year", "poster", "tags", "trailer", "album_desc"},
 		descriptionGroup:  "ptp",
 		releaseNamePolicy: "standalone/canonical/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v1",
 		principalName:     "title",
 	},
 	{

@@ -255,6 +255,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			SubtitleLanguagesProvenance:          meta.SubtitleLanguagesProvenance,
 			HardcodedSubs:                        meta.HardcodedSubs,
 			HardcodedSubtitleLanguages:           append([]string(nil), meta.HardcodedSubtitleLanguages...),
+			HardcodedSubtitleCoverage:            append([]api.SubtitleLanguageCoverage(nil), meta.HardcodedSubtitleCoverage...),
 			HardcodedSubsProvenance:              meta.HardcodedSubsProvenance,
 			HardcodedSubtitleLanguagesProvenance: meta.HardcodedSubtitleLanguagesProvenance,
 			OriginalLanguage:                     effective.OriginalLanguage,

@@ -182,6 +182,22 @@ type EpisodeFacts struct {
 	DateMatched       bool
 }
 
+// SubtitleCoverage records explicitly supplied dialogue coverage; empty retains
+// an unqualified language without guessing full or forced coverage.
+type SubtitleCoverage string
+
+const (
+	SubtitleCoverageUnspecified SubtitleCoverage = ""
+	SubtitleCoverageFull        SubtitleCoverage = "full"
+	SubtitleCoverageForced      SubtitleCoverage = "forced"
+)
+
+// SubtitleLanguageCoverage preserves coverage without changing base-language lists.
+type SubtitleLanguageCoverage struct {
+	Language string
+	Coverage SubtitleCoverage
+}
+
 // MediaFacts contains finalized reusable media characteristics.
 type MediaFacts struct {
 	AudioLanguages                       []string
@@ -195,6 +211,7 @@ type MediaFacts struct {
 	SubtitleLanguagesProvenance          FactProvenance
 	HardcodedSubs                        bool
 	HardcodedSubtitleLanguages           []string
+	HardcodedSubtitleCoverage            []SubtitleLanguageCoverage `json:"HardcodedSubtitleCoverage,omitempty"`
 	HardcodedSubsProvenance              FactProvenance
 	HardcodedSubtitleLanguagesProvenance FactProvenance
 	OriginalLanguage                     string

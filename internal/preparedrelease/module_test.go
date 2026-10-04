@@ -353,7 +353,7 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 
 func TestPrepareRecomputesPreviousDVDRipNameAfterRestart(t *testing.T) {
 	t.Parallel()
-	for _, version := range []string{"prepared-release-v16", "prepared-release-v19", "prepared-release-v20", "prepared-release-v21", "prepared-release-v22", "prepared-release-v23", "prepared-release-v24"} {
+	for _, version := range []string{"prepared-release-v16", "prepared-release-v19", "prepared-release-v20", "prepared-release-v21", "prepared-release-v22", "prepared-release-v23", "prepared-release-v24", "prepared-release-v25"} {
 		t.Run(version, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "Example.Movie.2026.DVDRip.x264-GRP.mkv")
 			if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
@@ -1909,7 +1909,7 @@ func TestPrepareRecomputesV19YearSeasonAfterRestart(t *testing.T) {
 }
 
 func TestPrepareRecomputesOldVideoEncodeAfterRestart(t *testing.T) {
-	for _, oldVersion := range []string{"prepared-release-v21", "prepared-release-v22", "prepared-release-v23", "prepared-release-v24"} {
+	for _, oldVersion := range []string{"prepared-release-v21", "prepared-release-v22", "prepared-release-v23", "prepared-release-v24", "prepared-release-v25"} {
 		for _, codec := range []struct{ format, encode string }{{"AVC", "x264"}, {"HEVC", "x265"}} {
 			for _, manual := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/manual=%t", oldVersion, codec.format, manual), func(t *testing.T) {

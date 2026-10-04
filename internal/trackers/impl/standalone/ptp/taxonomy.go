@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -176,19 +177,34 @@ func resolveSource(source string) string {
 }
 
 func resolveSubtitles(meta api.UploadSubject) []int {
-	languages := append(append([]string(nil), meta.SubtitleLanguages...), meta.HardcodedSubtitleLanguages...)
-	if len(languages) == 0 {
-		return []int{44}
+	ids := make([]int, 0, len(meta.SubtitleLanguages)+len(meta.HardcodedSubtitleLanguages))
+	add := func(value int) {
+		if !slices.Contains(ids, value) {
+			ids = append(ids, value)
+		}
 	}
-	ids := make([]int, 0, len(languages))
-	seen := make(map[int]struct{})
-	for _, language := range languages {
-		if value, ok := subtitleIDs[strings.ToLower(strings.TrimSpace(language))]; ok {
-			if _, exists := seen[value]; exists {
+	for _, language := range meta.SubtitleLanguages {
+		if value, ok := subtitleID(language); ok {
+			add(value)
+		}
+	}
+	for _, language := range meta.HardcodedSubtitleLanguages {
+		covered := false
+		for _, detail := range meta.HardcodedSubtitleCoverage {
+			if detail.Language != language {
 				continue
 			}
-			seen[value] = struct{}{}
-			ids = append(ids, value)
+			covered = true
+			if ptpEnglishLanguage(language) && detail.Coverage == api.SubtitleCoverageForced {
+				add(50)
+			} else if value, ok := subtitleID(language); ok {
+				add(value)
+			}
+		}
+		if !covered {
+			if value, ok := subtitleID(language); ok {
+				add(value)
+			}
 		}
 	}
 	if len(ids) == 0 {
@@ -270,7 +286,9 @@ func resolveTrumpable(meta api.UploadSubject) []int {
 		return values
 	}
 	subtitles := append(append([]string(nil), meta.SubtitleLanguages...), meta.HardcodedSubtitleLanguages...)
-	if len(meta.AudioLanguages) > 0 && !ptpEnglishLanguage(meta.AudioLanguages[0]) && !ptpHasEnglishLanguage(subtitles) {
+	foreignAudio := len(meta.AudioLanguages) > 0 && !ptpEnglishLanguage(meta.AudioLanguages[0])
+	unknownAudioWithHardcodedLanguages := len(meta.AudioLanguages) == 0 && meta.HardcodedSubs && len(meta.HardcodedSubtitleLanguages) > 0
+	if (foreignAudio || unknownAudioWithHardcodedLanguages) && !ptpHasEnglishLanguage(subtitles) {
 		values = append(values, 14)
 	}
 	return values
@@ -292,7 +310,7 @@ func withHardcodedSubtitleLanguages(meta api.UploadSubject, value string) (api.U
 		if language == "" {
 			continue
 		}
-		if _, ok := subtitleIDs[strings.ToLower(language)]; !ok {
+		if _, ok := subtitleID(language); !ok {
 			return api.UploadSubject{}, fmt.Errorf("trackers: PTP unsupported hardcoded subtitle language %q", language)
 		}
 		meta.HardcodedSubtitleLanguages = append(meta.HardcodedSubtitleLanguages, language)
@@ -309,7 +327,7 @@ func ptpHasEnglishLanguage(values []string) bool {
 
 func ptpEnglishLanguage(value string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(value))
-	return normalized == "en" || normalized == "eng" || strings.HasPrefix(normalized, "english")
+	return languageutil.NormalizeLanguageCode(value) == "en" || strings.HasPrefix(normalized, "english")
 }
 
 var subtitleIDs = map[string]int{
@@ -357,4 +375,114 @@ var subtitleIDs = map[string]int{
 	"ukrainian":            34,
 	"vietnamese":           25,
 	"welsh":                55,
+}
+
+// reviewedSubtitles follows the owner-supplied PTP selection and call-site
+// normalization. A selected hardcoded choice is explicit tracker-local intent;
+// temporary choice values never become trumpable wire IDs.
+func reviewedSubtitles(meta api.UploadSubject, answers map[string]string) ([]int, []int, error) {
+	if answers == nil {
+		answers = standalone.QuestionnaireAnswers(meta, "PTP")
+	}
+	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"PTP": answers}
+
+	legacy := strings.ToLower(strings.TrimSpace(answers["no_english_subtitles"]))
+	if err := validateSubtitleReview(meta, answers, nil); err != nil {
+		return nil, nil, err
+	}
+
+	if !meta.HardcodedSubs && (legacy == "yes" || legacy == "no") {
+		return resolveSubtitles(meta), resolveTrumpable(meta), nil
+	}
+	if !requiresSubtitleReview(meta) {
+		return resolveSubtitles(meta), resolveTrumpable(meta), nil
+	}
+	if !meta.HardcodedSubs && answers["trumpable_review"] == "no" {
+		return resolveSubtitles(meta), nil, nil
+	}
+	selected, err := parseSubtitleReview(answers["subtitle_tags"])
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateSubtitleReview(meta, answers, selected); err != nil {
+		return nil, nil, err
+	}
+	subs := resolveSubtitles(meta)
+	if len(selected) == 0 {
+		return subs, resolveTrumpable(meta), nil
+	}
+	tags := make([]int, 0, 3)
+	addSub := func(id int) {
+		if !slices.Contains(subs, id) {
+			subs = append(subs, id)
+		}
+		subs = slices.DeleteFunc(subs, func(v int) bool { return v == 44 })
+	}
+	for _, choice := range selected {
+		switch choice {
+		case "English Hardcoded Subs (Full)":
+			tags = append(tags, 4)
+			addSub(3)
+		case "English Hardcoded Subs (Forced)":
+			tags = append(tags, 50)
+			addSub(50)
+		case "No English Subs":
+			tags = append(tags, 14)
+		case "English Softsubs Exist (Mislabeled)":
+		case "Hardcoded Subs (Non-English)":
+			tags = append(tags, 15)
+			languages := meta.HardcodedSubtitleLanguages
+			if len(languages) == 0 {
+				parsed, parseErr := withHardcodedSubtitleLanguages(api.UploadSubject{HardcodedSubs: true}, answers["hardcoded_subtitle_languages"])
+				if parseErr != nil {
+					return nil, nil, parseErr
+				}
+				languages = parsed.HardcodedSubtitleLanguages
+			}
+			for _, language := range languages {
+				if id, ok := subtitleID(language); ok {
+					addSub(id)
+				}
+			}
+		}
+	}
+	if meta.HardcodedSubs || slices.Contains(tags, 4) || slices.Contains(tags, 50) || slices.Contains(tags, 15) {
+		other := slices.Contains(tags, 15)
+		for i, v := range tags {
+			if v == 50 || v == 15 {
+				tags[i] = 4
+			}
+		}
+		if other && (len(meta.AudioLanguages) == 0 || !ptpEnglishLanguage(meta.AudioLanguages[0])) && !slices.Contains(subs, 3) && !slices.Contains(subs, 50) {
+			tags = append(tags, 14)
+		}
+		if slices.Contains(tags, 14) {
+			subs = slices.DeleteFunc(subs, func(v int) bool { return v == 44 })
+		}
+	}
+	switch legacy {
+	case "no":
+		tags = slices.DeleteFunc(tags, func(value int) bool { return value == 14 })
+	case "yes":
+		tags = append(tags, 14)
+	}
+	unique := make([]int, 0, len(tags))
+	for _, v := range tags {
+		if !slices.Contains(unique, v) {
+			unique = append(unique, v)
+		}
+	}
+	return subs, unique, nil
+}
+
+func subtitleID(value string) (int, bool) {
+	base, coverage := languageutil.SubtitleLanguageParts(value)
+	if normalized := languageutil.NormalizeLanguageLabel(base); normalized != "" {
+		base = normalized
+	}
+	if strings.EqualFold(base, "English") && coverage == "Forced" {
+		return 50, true
+	}
+	id, ok := subtitleIDs[strings.ToLower(strings.TrimSpace(base))]
+	return id, ok
 }
