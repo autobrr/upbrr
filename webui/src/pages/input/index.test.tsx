@@ -1521,7 +1521,10 @@ describe("InputPage", () => {
         },
       };
       const { rerender } = render(<InputCorrectionEditor facet={facet} />);
-      fireEvent.change(screen.getByLabelText("Category"), { target: { value: draftCategory } });
+      fireEvent.click(screen.getByRole("button", { name: "Enter custom Category" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Category" }), {
+        target: { value: draftCategory },
+      });
       expect(facet.changeReleaseName).toHaveBeenCalledWith({ Category: draftCategory });
       rerender(
         <InputCorrectionEditor
@@ -1825,3 +1828,141 @@ it.each([
     expect(screen.getByLabelText("Edition")).toHaveValue(expected);
   },
 );
+
+it("offers supported Input choices and applies their canonical correction values", () => {
+  const facet = inputFacet();
+  render(<InputCorrectionEditor facet={facet} />);
+  for (const [label, value] of [
+    ["Category", "movie"],
+    ["Type", "WEBDL"],
+    ["Source", "Blu-ray"],
+    ["Resolution", "1080p"],
+  ]) {
+    const choice = screen.getByRole("combobox", { name: label });
+    expect([...choice.querySelectorAll("option")].some((option) => option.value === value)).toBe(
+      true,
+    );
+    fireEvent.change(choice, { target: { value } });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ [label]: value });
+  }
+  const service = screen.getByRole("combobox", { name: "Service" });
+  fireEvent.focus(service);
+  const initialCount = screen.getAllByRole("option").length;
+  fireEvent.change(service, { target: { value: "AMZ" } });
+  fireEvent.click(screen.getByRole("option", { name: "Amazon Prime Video (AMZN)" }));
+  expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ Service: "AMZN" });
+  fireEvent.click(screen.getByRole("button", { name: "Browse Service" }));
+  expect(screen.getAllByRole("option")).toHaveLength(initialCount);
+});
+
+it("keeps blank and unknown saved dropdown values and resets local search with Auto", () => {
+  const base = inputFacet();
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      intent: {
+        ...base.view.intent,
+        releaseName: { Category: "Legacy", Type: "", Service: "Custom service" },
+      },
+    },
+  };
+  const { rerender, unmount } = render(<InputCorrectionEditor facet={facet} />);
+  expect(screen.getByRole("combobox", { name: "Category" })).toHaveValue("Legacy");
+  expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("");
+  const service = screen.getByRole("combobox", { name: "Service" });
+  expect(service).toHaveValue("Custom service");
+  fireEvent.change(service, { target: { value: "AMZ" } });
+  fireEvent.click(screen.getByRole("button", { name: "Auto Service" }));
+  expect(facet.resetCorrection).toHaveBeenLastCalledWith({ field: "release_name.service" });
+  rerender(<InputCorrectionEditor facet={base} />);
+  expect(screen.getByRole("combobox", { name: "Service" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  unmount();
+  render(<InputCorrectionEditor facet={facet} />);
+  expect(screen.getByRole("combobox", { name: "Service" })).toHaveValue("Custom service");
+});
+
+it("shows automatic choices and confirms retained values without changing correction semantics", () => {
+  const base = inputFacet();
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      release: preparedRelease(),
+      intent: { ...base.view.intent, releaseName: { Service: "NF" } },
+      corrections: {
+        revision: 1,
+        corrections: {
+          version: 1,
+          identity: {},
+          metadata: {},
+          releaseName: { Service: "NF" },
+          staleContentFields: ["release_name.service"],
+          contentBindings: {},
+        },
+      },
+    },
+  };
+  render(<InputCorrectionEditor facet={facet} />);
+  expect(screen.getByRole("combobox", { name: "Category" })).toHaveValue("movie");
+  expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("encode");
+  expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("BluRay");
+  expect(screen.getByRole("combobox", { name: "Resolution" })).toHaveValue("1080p");
+  expect(screen.getByRole("combobox", { name: "Service" })).toHaveValue("NF");
+  fireEvent.click(screen.getByRole("button", { name: "Confirm saved Service" }));
+  expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "release_name.service" });
+  expect(facet.changeReleaseName).not.toHaveBeenCalled();
+  const region = screen.getByRole("combobox", { name: "Region" });
+  expect(region).toHaveValue("A");
+  fireEvent.focus(region);
+  const count = within(screen.getByRole("listbox", { name: "Region suggestions" })).getAllByRole(
+    "option",
+  ).length;
+  expect(count).toBeGreaterThan(20);
+  fireEvent.change(region, { target: { value: "kIngdom" } });
+  expect(screen.getByRole("option", { name: "United Kingdom (GBR)" })).toBeInTheDocument();
+  fireEvent.keyDown(region, { key: "ArrowDown" });
+  fireEvent.keyDown(region, { key: "Enter" });
+  expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ Service: "NF", Region: "GBR" });
+});
+
+it("browses the shared distributor catalog and applies names while preserving custom and numeric corrections", () => {
+  const base = inputFacet();
+  const facet: InputFacet = { ...base, view: { ...base.view, release: preparedRelease() } };
+  const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+  const distributor = screen.getByRole("combobox", { name: "Distributor" });
+  expect(distributor).toHaveValue("Example Distributor");
+  fireEvent.focus(distributor);
+  const list = () => within(screen.getByRole("listbox", { name: "Distributor suggestions" }));
+  expect(list().getAllByRole("option")).toHaveLength(965);
+  fireEvent.change(distributor, { target: { value: "vInegar" } });
+  expect(list().getAllByRole("option")).toHaveLength(1);
+  fireEvent.keyDown(distributor, { key: "ArrowDown" });
+  fireEvent.keyDown(distributor, { key: "Enter" });
+  expect(facet.changeMetadata).toHaveBeenLastCalledWith({ Distributor: "VINEGAR SYNDROME" });
+  fireEvent.change(distributor, { target: { value: "" } });
+  expect(list().getAllByRole("option")).toHaveLength(965);
+  for (const value of ["Custom publisher", "922", ""]) {
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            intent: { ...facet.view.intent, metadata: { Distributor: value } },
+          },
+        }}
+      />,
+    );
+    expect(distributor).toHaveValue(value);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Auto Distributor" }));
+  expect(facet.resetCorrection).toHaveBeenLastCalledWith({ field: "metadata.distributor" });
+  expect(screen.getByRole("combobox", { name: "Distributor" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+});

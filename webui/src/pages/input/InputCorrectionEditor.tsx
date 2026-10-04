@@ -17,6 +17,8 @@ import type { PreparedRelease } from "../../types";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
 import { settingsStyle } from "../../settings/style";
+import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
+import correctionChoices from "./correctionChoices.json";
 
 const hasOwn = (value: object, key: PropertyKey) =>
   Object.prototype.hasOwnProperty.call(value, key);
@@ -251,30 +253,36 @@ const releaseStringFields: ReadonlyArray<{
   field: string;
   label: string;
   key: keyof ReleaseNameOverrides;
+  choices?: readonly { value: string; label: string }[];
+  searchable?: boolean;
   automatic: (release: PreparedRelease | null) => string | number;
 }> = [
   {
     field: "release_name.category",
     label: "Category",
     key: "Category",
+    choices: correctionChoices.Category,
     automatic: (r) => r?.Identity?.Category || "",
   },
   {
     field: "release_name.type",
     label: "Type",
     key: "Type",
+    choices: correctionChoices.Type,
     automatic: (r) => r?.Naming?.Type || "",
   },
   {
     field: "release_name.source",
     label: "Source",
     key: "Source",
+    choices: correctionChoices.Source,
     automatic: (r) => r?.Naming?.Source || "",
   },
   {
     field: "release_name.resolution",
     label: "Resolution",
     key: "Resolution",
+    choices: correctionChoices.Resolution,
     automatic: (r) => r?.Naming?.Resolution || "",
   },
   {
@@ -287,6 +295,8 @@ const releaseStringFields: ReadonlyArray<{
     field: "release_name.service",
     label: "Service",
     key: "Service",
+    choices: correctionChoices.Service,
+    searchable: true,
     automatic: (r) => r?.Media?.Service || "",
   },
   {
@@ -331,6 +341,8 @@ const releaseStringFields: ReadonlyArray<{
     field: "release_name.region",
     label: "Region",
     key: "Region",
+    choices: correctionChoices.Region,
+    searchable: true,
     automatic: (r) => r?.Naming?.Region || r?.Media?.Region || "",
   },
 ];
@@ -633,11 +645,14 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
       <div className={inputSectionClass}>
         <div className={settingsStyle.title}>Release name</div>
         <div className={inputGridClass}>
-          {releaseStringFields.map(({ field, label, key, automatic }) => {
+          {releaseStringFields.map(({ field, label, key, automatic, choices, searchable }) => {
             const readOnly = key === "ManualYear" && isTV;
             const manual = !readOnly && hasOwn(view.intent.releaseName, key);
             const rawValue = manual ? view.intent.releaseName[key] : automatic(release);
             const numeric = key === "ManualYear";
+            const value =
+              rawValue === null || rawValue === undefined || rawValue === 0 ? "" : String(rawValue);
+            const ChoiceControl = searchable ? CorrectionSearch : CorrectionSelect;
             return (
               <CorrectionRow
                 key={field}
@@ -649,29 +664,36 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
-                <input
-                  id={`correction-${field}-value`}
-                  aria-label={label}
-                  type={numeric ? "number" : "text"}
-                  readOnly={readOnly}
-                  disabled={readOnly}
-                  value={
-                    rawValue === null || rawValue === undefined || rawValue === 0
-                      ? ""
-                      : String(rawValue)
-                  }
-                  onChange={(event) => {
-                    if (readOnly) return;
-                    setReleaseName(
-                      key,
-                      numeric
-                        ? event.target.value
-                          ? Number(event.target.value)
-                          : 0
-                        : event.target.value,
-                    );
-                  }}
-                />
+                {choices ? (
+                  <ChoiceControl
+                    key={draftKey(field)}
+                    id={`correction-${field}-value`}
+                    label={label}
+                    value={value}
+                    options={choices}
+                    onChange={(next) => setReleaseName(key, next)}
+                  />
+                ) : (
+                  <input
+                    id={`correction-${field}-value`}
+                    aria-label={label}
+                    type={numeric ? "number" : "text"}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                    value={value}
+                    onChange={(event) => {
+                      if (readOnly) return;
+                      setReleaseName(
+                        key,
+                        numeric
+                          ? event.target.value
+                            ? Number(event.target.value)
+                            : 0
+                          : event.target.value,
+                      );
+                    }}
+                  />
+                )}
               </CorrectionRow>
             );
           })}
@@ -714,16 +736,27 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
-                <input
-                  id={`correction-${field}-value`}
-                  aria-label={label}
-                  readOnly={readOnly}
-                  disabled={readOnly}
-                  value={typeof value === "string" ? value : ""}
-                  onChange={(event) => {
-                    if (!readOnly) setMetadata(key, event.target.value);
-                  }}
-                />
+                {key === "Distributor" ? (
+                  <CorrectionSearch
+                    key={draftKey(field)}
+                    id={`correction-${field}-value`}
+                    label={label}
+                    value={typeof value === "string" ? value : ""}
+                    options={correctionChoices.Distributor}
+                    onChange={(next) => setMetadata(key, next)}
+                  />
+                ) : (
+                  <input
+                    id={`correction-${field}-value`}
+                    aria-label={label}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                    value={typeof value === "string" ? value : ""}
+                    onChange={(event) => {
+                      if (!readOnly) setMetadata(key, event.target.value);
+                    }}
+                  />
+                )}
               </CorrectionRow>
             );
           })}

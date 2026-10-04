@@ -5,6 +5,7 @@ package unit3d
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -122,14 +123,14 @@ func TestUnit3DUnknownDiscTaxonomyDiagnostics(t *testing.T) {
 	logger := &discTaxonomyLogger{}
 	data := map[string]string{}
 	applyDiscTaxonomy(trackers.PreparationInput{
-Tracker: "EXAMPLE",
- Logger: logger,
- Meta: api.UploadSubject{
-		DiscType: "BDMV",
- Region: "private-country",
- Distributor: "private-publisher",
-	},
-}, data, SiteProfile{})
+		Tracker: "EXAMPLE",
+		Logger:  logger,
+		Meta: api.UploadSubject{
+			DiscType:    "BDMV",
+			Region:      "private-country",
+			Distributor: "private-publisher",
+		},
+	}, data, SiteProfile{})
 	logs := strings.Join(logger.messages, "\n")
 	if len(data) != 0 || strings.Count(logs, "decision=omitted_unknown") != 2 {
 		t.Fatalf("unknown taxonomy not diagnosed: data=%v logs=%s", data, logs)
@@ -146,4 +147,44 @@ type discTaxonomyLogger struct {
 
 func (l *discTaxonomyLogger) Debugf(format string, args ...any) {
 	l.messages = append(l.messages, fmt.Sprintf(format, args...))
+}
+
+func TestDiscCatalogSuggestions(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		values  func() []string
+		resolve func(string) string
+		count   int
+	}{
+		{
+			name:    "region",
+			values:  RegionCodes,
+			resolve: RegionID,
+			count:   244,
+		},
+		{
+			name:    "distributor",
+			values:  DistributorNames,
+			resolve: DistributorID,
+			count:   965,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			values := tt.values()
+			if len(values) != tt.count || !slices.IsSorted(values) {
+				t.Fatalf("catalog must contain %d sorted choices", tt.count)
+			}
+			for _, value := range values {
+				if tt.resolve(value) == "" {
+					t.Fatalf("catalog choice %q does not resolve", value)
+				}
+			}
+			first := values[0]
+			values[0] = "Custom entry"
+			if tt.values()[0] != first {
+				t.Fatal("caller mutation changed the shared catalog")
+			}
+		})
+	}
 }

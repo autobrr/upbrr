@@ -4,9 +4,19 @@
 package unit3d
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
+
+// RegionCodes returns the sorted country codes recognized by the default catalog.
+// The caller owns the returned slice; site-specific extensions are not included.
+func RegionCodes() []string { return slices.Sorted(maps.Keys(unit3DRegionIDs)) }
+
+// DistributorNames returns sorted publisher names from the default catalog.
+// Names remain correction values; each site resolves them to its own numeric IDs.
+func DistributorNames() []string { return slices.Sorted(maps.Keys(unit3DDistributorIDs)) }
 
 // RegionID resolves a country code or positive explicit tracker ID. Disc playback
 // zones (A/B/C) and unknown names are not country IDs and return an empty value.

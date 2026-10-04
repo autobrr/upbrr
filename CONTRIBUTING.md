@@ -169,6 +169,8 @@ Stop the embedded server after inspection so later runs do not reuse an old proc
 
 For theme, page layout, and rendered-description changes, check the embedded UI at desktop and mobile widths in the supported light and dark modes. `make e2e` covers representative theme, MediaInfo, and description states; the separate visual suites sweep more routes and palette combinations. The [Web UI development guide](./webui/README.md) describes the styling and rendering owners, and [Playwright guidance](./webui/e2e/AGENTS.md) lists the visual commands.
 
+Input correction suggestions are generated from the backend's metadata dictionaries. After changing supported service, region, resolution, or distributor values, run `make correction-choices` and include the updated `webui/src/pages/input/correctionChoices.json`. `make correction-choices-check` (also part of `make lint`) checks for drift. These suggestions do not restrict custom corrections.
+
 ### Backend
 
 ```sh

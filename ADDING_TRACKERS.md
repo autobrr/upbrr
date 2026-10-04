@@ -387,6 +387,9 @@ UNIT3D default catalogs. Add site-only extensions or overrides with
 to use the family default. Explicit positive numeric inputs retain their value.
 Do not use fuzzy matching or assume a partial site dropdown is a complete catalog.
 Unknown optional names are omitted with diagnostics; retain any stricter site validation.
+The Input suggestion generator reads the default catalog through `unit3d.RegionCodes`
+and `unit3d.DistributorNames`. It stores country codes and publisher names as corrections,
+not numeric IDs; site-specific resolution remains in the tracker adapter.
 Bind site validation and payload callbacks to the same effective `SiteProfile.RegionID`
 and `DistributorID` methods so an extension is neither rejected nor overwritten by defaults.
 Configure callbacks in the site taxonomy/profile constructor before binding those methods;

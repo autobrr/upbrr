@@ -4,6 +4,7 @@
 package bluraycom
 
 import (
+	"maps"
 	"strings"
 	"unicode"
 )
@@ -48,6 +49,13 @@ var countryRegionCodes = map[string]string{
 	"United States":        "USA",
 	"United Arab Emirates": "UAE",
 	"Vietnam":              "VIE",
+}
+
+// CountryRegionCodes returns a copy of the provider's known country-to-region
+// mappings for correction suggestions. Unlisted countries still use the normal
+// countryToRegion fallback.
+func CountryRegionCodes() map[string]string {
+	return maps.Clone(countryRegionCodes)
 }
 
 func countryToRegion(country string) string {
