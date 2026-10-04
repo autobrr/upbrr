@@ -6,6 +6,7 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -58,6 +59,10 @@ func TestDescriptionCacheFailureAllowsNewKeyRetryAtOriginalRevision(t *testing.T
 	if retried.Descriptions.Descriptions[0].Source != command.Source ||
 		repository.reusable.Description.Descriptions[0].Source != command.Source {
 		t.Fatal("successful retry did not publish both edit and reusable description")
+	}
+	if len(repository.reusable.Description.Overrides) != 1 || !repository.reusable.Description.Overrides[0].Final ||
+		!slices.Equal(repository.reusable.Description.Overrides[0].TrackerIDs, current.Descriptions.Descriptions[0].TrackerIDs) {
+		t.Fatal("saved editor output lost its final-source marker in reusable instructions")
 	}
 }
 

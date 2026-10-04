@@ -540,10 +540,18 @@ func (b workflowDescriptionBuilder) resolveSubject(
 		baseGroup := strings.TrimSpace(strings.SplitN(override.GroupKey, "|", 2)[0])
 		trackersForGroup := make([]string, 0, len(descriptionTargets))
 		for _, projection := range descriptionTargets {
+			if len(override.TrackerIDs) > 0 && !slices.ContainsFunc(override.TrackerIDs, func(id api.TrackerID) bool {
+				return strings.EqualFold(strings.TrimSpace(string(id)), string(projection.TrackerID))
+			}) {
+				continue
+			}
 			if strings.EqualFold(baseGroup, "default") ||
 				strings.EqualFold(strings.TrimSpace(projection.DescriptionGroup), baseGroup) {
 				trackersForGroup = append(trackersForGroup, string(projection.TrackerID))
 			}
+		}
+		if len(override.TrackerIDs) > 0 && len(trackersForGroup) == 0 {
+			continue
 		}
 		groups = append(groups, api.DescriptionBuilderGroup{
 			GroupKey:       strings.TrimSpace(override.GroupKey),
@@ -551,6 +559,7 @@ func (b workflowDescriptionBuilder) resolveSubject(
 			Description:    strings.TrimSpace(override.Source),
 			RawDescription: strings.TrimSpace(override.Source),
 			HasOverride:    true,
+			Final:          override.Final,
 		})
 	}
 	questionnaire := make(map[string]map[string]string, len(instructions.QuestionnaireAnswers))

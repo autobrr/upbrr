@@ -1246,3 +1246,62 @@ func TestNewRegistryDeclaresDescriptionGroups(t *testing.T) {
 		t.Fatalf("AITHER claim policy = %#v, %t", policy, ok)
 	}
 }
+
+func TestSavedDescriptionGroupPreservesGeneratedContent(t *testing.T) {
+	t.Parallel()
+	registry := MustNewRegistry()
+	const logo = "https://image.tmdb.org/t/p/original/example-logo.png"
+	const synopsis = "Example episode synopsis."
+	const signature = "[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]"
+	media := &api.ExactMediaAssets{}
+	images := make([]string, 0, 4)
+	for index := range 4 {
+		imagePath := filepath.Join(t.TempDir(), fmt.Sprintf("screen-%d.png", index))
+		raw := fmt.Sprintf("https://img.ptscreens.com/example-screen-%d.png", index)
+		thumb := fmt.Sprintf("https://img.ptscreens.com/example-screen-%d.md.png", index)
+		web := fmt.Sprintf("https://ptscreens.com/image/example-screen-%d", index)
+		media.Screenshots = append(media.Screenshots, api.ScreenshotImage{Path: imagePath, Purpose: api.ScreenshotPurposeFinal})
+		media.ScreenshotUploads = append(media.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  imagePath,
+			Host:       "ptscreens",
+			UsageScope: "global",
+			RawURL:     raw,
+			ImgURL:     thumb,
+			WebURL:     web,
+		})
+		images = append(images, fmt.Sprintf("[url=%s][img=500]%s[/img][/url]", web, thumb))
+	}
+	body := "[center][img=300]" + logo + "[/img][/center]\n\n[center]" + synopsis + "[/center]\n\n[center]\n" +
+		strings.Join(images[:2], " ") + "\n" + strings.Join(images[2:], " ") + "\n[/center]\n\ntest\n\n" + signature
+	meta := api.UploadSubject{
+		SourcePath:         filepath.Join(t.TempDir(), "Example.Release.2026.mkv"),
+		Options:            api.UploadOptions{Screens: 4},
+		ExactMedia:         media,
+		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: body,
+			HasOverride:    true,
+			Final:          true,
+		}},
+		EpisodeOverview:  synopsis,
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Logo: logo}},
+	}
+	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "ptscreens"}}
+	cfg.Description.AddLogo = true
+	cfg.Description.EpisodeOverview = true
+	cfg.Description.LogoSize = 300
+	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, registry)
+	for save := range 2 {
+		preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{"AITHER"})
+		if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 1 {
+			t.Fatalf("save %d failed: preview=%+v err=%v", save, preview, err)
+		}
+		got := preview.Descriptions[0].RawDescription
+		if got != body {
+			t.Fatalf("save %d changed edited description:\nwant %s\ngot %s", save, body, got)
+		}
+		meta.DescriptionGroups[0].RawDescription = got
+	}
+}

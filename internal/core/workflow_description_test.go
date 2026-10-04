@@ -611,3 +611,49 @@ func TestWorkflowDescriptionBuilderHonorsCancellation(t *testing.T) {
 		t.Fatalf("canceled description build error = %v", err)
 	}
 }
+
+func TestWorkflowDescriptionOverridesPreservePerGroupFinalSource(t *testing.T) {
+	t.Parallel()
+	resolver := &workflowDescriptionResolverFake{}
+	builder := workflowDescriptionBuilder{resolver: resolver}
+	instructions := api.DescriptionInstructions{Overrides: []api.DescriptionOverrideInput{
+		{
+			GroupKey:   "unit3d|ptscreens|global",
+			Source:     "Saved complete description.",
+			Final:      true,
+			TrackerIDs: []api.TrackerID{"alpha"},
+		},
+		{
+GroupKey: "unit3d|pixhost|global",
+ Source: "Custom notes to compose.",
+ TrackerIDs: []api.TrackerID{"BETA"},
+},
+		{
+GroupKey: "unit3d|removed|global",
+ Source: "Unselected tracker description.",
+ Final: true,
+ TrackerIDs: []api.TrackerID{"REMOVED"},
+},
+	}}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+		{
+			TrackerID:        "ALPHA",
+			DescriptionGroup: "unit3d",
+			Artifacts:        api.TrackerArtifactRequirements{Description: true},
+		},
+		{
+			TrackerID:        "BETA",
+			DescriptionGroup: "unit3d",
+			Artifacts:        api.TrackerArtifactRequirements{Description: true},
+		},
+	}}
+	_, err := builder.resolveSubject(t.Context(), api.ReleaseRef{}, projections, instructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := resolver.input.DescriptionGroups
+	if len(groups) != 2 || !groups[0].Final || groups[1].Final || resolver.input.DescriptionGroupsFinal ||
+		!slices.Equal(groups[0].Trackers, []string{"ALPHA"}) || !slices.Equal(groups[1].Trackers, []string{"BETA"}) {
+		t.Fatalf("saved and generated groups lost their distinct source contracts: %+v", groups)
+	}
+}

@@ -6691,6 +6691,9 @@ func (m *Module) generateDescriptions(
 func cloneDescriptionInstructions(input api.DescriptionInstructions) api.DescriptionInstructions {
 	cloned := input
 	cloned.Overrides = append([]api.DescriptionOverrideInput(nil), input.Overrides...)
+	for index := range cloned.Overrides {
+		cloned.Overrides[index].TrackerIDs = slices.Clone(input.Overrides[index].TrackerIDs)
+	}
 	cloned.QuestionnaireAnswers = make(map[api.TrackerID]map[string]string, len(input.QuestionnaireAnswers))
 	for trackerID, answers := range input.QuestionnaireAnswers {
 		clonedAnswers := make(map[string]string, len(answers))
@@ -6778,14 +6781,24 @@ func (m *Module) mutateDescriptionOverride(
 		if strings.EqualFold(strings.TrimSpace(override.GroupKey), groupKey) {
 			matchedOverride = true
 			if source != nil {
-				overrides = append(overrides, api.DescriptionOverrideInput{GroupKey: groupKey, Source: *source})
+				overrides = append(overrides, api.DescriptionOverrideInput{
+					GroupKey:   groupKey,
+					Source:     *source,
+					Final:      true,
+					TrackerIDs: slices.Clone(current.Descriptions[targetIndex].TrackerIDs),
+				})
 			}
 			continue
 		}
 		overrides = append(overrides, override)
 	}
 	if source != nil && !matchedOverride {
-		overrides = append(overrides, api.DescriptionOverrideInput{GroupKey: groupKey, Source: *source})
+		overrides = append(overrides, api.DescriptionOverrideInput{
+			GroupKey:   groupKey,
+			Source:     *source,
+			Final:      true,
+			TrackerIDs: slices.Clone(current.Descriptions[targetIndex].TrackerIDs),
+		})
 	}
 	instructions.Overrides = overrides
 	if err := instructions.Validate(); err != nil {

@@ -347,8 +347,10 @@ export type DescriptionInstructions = Readonly<{
 }>;
 
 export type DescriptionOverrideInput = Readonly<{
+  final?: boolean;
   groupKey: string;
   source: string;
+  trackerIds?: readonly TrackerID[];
 }>;
 
 export type DescriptionOverrideMutation = Readonly<{

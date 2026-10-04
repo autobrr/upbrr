@@ -574,6 +574,11 @@ type MediaArtifactSet struct {
 type DescriptionOverrideInput struct {
 	GroupKey string `json:"groupKey"`
 	Source   string `json:"source"`
+	// Final preserves saved editor output instead of composing generated sections again.
+	Final bool `json:"final,omitempty"`
+	// TrackerIDs binds a saved composite group to its original tracker members.
+	// Omitted membership retains the group-wide behavior of custom input notes.
+	TrackerIDs []TrackerID `json:"trackerIds,omitempty"`
 }
 
 // DescriptionInstructions are transport-safe generation choices. Canonical

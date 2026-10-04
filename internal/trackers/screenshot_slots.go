@@ -790,16 +790,24 @@ func rangeCovered(start int, end int, covered [][2]int) bool {
 	return false
 }
 
+// attachSelectionPathsToSlots pairs selections with renderable slots in order,
+// preserving existing paths without shifting subsequent selections.
 func attachSelectionPathsToSlots(slots []api.ScreenshotSlot, selections []api.ScreenshotFinalSelection) {
+	selectionIdx := 0
 	for idx := range slots {
-		if idx >= len(selections) {
+		if !slots[idx].RenderInScreenshots {
+			continue
+		}
+		if selectionIdx >= len(selections) {
 			break
 		}
+		selection := selections[selectionIdx]
+		selectionIdx++
 		if strings.TrimSpace(slots[idx].ImagePath) != "" {
 			continue
 		}
-		slots[idx].ImagePath = strings.TrimSpace(selections[idx].ImagePath)
-		slots[idx].DiscID = selections[idx].DiscID
+		slots[idx].ImagePath = strings.TrimSpace(selection.ImagePath)
+		slots[idx].DiscID = selection.DiscID
 		if strings.TrimSpace(slots[idx].OriginalKey) == "" {
 			slots[idx].OriginalKey = slots[idx].ImagePath
 		}
