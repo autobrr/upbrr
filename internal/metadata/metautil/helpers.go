@@ -4,10 +4,13 @@
 package metautil
 
 import (
+	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/rls"
+	"github.com/autobrr/rls/taginfo"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -31,7 +34,7 @@ func ParseRelease(filename string) ParsedRelease {
 		return ParsedRelease{}
 	}
 	base = pathutil.Base(base)
-	release := rls.ParseString(base)
+	release := ParseReleaseTokens(base)
 	return ParsedRelease{
 		Title:    release.Title,
 		Alt:      release.Alt,
@@ -39,6 +42,26 @@ func ParseRelease(filename string) ParsedRelease {
 		Category: ReleaseCategoryFromRLS(release.Type.String()),
 		Year:     release.Year,
 	}
+}
+
+var releaseSeasonTokenPattern = regexp.MustCompile(`(?i)^(?:s(?:eason|eries)?[ ._-]*(\d+)|(\d+)x)`)
+var releaseTagBuilder = rls.NewTagBuilder().Init(taginfo.All())
+
+// ParseReleaseTokens parses source-name text with RLS. X-separated pairs and
+// season tokens without exactly two or four digits remain ordinary text, so
+// they cannot supply episodic values or a TV category to metadata searches.
+func ParseReleaseTokens(name string) rls.Release {
+	tags, end := rls.ParseTagsString(name)
+	for i, tag := range tags {
+		if !tag.Is(rls.TagTypeSeries) {
+			continue
+		}
+		match := releaseSeasonTokenPattern.FindStringSubmatch(fmt.Sprintf("%o", tag))
+		if len(match) > 0 && (match[2] != "" || len(match[1]) != 2 && len(match[1]) != 4) {
+			tags[i] = tag.As(rls.TagTypeText, nil)
+		}
+	}
+	return releaseTagBuilder.Build(tags, end)
 }
 
 // NormalizeIMDbID adds the tt prefix and seven-digit padding to numeric IDs.

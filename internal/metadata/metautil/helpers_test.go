@@ -124,3 +124,20 @@ func TestReleaseCategoryFromRLS(t *testing.T) {
 		})
 	}
 }
+
+func TestParseReleaseRejectsUnsupportedSeasonCategory(t *testing.T) {
+	t.Parallel()
+	for _, token := range []string{"1x05", "S1E03", "S123E03", "768x576", "1920x800"} {
+		t.Run(token, func(t *testing.T) {
+			got := ParseRelease("Example.Show." + token)
+			if got.Category == "TV" {
+				t.Fatalf("rejected token inferred TV: %+v", got)
+			}
+		})
+	}
+	for _, token := range []string{"S01E03", "S2026E03", "S00E03"} {
+		if got := ParseRelease("Example.Show." + token); got.Category != "TV" {
+			t.Errorf("valid token %q lost TV category: %+v", token, got)
+		}
+	}
+}
