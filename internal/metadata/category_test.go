@@ -21,7 +21,15 @@ func TestSourceCategoryDetection(t *testing.T) {
 	}{
 		{"show folder", filepath.Join("media", "shows", "Example.Movie.1080p.mkv"), "TV"},
 		{"stored Windows path", `C:\Media\TV Shows\Example.Movie.1080p.mkv`, "TV"},
+		{"nearby folder is not a category", filepath.Join("media", "TV Show Extras", "Example.Movie.1080p.mkv"), "MOVIE"},
+		{"tv show folder", filepath.Join("media", "TV Show", "Example.Movie.1080p.mkv"), "TV"},
 		{"tv shows folder", filepath.Join("media", "TV Shows", "Example.Movie.1080p.mkv"), "TV"},
+		{"spelled-out year season parent", filepath.Join("media", "Season 2026", "Example.Movie.1080p.mkv"), "TV"},
+		{"POSIX single-digit season parent", "media/Season 1/Example.Series.(DVD x264 768x576 AC3)-GRP.mkv", "TV"},
+		{"incidental season folder text", filepath.Join("media", "Behind Season 1", "Example.Movie.1080p.mkv"), "MOVIE"},
+		{"season folder suffix", filepath.Join("media", "Season 1 Extras", "Example.Movie.1080p.mkv"), "MOVIE"},
+		{"single-digit release token", "Example.Movie.S1E03.1080p.mkv", "MOVIE"},
+		{"single-digit season parent", `D:\temp\test\Season 1\Example.Series.(DVD x264 768x576 AC3) Dual Audio)-GRP.mkv`, "TV"},
 		{"season parent", filepath.Join("media", "Example Series (2005)", "Season 01 [DVD]", "Example.Series.DVD.x264.mkv"), "TV"},
 		{"four-digit nonyear season", "Example.Show.S0100E03.1080p.mkv", "TV"},
 		{"four-digit maximum season", "Example.Show.S9999E03.1080p.mkv", "TV"},
@@ -98,5 +106,21 @@ func TestUnknownSourceCategoryFallsBackOnlyForNaming(t *testing.T) {
 	}
 	if got := releaseNameRequestFromMeta(meta, api.NopLogger{}).Category; got != "MOVIE" {
 		t.Fatalf("final category = %q, want MOVIE", got)
+	}
+}
+
+func TestSeasonDirectoryCategoryLeavesBasenameFactsUnchanged(t *testing.T) {
+	t.Parallel()
+	base := "Example.Series.(DVD x264 768x576 AC3) Dual Audio)-GRP.mkv"
+	got, want := ParseReleaseInfo(filepath.Join("media", "Season 1", base)), ParseReleaseInfo(base)
+	if got.Category != "TV" || want.Category != "MOVIE" {
+		t.Fatalf("source category = %q, basename category = %q", got.Category, want.Category)
+	}
+	if got.Season != 0 || got.Episode != 0 || got.Month != 0 || got.Day != 0 {
+		t.Fatalf("category-only directory supplied season/episode: %+v", got)
+	}
+	got.Category = want.Category
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("season directory changed basename release facts: got=%+v want=%+v", got, want)
 	}
 }

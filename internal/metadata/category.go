@@ -11,7 +11,7 @@ import (
 
 var (
 	sourceTVPathPattern = regexp.MustCompile(
-		`(?i)(?:^|[\\/])(?:tv|tvshows?|tv.shows|series|shows)(?:[\\/]|$)|(?:^|[\\/])(?:S(?:\d{2}|\d{4})(?:E\d{1,3})?|season\s*(?:\d{2}|\d{4}))\b|\b(?:tv pack|season\s*(?:\d{2}|\d{4}))\b`,
+		`(?i)(?:^|[\\/])(?:tv|tvshows?|tv.shows?|series|shows)(?:[\\/]|$)|(?:^|[\\/])season\s*\d+[\\/]|(?:^|[\\/])(?:S(?:\d{2}|\d{4})(?:E\d{1,3})?|season\s*(?:\d{2}|\d{4}))\b|\b(?:tv pack|season\s*(?:\d{2}|\d{4}))\b`,
 	)
 	sourceTVNamePattern = regexp.MustCompile(
 		`(?i)\bS(?:\d{2}|\d{4})(?:E\d{1,3})?\b|\b(?:season|series)\s*(?:\d{2}|\d{4})\b|\bE\d{2,3}\s*-|\b\d{4}[.-]\d{1,2}[.-]\d{1,2}\b`,
@@ -21,7 +21,8 @@ var (
 )
 
 // sourceHasTVCategory recognizes source folder and basename hints without
-// passing parent-directory text into the release-title parser.
+// passing parent-directory text into the release-title parser. Spelled-out season
+// directories supply category evidence without setting canonical season fields.
 func sourceHasTVCategory(source string) bool {
 	path := pathutil.Clean(source)
 	return sourceTVPathPattern.MatchString(path) || sourceTVNamePattern.MatchString(pathutil.Base(path)) ||

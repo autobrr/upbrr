@@ -52,7 +52,7 @@ Metadata providers and local media inspection produce shared release facts. Revi
 - external IDs;
 - generated release name.
 
-Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
+Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. A `Season 1` directory is a TV-category hint without supplying a season number; canonical season tokens still require two or four digits. Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
