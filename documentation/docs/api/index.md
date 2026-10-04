@@ -76,7 +76,7 @@ Workflow writes use the general API concurrency and idempotency headers document
 
 See [Audio analysis](../workflow/audio-analysis.md) for user-facing behavior. Use the embedded OpenAPI schemas for request and response fields.
 
-One active input is shared by all processes using the same database. Reads do not acquire its lease or recover interrupted work. After a restart, an explicit continuation or workflow command performs authorized recovery. If it returns a revision conflict, fetch the current workflow and review its required actions before sending a new command; do not replay a write with the old revision. Unknown external outcomes require reconciliation before another submission.
+One active input is shared by all processes using the same database. Reads do not acquire its lease or recover interrupted work. Startup waits for prior-process leases to expire, preserves completed work, and marks unfinished operations interrupted without replaying external work. It abandons unresolved prior-process effects without verifying their remote outcome; check the tracker or torrent client before explicitly retrying an interrupted stage. Unknown external outcomes during the running process still require reconciliation before another submission. If a continuation or workflow command returns a revision conflict, fetch the current workflow and review its required actions before sending a new command; do not replay a write with the old revision.
 
 ## Base-path example
 

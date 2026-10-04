@@ -74,7 +74,7 @@ func azFamilyResponsibilityVersion(name string, version string) trackerResponsib
 
 var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("ACM", "acm", "acm", "v4"),
-	unit3DResponsibilityVersion("AITHER", "aither", "", "v3"),
+	unit3DResponsibilityVersion("AITHER", "aither", "", "v4"),
 	unit3DResponsibility("BLU"),
 	unit3DResponsibilityVersion("CBR", "cbr", "", "v2"),
 	unit3DResponsibilityVersion("DP", "dp", "", "v3"),
@@ -97,7 +97,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("R4E"),
 	unit3DResponsibility("RAS"),
 	unit3DResponsibilityVersion("RF", "rf", "", "v3"),
-	unit3DResponsibilityVersion("RHD", "rhd", "", "v4"),
+	unit3DResponsibilityVersion("RHD", "rhd", "", "v5"),
 	unit3DResponsibilityVersion("RMC", "rmc", "", "v3"),
 	unit3DResponsibilityVersion("SAM", "sam", "", "v2"),
 	unit3DResponsibility("SHRI"),
@@ -107,13 +107,13 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("TLZ"),
 	unit3DResponsibility("TOS"),
 	unit3DResponsibility("TTR"),
-	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v3"),
+	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v4"),
 	unit3DResponsibility("UTP"),
-	unit3DResponsibilityVersion("YUS", "yus", "", "v3"),
+	unit3DResponsibilityVersion("YUS", "yus", "", "v4"),
 	unit3DResponsibilityVersion("ZNTH", "znth", "", "v2"),
 	azFamilyResponsibilityVersion("AZ", "v4"),
-	azFamilyResponsibilityVersion("CZ", "v6"),
-	azFamilyResponsibilityVersion("PHD", "v3"),
+	azFamilyResponsibilityVersion("CZ", "v7"),
+	azFamilyResponsibilityVersion("PHD", "v4"),
 	{
 		name:              "ANT",
 		family:            trackers.FamilyStandalone,
@@ -443,22 +443,6 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		principalName:     "name",
 	},
 	{
-		name:              "THR",
-		family:            trackers.FamilyStandalone,
-		contentMode:       trackers.UploadContentModeDescription,
-		authMode:          "credential_login",
-		authOwner:         "standalone/thr/auth.go",
-		hasAuthResolver:   true,
-		supportsLogin:     true,
-		taxonomyOwner:     "standalone/thr/taxonomy.go",
-		descriptionOwner:  "standalone/thr/description.go",
-		questionnaireKeys: []string{"name_override"},
-		descriptionGroup:  "thr",
-		releaseNamePolicy: "standalone/thr/v2",
-		projectorVersion:  "standalone-v2",
-		principalName:     "name",
-	},
-	{
 		name:              "TL",
 		family:            trackers.FamilyStandalone,
 		contentMode:       trackers.UploadContentModeDescription,
@@ -481,7 +465,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/tvc/description.go",
 		questionnaireKeys: []string{"name_override"},
 		descriptionGroup:  "tvc",
-		releaseNamePolicy: "standalone/tvc/v2",
+		releaseNamePolicy: "standalone/tvc/v3",
 		projectorVersion:  "standalone-v2",
 		principalName:     "name",
 	},
@@ -492,8 +476,8 @@ func TestTrackerResponsibilityLedgerCoversEveryBuiltIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	if len(trackerResponsibilityLedger) != 66 {
-		t.Fatalf("responsibility rows = %d, want 66", len(trackerResponsibilityLedger))
+	if len(trackerResponsibilityLedger) != 65 {
+		t.Fatalf("responsibility rows = %d, want 65", len(trackerResponsibilityLedger))
 	}
 
 	ledgerNames := make([]string, 0, len(trackerResponsibilityLedger))

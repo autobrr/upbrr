@@ -26,6 +26,8 @@ Choose up to six hosts in preferred order. The Web UI reveals credential fields 
 | ShareX       | Endpoint URL and API key |
 | UTPPM        | API key                  |
 
+Tracker-specific host choices still apply after warning acknowledgement and when existing images are reused. Cached images on another host do not replace the configured choice.
+
 When an allowed host fails, upbrr can try the next eligible configured host. A host rejected by the target tracker's policy is skipped regardless of its global position.
 
 ## Additional hosts

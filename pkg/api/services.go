@@ -427,6 +427,9 @@ type UploadSubject struct {
 	VideoEncode                 string
 	HasEncodeSettings           bool
 	BitDepth                    string
+	EditionSet                  string
+	Cut                         string
+	Presentation                string
 	Edition                     string
 	Repack                      string
 	WebDV                       bool
@@ -688,6 +691,9 @@ type TrackerValidationSubject struct {
 	UHD                        string
 	Distributor                string
 	Region                     string
+	EditionSet                 string
+	Cut                        string
+	Presentation               string
 	Edition                    string
 	Repack                     string
 	WebDV                      bool
@@ -802,6 +808,9 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		UHD:                         subject.UHD,
 		Distributor:                 subject.Distributor,
 		Region:                      subject.Region,
+		EditionSet:                  subject.EditionSet,
+		Cut:                         subject.Cut,
+		Presentation:                subject.Presentation,
 		Edition:                     subject.Edition,
 		Repack:                      subject.Repack,
 		WebDV:                       subject.WebDV,
@@ -2339,35 +2348,37 @@ type TrackerMatch struct {
 // Codec, Audio, HDR, Language, and Ext retain parser tokens for naming
 // transformations; operations must use resolved media fields for technical facts.
 type ReleaseInfo struct {
-	Category   string
-	Type       string
-	Artist     string
-	Title      string
-	Subtitle   string
-	Alt        string
-	Year       int
-	Month      int
-	Day        int
-	Version    string
-	Source     string
-	Resolution string
-	Codec      []string
-	Audio      []string
-	HDR        []string
-	Ext        string
-	Language   []string
-	Site       string
-	Genre      string
-	Channels   string
-	Collection string
-	Region     string
-	Size       string
-	Group      string
-	Disc       string
-	Season     int
-	Episode    int
-	Edition    []string
-	Other      []string
+	Category     string
+	Type         string
+	Artist       string
+	Title        string
+	Subtitle     string
+	Alt          string
+	Year         int
+	Month        int
+	Day          int
+	Version      string
+	Source       string
+	Resolution   string
+	Codec        []string
+	Audio        []string
+	HDR          []string
+	Ext          string
+	Language     []string
+	Site         string
+	Genre        string
+	Channels     string
+	Collection   string
+	Region       string
+	Size         string
+	Group        string
+	Disc         string
+	Season       int
+	Episode      int
+	Presentation []string
+	Cut          []string
+	Edition      []string
+	Other        []string
 }
 
 type TagOverride struct {

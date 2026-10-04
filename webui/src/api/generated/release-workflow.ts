@@ -882,9 +882,11 @@ export type MediaFacts = Readonly<{
   Channels: string;
   Commentary: boolean;
   Container: string;
+  Cut: string;
   Distributor: string;
   DistributorProvenance: FactProvenance;
   Edition: string;
+  EditionSet: string;
   HDR: string;
   HDRFacts: HDRFacts;
   HardcodedSubs: boolean;
@@ -895,6 +897,7 @@ export type MediaFacts = Readonly<{
   MediaInfoUniqueID: string;
   OriginalLanguage: string;
   OriginalLanguageProvenance: FactProvenance;
+  Presentation: string;
   PrimaryAudioTrackID: string;
   Region: string;
   Repack: string;
@@ -998,8 +1001,10 @@ export type NamingFacts = Readonly<{
   CleanName: string;
   Codecs: readonly string[];
   Collection: string;
+  Cuts: readonly string[];
   Day: number;
   Disc: string;
+  EditionSet: string;
   Editions: readonly string[];
   Extension: string;
   Filename: string;
@@ -1018,6 +1023,7 @@ export type NamingFacts = Readonly<{
   OriginalTitleProvenance: FactProvenance;
   Other: readonly string[];
   Personal: boolean;
+  Presentations: readonly string[];
   Region: string;
   ReleaseName: string;
   Resolution: string;

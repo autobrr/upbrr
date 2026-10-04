@@ -950,7 +950,7 @@ func duplicateTargetForEvaluation(meta api.DuplicateSubject) api.TrackerDuplicat
 		VideoCodec:  meta.VideoCodec,
 		VideoEncode: meta.VideoEncode,
 		HDR:         cloneHDRFacts(meta.HDRFacts),
-		Edition:     strings.Join(meta.Release.Edition, " "),
+		Edition:     meta.Release.EditionLabel(),
 		Region:      meta.Release.Region,
 		Group:       meta.Tag,
 		Season:      meta.SeasonInt,

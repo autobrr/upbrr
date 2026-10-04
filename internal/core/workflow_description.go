@@ -141,6 +141,7 @@ func (b workflowDescriptionBuilder) Build(
 		return api.DescriptionSet{}, err
 	}
 	subject.ExactMedia = exactMedia
+	subject.ImageHostOverrides.FailedHosts = slices.Concat(subject.ImageHostOverrides.FailedHosts, media.FailedHosts)
 	skipUpload := true
 	subject.ImageHostOverrides.SkipUpload = &skipUpload
 	descriptionTargets := workflowDescriptionTargets(projections.Projections)

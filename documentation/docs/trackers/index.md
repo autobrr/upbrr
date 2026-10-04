@@ -7,6 +7,8 @@ description: Configure tracker credentials, authentication, default selection, d
 
 upbrr's tracker catalog is built from registered tracker implementations. The Web UI renders each tracker's supported settings and capabilities from that catalog.
 
+THR support, including its tracker-owned image host, has been removed because the site changed its underlying codebase. On upgrade or config import, THR settings, default/preferred selections, and obsolete Pronfo credentials are discarded before secret decryption. Historical upload records and unrelated settings are preserved. Startup writes repaired database configuration atomically; if that write fails, the original configuration remains available for retry. A replacement integration is not included.
+
 ## Configure a tracker
 
 1. Open **Settings**.
@@ -46,9 +48,9 @@ Tracker settings can restrict duplicate competition by incoming release group. W
 
 ### Approve tracker warnings
 
-Some tracker warnings permit an explicit override. On **Dupe Check**, read the warnings on the affected tracker's card. Choose **Upload anyway** only after deciding that the release is appropriate for that tracker.
+Some tracker warnings permit an explicit override. On **Dupe Check**, read the warnings on the affected tracker's card. Turn on **Acknowledge tracker warnings** only after deciding that the release is appropriate for that tracker. The warning details remain visible while acknowledged.
 
-Approval applies only to that tracker and its current warning set. Changed warnings require renewed approval. Strict failures remain blocked and cannot be overridden, including in debug mode.
+Approval applies only to that tracker and its current warning set. After the initial duplicate check, changing its warning toggle rechecks only that tracker when eligible. Other trackers keep their fresh, unchanged duplicate evidence and decisions. Turning the toggle off withdraws approval and skips that tracker's search until it is eligible again. Changed inputs, configuration, or expired evidence still require fresh checks. Changed warnings or a new prepared generation require renewed approval. Strict failures remain blocked and cannot be overridden, including in debug mode.
 
 The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override.
 
@@ -59,6 +61,20 @@ upbrr resolves tracker-specific upload and search names before duplicate checkin
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or the rendered TV season/episode segment. Missing or unknown resolution stays absent. Complete manual names and tracker policies that use exact source names or separate display titles retain their existing behavior.
 
 Tracker-specific categories, source/type mappings, descriptions, media selection, questionnaires, and auth flows remain owned by the tracker adapter. A successful mapping does not prove the upload complies with every current site rule.
+
+### Disc region and distributor IDs
+
+For Unit3D disc uploads, upbrr translates known country codes and publisher names to the standard UNIT3D numeric IDs. Matching is case-insensitive; explicit positive numeric IDs remain usable for site-specific entries. Tracker taxonomy implementations can add or override names without changing the shared defaults. Disc playback zones such as A/B/C are not country codes.
+
+Unknown optional values are omitted with a debug diagnostic rather than assigned a guessed ID. ACM and SHRI retain their stricter validation, and SHRI still requires a valid region for DVD and HD DVD uploads. ULCX requires a resolvable country region for Blu-ray discs (including UHD); a missing or unsupported region strictly blocks upload, even in debug mode or with rule authorization. Set the Region correction to a recognized country code or a positive tracker region ID, then refresh metadata before retrying. Playback zones A/B/C do not satisfy this country field.
+
+Site-specific catalogs and live upload acceptance still need verification when a site changes its list.
+
+### ACM diagnostics
+
+ACM duplicate searches gather the full TMDB work within the movie or TV category. They do not narrow by release name, season, type, or resolution; the duplicate evaluator compares the returned content scopes and variants. This preserves work matching on ACM's legacy API.
+
+For an ACM report, enable `--log-level trace` for the affected run. Search diagnostics include the work query and pagination decisions. Payload diagnostics include numeric classification IDs and evidence byte counts, without copying descriptions or MediaInfo into these messages. Review all logs before sharing and remove credentials, private URLs, and identifying release details. A successful local preparation does not confirm that ACM accepted an upload.
 
 ## Image hosts and clients
 

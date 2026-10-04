@@ -680,6 +680,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		Size:       meta.Release.Size,
 		Group:      meta.Release.Group,
 		Disc:       meta.Release.Disc,
+		Cut:        meta.Release.Cut,
 		Edition:    meta.Release.Edition,
 		Other:      meta.Release.Other,
 	}); err != nil {

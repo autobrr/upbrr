@@ -27,6 +27,194 @@ const current = (workflowID: string, revision: number): ReleaseWorkflowCurrent =
   }) as unknown as ReleaseWorkflowCurrent;
 
 describe("sessionReducer upload intent", () => {
+  it("retains description drafts for unchanged normalized tracker receipts", () => {
+    let state = sessionReducer(initialSessionState(), {
+      type: "trackers_received",
+      trackers: ["BLU", "AITHER"],
+    });
+    state = sessionReducer(state, {
+      type: "description_edited",
+      groupKey: "unit3d",
+      raw: "unsaved",
+    });
+    state = {
+      ...state,
+      descriptions: { ...state.descriptions, renderedByGroup: { unit3d: "<p>unsaved</p>" } },
+    };
+    const refreshed = sessionReducer(state, {
+      type: "trackers_received",
+      trackers: [" aither ", "BLU", "AITHER"],
+    });
+    expect(refreshed.descriptions).toBe(state.descriptions);
+    const changed = sessionReducer(state, { type: "trackers_received", trackers: ["AITHER"] });
+    expect(changed.descriptions.rawByGroup).toEqual({});
+    expect(changed.descriptions.dirtyGroups).toEqual([]);
+    expect(changed.descriptions.renderedByGroup).toEqual({});
+  });
+
+  it.each(["tracker", "generation", "input", "workflow", "unfinished workflow"])(
+    "clears description drafts for a real %s change",
+    (change) => {
+      const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+      const initial = initialSessionState();
+      const snapshot = {
+        state: "active" as const,
+        revision: 1,
+        inputId: "input-one",
+        sourceVersion: "source-one",
+        current: current("workflow-one", 3),
+      };
+      const action = {
+        type: "active_input_applied" as const,
+        snapshot,
+        status: "ready" as const,
+        preview: preview(sourcePath, 1),
+        intent: initial.preparationIntent,
+        capturedInputEditRevision: 0,
+        selectedTrackers: ["AITHER"],
+      };
+      let state = sessionReducer(initial, action);
+      state = sessionReducer(state, {
+        type: "description_edited",
+        groupKey: "unit3d",
+        raw: "unsaved",
+      });
+      const refreshed = sessionReducer(state, action);
+      expect(refreshed.descriptions.rawByGroup.unit3d).toBe("unsaved");
+      const nextSnapshot = change.includes("workflow")
+        ? { ...snapshot, revision: 2, current: current("workflow-two", 1) }
+        : snapshot;
+      const changed = sessionReducer(state, {
+        ...action,
+        snapshot: nextSnapshot,
+        ...(change === "unfinished workflow" ? { preview: null, status: "running" as const } : {}),
+        ...(change === "tracker" ? { selectedTrackers: ["BLU"] } : {}),
+        ...(change === "generation" ? { preview: preview(sourcePath, 2) } : {}),
+        ...(change === "input"
+          ? {
+              snapshot: {
+                ...snapshot,
+                revision: 2,
+                inputId: "input-two",
+                sourceVersion: "source-two",
+              },
+            }
+          : {}),
+      });
+      expect(changed.descriptions.rawByGroup).toEqual({});
+      expect(changed.descriptions.dirtyGroups).toEqual([]);
+      if (change === "unfinished workflow") {
+        const completed = sessionReducer(changed, { ...action, snapshot: nextSnapshot });
+        expect(completed.descriptions.rawByGroup).toEqual({});
+      }
+    },
+  );
+
+  it("invalidates at workflow generation publication, then preserves newer edits on reload", () => {
+    const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+    const workflow = (generation: number): ReleaseWorkflowCurrent =>
+      ({
+        ...current("workflow-one", generation + 2),
+        release: { release: { Source: { SourcePath: sourcePath }, Generation: generation } },
+      }) as ReleaseWorkflowCurrent;
+    const initial = initialSessionState();
+    const action = {
+      type: "active_input_applied" as const,
+      snapshot: {
+        state: "active" as const,
+        revision: 1,
+        inputId: "input-one",
+        sourceVersion: "source-one",
+        current: workflow(1),
+      },
+      status: "ready" as const,
+      preview: preview(sourcePath, 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+      selectedTrackers: ["AITHER"],
+    };
+    let state = sessionReducer(initial, action);
+    state = sessionReducer(state, {
+      type: "description_edited",
+      groupKey: "unit3d",
+      raw: "old generation draft",
+    });
+    const priorSessionRevision = state.sessionRevision;
+    const screenshotRevision = state.screenshots.revision + 1;
+    state = sessionReducer(state, {
+      type: "workflow_started",
+      facet: "screenshots",
+      sessionRevision: priorSessionRevision,
+      revision: screenshotRevision,
+    });
+    state = sessionReducer(state, {
+      type: "workflow_current_published",
+      status: "ready",
+      current: workflow(2),
+    });
+    expect(state.descriptions.rawByGroup).toEqual({});
+    expect(state.sessionRevision).toBe(priorSessionRevision + 1);
+    state = sessionReducer(state, {
+      type: "screenshot_previewed",
+      sessionRevision: priorSessionRevision,
+      revision: screenshotRevision,
+      image: "/stale-preview.png",
+    });
+    expect(state.screenshots.previewImage).toBe("");
+    state = sessionReducer(state, {
+      type: "description_edited",
+      groupKey: "unit3d",
+      raw: "new generation draft",
+    });
+    state = sessionReducer(state, {
+      ...action,
+      snapshot: { ...action.snapshot, current: workflow(2) },
+      preview: preview(sourcePath, 2),
+    });
+    expect(state.descriptions.rawByGroup.unit3d).toBe("new generation draft");
+    expect(state.sessionRevision).toBe(priorSessionRevision + 1);
+  });
+
+  it("keeps source-only edits independent of an authoritative tracker refresh", () => {
+    const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+    const initial = initialSessionState();
+    const action = {
+      type: "active_input_applied" as const,
+      snapshot: {
+        state: "active" as const,
+        revision: 1,
+        inputId: "input-one",
+        sourceVersion: "source-one",
+        current: current("workflow-one", 3),
+      },
+      status: "ready" as const,
+      preview: preview(sourcePath, 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+      selectedTrackers: ["AITHER"],
+    };
+    let state = sessionReducer(initial, action);
+    state = sessionReducer(state, {
+      type: "description_edited",
+      groupKey: "unit3d",
+      raw: "unsaved",
+    });
+    const capturedInputEditRevision = state.inputEditRevision;
+    state = sessionReducer(state, {
+      type: "draft_changed",
+      value: "C:\\media\\Next.Release.2026.mkv",
+    });
+    state = sessionReducer(state, {
+      ...action,
+      capturedInputEditRevision,
+      selectedTrackers: ["BLU"],
+    });
+    expect(state.sourceDraft).toBe("C:\\media\\Next.Release.2026.mkv");
+    expect(state.selectedTrackers).toEqual(["BLU"]);
+    expect(state.preparationDirty).toBe(false);
+    expect(state.descriptions.rawByGroup).toEqual({});
+  });
+
   it("retains an explicit source ID clear until preparation resolves the source again", () => {
     let state = initialSessionState();
     for (const value of ["123", ""]) {
@@ -797,4 +985,124 @@ describe("sessionReducer active input snapshots", () => {
     expect(stale.selectedSource).toBe("C:\\media\\B.mkv");
     expect(stale.workflowView.current?.workflow.id).toBe("workflow-b");
   });
+});
+
+describe("screenshot plan authority", () => {
+  it.each(["publication", "active input"])(
+    "fences projection-only stale completions from %s and retains media drafts",
+    (receipt) => {
+      const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+      const initial = initialSessionState();
+      const workflow = {
+        ...current("workflow-one", 4),
+        workflow: {
+          ...current("workflow-one", 4).workflow,
+          trackerProjections: { id: "projections-one", revision: 1 },
+        },
+        release: { release: { Source: { SourcePath: sourcePath }, Generation: 1 } },
+      } as ReleaseWorkflowCurrent;
+      const applied = {
+        type: "active_input_applied" as const,
+        snapshot: {
+          state: "active" as const,
+          revision: 1,
+          inputId: "input-one",
+          sourceVersion: "source-one",
+          current: workflow,
+        },
+        status: "ready" as const,
+        preview: preview(sourcePath, 1),
+        intent: initial.preparationIntent,
+        capturedInputEditRevision: 0,
+        selectedTrackers: ["AITHER"],
+      };
+      let state = sessionReducer(initial, applied);
+      const plan = {
+        SourcePath: sourcePath,
+        SavedImagePlanID: "plan-before",
+        DiscType: "",
+        DurationSeconds: 120,
+        FrameRate: 24,
+        SuggestedSelections: [{ Index: 0, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
+        ExistingScreenshots: [],
+        ExistingTrackerScreenshots: [],
+        FinalSelections: [],
+        TrackerImageLinks: [],
+        PreviewImages: [],
+        MetadataTimestamp: "2026-07-20T00:00:00Z",
+        RequiresManualFrames: false,
+      };
+      state = sessionReducer(state, {
+        type: "screenshots_loaded",
+        sessionRevision: state.sessionRevision,
+        revision: state.screenshots.revision,
+        plan,
+        reseedDrafts: true,
+      });
+      state = sessionReducer(state, {
+        type: "screenshot_selection_changed",
+        index: 0,
+        value: { TimestampSeconds: 42, Frame: 1008 },
+      });
+      state = sessionReducer(state, {
+        type: "screenshot_final_artifacts_changed",
+        artifactIDs: ["retained-image"],
+      });
+      state = sessionReducer(state, {
+        type: "screenshot_previewed",
+        sessionRevision: state.sessionRevision,
+        revision: state.screenshots.revision,
+        image: "/retained-preview.png",
+      });
+      const before = state;
+      const receive = (next: ReleaseWorkflowCurrent) =>
+        receipt === "publication"
+          ? { type: "workflow_current_published" as const, current: next, status: "ready" as const }
+          : { ...applied, snapshot: { ...applied.snapshot, current: next } };
+      state = sessionReducer(
+        state,
+        receive({ ...workflow, workflow: { ...workflow.workflow, revision: 5 } }),
+      );
+      expect(state.screenshots).toBe(before.screenshots);
+      const sessionRevision = state.sessionRevision;
+      const revision = state.screenshots.revision + 1;
+      state = sessionReducer(state, {
+        type: "workflow_started",
+        facet: "screenshots",
+        sessionRevision,
+        revision,
+      });
+      state = sessionReducer(
+        state,
+        receive({
+          ...workflow,
+          workflow: {
+            ...workflow.workflow,
+            revision: 6,
+            trackerProjections: { id: "projections-one", revision: 2 },
+          },
+        }),
+      );
+      expect(state.sessionRevision).toBe(sessionRevision);
+      expect(state.screenshots.revision).toBeGreaterThan(revision);
+      expect(state.screenshots.value).toBeNull();
+      expect(state.screenshots.planStale).toBe(true);
+      expect(state.screenshots.selections).toBe(before.screenshots.selections);
+      expect(state.screenshots.finalSelectionArtifactIDs).toBe(
+        before.screenshots.finalSelectionArtifactIDs,
+      );
+      expect(state.screenshots.previewImage).toBe(before.screenshots.previewImage);
+      expect(state.menuImages).toBe(before.menuImages);
+      expect(state.uploadedImages).toBe(before.uploadedImages);
+      const refreshed = state;
+      state = sessionReducer(state, {
+        type: "screenshots_loaded",
+        sessionRevision,
+        revision,
+        plan,
+        reseedDrafts: true,
+      });
+      expect(state).toBe(refreshed);
+    },
+  );
 });

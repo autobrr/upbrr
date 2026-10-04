@@ -1,6 +1,7 @@
 name: e2e
 
 on:
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,9 +12,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select E2E checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      e2e: ${{ steps.scope.outputs.e2e }}
+    steps:
+      - name: Checkout complete PR history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Test E2E change selection
+        run: node --test scripts/ci/e2e-scope.test.mjs
+
+      - name: Select relevant PR changes or manual full run
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          scope=$(node scripts/ci/e2e-scope.mjs "$BASE_SHA" "$HEAD_SHA")
+          echo "e2e=$scope" >> "$GITHUB_OUTPUT"
+
   e2e:
     name: Playwright E2E
-    runs-on: windows-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
@@ -29,7 +62,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 10.27.0
+          package_json_file: webui/package.json
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -42,9 +75,20 @@ jobs:
         working-directory: webui
         run: pnpm install --frozen-lockfile
 
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
+
+      - name: Verify E2E prerequisites and runner capacity
+        run: |
+          ffmpeg -version
+          printf 'Runner capacity: %s logical CPUs\n' "$(nproc)"
+          free --human
+
       - name: Install Playwright browser
         working-directory: webui
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps --only-shell chromium
 
       - name: Run E2E
         run: make e2e

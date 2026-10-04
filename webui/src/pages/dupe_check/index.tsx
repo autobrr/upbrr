@@ -103,9 +103,14 @@ const uniqueMessages = (values: readonly (string | undefined)[]) => {
   });
 };
 
-const ruleOverrideAction = (projection: TrackerReleaseProjection | undefined) =>
+const ruleAcknowledgementAction = (projection: TrackerReleaseProjection | undefined) =>
   projection?.requiredActions?.find(
-    (action) => action.kind === "authorize_rules" && action.status === "pending",
+    (action) =>
+      action.kind === "authorize_rules" &&
+      (action.status === "pending" ||
+        (action.status === "resolved" &&
+          Boolean(projection.waivableRuleFingerprint) &&
+          projection.ruleAuthorizationFingerprint === projection.waivableRuleFingerprint)),
   );
 
 const trackerBlockReasons = (
@@ -113,7 +118,8 @@ const trackerBlockReasons = (
   readiness: TrackerPreflightAssessment["results"][number] | undefined,
   result: DupeAssessment["results"][number] | undefined,
 ) => {
-  const hasRuleOverride = !hasInClientMatch(result) && Boolean(ruleOverrideAction(projection));
+  const hasRuleOverride =
+    !hasInClientMatch(result) && Boolean(ruleAcknowledgementAction(projection));
   const inClientMatches = (result?.matches || []).filter(
     (match) => match.reason?.trim().toLowerCase() === "in_client",
   );
@@ -138,7 +144,9 @@ const trackerSummary = (
   result: DupeAssessment["results"][number] | undefined,
 ) => {
   if (hasInClientMatch(result)) return "In client";
-  if (ruleOverrideAction(projection)) return "Upload approval needed";
+  if (ruleAcknowledgementAction(projection)?.status === "pending") {
+    return "Tracker acknowledgement needed";
+  }
   if (projection?.readiness !== "ready" || (readiness && readiness.state !== "ready")) {
     return "Blocked";
   }
@@ -219,7 +227,7 @@ function WorkflowDupeAssessmentView({
   busy,
   confirmReleaseName,
   acknowledgeReleaseName,
-  overrideRules,
+  acknowledgeRules,
   setIgnored,
 }: Readonly<{
   assessment: DupeAssessment | null;
@@ -230,7 +238,7 @@ function WorkflowDupeAssessmentView({
   busy: boolean;
   confirmReleaseName(tracker: string, value: string): void;
   acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
-  overrideRules(tracker: string): Promise<boolean>;
+  acknowledgeRules(tracker: string, acknowledged: boolean): Promise<boolean>;
   setIgnored(tracker: string, ignored: boolean): void;
 }>) {
   const projectionsByTracker = new Map(
@@ -251,7 +259,6 @@ function WorkflowDupeAssessmentView({
         const readiness = preflightByTracker.get(trackerID);
         const nameConfirmation = releaseNameConfirmationState(projection);
         const releaseNameNotices = releaseNameOverrideNotices(projection);
-        const ruleOverride = !hasInClientMatch(result) ? ruleOverrideAction(projection) : undefined;
         const releaseName = releaseNameOverrides[trackerID] ?? projection?.uploadReleaseName ?? "";
         const inClient = hasInClientMatch(result);
         const strictBlocked =
@@ -261,6 +268,9 @@ function WorkflowDupeAssessmentView({
               (decision) => decision.blocking && decision.disposition === "strict",
             ),
           );
+        const ruleAcknowledgement = !strictBlocked
+          ? ruleAcknowledgementAction(projection)
+          : undefined;
         const canonicalName = projection?.canonicalReleaseName?.trim() || "";
         const uploadName =
           result?.uploadReleaseName?.trim() || projection?.uploadReleaseName?.trim() || "";
@@ -297,7 +307,7 @@ function WorkflowDupeAssessmentView({
               <h2 className="text-base">{projection?.displayName || trackerID}</h2>
               <Badge
                 tone={
-                  ruleOverride
+                  ruleAcknowledgement?.status === "pending"
                     ? "info"
                     : inClient ||
                         result?.status === "failed" ||
@@ -321,17 +331,20 @@ function WorkflowDupeAssessmentView({
               </div>
             ) : null}
 
-            {ruleOverride ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--status-warning)] bg-card p-2 text-sm">
-                <p>{ruleOverride.prompt}</p>
-                <Button
-                  aria-label={`Upload to ${trackerID} anyway`}
-                  disabled={busy}
-                  type="button"
-                  onClick={() => void overrideRules(trackerID)}
-                >
-                  Upload anyway
-                </Button>
+            {ruleAcknowledgement ? (
+              <div className="grid gap-2 rounded border border-[var(--status-warning)] bg-card p-2 text-sm">
+                <p>{ruleAcknowledgement.prompt}</p>
+                <label className="inline-flex items-center gap-2 text-xs font-semibold">
+                  <span>Acknowledge tracker warnings</span>
+                  <Switch
+                    aria-label={`Acknowledge warnings for ${trackerID}`}
+                    checked={ruleAcknowledgement.status === "resolved"}
+                    disabled={busy}
+                    onChange={(event) => {
+                      void acknowledgeRules(trackerID, event.target.checked);
+                    }}
+                  />
+                </label>
               </div>
             ) : null}
 
@@ -564,7 +577,7 @@ export default function DupeCheckPage({
           busy={dupeLoading}
           confirmReleaseName={facet.confirmReleaseName}
           ignoredTrackers={ignoredTrackers}
-          overrideRules={facet.overrideRules}
+          acknowledgeRules={facet.acknowledgeRules}
           preflight={preflight}
           projections={projections}
           releaseNameOverrides={view.releaseNameOverrides}

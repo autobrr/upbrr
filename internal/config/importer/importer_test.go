@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 )
@@ -338,7 +340,7 @@ func TestImportFromContentEncryptedNativeSecretsRejectPlaintextFallback(t *testi
 		t.Run(name, func(t *testing.T) {
 			sourceDB := filepath.Join(t.TempDir(), "source.db")
 			writeImportWebAuthFixture(t, sourceDB, "source")
-			payload := encryptedNativePayload(t, filename, importSecretConfig(sourceDB))
+			payload := withRemovedTrackerSecrets(t, filename, encryptedNativePayload(t, filename, importSecretConfig(sourceDB)))
 
 			cfg, _, err := ImportFromContent(filename, payload)
 			if err != nil {
@@ -371,7 +373,7 @@ func TestImportFromContentEncryptedNativeSecretsReencryptsWithDestinationHelper(
 		t.Run(name, func(t *testing.T) {
 			sourceDB := filepath.Join(t.TempDir(), "source.db")
 			writeImportWebAuthFixture(t, sourceDB, "source")
-			payload := encryptedNativePayload(t, filename, importSecretConfig(sourceDB))
+			payload := withRemovedTrackerSecrets(t, filename, encryptedNativePayload(t, filename, importSecretConfig(sourceDB)))
 
 			cfg, _, err := ImportFromContent(filename, payload)
 			if err != nil {
@@ -772,6 +774,10 @@ func encryptedNativePayload(t *testing.T, filename string, cfg *config.Config) [
 
 func assertImportedSecretValues(t *testing.T, cfg *config.Config) {
 	t.Helper()
+	if _, ok := cfg.Trackers.Trackers["THR"]; ok {
+		t.Fatal("removed encrypted tracker retained")
+	}
+
 	if cfg.MainSettings.TMDBAPI != "plain-tmdb-token" {
 		t.Fatalf("TMDBAPI: got %q", cfg.MainSettings.TMDBAPI)
 	}
@@ -815,4 +821,49 @@ func TestIsPythonFile(t *testing.T) {
 			t.Errorf("isPythonFile(%q) = %v, want %v", name, got, want)
 		}
 	}
+}
+
+// withRemovedTrackerSecrets models a pre-removal export without relying on
+// the current marshaler, which deliberately discards retired settings.
+func withRemovedTrackerSecrets(t *testing.T, filename string, payload []byte) []byte {
+	t.Helper()
+	raw := map[string]any{}
+	if err := yaml.Unmarshal(payload, &raw); err != nil {
+		t.Fatal(err)
+	}
+	var trackers map[string]any
+	switch filepath.Ext(filename) {
+	case ".json":
+		section, ok := raw["Trackers"].(map[string]any)
+		if !ok {
+			t.Fatal("tracker section missing")
+		}
+		trackers, ok = section["Trackers"].(map[string]any)
+		if !ok {
+			t.Fatal("tracker entries missing")
+		}
+	case ".yaml":
+		var ok bool
+		trackers, ok = raw["trackers"].(map[string]any)
+		if !ok {
+			t.Fatal("tracker section missing")
+		}
+	}
+	trackers["THR"] = map[string]any{
+		"Password":       "upbrr-enc:v1:unreadable",
+		"password":       "upbrr-enc:v1:unreadable",
+		"PronfoAPIKey":   "synthetic-retired-secret",
+		"pronfo_api_key": "synthetic-retired-secret",
+	}
+	var result []byte
+	var err error
+	if filepath.Ext(filename) == ".json" {
+		result, err = json.Marshal(raw)
+	} else {
+		result, err = yaml.Marshal(raw)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }

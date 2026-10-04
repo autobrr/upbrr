@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -25,6 +27,8 @@ type workflowDupeBuilder struct {
 type workflowDupePrivateEvidence struct {
 	Summary    api.DupeCheckSummary
 	Assessment api.DupeAssessmentEvidence
+	// Legacy evidence has no skip-mode provenance and cannot be reused.
+	SkipRemote *bool
 }
 
 func (b workflowDupeBuilder) Build(
@@ -34,6 +38,32 @@ func (b workflowDupeBuilder) Build(
 	preflight api.TrackerPreflightAssessment,
 	checkedAt time.Time,
 	skipRemote bool,
+) (api.DupeAssessment, any, error) {
+	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, nil)
+}
+
+// BuildWithReuse rechecks changed lanes and carries forward exact, fresh sibling
+// evidence after a rule-only change, without extending its original lifetime.
+func (b workflowDupeBuilder) BuildWithReuse(
+	ctx context.Context,
+	subject api.DuplicateSubject,
+	projections api.TrackerReleaseProjectionSet,
+	preflight api.TrackerPreflightAssessment,
+	checkedAt time.Time,
+	skipRemote bool,
+	reuse releaseworkflow.DuplicateAssessmentReuse,
+) (api.DupeAssessment, any, error) {
+	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, &reuse)
+}
+
+func (b workflowDupeBuilder) build(
+	ctx context.Context,
+	subject api.DuplicateSubject,
+	projections api.TrackerReleaseProjectionSet,
+	preflight api.TrackerPreflightAssessment,
+	checkedAt time.Time,
+	skipRemote bool,
+	reuse *releaseworkflow.DuplicateAssessmentReuse,
 ) (api.DupeAssessment, any, error) {
 	if err := ctx.Err(); err != nil {
 		return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: %w", err)
@@ -54,6 +84,16 @@ func (b workflowDupeBuilder) Build(
 			return strings.EqualFold(strings.TrimSpace(candidate), string(trackerID))
 		})
 	}
+	reused, previousEvidence, err := reusableWorkflowDupes(reuse, projections, checkedAt, skipRemote, inClient)
+	if err != nil {
+		return api.DupeAssessment{}, nil, err
+	}
+	for trackerID := range reused {
+		result, ok := preflightByTracker[trackerID]
+		if !ok || result.State != api.TrackerPreflightStateReady || !result.FreshUntil.After(checkedAt) {
+			delete(reused, trackerID)
+		}
+	}
 	eligibleProjections := projections
 	eligibleProjections.Projections = make([]api.TrackerReleaseProjection, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {
@@ -66,6 +106,9 @@ func (b workflowDupeBuilder) Build(
 			)
 		}
 		result, ok := preflightByTracker[projection.TrackerID]
+		if _, retained := reused[projection.TrackerID]; retained {
+			continue
+		}
 		if inClient(projection.TrackerID) ||
 			(ok && projection.Readiness == api.ReadinessStatusReady && projection.DupeReady && result.State == api.TrackerPreflightStateReady) {
 			eligibleProjections.Projections = append(eligibleProjections.Projections, projection)
@@ -83,20 +126,22 @@ func (b workflowDupeBuilder) Build(
 			requiredActionLogValues(result.RequiredActions),
 		)
 	}
-	if len(eligibleProjections.Projections) == 0 {
+	if len(eligibleProjections.Projections) == 0 && len(reused) == 0 {
 		return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: no eligible trackers")
 	}
 	var (
 		summary    api.DupeCheckSummary
 		assessment api.DupeAssessmentEvidence
-		err        error
 	)
-	summary, assessment, err = b.service.CheckProjectionSet(ctx, subject, eligibleProjections, api.ProjectionDupeCheckOptions{
-		SkipRemote:         skipRemote,
-		BypassBannedGroups: projections.ExecutionMode == api.WorkflowExecutionModeDebug,
-	})
-	if err != nil {
-		return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: %w", err)
+	assessment = dupechecking.EmptyAssessment()
+	if len(eligibleProjections.Projections) > 0 {
+		summary, assessment, err = b.service.CheckProjectionSet(ctx, subject, eligibleProjections, api.ProjectionDupeCheckOptions{
+			SkipRemote:         skipRemote,
+			BypassBannedGroups: projections.ExecutionMode == api.WorkflowExecutionModeDebug,
+		})
+		if err != nil {
+			return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: %w", err)
+		}
 	}
 	resultsByTracker := make(map[api.TrackerID]api.DupeCheckResult, len(summary.Results))
 	for _, result := range summary.Results {
@@ -104,11 +149,20 @@ func (b workflowDupeBuilder) Build(
 		resultsByTracker[trackerID] = result
 	}
 	freshUntil := checkedAt.Add(workflowDupeFreshness)
+	expiresAt := freshUntil
 	results := make([]api.TrackerDupeAssessment, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {
 		projectionFingerprint, err := api.CanonicalWorkflowFingerprint(projection)
 		if err != nil {
 			return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: fingerprint %s projection: %w", projection.TrackerID, err)
+		}
+		if retained, ok := reused[projection.TrackerID]; ok {
+			retained.ProjectionFingerprint = projectionFingerprint
+			results = append(results, retained)
+			if retained.FreshUntil.Before(expiresAt) {
+				expiresAt = retained.FreshUntil
+			}
+			continue
 		}
 		trackerResult := api.TrackerDupeAssessment{
 			TrackerID:             projection.TrackerID,
@@ -184,11 +238,40 @@ func (b workflowDupeBuilder) Build(
 	if err != nil {
 		return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: input fingerprint: %w", err)
 	}
+	if len(reused) > 0 {
+		delta, ok := assessment.(dupechecking.Assessment)
+		if !ok {
+			return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: incremental evidence is incompatible")
+		}
+		retainedTrackers := make([]string, 0, len(reused))
+		for trackerID := range reused {
+			retainedTrackers = append(retainedTrackers, string(trackerID))
+		}
+		checkedTrackers := make([]string, 0, len(eligibleProjections.Projections))
+		for _, projection := range eligibleProjections.Projections {
+			checkedTrackers = append(checkedTrackers, string(projection.TrackerID))
+		}
+		prior, _ := previousEvidence.Assessment.(dupechecking.Assessment)
+		assessment = prior.RetainTrackers(retainedTrackers).Merge(delta, checkedTrackers)
+		for _, result := range previousEvidence.Summary.Results {
+			if _, ok := reused[api.TrackerID(strings.ToUpper(strings.TrimSpace(result.Tracker)))]; ok {
+				summary.Results = append(summary.Results, result)
+			}
+		}
+		if reuse.Assessment.ExpiresAt.Before(expiresAt) {
+			expiresAt = reuse.Assessment.ExpiresAt
+		}
+	}
+	summary.SourcePath = subject.SourcePath
 	return api.DupeAssessment{
 		InputFingerprint: inputFingerprint,
 		Results:          results,
-		ExpiresAt:        freshUntil,
-	}, workflowDupePrivateEvidence{Summary: summary, Assessment: assessment}, nil
+		ExpiresAt:        expiresAt,
+	}, workflowDupePrivateEvidence{
+		Summary:    summary,
+		Assessment: assessment,
+		SkipRemote: new(skipRemote),
+	}, nil
 }
 
 func blockingPolicyDecisionLogValues(decisions []api.TrackerPolicyDecision) string {

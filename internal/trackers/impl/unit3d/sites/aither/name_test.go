@@ -101,6 +101,27 @@ func TestAitherStructuredReleaseNamePolicy(t *testing.T) {
 			want: "Example Release 2026 480p PAL DVD5 MPEG-2 DD 1.0-GRP",
 		},
 		{
+			name: "DVD disc retains cut and presentation before repack",
+			request: api.ReleaseNameRequest{
+				Category:     "MOVIE",
+				Type:         "DISC",
+				DiscType:     "DVD",
+				Title:        "Example Release",
+				Year:         2026,
+				Cut:          "Extended Cut",
+				Edition:      "Collector's",
+				Presentation: "Open Matte",
+				Repack:       "REPACK",
+				Resolution:   "480p",
+				Source:       "PAL DVD",
+				DVDSize:      "DVD5",
+				Audio:        "DD 1.0",
+				VideoCodec:   "MPEG-2",
+				Tag:          "-GRP",
+			},
+			want: "Example Release 2026 Extended Cut Open Matte REPACK 480p PAL DVD5 MPEG-2 DD 1.0-GRP",
+		},
+		{
 			name: "TVDB locale and year are independent structured components",
 			request: api.ReleaseNameRequest{
 				Category:    "TV",
@@ -190,6 +211,75 @@ func TestAitherStructuredPolicyPreservesManualAndOpaqueNames(t *testing.T) {
 	}
 }
 
+func TestAitherCanonicalCutPresentationAndEdition(t *testing.T) {
+	t.Parallel()
+	request := api.ReleaseNameRequest{
+		Category:     "MOVIE",
+		Type:         "WEBDL",
+		Title:        "Collector's Cut IMAX Story",
+		Year:         2026,
+		Cut:          "Extended Cut",
+		Edition:      "Collector's Cut",
+		Presentation: "Open Matte IMAX",
+		Resolution:   "1080p",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+	}
+	subject := aitherGeneratedSubject(t, request, []string{"Japanese"})
+	if got, want := aitherReviewedName(t, subject, nil), "Collector's Cut IMAX Story 2026 JAPANESE Extended Cut Open Matte IMAX 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("canonical modifiers = %q, want %q", got, want)
+	}
+	if edition, ok := subject.GeneratedName.Component(api.NameRoleEdition); !ok || !edition.Present || edition.AvailableValue != request.Edition {
+		t.Fatalf("tracker projection changed canonical edition: %+v", edition)
+	}
+	manual := subject
+	manual.GeneratedName = subject.GeneratedName.Clone()
+	markAitherManual(t, manual.GeneratedName, api.NameRoleEdition)
+	for index := range manual.GeneratedName.Components {
+		component := &manual.GeneratedName.Components[index]
+		if component.Role == api.NameRoleCut || component.Role == api.NameRolePresentation {
+			component.Manual, component.Present = true, false
+		}
+	}
+	manual.ReleaseName = manual.GeneratedName.Render().Name
+	if got, want := aitherReviewedName(t, manual, nil), "Collector's Cut IMAX Story 2026 JAPANESE Collector's Cut 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("manual modifier choices = %q, want %q", got, want)
+	}
+	opaque := subject
+	opaque.GeneratedName = nil
+	if got := aitherReviewedName(t, opaque, nil); got != opaque.ReleaseName {
+		t.Fatalf("opaque name = %q, want %q", got, opaque.ReleaseName)
+	}
+}
+
+func TestAitherCanonicalEditionSet(t *testing.T) {
+	t.Parallel()
+	request := api.ReleaseNameRequest{
+		Category:     "MOVIE",
+		Type:         "WEBDL",
+		Title:        "2in1 Extended Collector's Open Matte Story",
+		Year:         2026,
+		EditionSet:   "2in1",
+		Cut:          "Extended",
+		Edition:      "Collector's",
+		Presentation: "Open Matte",
+		Resolution:   "1080p",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+	}
+	subject := aitherGeneratedSubject(t, request, []string{"Japanese"})
+	if got, want := aitherReviewedName(t, subject, nil), "2in1 Extended Collector's Open Matte Story 2026 JAPANESE 2in1 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("WEB edition set = %q, want %q", got, want)
+	}
+	request.Type, request.DiscType = "DISC", "DVD"
+	request.Repack, request.Resolution, request.Source = "REPACK", "480p", "PAL DVD"
+	request.DVDSize, request.Audio, request.VideoCodec, request.VideoEncode = "DVD5", "DD 1.0", "MPEG-2", ""
+	subject = aitherGeneratedSubject(t, request, nil)
+	if got, want := aitherReviewedName(t, subject, nil), "2in1 Extended Collector's Open Matte Story 2026 2in1 REPACK 480p PAL DVD5 MPEG-2 DD 1.0-GRP"; got != want {
+		t.Fatalf("DVD edition set = %q, want %q", got, want)
+	}
+}
+
 func TestAitherTVDBDisambiguationRequiresCurrentMatchingAutomaticTitle(t *testing.T) {
 	t.Parallel()
 	request := api.ReleaseNameRequest{
@@ -263,7 +353,7 @@ func aitherTVDBEvidence() *api.TVDBMetadata {
 func TestAitherProfileUsesStructuredPolicy(t *testing.T) {
 	t.Parallel()
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/aither/v3" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/aither/v4" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("AITHER policy = %#v", policy)
 	}
 }
@@ -295,7 +385,10 @@ func aitherGeneratedSubject(t *testing.T, request api.ReleaseNameRequest, langua
 		VideoCodec:     request.VideoCodec,
 		VideoEncode:    request.VideoEncode,
 		AudioLanguages: languages,
+		EditionSet:     request.EditionSet,
+		Cut:            request.Cut,
 		Edition:        request.Edition,
+		Presentation:   request.Presentation,
 		Repack:         request.Repack,
 		Tag:            request.Tag,
 		SeasonStr:      request.Season,

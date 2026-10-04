@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -264,6 +265,7 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 	}
 	media := api.MediaArtifactSet{
 		ID:                      "media-1",
+		FailedHosts:             []string{"onlyimage"},
 		Revision:                5,
 		CaptureFingerprint:      workflowTestFingerprint(t, "media-capture"),
 		RequirementsFingerprint: workflowTestFingerprint(t, "media-requirements"),
@@ -301,6 +303,7 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 		},
 	}
 	instructions := api.DescriptionInstructions{
+		ImageHost: api.ImageHostOverrides{FailedHosts: []string{"pixhost"}},
 		Overrides: []api.DescriptionOverrideInput{{GroupKey: "unit3d", Source: "User description."}},
 		QuestionnaireAnswers: map[api.TrackerID]map[string]string{
 			"ALPHA": {"edition": "theatrical"},
@@ -357,6 +360,9 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 	}
 	if service.subject.ImageHost.SkipUpload == nil || !*service.subject.ImageHost.SkipUpload {
 		t.Fatalf("description subject allowed hidden image upload: %#v", service.subject.ImageHost)
+	}
+	if !slices.Equal(service.subject.ImageHost.FailedHosts, []string{"pixhost", "onlyimage"}) {
+		t.Fatalf("description lost current media or caller host exclusions: %#v", service.subject.ImageHost)
 	}
 	if service.subject.TrackerQuestionnaireAnswers["ALPHA"]["edition"] != "theatrical" {
 		t.Fatalf("description stage dropped supplied questionnaire evidence: %+v", service.subject.TrackerQuestionnaireAnswers)

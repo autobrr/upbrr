@@ -290,7 +290,7 @@ func TestCreateLiveTestProfileRejectsCaseFoldedTrackerDuplicates(t *testing.T) {
 		alias     string
 	}{
 		{canonical: "HDB", alias: "hdb"},
-		{canonical: "THR", alias: "thr"},
+		{canonical: "BHD", alias: "bhd"},
 	} {
 		t.Run(test.canonical, func(t *testing.T) {
 			source, runDir := liveTestFixture(t)
@@ -319,14 +319,14 @@ func TestValidateLiveTestTrackerConfigNames(t *testing.T) {
 	if err := configstore.ValidateLiveTestTrackerConfigNames(map[string]config.TrackerConfig{
 		"HDB": {},
 		"PTP": {},
-		"thr": {},
+		"bhd": {},
 	}); err != nil {
 		t.Fatalf("distinct tracker names rejected: %v", err)
 	}
 	for _, trackers := range []map[string]config.TrackerConfig{
 		{"HDB": {}, "hdb": {}},
 		{"hDb": {}, "hdb": {}},
-		{"tHr": {}, "thr": {}},
+		{"bHd": {}, "bhd": {}},
 	} {
 		if err := configstore.ValidateLiveTestTrackerConfigNames(trackers); err == nil {
 			t.Fatalf("case-folded tracker duplicate accepted: %#v", trackers)

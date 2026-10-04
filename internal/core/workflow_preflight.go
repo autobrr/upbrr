@@ -286,10 +286,13 @@ func (b workflowPreflightBuilder) Build(
 		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
 			result.State = api.TrackerPreflightStateFailed
 			result.Failures = append([]api.WorkflowFailure(nil), projection.Failures...)
-			if len(result.RequiredActions) > 0 {
+			hasPendingAction := slices.ContainsFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Status == "" || action.Status == api.RequiredActionStatusPending
+			})
+			if hasPendingAction {
 				result.State = api.TrackerPreflightStateActionRequired
 			}
-			if len(result.RequiredActions) == 0 && len(result.Failures) == 0 {
+			if !hasPendingAction && len(result.Failures) == 0 {
 				result.Failures = []api.WorkflowFailure{preflightFailure(
 					projection.TrackerID,
 					api.OperationFailureMissingPrerequisite,
@@ -562,7 +565,9 @@ func setAuthBlockedPreflight(result *api.TrackerPreflightResult, status api.Trac
 	}
 	result.State = api.TrackerPreflightStateRetryable
 	result.AuthReady = false
-	result.RequiredActions = nil
+	result.RequiredActions = slices.DeleteFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind != api.RequiredActionAuthorizeRules || action.Status != api.RequiredActionStatusResolved
+	})
 	result.Failures = []api.WorkflowFailure{preflightFailure(
 		result.TrackerID,
 		api.OperationFailureTrackerAuthRequired,
@@ -574,7 +579,9 @@ func setAuthBlockedPreflight(result *api.TrackerPreflightResult, status api.Trac
 func setAuthUnavailablePreflight(result *api.TrackerPreflightResult) {
 	result.State = api.TrackerPreflightStateRetryable
 	result.AuthReady = false
-	result.RequiredActions = nil
+	result.RequiredActions = slices.DeleteFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind != api.RequiredActionAuthorizeRules || action.Status != api.RequiredActionStatusResolved
+	})
 	result.Failures = []api.WorkflowFailure{preflightFailure(
 		result.TrackerID,
 		api.OperationFailureTrackerAuthUnavailable,

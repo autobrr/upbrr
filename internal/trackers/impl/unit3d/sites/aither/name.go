@@ -16,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v3", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v4", trackers.StructuredNamePolicy{
 		Defaults: applyAitherNameDefaults,
 	})
 }
@@ -26,11 +26,8 @@ func applyAitherNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject
 		return err
 	}
 
-	edition := effectiveAitherEdition(meta)
-	if edition != "" && !isAitherCut(edition) {
-		if err := editor.Omit(api.NameRoleEdition); err != nil {
-			return fmt.Errorf("omit AITHER non-cut edition: %w", err)
-		}
+	if err := editor.Omit(api.NameRoleEdition); err != nil {
+		return fmt.Errorf("omit AITHER edition: %w", err)
 	}
 
 	nameType := strings.ToUpper(strings.TrimSpace(meta.Type))
@@ -132,9 +129,11 @@ func applyAitherDVDRipNameOrder(editor *trackers.NameEditor) error {
 }
 
 func applyAitherDVDNameOrder(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.IsDiscType(meta.DiscType) && strings.TrimSpace(effectiveAitherEdition(meta)) != "" && strings.TrimSpace(meta.Repack) != "" {
-		if err := editor.MoveBefore(api.NameRoleEdition, api.NameRoleRepack); err != nil {
-			return fmt.Errorf("move AITHER DVD edition: %w", err)
+	if unit3d.IsDiscType(meta.DiscType) {
+		for _, role := range []api.ReleaseNameRole{api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation} {
+			if err := editor.MoveBefore(role, api.NameRoleRepack); err != nil {
+				return fmt.Errorf("move AITHER DVD %s: %w", role, err)
+			}
 		}
 	}
 	if strings.TrimSpace(unit3d.Resolution(meta)) != "" {
@@ -167,8 +166,17 @@ func addAitherLanguageMarker(editor *trackers.NameEditor, meta api.UploadSubject
 	if language == "" {
 		return nil
 	}
-	anchor := firstAitherPresentRole(editor.PresentRoles(), api.NameRoleThreeD, api.NameRoleEdition, api.NameRoleRepack,
-		api.NameRoleResolution, api.NameRoleSource, api.NameRoleVideoFormat)
+	anchor := firstAitherPresentRole(
+		editor.PresentRoles(),
+		api.NameRoleThreeD,
+		api.NameRoleEditionSet, api.NameRoleCut,
+		api.NameRoleEdition,
+		api.NameRolePresentation,
+		api.NameRoleRepack,
+		api.NameRoleResolution,
+		api.NameRoleSource,
+		api.NameRoleVideoFormat,
+	)
 	if !anchor.Valid() {
 		return nil
 	}
@@ -217,38 +225,6 @@ func aitherLanguageComponent(value string) string {
 		return strings.ToUpper(normalized)
 	}
 	return strings.ToUpper(trimmed)
-}
-
-// effectiveAitherEdition applies release-name overrides and removes Hybrid,
-// which AITHER positions as a separate release modifier.
-func effectiveAitherEdition(meta api.UploadSubject) string {
-	if meta.ReleaseNameOverrides.NoEdition != nil && *meta.ReleaseNameOverrides.NoEdition {
-		return ""
-	}
-	value := meta.Edition
-	if meta.ReleaseNameOverrides.Edition != nil {
-		value = *meta.ReleaseNameOverrides.Edition
-	}
-	fields := strings.Fields(value)
-	kept := fields[:0]
-	for _, field := range fields {
-		if !strings.EqualFold(field, "Hybrid") {
-			kept = append(kept, field)
-		}
-	}
-	return strings.Join(kept, " ")
-}
-
-// isAitherCut reports whether an edition contains a cut or presentation marker
-// retained by AITHER's naming policy.
-func isAitherCut(value string) bool {
-	lower := strings.ToLower(strings.TrimSpace(value))
-	for _, marker := range []string{"cut", "director", "extended", "unrated", "uncut", "censored", "imax", "3d", "open matte"} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func isDVDSource(source string) bool {

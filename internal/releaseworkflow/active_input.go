@@ -466,6 +466,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			state.PendingAudioAnalysis = state.Workflow.AudioAnalysis
 			state.PendingAudioAnalysisWorkflowID = state.Workflow.ID
 		}
+		state.PendingDuplicateReuse = nil
 		invalidatePreparedAndDownstream(&state.Workflow)
 		if state.Composite != nil {
 			state.Composite.LastCommittedRevision = state.Workflow.Revision

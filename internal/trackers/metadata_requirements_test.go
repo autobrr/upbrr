@@ -276,13 +276,6 @@ func TestMetadataRequirementMatrix(t *testing.T) {
 			fail:     true,
 		},
 		{
-			name:     "thr imdb",
-			tracker:  "THR",
-			category: "movie",
-			ids:      api.ExternalIdentity{IMDBID: 1234567},
-			metadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Release"}},
-		},
-		{
 			name:     "tvc tmdb",
 			tracker:  "TVC",
 			category: "tv",
@@ -476,7 +469,7 @@ func newMetadataRegistry(t *testing.T) *Registry {
 		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB, MetadataFieldTVDB}},
 		{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldPoster}},
 	}})
-	for _, name := range []string{"SPD", "THR", "TVC", "TL"} {
+	for _, name := range []string{"SPD", "TVC", "TL"} {
 		register(name, TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}})
 	}
 	register("BJS", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB}}}})
@@ -696,7 +689,7 @@ func TestPTPMetadataAdvisoryDoesNotBlock(t *testing.T) {
 
 func TestMetadataRequirementTMDBOrIMDbTrackersRejectIDsAlone(t *testing.T) {
 	t.Parallel()
-	for _, tracker := range []string{"SPD", "THR", "TVC", "TL"} {
+	for _, tracker := range []string{"SPD", "TVC", "TL"} {
 		t.Run(tracker, func(t *testing.T) {
 			t.Parallel()
 			meta := api.RuleSubject{Identity: api.ExternalIdentity{

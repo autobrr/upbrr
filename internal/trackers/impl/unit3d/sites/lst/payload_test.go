@@ -76,3 +76,22 @@ func TestAdditionalPayloadMarksCompleteSDR(t *testing.T) {
 		t.Fatalf("SDR hdr_dv = %q, %t; payload=%#v", value, ok, data)
 	}
 }
+
+func TestLSTPayloadPreservesCanonicalCut(t *testing.T) {
+	t.Parallel()
+	for cut, want := range map[string]string{
+		"Director's Cut": "2",
+		"Extended Cut":   "3",
+		"Theatrical Cut": "8",
+		"Uncut":          "9",
+		"Unrated Cut":    "10",
+	} {
+		t.Run(cut, func(t *testing.T) {
+			data := make(map[string]string)
+			additionalPayload(trackers.PreparationInput{Meta: api.UploadSubject{Cut: cut}}, data)
+			if data["edition_id"] != want {
+				t.Fatalf("canonical cut payload = %#v, want %s", data, want)
+			}
+		})
+	}
+}

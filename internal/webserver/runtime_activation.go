@@ -291,7 +291,6 @@ type liveTestImageTrackerInput struct {
 	Tracker   string
 	Username  string
 	Passkey   string
-	ImgAPI    string
 	ImageHost string
 	ImgRehost bool
 }
@@ -766,7 +765,6 @@ func liveTestImageTrackerInputs(cfg config.Config, registry *trackers.Registry) 
 		return nil
 	}
 	hdbOwner := registry.OwnerForImageHost("hdb")
-	thrOwner := registry.OwnerForImageHost("thr")
 	inputs := make([]liveTestImageTrackerInput, 0, len(registry.Names()))
 	for _, tracker := range registry.Names() {
 		trackerCfg, _ := config.TrackerConfigByName(cfg.Trackers.Trackers, tracker)
@@ -777,9 +775,6 @@ func liveTestImageTrackerInputs(cfg config.Config, registry *trackers.Registry) 
 		policy, hasPolicy := registry.LookupImageHostPolicy(tracker)
 		if hasPolicy && policy.DisableWithoutRehost {
 			input.ImgRehost = trackerCfg.ImgRehost
-		}
-		if (hasPolicy && policy.DisableWithoutAPI) || strings.EqualFold(tracker, thrOwner) {
-			input.ImgAPI = strings.TrimSpace(trackerCfg.ImgAPI)
 		}
 		if strings.EqualFold(tracker, hdbOwner) {
 			input.Username = strings.TrimSpace(trackerCfg.Username)

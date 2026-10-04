@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
+import { expect, type Locator, type Page, type Response } from "@playwright/test";
 import type {
   ActiveInputSnapshot,
   ReleaseWorkflowCurrent,
@@ -15,6 +15,7 @@ import {
   fetchMetadata,
   releaseWorkflowParityFixture,
   startApp,
+  test,
   waitForMetadataReady,
   type AppServer,
 } from "./helpers/e2eHarness";
@@ -335,6 +336,7 @@ test("embedded web tabs converge on active input switches and closes", async ({ 
     await expect(secondPage.getByLabel("Source path", { exact: true })).toHaveValue(
       alternateSourcePath,
     );
+    await waitForMetadataReady(secondPage, app.url);
 
     await page.route(
       "**/api/app/GetActiveInput",
@@ -412,7 +414,7 @@ for (const mode of ["rebuild", "reject"] as const) {
       await page.goto(app.url);
       await page.getByLabel("Source path").fill(workspace.sourcePath);
       await page.getByRole("button", { name: "Fetch metadata" }).click();
-      await expect(page.getByRole("button", { name: "Dupe Check" })).toBeEnabled();
+      await waitForMetadataReady(page, app.url);
       await page.getByRole("button", { name: "Dupe Check" }).click();
       await runDuplicateCheck(page, mode === "reject" ? "failed" : "completed");
       await expect.poll(() => suppliedName).toBe(true);
@@ -1469,6 +1471,7 @@ test("embedded web restores edited descriptions after reopening an input", async
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
   try {
+    await page.clock.install();
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Dupe Check" }).click();
@@ -1496,6 +1499,10 @@ test("embedded web restores edited descriptions after reopening an input", async
 <blockquote>HTML and [b]custom notes[/b] together.</blockquote>
 [right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]`;
     await page.getByRole("textbox").fill(editedDescription);
+    const refreshed = waitForAppMethod(page, "GetActiveInput");
+    await page.clock.runFor(15_000);
+    expect((await refreshed).ok()).toBe(true);
+    await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
     await page.getByRole("button", { name: "Render" }).click();
     const renderedPreview = page
       .getByRole("heading", { name: "Rendered Raw Preview" })

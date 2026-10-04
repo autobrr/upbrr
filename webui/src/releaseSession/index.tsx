@@ -1297,7 +1297,7 @@ export function ReleaseSessionProvider({
     const intent = cloneIntent(requestedIntent);
     const existingSource = sourcePath === state.selectedSource;
     const sourceChanged = Boolean(state.selectedSource) && !existingSource;
-    const inputEditRevision = existingSource ? state.inputEditRevision : 0;
+    const inputEditRevision = state.inputEditRevision;
     const update: PendingInputUpdate = {
       inputEditRevision,
       correctionDirty: existingSource ? state.correctionDirty : false,
@@ -1493,6 +1493,8 @@ export function ReleaseSessionProvider({
   });
 
   const loadScreenshotPlan = async (): Promise<boolean> => {
+    // Authority invalidation can leave an older plan request pending.
+    if (state.screenshots.status !== "running") abortController("screenshots");
     setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command || !workflowView.current) return false;
@@ -1539,7 +1541,7 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         plan,
-        reseedDrafts: true,
+        reseedDrafts: !state.screenshots.planStale,
         finalSelectionArtifactIDs: selectedArtifactIDs,
       });
       return !command.controller.signal.aborted;
@@ -2678,14 +2680,20 @@ export function ReleaseSessionProvider({
           }),
         );
       },
-      overrideRules: async (tracker) => {
+      acknowledgeRules: async (tracker, acknowledged) => {
         const normalizedTracker = tracker.trim().toUpperCase();
         const current = workflowView.current;
-        const action = current?.workflow.requiredActions?.find(
+        const projection = current?.projections?.projections.find(
+          (candidate) => candidate.trackerId === normalizedTracker,
+        );
+        const actions = acknowledged
+          ? current?.workflow.requiredActions
+          : projection?.requiredActions;
+        const action = actions?.find(
           (candidate) =>
             candidate.kind === "authorize_rules" &&
             candidate.trackerId === normalizedTracker &&
-            candidate.status === "pending",
+            candidate.status === (acknowledged ? "pending" : "resolved"),
         );
         if (!current || !action) return false;
         return runBackendWorkflow((latest, commandID, signal) =>
@@ -2694,7 +2702,7 @@ export function ReleaseSessionProvider({
               {
                 actionId: action.id,
                 workflowRevision: latest.workflow.revision,
-                confirmed: true,
+                confirmed: acknowledged,
               },
             ],
           }),

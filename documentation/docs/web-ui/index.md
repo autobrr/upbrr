@@ -44,6 +44,8 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+Background workflow updates preserve an unsubmitted **Source path**, unsaved **Descriptions** text, and the selected TVDB preview language for the same input. Description drafts are cleared when the active input, prepared generation, or selected trackers change. Use **Save group** to retain description edits; **Reset group** replaces that group with its generated description.
+
 On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
 
 After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
@@ -71,6 +73,8 @@ Corrections survive metadata refresh, history reload, and restart. Explicit valu
 Tracker naming policies can declare mandatory rules for specific name components. Those rules take precedence over manual naming choices for that tracker only; they do not change the saved Input facts. When a rule overrides a choice or replaces a complete manual name, the review shows an explanation beside the effective tracker name. This authority is part of the tracker implementation, not a user setting.
 
 A complete manual name has no reliable component boundaries. If a mandatory rule cannot safely apply to it, clear the complete-name override and regenerate the automatic name. A tracker policy may explicitly rebuild it instead. Confirm the effective name shown in review: submitting an edit that would be changed by enforcement does not confirm the unseen replacement.
+
+The **Edition** field shows the detected cut, edition, and presentation labels, or just `2in1` for a two-edition set. Replace or clear this field to override those automatic labels, or set **No edition** to **Yes** to omit them. Apply **Refresh metadata**; choose **Auto** on the edited control to restore automatic handling.
 
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -305,9 +306,11 @@ func (p *WorkflowProjector) projectSelected(
 		projections = append(projections, projection)
 		itemStatus := api.StageStatusCompleted
 		message := "Tracker projection complete."
-		if len(projection.RequiredActions) > 0 {
+		if actionIndex := slices.IndexFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
+			return action.Status == "" || action.Status == api.RequiredActionStatusPending
+		}); actionIndex >= 0 {
 			itemStatus = api.StageStatusBlocked
-			message = strings.TrimSpace(projection.RequiredActions[0].Prompt)
+			message = strings.TrimSpace(projection.RequiredActions[actionIndex].Prompt)
 		} else if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
 			itemStatus = api.StageStatusSkipped
 			message = projectionIneligibleProgressMessage(projection)

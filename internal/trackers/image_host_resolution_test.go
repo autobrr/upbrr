@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -151,6 +152,90 @@ func TestExactMediaForTrackerHostKeepsAllowedExistingHost(t *testing.T) {
 	}
 }
 
+func TestExactMediaForTrackerHostPreservesPreferredHost(t *testing.T) {
+	t.Parallel()
+
+	registry := imageHostPolicyTestRegistry(t)
+	pathValue := filepath.Join(t.TempDir(), "example.png")
+	exact := &api.ExactMediaAssets{
+		Screenshots: []api.ScreenshotImage{{Path: pathValue, Purpose: api.ScreenshotPurposeFinal}},
+	}
+	for _, host := range []string{"imgbb", "onlyimage"} {
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  pathValue,
+			Host:       host,
+			UsageScope: "global",
+			RawURL:     "https://images.example.invalid/" + host + ".png",
+		})
+	}
+	for _, test := range []struct {
+		name               string
+		configured         string
+		preferred          string
+		failed             []string
+		want               string
+		extraFallbackImage bool
+	}{
+		{
+			name:       "tracker preference",
+			configured: "onlyimage",
+			want:       "onlyimage",
+		},
+		{
+			name:      "resolved target preference",
+			preferred: "onlyimage",
+			want:      "onlyimage",
+		},
+		{
+			name:               "configured host with accepted partial coverage",
+			configured:         "onlyimage",
+			extraFallbackImage: true,
+			want:               "onlyimage",
+		},
+		{
+			name:               "unconfigured reuse keeps greater coverage",
+			extraFallbackImage: true,
+			want:               "imgbb",
+		},
+		{
+			name:       "failed preferred host",
+			configured: "onlyimage",
+			failed:     []string{"onlyimage"},
+			want:       "imgbb",
+		},
+		{name: "unconfigured existing host", want: "imgbb"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assets := exact.Clone()
+			if test.extraFallbackImage {
+				extraPath := filepath.Join(t.TempDir(), "extra.png")
+				assets.Screenshots = append(assets.Screenshots, api.ScreenshotImage{Path: extraPath, Purpose: api.ScreenshotPurposeFinal})
+				assets.ScreenshotUploads[0], assets.ScreenshotUploads[1] = assets.ScreenshotUploads[1], assets.ScreenshotUploads[0]
+				assets.ScreenshotUploads = append(assets.ScreenshotUploads, api.UploadedImageLink{
+					ImagePath:  extraPath,
+					Host:       "imgbb",
+					UsageScope: "global",
+					RawURL:     "https://images.example.invalid/extra.png",
+				})
+			}
+			filtered, err := exactMediaForTrackerHost("OE", api.UploadSubject{
+				ExactMedia:         assets,
+				ImageHostOverrides: api.ImageHostOverrides{FailedHosts: test.failed},
+			}, config.Config{}, config.TrackerConfig{ImageHost: test.configured}, registry, test.preferred)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantImages := 1
+			if test.extraFallbackImage && test.want == "imgbb" {
+				wantImages = 2
+			}
+			if len(filtered.Screenshots) != wantImages || len(filtered.ScreenshotUploads) != wantImages || filtered.ScreenshotUploads[0].Host != test.want {
+				t.Fatalf("selected image host: got %#v, want %s", filtered, test.want)
+			}
+		})
+	}
+}
+
 func TestExactMediaForOptionalTrackerExcludesAnotherTrackersOwnedHost(t *testing.T) {
 	t.Parallel()
 	registry := NewRegistry()
@@ -242,6 +327,79 @@ func TestExactMediaForTrackerHostDropsSourceOnlyDVDMenuUpload(t *testing.T) {
 	menus, _ := exactDescriptionMedia("BTN", api.UploadSubject{ExactMedia: filtered}, nil)
 	if len(menus) != 1 || menus[0].RawURL != "" || menus[0].Path != menuPath {
 		t.Fatalf("legacy DVD menu image = %#v", menus)
+	}
+}
+
+func TestPreparedExactMediaExcludesFailedHosts(t *testing.T) {
+	t.Parallel()
+	for _, required := range []bool{false, true} {
+		t.Run(fmt.Sprintf("required=%t", required), func(t *testing.T) {
+			t.Parallel()
+			registry := NewRegistry()
+			descriptor := Descriptor{
+				Name:              "ALPHA",
+				Definition:        menuScreenshotTestDefinition{menuImageTestDefinition{stubDefinition{name: "ALPHA"}}},
+				UploadContentMode: UploadContentModeScreenshots,
+			}
+			if required {
+				descriptor.ImageHost = &ImageHostPolicy{AllowedHosts: []string{"onlyimage"}}
+			}
+			if err := registry.RegisterDescriptor(descriptor); err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			imagePath := filepath.Join(root, "screen.png")
+			menuPath := filepath.Join(root, "menu.png")
+			uploads := func(path string) []api.UploadedImageLink {
+				return []api.UploadedImageLink{
+					{
+						ImagePath:  path,
+						Host:       "imgbb",
+						UsageScope: "global",
+						RawURL:     "https://images.example.invalid/failed.png",
+					},
+					{
+						ImagePath:  path,
+						Host:       "pixhost",
+						UsageScope: "global",
+						RawURL:     "https://passthepopcorn.me/static/source.png",
+					},
+					{
+						ImagePath:  path,
+						Host:       "onlyimage",
+						UsageScope: "global",
+						RawURL:     "https://images.example.invalid/ready.png",
+					},
+				}
+			}
+			exact := &api.ExactMediaAssets{
+				Screenshots:       []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}},
+				ScreenshotUploads: uploads(imagePath),
+				DVDMenus:          []api.DVDMenuCaptureImage{{Path: menuPath, Purpose: api.ScreenshotPurposeMenu}},
+				DVDMenuUploads:    uploads(menuPath),
+			}
+			subject := api.UploadSubject{
+				SourcePath:         filepath.Join(root, "Example.Release.2026-GRP.mkv"),
+				ExactMedia:         exact,
+				ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true), FailedHosts: []string{" IMGBB "}},
+			}
+			subject.MediaBinding = trackerTestMediaBinding(subject.SourcePath)
+			original := exact.Clone()
+			service := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, &stubRepo{}, registry)
+			prepared := service.prepareUploadContent(t.Context(), "ALPHA", subject, config.TrackerConfig{}, nil, nil)
+			if prepared.State != preparedUploadContentReady || prepared.Assets == nil ||
+				len(prepared.Assets.MenuImages) != 1 || len(prepared.Assets.Screenshots) != 1 {
+				t.Fatalf("prepared exact media = %#v", prepared)
+			}
+			for _, image := range append(prepared.Assets.MenuImages, prepared.Assets.Screenshots...) {
+				if image.Host != "onlyimage" || image.RawURL != "https://images.example.invalid/ready.png" {
+					t.Fatalf("prepared asset retained an unavailable host: %#v", image)
+				}
+			}
+			if !reflect.DeepEqual(exact, original) {
+				t.Fatal("tracker preparation mutated the shared exact media")
+			}
+		})
 	}
 }
 
@@ -351,10 +509,10 @@ func TestOriginTrackerMatchesSelectedLocalSourceScreenshot(t *testing.T) {
 		t.Fatal("native source URL was not matched to selected local image")
 	}
 	slots[0].Variants = []api.ScreenshotSlotVariant{{
-Host: "wsrv.nl",
- RawURL: rawURL,
- ImgURL: rawURL,
-}}
+		Host:   "wsrv.nl",
+		RawURL: rawURL,
+		ImgURL: rawURL,
+	}}
 	selected, _, _, err := selectScreenshotsFromSlots("AITHER", slots, policy)
 	if err != nil || len(selected) != 1 || selected[0].RawURL != "https://example.org/shot.png" || selected[0].Path != imagePath {
 		t.Fatalf("selected native screenshot = %#v, err=%v", selected, err)

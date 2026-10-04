@@ -14,7 +14,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v3", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v4", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
 }
 
 func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {

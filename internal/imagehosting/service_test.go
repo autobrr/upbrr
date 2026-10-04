@@ -572,11 +572,14 @@ func TestUploadImagesMissingFile(t *testing.T) {
 	}
 }
 
-func TestImgboxUploaderInRegistry(t *testing.T) {
+func TestUploaderRegistrySupportedHosts(t *testing.T) {
 	cfg := config.Config{}
 	registry := newUploaderRegistry(cfg, nil, trackers.NewRegistry())
 	if _, ok := registry["imgbox"]; !ok {
 		t.Fatal("imgbox not found in uploader registry")
+	}
+	if _, ok := registry["thr"]; ok {
+		t.Fatal("obsolete THR host found in uploader registry")
 	}
 }
 
@@ -588,27 +591,21 @@ func TestUploaderRegistryResolvesOwnedTrackerCredentialsDeterministically(t *tes
 		trackers    map[string]config.TrackerConfig
 		hdbUsername string
 		hdbPasskey  string
-		thrAPIKey   string
 	}{
 		{
 			name: "canonical entries win",
 			trackers: map[string]config.TrackerConfig{
 				"HDB": {Username: "canonical-user", Passkey: "canonical-passkey"},
 				"hdb": {Username: "alias-user", Passkey: "alias-passkey"},
-				"THR": {ImgAPI: "canonical-api-key"},
-				"thr": {ImgAPI: "alias-api-key"},
 			},
 			hdbUsername: "canonical-user",
 			hdbPasskey:  "canonical-passkey",
-			thrAPIKey:   "canonical-api-key",
 		},
 		{
 			name: "empty canonical entries block alias credentials",
 			trackers: map[string]config.TrackerConfig{
 				"HDB": {},
 				"hdb": {Username: "alias-user", Passkey: "alias-passkey"},
-				"THR": {},
-				"thr": {ImgAPI: "alias-api-key"},
 			},
 		},
 		{
@@ -616,12 +613,9 @@ func TestUploaderRegistryResolvesOwnedTrackerCredentialsDeterministically(t *tes
 			trackers: map[string]config.TrackerConfig{
 				"hDb": {Username: "first-user", Passkey: "first-passkey"},
 				"hdb": {Username: "second-user", Passkey: "second-passkey"},
-				"tHr": {ImgAPI: "first-api-key"},
-				"thr": {ImgAPI: "second-api-key"},
 			},
 			hdbUsername: "first-user",
 			hdbPasskey:  "first-passkey",
-			thrAPIKey:   "first-api-key",
 		},
 		{
 			name:     "unrelated entries leave credentials empty",
@@ -636,11 +630,7 @@ func TestUploaderRegistryResolvesOwnedTrackerCredentialsDeterministically(t *tes
 			if !ok {
 				t.Fatal("HDB uploader has unexpected type")
 			}
-			thr, ok := uploaders["thr"].(*thrUploader)
-			if !ok {
-				t.Fatal("THR uploader has unexpected type")
-			}
-			if hdb.username != test.hdbUsername || hdb.passkey != test.hdbPasskey || thr.apiKey != test.thrAPIKey {
+			if hdb.username != test.hdbUsername || hdb.passkey != test.hdbPasskey {
 				t.Fatal("owned tracker credentials resolved incorrectly")
 			}
 		})
@@ -866,7 +856,6 @@ func TestImageHostLogTrackerNamesEveryOwnedHost(t *testing.T) {
 		"hdb":      "HDB",
 		"lostimg":  "LST",
 		"reelflix": "RF",
-		"thr":      "THR",
 	} {
 		if got := service.imageHostLogTracker(host); got != expected {
 			t.Errorf("host %q tracker = %q, want %q", host, got, expected)
