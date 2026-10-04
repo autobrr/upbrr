@@ -1426,11 +1426,20 @@
       "DescriptionOverrideInput": {
         "type": "object",
         "properties": {
+          "final": {
+            "type": "boolean"
+          },
           "groupKey": {
             "type": "string"
           },
           "source": {
             "type": "string"
+          },
+          "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
           }
         },
         "required": [

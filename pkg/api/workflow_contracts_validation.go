@@ -1060,6 +1060,14 @@ func (i DescriptionInstructions) Validate() error {
 			return fmt.Errorf("duplicate description override group %s", key)
 		}
 		seen[key] = struct{}{}
+		trackers := make(map[TrackerID]struct{}, len(override.TrackerIDs))
+		for _, id := range override.TrackerIDs {
+			id = normalizeTrackerID(id)
+			if _, duplicate := trackers[id]; id == "" || duplicate {
+				return fmt.Errorf("description override %s contains blank or duplicate tracker IDs", key)
+			}
+			trackers[id] = struct{}{}
+		}
 	}
 	for trackerID, answers := range i.QuestionnaireAnswers {
 		if strings.TrimSpace(string(trackerID)) == "" {

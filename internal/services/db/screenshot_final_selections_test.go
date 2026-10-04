@@ -68,7 +68,7 @@ func TestScreenshotFinalSelectionsCRUD(t *testing.T) {
 	if len(loaded) != 1 {
 		t.Fatalf("expected 1 selection, got %d", len(loaded))
 	}
-	if loaded[0].ImagePath != selections[1].ImagePath {
+	if loaded[0].ImagePath != selections[1].ImagePath || loaded[0].Order != selections[1].Order {
 		t.Fatalf("unexpected remaining selection: %#v", loaded[0])
 	}
 }

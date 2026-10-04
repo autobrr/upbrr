@@ -4593,3 +4593,49 @@ func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *te
 		t.Fatalf("unexpected rollback target: %#v", repo.deletedUploads)
 	}
 }
+
+func TestResolveDescriptionAssetsKeepsFinalSourceScopedToGroup(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{DescriptionGroups: []api.DescriptionBuilderGroup{
+		{
+			GroupKey:       "unit3d|ptscreens|global",
+			Trackers:       []string{"AITHER"},
+			RawDescription: "Saved complete description.",
+			Final:          true,
+		},
+		{
+			GroupKey:       "unit3d|pixhost|global",
+			Trackers:       []string{"BLU"},
+			RawDescription: "Custom notes to compose.",
+		},
+	}}
+	registry := descriptionAssetsTestRegistry(t)
+	for _, preloaded := range []*preloadedDescriptionAssetData{nil, {}} {
+		for _, tracker := range []string{"AITHER", "BLU"} {
+			assets, err := resolveDescriptionAssets(t.Context(), tracker, meta, nil, api.NopLogger{}, preloaded, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if assets.Final != (tracker == "AITHER") {
+				t.Fatalf("tracker %s final = %t", tracker, assets.Final)
+			}
+		}
+	}
+}
+
+func TestResolveDescriptionAssetsDoesNotApplyScopedCanonicalGroupToOtherTracker(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{DescriptionGroups: []api.DescriptionBuilderGroup{{
+		GroupKey: "unit3d",
+ Trackers: []string{"AITHER"},
+ RawDescription: "Saved complete description.",
+ Final: true,
+	}}}
+	assets, err := ResolveDescriptionAssets(t.Context(), "BLU", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assets.Final || assets.Description != "" {
+		t.Fatalf("scoped canonical group escaped membership: %+v", assets)
+	}
+}

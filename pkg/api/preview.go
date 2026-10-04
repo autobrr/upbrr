@@ -41,7 +41,9 @@ type DescriptionBuilderGroup struct {
 	RawDescription     string
 	RawDescriptionHTML string
 	HasOverride        bool
-	ImageHost          ImageHostFeedback
+	// Final marks complete edited output whose generated sections must not be rebuilt.
+	Final     bool
+	ImageHost ImageHostFeedback
 }
 
 type PreparationPreview struct {
