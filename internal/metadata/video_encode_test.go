@@ -17,9 +17,40 @@ import (
 
 func TestDeriveMediaFactsUsesEffectiveTypeForVideoEncode(t *testing.T) {
 	for _, test := range []struct {
-		name, filename, format, profile, library, correction, wantType, wantEncode, wantNameVideo string
-		wantRole                                                                                  api.ReleaseNameRole
+		name, filename, format, profile, library, correction, sourceCorrection, wantType, wantEncode, wantNameVideo string
+		wantRole                                                                                                    api.ReleaseNameRole
 	}{
+		{
+			name:          "web download corrected to encode",
+			filename:      "Example.Show.S01.2160p.WEB-DL.H.265-GRP",
+			format:        "HEVC",
+			correction:    "ENCODE",
+			wantType:      "ENCODE",
+			wantEncode:    "x265",
+			wantNameVideo: "x265",
+			wantRole:      api.NameRoleVideoEncode,
+		},
+		{
+			name:          "web download AVC corrected to encode",
+			filename:      "Example.Show.S01.1080p.WEB-DL.H.264-GRP",
+			format:        "AVC",
+			correction:    "ENCODE",
+			wantType:      "ENCODE",
+			wantEncode:    "x264",
+			wantNameVideo: "x264",
+			wantRole:      api.NameRoleVideoEncode,
+		},
+		{
+			name:             "web filename with corrected source and type",
+			filename:         "Example.Show.S01.2160p.WEB-DL.H.265-GRP",
+			format:           "HEVC",
+			correction:       "ENCODE",
+			sourceCorrection: "BluRay",
+			wantType:         "ENCODE",
+			wantEncode:       "x265",
+			wantNameVideo:    "x265",
+			wantRole:         api.NameRoleVideoEncode,
+		},
 		{
 			name:          "unknown anime type",
 			filename:      "Example Anime S01 (BD 1080p HEVC) [GRP]",
@@ -131,6 +162,9 @@ func TestDeriveMediaFactsUsesEffectiveTypeForVideoEncode(t *testing.T) {
 			if test.correction != "" {
 				input.ReleaseNameOverrides.Type = &test.correction
 			}
+			if test.sourceCorrection != "" {
+				input.ReleaseNameOverrides.Source = &test.sourceCorrection
+			}
 			meta, err := NewService(&fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), input)
 			if err != nil {
 				t.Fatal(err)
@@ -140,6 +174,9 @@ func TestDeriveMediaFactsUsesEffectiveTypeForVideoEncode(t *testing.T) {
 			}
 			if !strings.Contains(meta.ReleaseName, test.wantNameVideo) {
 				t.Fatalf("name %q missing %q", meta.ReleaseName, test.wantNameVideo)
+			}
+			if test.correction == "ENCODE" && strings.Contains(meta.ReleaseName, "WEB-DL") {
+				t.Fatalf("explicit encode was rendered as web download: %q", meta.ReleaseName)
 			}
 			for _, document := range []*api.ReleaseNameDocument{meta.GeneratedName, meta.AvailableGeneratedName} {
 				component, ok := document.Component(test.wantRole)

@@ -60,7 +60,7 @@ Input readiness evaluates missing release facts and selected tracker metadata be
 
 Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections.
 
-Video naming follows the effective release type, including your corrections: AVC/HEVC encodes use `x264`/`x265`, Blu-ray remuxes retain `AVC`/`HEVC`, and WEB-DL releases use `H.264`/`H.265`. The underlying measured codec remains unchanged. Older cached names are regenerated the next time the release is prepared; existing corrections are retained.
+Video naming follows the effective release type, including your corrections: AVC/HEVC encodes use `x264`/`x265`, Blu-ray remuxes retain `AVC`/`HEVC`, and WEB-DL releases use `H.264`/`H.265`. An explicit release type takes precedence over the filename and source; select Auto to restore automatic type detection. The underlying measured codec remains unchanged. Older cached names are regenerated the next time the release is prepared; existing corrections are retained.
 
 If a provider fails or selects the wrong title, supply a correct ID or [clear that provider](../cli/index.md#clear-a-metadata-provider). Clearing suppresses its ID and metadata for this source, including later reloads. Other providers remain available, but trackers that require the cleared provider may be blocked.
 
