@@ -80,18 +80,19 @@ func samContentStructureFailures(subject api.TrackerValidationSubject) []api.Rul
 	return nil
 }
 
-// samLanguageFailures requires original audio and Portuguese subtitles when applicable.
+// samLanguageFailures rejects non-Portuguese content that lacks original audio,
+// Portuguese subtitles, or complete language evidence.
 func samLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	facts := subject.MediaFileFacts
 	original := languageutil.NormalizeLanguageCode(facts.OriginalLanguage)
 	if original == "" {
-		return []api.RuleFailure{samEvidenceFailure("sam_language", "original-language evidence is required", facts.LanguageStatus)}
+		return []api.RuleFailure{samStrictFailure("sam_language", "original-language evidence is required", facts.LanguageStatus)}
 	}
 	if original == "pt" {
 		return nil
 	}
 	if facts.LanguageStatus != api.MetadataEvidenceStatusComplete || facts.ExpectedFileCount <= 0 || len(facts.Files) != facts.ExpectedFileCount {
-		return []api.RuleFailure{samEvidenceFailure("sam_language", "complete audio and subtitle evidence is required", facts.LanguageStatus)}
+		return []api.RuleFailure{samStrictFailure("sam_language", "complete audio and subtitle evidence is required", facts.LanguageStatus)}
 	}
 	for _, file := range facts.Files {
 		if !samContainsLanguage(file.AudioLanguages, original) {

@@ -100,6 +100,44 @@ func TestSAMValidation(t *testing.T) {
 			},
 			wantRule: "sam_language",
 		},
+		{
+			name: "incomplete_language_evidence_blocks",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.MediaFileFacts.LanguageStatus = api.MetadataEvidenceStatusPartial
+				subject.MediaFileFacts.OriginalLanguage = "ja"
+				subject.MediaFileFacts.ExpectedFileCount = 1
+				subject.MediaFileFacts.Files = []api.MediaFileFact{{
+					AudioLanguages:    []string{"jpn"},
+					SubtitleLanguages: []string{"fre"},
+				}}
+			},
+			wantRule: "sam_language",
+		},
+		{
+			name: "japanese audio with french-only subtitles",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.TVPack = false
+				subject.EpisodeInt = 1
+				subject.PackageFacts.MediaFileCount = 1
+				subject.PackageFacts.DetectedEpisodes = []api.SeasonEpisodeFacts{{Season: 1, Episodes: []int{1}}}
+				subject.MediaFileFacts.LanguageStatus = api.MetadataEvidenceStatusComplete
+				subject.MediaFileFacts.ExpectedFileCount = 1
+				subject.MediaFileFacts.OriginalLanguage = "Japanese"
+				subject.MediaFileFacts.Files = []api.MediaFileFact{{
+					AudioLanguages:    []string{"Japanese"},
+					SubtitleLanguages: []string{"French"},
+				}}
+			},
+			wantRule: "sam_language",
+		},
+		{
+			name: "missing original language blocks",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.MediaFileFacts.OriginalLanguage = ""
+				subject.MediaFileFacts.LanguageStatus = api.MetadataEvidenceStatusUnavailable
+			},
+			wantRule: "sam_language",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,6 +154,9 @@ func TestSAMValidation(t *testing.T) {
 					t.Fatalf("unexpected failures: %#v", failures)
 				}
 				return
+			}
+			if !api.HasBlockingRuleFailures(failures) {
+				t.Fatalf("expected blocking %q failure, got %#v", test.wantRule, failures)
 			}
 			for _, failure := range failures {
 				if failure.Rule == test.wantRule && failure.Disposition == api.RuleDispositionStrict {
