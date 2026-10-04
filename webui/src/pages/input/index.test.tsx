@@ -1624,6 +1624,38 @@ describe("InputPage", () => {
     expect(row().getByText("Manual value · Applied")).toBeInTheDocument();
   });
 
+  it("keeps an unsupported saved release version visible until correction or Auto", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: {
+          ...base.view.intent,
+          releaseName: { Edition: "Extended", Repack: "Legacy-Version" },
+        },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    const control = screen.getByRole("combobox", { name: "Release version" });
+    expect(control).toHaveValue("LEGACY-VERSION");
+    expect(
+      within(control).getByRole("option", { name: "Unsupported current value: LEGACY-VERSION" }),
+    ).toBeDisabled();
+    expect(facet.view.intent.releaseName.Repack).toBe("Legacy-Version");
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    for (const value of ["PROPER", ""]) {
+      fireEvent.change(control, { target: { value } });
+      expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+        Edition: "Extended",
+        Repack: value,
+      });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Auto Release version" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.repack" });
+  });
+
   it("renders the complete source-level correction inventory", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {

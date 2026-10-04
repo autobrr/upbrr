@@ -877,23 +877,24 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     onChange={(next) => setReleaseName(key, next)}
                   />
                 ) : key === "Repack" ? (
-                  <Select
+                  <CorrectionSelect
                     id={`correction-${field}-value`}
-                    aria-label={label}
+                    label={label}
                     value={String(rawValue ?? "")
                       .trim()
                       .toUpperCase()}
-                    onChange={(event) => setReleaseName(key, event.target.value)}
-                  >
-                    <option value="">None</option>
-                    {["REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP"].map(
-                      (value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ),
-                    )}
-                  </Select>
+                    options={[
+                      "",
+                      "REPACK",
+                      "REPACK2",
+                      "REPACK3",
+                      "PROPER",
+                      "PROPER2",
+                      "PROPER3",
+                      "RERIP",
+                    ].map((value) => ({ value, label: value || "None" }))}
+                    onChange={(next) => setReleaseName(key, next)}
+                  />
                 ) : (
                   <input
                     id={`correction-${field}-value`}
