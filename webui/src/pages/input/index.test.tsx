@@ -809,6 +809,90 @@ describe("InputPage", () => {
     expect(screen.getByText("TMDB generation 2")).toBeVisible();
   });
 
+  it("preserves the selected TVDB display language when provider data refreshes", () => {
+    const base = readyInputFacet(1);
+    const preview = base.view.preview!;
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        preview: {
+          ...preview,
+          Identity: { ...preview.Identity, TVDBID: 77 },
+          Display: {
+            ...preview.Display,
+            Providers: [
+              {
+                Provider: "tvdb",
+                ID: 77,
+                DisplayID: "77",
+                URL: "",
+                Provenance: "resolver",
+                SummaryAvailable: true,
+                Summary: providerSummary("Original title"),
+                Details: {
+                  TVDB: {
+                    Name: "Original title",
+                    NameEnglish: "English title",
+                    OriginalLanguage: "ja",
+                    HasEnglish: true,
+                  } as TVDBMetadata,
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const pageProps = {
+      sourcePathHistory: [],
+      handleBrowseFile: vi.fn(),
+      handleBrowseFolder: vi.fn(),
+      trackerUploadItems: [],
+      showExternalIDInputUI: false,
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+      trackerIconSrcByName: {},
+    };
+    const { rerender } = render(<InputPage facet={facet} {...pageProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Original" }));
+    expect(screen.getByRole("button", { name: "Original" })).toHaveClass("toggle-active");
+    rerender(
+      <InputPage
+        facet={{ ...facet, view: { ...facet.view, preview: structuredClone(facet.view.preview) } }}
+        {...pageProps}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Original" })).toHaveClass("toggle-active");
+    const refreshed = structuredClone(facet.view.preview!);
+    for (const change of ["generation", "provider", "source"]) {
+      if (change === "generation") refreshed.Release.Generation += 1;
+      if (change === "provider") {
+        refreshed.Identity.TVDBID = 78;
+        refreshed.Display.Providers[0].ID = 78;
+      }
+      if (change === "source") refreshed.Release.SourcePath = "C:\\media\\Other.Release.2026.mkv";
+      rerender(
+        <InputPage
+          facet={{ ...facet, view: { ...facet.view, preview: structuredClone(refreshed) } }}
+          {...pageProps}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "English" })).toHaveClass("toggle-active");
+      fireEvent.click(screen.getByRole("button", { name: "Original" }));
+    }
+    const tvdbProvider = refreshed.Display.Providers[0];
+    if (tvdbProvider.Provider !== "tvdb") throw new Error("TVDB fixture missing");
+    tvdbProvider.Details.TVDB.HasEnglish = false;
+    rerender(
+      <InputPage
+        facet={{ ...facet, view: { ...facet.view, preview: structuredClone(refreshed) } }}
+        {...pageProps}
+      />,
+    );
+    expect(screen.queryByRole("group", { name: "TVDB language display" })).not.toBeInTheDocument();
+  });
+
   it("uses provider preview images while opening full-size artwork in the lightbox", () => {
     const base = readyInputFacet(1);
     const preview = base.view.preview!;

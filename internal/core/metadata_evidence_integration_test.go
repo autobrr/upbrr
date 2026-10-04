@@ -386,7 +386,7 @@ func assertCoreCorrectionName(t *testing.T, correction api.ReleaseCorrectionValu
 
 func TestDefaultCoreLocalCorrectionMatrix(t *testing.T) {
 	cases := []coreCorrectionCase{
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameType, []string{"WEBDL", "WEBRIP", ""}, []string{"WEBDL", "WEBRIP", "WEBDL"},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameType, []string{"ENCODE", "WEBRIP", ""}, []string{"ENCODE", "WEBRIP", "WEBDL"},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Type },
 			func(r api.PreparedRelease) string { return r.Media.Type }),
 		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameSource, []string{"HDTV", "BluRay", ""}, []string{"HDTV", "BluRay", "Web"},

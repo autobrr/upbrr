@@ -44,6 +44,8 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+Background workflow updates preserve an unsubmitted **Source path**, unsaved **Descriptions** text, and the selected TVDB preview language for the same input. Description drafts are cleared when the active input, prepared generation, or selected trackers change. Use **Save group** to retain description edits; **Reset group** replaces that group with its generated description.
+
 On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
 
 After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.

@@ -63,8 +63,10 @@ func (p ReleaseNameElementPolicy) Normalized() ReleaseNameElementPolicy {
 }
 
 type ReleaseNameRequest struct {
-	Category     string
-	Type         string
+	Category string
+	Type     string
+	// ManualType keeps an explicit type correction authoritative over inferred source signals.
+	ManualType   bool
 	Title        string
 	AltTitle     string
 	Year         int

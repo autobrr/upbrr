@@ -52,7 +52,9 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 
 	category := normalizeNamingCategory(req.Category)
 	typeValue := strings.ToUpper(strings.TrimSpace(req.Type))
-	typeValue = normalizeReleaseTypeForCategory(category, typeValue, strings.TrimSpace(req.Source), "")
+	if !req.ManualType {
+		typeValue = normalizeReleaseTypeForCategory(category, typeValue, strings.TrimSpace(req.Source), "")
+	}
 	matchType := normalizeReleaseType(typeValue)
 	logger.Tracef(
 		"metadata: release name input category=%q type=%q normalized_type=%q source=%q season=%q episode=%q date=%q manual_date=%t",
@@ -1255,7 +1257,12 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		tvdbYearFromAlias = meta.ProviderMetadata.TVDB.YearFromAlias
 	}
 
-	typeValue = normalizeReleaseTypeForCategory(category, typeValue, source, meta.SourcePath)
+	manualType := meta.ReleaseNameOverrides.Type != nil && strings.TrimSpace(*meta.ReleaseNameOverrides.Type) != ""
+	if manualType {
+		typeValue = normalizeReleaseType(*meta.ReleaseNameOverrides.Type)
+	} else {
+		typeValue = normalizeReleaseTypeForCategory(category, typeValue, source, meta.SourcePath)
+	}
 
 	logger.Tracef(
 		"metadata: release name request resolved category=%q type=%q base_type=%q source=%q season=%q episode=%q date=%q tv_pack=%t year=%d search_year=%q year_source=%q tvdb_year_from_alias=%t",
@@ -1288,6 +1295,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	return api.ReleaseNameRequest{
 		Category:      category,
 		Type:          typeValue,
+		ManualType:    manualType,
 		Title:         title,
 		AltTitle:      altTitle,
 		Year:          year,

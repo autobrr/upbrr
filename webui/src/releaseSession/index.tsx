@@ -1297,7 +1297,7 @@ export function ReleaseSessionProvider({
     const intent = cloneIntent(requestedIntent);
     const existingSource = sourcePath === state.selectedSource;
     const sourceChanged = Boolean(state.selectedSource) && !existingSource;
-    const inputEditRevision = existingSource ? state.inputEditRevision : 0;
+    const inputEditRevision = state.inputEditRevision;
     const update: PendingInputUpdate = {
       inputEditRevision,
       correctionDirty: existingSource ? state.correctionDirty : false,
@@ -1493,6 +1493,8 @@ export function ReleaseSessionProvider({
   });
 
   const loadScreenshotPlan = async (): Promise<boolean> => {
+    // Authority invalidation can leave an older plan request pending.
+    if (state.screenshots.status !== "running") abortController("screenshots");
     setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command || !workflowView.current) return false;
@@ -1539,7 +1541,7 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         plan,
-        reseedDrafts: true,
+        reseedDrafts: !state.screenshots.planStale,
         finalSelectionArtifactIDs: selectedArtifactIDs,
       });
       return !command.controller.signal.aborted;

@@ -2203,6 +2203,9 @@ func TestDeriveMediaFactsFromCollectedUHDDiscSummary(t *testing.T) {
 			if meta.BitDepth != tt.bitDepth {
 				t.Fatalf("bit depth = %q, want %q", meta.BitDepth, tt.bitDepth)
 			}
+			if meta.VideoCodec != "HEVC" || meta.VideoEncode != "" || !strings.Contains(meta.ReleaseName, "HEVC") {
+				t.Fatalf("disc video naming = codec %q encode %q name %q", meta.VideoCodec, meta.VideoEncode, meta.ReleaseName)
+			}
 			if meta.HDRFacts.Origin != api.HDREvidenceBDInfo || meta.HDRFacts.Status != api.HDREvidenceComplete ||
 				!slices.Equal(meta.HDRFacts.Formats, tt.hdrFormats) {
 				t.Fatalf("HDR facts = %#v, want complete BDInfo formats %v", meta.HDRFacts, tt.hdrFormats)
