@@ -1950,3 +1950,63 @@ func TestYearNumberedSeasonCategoryHints(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseVersionOverrideKeepsEditionIndependent(t *testing.T) {
+	for _, value := range []string{"", "PROPER", "REPACK", "REPACK2", "REPACK3", "PROPER2", "PROPER3", "RERIP"} {
+		t.Run(value, func(t *testing.T) {
+			meta := preparationstate.State{
+				Edition:              "Uncut",
+				Repack:               "REPACK",
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Repack: new(value)},
+			}
+			if err := validateReleaseNameFactInstructions(meta.ReleaseNameOverrides); err != nil {
+				t.Fatal(err)
+			}
+			applyReleaseNameValueOverrides(&meta)
+			if meta.Repack != value || meta.Edition != "Uncut" {
+				t.Fatalf("repack=%q edition=%q", meta.Repack, meta.Edition)
+			}
+		})
+	}
+	meta := preparationstate.State{
+		Edition: "Uncut",
+		Repack:  "REPACK",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Edition:   new(""),
+			Repack:    new(" proper "),
+			NoEdition: new(true),
+		},
+	}
+	applyReleaseNameValueOverrides(&meta)
+	if meta.Repack != "PROPER" || meta.Edition != "" {
+		t.Fatalf("explicit override lost: %#v", meta)
+	}
+	if err := validateReleaseNameFactInstructions(api.ReleaseNameOverrides{Repack: new("unrecognized")}); !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("invalid repack error=%v", err)
+	}
+}
+
+func TestDVDReleaseVersionPrecedesResolution(t *testing.T) {
+	t.Parallel()
+	for _, category := range []string{"MOVIE", "TV"} {
+		t.Run(category, func(t *testing.T) {
+			result := BuildReleaseName(api.ReleaseNameRequest{
+				Category:    category,
+				Type:        "DVDRIP",
+				Title:       "PROPER 2001 Tales",
+				Year:        2026,
+				SearchYear:  "2026",
+				Season:      "S01",
+				Source:      "DVD",
+				Resolution:  "480p",
+				Repack:      "REPACK2",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0",
+				Tag:         "-GRP",
+			}, api.NopLogger{})
+			if !strings.Contains(result.Name, "REPACK2 480p DVDRip") || !strings.HasPrefix(result.Name, "PROPER 2001 Tales 2026") {
+				t.Fatalf("name=%q", result.Name)
+			}
+		})
+	}
+}

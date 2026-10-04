@@ -80,6 +80,7 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 			Audio:       "DD+ 5.1",
 			HDR:         "HDR10+ DV",
 			Edition:     "Hybrid Director",
+			Repack:      "PROPER2",
 			TVPack:      true,
 			SeasonStr:   "S00",
 		},
@@ -123,7 +124,7 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["edition"] != "Director" {
 		t.Fatalf("expected title-cased edition, got %q", entry.Payload["edition"])
 	}
-	if got := entry.Payload["tags"]; !strings.Contains(got, "WEBDL") || !strings.Contains(got, "HDR10+") || !strings.Contains(got, "DV") {
+	if got := entry.Payload["tags"]; !strings.Contains(got, "PROPER,") || strings.Contains(got, "PROPER2") || strings.Count(got, "PROPER") != 1 || !strings.Contains(got, "WEBDL") || !strings.Contains(got, "HDR10+") || !strings.Contains(got, "DV") {
 		t.Fatalf("expected BHD tags in payload, got %q", got)
 	}
 }

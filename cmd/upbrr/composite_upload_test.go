@@ -202,6 +202,7 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 			Tag:              new("GRP"),
 			Service:          new("Example"),
 			Edition:          new("Synthetic"),
+			Repack:           new("PROPER"),
 			Season:           new("S01"),
 			Episode:          new("E01"),
 			EpisodeTitle:     new("Pilot"),
@@ -263,6 +264,8 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 	if mapped.Preparation.Facts.ExternalIDs.IMDB == nil ||
 		mapped.Preparation.Facts.ExternalIDs.IMDB.Value == nil ||
 		*mapped.Preparation.Facts.ExternalIDs.IMDB.Value != "tt0000456" ||
+		mapped.Preparation.Facts.ReleaseName.Repack == nil ||
+		*mapped.Preparation.Facts.ReleaseName.Repack != "PROPER" ||
 		mapped.Preparation.Facts.ReleaseName.Tag == nil ||
 		*mapped.Preparation.Facts.ReleaseName.Tag != "GRP" ||
 		mapped.Preparation.Facts.ReleaseName.NoEpisodeTitle == nil ||

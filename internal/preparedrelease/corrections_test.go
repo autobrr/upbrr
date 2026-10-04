@@ -483,3 +483,26 @@ func (s *memoryStore) CommitPreparedReleaseWithCorrections(
 	s.commits++
 	return snapshot.Revision, nil
 }
+
+func TestResolveInputRejectsUnsupportedReleaseVersionBeforeSaving(t *testing.T) {
+	t.Parallel()
+	source := writePreparedTestFile(t, "Example.2026.mkv", "media")
+	store := newMemoryStore()
+	module := newTestModule(t, store, &recordingCollector{})
+	_, err := module.ResolveInput(t.Context(), api.PrepareInput{
+		SourcePath: source,
+		Instructions: api.ReleaseFactInstructions{ReleaseName: api.ReleaseNameOverrides{
+			Repack: new("REPACK4"), Edition: new("Extended"),
+		}},
+	}, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	if !errors.Is(err, api.ErrCorrectionConflict) {
+		t.Fatalf("unsupported release version was accepted: %v", err)
+	}
+	stored, err := store.LoadReleaseCorrections(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Revision != 0 || stored.Corrections.ReleaseName.Repack != nil || stored.Corrections.ReleaseName.Edition != nil {
+		t.Fatalf("rejected source-start instructions were persisted: %#v", stored)
+	}
+}

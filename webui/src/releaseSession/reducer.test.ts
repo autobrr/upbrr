@@ -425,6 +425,52 @@ describe("sessionReducer upload intent", () => {
     expect(state.correctionValueFields).toEqual([]);
   });
 
+  it("tracks Repack values, confirmation, and Auto independently of Edition", () => {
+    let state = initialSessionState();
+    state = sessionReducer(state, {
+      type: "release_name_changed",
+      value: { Edition: "Extended" },
+    });
+    state = sessionReducer(state, {
+      type: "correction_confirmed",
+      field: { field: "release_name.edition" },
+    });
+    for (const value of ["REPACK3", ""]) {
+      state = sessionReducer(state, {
+        type: "release_name_changed",
+        value: { Edition: "Extended", Repack: value },
+      });
+      expect(state.correctionValueFields).toEqual([{ field: "release_name.repack" }]);
+      expect(correctionValuesFor(state.preparationIntent, state.correctionValueFields)).toEqual({
+        Identity: {},
+        ReleaseName: { Repack: value },
+        Metadata: {},
+      });
+    }
+    state = sessionReducer(state, {
+      type: "correction_confirmed",
+      field: { field: "release_name.repack" },
+    });
+    expect(state.correctionConfirmFields).toEqual([
+      { field: "release_name.edition" },
+      { field: "release_name.repack" },
+    ]);
+    expect(state.correctionValueFields).toEqual([]);
+    state = sessionReducer(state, {
+      type: "correction_reset",
+      field: { field: "release_name.repack" },
+    });
+    expect(state.preparationIntent.releaseName).toEqual({ Edition: "Extended" });
+    expect(state.correctionResetFields).toEqual([{ field: "release_name.repack" }]);
+    expect(state.correctionConfirmFields).toEqual([{ field: "release_name.edition" }]);
+    state = sessionReducer(state, {
+      type: "release_name_changed",
+      value: { Edition: "Extended", Repack: "RERIP" },
+    });
+    expect(state.correctionResetFields).toEqual([]);
+    expect(state.correctionValueFields).toEqual([{ field: "release_name.repack" }]);
+  });
+
   it("preserves a newer edit when an older preparation response succeeds", () => {
     const sourcePath = "C:\\media\\Example.mkv";
     let state = initialSessionState();

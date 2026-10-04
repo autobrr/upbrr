@@ -3026,3 +3026,74 @@ func combinedEditionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (str
 	}
 	return strings.Join(strings.Fields(strings.Join([]string{parts.Cut, parts.Presentation, parts.Edition}, " ")), " "), parts.Repack
 }
+
+func TestDeriveMediaFactsReleaseVersionCorrections(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		overrides api.ReleaseNameOverrides
+		want      string
+		manual    bool
+	}{
+		{name: "automatic", want: "REPACK2"},
+		{
+			name:      "explicit",
+			overrides: api.ReleaseNameOverrides{Repack: new("PROPER")},
+			want:      "PROPER",
+			manual:    true,
+		},
+		{
+			name:      "clear",
+			overrides: api.ReleaseNameOverrides{Repack: new("")},
+			manual:    true,
+		},
+		{
+			name:      "edition clear",
+			overrides: api.ReleaseNameOverrides{Edition: new("")},
+			want:      "REPACK2",
+		},
+		{
+			name:      "explicit wins legacy no edition",
+			overrides: api.ReleaseNameOverrides{NoEdition: new(true), Repack: new("PROPER")},
+			want:      "PROPER",
+			manual:    true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
+				SourcePath: "Example.Movie.2026.REPACK2.1080p.WEB-DL.H.264-GRP.mkv",
+				Type:       "WEBDL",
+				Source:     "Web",
+				Tag:        "-GRP",
+				Edition:    "Uncut",
+				Release: api.ReleaseInfo{
+					Category:   "MOVIE",
+					Title:      "Example Movie",
+					Year:       2026,
+					Resolution: "1080p",
+					Source:     "Web",
+					Type:       "WEBDL",
+					Group:      "GRP",
+				},
+				ReleaseNameOverrides: test.overrides,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.Repack != test.want {
+				t.Fatalf("repack=%q want %q", meta.Repack, test.want)
+			}
+			version, ok := meta.GeneratedName.Component(api.NameRoleRepack)
+			if !ok || version.Manual != test.manual || version.Present != (test.want != "") || version.Value != test.want {
+				t.Fatalf("version=%#v", version)
+			}
+			if test.want != "" && !strings.Contains(meta.ReleaseName, test.want+" 1080p") {
+				t.Fatalf("name=%q", meta.ReleaseName)
+			}
+			if test.want == "" && strings.Contains(meta.ReleaseName, "REPACK") {
+				t.Fatalf("detected version survived clear: %q", meta.ReleaseName)
+			}
+		})
+	}
+}

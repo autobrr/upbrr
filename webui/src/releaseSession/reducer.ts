@@ -631,6 +631,7 @@ const releaseNameFieldKeys = {
   "release_name.tag": "Tag",
   "release_name.service": "Service",
   "release_name.edition": "Edition",
+  "release_name.repack": "Repack",
   "release_name.season": "Season",
   "release_name.episode": "Episode",
   "release_name.episode_title": "EpisodeTitle",

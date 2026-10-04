@@ -898,7 +898,7 @@ func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseName
 	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation, api.NameRoleHybrid:
 		return overrides.Edition != nil || overrides.NoEdition != nil
 	case api.NameRoleRepack:
-		return overrides.NoEdition != nil
+		return overrides.Repack != nil || overrides.NoEdition != nil
 	case api.NameRoleRegion:
 		return overrides.Region != nil
 	case api.NameRoleSource:

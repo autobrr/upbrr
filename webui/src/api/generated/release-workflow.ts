@@ -1349,6 +1349,7 @@ export type ReleaseNameOverrides = Readonly<{
   NoTag?: boolean | null;
   NoYear?: boolean | null;
   Region?: string | null;
+  Repack?: string | null;
   Resolution?: string | null;
   Season?: string | null;
   Service?: string | null;
@@ -1688,6 +1689,7 @@ export type ReleaseWorkflowUploadReleaseName = Readonly<{
   noTag?: boolean | null;
   noYear?: boolean | null;
   region?: string | null;
+  repack?: string | null;
   resolution?: string | null;
   season?: string | null;
   service?: string | null;

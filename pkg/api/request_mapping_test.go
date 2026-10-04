@@ -37,6 +37,7 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 			Category:       &category,
 			Type:           &releaseType,
 			Tag:            &tag,
+			Repack:         new("PROPER"),
 			NoEpisodeTitle: &omitEpisodeTitle,
 			NoDistributor:  &omitDistributor,
 		},
@@ -73,6 +74,7 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 				Category:       new("TV"),
 				Type:           new("episode"),
 				Tag:            new("GRP"),
+				Repack:         new("PROPER"),
 				NoEpisodeTitle: new(true),
 				NoDistributor:  new(true),
 			},
@@ -103,6 +105,7 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 
 	*request.ExternalIDOverrides.TMDBID = 999999
 	*request.ReleaseNameOverrides.Tag = "CHANGED"
+	*request.ReleaseNameOverrides.Repack = "REPACK"
 	*request.ReleaseNameOverrides.NoEpisodeTitle = false
 	*request.ReleaseNameOverrides.NoDistributor = false
 	*request.MetadataOverrides.Distributor = "CHANGED"

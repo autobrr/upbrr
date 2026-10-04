@@ -206,6 +206,123 @@ func TestReleaseCorrectionsPreserveUnknownVersionBytes(t *testing.T) {
 	}
 }
 
+func TestReleaseCorrectionsRejectUnsupportedRepackBeforePersistence(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "repack-corrections.db")
+	repo, err := OpenWithLogger(path, nopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	const sourcePath = "release-version-source"
+	stored, err := repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{
+		Mode: api.ReleaseCorrectionUpdatePatch,
+		Patch: &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{
+			Repack:  new(" proper2 "),
+			Edition: new("Uncut"),
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("store valid release version: %v", err)
+	}
+	if stored.Corrections.ReleaseName.Repack == nil || *stored.Corrections.ReleaseName.Repack != " proper2 " {
+		t.Fatalf("stored release version spelling changed: %#v", stored.Corrections.ReleaseName)
+	}
+	readStored := func(t *testing.T) (string, uint64) {
+		t.Helper()
+		var payload string
+		var revision uint64
+		if err := repo.RawDB().QueryRowContext(ctx, `
+			SELECT corrections_json, corrections_revision FROM release_overrides WHERE source_path = ?`, sourcePath).Scan(&payload, &revision); err != nil {
+			t.Fatalf("read stored corrections: %v", err)
+		}
+		return payload, revision
+	}
+	wantPayload, wantRevision := readStored(t)
+	for _, mode := range []api.ReleaseCorrectionUpdateMode{api.ReleaseCorrectionUpdatePatch, api.ReleaseCorrectionUpdateReplace} {
+		t.Run(string(mode), func(t *testing.T) {
+			values := api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{Repack: new("REPACK4"), Edition: new("Extended")}}
+			update := api.ReleaseCorrectionUpdate{Mode: mode, Values: values}
+			if mode == api.ReleaseCorrectionUpdatePatch {
+				update.Values = api.ReleaseCorrectionValues{}
+				update.Patch = &api.ReleaseCorrectionPatch{Values: values}
+			}
+			_, err := repo.UpdateReleaseCorrections(ctx, sourcePath, update)
+			var conflict *api.CorrectionConflictError
+			if !errors.As(err, &conflict) || conflict.Field != api.CorrectionFieldReleaseNameRepack {
+				t.Fatalf("unsupported release version error = %v", err)
+			}
+			if payload, revision := readStored(t); payload != wantPayload || revision != wantRevision {
+				t.Fatalf("rejected update changed stored corrections to %q at revision %d", payload, revision)
+			}
+		})
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = OpenWithLogger(path, nopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := repo.LoadReleaseCorrections(ctx, sourcePath)
+	if err != nil || !reflect.DeepEqual(restarted, stored) {
+		t.Fatalf("rejected updates changed corrections after restart: %#v, %v; want %#v", restarted, err, stored)
+	}
+}
+
+func TestReleaseCorrectionsRecoverLegacyUnsupportedRepack(t *testing.T) {
+	t.Parallel()
+
+	repo := openPreparedReleaseTestRepo(t)
+	ctx := t.Context()
+	const sourcePath = "legacy-release-version-source"
+	const payload = `{"version":1,"releaseName":{"Repack":"Legacy-Version","Edition":"Uncut"}}`
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		INSERT INTO release_overrides (source_path, corrections_json, corrections_revision, updated_at)
+		VALUES (?, ?, ?, ?)`, sourcePath, payload, 7, "2026-09-09T00:00:00Z"); err != nil {
+		t.Fatalf("seed legacy release version: %v", err)
+	}
+	loaded, err := repo.LoadReleaseCorrections(ctx, sourcePath)
+	if err != nil || loaded.Revision != 7 || loaded.Corrections.ReleaseName.Repack == nil || *loaded.Corrections.ReleaseName.Repack != "Legacy-Version" {
+		t.Fatalf("load legacy release version = %#v, %v", loaded, err)
+	}
+	patched, err := repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{
+		Mode:  api.ReleaseCorrectionUpdatePatch,
+		Patch: &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{Edition: new("Extended")}}},
+	})
+	if err != nil || patched.Revision != 8 || patched.Corrections.ReleaseName.Repack == nil || *patched.Corrections.ReleaseName.Repack != "Legacy-Version" {
+		t.Fatalf("unrelated patch changed legacy release version: %#v, %v", patched, err)
+	}
+	automatic, err := repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{
+		Mode:  api.ReleaseCorrectionUpdatePatch,
+		Patch: &api.ReleaseCorrectionPatch{ResetFields: []api.CorrectionFieldRef{{Field: api.CorrectionFieldReleaseNameRepack}}},
+	})
+	if err != nil || automatic.Revision != 9 || automatic.Corrections.ReleaseName.Repack != nil ||
+		automatic.Corrections.ReleaseName.Edition == nil || *automatic.Corrections.ReleaseName.Edition != "Extended" {
+		t.Fatalf("reset release version = %#v, %v", automatic, err)
+	}
+	loaded, err = repo.LoadReleaseCorrections(ctx, sourcePath)
+	if err != nil || !reflect.DeepEqual(loaded, automatic) {
+		t.Fatalf("load reset release version = %#v, %v; want %#v", loaded, err, automatic)
+	}
+	cleared, err := repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{
+		Mode:  api.ReleaseCorrectionUpdatePatch,
+		Patch: &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{Repack: new("")}}},
+	})
+	if err != nil || cleared.Revision != 10 || cleared.Corrections.ReleaseName.Repack == nil || *cleared.Corrections.ReleaseName.Repack != "" {
+		t.Fatalf("explicit empty release version = %#v, %v", cleared, err)
+	}
+	loaded, err = repo.LoadReleaseCorrections(ctx, sourcePath)
+	if err != nil || !reflect.DeepEqual(loaded, cleared) {
+		t.Fatalf("load explicit empty release version = %#v, %v; want %#v", loaded, err, cleared)
+	}
+}
+
 func TestIdentityResetMarkersSurviveRestartAndRejectInvalidRows(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "identity-resets.db")

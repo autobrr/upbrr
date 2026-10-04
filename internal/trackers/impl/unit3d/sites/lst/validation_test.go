@@ -20,6 +20,13 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 		wantStatus      api.MetadataEvidenceStatus
 	}{
 		{name: "complete evidence passes"},
+		{name: "release version is independent of edition", mutate: func(subject *api.TrackerValidationSubject) { subject.Repack = "PROPER" }},
+		{
+			name:            "version text in edition remains invalid",
+			mutate:          func(subject *api.TrackerValidationSubject) { subject.Edition = "PROPER" },
+			wantRule:        "unsupported_edition",
+			wantDisposition: api.RuleDispositionStrict,
+		},
 		{
 			name: "archive is strict",
 			mutate: func(subject *api.TrackerValidationSubject) {

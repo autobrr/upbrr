@@ -14,7 +14,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v4", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v5", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
 }
 
 func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -23,6 +23,16 @@ func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 	}
 	if err := editor.Omit(api.NameRoleEdition); err != nil {
 		return fmt.Errorf("omit YUS edition: %w", err)
+	}
+	for _, role := range []api.ReleaseNameRole{api.NameRoleEditionSet, api.NameRoleCut, api.NameRolePresentation} {
+		if err := editor.Include(role); err != nil {
+			return fmt.Errorf("include YUS %s: %w", role, err)
+		}
+		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+			if err := editor.MoveBefore(role, api.NameRoleRepack); err != nil {
+				return fmt.Errorf("move YUS DVD %s before version: %w", role, err)
+			}
+		}
 	}
 	if isYUSFullDisc(meta) {
 		if err := insertYUSDiscDistributor(editor, meta); err != nil {

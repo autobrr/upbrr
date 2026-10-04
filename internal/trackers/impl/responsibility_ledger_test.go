@@ -109,7 +109,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("TTR"),
 	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v4"),
 	unit3DResponsibility("UTP"),
-	unit3DResponsibilityVersion("YUS", "yus", "", "v4"),
+	unit3DResponsibilityVersion("YUS", "yus", "", "v5"),
 	unit3DResponsibilityVersion("ZNTH", "znth", "", "v2"),
 	azFamilyResponsibilityVersion("AZ", "v4"),
 	azFamilyResponsibilityVersion("CZ", "v7"),

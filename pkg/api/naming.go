@@ -137,12 +137,14 @@ type ReleaseNameResult struct {
 }
 
 type ReleaseNameOverrides struct {
-	Category     *string
-	Type         *string
-	Source       *string
-	Resolution   *string
-	Tag          *string
-	Service      *string
+	Category   *string
+	Type       *string
+	Source     *string
+	Resolution *string
+	Tag        *string
+	Service    *string
+	// Repack replaces the detected release version; empty clears it and nil keeps automatic detection.
+	Repack       *string
 	Edition      *string
 	Season       *string
 	Episode      *string
@@ -162,6 +164,17 @@ type ReleaseNameOverrides struct {
 	NoDual           *bool
 	DualAudio        *bool
 	Region           *string
+}
+
+// IsSupportedReleaseVersion reports whether value names a supported release version
+// or explicitly clears it. Matching ignores case and surrounding whitespace without changing value.
+func IsSupportedReleaseVersion(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "", "REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP":
+		return true
+	default:
+		return false
+	}
 }
 
 // EditionLabel returns the finalized edition wording used by tracker payloads

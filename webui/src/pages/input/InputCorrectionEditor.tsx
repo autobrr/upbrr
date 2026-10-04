@@ -308,6 +308,12 @@ const releaseStringFields: ReadonlyArray<{
       [r?.Media?.Cut, r?.Media?.Edition, r?.Media?.Presentation].filter(Boolean).join(" "),
   },
   {
+    field: "release_name.repack",
+    label: "Release version",
+    key: "Repack",
+    automatic: (r) => r?.Media?.Repack || "",
+  },
+  {
     field: "release_name.season",
     label: "Season",
     key: "Season",
@@ -868,6 +874,25 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     label={label}
                     value={value}
                     options={choices}
+                    onChange={(next) => setReleaseName(key, next)}
+                  />
+                ) : key === "Repack" ? (
+                  <CorrectionSelect
+                    id={`correction-${field}-value`}
+                    label={label}
+                    value={String(rawValue ?? "")
+                      .trim()
+                      .toUpperCase()}
+                    options={[
+                      "",
+                      "REPACK",
+                      "REPACK2",
+                      "REPACK3",
+                      "PROPER",
+                      "PROPER2",
+                      "PROPER3",
+                      "RERIP",
+                    ].map((value) => ({ value, label: value || "None" }))}
                     onChange={(next) => setReleaseName(key, next)}
                   />
                 ) : (

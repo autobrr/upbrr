@@ -5308,6 +5308,16 @@
               }
             ]
           },
+          "Repack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "Resolution": {
             "anyOf": [
               {
@@ -7106,6 +7116,16 @@
             ]
           },
           "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repack": {
             "anyOf": [
               {
                 "type": "string"

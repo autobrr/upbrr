@@ -48,6 +48,13 @@ func resolveEdition(meta api.UploadSubject, tags []string) (bool, string) {
 
 func resolveTags(meta api.UploadSubject) []string {
 	tags := make([]string, 0, 12)
+	// Numbered versions retain their name token but share the API category tag.
+	switch strings.ToUpper(strings.TrimSpace(meta.Repack)) {
+	case "PROPER", "PROPER2", "PROPER3":
+		tags = append(tags, "PROPER")
+	case "REPACK", "REPACK2", "REPACK3":
+		tags = append(tags, "REPACK")
+	}
 	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
 	case "WEBRIP":
 		tags = append(tags, "WEBRip")
