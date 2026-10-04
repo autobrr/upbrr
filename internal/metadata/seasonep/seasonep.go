@@ -19,12 +19,11 @@ import (
 )
 
 var (
-	seasonEpisodePattern   = regexp.MustCompile(`(?i)\bS(\d{1,4})[ ._-]*E(\d{1,3}(?:[ ._-]*E\d{1,3})*)\b`)
+	seasonEpisodePattern   = regexp.MustCompile(`(?i)\bS(\d{2}|\d{4})[ ._-]*E(\d{1,3}(?:[ ._-]*E\d{1,3})*)\b`)
 	episodeTokenPattern    = regexp.MustCompile(`(?i)E(\d{1,3})`)
 	multiEpisodePattern    = regexp.MustCompile(`(?i)E\d{1,3}\s*[-+&]\s*(?:E)?\d{1,3}`)
-	altSeasonEpisode       = regexp.MustCompile(`(?i)\b(\d{1,4})x(\d{2,3})\b`)
-	seasonOnlyPattern      = regexp.MustCompile(`(?i)\bS(\d{1,4})\b`)
-	seasonWordPattern      = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d+)\b`)
+	seasonOnlyPattern      = regexp.MustCompile(`(?i)\bS(\d{2}|\d{4})\b`)
+	seasonWordPattern      = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d{2}|\d{4})\b`)
 	episodeOnlyPattern     = regexp.MustCompile(`(?i)\bE(\d{2,3})\b`)
 	dailyPattern           = regexp.MustCompile(`\b(19\d{2}|20\d{2})[.-](\d{2})[.-](\d{2})\b`)
 	animeResolutionPattern = regexp.MustCompile(`(?i)(?:\s-\s)?(\d{1,4})(?:v\d+)?\s*\((?:\d+[pi])\)`)
@@ -90,13 +89,6 @@ func Extract(path string, meta preparationstate.State) Result {
 			}
 		}
 
-		if result.Season == 0 && result.Episode == 0 {
-			if season, episode, ok := parseAltSeasonEpisode(candidate); ok {
-				result.Season = season
-				result.Episode = episode
-			}
-		}
-
 		if result.Season == 0 {
 			if season, ok := parseSeasonOnly(candidate); ok {
 				result.Season = season
@@ -136,8 +128,8 @@ func Extract(path string, meta preparationstate.State) Result {
 }
 
 // ParseSeasonInstruction parses one explicit caller-supplied season token: a
-// bare number or an S-prefixed number of at most four digits ("5", "05",
-// "S05", "S2026"). An empty value means an explicit clear and returns zero. Combined,
+// bare or S-prefixed number with exactly two or four digits ("05", "S05",
+// "2026", "S2026"). An empty value means an explicit clear and returns zero. Combined,
 // ranged, zero, overflowing, or otherwise malformed values are rejected with a
 // typed invalid-input error.
 func ParseSeasonInstruction(value string) (int, error) {
@@ -162,7 +154,7 @@ func parseInstructionToken(value string, prefix string, maxDigits int, label str
 	if len(digits) > 1 && strings.EqualFold(digits[:1], prefix) {
 		digits = digits[1:]
 	}
-	if len(digits) > maxDigits {
+	if len(digits) > maxDigits || prefix == "S" && len(digits) != 2 && len(digits) != 4 {
 		return 0, instructionTokenError(label, value, prefix)
 	}
 	for _, char := range digits {
@@ -182,15 +174,20 @@ func instructionTokenError(label string, value string, prefix string) error {
 		"%s instruction %q: expected a single positive token such as %q or %q: %w",
 		label,
 		value,
-		"5",
+		"05",
 		prefix+"05",
 		internalerrors.ErrInvalidInput,
 	)
 }
 
+// FormatSeason pads positive seasons to two digits, or at least four above 99.
+// Nonpositive values return an empty string.
 func FormatSeason(value int) string {
 	if value <= 0 {
 		return ""
+	}
+	if value >= 100 {
+		return fmt.Sprintf("S%04d", value)
 	}
 	return fmt.Sprintf("S%02d", value)
 }
@@ -254,19 +251,6 @@ func parseSeasonEpisode(value string) (int, int, []int, bool) {
 	return season, episodes[0], multi, true
 }
 
-func parseAltSeasonEpisode(value string) (int, int, bool) {
-	match := altSeasonEpisode.FindStringSubmatch(value)
-	if len(match) < 3 {
-		return 0, 0, false
-	}
-	season := parseInt(match[1])
-	episode := parseInt(match[2])
-	if season == 0 || episode == 0 {
-		return 0, 0, false
-	}
-	return season, episode, true
-}
-
 func parseSeasonOnly(value string) (int, bool) {
 	if match := seasonOnlyPattern.FindStringSubmatch(value); len(match) > 1 {
 		if season := parseInt(match[1]); season > 0 {
@@ -297,9 +281,6 @@ func hasExplicitSingleEpisodeToken(value string) bool {
 	}
 	if season, episode, multi, ok := parseSeasonEpisode(trimmed); ok && season > 0 && episode > 0 {
 		return len(multi) == 0
-	}
-	if _, _, ok := parseAltSeasonEpisode(trimmed); ok {
-		return true
 	}
 	_, ok := parseEpisodeOnly(trimmed)
 	return ok

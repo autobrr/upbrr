@@ -64,9 +64,8 @@ func TestExtract(t *testing.T) {
 			want: Result{Season: 2026, TVPack: true},
 		},
 		{
-			name: "year numbered alternate episode",
+			name: "year numbered alternate episode rejected",
 			path: "Example.Show.2026x03.1080p.WEB-DL.mkv",
-			want: Result{Season: 2026, Episode: 3},
 		},
 		{
 			name: "oversized season episode is not truncated",
@@ -192,12 +191,6 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 			want:  0,
 		},
 		{
-			name:  "bare season",
-			parse: ParseSeasonInstruction,
-			value: "5",
-			want:  5,
-		},
-		{
 			name:  "padded season",
 			parse: ParseSeasonInstruction,
 			value: "05",
@@ -212,7 +205,7 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 		{
 			name:  "lowercase prefixed season",
 			parse: ParseSeasonInstruction,
-			value: "s5",
+			value: "s05",
 			want:  5,
 		},
 		{
@@ -381,6 +374,80 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 			}
 			if !errors.Is(err, internalerrors.ErrInvalidInput) {
 				t.Fatalf("parse(%q) error = %v, want typed invalid input", tt.value, err)
+			}
+		})
+	}
+}
+
+func TestExtractSeasonTokenWidths(t *testing.T) {
+	t.Parallel()
+	for _, token := range []string{"768x576", "1920x800", "1x05", "01x05", "2026x03", "S1E03", "S123E03", "S12345E03", "S1", "S123", "Season 1", "Series 123", "S1E03E04", "S123E03E04"} {
+		t.Run(token, func(t *testing.T) {
+			got := Extract("Example.Show."+token+".1080p.mkv", preparationstate.State{})
+			if !reflect.DeepEqual(got, Result{}) {
+				t.Fatalf("rejected token %q produced %+v", token, got)
+			}
+		})
+	}
+	for _, token := range []string{"Season 01", "Series 2026"} {
+		t.Run(token, func(t *testing.T) {
+			got := Extract("Example.Show."+token+".1080p", preparationstate.State{})
+			if got.Season == 0 || !got.TVPack {
+				t.Fatalf("valid season pack %q produced %+v", token, got)
+			}
+		})
+	}
+	got := Extract("Example.Show.S2026E03E04.1080p.mkv", preparationstate.State{})
+	if got.Season != 2026 || !reflect.DeepEqual(got.MultiEpisode, []int{3, 4}) {
+		t.Fatalf("year-numbered multi episode produced %+v", got)
+	}
+}
+
+func TestParseSeasonInstructionRejectsInvalidWidths(t *testing.T) {
+	t.Parallel()
+	for _, token := range []string{"1", "S1", "123", "S123", "000", "S001"} {
+		if _, err := ParseSeasonInstruction(token); !errors.Is(err, internalerrors.ErrInvalidInput) {
+			t.Errorf("ParseSeasonInstruction(%q) error = %v, want invalid input", token, err)
+		}
+	}
+}
+
+func TestExtractIgnoredTokensPreservePackAndEpisodeEvidence(t *testing.T) {
+	t.Parallel()
+	files := []string{"Example.Show.S02E03.mkv", "Example.Show.S02E04.mkv"}
+	for _, token := range []string{"1x05", "S1E03", "768x576"} {
+		t.Run(token, func(t *testing.T) {
+			got := Extract("Example.Show."+token, preparationstate.State{VideoPath: files[0], FileList: files})
+			if got.Season != 2 || got.Episode != 0 || !got.TVPack {
+				t.Fatalf("rejected primary token overrode pack evidence: %+v", got)
+			}
+			got = Extract("Example.Show."+token+".S02E04.mkv", preparationstate.State{})
+			if got.Season != 2 || got.Episode != 4 || got.TVPack {
+				t.Fatalf("rejected token overrode valid episode: %+v", got)
+			}
+		})
+	}
+}
+
+func TestFormatSeasonInstructionRoundTrip(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		token string
+		want  string
+	}{
+		{"99", "S99"}, {"0100", "S0100"}, {"0999", "S0999"}, {"1000", "S1000"},
+	} {
+		t.Run(tc.token, func(t *testing.T) {
+			season, err := ParseSeasonInstruction(tc.token)
+			if err != nil {
+				t.Fatal(err)
+			}
+			formatted := FormatSeason(season)
+			if formatted != tc.want {
+				t.Fatalf("FormatSeason(%d) = %q, want %q", season, formatted, tc.want)
+			}
+			if got, err := ParseSeasonInstruction(formatted); err != nil || got != season {
+				t.Fatalf("season did not round-trip: %d, %v", got, err)
 			}
 		})
 	}

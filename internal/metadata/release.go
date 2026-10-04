@@ -41,7 +41,8 @@ var releaseMarkerOther = map[string]struct{}{
 
 // ParseReleaseInfo parses the host-path basename into detached release fields.
 // It derives the release format separately from the movie/TV category and fills
-// missing season or episode values from the basename fallback parser.
+// missing season or episode values from the basename fallback parser. Season
+// tokens require two or four digits; x-separated pairs are not episodic evidence.
 func ParseReleaseInfo(path string) api.ReleaseInfo {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -53,7 +54,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 		return api.ReleaseInfo{}
 	}
 
-	release := rls.ParseString(base)
+	release := metautil.ParseReleaseTokens(base)
 	other := append([]string{}, release.Other...)
 	other = append(other, parsedReleaseMarkers(base)...)
 	typeValue := parsedReleaseType(base, release.Source, release.Other, release.Codec)
