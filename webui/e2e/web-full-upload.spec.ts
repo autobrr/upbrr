@@ -505,6 +505,20 @@ type CorrectionCase = {
 // Sample each distinct editor control; production Go tests retain the broad field matrix.
 const releaseDetailCorrections: readonly CorrectionCase[] = [
   {
+    field: "release_name.type",
+    label: "Type",
+    group: "ReleaseName",
+    key: "Type",
+    values: ["WEBDL", "ENCODE"],
+  },
+  {
+    field: "metadata.distributor",
+    label: "Distributor",
+    group: "Metadata",
+    key: "Distributor",
+    values: ["ARROW", "VINEGAR SYNDROME", ""],
+  },
+  {
     field: "release_name.service",
     label: "Service",
     group: "ReleaseName",
@@ -542,10 +556,42 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
   },
 ];
 
+test("embedded Input finite choices support keyboard selection without custom or blank entry", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    for (const label of ["Category", "Type", "Source", "Resolution"]) {
+      const control = page.getByRole("combobox", { name: label, exact: true });
+      const options = await control
+        .locator("option:not(:disabled)")
+        .evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value));
+      expect(options.length).toBeGreaterThan(1);
+      expect(options).not.toContain("");
+      await expect(
+        page.getByRole("button", { name: `Enter custom ${label}`, exact: true }),
+      ).toHaveCount(0);
+      await control.selectOption(options[0]);
+      await control.focus();
+      await control.press("ArrowDown");
+      await control.press("Enter");
+      await expect(control).toHaveValue(options[1]);
+      await page.getByRole("button", { name: `Auto ${label}`, exact: true }).click();
+    }
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 // The fixed evidence collector proves editor transport and durable instructions here.
 // Production preparation tests separately verify regenerated names and media facts.
 for (const correction of releaseDetailCorrections) {
-  test(`embedded web persists Release Details ${correction.label} edits, clear and Auto`, async ({
+  test(`embedded web persists Release Details ${correction.label} edits and Auto`, async ({
     page,
   }) => {
     const workspace = await createE2EWorkspace({ mediaKind: correction.mediaKind });
@@ -563,7 +609,11 @@ for (const correction of releaseDetailCorrections) {
       const row = page.locator(`[data-correction-field="${correction.field}"]`);
       const boolean = typeof correction.values[0] === "boolean";
       const control = row.getByRole(
-        boolean ? "combobox" : correction.key === "ManualYear" ? "spinbutton" : "textbox",
+        boolean || ["Type", "Service", "Distributor"].includes(correction.key)
+          ? "combobox"
+          : correction.key === "ManualYear"
+            ? "spinbutton"
+            : "textbox",
         { name: correction.label, exact: true },
       );
       const automaticValue = await control.inputValue();
@@ -592,8 +642,23 @@ for (const correction of releaseDetailCorrections) {
               : value === 0
                 ? ""
                 : String(value);
-          if (boolean) await control.selectOption(text);
-          else await control.fill(text);
+          if (boolean || correction.key === "Type") await control.selectOption(text);
+          else if (["Service", "Distributor"].includes(correction.key) && text) {
+            await control.fill(
+              correction.key === "Service"
+                ? text === "AMZN"
+                  ? "aMz"
+                  : "netfl"
+                : text === "ARROW"
+                  ? "aRrOw"
+                  : "vInegar",
+            );
+            const choices = row.getByRole("option");
+            await expect(choices).toHaveCount(1);
+            await control.press("ArrowDown");
+            await control.press("Enter");
+            await expect(control).toHaveValue(text);
+          } else await control.fill(text);
           await expect(row.getByText("Manual change pending", { exact: true })).toBeVisible();
           const saved = waitForAppMethod(page, "OpenActiveInput");
           await page.getByRole("button", { name: "Refresh metadata" }).click();
@@ -1141,13 +1206,13 @@ test("embedded web retains Release Details corrections without downstream workfl
     await expect(page.getByRole("textbox", { name: "Title", exact: true })).toBeDisabled();
     await expect(page.getByRole("textbox", { name: "Original title", exact: true })).toBeDisabled();
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
-    const categoryInput = page.getByRole("textbox", { name: "Category", exact: true });
-    await categoryInput.fill("TV");
+    const categoryInput = page.getByRole("combobox", { name: "Category", exact: true });
+    await categoryInput.selectOption("tv");
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeDisabled();
-    await categoryInput.fill("movie");
+    await categoryInput.selectOption("movie");
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     await page.getByRole("button", { name: "Auto Category", exact: true }).click();
-    await expect(page.getByRole("textbox", { name: "Category", exact: true })).not.toHaveValue("");
+    await expect(page.getByRole("combobox", { name: "Category", exact: true })).not.toHaveValue("");
     for (const group of [
       "Provider IDs",
       "Release name",
