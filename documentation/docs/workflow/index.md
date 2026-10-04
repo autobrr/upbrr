@@ -102,7 +102,7 @@ Automatic screenshot plans distribute the requested images across all prepared d
 
 Capturing an additional frame keeps previously generated screenshots, including their selection and order, without adding those images again.
 
-Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode.
+Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode. Open an image to inspect it at its natural resolution in a nearly full-viewport lightbox. Scroll horizontally or vertically for larger images; **Close** and **Escape** remain available while scrolling.
 
 Compatible images retain their selection and order across refresh. In the Web UI, the Screenshots page reloads its saved-image suggestions when preparation or tracker assessment changes, while keeping edited frame times. Deleted images stay removed. upbrr verifies local image bytes before reuse and reuses hosted links only for a compatible host account and purpose. A hosted link can remain usable when its local preview is missing. Changed capture settings or stricter tracker requirements can require additional images.
 

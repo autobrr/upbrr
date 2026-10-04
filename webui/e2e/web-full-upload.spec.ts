@@ -2066,3 +2066,117 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await workspace.cleanup();
   }
 });
+
+for (const size of [
+  { width: 1800, height: 100 },
+  { width: 100, height: 1800 },
+  { width: 1800, height: 1400 },
+  { width: 64, height: 48 },
+]) {
+  test(`embedded image lightbox preserves ${size.width}x${size.height} pixels across viewport changes`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace();
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace);
+      await fetchMetadata(page, app.url, workspace.sourcePath);
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+      await page.getByRole("checkbox", { name: "HDS" }).check();
+      await runDuplicateCheck(page);
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      await page.route("**/api/app/release-workflow-media?*", (route) =>
+        route.fulfill({
+          contentType: "image/svg+xml",
+          body: `<svg xmlns="http://www.w3.org/2000/svg" width="${size.width}" height="${size.height}"><rect width="100%" height="100%" fill="#537da8"/></svg>`,
+        }),
+      );
+
+      await page.getByRole("button", { name: "Generate screenshots" }).click();
+      const thumbnail = page.getByRole("img", { name: "Screenshot 1", exact: true });
+      await expect(thumbnail).toBeVisible();
+      await thumbnail.click();
+      const dialog = page.getByRole("dialog", { name: "Screenshot 1" });
+      const image = dialog.getByRole("img");
+      const scrollArea = dialog.getByRole("region", { name: "Image", exact: true });
+      const close = dialog.getByRole("button", { name: "Close image preview" });
+      await expect
+        .poll(() =>
+          image.evaluate((img: HTMLImageElement) => ({
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          })),
+        )
+        .toEqual(size);
+
+      for (const viewport of [
+        { width: 1280, height: 900 },
+        { width: 390, height: 640 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ colorScheme: viewport.width === 390 ? "dark" : "light" });
+        await expect
+          .poll(async () => {
+            const box = await dialog.boundingBox();
+            return box && { width: box.width, height: box.height, x: box.x, y: box.y };
+          })
+          .toEqual({ width: viewport.width - 16, height: viewport.height - 16, x: 8, y: 8 });
+        const imageBox = await image.boundingBox();
+        expect(imageBox?.width).toBe(size.width);
+        expect(imageBox?.height).toBe(size.height);
+        await scrollArea.evaluate((element) => element.scrollTo(0, 0));
+        const start = await scrollArea.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const img = element.querySelector("img")!.getBoundingClientRect();
+          return { left: img.left - box.left, top: img.top - box.top };
+        });
+        expect(start.left).toBeGreaterThanOrEqual(0);
+        expect(start.top).toBe(0);
+        const overflow = await scrollArea.evaluate((element) => ({
+          x: element.scrollWidth > element.clientWidth,
+          y: element.scrollHeight > element.clientHeight,
+          width: element.clientWidth,
+          height: element.clientHeight,
+        }));
+        expect(overflow.x).toBe(size.width > overflow.width);
+        expect(overflow.y).toBe(size.height > overflow.height);
+        if (overflow.y) {
+          await scrollArea.focus();
+          await scrollArea.press("ArrowDown");
+          await expect
+            .poll(() => scrollArea.evaluate((element) => element.scrollTop))
+            .toBeGreaterThan(0);
+        }
+        await scrollArea.evaluate((element) =>
+          element.scrollTo(element.scrollWidth, element.scrollHeight),
+        );
+        const end = await scrollArea.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const img = element.querySelector("img")!.getBoundingClientRect();
+          return {
+            right: img.right - (box.left + element.clientWidth),
+            bottom: img.bottom - (box.top + element.clientHeight),
+          };
+        });
+        expect(end.right).toBeLessThanOrEqual(1);
+        expect(end.bottom).toBeLessThanOrEqual(1);
+        await expect(close).toBeInViewport();
+      }
+      await close.click();
+      await expect(dialog).toHaveCount(0);
+      await thumbnail.click();
+      await scrollArea.focus();
+      await expect
+        .poll(() =>
+          scrollArea.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop })),
+        )
+        .toEqual({ x: 0, y: 0 });
+      await scrollArea.press("Escape");
+      await expect(dialog).toHaveCount(0);
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
