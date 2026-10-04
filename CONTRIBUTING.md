@@ -15,6 +15,31 @@ This document is a guide to help you through the process of contributing to upbr
   module, auth, naming, registry, config, and validation contracts
 - **Documentation** — public guides under `documentation/`, this file, the README, or inline Go/TS docs
 
+## Reporting bugs and requesting features
+
+Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) for unexpected behavior and the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md) for new capabilities. Search open and closed issues first. For development or PR builds, check the relevant Markdown documentation in this repository at the build's commit or branch; the published site describes released versions.
+
+### Automated bug-report completeness check
+
+After the workflow is merged into the default branch, newly opened, human-authored bug reports are checked once. A report is explicitly identified by its `[Bug]` title prefix (case-insensitive) or the `<!-- upbrr-bug-report:v1 -->` marker. A `[Feature]` prefix or `<!-- upbrr-feature-request:v1 -->` marker exempts it, even if it also contains bug identification. Unclassified issues are left for manual triage. All issues authored by Audionut's numeric GitHub account ID `13182387` are exempt; the event sender and display name do not grant this exemption.
+
+“Significantly different” means any of these specific structural failures:
+
+- Missing a required heading: **What happened?**, **Version and environment**, **Steps to reproduce**, **Expected behavior**, or **Actual behavior**. Heading case, level, and closing Markdown hashes may vary.
+- Empty **What happened?**, **Expected behavior**, or **Actual behavior** content after removing comments and Markdown scaffolding, or a placeholder-only answer (`N/A`, `NA`, `none`, `unknown`, `TODO`, `TBD`, or ellipses; case-insensitive). Answers must contain at least one letter or number; this is a completeness check, not semantic validation.
+- Missing or unfilled **upbrr version and build**, **Installation method**, or **Operating system and architecture** bullets under **Version and environment**. Keep those field names and put each answer after its colon on the same line; the same placeholder rules apply.
+- No numbered reproduction step with a non-placeholder answer on the same line.
+
+Additional details, subsections, screenshots, logs, and reordered sections are allowed. Optional sections may be removed or left blank. Checklist wording and checkbox state are not automatic rejection criteria; reporters are still expected to complete the prerequisites, including checking repository documentation for development builds. Headings inside comments or fenced code do not satisfy the required structure.
+
+An incomplete report receives the `invalid` label, a GitHub Actions bot comment listing missing information, and closure as not planned. The reporter's text is never edited or deleted. Correct the report and ask a maintainer to reopen it. There is no automatic reopening, validation on edits/reopening/label changes, historical sweep, or validation on manually rerun workflow attempts. A report changed while the workflow was queued is left for manual triage.
+
+The repository must have an `invalid` label. Failure to apply it or publish the explanation stops the workflow before closure. The issue job uses only default-branch code with `contents: read` and `issues: write`; issue text is read as JSON data, never interpolated into a shell command. Pull-request runs only execute the offline test job with read-only permissions. No live issue is changed by the tests:
+
+```sh
+python3 -m unittest discover -s scripts/issue_reports -v
+```
+
 ## Developer guide
 
 ### Dependencies

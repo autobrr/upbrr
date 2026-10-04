@@ -1,0 +1,47 @@
+name: Validate new bug reports
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    paths:
+      - .github/ISSUE_TEMPLATE/**
+      - .github/workflows/issue-reports.yml
+      - scripts/issue_reports/**
+
+permissions: {}
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts/issue_reports -v
+
+  validate:
+    if: >-
+      github.event_name == 'issues' && github.event.action == 'opened' &&
+      github.repository == 'autobrr/upbrr' && github.run_attempt == 1 &&
+      github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # Issue events use default-branch code, never a ref supplied by a reporter.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/issue_reports
+      - name: Validate the new report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/issue_reports/validate.py
