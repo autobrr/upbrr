@@ -45,14 +45,10 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 
 // validateReleaseNameFactInstructions rejects malformed release-version, season, episode, and
 // daily-date instruction values with a typed invalid-input error before any
-// instruction becomes an effective fact or is persisted for reuse.
+// instruction becomes an effective metadata fact.
 func validateReleaseNameFactInstructions(overrides api.ReleaseNameOverrides) error {
-	if overrides.Repack != nil {
-		switch strings.ToUpper(strings.TrimSpace(*overrides.Repack)) {
-		case "", "REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP":
-		default:
-			return fmt.Errorf("metadata: unsupported release version %q: %w", *overrides.Repack, internalerrors.ErrInvalidInput)
-		}
+	if overrides.Repack != nil && !api.IsSupportedReleaseVersion(*overrides.Repack) {
+		return fmt.Errorf("metadata: unsupported release version %q: %w", *overrides.Repack, internalerrors.ErrInvalidInput)
 	}
 	if overrides.Season != nil {
 		if _, err := seasonep.ParseSeasonInstruction(*overrides.Season); err != nil {

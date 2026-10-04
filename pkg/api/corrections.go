@@ -227,7 +227,7 @@ func (p *ReleaseCorrectionPatch) UnmarshalJSON(payload []byte) error {
 	return nil
 }
 
-// Validate verifies closed correction targets and mutually exclusive operations.
+// Validate checks incoming values, closed correction targets, and mutually exclusive operations.
 func (p ReleaseCorrectionPatch) Validate() error {
 	if err := normalizeReleaseCorrectionValues(&p.Values); err != nil {
 		return err
@@ -364,7 +364,13 @@ func NormalizeReleaseFactInstructionsCategory(instructions *ReleaseFactInstructi
 }
 
 func normalizeReleaseCorrectionValues(values *ReleaseCorrectionValues) error {
-	if values == nil || values.ReleaseName.Category == nil {
+	if values == nil {
+		return nil
+	}
+	if repack := values.ReleaseName.Repack; repack != nil && !IsSupportedReleaseVersion(*repack) {
+		return correctionConflict(CorrectionFieldRef{Field: CorrectionFieldReleaseNameRepack}, fmt.Sprintf("unsupported release version %q", *repack))
+	}
+	if values.ReleaseName.Category == nil {
 		return nil
 	}
 	normalized, err := NormalizeCanonicalCategory(*values.ReleaseName.Category)

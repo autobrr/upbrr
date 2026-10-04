@@ -417,3 +417,33 @@ func TestReleaseVersionCorrectionClearAndAuto(t *testing.T) {
 		t.Fatalf("stale version correction error=%v", err)
 	}
 }
+
+func TestReleaseVersionCorrectionValidatesIncomingValues(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"", "REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP", " proper ", "REPACK4", "Legacy-Version"} {
+		t.Run(value, func(t *testing.T) {
+			valid := value != "REPACK4" && value != "Legacy-Version"
+			values := ReleaseCorrectionValues{ReleaseName: ReleaseNameOverrides{Repack: new(value)}}
+			patch := ReleaseCorrectionPatch{Values: values}
+			if err := patch.Validate(); (err == nil) != valid {
+				t.Fatalf("patch validation = %v, valid=%t", err, valid)
+			}
+			for _, update := range []ReleaseCorrectionUpdate{
+				{Mode: ReleaseCorrectionUpdatePatch, Patch: &patch},
+				{Mode: ReleaseCorrectionUpdateReplace, Values: values},
+			} {
+				stored, err := ApplyReleaseCorrectionUpdate(ReleaseCorrectionsSnapshot{}, update)
+				if valid {
+					if err != nil || stored.ReleaseName.Repack == nil || *stored.ReleaseName.Repack != value {
+						t.Fatalf("%s did not preserve accepted spelling %q: stored=%#v err=%v", update.Mode, value, stored, err)
+					}
+					continue
+				}
+				var conflict *CorrectionConflictError
+				if !errors.As(err, &conflict) || conflict.Field != CorrectionFieldReleaseNameRepack {
+					t.Fatalf("%s accepted invalid release version %q: %v", update.Mode, value, err)
+				}
+			}
+		})
+	}
+}

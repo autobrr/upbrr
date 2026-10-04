@@ -166,6 +166,17 @@ type ReleaseNameOverrides struct {
 	Region           *string
 }
 
+// IsSupportedReleaseVersion reports whether value names a supported release version
+// or explicitly clears it. Matching ignores case and surrounding whitespace without changing value.
+func IsSupportedReleaseVersion(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "", "REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP":
+		return true
+	default:
+		return false
+	}
+}
+
 // EditionLabel returns the finalized edition wording used by tracker payloads
 // and duplicate comparison. EditionSet only controls rendered naming; this
 // label retains detailed categories for validation. Naming policies should use
