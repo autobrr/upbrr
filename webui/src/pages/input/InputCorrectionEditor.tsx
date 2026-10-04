@@ -293,7 +293,9 @@ const releaseStringFields: ReadonlyArray<{
     field: "release_name.edition",
     label: "Edition",
     key: "Edition",
-    automatic: (r) => r?.Media?.Edition || "",
+    automatic: (r) =>
+      r?.Media?.EditionSet ||
+      [r?.Media?.Cut, r?.Media?.Edition, r?.Media?.Presentation].filter(Boolean).join(" "),
   },
   {
     field: "release_name.season",

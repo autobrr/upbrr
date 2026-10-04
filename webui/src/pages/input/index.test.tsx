@@ -1005,6 +1005,10 @@ describe("InputPage", () => {
 
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(1, { NoEpisodeTitle: true });
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(2, { NoDistributor: true });
+    fireEvent.change(screen.getByLabelText("No edition"), { target: { value: "yes" } });
+    expect(facet.changeReleaseName).toHaveBeenNthCalledWith(3, { NoEdition: true });
+    fireEvent.change(screen.getByLabelText("No edition"), { target: { value: "no" } });
+    expect(facet.changeReleaseName).toHaveBeenNthCalledWith(4, { NoEdition: false });
   });
 
   it("removes each metadata provider without overriding untouched IDs", () => {
@@ -1695,3 +1699,45 @@ describe("InputPage", () => {
     expect(screen.getByLabelText("PTP No English subtitles")).toHaveValue("auto");
   });
 });
+
+it.each([
+  ["Director's Cut", "", "", "", "Director's Cut"],
+  ["Extended Cut", "Collector's", "IMAX", "", "Extended Cut Collector's IMAX"],
+  ["Theatrical / Extended", "", "IMAX", "2in1", "2in1"],
+])(
+  "displays canonical edition parts for correction (%s)",
+  (Cut, Edition, Presentation, EditionSet, expected) => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: {
+          ...release,
+          Media: { ...release.Media, Cut, Edition, Presentation, EditionSet },
+        },
+      },
+    };
+    const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+    expect(screen.getByLabelText("Edition")).toHaveValue(expected);
+
+    for (const Edition of ["Custom Edition", ""]) {
+      fireEvent.change(screen.getByLabelText("Edition"), { target: { value: Edition } });
+      expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ Edition });
+      rerender(
+        <InputCorrectionEditor
+          facet={{
+            ...facet,
+            view: { ...facet.view, intent: { ...facet.view.intent, releaseName: { Edition } } },
+          }}
+        />,
+      );
+      expect(screen.getByLabelText("Edition")).toHaveValue(Edition);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Auto Edition" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.edition" });
+    rerender(<InputCorrectionEditor facet={facet} />);
+    expect(screen.getByLabelText("Edition")).toHaveValue(expected);
+  },
+);

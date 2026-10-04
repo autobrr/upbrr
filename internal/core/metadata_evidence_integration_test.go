@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -42,10 +43,14 @@ type coreEvidenceFixture struct {
 }
 
 // Both production repository ownership paths must retain provider evidence.
-func newCoreEvidenceFixture(t *testing.T, borrowed bool) coreEvidenceFixture {
+func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) coreEvidenceFixture {
 	t.Helper()
 	root := t.TempDir()
-	source := filepath.Join(root, "Example.Series.S01E04.1080p.WEB-DL.H264-GRP.mkv")
+	sourceName := "Example.Series.S01E04.1080p.WEB-DL.H264-GRP.mkv"
+	if len(sourceNames) > 0 {
+		sourceName = sourceNames[0]
+	}
+	source := filepath.Join(root, sourceName)
 	if err := os.WriteFile(source, []byte("synthetic video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -589,5 +594,45 @@ func TestDefaultCoreTrackLanguageCorrectionMatrix(t *testing.T) {
 				t.Fatalf("track corrections mutated original generation: %v", err)
 			}
 		})
+	}
+}
+
+func TestCanonicalFilenameCutExplicitCorrectionLifecycle(t *testing.T) {
+	for _, borrowed := range []bool{false, true} {
+		for _, tc := range []struct {
+			name     string
+			override api.ReleaseNameOverrides
+		}{
+			{"omit", api.ReleaseNameOverrides{NoEdition: new(true)}},
+			{"clear", api.ReleaseNameOverrides{Edition: new("")}},
+			{"replace", api.ReleaseNameOverrides{Edition: new("Custom Edition")}},
+		} {
+			t.Run(fmt.Sprintf("borrowed=%t/%s", borrowed, tc.name), func(t *testing.T) {
+				fixture := newCoreEvidenceFixture(t, borrowed, "Example.Series.S01E04.Directors.Cut.1080p.WEB-DL.H264-GRP.mkv")
+				if fixture.initial.Release.Media.Cut != "Director's Cut" {
+					t.Fatalf("initial cut=%q", fixture.initial.Release.Media.Cut)
+				}
+				result := fixture.prepare(t, api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{ReleaseName: tc.override}})
+				reused := fixture.prepare(t, api.ReleaseCorrectionPatch{})
+				persisted, err := fixture.repo.LoadPreparedRelease(t.Context(), fixture.input.SourcePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, release := range []api.PreparedRelease{result.Release, reused.Release, persisted} {
+					if release.Media.Cut != "" || strings.Contains(release.Naming.ReleaseName, "Director's Cut") {
+						t.Fatalf("cut remains: %q / %q", release.Media.Cut, release.Naming.ReleaseName)
+					}
+					if tc.name == "replace" && !strings.Contains(release.Naming.ReleaseName, "Custom Edition") {
+						t.Fatalf("manual edition missing: %q", release.Naming.ReleaseName)
+					}
+					for _, role := range []api.ReleaseNameRole{api.NameRoleCut, api.NameRolePresentation, api.NameRoleEditionSet} {
+						component, ok := release.Naming.GeneratedName.Component(role)
+						if !ok || component.Present || !component.Manual {
+							t.Fatalf("unprotected omitted %s: %#v", role, component)
+						}
+					}
+				}
+			})
+		}
 	}
 }
