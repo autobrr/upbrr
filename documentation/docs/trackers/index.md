@@ -76,6 +76,12 @@ ACM duplicate searches gather the full TMDB work within the movie or TV category
 
 For an ACM report, enable `--log-level trace` for the affected run. Search diagnostics include the work query and pagination decisions. Payload diagnostics include numeric classification IDs and evidence byte counts, without copying descriptions or MediaInfo into these messages. Review all logs before sharing and remove credentials, private URLs, and identifying release details. A successful local preparation does not confirm that ACM accepted an upload.
 
+### BHD NFOs
+
+BHD sends an available local scene NFO through the dedicated `nfo` upload field without changing the reviewed description. NFO content is captured during upload preparation; an unreadable supplied NFO or content larger than 8 MiB blocks preparation. Uploads without NFO content omit the optional field.
+
+Scene NFOs must stay within the database-adjacent `nfo` storage, including any symlink targets. Safe nested paths and links within that storage remain usable; a supplied NFO outside it blocks BHD preparation.
+
 ## Image hosts and clients
 
 Trackers can restrict usable image hosts or select tracker-specific image/client overrides. Configure a compatible host before media preparation. Confirm the final hosted links and client injection settings per tracker.

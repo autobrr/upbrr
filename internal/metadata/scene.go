@@ -514,7 +514,7 @@ func (d *srrdbDetector) buildSceneResult(ctx context.Context, result srrdbSearch
 			scene.NFOPath = path
 			scene.NFONew = downloaded
 			d.log().Tracef("metadata: scene nfo attached downloaded=%t", downloaded)
-			if nfoIDs, readErr := parseNFOExternalIDs(path); readErr == nil {
+			if nfoIDs, readErr := parseNFOExternalIDs(d.nfoDir, path); readErr == nil {
 				scene.TMDBID = nfoIDs.TMDBID
 				if scene.IMDBID == 0 {
 					scene.IMDBID = nfoIDs.IMDBID
@@ -746,8 +746,13 @@ func parseSRRDBIMDbID(raw string) int {
 	return parsed
 }
 
-func parseNFOExternalIDs(path string) (nfoExternalIDs, error) {
-	data, err := os.ReadFile(path)
+func parseNFOExternalIDs(root, path string) (nfoExternalIDs, error) {
+	file, err := pathutil.OpenFileWithinRoot(root, path, os.O_RDONLY, 0)
+	if err != nil {
+		return nfoExternalIDs{}, fmt.Errorf("metadata: open NFO file: %w", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return nfoExternalIDs{}, fmt.Errorf("metadata: read NFO file: %w", err)
 	}
@@ -826,6 +831,10 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 		d.log().Debugf("metadata: scene nfo details failed release=%q: %v", trimmed, err)
 		detailsErr = err
 	}
+	fileName, nameErr := filepath.Localize(strings.ReplaceAll(fileBase+".nfo", "\\", "/"))
+	if nameErr != nil || strings.Contains(fileBase, ":") {
+		return "", false, errors.Join(detailsErr, errors.New("scene: invalid nfo filename"))
+	}
 
 	cacheDir := d.cacheDir
 	if cacheDir == "" {
@@ -845,10 +854,13 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 		d.log().Debugf("metadata: scene nfo dir unavailable release=%q: %v", trimmed, err)
 		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: nfo dir: %w", err))
 	}
-	path := filepath.Join(nfoDir, fileBase+".nfo")
-	if _, err := os.Stat(path); err == nil {
+	path := filepath.Join(nfoDir, fileName)
+	if file, err := pathutil.OpenFileWithinRoot(nfoDir, path, os.O_RDONLY, 0); err == nil {
+		_ = file.Close()
 		d.log().Debugf("metadata: scene nfo cache hit release=%q path=%s details_error=%t", trimmed, path, detailsErr != nil)
 		return path, false, detailsErr
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: open nfo: %w", err))
 	}
 
 	d.log().Tracef(
@@ -891,7 +903,12 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 	if len(data) == 0 {
 		return "", false, detailsErr
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	file, err := pathutil.OpenFileWithinRoot(nfoDir, path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: open nfo for writing: %w", err))
+	}
+	_, writeErr := file.Write(data)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
 		d.log().Debugf("metadata: scene nfo write failed release=%q path=%s: %v", trimmed, path, err)
 		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: write nfo: %w", err))
 	}

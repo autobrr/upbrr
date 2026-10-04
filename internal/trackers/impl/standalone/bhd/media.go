@@ -6,10 +6,13 @@ package bhd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -51,4 +54,33 @@ func resolveMediaPath(meta api.UploadSubject, dbPath string) string {
 	default:
 		return strings.TrimSpace(meta.MediaInfoTextPath)
 	}
+}
+
+// Match the size bound used when scene metadata downloads an NFO.
+const maxNFOBytes = 8 << 20
+
+// resolveNFO captures the prepared local NFO without changing its formatting.
+// An absent path omits the optional NFO; unreadable or oversized content fails preparation.
+func resolveNFO(meta api.UploadSubject, dbPath string) (string, error) {
+	path := strings.TrimSpace(meta.SceneNFOPath)
+	if path == "" {
+		return "", nil
+	}
+	root, err := db.Subdir(dbPath, "nfo")
+	if err != nil {
+		return "", fmt.Errorf("trackers: BHD NFO storage: %w", err)
+	}
+	file, err := pathing.OpenFileWithinRoot(root, path, os.O_RDONLY, 0)
+	if err != nil {
+		return "", fmt.Errorf("trackers: BHD open NFO: %w", err)
+	}
+	defer file.Close()
+	payload, err := io.ReadAll(io.LimitReader(file, maxNFOBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("trackers: BHD read NFO: %w", err)
+	}
+	if len(payload) > maxNFOBytes {
+		return "", errors.New("trackers: BHD NFO exceeds size limit")
+	}
+	return string(payload), nil
 }

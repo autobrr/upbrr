@@ -80,6 +80,19 @@ func TestIsWithinRootAllowsWindowsCaseVariants(t *testing.T) {
 	}
 }
 
+func TestIsWithinRootRejectsDanglingWindowsJunction(t *testing.T) {
+	t.Parallel()
+	root, outside := setupEscapeDirs(t)
+	link := filepath.Join(root, "dangling-junction")
+	target := filepath.Join(outside, "missing")
+	output, err := exec.CommandContext(t.Context(), "cmd.exe", "/d", "/c", "mklink", "/J", link, target).CombinedOutput()
+	if err != nil {
+		t.Fatalf("create junction: %v: %s", err, output)
+	}
+	t.Cleanup(func() { _ = os.Remove(link) })
+	assertEscapingLinkRejected(t, root, link)
+}
+
 func swapASCIIPathCase(value string) string {
 	swapped := []byte(value)
 	for idx, char := range swapped {
