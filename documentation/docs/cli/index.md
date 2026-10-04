@@ -179,35 +179,37 @@ Saved corrections use a newer database format. Older binaries do not support wri
 
 ### Naming fields
 
-Season tokens accept up to four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S2026E03` for an episode or `S2026` for a season pack.
+Season tokens require exactly two or four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized; use `S01E05` instead.
 
-| Option                        | Aliases                                           | Purpose                                           |
-| ----------------------------- | ------------------------------------------------- | ------------------------------------------------- |
-| `--category <value>`          | `-category`, `-c`                                 | Override category.                                |
-| `--type <value>`              | `-type`, `-t`                                     | Override release type.                            |
-| `--source <value>`            | `-source`                                         | Override source.                                  |
-| `--resolution <value>`        | `-resolution`, `-res`                             | Override resolution.                              |
-| `--tag <value>`               | `-tag`, `-g`                                      | Override group tag.                               |
-| `--service <value>`           | `-service`, `-serv`                               | Override streaming service.                       |
-| `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                             |
-| `--original-language <value>` | `-original-language`, `-ol`                       | Override original language.                       |
-| `--edition <value>`           | `-edition`, `-repack`                             | Override edition text.                            |
-| `--season <value>`            | `-season`                                         | Override one season token, such as `5` or `S05`.  |
-| `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`. |
-| `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                           |
-| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.  |
-| `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                       |
-| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                             |
-| `--no-season`                 | `-no-season`                                      | Remove season and episode from name.              |
-| `--no-year`                   | `-no-year`                                        | Remove year from name.                            |
-| `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                             |
-| `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                       |
-| `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                   |
-| `--no-distributor`            | `-no-distributor`, `-ndist`                       | Remove distributor.                               |
-| `--no-edition`                | `-no-edition`, `-ne`                              | Remove edition from name.                         |
-| `--no-dub`                    | `-no-dub`                                         | Remove dubbed tag from audio name.                |
-| `--no-dual`                   | `-no-dual`                                        | Remove dual-audio tag from audio name.            |
-| `--dual-audio`                | `-dual-audio`                                     | Add dual-audio tag to audio name.                 |
+| Option                        | Aliases                                           | Purpose                                                                                     |
+| ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `--category <value>`          | `-category`, `-c`                                 | Override category.                                                                          |
+| `--type <value>`              | `-type`, `-t`                                     | Override release type.                                                                      |
+| `--source <value>`            | `-source`                                         | Override source.                                                                            |
+| `--resolution <value>`        | `-resolution`, `-res`                             | Override resolution.                                                                        |
+| `--tag <value>`               | `-tag`, `-g`                                      | Override group tag.                                                                         |
+| `--service <value>`           | `-service`, `-serv`                               | Override streaming service.                                                                 |
+| `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                                                                       |
+| `--original-language <value>` | `-original-language`, `-ol`                       | Override original language.                                                                 |
+| `--edition <value>`           | `-edition`, `-repack`                             | Override edition text, replacing automatic cut, presentation, and multi-edition set labels. |
+| `--season <value>`            | `-season`                                         | Override one season token, such as `05` or `S05`.                                           |
+| `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                           |
+| `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                     |
+| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                            |
+| `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                 |
+| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                       |
+| `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                        |
+| `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                      |
+| `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                       |
+| `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                                                                 |
+| `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                                                             |
+| `--no-distributor`            | `-no-distributor`, `-ndist`                       | Remove distributor.                                                                         |
+| `--no-edition`                | `-no-edition`, `-ne`                              | Remove cut, edition, presentation, and multi-edition set labels from the name.              |
+| `--no-dub`                    | `-no-dub`                                         | Remove dubbed tag from audio name.                                                          |
+| `--no-dual`                   | `-no-dual`                                        | Remove dual-audio tag from audio name.                                                      |
+| `--dual-audio`                | `-dual-audio`                                     | Add dual-audio tag to audio name.                                                           |
+
+Filename cut, edition, and presentation labels take priority over provider runtime labels. If selected playlists identify two distinct editions, automatic naming uses only `2in1`, without listing the individual editions. Manual `--edition` and `--no-edition` choices take precedence over these automatic labels.
 
 ## Metadata IDs
 

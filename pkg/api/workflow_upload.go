@@ -159,6 +159,7 @@ type ReleaseWorkflowUploadReleaseName struct {
 	Tag              *string `json:"tag,omitempty"`
 	Service          *string `json:"service,omitempty"`
 	Edition          *string `json:"edition,omitempty"`
+	Repack           *string `json:"repack,omitempty"`
 	Season           *string `json:"season,omitempty"`
 	Episode          *string `json:"episode,omitempty"`
 	EpisodeTitle     *string `json:"episodeTitle,omitempty"`
@@ -294,6 +295,11 @@ func (r CreateReleaseWorkflowUploadRequest) Validate() error {
 	case "", ReleaseWorkflowUploadModeUpload, ReleaseWorkflowUploadModeDebug:
 	default:
 		return fmt.Errorf("unsupported upload execution mode %q", r.Execution.Mode)
+	}
+	if r.Execution.RunLogLevel != nil {
+		if _, err := ParseLogLevel(*r.Execution.RunLogLevel); err != nil {
+			return fmt.Errorf("upload run log level: %w", err)
+		}
 	}
 	switch r.Execution.PreparedRelease {
 	case "", ReleaseWorkflowPreparedReleaseAllow, ReleaseWorkflowPreparedReleaseRequire:

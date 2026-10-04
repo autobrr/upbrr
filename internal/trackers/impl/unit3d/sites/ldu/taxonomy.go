@@ -30,7 +30,7 @@ func categoryID(meta api.UploadSubject) string {
 	hasEnglishAudio := unit3d.HasEnglishLanguage(meta.AudioLanguages)
 	hasEnglishSubs := unit3d.HasEnglishLanguage(meta.SubtitleLanguages)
 	containsDubbed := strings.Contains(strings.ToLower(strings.TrimSpace(meta.Audio)), "dubbed")
-	edition := strings.ToLower(strings.TrimSpace(meta.Edition))
+	edition := strings.ToLower(meta.EditionLabel())
 
 	if strings.EqualFold(category, "MOVIE") {
 		switch {

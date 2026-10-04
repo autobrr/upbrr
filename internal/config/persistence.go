@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -308,7 +310,7 @@ func loadFullConfigOverlayingDefaults(ctx context.Context, repo fullConfigLoader
 			InvalidPaths:       []string{"raw-config"},
 		}, nil
 	}
-	mergeReport, err := mergeStoredConfigMapWithReport(base, stored, "")
+	mergeReport, err := mergeStoredConfigMapWithReport(base, stored, nil)
 	if err != nil {
 		return Config{}, DatabaseRepairReport{}, fmt.Errorf("config load from database: merge stored config: %w", err)
 	}
@@ -403,7 +405,7 @@ func (r *storedConfigMergeReport) changedRootSections() []string {
 // mergeStoredConfigMapWithReport mutates base by applying overlay and reports
 // missing defaults, invalid object-shaped overlays, and root sections changed by
 // repair. It returns an error for ambiguous tracker name or field collisions.
-func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any, path string) (storedConfigMergeReport, error) {
+func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any, path []string) (storedConfigMergeReport, error) {
 	report := newStoredConfigMergeReport()
 	for key := range base {
 		if _, exists := overlay[key]; !exists {
@@ -415,7 +417,7 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 
 	overlayKeys := make([]string, 0, len(overlay))
 	for key := range overlay {
-		if isDeprecatedTrackerURLField(path, key) {
+		if isDeprecatedStoredTrackerSetting(path, key) {
 			deprecatedPath := configMapPath(path, key)
 			report.deprecatedPaths = append(report.deprecatedPaths, deprecatedPath)
 			report.markChanged(deprecatedPath)
@@ -436,6 +438,25 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 
 	for _, key := range overlayKeys {
 		overlayValue := overlay[key]
+		if slices.Equal(path, []string{"Trackers"}) {
+			switch key {
+			case "DefaultTrackers":
+				names := parseDefaultTrackersValue(overlayValue)
+				cleaned := TrackersConfig{DefaultTrackers: names}
+				RemoveRetiredTrackerSettings(&cleaned)
+				if len(names) != len(cleaned.DefaultTrackers) {
+					overlayValue = cleaned.DefaultTrackers
+					report.deprecatedPaths = append(report.deprecatedPaths, configMapPath(path, key))
+					report.markChanged(configMapPath(path, key))
+				}
+			case "PreferredTracker":
+				if name, ok := overlayValue.(string); ok && isRemovedTracker(name) {
+					overlayValue = ""
+					report.deprecatedPaths = append(report.deprecatedPaths, configMapPath(path, key))
+					report.markChanged(configMapPath(path, key))
+				}
+			}
+		}
 		baseValue, exists := base[key]
 		if !exists {
 			if allowsStoredDynamicConfigEntry(path) || isStoredTrackerEntryPath(path) {
@@ -457,10 +478,7 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 				report.markInvalid(invalidPath)
 				continue
 			}
-			childPath := key
-			if path != "" {
-				childPath = path + "." + key
-			}
+			childPath := append(slices.Clone(path), key)
 			childReport, err := mergeStoredConfigMapWithReport(baseMap, overlayMap, childPath)
 			if err != nil {
 				return report, err
@@ -477,7 +495,7 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 // or folds it into a single existing ASCII-case tracker or field alias. Dynamic
 // tracker and torrent-client entries that are not objects are skipped without
 // marking the section changed.
-func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue any, path string) (storedConfigMergeReport, error) {
+func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue any, path []string) (storedConfigMergeReport, error) {
 	report := newStoredConfigMergeReport()
 	if usesASCIIStoredTrackerKeys(path) {
 		existingKey, ok, err := asciiConfigMapKey(base, key)
@@ -491,7 +509,7 @@ func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue
 				if !overlayOK {
 					return report, nil
 				}
-				return mergeStoredConfigMapWithReport(baseMap, overlayMap, configMapPath(path, existingKey))
+				return mergeStoredConfigMapWithReport(baseMap, overlayMap, append(slices.Clone(path), existingKey))
 			}
 			if !overlayOK {
 				return report, nil
@@ -520,7 +538,7 @@ func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue
 		}
 		if usesASCIIStoredTrackerKeys(path) {
 			cleaned := map[string]any{}
-			childReport, err := mergeStoredConfigMapWithReport(cleaned, overlayMap, configMapPath(path, key))
+			childReport, err := mergeStoredConfigMapWithReport(cleaned, overlayMap, append(slices.Clone(path), key))
 			if err != nil {
 				return report, err
 			}
@@ -585,12 +603,11 @@ func trackerFieldConfigMapKey(values map[string]any, key string) (string, bool, 
 // collision group that cannot apply to this tracker. Older saves could emit
 // every TrackerConfig field, including APIKey and PTP-only ApiKey, for unknown
 // trackers. A lone case alias remains eligible for legacy normalization.
-func shouldDiscardStoredTrackerField(path string, key string, values map[string]any) bool {
-	const trackerPathPrefix = "Trackers.Trackers."
-	trackerName, ok := strings.CutPrefix(path, trackerPathPrefix)
-	if !ok || trackerName == "" || strings.Contains(trackerName, ".") {
+func shouldDiscardStoredTrackerField(path []string, key string, values map[string]any) bool {
+	if !isStoredTrackerEntryPath(path) {
 		return false
 	}
+	trackerName := path[2]
 	allowed := trackerAllowedJSONKeys(trackerName)
 	if len(allowed) == 0 {
 		return false
@@ -616,15 +633,16 @@ func shouldDiscardStoredTrackerField(path string, key string, values map[string]
 	return hasKnownFoldPeer
 }
 
-func isDeprecatedTrackerURLField(path string, key string) bool {
-	const trackerPathPrefix = "Trackers.Trackers."
-	trackerName, ok := strings.CutPrefix(path, trackerPathPrefix)
-	return ok && trackerName != "" && !strings.Contains(trackerName, ".") && strings.EqualFold(strings.TrimSpace(key), "URL")
+func isDeprecatedStoredTrackerSetting(path []string, key string) bool {
+	if usesASCIIStoredTrackerKeys(path) && isRemovedTracker(key) {
+		return true
+	}
+	return isStoredTrackerEntryPath(path) && isDeprecatedTrackerField(key)
 }
 
 // validateStoredOverlayKeys rejects duplicate stored keys that would fold into
 // the same tracker name or tracker field before mutation starts.
-func validateStoredOverlayKeys(base map[string]any, keys []string, path string) error {
+func validateStoredOverlayKeys(base map[string]any, keys []string, path []string) error {
 	seen := map[string]string{}
 	for _, key := range keys {
 		foldKey := key
@@ -654,7 +672,7 @@ func validateStoredOverlayKeys(base map[string]any, keys []string, path string) 
 			if isRetainedStoredTrackerFieldAlias(path, previous, key) {
 				continue
 			}
-			return fmt.Errorf("duplicate folded config keys %q and %q at %q", previous, key, path)
+			return fmt.Errorf("duplicate folded config keys %q and %q at %q", previous, key, strings.Join(path, "."))
 		}
 		seen[foldKey] = key
 	}
@@ -663,12 +681,11 @@ func validateStoredOverlayKeys(base map[string]any, keys []string, path string) 
 
 // isRetainedStoredTrackerFieldAlias reports the unambiguous schema-known pair
 // left after a populated legacy alias outranks its zero-valued allowed peer.
-func isRetainedStoredTrackerFieldAlias(path, firstKey, secondKey string) bool {
-	const trackerPathPrefix = "Trackers.Trackers."
-	trackerName, ok := strings.CutPrefix(path, trackerPathPrefix)
-	if !ok || trackerName == "" || strings.Contains(trackerName, ".") {
+func isRetainedStoredTrackerFieldAlias(path []string, firstKey, secondKey string) bool {
+	if !isStoredTrackerEntryPath(path) {
 		return false
 	}
+	trackerName := path[2]
 	initTrackerTagMetadata()
 	if _, known := trackerKnownJSONKeys[firstKey]; !known {
 		return false
@@ -684,16 +701,14 @@ func isRetainedStoredTrackerFieldAlias(path, firstKey, secondKey string) bool {
 
 // usesASCIIStoredTrackerKeys reports paths whose dynamic child names are
 // tracker IDs and may use ASCII-case aliases.
-func usesASCIIStoredTrackerKeys(path string) bool {
-	return path == "Trackers.Trackers"
+func usesASCIIStoredTrackerKeys(path []string) bool {
+	return slices.Equal(path, []string{"Trackers", "Trackers"})
 }
 
-// configMapPath appends key to a dotted raw-config path.
-func configMapPath(path, key string) string {
-	if path == "" {
-		return key
-	}
-	return path + "." + key
+// configMapPath formats traversal segments for diagnostics only. Keeping keys
+// separate during traversal distinguishes dotted tracker names from nested fields.
+func configMapPath(path []string, key string) string {
+	return strings.Join(append(slices.Clone(path), key), ".")
 }
 
 // configMapRoot returns the top-level JSON config section for a dotted path.
@@ -709,18 +724,14 @@ func configMapRoot(path string) string {
 
 // allowsStoredDynamicConfigEntry reports raw JSON maps whose child keys are
 // user-defined entries rather than fixed struct fields.
-func allowsStoredDynamicConfigEntry(path string) bool {
-	return path == "Trackers.Trackers" || path == "TorrentClients"
+func allowsStoredDynamicConfigEntry(path []string) bool {
+	return slices.Equal(path, []string{"Trackers", "Trackers"}) || slices.Equal(path, []string{"TorrentClients"})
 }
 
 // isStoredTrackerEntryPath reports direct tracker-entry maps only; deeper
 // extension maps are preserved without tracker-field case folding.
-func isStoredTrackerEntryPath(path string) bool {
-	const prefix = "Trackers.Trackers."
-	if !strings.HasPrefix(path, prefix) {
-		return false
-	}
-	return !strings.Contains(strings.TrimPrefix(path, prefix), ".")
+func isStoredTrackerEntryPath(path []string) bool {
+	return len(path) == 3 && path[0] == "Trackers" && path[1] == "Trackers"
 }
 
 // asciiFoldKey lowercases ASCII letters without treating Unicode lookalikes as
@@ -765,7 +776,7 @@ func sortedUniqueStrings(values []string) []string {
 // current without overwriting known current values. It recurses using canonical
 // tracker names and fields so selected-section repair saves preserve distinct
 // future same-root fields without reintroducing folded aliases.
-func mergeStoredUnknownConfigValues(current, stored any, path string) error {
+func mergeStoredUnknownConfigValues(current, stored any, path []string) error {
 	currentMap, ok := current.(map[string]any)
 	if !ok {
 		return nil
@@ -775,7 +786,7 @@ func mergeStoredUnknownConfigValues(current, stored any, path string) error {
 		return nil
 	}
 	for key, storedValue := range storedMap {
-		if isDeprecatedTrackerURLField(path, key) {
+		if isDeprecatedStoredTrackerSetting(path, key) {
 			continue
 		}
 		if shouldDiscardStoredTrackerField(path, key, storedMap) {
@@ -786,10 +797,16 @@ func mergeStoredUnknownConfigValues(current, stored any, path string) error {
 			return err
 		}
 		if !exists {
+			// Missing tracker entries retain distinct extension keys, but no retired fields.
+			if entry, object := storedValue.(map[string]any); object && usesASCIIStoredTrackerKeys(path) {
+				cleaned := maps.Clone(entry)
+				stripDeprecatedTrackerFields(cleaned)
+				storedValue = cleaned
+			}
 			currentMap[key] = storedValue
 			continue
 		}
-		if err := mergeStoredUnknownConfigValues(currentValue, storedValue, configMapPath(path, currentKey)); err != nil {
+		if err := mergeStoredUnknownConfigValues(currentValue, storedValue, append(slices.Clone(path), currentKey)); err != nil {
 			return err
 		}
 	}
@@ -800,7 +817,7 @@ func mergeStoredUnknownConfigValues(current, stored any, path string) error {
 // should receive recursive unknown-field preservation at path. Tracker names
 // and direct tracker-entry fields use the same ASCII folding rules as load-time
 // repair; all other paths require exact keys.
-func storedUnknownConfigMergeTarget(current map[string]any, key, path string) (string, any, bool, error) {
+func storedUnknownConfigMergeTarget(current map[string]any, key string, path []string) (string, any, bool, error) {
 	currentValue, exists := current[key]
 	if exists {
 		return key, currentValue, true, nil
@@ -848,7 +865,7 @@ func preserveStoredUnknownConfigValues(ctx context.Context, repo any, sections m
 		return fmt.Errorf("load stored sections: %w", err)
 	}
 	for section, current := range sections {
-		if err := mergeStoredUnknownConfigValues(current, stored[section], section); err != nil {
+		if err := mergeStoredUnknownConfigValues(current, stored[section], []string{section}); err != nil {
 			return err
 		}
 	}

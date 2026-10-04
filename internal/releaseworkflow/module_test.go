@@ -4631,6 +4631,7 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 	t.Parallel()
 
 	waivableFingerprint := testFingerprint(t, "alpha-waivable-rules")
+	betaFingerprint := testFingerprint(t, "beta-waivable-rules")
 	projector := trackerProjectionBuilderFunc(func(
 		_ context.Context,
 		_ api.ReleaseSnapshot,
@@ -4646,38 +4647,50 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 		api.TrackerReleaseProjectionSet,
 		error,
 	) {
-		projection := testProjection(t, "ALPHA", "Example.Release.2026.ALPHA-GRP")
-		projection.WaivableRuleFingerprint = waivableFingerprint
-		projection.PolicyDecisions = []api.TrackerPolicyDecision{{
-			Code:        "language_rule",
-			Message:     "language waiver required",
-			Disposition: api.RuleDispositionWaivable,
-		}}
-		status := api.StageStatusReady
-		inputFingerprint := testFingerprint(t, "authorized-rule-projection")
-		if ruleAuthorizations["ALPHA"] == waivableFingerprint {
-			projection.RuleAuthorizationFingerprint = waivableFingerprint
-			projection.PolicyDecisions[0].Decision = "authorized"
-		} else {
-			inputFingerprint = testFingerprint(t, "pending-rule-projection")
-			projection.Readiness = api.ReadinessStatusBlocked
-			projection.DupeReady = false
-			projection.UploadReady = false
-			projection.PolicyDecisions[0].Decision = "authorization_required"
-			projection.PolicyDecisions[0].Blocking = true
-			projection.RequiredActions = []api.RequiredAction{{
-				Kind:   api.RequiredActionAuthorizeRules,
-				Prompt: "Alpha rule warning. Upload to this tracker anyway?",
+		projections := make([]api.TrackerReleaseProjection, 0, len(trackerIDs))
+		actions := make([]api.RequiredAction, 0, len(trackerIDs))
+		for _, trackerID := range trackerIDs {
+			projection := testProjection(t, trackerID, "Example.Release.2026."+string(trackerID)+"-GRP")
+			fingerprint := waivableFingerprint
+			if trackerID == "BETA" {
+				fingerprint = betaFingerprint
+			}
+			projection.WaivableRuleFingerprint = fingerprint
+			projection.PolicyDecisions = []api.TrackerPolicyDecision{{
+				Code:        "language_rule",
+				Message:     "language waiver required",
+				Disposition: api.RuleDispositionWaivable,
 			}}
-			status = api.StageStatusBlocked
+			if ruleAuthorizations[trackerID] == fingerprint {
+				projection.RuleAuthorizationFingerprint = fingerprint
+				projection.PolicyDecisions[0].Decision = "authorized"
+				projection.RequiredActions = []api.RequiredAction{{
+					Kind:   api.RequiredActionAuthorizeRules,
+					Status: api.RequiredActionStatusResolved,
+					Prompt: "Acknowledge these tracker warnings?",
+				}}
+			} else {
+				projection.Readiness = api.ReadinessStatusBlocked
+				projection.DupeReady = false
+				projection.UploadReady = false
+				projection.PolicyDecisions[0].Decision = "authorization_required"
+				projection.PolicyDecisions[0].Blocking = true
+				projection.RequiredActions = []api.RequiredAction{{
+					Kind:   api.RequiredActionAuthorizeRules,
+					Prompt: "Acknowledge these tracker warnings?",
+				}}
+			}
+			projections = append(projections, projection)
+			actions = append(actions, projection.RequiredActions...)
 		}
+		status := finalizedProjectionStatus(projections, actions, nil)
 		return testCatalog(t), testRuntime(t), api.TrackerSelection{TrackerIDs: trackerIDs}, api.TrackerReleaseProjectionSet{
-			InputFingerprint:  inputFingerprint,
+			InputFingerprint:  testFingerprint(t, "rule-projections"),
 			PolicyFingerprint: testFingerprint(t, "waivable-rule-policy"),
 			ExecutionMode:     executionMode,
-			Projections:       []api.TrackerReleaseProjection{projection},
+			Projections:       projections,
 			Status:            status,
-			RequiredActions:   append([]api.RequiredAction(nil), projection.RequiredActions...),
+			RequiredActions:   actions,
 		}, nil
 	})
 	module, repository := newTestModule(t, testPreparer(), WithTrackerProjectionBuilder(projector))
@@ -4690,10 +4703,10 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 	result = executeCommand(t, module, ProjectTrackersCommand{
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
-		TrackerIDs:       []api.TrackerID{"ALPHA"},
+		TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
 		Instructions:     map[api.TrackerID]api.TrackerProjectionInstructions{"ALPHA": {}},
 	})
-	if result.Workflow.Status != api.WorkflowStatusBlocked || len(result.Workflow.RequiredActions) != 1 {
+	if result.Workflow.Status != api.WorkflowStatusBlocked || len(result.Workflow.RequiredActions) != 2 {
 		t.Fatalf("initial rule authorization state = %#v", result)
 	}
 	action := result.Workflow.RequiredActions[0]
@@ -4709,7 +4722,7 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 		},
 	})
 	projection := result.Projections.Projections[0]
-	if result.Workflow.Status != api.WorkflowStatusActive || len(result.Workflow.RequiredActions) != 0 ||
+	if result.Workflow.Status != api.WorkflowStatusBlocked || len(result.Workflow.RequiredActions) != 2 || result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusResolved ||
 		projection.Readiness != api.ReadinessStatusReady || !projection.UploadReady ||
 		projection.RuleAuthorizationFingerprint != waivableFingerprint {
 		t.Fatalf(
@@ -4719,6 +4732,19 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 			projection,
 		)
 	}
+	result = executeCommand(t, module, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         result.Projections.Projections[1].RequiredActions[0].ID,
+			WorkflowRevision: result.Workflow.Revision,
+			Confirmed:        &confirmed,
+		},
+	})
+	if result.Workflow.Status != api.WorkflowStatusActive {
+		t.Fatalf("both tracker acknowledgements did not unblock workflow: %#v", result.Workflow)
+	}
+
 	state, err := repository.Load(context.Background(), testOwnerID, result.Workflow.ID)
 	if err != nil {
 		t.Fatalf("reload authorized workflow: %v", err)
@@ -4738,6 +4764,83 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 		IdempotencyKey: "stale-rule-authorization",
 	}); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("stale rule authorization error = %v", err)
+	}
+	state.Workflow.TrackerPreflight = &api.TrackerPreflightAssessmentRef{ID: "prepared-preflight", Revision: 1}
+	state.Workflow.Dupes = &api.DupeAssessmentRef{ID: "prepared-dupes", Revision: 1}
+	state.Workflow.TrackerApproval = &api.TrackerApprovalSnapshotRef{ID: "prepared-approval", Revision: 1}
+	state.Workflow.Media = &api.MediaArtifactSetRef{ID: "prepared-media", Revision: 1}
+	state.Workflow.Descriptions = &api.DescriptionSetRef{ID: "prepared-descriptions", Revision: 1}
+	state.Workflow.DryRun = &api.UploadDryRunResultRef{ID: "prepared-plan", Revision: 1}
+	state.Workflow.UploadResult = &api.UploadResultRef{ID: "prepared-upload", Revision: 1}
+	unconfirmed := false
+	if _, err := module.resolveAction(context.Background(), testOwnerID, &state, state.Workflow.Revision+1, module.clock.Now(), ResolveActionCommand{
+		ExpectedRevision: state.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         result.Projections.Projections[0].RequiredActions[0].ID,
+			WorkflowRevision: state.Workflow.Revision,
+			Confirmed:        &unconfirmed,
+		},
+	}); err != nil {
+		t.Fatalf("revoke prepared rule authority: %v", err)
+	}
+	if state.Workflow.TrackerPreflight != nil || state.Workflow.Dupes != nil || state.Workflow.TrackerApproval != nil ||
+		state.Workflow.Media != nil || state.Workflow.Descriptions != nil || state.Workflow.DryRun != nil || state.Workflow.UploadResult != nil {
+		t.Fatalf("rule revocation retained downstream authority: %#v", state.Workflow)
+	}
+
+	resolvedAction := result.Projections.Projections[0].RequiredActions[0]
+	confirmed = false
+	var handled bool
+	result, handled, err = module.resolveContinuationAnswer(context.Background(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "revoke-rule-acknowledgement",
+		Answers: []api.RequiredActionAnswer{{
+			ActionID:         resolvedAction.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			Confirmed:        &confirmed,
+		}},
+	}, result, TrackerDecisionModeWebUIControls)
+	if err != nil || !handled {
+		t.Fatalf("revoke rule acknowledgement through continuation: handled=%t err=%v", handled, err)
+	}
+	if result.Workflow.Status != api.WorkflowStatusBlocked || result.Projections.Projections[0].RuleAuthorizationFingerprint != "" ||
+		len(result.Workflow.RequiredActions) != 2 || result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusPending {
+		t.Fatalf("revoked rule authorization = %#v", result)
+	}
+	if result.Projections.Projections[1].RuleAuthorizationFingerprint != betaFingerprint {
+		t.Fatalf("revocation cleared unrelated BETA authority: %#v", result.Projections)
+	}
+	confirmed = true
+	result = executeCommand(t, module, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         result.Workflow.RequiredActions[0].ID,
+			WorkflowRevision: result.Workflow.Revision,
+			Confirmed:        &confirmed,
+		},
+	})
+	if result.Projections.Projections[0].RuleAuthorizationFingerprint != waivableFingerprint {
+		t.Fatalf("reacknowledged rule authorization = %#v", result.Projections)
+	}
+
+	obsoleteActionID := result.Projections.Projections[0].RequiredActions[0].ID
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "Example.Release.2026.1080p-GRP", Force: true},
+	})
+	confirmed = false
+	if _, err := module.Execute(context.Background(), testOwnerID, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         obsoleteActionID,
+			WorkflowRevision: result.Workflow.Revision,
+			Confirmed:        &confirmed,
+		},
+		IdempotencyKey: "revoke-obsolete-generation",
+	}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("obsolete generation revocation error = %v", err)
 	}
 }
 

@@ -589,7 +589,7 @@ func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 		VideoCodec:  strings.TrimSpace(subject.VideoCodec),
 		VideoEncode: strings.TrimSpace(subject.VideoEncode),
 		HDR:         subject.HDRFacts,
-		Edition:     strings.TrimSpace(subject.Edition),
+		Edition:     subject.EditionLabel(),
 		Region:      strings.TrimSpace(subject.Region),
 		ThreeD:      strings.TrimSpace(subject.Is3D),
 		Group:       strings.TrimSpace(subject.Tag),
@@ -708,13 +708,17 @@ func ApplyProjectionRuleFailures(
 		projection.UploadReady = false
 		return nil
 	}
-	if waivableFingerprint != "" && !authorized &&
-		api.NormalizeWorkflowExecutionMode(executionMode) != api.WorkflowExecutionModeDebug {
-		projection.Readiness = api.ReadinessStatusBlocked
-		projection.DupeReady = false
-		projection.UploadReady = false
+	if waivableFingerprint != "" && api.NormalizeWorkflowExecutionMode(executionMode) != api.WorkflowExecutionModeDebug {
+		status := api.RequiredActionStatusResolved
+		if !authorized {
+			status = api.RequiredActionStatusPending
+			projection.Readiness = api.ReadinessStatusBlocked
+			projection.DupeReady = false
+			projection.UploadReady = false
+		}
 		projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
 			Kind:      api.RequiredActionAuthorizeRules,
+			Status:    status,
 			TrackerID: projection.TrackerID,
 			Prompt:    waivableRuleAuthorizationPrompt(*projection, failures),
 		})
@@ -750,5 +754,5 @@ func waivableRuleAuthorizationPrompt(projection api.TrackerReleaseProjection, fa
 	} else if !strings.ContainsAny(detail[len(detail)-1:], ".!?") {
 		detail += "."
 	}
-	return fmt.Sprintf("%s %s: %s Upload to this tracker anyway?", tracker, label, detail)
+	return fmt.Sprintf("%s %s: %s Acknowledge these tracker warnings?", tracker, label, detail)
 }

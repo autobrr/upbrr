@@ -47,10 +47,11 @@ func resolveName(meta api.UploadSubject) string {
 			name += fmt.Sprintf(" E%02d", meta.EpisodeInt)
 		}
 	}
-	name += fmt.Sprintf(" [%s %s %s]", meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
+	video := videoSuffix(meta.VideoCodec)
 	if strings.EqualFold(strings.TrimSpace(meta.VideoCodec), "HEVC") {
-		name = strings.Replace(name, "]", " HEVC]", 1)
+		video += " HEVC"
 	}
+	name += fmt.Sprintf(" [%s %s %s]", meta.Release.Resolution, typeName, video)
 	return appendCountryCode(meta, name)
 }
 

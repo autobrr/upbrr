@@ -9,11 +9,14 @@ import (
 )
 
 // ActiveInputSnapshot is one owner-safe read of the database's current input.
-// Private paths, content digests, coordinator tokens and reservation data are excluded.
+// Content digests, coordinator tokens and reservation data are excluded.
 type ActiveInputSnapshot struct {
-	State         ActiveInputState        `json:"state"`
-	Revision      uint64                  `json:"revision"`
-	InputID       string                  `json:"inputId,omitempty"`
+	State    ActiveInputState `json:"state"`
+	Revision uint64           `json:"revision"`
+	InputID  string           `json:"inputId,omitempty"`
+	// SourcePath is the verified canonical path, exposed only to the current input's owner.
+	// It remains available before preparation produces a release.
+	SourcePath    string                  `json:"sourcePath,omitempty"`
 	SourceVersion string                  `json:"sourceVersion,omitempty"`
 	Current       *ReleaseWorkflowCurrent `json:"current,omitempty"`
 	// RecoveryWorkflowIDs lists this owner's unresolved migrated workflows only

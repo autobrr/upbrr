@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -17,6 +19,8 @@ import (
 // sequence. Canonical preparation sees one deep collection port; intermediate
 // mutable evidence and step ordering do not escape this package.
 func (s *Service) CollectPreparationEvidence(ctx context.Context, request preparationstate.Request) (result preparationstate.State, resultErr error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	store, _ := s.repo.(api.MetadataEvidenceRepository)
 	fingerprint := request.SourceFingerprint
 	if fingerprint == "" || request.Manifest.SourcePath == "" {
@@ -25,7 +29,7 @@ func (s *Service) CollectPreparationEvidence(ctx context.Context, request prepar
 	if request.Input.VerifiedSource != nil {
 		fingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
 	}
-	ctx, scope := evidence.WithScope(ctx, store, request.Manifest.SourcePath, fingerprint, request.Input.ExternalFreshness, s.logger)
+	ctx, scope := evidence.WithScope(ctx, store, request.Manifest.SourcePath, fingerprint, request.Input.ExternalFreshness, logger)
 	defer func() {
 		if err := scope.Err(); err != nil {
 			result = preparationstate.State{}

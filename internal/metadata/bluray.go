@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
@@ -18,13 +20,13 @@ import (
 )
 
 func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate.State, bdinfo *discparse.BDInfo) preparationstate.State {
+	logger := logging.FromContext(ctx, s.logger)
+
 	if meta.ExternalFreshness.RequiresRefresh() && !evidence.Enabled(ctx) {
 		meta.ProviderMetadata.Bluray = nil
 	}
 	if reason := s.blurayLookupSkipReason(meta); reason != "" {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: blu-ray.com lookup skipped: %s", reason)
-		}
+		logger.Debugf("metadata: blu-ray.com lookup skipped: %s", reason)
 		meta = applySelectedBlurayCandidate(meta)
 		return meta
 	}
@@ -62,9 +64,7 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate
 		SingleThreshold:   s.cfg.Metadata.BluraySingleScore,
 	})
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: blu-ray.com lookup failed: %v", err)
-		}
+		logger.Warnf("metadata: blu-ray.com lookup failed: %v", err)
 		if meta.ExternalFreshness.RequiresRefresh() {
 			appendProviderRefreshWarning(&meta, "Blu-ray.com", err)
 		}

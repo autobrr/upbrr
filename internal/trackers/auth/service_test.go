@@ -23,7 +23,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/btn"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
-	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/thr"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -33,7 +32,7 @@ func newTestService(cfg config.Config) *Service {
 
 func newTestServiceWithLogger(cfg config.Config, logger api.Logger) *Service {
 	registry := trackers.NewRegistry()
-	for _, definition := range []trackers.Definition{btn.New(), ptp.New(), rtf.New(), thr.New()} {
+	for _, definition := range []trackers.Definition{btn.New(), ptp.New(), rtf.New()} {
 		if err := registry.Register(definition); err != nil {
 			panic(err)
 		}
@@ -1288,26 +1287,6 @@ func TestRTFStatusTreatsCredentialsAsRefreshAuth(t *testing.T) {
 	}
 }
 
-func TestTHRDoesNotAdvertiseCookieImport(t *testing.T) {
-	t.Parallel()
-
-	service := newTestService(config.Config{})
-	caps, err := service.Capabilities(context.Background())
-	if err != nil {
-		t.Fatalf("Capabilities: %v", err)
-	}
-	for _, cap := range caps {
-		if cap.TrackerID != "THR" {
-			continue
-		}
-		if cap.SupportsCookieFile {
-			t.Fatalf("THR upload logs in per request and must not advertise DB cookie import: %#v", cap)
-		}
-		return
-	}
-	t.Fatal("THR capability not found")
-}
-
 func TestFFAdvertisesCookieImportWithRemoteLoginAction(t *testing.T) {
 	t.Parallel()
 
@@ -1998,13 +1977,6 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 			}
 			if !cap.SupportsCookieFile || cap.SupportsManual2FA {
 				t.Fatalf("%s must advertise cookie import without manual 2FA: %#v", cap.TrackerID, cap)
-			}
-		case "THR":
-			if !cap.SupportsLogin || !cap.SupportsAutoLogin {
-				t.Fatalf("%s adapter-backed login capability must be preserved: %#v", cap.TrackerID, cap)
-			}
-			if cap.SupportsCookieFile || cap.SupportsManual2FA {
-				t.Fatalf("%s must advertise stateless login without cookie import or 2FA: %#v", cap.TrackerID, cap)
 			}
 		case "ASC":
 			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {

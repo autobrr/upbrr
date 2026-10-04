@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ReactNode } from "react";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
@@ -14,10 +14,15 @@ import type {
   MediaCaptureInstructions,
   ReleaseWorkflowCurrent,
   TrackerProjectionInstructions,
+  SaveReleaseWorkflowDescriptionOverrideRequest,
   WorkflowContinuation,
 } from "../api/generated/release-workflow";
 import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
+import DescriptionBuilderPage from "../pages/description_builder";
+import ScreenshotsPage from "../pages/screenshots";
 import type { ReleaseSessionPorts } from "./ports";
+import { setAppRequestHandlerForTests } from "../api/client";
+import { productionReleaseSessionPorts } from "./production";
 
 const preview = (sourcePath: string, generation: number): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -2186,6 +2191,345 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
+  it.each(["error", "stale", "closed"])(
+    "does not accept an open with outcome %s",
+    async (outcome) => {
+      const sourcePath = "C:\\media\\Rejected.Open.2026.mkv";
+      const response = createDeferred<ActiveInputSnapshot>();
+      const open = vi.fn(() => response.promise);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            activeInput: {
+              get: async (): Promise<ActiveInputSnapshot> =>
+                outcome === "closed"
+                  ? {
+                      state: "active",
+                      revision: 4,
+                      inputId: "input-current",
+                      sourceVersion: "source-previous",
+                      current: workflowCurrentFromPreview(
+                        workflowCurrent("workflow-current", 2),
+                        preview(sourcePath, 1),
+                      ),
+                    }
+                  : { state: "empty", revision: 4 },
+              open,
+            },
+          }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.input.view.activeInput.revision).toBe(4));
+        let opening!: Promise<boolean>;
+        act(() => {
+          opening = result.current.input.openSource(sourcePath);
+        });
+        await waitFor(() => expect(open).toHaveBeenCalledOnce());
+        if (outcome === "closed") {
+          await act(async () => expect(await result.current.input.close()).toBe(true));
+        }
+        await act(async () => {
+          if (outcome === "error") response.reject(new Error("Source could not be opened."));
+          else
+            response.resolve({
+              state: "active",
+              revision: outcome === "stale" ? 3 : 5,
+              inputId: "input-rejected",
+              sourceVersion: "source-one",
+              sourcePath,
+              current: workflowCurrentFromPreview(
+                workflowCurrent("workflow-rejected", 2),
+                preview(sourcePath, 1),
+              ),
+            });
+          expect(await opening).toBe(false);
+        });
+        expect(result.current.input.view.activeInput.state).toBe("empty");
+        expect(result.current.input.view.selectedSource).toBe("");
+        expect(result.current.workflow.view.current).toBeNull();
+      } finally {
+        unmount();
+      }
+    },
+  );
+
+  it.each(["confirm_corrections", "select_playlist"])(
+    "reports an accepted open separately from preparation readiness for %s",
+    async (kind) => {
+      const sourcePath = "C:\\media\\Pending.Review.2026.mkv";
+      const initial = workflowCurrent("workflow-pending-open", 2);
+      const current: ReleaseWorkflowCurrent = {
+        ...initial,
+        workflow: {
+          ...initial.workflow,
+          status: "blocked",
+          requiredActions: [
+            {
+              id: "action-review",
+              kind,
+              status: "pending",
+              workflowRevision: 2,
+              createdAt: initial.workflow.createdAt,
+              prompt: "Review the input.",
+              ...(kind === "confirm_corrections"
+                ? {
+                    correctionConfirmation: {
+                      revision: 3,
+                      fields: ["metadata.title"],
+                      previousBindings: {},
+                      currentBinding: {
+                        category: "movie",
+                        sourceFingerprint: "source-one",
+                        providerIds: { imdbId: 0, tmdbId: 222, tvdbId: 0, tvmazeId: 0, malId: 0 },
+                      },
+                    },
+                  }
+                : { options: [] }),
+            },
+          ],
+        },
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({ workflow: workflowPorts({ continue: async () => current }) }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+        await act(async () => expect(await result.current.input.openSource(sourcePath)).toBe(true));
+        expect(result.current.input.view.status).toBe("awaiting_input");
+        expect(result.current.input.view.error).toBe("");
+        expect(result.current.input.view.selectedSource).toBe(sourcePath);
+        expect(result.current.input.view.release).toBeNull();
+        await act(async () =>
+          expect(
+            await result.current.input.prepareSource(sourcePath, result.current.input.view.intent),
+          ).toBe(false),
+        );
+        expect(result.current.input.view.status).toBe("awaiting_input");
+      } finally {
+        unmount();
+      }
+    },
+  );
+
+  it.each(["keep", "edit", "reset"])(
+    "reviews saved corrections before a first release exists and applies %s with revision authority",
+    async (choice) => {
+      const sourcePath = "C:\\media\\Correction.Review.2026.mkv";
+      const workflowID = "workflow-correction-review";
+      const binding = {
+        category: "movie" as const,
+        providerIds: { imdbId: 0, tmdbId: 222, tvdbId: 0, tvmazeId: 0, malId: 0 },
+        sourceFingerprint: "source-current",
+      };
+      const review = {
+        revision: 3,
+        fields: ["metadata.title", "metadata.genres"],
+        previousBindings: {
+          "metadata.title": { ...binding, providerIds: { ...binding.providerIds, tmdbId: 111 } },
+        },
+        currentBinding: binding,
+      };
+      const initial = workflowCurrent(workflowID, 7);
+      let current: ReleaseWorkflowCurrent = {
+        ...initial,
+        workflow: {
+          ...initial.workflow,
+          status: "blocked",
+          requiredActions: [
+            {
+              id: "action-corrections",
+              kind: "confirm_corrections",
+              status: "pending",
+              workflowRevision: 7,
+              createdAt: initial.workflow.createdAt,
+              prompt: "Review saved corrections.",
+              correctionConfirmation: review,
+            },
+          ],
+        },
+        corrections: {
+          revision: 3,
+          corrections: {
+            version: 1,
+            identity: {},
+            releaseName: {},
+            metadata: { Title: "Saved title", Genres: ["Drama"] },
+            staleContentFields: review.fields,
+          },
+        },
+      };
+      let snapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
+      const open = vi.fn(
+        async (
+          request: Parameters<ReleaseSessionPorts["activeInput"]["open"]>[0],
+        ): Promise<ActiveInputSnapshot> => {
+          if (request.request.intent.correctionPatch) {
+            // Resolve one field first; the remaining review must remain available without a release.
+            const remaining = request.request.intent.correctionPatch.confirmFields?.some(
+              (field) => field.field === "metadata.genres",
+            )
+              ? []
+              : ["metadata.genres"];
+            current = {
+              ...current,
+              workflow: {
+                ...current.workflow,
+                revision: current.workflow.revision + 1,
+                requiredActions: remaining.length
+                  ? [
+                      {
+                        ...current.workflow.requiredActions![0],
+                        correctionConfirmation: { ...review, revision: 4, fields: remaining },
+                      },
+                    ]
+                  : [],
+              },
+              corrections: { ...current.corrections!, revision: 4 },
+            };
+            if (!remaining.length)
+              current = workflowCurrentFromPreview(current, preview(sourcePath, 1));
+          }
+          snapshot = {
+            state: "active",
+            revision: request.expectedRevision + 1,
+            inputId: "input-corrections",
+            sourceVersion: "source-one",
+            sourcePath,
+            current,
+          };
+          return snapshot;
+        },
+      );
+      const get = vi.fn(async () => structuredClone(snapshot));
+      const wrapper = wrapperFor(
+        portsFor({
+          activeInput: { open, get },
+          workflow: workflowPorts({ continue: async () => current }),
+        }),
+      );
+      let { result, unmount } = renderHook(useReleaseSession, { wrapper });
+      try {
+        act(() => result.current.input.updateSourceDraft(sourcePath));
+        await act(async () => expect(await result.current.input.prepare()).toBe(false));
+        expect(result.current.input.view.status).toBe("awaiting_input");
+        expect(result.current.input.view.error).toBe("");
+        expect(result.current.input.view.release).toBeNull();
+        expect(result.current.input.view.correctionReview).toEqual(review);
+        expect(result.current.input.view.intent.metadata).toEqual({
+          Title: "Saved title",
+          Genres: ["Drama"],
+        });
+        unmount();
+        ({ result, unmount } = renderHook(useReleaseSession, { wrapper }));
+        await waitFor(() => expect(result.current.input.view.status).toBe("awaiting_input"));
+        expect(result.current.input.view.selectedSource).toBe(sourcePath);
+        expect(result.current.input.view.intent.metadata).toEqual({
+          Title: "Saved title",
+          Genres: ["Drama"],
+        });
+        expect(result.current.input.view.correctionReview).toEqual(review);
+        act(() => {
+          if (choice === "keep")
+            result.current.input.confirmCorrection({ field: "metadata.title" });
+          if (choice === "edit")
+            result.current.input.changeMetadata({
+              ...result.current.input.view.intent.metadata,
+              Title: "Edited title",
+            });
+          if (choice === "reset") result.current.input.resetCorrection({ field: "metadata.title" });
+        });
+        const refreshOnFocus = async () => {
+          const calls = get.mock.calls.length;
+          await act(async () => fireEvent.focus(window));
+          await waitFor(() => expect(get).toHaveBeenCalledTimes(calls + 1));
+          await waitFor(() => expect(result.current.input.view.status).toBe("awaiting_input"));
+        };
+        await refreshOnFocus();
+        expect(result.current.input.view.correctionDirty).toBe(true);
+        expect(result.current.input.view.confirmFields).toEqual(
+          choice === "keep" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.resetFields).toEqual(
+          choice === "reset" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.valueFields).toEqual(
+          choice === "edit" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.intent.metadata.Title).toBe(
+          choice === "edit" ? "Edited title" : choice === "reset" ? undefined : "Saved title",
+        );
+        current = {
+          ...current,
+          workflow: {
+            ...current.workflow,
+            revision: current.workflow.revision + 1,
+            requiredActions: [
+              {
+                ...current.workflow.requiredActions![0],
+                workflowRevision: current.workflow.revision + 1,
+                correctionConfirmation: {
+                  ...review,
+                  currentBinding: {
+                    ...binding,
+                    providerIds: { ...binding.providerIds, tmdbId: 333 },
+                  },
+                },
+              },
+            ],
+          },
+        };
+        snapshot = { ...snapshot, current };
+        await refreshOnFocus();
+        expect(result.current.input.view.confirmFields).toEqual([]);
+        expect(result.current.input.view.resetFields).toEqual(
+          choice === "reset" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.valueFields).toEqual(
+          choice === "edit" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.intent.metadata.Title).toBe(
+          choice === "edit" ? "Edited title" : choice === "reset" ? undefined : "Saved title",
+        );
+        if (choice === "keep") {
+          act(() => result.current.input.confirmCorrection({ field: "metadata.title" }));
+        }
+        await act(async () => expect(await result.current.input.prepare()).toBe(false));
+        expect(open.mock.calls[1][0]).toMatchObject({
+          expectedRevision: 1,
+          request: {
+            intent: {
+              correctionPatch: {
+                expectedRevision: 3,
+                confirmFields: choice === "keep" ? [{ field: "metadata.title" }] : [],
+                resetFields: choice === "reset" ? [{ field: "metadata.title" }] : [],
+                values: {
+                  Identity: {},
+                  ReleaseName: {},
+                  Metadata: choice === "edit" ? { Title: "Edited title" } : {},
+                },
+              },
+            },
+          },
+        });
+        expect(result.current.input.view.status).toBe("awaiting_input");
+        expect(result.current.input.view.error).toBe("");
+        expect(result.current.input.view.correctionReview?.fields).toEqual(["metadata.genres"]);
+        expect(result.current.input.view.confirmFields).toEqual([]);
+        expect(result.current.input.view.resetFields).toEqual([]);
+        expect(result.current.input.view.valueFields).toEqual([]);
+        act(() => result.current.input.confirmCorrection({ field: "metadata.genres" }));
+        await act(async () => expect(await result.current.input.prepare()).toBe(true));
+        expect(result.current.input.view.status).toBe("ready");
+        expect(result.current.input.view.correctionReview).toBeNull();
+      } finally {
+        unmount();
+      }
+    },
+  );
+
   it("keeps a same-input correction draft for an explicit retry after stale-review resync", async () => {
     const workflowID = "workflow-stale-correction";
     const sourcePath = "C:\\media\\Stale.Correction.2026.mkv";
@@ -2852,7 +3196,7 @@ describe("useReleaseSession", () => {
     },
   );
 
-  it("accepts a tracker rule warning from the dupe facet", async () => {
+  it("acknowledges, revokes, and reacknowledges tracker warnings from the dupe facet", async () => {
     const workflowID = "workflow-dupe-rule-override";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
     const action = {
@@ -2886,7 +3230,46 @@ describe("useReleaseSession", () => {
         ],
       } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
     };
-    const continueWorkflow = vi.fn(async () => retained);
+    let current = retained;
+    const continueWorkflow = vi.fn(async (request: ContinueReleaseWorkflowRequest) => {
+      const acknowledged = request.answers?.[0]?.confirmed === true;
+      if (
+        Boolean(current.projections?.projections[0]?.ruleAuthorizationFingerprint) === acknowledged
+      ) {
+        return current;
+      }
+      const revision = current.workflow.revision + 1;
+      const updatedAction = {
+        ...action,
+        id: `action-authorize-alpha-${revision}`,
+        status: acknowledged ? ("resolved" as const) : ("pending" as const),
+        workflowRevision: revision,
+      };
+      current = {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          revision,
+          status: acknowledged ? "active" : "blocked",
+          requiredActions: acknowledged ? [] : [updatedAction],
+        },
+        continuation: {
+          ...current.continuation,
+          requiredActions: acknowledged ? [] : [updatedAction],
+        },
+        projections: {
+          ...current.projections!,
+          projections: current.projections!.projections.map((projection) => ({
+            ...projection,
+            waivableRuleFingerprint: "current-warnings",
+            ruleAuthorizationFingerprint: acknowledged ? "current-warnings" : "",
+            readiness: acknowledged ? ("ready" as const) : ("blocked" as const),
+            requiredActions: [updatedAction],
+          })),
+        },
+      };
+      return current;
+    });
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
@@ -2901,12 +3284,33 @@ describe("useReleaseSession", () => {
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
     await act(async () => {
-      expect(await result.current.duplicates.overrideRules("alpha")).toBe(true);
+      expect(await result.current.duplicates.acknowledgeRules("alpha", true)).toBe(true);
     });
     expect(continueWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({
         goal: "duplicates_decided",
         answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
+      }),
+      expect.any(AbortSignal),
+    );
+
+    await act(async () => {
+      expect(await result.current.duplicates.acknowledgeRules("alpha", false)).toBe(true);
+    });
+    expect(continueWorkflow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        goal: "duplicates_decided",
+        answers: [{ actionId: "action-authorize-alpha-8", workflowRevision: 8, confirmed: false }],
+      }),
+      expect.any(AbortSignal),
+    );
+    await act(async () => {
+      expect(await result.current.duplicates.acknowledgeRules("alpha", true)).toBe(true);
+    });
+    expect(continueWorkflow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        goal: "duplicates_decided",
+        answers: [{ actionId: "action-authorize-alpha-9", workflowRevision: 9, confirmed: true }],
       }),
       expect.any(AbortSignal),
     );
@@ -2957,7 +3361,7 @@ describe("useReleaseSession", () => {
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
     await act(async () => {
-      expect(await result.current.duplicates.overrideRules("alpha")).toBe(false);
+      expect(await result.current.duplicates.acknowledgeRules("alpha", true)).toBe(false);
     });
     expect(continueWorkflow).not.toHaveBeenCalled();
 
@@ -3308,6 +3712,130 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it.each(["C:\\media\\Next.Release.2026.mkv", ""])(
+    "preserves an unsubmitted source path %j until the active input changes",
+    async (draft) => {
+      const workflowID = "workflow-source-draft";
+      const current = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 3),
+        preview("C:\\media\\Example.Release.2026.mkv", 1),
+      );
+      let snapshot: ActiveInputSnapshot = {
+        state: "active",
+        revision: 1,
+        inputId: "input-one",
+        sourceVersion: "source-one",
+        current,
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({ activeInput: { get: async () => structuredClone(snapshot) } }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+        act(() => result.current.input.updateSourceDraft(draft));
+        await act(() => result.current.workflow.reload());
+        expect(result.current.input.view.sourceDraft).toBe(draft);
+        expect(result.current.input.view.preparationDirty).toBe(false);
+        const nextPath = "C:\\media\\Other.Release.2026.mkv";
+        snapshot = {
+          state: "active",
+          revision: 2,
+          inputId: "input-two",
+          sourceVersion: "source-two",
+          current: workflowCurrentFromPreview(
+            workflowCurrent("workflow-two", 3),
+            preview(nextPath, 1),
+          ),
+        };
+        await act(() => result.current.workflow.reload());
+        expect(result.current.input.view.sourceDraft).toBe(nextPath);
+      } finally {
+        unmount();
+      }
+    },
+  );
+
+  it("preserves description drafts when the active input refreshes unchanged trackers", async () => {
+    const workflowID = "workflow-description-refresh";
+    const current: ReleaseWorkflowCurrent = {
+      ...workflowCurrentFromPreview(
+        workflowCurrentWithDescriptions(workflowID, 7, "generated source"),
+        preview("C:\\media\\Example.Release.2026.1080p-GRP.mkv", 1),
+      ),
+      selection: {
+        id: "selection-1",
+        workflowId: workflowID,
+        revision: 1,
+        catalog: { id: "catalog-1", revision: 1 },
+        runtime: { id: "runtime-1", revision: 1 },
+        trackerIds: ["AITHER"],
+        fingerprint: "1".repeat(64),
+        createdAt: "2026-07-21T00:00:00Z",
+      },
+    };
+    let refresh: () => void = () => undefined;
+    vi.useFakeTimers();
+    const ports = portsFor({
+      resumeWorkflowID: workflowID,
+      workflow: workflowPorts({ current: async () => structuredClone(current) }),
+      activeInput: {
+        subscribe: (callback) => {
+          refresh = callback;
+          return () => undefined;
+        },
+      },
+    });
+    function DescriptionEditor() {
+      const session = useReleaseSession();
+      return (
+        <DescriptionBuilderPage
+          facet={session.descriptions}
+          sourcePath={current.release!.release.Source.SourcePath}
+        />
+      );
+    }
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <DescriptionEditor />
+        </ReleaseSessionProvider>
+      ),
+    });
+    try {
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(result.current.workflow.view.status).toBe("ready");
+      fireEvent.click(screen.getByRole("button", { name: "Expand AITHER" }));
+      const editor = screen.getByRole("textbox", { name: "Raw description for AITHER" });
+      fireEvent.change(editor, { target: { value: "unsaved description" } });
+      for (const reload of [
+        () => result.current.workflow.reload(),
+        refresh,
+        () => window.dispatchEvent(new Event("focus")),
+        () => window.dispatchEvent(new Event("online")),
+        () => document.dispatchEvent(new Event("visibilitychange")),
+        () => vi.advanceTimersByTimeAsync(15_000),
+        () => vi.advanceTimersByTimeAsync(15_000),
+      ]) {
+        await act(async () => {
+          await reload();
+        });
+        expect(editor).toHaveValue("unsaved description");
+        expect(result.current.descriptions.view.dirtyGroups).toEqual(["unit3d"]);
+      }
+      fireEvent.change(editor, { target: { value: "" } });
+      await act(async () => {
+        await result.current.workflow.reload();
+      });
+      expect(editor).toHaveValue("");
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("saves and resets authoritative descriptions through revisioned workflow commands", async () => {
     const workflowID = "workflow-descriptions";
     const withDescription = (revision: number, unit3dSource: string): ReleaseWorkflowCurrent =>
@@ -3431,6 +3959,111 @@ describe("useReleaseSession", () => {
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("preserves edited source through Render then Save group", async () => {
+    const workflowID = "workflow-descriptions";
+    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const withPreparedDescription = (
+      revision: number,
+      source = "generated source",
+    ): ReleaseWorkflowCurrent => ({
+      ...workflowCurrentFromPreview(
+        workflowCurrentWithDescriptions(workflowID, revision, source, undefined, {
+          "https://images.example.invalid/full.png": "https://images.example.invalid/preview.png",
+        }),
+        preview(sourcePath, 1),
+      ),
+      projections: {
+        status: "ready",
+        projections: [
+          {
+            trackerId: "AITHER",
+            displayName: "AITHER",
+            artifacts: {
+              screenshotCount: 0,
+              dvdMenuCount: 0,
+              imageHosting: false,
+              description: true,
+            },
+          },
+        ],
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+    });
+    const render = vi.fn(async (raw: string) => `<p>${raw}</p>`);
+    const requests: unknown[] = [];
+    setAppRequestHandlerForTests(async (method, body) => {
+      expect(method).toBe("SaveReleaseWorkflowDescriptionOverride");
+      requests.push(body);
+      const command = body as SaveReleaseWorkflowDescriptionOverrideRequest;
+      return withPreparedDescription(8, command.override.source);
+    });
+    const saveDescriptionOverride =
+      productionReleaseSessionPorts().workflow.saveDescriptionOverride;
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const ports = {
+      ...portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => withPreparedDescription(7),
+          saveDescriptionOverride,
+        }),
+      }),
+      descriptions: { render },
+    };
+    function DescriptionEditor() {
+      const session = useReleaseSession();
+      return <DescriptionBuilderPage facet={session.descriptions} sourcePath={sourcePath} />;
+    }
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <DescriptionEditor />
+        </ReleaseSessionProvider>
+      ),
+    });
+    try {
+      await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(7));
+      fireEvent.click(screen.getByRole("button", { name: "Expand AITHER" }));
+      const editor = screen.getByRole("textbox", { name: "Raw description for AITHER" });
+      fireEvent.change(editor, { target: { value: "edited source" } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Render AITHER" }));
+      });
+
+      expect(render).toHaveBeenCalledWith(
+        "edited source",
+        { "https://images.example.invalid/full.png": "https://images.example.invalid/preview.png" },
+        expect.any(AbortSignal),
+      );
+      expect(result.current.descriptions.view.renderedByGroup.unit3d).toBe("<p>edited source</p>");
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Save group AITHER" }));
+      });
+
+      expect(requests).toEqual([
+        expect.objectContaining({
+          workflowId: workflowID,
+          expectedRevision: 7,
+          override: {
+            descriptions: { id: withPreparedDescription(7).descriptions!.id, revision: 7 },
+            groupKey: "unit3d",
+            source: "edited source",
+          },
+        }),
+      ]);
+      expect(editor).toHaveValue("edited source");
+      expect(result.current.descriptions.view.artifact?.descriptions[0]?.source).toBe(
+        "edited source",
+      );
+      expect(result.current.descriptions.view.dirtyGroups).toEqual([]);
+    } finally {
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      setAppRequestHandlerForTests(null);
+    }
   });
 
   it("prepares through the backend workflow and retains only its compatibility preview", async () => {
@@ -3579,6 +4212,97 @@ describe("useReleaseSession", () => {
     );
     unmount();
   });
+
+  it.each(["none", "metadata", "clear source"])(
+    "restores saved corrections after early input discovery (later edit: %s)",
+    async (laterEdit) => {
+      const editDuringPreparation = laterEdit === "metadata";
+      const sourcePath = "C:\\media\\Saved.Release.2026.mkv";
+      const workflowID = "workflow-reopened";
+      const restored = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 3),
+        preview(sourcePath, 1),
+      );
+      const saved = {
+        ...restored,
+        factInstructions: {
+          ...restored.factInstructions!,
+          instructions: {
+            ...restored.factInstructions!.instructions,
+            Metadata: { Commentary: false },
+          },
+        },
+      };
+      const workflow = workflowPorts({
+        create: async () => workflowCurrent(workflowID, 1),
+        prepare: async () => saved,
+      });
+      const response = createDeferred<void>();
+      let snapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
+      let refresh: () => void = () => undefined;
+      const get = vi.fn(async () => snapshot);
+      const open = vi.fn(
+        async (
+          request: Parameters<ReleaseSessionPorts["activeInput"]["open"]>[0],
+          signal: AbortSignal,
+        ) => {
+          snapshot = {
+            state: "active",
+            revision: 2,
+            inputId: "input-reopened",
+            sourceVersion: "source-one",
+            current: await workflow.continue(request.request, signal),
+          };
+          await response.promise;
+          return snapshot;
+        },
+      );
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            workflow,
+            activeInput: {
+              get,
+              open,
+              subscribe: (callback) => {
+                refresh = callback;
+                return () => undefined;
+              },
+            },
+          }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(get).toHaveBeenCalledOnce());
+        act(() => result.current.input.updateSourceDraft(sourcePath));
+        act(() => result.current.input.chooseTrackers(["AITHER"]));
+        let preparation!: Promise<boolean>;
+        act(() => {
+          preparation = result.current.input.prepare();
+        });
+        await waitFor(() => expect(snapshot.current).toBeDefined());
+        await act(async () => {
+          refresh();
+        });
+        await waitFor(() =>
+          expect(result.current.workflow.view.current?.workflow.id).toBe(workflowID),
+        );
+        if (editDuringPreparation)
+          act(() => result.current.input.changeMetadata({ Commentary: true }));
+        if (laterEdit === "clear source") act(() => result.current.input.updateSourceDraft(""));
+        response.resolve();
+        await act(() => preparation);
+        expect(result.current.input.view.intent.metadata.Commentary).toBe(editDuringPreparation);
+        expect(result.current.input.view.preparationDirty).toBe(editDuringPreparation);
+        expect(result.current.input.view.sourceDraft).toBe(
+          laterEdit === "clear source" ? "" : sourcePath,
+        );
+      } finally {
+        response.resolve();
+        unmount();
+      }
+    },
+  );
 
   it("resumes the backend playlist required action with the captured draft source", async () => {
     const sourcePath = "C:\\media\\Example Disc";
@@ -4202,9 +4926,14 @@ describe("useReleaseSession", () => {
 
     await act(() => result.current.input.prepare());
     expect(result.current.identity.view.release?.Generation).toBe(2);
-    expect(result.current.screenshots.view.revision).toBe(firstRevision);
-    expect(result.current.screenshots.view.plan).toBe(firstPlan);
-    expect(result.current.screenshots.view.staleReason).toBe("");
+    expect(result.current.screenshots.view.revision).toBeGreaterThan(firstRevision);
+    expect(result.current.screenshots.view.plan).toBeNull();
+    expect(result.current.screenshots.view.staleReason).toBe("Screenshot plan changed.");
+    expect(result.current.screenshots.view.selections).toEqual(firstPlan?.SuggestedSelections);
+    await act(() => result.current.duplicates.run());
+    await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.plan).not.toBeNull();
+    expect(result.current.screenshots.view.selections).toEqual(firstPlan?.SuggestedSelections);
   });
 
   it("aborts and suppresses stale preparation completion after source replacement", async () => {
@@ -5469,5 +6198,142 @@ describe("useReleaseSession", () => {
         uploadReady: true,
       }),
     );
+  });
+});
+
+describe("saved-image plan authority", () => {
+  it.each([
+    "metadata refresh",
+    "tracker reassessment",
+    "another tab",
+    "another tab during plan load",
+  ])("refreshes saved-image authority after %s without resetting frame drafts", async (change) => {
+    const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+    let planID = "plan-before";
+    let externalSnapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
+    let notifyChange: () => void = () => undefined;
+    const deferredPlan =
+      createDeferred<Awaited<ReturnType<ReleaseSessionPorts["workflow"]["mediaPlan"]>>>();
+    let deferNextPlan = false;
+    const mediaPlan = vi.fn(async (workflowID: string) => {
+      if (deferNextPlan) {
+        deferNextPlan = false;
+        return deferredPlan.promise;
+      }
+      return {
+        id: planID,
+        workflowId: workflowID,
+        revision: 1,
+        release: { id: "release-one", revision: 1 },
+        projectionSet: { id: "projections-one", revision: 1 },
+        durationSeconds: 120,
+        frameRate: 24,
+        suggestedSelections: [
+          { DiscID: "", Index: 0, TimestampSeconds: 10, Frame: 240, Source: "auto" },
+        ],
+        savedTrackerImages: [
+          { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
+        ],
+        createdAt: "2026-07-20T00:00:00Z",
+      };
+    });
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const ports = portsFor({
+      workflow: workflowPorts({ mediaPlan, captureMedia }),
+      activeInput: {
+        get: async () => externalSnapshot,
+        subscribe: (callback) => {
+          notifyChange = callback;
+          return () => undefined;
+        },
+      },
+    });
+    function ScreenshotEditor() {
+      const session = useReleaseSession();
+      return session.navigation.view.access.screenshots.available ? (
+        <ScreenshotsPage
+          facet={session.screenshots}
+          setLightboxImage={() => undefined}
+          setLightboxAlt={() => undefined}
+        />
+      ) : null;
+    }
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <ScreenshotEditor />
+        </ReleaseSessionProvider>
+      ),
+    });
+    try {
+      await selectAndPrepare(result, sourcePath);
+      await waitFor(() =>
+        expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("plan-before"),
+      );
+      act(() =>
+        result.current.screenshots.changeSelection(0, { TimestampSeconds: 42, Frame: 1008 }),
+      );
+      const selections = result.current.screenshots.view.selections;
+      let pendingLoad: Promise<boolean> | undefined;
+      const initialPlan = await mediaPlan.mock.results[0].value;
+      if (change === "another tab during plan load") {
+        deferNextPlan = true;
+        act(() => {
+          pendingLoad = result.current.screenshots.load();
+        });
+      }
+      planID = "plan-after";
+      if (change.startsWith("another tab")) {
+        const current = result.current.workflow.view.current!;
+        const active = result.current.input.view.activeInput;
+        externalSnapshot = {
+          state: "active",
+          revision: active.revision,
+          inputId: active.inputID,
+          sourceVersion: active.sourceVersion,
+          current: {
+            ...current,
+            workflow: {
+              ...current.workflow,
+              revision: current.workflow.revision + 1,
+              trackerProjections: {
+                id: current.workflow.trackerProjections!.id,
+                revision: current.workflow.trackerProjections!.revision + 1,
+              },
+            },
+          },
+        };
+        act(notifyChange);
+      } else {
+        if (change === "metadata refresh") {
+          await act(() =>
+            result.current.input.prepareSource(sourcePath, result.current.input.view.intent),
+          );
+        }
+        await act(() => result.current.duplicates.run());
+      }
+      await waitFor(() =>
+        expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("plan-after"),
+      );
+      if (pendingLoad) {
+        deferredPlan.resolve(initialPlan);
+        await act(() => pendingLoad);
+        expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("plan-after");
+      }
+      expect(result.current.screenshots.view.selections).toEqual(selections);
+      expect(mediaPlan).toHaveBeenCalledTimes(pendingLoad ? 3 : 2);
+      fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
+      await waitFor(() =>
+        expect(captureMedia).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ savedImagePlanId: "plan-after", selections: [] }),
+          expect.any(String),
+          expect.any(AbortSignal),
+        ),
+      );
+    } finally {
+      unmount();
+    }
   });
 });

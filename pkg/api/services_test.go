@@ -42,10 +42,10 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	t.Parallel()
 
 	source := UploadSubject{
-		VideoCodec: "AV1",
-		HasEncodeSettings: true,
+		VideoCodec:                  "AV1",
+		HasEncodeSettings:           true,
 		TrackerQuestionnaireAnswers: map[string]map[string]string{"OE": {"source_notes": "Example BluRay source"}},
-		Release: ReleaseInfo{Codec: []string{"H.265"}},
+		Release:                     ReleaseInfo{Codec: []string{"H.265"}},
 		ProviderMetadata: SourceScopedMetadata{TMDB: &TMDBMetadata{
 			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
 		}},
@@ -606,5 +606,41 @@ func TestTVDBMetadataJSONPreservesExplicitEvidenceWithoutInventingLegacyEvidence
 	}
 	if decoded.NameDisambiguation != current.NameDisambiguation {
 		t.Fatalf("disambiguation = %+v, want %+v", decoded.NameDisambiguation, current.NameDisambiguation)
+	}
+}
+
+func TestValidationSeasonTokenWidths(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		token  string
+		season int
+	}{
+		{"S01S02", 1}, {"S01Something", -1},
+		{"S00E01", 0}, {"S01E03", 1}, {"S2026E03", 2026}, {"S2026", 2026}, {"S01_1080p", 1},
+		{"S1E03", -1}, {"S123E03", -1}, {"S20260E03", -1}, {"S1", -1}, {"S123", -1},
+		{"1x05", -1}, {"2026x03", -1}, {"768x576", -1}, {"1920x800", -1},
+	} {
+		t.Run(tc.token, func(t *testing.T) {
+			detected := make(map[int]map[int]struct{})
+			collectValidationSeasonEpisodes("Example.Show."+tc.token+".mkv", detected)
+			if tc.season < 0 {
+				if len(detected) != 0 {
+					t.Fatalf("rejected token produced seasons: %v", detected)
+				}
+				return
+			}
+			if _, ok := detected[tc.season]; !ok || len(detected) != 1 {
+				t.Fatalf("seasons = %v, want %d", detected, tc.season)
+			}
+		})
+	}
+	root := t.TempDir()
+	files := []string{"Example.S00E01.mkv", "Example.S01E01.mkv", "Example.S2026E03.mkv", "Example.S123E03.mkv", "Example.1x05.mkv"}
+	for i, file := range files {
+		files[i] = filepath.Join(root, file)
+	}
+	got := NewTrackerValidationSubject(UploadSubject{SourcePath: root, FileList: files}, "example").PackageFacts.DetectedSeasons
+	if len(got) != 3 || got[0] != 0 || got[1] != 1 || got[2] != 2026 {
+		t.Fatalf("mixed-season evidence = %v, want [0 1 2026]", got)
 	}
 }

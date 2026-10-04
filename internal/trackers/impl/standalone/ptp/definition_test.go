@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -239,6 +240,13 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 		if got := fields[key]; got != want {
 			t.Fatalf("field %s=%q, want %q", key, got, want)
 		}
+	}
+	meta.Repack = "PROPER"
+	versionFields, err := buildUploadFields(meta, "description", "123", map[string]string{
+		"hardcoded_subtitle_languages": "Malay",
+	}, "")
+	if err != nil || !maps.Equal(fields, versionFields) {
+		t.Fatalf("release version changed PTP payload: fields=%v error=%v", versionFields, err)
 	}
 	if got := resolveTags(meta); got != "sci.fi, mystery" {
 		t.Fatalf("tags=%q", got)

@@ -36,6 +36,13 @@ func (m *Module) Continue(
 	if err := request.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue: %w", err)
 	}
+	if request.Intent.Descriptions != nil {
+		var err error
+		ctx, err = m.withRunLogLevel(ctx, request.Intent.Descriptions.Options.RunLogLevel)
+		if err != nil {
+			return CommandResult{}, err
+		}
+	}
 	if request.Authority == nil && hasConfirmedNameProjectionInstruction(request.Intent.ProjectionInstructions) {
 		return CommandResult{}, fmt.Errorf("%w: confirmed tracker name authority is server-owned", ErrInvalidTransition)
 	}
@@ -480,7 +487,9 @@ func (m *Module) resolveContinuationAnswer(
 	trackerDecisionMode TrackerDecisionMode,
 ) (CommandResult, bool, error) {
 	for _, answer := range request.Answers {
-		if _, ok := releaseNameConfirmationAction(current.Projections, answer.ActionID); !ok {
+		_, nameReview := releaseNameConfirmationAction(current.Projections, answer.ActionID)
+		_, ruleAction, ruleReview := projectionRuleAuthorizationAction(current.Projections, answer.ActionID)
+		if !nameReview && (!ruleReview || ruleAction.Status != api.RequiredActionStatusResolved) {
 			continue
 		}
 		result, err := m.Execute(ctx, ownerID, ResolveActionCommand{

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -35,6 +37,7 @@ func WithActiveInputs(repository api.ActiveInputRepository, verifier InputVerifi
 type OpenInputRequest struct {
 	ExpectedRevision    uint64
 	Input               api.PrepareInput
+	CorrectionPatch     *api.ReleaseCorrectionPatch
 	IdempotencyKey      string
 	TrackerDecisionMode TrackerDecisionMode
 	Composite           *compositeUploadSession
@@ -61,6 +64,16 @@ func (m *Module) ActiveInput(ctx context.Context, owner string) (api.ActiveInput
 // Callers use it to avoid loading a foreign persisted input during startup.
 func (m *Module) OwnsActiveInput(slot api.ActiveInputRecord) bool {
 	return m != nil && slot.State != api.ActiveInputEmpty && slot.Fence != 0 && slot.CoordinatorID == m.processEpoch
+}
+
+// InputSourcePath reads the canonical source for an already authorized input ID.
+// Callers must enforce input ownership before projecting the path to a client.
+func (m *Module) InputSourcePath(ctx context.Context, inputID string) (string, error) {
+	record, err := m.activeInputs.LoadInputRecordByID(ctx, inputID)
+	if err != nil {
+		return "", fmt.Errorf("release workflow read input source: %w", err)
+	}
+	return record.CanonicalPath, nil
 }
 
 // PreparationForInputOpen distinguishes a new input load from reapplying the
@@ -280,9 +293,10 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		fingerprintInput.ExternalFreshness = api.ExternalFreshnessReuse
 	}
 	fingerprint, err := canonicalCommandFingerprint(struct {
-		Input   api.PrepareInput
-		Request api.WorkflowFingerprint
-	}{fingerprintInput, request.RequestFingerprint})
+		Input           api.PrepareInput
+		CorrectionPatch *api.ReleaseCorrectionPatch `json:",omitempty"`
+		Request         api.WorkflowFingerprint
+	}{fingerprintInput, request.CorrectionPatch, request.RequestFingerprint})
 	if err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -291,7 +305,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow load input admission: %w", err)
 	}
 	admissionRevision := prior.Revision
-	m.logger.Debugf("active input: open admission decision=check state=%s revision=%d", prior.State, prior.Revision)
+	logging.FromContext(ctx, m.logger).Debugf("active input: open admission decision=check state=%s revision=%d", prior.State, prior.Revision)
 	if prior.State != api.ActiveInputEmpty && !prior.LeaseExpiresAt.After(m.clock.Now()) {
 		foreignOwner := prior.OwnerID != owner
 		prior, err = m.recoverActiveInput(ctx, prior, owner, false)
@@ -356,7 +370,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		rollback.OwnerID, rollback.CoordinatorID = owner, m.processEpoch
 		rollback.LeaseExpiresAt = m.clock.Now().Add(workflowWorkLeaseTTL)
 		if cleanupErr := m.activeInputs.CompareAndSwapActiveInput(cleanup, pending, rollback, m.clock.Now()); cleanupErr != nil {
-			m.logger.Warnf("active input: rollback failed state=recovery_required")
+			logging.FromContext(ctx, m.logger).Warnf("active input: rollback failed state=recovery_required")
 		}
 	}()
 	if err := m.cancelPriorInputWork(ctx, owner, prior.WorkflowID); err != nil {
@@ -447,6 +461,26 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		if loadErr != nil {
 			return api.ActiveInputRecord{}, fmt.Errorf("release workflow load refreshed workflow: %w", loadErr)
 		}
+		var correctionReview *api.CorrectionConfirmation
+		if patch := request.CorrectionPatch; patch != nil && state.Corrections != nil {
+			expected := state.Corrections.Revision
+			if patch.ExpectedRevision != nil {
+				expected = *patch.ExpectedRevision
+			}
+			// The verified input ID already binds this workflow to the same canonical
+			// source; its preparation may still contain the originally submitted alias.
+			if len(patch.ConfirmFields) > 0 {
+				correctionReview, err = pendingCorrectionConfirmation(&state, currentWorkflowSourcePath(&state), *patch)
+				if err != nil {
+					return api.ActiveInputRecord{}, err
+				}
+			} else {
+				correctionReview, _ = currentCorrectionConfirmation(&state, currentWorkflowSourcePath(&state), expected)
+			}
+			if prior.SourceVersion != record.SourceVersion {
+				correctionReview = nil
+			}
+		}
 		state.SourcePath = strings.TrimSpace(record.CanonicalPath)
 		state.PreparationInput = &request.Input
 		if request.Composite != nil && (state.Composite == nil || state.Composite.RequestFingerprint != request.Composite.RequestFingerprint) {
@@ -457,13 +491,22 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		state.Workflow.Status = api.WorkflowStatusDraft
 		state.Workflow.SubmissionExclusions = nil
 		state.Workflow.RequiredActions, state.Workflow.Failures = nil, nil
+		if correctionReview != nil {
+			// Reverification retains only valid correction review, bound to the new
+			// workflow revision. Preparation still checks the final provider identity.
+			if err := m.blockForCorrectionConfirmation(&state, state.Workflow.Revision, state.Workflow.UpdatedAt, correctionReview.CurrentBinding); err != nil {
+				return api.ActiveInputRecord{}, err
+			}
+		}
 		if prior.SourceVersion != record.SourceVersion {
+			state.PendingCorrectionConfirmation = nil
 			state.PendingAudioAnalysis = nil
 			state.PendingAudioAnalysisWorkflowID = ""
 		} else if state.Workflow.AudioAnalysis != nil {
 			state.PendingAudioAnalysis = state.Workflow.AudioAnalysis
 			state.PendingAudioAnalysisWorkflowID = state.Workflow.ID
 		}
+		state.PendingDuplicateReuse = nil
 		invalidatePreparedAndDownstream(&state.Workflow)
 		if state.Composite != nil {
 			state.Composite.LastCommittedRevision = state.Workflow.Revision

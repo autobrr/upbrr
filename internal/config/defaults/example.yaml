@@ -403,16 +403,6 @@ trackers:
     link_dir_name: ""
     api_key: ""
     anon: false
-  THR:
-    link_dir_name: ""
-    username: ""
-    password: ""
-    img_api: ""
-    announce_url: ""
-    pronfo_api_key: ""
-    pronfo_theme: ""
-    pronfo_rapi_id: ""
-    anon: false
   TIK:
     link_dir_name: ""
     api_key: ""

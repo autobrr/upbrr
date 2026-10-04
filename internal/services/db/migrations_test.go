@@ -11,6 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -444,6 +445,9 @@ func TestMigrateBridgesLegacyV8TrackerCookiesSchema(t *testing.T) {
 		t.Fatalf("set legacy user_version: %v", err)
 	}
 
+	if _, err := rawDB.ExecContext(ctx, `INSERT INTO config_settings (section,data,updated_at) VALUES ('Trackers','{"DefaultTrackers":["THR","AITHER"],"PreferredTracker":"THR","Trackers":{"THR":{"Password":"upbrr-enc:v1:unreadable"},"RETIRED":{"keep_me":"retained"}}}','2026-01-01')`); err != nil {
+		t.Fatal(err)
+	}
 	if err := Migrate(rawDB); err != nil {
 		t.Fatalf("bridge legacy v8 db: %v", err)
 	}
@@ -460,6 +464,25 @@ func TestMigrateBridgesLegacyV8TrackerCookiesSchema(t *testing.T) {
 	assertSQLiteObjectExists(t, rawDB, "table", "schema_migrations")
 	assertSQLiteObjectExists(t, rawDB, "index", "idx_tracker_cookies_tracker_id")
 	assertSQLiteObjectExists(t, rawDB, "index", "idx_tracker_cookies_created_at")
+	repo := &SQLiteRepository{db: rawDB, logger: nopLogger{}}
+	for range 2 {
+		if err := Migrate(rawDB); err != nil {
+			t.Fatal(err)
+		}
+		cfg, report, err := config.LoadFromDatabaseWithRepairReport(ctx, repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := cfg.Trackers.Trackers["THR"]; ok {
+			t.Fatal("removed tracker retained after legacy schema upgrade")
+		}
+		if cfg.Trackers.Trackers["RETIRED"].Unknown["keep_me"] != "retained" {
+			t.Fatal("unrelated legacy extension lost")
+		}
+		if err := config.SaveSectionsToDatabase(ctx, cfg, report.ChangedSections, repo); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestMigrateAddExternalIDsMALBackfillsFromTMDBMetadata(t *testing.T) {

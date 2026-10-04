@@ -55,7 +55,7 @@ func TestPrepareWarnsAboutSourceSeasonsAcrossReuseAndRefresh(t *testing.T) {
 	}
 	module = newTestModule(t, store, collector)
 	check(true)
-	season := "1"
+	season := "01"
 	title := "Example Manual Title"
 	input.Instructions.ReleaseName.Season = &season
 	input.Instructions.Metadata.Title = &title

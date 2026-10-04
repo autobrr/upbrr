@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -102,9 +103,7 @@ func (b workflowPreflightBuilder) Build(
 	if b.registry == nil {
 		return api.TrackerPreflightAssessment{}, nil, errors.New("tracker preflight: tracker registry is required")
 	}
-	if b.logger == nil {
-		b.logger = api.NopLogger{}
-	}
+	b.logger = logging.FromContext(ctx, b.logger)
 	if b.banned == nil {
 		b.banned = trackers.NewBannedGroupCheckerWithRegistry(b.config.MainSettings.DBPath, b.registry)
 	}
@@ -287,10 +286,13 @@ func (b workflowPreflightBuilder) Build(
 		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
 			result.State = api.TrackerPreflightStateFailed
 			result.Failures = append([]api.WorkflowFailure(nil), projection.Failures...)
-			if len(result.RequiredActions) > 0 {
+			hasPendingAction := slices.ContainsFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Status == "" || action.Status == api.RequiredActionStatusPending
+			})
+			if hasPendingAction {
 				result.State = api.TrackerPreflightStateActionRequired
 			}
-			if len(result.RequiredActions) == 0 && len(result.Failures) == 0 {
+			if !hasPendingAction && len(result.Failures) == 0 {
 				result.Failures = []api.WorkflowFailure{preflightFailure(
 					projection.TrackerID,
 					api.OperationFailureMissingPrerequisite,
@@ -563,7 +565,9 @@ func setAuthBlockedPreflight(result *api.TrackerPreflightResult, status api.Trac
 	}
 	result.State = api.TrackerPreflightStateRetryable
 	result.AuthReady = false
-	result.RequiredActions = nil
+	result.RequiredActions = slices.DeleteFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind != api.RequiredActionAuthorizeRules || action.Status != api.RequiredActionStatusResolved
+	})
 	result.Failures = []api.WorkflowFailure{preflightFailure(
 		result.TrackerID,
 		api.OperationFailureTrackerAuthRequired,
@@ -575,7 +579,9 @@ func setAuthBlockedPreflight(result *api.TrackerPreflightResult, status api.Trac
 func setAuthUnavailablePreflight(result *api.TrackerPreflightResult) {
 	result.State = api.TrackerPreflightStateRetryable
 	result.AuthReady = false
-	result.RequiredActions = nil
+	result.RequiredActions = slices.DeleteFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind != api.RequiredActionAuthorizeRules || action.Status != api.RequiredActionStatusResolved
+	})
 	result.Failures = []api.WorkflowFailure{preflightFailure(
 		result.TrackerID,
 		api.OperationFailureTrackerAuthUnavailable,

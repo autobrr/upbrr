@@ -9,11 +9,16 @@ import (
 
 // Profile returns ULCX's naming, duplicate, validation, and banned-group policy.
 func Profile() unit3d.Profile {
+	return profileWithTaxonomy(unit3d.SiteProfile{})
+}
+
+func profileWithTaxonomy(site unit3d.SiteProfile) unit3d.Profile {
 	return unit3d.Profile{
 		Name:              "ULCX",
 		BaseURL:           "https://upload.cx",
 		Rules:             Rules(),
-		ValidationPolicy:  ValidationPolicy(),
+		ValidationPolicy:  validationPolicy(site.RegionID),
+		Site:              site,
 		BannedGroups:      BannedGroups(),
 		ReleaseNamePolicy: namePolicy(),
 		DupePolicy:        duplicatePolicy(),

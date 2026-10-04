@@ -562,7 +562,7 @@ for (const theme of ["minimal", "swizzin"]) {
                 element.parentElement!.clientWidth - element.getBoundingClientRect().width,
             ),
           ).toBeLessThanOrEqual(1);
-          const category = editor.getByRole("textbox", { name: "Category", exact: true });
+          const category = editor.getByRole("combobox", { name: "Category", exact: true });
           const automatic = editor.getByRole("button", { name: "Auto Category", exact: true });
           const title = editor.getByRole("textbox", { name: "Title", exact: true });
           const triState = editor.getByRole("combobox", { name: "No year", exact: true });
@@ -574,7 +574,7 @@ for (const theme of ["minimal", "swizzin"]) {
           if (width >= 1440) {
             for (const label of ["Type", "Source"]) {
               const bounds = await editor
-                .getByRole("textbox", { name: label, exact: true })
+                .getByRole("combobox", { name: label, exact: true })
                 .boundingBox();
               expect(bounds?.y).toBe(categoryBounds?.y);
               expect(bounds?.x).toBeGreaterThan(categoryBounds!.x);

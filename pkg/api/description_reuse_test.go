@@ -39,6 +39,12 @@ func TestReusableDescriptionRecordCloneAndWorkflowStateJSON(t *testing.T) {
 	record := ReusableDescriptionRecord{
 		SourcePath: "C:\\releases\\Example.Release.2026.mkv",
 		Description: ReusableDescription{
+			Overrides:                []DescriptionOverrideInput{{
+GroupKey: "main",
+ Source: "saved",
+ Final: true,
+ TrackerIDs: []TrackerID{"AITHER"},
+}},
 			CompatibilityFingerprint: WorkflowFingerprint(strings.Repeat("a", 64)),
 			Descriptions: []RenderedDescription{{
 				GroupKey:           "main",
@@ -51,6 +57,10 @@ func TestReusableDescriptionRecordCloneAndWorkflowStateJSON(t *testing.T) {
 	}
 	cloned := record.Clone()
 	cloned.Description.Descriptions[0].TrackerIDs[0] = "BLU"
+	cloned.Description.Overrides[0].TrackerIDs[0] = "BLU"
+	if record.Description.Overrides[0].TrackerIDs[0] != "AITHER" {
+		t.Fatal("clone mutated saved override membership")
+	}
 	if record.Description.Descriptions[0].TrackerIDs[0] != "AITHER" {
 		t.Fatal("clone mutated reusable description source")
 	}
@@ -60,5 +70,20 @@ func TestReusableDescriptionRecordCloneAndWorkflowStateJSON(t *testing.T) {
 	}
 	if strings.Contains(string(payload), record.SourcePath) || strings.Contains(string(payload), "rendered") {
 		t.Fatalf("workflow state JSON exposed reusable description: %s", payload)
+	}
+}
+
+func TestDescriptionOverrideTrackerMembershipValidation(t *testing.T) {
+	t.Parallel()
+	for _, ids := range [][]TrackerID{{""}, {"AITHER", " aither "}} {
+		instructions := DescriptionInstructions{Overrides: []DescriptionOverrideInput{{
+GroupKey: "unit3d",
+ Source: "saved",
+ Final: true,
+ TrackerIDs: ids,
+}}}
+		if err := instructions.Validate(); err == nil {
+			t.Fatalf("invalid membership accepted: %v", ids)
+		}
 	}
 }

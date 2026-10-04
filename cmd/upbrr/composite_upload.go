@@ -850,6 +850,7 @@ func compositeCLIFacts(instructions api.ReleaseFactInstructions) api.ReleaseWork
 			Tag:              cloneCLIStringPointer(instructions.ReleaseName.Tag),
 			Service:          cloneCLIStringPointer(instructions.ReleaseName.Service),
 			Edition:          cloneCLIStringPointer(instructions.ReleaseName.Edition),
+			Repack:           cloneCLIStringPointer(instructions.ReleaseName.Repack),
 			Season:           cloneCLIStringPointer(instructions.ReleaseName.Season),
 			Episode:          cloneCLIStringPointer(instructions.ReleaseName.Episode),
 			EpisodeTitle:     cloneCLIStringPointer(instructions.ReleaseName.EpisodeTitle),

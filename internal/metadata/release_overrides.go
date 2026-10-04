@@ -23,6 +23,7 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 		overrides.Tag != nil ||
 		overrides.Service != nil ||
 		overrides.Edition != nil ||
+		overrides.Repack != nil ||
 		overrides.Season != nil ||
 		overrides.Episode != nil ||
 		overrides.EpisodeTitle != nil ||
@@ -42,10 +43,13 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 		overrides.Region != nil
 }
 
-// validateReleaseNameFactInstructions rejects malformed season, episode, and
+// validateReleaseNameFactInstructions rejects malformed release-version, season, episode, and
 // daily-date instruction values with a typed invalid-input error before any
-// instruction becomes an effective fact or is persisted for reuse.
+// instruction becomes an effective metadata fact.
 func validateReleaseNameFactInstructions(overrides api.ReleaseNameOverrides) error {
+	if overrides.Repack != nil && !api.IsSupportedReleaseVersion(*overrides.Repack) {
+		return fmt.Errorf("metadata: unsupported release version %q: %w", *overrides.Repack, internalerrors.ErrInvalidInput)
+	}
 	if overrides.Season != nil {
 		if _, err := seasonep.ParseSeasonInstruction(*overrides.Season); err != nil {
 			return fmt.Errorf("metadata: %w", err)
@@ -142,6 +146,10 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 
 	if overrides.Edition != nil {
+		meta.EditionSet = ""
+		meta.Cut = ""
+		meta.Presentation = ""
+		meta.Release.Cut = nil
 		meta.Edition = strings.TrimSpace(*overrides.Edition)
 		meta.Release.Edition = nil
 		if meta.Edition != "" {
@@ -150,8 +158,16 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		meta.Edition = ""
+		meta.EditionSet = ""
+		meta.Cut = ""
+		meta.Presentation = ""
+		meta.Release.Cut = nil
 		meta.Release.Edition = nil
 		meta.Repack = ""
+	}
+	// Explicit version corrections take precedence over legacy NoEdition suppression.
+	if overrides.Repack != nil {
+		meta.Repack = strings.ToUpper(strings.TrimSpace(*overrides.Repack))
 	}
 
 	// Malformed values cannot reach this point: the merged instructions were
@@ -243,6 +259,9 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		req.Edition = ""
+		req.EditionSet = ""
+		req.Cut = ""
+		req.Presentation = ""
 	}
 	return req
 }

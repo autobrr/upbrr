@@ -25,6 +25,95 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestPreparedTypeCorrectionSurvivesSourceEditAndRestart(t *testing.T) {
+	t.Parallel()
+	fixture := newCorrectionEvidenceFixture(t)
+	module, repo := fixture.open(t)
+	initial := prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	calls := fixture.requests()
+	input := api.PrepareInput{SourcePath: fixture.input.SourcePath, ExternalFreshness: api.ExternalFreshnessReuse}
+	previous := initial.Release.Generation
+	for _, step := range []struct {
+		name, wantType, wantSource string
+		patch                      *api.ReleaseCorrectionPatch
+		restart, manual            bool
+	}{
+		{
+			name:       "encode",
+			wantType:   "ENCODE",
+			wantSource: "Web",
+			manual:     true,
+			patch:      &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{Type: new("ENCODE")}}},
+		},
+		{
+			name:       "source only",
+			wantType:   "ENCODE",
+			wantSource: "BluRay",
+			manual:     true,
+			patch:      &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{Source: new("BluRay")}}},
+		},
+		{
+			name:       "restart",
+			wantType:   "ENCODE",
+			wantSource: "BluRay",
+			manual:     true,
+			restart:    true,
+		},
+		{
+			name:       "Auto",
+			wantType:   "WEBDL",
+			wantSource: "BluRay",
+			patch:      &api.ReleaseCorrectionPatch{ResetFields: []api.CorrectionFieldRef{{Field: api.CorrectionFieldReleaseNameType}}},
+		},
+	} {
+		if step.restart {
+			if err := repo.Close(); err != nil {
+				t.Fatal(err)
+			}
+			module, repo = fixture.open(t)
+		}
+		t.Run(step.name, func(t *testing.T) {
+			update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+			if step.patch != nil {
+				update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: step.patch}
+			}
+			result := prepareCorrectionEvidence(t, module, input, update)
+			if result.Release.Naming.Type != step.wantType || result.Release.Media.Type != step.wantType || result.Release.Media.Source != step.wantSource {
+				t.Fatalf("naming/media type/source = %q/%q/%q", result.Release.Naming.Type, result.Release.Media.Type, result.Release.Media.Source)
+			}
+			for _, override := range []*string{result.Corrections.Corrections.ReleaseName.Type, result.EffectiveInstructions.ReleaseName.Type} {
+				if step.manual && (override == nil || *override != "ENCODE") || !step.manual && override != nil {
+					t.Fatalf("type authority = %v, manual=%t", override, step.manual)
+				}
+			}
+			if step.patch != nil && result.Release.Generation <= previous {
+				t.Fatal("correction reused the previous generation")
+			}
+			previous = result.Release.Generation
+			name := result.Release.Naming.ReleaseName
+			if result.Release.Naming.GeneratedName == nil || result.Release.Naming.GeneratedName.Render().Name != name ||
+				step.manual && strings.Contains(name, "WEB-DL") {
+				t.Fatalf("generated name disagrees with effective type: %q", name)
+			}
+			ref := api.ReleaseRef{SourcePath: input.SourcePath, Generation: result.Release.Generation}
+			upload, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: ref})
+			if err != nil {
+				t.Fatal(err)
+			}
+			duplicate, err := module.ResolveDuplicateSubject(t.Context(), api.DuplicateCheckInput{Release: ref})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if upload.Type != step.wantType || upload.ReleaseName != name || duplicate.ReleaseName != name {
+				t.Fatal("downstream subjects lost effective type or name")
+			}
+			if !reflect.DeepEqual(fixture.requests(), calls) {
+				t.Fatal("local correction repeated metadata requests")
+			}
+		})
+	}
+}
+
 func TestPreparedCorrectionReusesEpisodeAndSceneEvidenceAcrossRestart(t *testing.T) {
 	t.Parallel()
 	fixture := newCorrectionEvidenceFixture(t)

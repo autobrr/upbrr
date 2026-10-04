@@ -18,6 +18,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -44,6 +45,8 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 }
 
 func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
+	h.logger = logging.FromContext(ctx, h.logger)
+
 	cookies, err := loadTrackerCookies(ctx, h.cfg, "BT", trackerHost(trackerBaseURL(h.cfg, "BT", "https://brasiltracker.org"), "brasiltracker.org"))
 	if err != nil {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid BT cookies", nil)

@@ -104,7 +104,7 @@ func resolveAudioFormat(meta api.UploadSubject) string {
 
 func resolveFlags(meta api.UploadSubject) []string {
 	flags := make([]string, 0, 12)
-	edition := strings.ReplaceAll(meta.Edition, "'", "")
+	edition := strings.ReplaceAll(meta.EditionLabel(), "'", "")
 	for _, candidate := range []string{"Directors", "Extended", "Uncut", "Unrated", "4KRemaster", "IMAX"} {
 		if strings.Contains(edition, candidate) {
 			flags = append(flags, candidate)
@@ -128,7 +128,7 @@ func resolveFlags(meta api.UploadSubject) []string {
 	if strings.Contains(strings.ToUpper(meta.HDR), "DV") {
 		flags = append(flags, "DV")
 	}
-	if strings.Contains(strings.ToUpper(meta.Distributor), "CRITERION") || strings.Contains(strings.ToUpper(meta.Edition), "CRITERION") {
+	if strings.Contains(strings.ToUpper(meta.Distributor), "CRITERION") || strings.Contains(strings.ToUpper(meta.EditionLabel()), "CRITERION") {
 		flags = append(flags, "Criterion")
 	}
 	if strings.Contains(strings.ToUpper(meta.Type), "REMUX") {

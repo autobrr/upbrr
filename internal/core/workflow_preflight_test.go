@@ -218,6 +218,75 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
+	t.Run("resolved rules do not request further acknowledgement", func(t *testing.T) {
+		for _, ready := range []bool{true, false} {
+			acknowledged := projections
+			acknowledged.Projections = append([]api.TrackerReleaseProjection(nil), projections.Projections...)
+			acknowledged.Projections[0].RequiredActions = []api.RequiredAction{{
+				Kind:      api.RequiredActionAuthorizeRules,
+				Status:    api.RequiredActionStatusResolved,
+				TrackerID: "ALPHA",
+				Prompt:    "Acknowledge these tracker warnings?",
+			}}
+			if !ready {
+				acknowledged.Projections[0].Readiness = api.ReadinessStatusBlocked
+				acknowledged.Projections[0].DupeReady = false
+			}
+			builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
+			assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, acknowledged, now)
+			if err != nil {
+				t.Fatalf("build acknowledged preflight: %v", err)
+			}
+			wantState := api.TrackerPreflightStateReady
+			if !ready {
+				wantState = api.TrackerPreflightStateFailed
+			}
+			if assessment.Results[0].State != wantState || len(finalized[0].RequiredActions) != 1 ||
+				finalized[0].RequiredActions[0].Status != api.RequiredActionStatusResolved || (!ready && len(assessment.Results[0].Failures) == 0) {
+				t.Fatalf("acknowledged preflight ready=%t: %#v/%#v", ready, assessment.Results[0], finalized[0])
+			}
+		}
+	})
+
+	t.Run("auth failures preserve resolved rule acknowledgement", func(t *testing.T) {
+		for _, unavailable := range []bool{false, true} {
+			acknowledged := projections
+			acknowledged.Projections = append([]api.TrackerReleaseProjection(nil), projections.Projections...)
+			ruleAction := api.RequiredAction{
+				Kind:      api.RequiredActionAuthorizeRules,
+				Status:    api.RequiredActionStatusResolved,
+				TrackerID: "ALPHA",
+				Prompt:    "Acknowledge these tracker warnings?",
+			}
+			acknowledged.Projections[0].RequiredActions = []api.RequiredAction{
+				ruleAction,
+				{Kind: api.RequiredActionProvideTrackerInput, Status: api.RequiredActionStatusPending},
+			}
+			status := api.TrackerAuthStatus{TrackerID: "ALPHA", State: trackerauth.StateLoginRequired}
+			wantCode := api.OperationFailureTrackerAuthRequired
+			if unavailable {
+				status.State = trackerauth.StateConfigured
+				status.LastError = "remote validation unavailable"
+				wantCode = api.OperationFailureTrackerAuthUnavailable
+			}
+			builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
+				capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsLogin: true}},
+				statuses:     []api.TrackerAuthStatus{status},
+			}, registry: registry}
+			assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, acknowledged, now)
+			if err != nil {
+				t.Fatalf("build auth-blocked acknowledged preflight: %v", err)
+			}
+			result := assessment.Results[0]
+			if result.State != api.TrackerPreflightStateRetryable || len(result.Failures) != 1 || result.Failures[0].Failure.Code != wantCode ||
+				finalized[0].DupeReady || finalized[0].UploadReady || len(finalized[0].RequiredActions) != 1 ||
+				finalized[0].RequiredActions[0].Kind != ruleAction.Kind || finalized[0].RequiredActions[0].Status != ruleAction.Status ||
+				finalized[0].RequiredActions[0].Prompt != ruleAction.Prompt {
+				t.Fatalf("auth-blocked rule acknowledgement unavailable=%t: %#v/%#v", unavailable, result, finalized[0])
+			}
+		}
+	})
+
 	t.Run("upload name review does not block duplicate preflight", func(t *testing.T) {
 		uploadPending := projections
 		uploadPending.Projections = append([]api.TrackerReleaseProjection(nil), projections.Projections...)
@@ -599,15 +668,15 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		builder.images = workflowPreflightImagesFake{links: []api.ScreenshotLinkedImage{
 			{
 				Tracker: "AITHER",
-				URL: "https://pixhost.cc/one.png",
-				Path: "image-one.png",
-				Host: "pixhost",
+				URL:     "https://pixhost.cc/one.png",
+				Path:    "image-one.png",
+				Host:    "pixhost",
 			},
 			{
 				Tracker: "AITHER",
-				URL: "https://pixhost.cc/two.png",
-				Path: "image-two.png",
-				Host: "pixhost",
+				URL:     "https://pixhost.cc/two.png",
+				Path:    "image-two.png",
+				Host:    "pixhost",
 			},
 		}}
 		assessment, finalized, err = builder.Build(context.Background(), subject, catalog, runtime, withImages, now)
@@ -616,9 +685,9 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		builder.images = workflowPreflightImagesFake{links: []api.ScreenshotLinkedImage{{
 			Tracker: "AITHER",
-			URL: "https://pixhost.cc/one.png",
-			Path: "image-one.png",
-			Host: "pixhost",
+			URL:     "https://pixhost.cc/one.png",
+			Path:    "image-one.png",
+			Host:    "pixhost",
 		}}}
 		assessment, finalized, err = builder.Build(context.Background(), subject, catalog, runtime, withImages, now)
 		if err != nil || assessment.Results[0].State != api.TrackerPreflightStateFailed || finalized[0].DupeReady {

@@ -353,7 +353,7 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 
 func TestPrepareRecomputesPreviousDVDRipNameAfterRestart(t *testing.T) {
 	t.Parallel()
-	for _, version := range []string{"prepared-release-v16", "prepared-release-v19", "prepared-release-v20"} {
+	for _, version := range []string{"prepared-release-v16", "prepared-release-v19", "prepared-release-v20", "prepared-release-v21", "prepared-release-v22", "prepared-release-v23", "prepared-release-v24"} {
 		t.Run(version, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "Example.Movie.2026.DVDRip.x264-GRP.mkv")
 			if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
@@ -1905,5 +1905,62 @@ func TestPrepareRecomputesV19YearSeasonAfterRestart(t *testing.T) {
 	reused, err := restarted.Prepare(t.Context(), input)
 	if err != nil || reused.Release.Generation != result.Release.Generation || collector.callCount() != 1 {
 		t.Fatalf("updated generation was not reused: generation=%d calls=%d err=%v", reused.Release.Generation, collector.callCount(), err)
+	}
+}
+
+func TestPrepareRecomputesOldVideoEncodeAfterRestart(t *testing.T) {
+	for _, oldVersion := range []string{"prepared-release-v21", "prepared-release-v22", "prepared-release-v23", "prepared-release-v24"} {
+		for _, codec := range []struct{ format, encode string }{{"AVC", "x264"}, {"HEVC", "x265"}} {
+			for _, manual := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/manual=%t", oldVersion, codec.format, manual), func(t *testing.T) {
+					path := writePreparedTestFile(t, "Example.Show.S01.1080p.BluRay."+codec.format+"-GRP.mkv", "video")
+					store := newMemoryStore()
+					input := api.PrepareInput{SourcePath: path}
+					if manual {
+						input.Instructions.ReleaseName.Type = new("ENCODE")
+					}
+					oldFacts := &CollectedFacts{
+						Naming: api.NamingFacts{ReleaseName: "Example Show " + codec.format, Type: "ENCODE"},
+						Media:  api.MediaFacts{Type: "ENCODE", VideoCodec: codec.format},
+					}
+					prepared, err := newTestModule(t, store, &recordingCollector{facts: oldFacts}).Prepare(t.Context(), input)
+					if err != nil {
+						t.Fatal(err)
+					}
+					previous := prepared.Release
+					previous.Compatibility.ContractVersion = oldVersion
+					store.mu.Lock()
+					store.current[canonicalSourceKey(path)] = previous
+					store.mu.Unlock()
+
+					wantName := "Example Show " + codec.encode
+					collector := &clientEvidenceTestCollector{base: recordingCollector{facts: &CollectedFacts{
+						Naming: api.NamingFacts{ReleaseName: wantName, Type: "ENCODE"},
+						Media: api.MediaFacts{
+							Type:        "ENCODE",
+							VideoCodec:  codec.format,
+							VideoEncode: codec.encode,
+						},
+					}}}
+					restarted := newTestModule(t, store, collector)
+					result, err := restarted.Prepare(t.Context(), input)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if collector.collectCount() != 1 || result.Release.Generation != previous.Generation+1 ||
+						result.Release.Compatibility.ContractVersion != ContractVersion {
+						t.Fatalf("stale generation reused: generation=%d calls=%d", result.Release.Generation, collector.collectCount())
+					}
+					if result.Release.Naming.ReleaseName != wantName || result.Release.Media.VideoEncode != codec.encode ||
+						result.Release.Media.VideoCodec != codec.format {
+						t.Fatalf("regenerated name=%q codec=%q encode=%q", result.Release.Naming.ReleaseName, result.Release.Media.VideoCodec, result.Release.Media.VideoEncode)
+					}
+					reused, err := restarted.Prepare(t.Context(), input)
+					if err != nil || reused.Release.Generation != result.Release.Generation || collector.collectCount() != 1 {
+						t.Fatalf("corrected generation not reused: generation=%d calls=%d err=%v", reused.Release.Generation, collector.collectCount(), err)
+					}
+				})
+			}
+		}
 	}
 }

@@ -90,10 +90,12 @@ func (s *Service) maxConcurrentTrackerUploads(total int) int {
 // workers run, using configured image-host preferences even for trackers without
 // a restricted image-host policy.
 func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.UploadSubject, trackers []string) imageHostPreflight {
+	logger := logging.FromContext(ctx, s.logger)
+
 	if meta.ExactMedia != nil && imageHostUploadSkipped(meta) {
 		return nil
 	}
-	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, trackers, s.logger, s.registry)
+	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, trackers, logger, s.registry)
 	return s.preflightDescriptionImageHostsWithPreferences(ctx, meta, trackers, preferredImageHosts, nil, true)
 }
 
@@ -105,6 +107,8 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 	preloaded *preloadedDescriptionAssetData,
 	resolveAll bool,
 ) imageHostPreflight {
+	logger := logging.FromContext(ctx, s.logger)
+
 	if len(trackers) == 0 || s.registry == nil {
 		return nil
 	}
@@ -133,7 +137,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 		targetKey := ""
 		policy, err := resolveImageHostPolicyForMetadataWithRegistry(s.registry, tracker, s.cfg, trackerCfg, meta.ImageHostOverrides)
 		if err != nil {
-			s.logger.Warnf("trackers: image host preflight failed for %s: %v", tracker, err)
+			logger.Warnf("trackers: image host preflight failed for %s: %v", tracker, err)
 			continue
 		}
 		if host := preferredHost(effectiveImageHostSelectionPolicy(policy, preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))])); host != "" {
@@ -158,7 +162,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 		var err error
 		preloaded, err = preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 		if err != nil {
-			s.logger.Warnf("trackers: image host preflight preload failed for %s: %v", meta.SourcePath, err)
+			logger.Warnf("trackers: image host preflight preload failed for %s: %v", meta.SourcePath, err)
 			preloaded = nil
 		}
 	}
@@ -185,13 +189,13 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 				entry.trackerCfg,
 				s.repo,
 				s.images,
-				s.logger,
+				logger,
 				s.registry,
 				preloadedCopy,
 				preferredImageHosts[strings.ToUpper(strings.TrimSpace(entry.tracker))],
 			)
 			if err != nil {
-				s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
+				logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
 				return
 			}
 			mu.Lock()
@@ -211,7 +215,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 	if len(representatives) > 0 && reuploaded {
 		refreshed, err := preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 		if err != nil {
-			s.logger.Warnf("trackers: image host preflight reload failed for %s: %v", meta.SourcePath, err)
+			logger.Warnf("trackers: image host preflight reload failed for %s: %v", meta.SourcePath, err)
 		} else {
 			preloaded = refreshed
 		}
@@ -230,13 +234,13 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 			entry.trackerCfg,
 			s.repo,
 			s.images,
-			s.logger,
+			logger,
 			s.registry,
 			preloaded,
 			preferredImageHosts[strings.ToUpper(strings.TrimSpace(entry.tracker))],
 		)
 		if err != nil {
-			s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
+			logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
 			continue
 		}
 		resolutions[key] = resolution
@@ -280,6 +284,8 @@ func (s *Service) preloadUploadContentData(
 // variants; tracker-local content failures are returned in the preview while
 // cancellation and invalid top-level selection return errors.
 func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionSubject, trackersList []string) (api.PreparationPreview, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	meta := uploadSubjectForDescription(subject)
 	select {
 	case <-ctx.Done():
@@ -289,9 +295,9 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 
 	resolved := trackersList
 	if len(resolved) == 0 {
-		resolved = ResolveTrackersWithDefaultsAndRegistry(s.cfg, meta.Trackers, meta.TrackersRemove, s.logger, s.registry)
+		resolved = ResolveTrackersWithDefaultsAndRegistry(s.cfg, meta.Trackers, meta.TrackersRemove, logger, s.registry)
 	}
-	resolved = filterTrackersByBlocks(resolved, meta.BlockedTrackers, s.logger)
+	resolved = filterTrackersByBlocks(resolved, meta.BlockedTrackers, logger)
 	if len(resolved) == 0 {
 		return api.PreparationPreview{}, errors.New("trackers: no trackers configured")
 	}
@@ -316,18 +322,18 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		return api.PreparationPreview{SourcePath: meta.SourcePath, ContentFailures: contentFailures}, nil
 	}
 
-	s.logger.Debugf("trackers: preparation decision=build trackers=%d", len(resolved))
+	logger.Debugf("trackers: preparation decision=build trackers=%d", len(resolved))
 
 	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 	if err != nil {
-		s.logger.Warnf("trackers: preparation preload failed source=%s err=%s", meta.SourcePath, redaction.RedactValue(err.Error(), nil))
+		logger.Warnf("trackers: preparation preload failed source=%s err=%s", meta.SourcePath, redaction.RedactValue(err.Error(), nil))
 		for _, tracker := range resolved {
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
 			contentFailures = append(contentFailures, *failed.Failure)
 		}
 		return api.PreparationPreview{SourcePath: meta.SourcePath, ContentFailures: contentFailures}, nil
 	}
-	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, s.logger, s.registry)
+	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, logger, s.registry)
 	scopeExactReuse := meta.ExactMedia != nil && imageHostUploadSkipped(meta)
 	var preflight imageHostPreflight
 	if !scopeExactReuse {
@@ -344,7 +350,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 	if preflightUploaded {
 		refreshed, reloadErr := preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 		if reloadErr != nil {
-			s.logger.Warnf("trackers: preparation preload reload failed source=%s err=%s", meta.SourcePath, redaction.RedactValue(reloadErr.Error(), nil))
+			logger.Warnf("trackers: preparation preload reload failed source=%s err=%s", meta.SourcePath, redaction.RedactValue(reloadErr.Error(), nil))
 			for _, tracker := range resolved {
 				failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, reloadErr)
 				contentFailures = append(contentFailures, *failed.Failure)
@@ -398,13 +404,13 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 				trackerCfg,
 				s.repo,
 				s.images,
-				s.logger,
+				logger,
 				s.registry,
 				trackerPreloaded,
 				preferredImageHosts[key],
 			)
 			if err != nil {
-				s.logger.Warnf("trackers: preparation image host resolution failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
+				logger.Warnf("trackers: preparation image host resolution failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 				failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
 				contentFailures = append(contentFailures, *failed.Failure)
 				continue
@@ -416,9 +422,9 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
-		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger, trackerPreloaded)
+		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, logger, trackerPreloaded)
 		if err != nil {
-			s.logger.Warnf("trackers: preparation assets failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
+			logger.Warnf("trackers: preparation assets failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
@@ -431,19 +437,19 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		}
 		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentDescriptionPreview, tracker, trackerMeta, trackerCfg, &assets))
 		if failure != nil {
-			s.logger.Errorf("trackers: preparation failed for %s: %v", tracker, failure)
+			logger.Errorf("trackers: preparation failed for %s: %v", tracker, failure)
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, failure)
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
 		result := plan.Description()
 		if err := plan.Release(); err != nil {
-			s.logger.Warnf("trackers: plan release failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
+			logger.Warnf("trackers: plan release failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 		}
 
 		descriptionText := strings.TrimSpace(result.Description)
 		if descriptionText == "" {
-			s.logger.Infof("trackers: preparation empty description for %s", tracker)
+			logger.Infof("trackers: preparation empty description for %s", tracker)
 		}
 		groupKey := strings.TrimSpace(result.Group)
 		if groupKey == "" {
@@ -489,12 +495,12 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		if descriptionText == "" {
 			placeholderCount++
 		} else {
-			s.logger.Debugf("trackers: preparation built description for %s", tracker)
+			logger.Debugf("trackers: preparation built description for %s", tracker)
 		}
 	}
 
 	if placeholderCount > 0 {
-		s.logger.Infof("trackers: preparation placeholders created for %d trackers", placeholderCount)
+		logger.Infof("trackers: preparation placeholders created for %d trackers", placeholderCount)
 	}
 
 	results := make([]api.PreparationDescription, 0, len(order))

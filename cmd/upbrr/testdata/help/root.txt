@@ -107,7 +107,7 @@ Release Overrides:
   -edition, --edition, -repack string
       Override edition text
   -season, --season string
-      Override season value (single token such as 5 or S05)
+      Override season value (two or four digits, such as 05 or S2026)
   -episode, --episode string
       Override episode value (single token such as 5 or E05)
   -episode-title, --episode-title, -manual-episode-title, -met string

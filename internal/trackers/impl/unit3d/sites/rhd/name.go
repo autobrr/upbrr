@@ -63,8 +63,10 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 			parts = append(parts, "iNCOMPLETE")
 		}
 	}
-	if meta.Edition != "" {
-		parts = append(parts, meta.Edition)
+	if meta.EditionSet != "" {
+		parts = append(parts, meta.EditionSet)
+	} else if edition := meta.EditionLabel(); edition != "" {
+		parts = append(parts, edition)
 	}
 	if meta.Is3D != "" {
 		parts = append(parts, meta.Is3D)

@@ -26,7 +26,7 @@ func resolveType(meta api.UploadSubject) string {
 }
 
 func resolveEdition(meta api.UploadSubject, tags []string) (bool, string) {
-	edition := strings.TrimSpace(meta.Edition)
+	edition := meta.EditionLabel()
 	if slices.Contains(tags, "Hybrid") {
 		edition = strings.TrimSpace(strings.ReplaceAll(edition, "Hybrid", ""))
 	}
@@ -48,6 +48,13 @@ func resolveEdition(meta api.UploadSubject, tags []string) (bool, string) {
 
 func resolveTags(meta api.UploadSubject) []string {
 	tags := make([]string, 0, 12)
+	// Numbered versions retain their name token but share the API category tag.
+	switch strings.ToUpper(strings.TrimSpace(meta.Repack)) {
+	case "PROPER", "PROPER2", "PROPER3":
+		tags = append(tags, "PROPER")
+	case "REPACK", "REPACK2", "REPACK3":
+		tags = append(tags, "REPACK")
+	}
 	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
 	case "WEBRIP":
 		tags = append(tags, "WEBRip")
@@ -64,7 +71,7 @@ func resolveTags(meta api.UploadSubject) []string {
 	if strings.Contains(audio, "dubbed") {
 		tags = append(tags, "EnglishDub")
 	}
-	if strings.Contains(strings.ToLower(meta.Edition), "open matte") {
+	if strings.Contains(strings.ToLower(meta.EditionLabel()), "open matte") {
 		tags = append(tags, "OpenMatte")
 	}
 	if meta.Scene {
@@ -73,7 +80,7 @@ func resolveTags(meta api.UploadSubject) []string {
 	if meta.PersonalRelease {
 		tags = append(tags, "Personal")
 	}
-	if strings.Contains(strings.ToLower(meta.Edition), "hybrid") {
+	if strings.Contains(strings.ToLower(meta.EditionLabel()), "hybrid") {
 		tags = append(tags, "Hybrid")
 	}
 	if meta.HasCommentary {

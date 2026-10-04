@@ -1477,10 +1477,11 @@ func (b workflowMediaBuilder) restoredHostedImageAttempts(
 	if err != nil {
 		return nil, false
 	}
-	return b.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, subject)
+	return b.restoredHostedImageAttemptsForSubject(ctx, snapshot, retained, projections, subject)
 }
 
 func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
+	ctx context.Context,
 	snapshot api.MediaArtifactSet,
 	retained workflowMediaPrivateArtifacts,
 	projections []api.TrackerReleaseProjection,
@@ -1517,6 +1518,8 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 		if tracker == "" {
 			return nil, false
 		}
+		trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, tracker)
+		configuredHost := strings.ToLower(strings.TrimSpace(trackerConfig.ImageHost))
 		hostedSources := make(map[api.PublicResourceID]struct{}, len(selectedSources))
 		eligibleSources := make(map[api.PublicResourceID]struct{}, len(selectedSources))
 		for _, candidate := range b.retainedHostedImageCandidates(snapshot, retained, selectedSources) {
@@ -1536,9 +1539,9 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 				eligibleSources[sourceID] = struct{}{}
 			}
 		}
-		excludedHosts := make([]string, 0)
+		excludedHosts := slices.Clone(snapshot.FailedHosts)
 		for {
-			targets, err := b.media.resolveImageUploadTargets([]string{tracker}, subject, "", excludedHosts)
+			targets, err := b.media.resolveImageUploadTargets(ctx, []string{tracker}, subject, "", excludedHosts)
 			if err != nil {
 				return nil, false
 			}
@@ -1569,6 +1572,10 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 					attempts = append(attempts, attempt)
 					covered = true
 					break
+				}
+				// Missing cached links must leave the configured host pending upload.
+				if target.Host == configuredHost {
+					return nil, false
 				}
 				if !slices.Contains(excludedHosts, target.Host) {
 					excludedHosts = append(excludedHosts, target.Host)
@@ -1678,7 +1685,8 @@ type retainedHostedImageCandidate struct {
 	link     api.UploadedImageLink
 }
 
-// preferReusableImageTargets favors valid saved links for each tracker. When
+// preferReusableImageTargets favors valid saved links without replacing a
+// tracker's configured host while that host remains an active target. When
 // selected local images still need upload, a saved host can replace an upload
 // target only if the resolved targets already assign it to that tracker.
 func (b workflowMediaBuilder) preferReusableImageTargets(
@@ -1728,6 +1736,13 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 		if tracker == "" || projection.Artifacts.ScreenshotCount <= 0 {
 			continue
 		}
+		trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, tracker)
+		configuredHost := strings.ToLower(strings.TrimSpace(trackerConfig.ImageHost))
+		preserveConfiguredHost := configuredHost != "" && slices.ContainsFunc(targets, func(target trackers.ImageUploadTarget) bool {
+			return strings.EqualFold(target.Host, configuredHost) && slices.ContainsFunc(target.Trackers, func(candidate string) bool {
+				return strings.EqualFold(candidate, tracker)
+			})
+		})
 		usableKeys := make(map[hostScope]struct{}, len(ordered))
 		eligibleSources := make(map[api.PublicResourceID]struct{}, len(selectedKinds))
 		hostedSources := make(map[api.PublicResourceID]struct{}, len(selectedKinds))
@@ -1753,7 +1768,7 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 			}
 		}
 		for _, key := range ordered {
-			if _, usable := usableKeys[key]; !usable {
+			if _, usable := usableKeys[key]; !usable || (preserveConfiguredHost && key.host != configuredHost) {
 				continue
 			}
 			coveredScreenshots, coveredMenus := 0, 0

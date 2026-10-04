@@ -423,6 +423,10 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err := m.recoverAfterRestart(ctx, ownerID, &state); err != nil {
 		return CommandResult{}, err
 	}
+	ctx, err = m.withCommandRunLogLevel(ctx, ownerID, state, command)
+	if err != nil {
+		return CommandResult{}, err
+	}
 	receiptKey := commandReceiptKey(command.commandName(), idempotencyKey, fingerprint)
 	if receipt, ok := state.Receipts[receiptKey]; ok {
 		if receipt.Fingerprint != fingerprint {
@@ -445,6 +449,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 
 	priorWorkflow := state.Workflow
+	priorDuplicateReuse := state.PendingDuplicateReuse
 	now := m.clock.Now().UTC()
 	nextRevision := state.Workflow.Revision + 1
 	result, err := m.apply(ctx, ownerID, &state, nextRevision, now, command)
@@ -499,6 +504,10 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 	if result.Dupes != nil {
 		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
+	}
+	if priorDuplicateReuse != nil && (state.PendingDuplicateReuse == nil ||
+		priorDuplicateReuse.Assessment != state.PendingDuplicateReuse.Assessment) {
+		m.private.Delete(ownerID, state.Workflow.ID, dupePrivateResourceID(priorDuplicateReuse.Assessment.ID))
 	}
 	if result.Media != nil || result.Descriptions != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
@@ -697,6 +706,10 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow start load: %w", err)
 	}
 	if err := m.recoverAfterRestart(ctx, ownerID, &state); err != nil {
+		return api.WorkflowOperationStatus{}, err
+	}
+	ctx, err = m.withCommandRunLogLevel(ctx, ownerID, state, command)
+	if err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
 	if prior, found, loadErr := m.loadOperationReceipt(
@@ -1063,7 +1076,7 @@ func (m *Module) runOperation(
 	if runningErr != nil {
 		if m.failAcceptedOperation(ctx, record, true, "Operation could not begin. Retry the stage.") {
 			if err := m.finishCompositeSession(ctx, record.OwnerID, record.WorkflowID, record.OperationID, "admission_failed"); err != nil {
-				m.logger.Warnf(
+				logging.FromContext(ctx, m.logger).Warnf(
 					"releaseworkflow: workflow=%s operation=%s stage=admission_composite_cleanup state=retry_pending cause=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1115,7 +1128,7 @@ func (m *Module) runOperation(
 	privateErr := err
 	if err != nil {
 		err = m.operationErrorClassifier(record.Status.Operation, err)
-		m.logger.Errorf(
+		logging.FromContext(ctx, m.logger).Errorf(
 			"releaseworkflow: command=%s operation=%s stage=%s state=failed cause=%s",
 			command.commandName(),
 			record.Status.Operation,
@@ -1177,7 +1190,7 @@ func (m *Module) runOperation(
 			}
 		}
 	}); terminalErr != nil && !errors.Is(terminalErr, ErrOperationConflict) {
-		m.logger.Warnf(
+		logging.FromContext(ctx, m.logger).Warnf(
 			"releaseworkflow: workflow=%s operation=%s stage=work_completion state=retry_pending cause=%s",
 			record.WorkflowID,
 			record.OperationID,
@@ -1261,7 +1274,7 @@ func (m *Module) failAcceptedOperation(
 		}
 	}
 	if err := m.publishOperationAdmissionFailure(cleanupCtx, record, reason); err != nil {
-		m.logger.Warnf(
+		logging.FromContext(ctx, m.logger).Warnf(
 			"releaseworkflow: workflow=%s operation=%s stage=admission_cleanup state=failed cause=%s",
 			record.WorkflowID,
 			record.OperationID,
@@ -1287,7 +1300,7 @@ func (m *Module) finishCompositeAdmissionLocked(
 	state.Composite.LastOperationID = operationID
 	state.Composite.TerminalReason = "admission_failed"
 	if err := m.saveCompositeMetadata(context.WithoutCancel(ctx), ownerID, state); err != nil {
-		m.logger.Warnf(
+		logging.FromContext(ctx, m.logger).Warnf(
 			"releaseworkflow: workflow=%s operation=%s stage=admission_composite_cleanup state=retry_pending cause=%s",
 			state.Workflow.ID,
 			operationID,
@@ -1615,12 +1628,18 @@ func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted b
 	records, err := m.operations.ListActiveOperations(recoveryCtx)
 	if err != nil {
 		if discardInterrupted {
-			m.logger.Debugf("releaseworkflow: startup operation recovery state=failed stage=list cause=%s", logging.SanitizeMessage(err.Error()))
+			logging.FromContext(
+				ctx,
+				m.logger,
+			).Debugf(
+				"releaseworkflow: startup operation recovery state=failed stage=list cause=%s",
+				logging.SanitizeMessage(err.Error()),
+			)
 		}
 		return fmt.Errorf("release workflow recover operations: %w", err)
 	}
 	if discardInterrupted {
-		m.logger.Debugf("releaseworkflow: startup operation recovery state=started active_count=%d", len(records))
+		logging.FromContext(ctx, m.logger).Debugf("releaseworkflow: startup operation recovery state=started active_count=%d", len(records))
 	}
 	for _, record := range records {
 		if record.ProcessEpoch == m.processEpoch {
@@ -1628,7 +1647,7 @@ func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted b
 		}
 		if err := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); err != nil {
 			if discardInterrupted {
-				m.logger.Debugf(
+				logging.FromContext(ctx, m.logger).Debugf(
 					"releaseworkflow: startup operation recovery state=failed workflow=%s operation=%s cause=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1658,7 +1677,7 @@ func (m *Module) recoverOperationsOnce(ctx context.Context, discardInterrupted b
 		}
 	}
 	if discardInterrupted {
-		m.logger.Debugf("releaseworkflow: startup operation recovery state=completed active_count=%d", len(records))
+		logging.FromContext(ctx, m.logger).Debugf("releaseworkflow: startup operation recovery state=completed active_count=%d", len(records))
 		m.startupRecoveryCompleted = true
 	}
 	m.operationRecovered = true
@@ -1677,7 +1696,7 @@ func (m *Module) completeInterruptedWorkAfterLease(ctx context.Context, record a
 	}
 	now := m.clock.Now().UTC()
 	if work.LeaseExpiresAt.After(now) {
-		m.logger.Debugf(
+		logging.FromContext(ctx, m.logger).Debugf(
 			"releaseworkflow: startup operation recovery decision=wait_terminal_work_lease workflow=%s operation=%s remaining=%s",
 			record.WorkflowID,
 			record.OperationID,
@@ -1707,7 +1726,7 @@ func (m *Module) completeInterruptedWorkAfterLease(ctx context.Context, record a
 	if err := m.durability.CompleteWork(ctx, workflowWorkRecord(current, current.Status, now, &completedAt)); err != nil {
 		return fmt.Errorf("release workflow complete interrupted terminal work: %w", err)
 	}
-	m.logger.Debugf(
+	logging.FromContext(ctx, m.logger).Debugf(
 		"releaseworkflow: startup operation recovery decision=complete_terminal_work workflow=%s operation=%s",
 		record.WorkflowID,
 		record.OperationID,
@@ -1725,7 +1744,7 @@ func (m *Module) recoverOperationAfterLease(
 	if err != nil {
 		if errors.Is(err, ErrWorkflowNotFound) {
 			if discardInterrupted {
-				m.logger.Debugf(
+				logging.FromContext(ctx, m.logger).Debugf(
 					"releaseworkflow: startup operation recovery decision=interrupt reason=missing_work workflow=%s operation=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1739,7 +1758,7 @@ func (m *Module) recoverOperationAfterLease(
 		checkpoint, checkpointErr := completedOperationCheckpoint(record, work)
 		if checkpointErr != nil {
 			if discardInterrupted {
-				m.logger.Debugf(
+				logging.FromContext(ctx, m.logger).Debugf(
 					"releaseworkflow: startup operation recovery decision=interrupt reason=invalid_checkpoint workflow=%s operation=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1748,7 +1767,7 @@ func (m *Module) recoverOperationAfterLease(
 			return m.interruptRecoveredOperation(ctx, record, "The completed operation checkpoint failed its integrity check.")
 		}
 		if discardInterrupted {
-			m.logger.Debugf(
+			logging.FromContext(ctx, m.logger).Debugf(
 				"releaseworkflow: startup operation recovery decision=publish_checkpoint workflow=%s operation=%s",
 				record.WorkflowID,
 				record.OperationID,
@@ -1760,7 +1779,7 @@ func (m *Module) recoverOperationAfterLease(
 	if work.LeaseExpiresAt.After(now) {
 		delay := work.LeaseExpiresAt.Sub(now)
 		if discardInterrupted {
-			m.logger.Debugf(
+			logging.FromContext(ctx, m.logger).Debugf(
 				"releaseworkflow: startup operation recovery decision=wait_work_lease workflow=%s operation=%s remaining=%s",
 				record.WorkflowID,
 				record.OperationID,
@@ -1786,7 +1805,7 @@ func (m *Module) recoverOperationAfterLease(
 				return
 			}
 			if recoveryErr := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); recoveryErr != nil {
-				m.logger.Errorf(
+				logging.FromContext(ctx, m.logger).Errorf(
 					"releaseworkflow: workflow=%s operation=%s stage=restart_recovery state=failed cause=%s",
 					record.WorkflowID,
 					record.OperationID,
@@ -1815,7 +1834,7 @@ func (m *Module) recoverOperationAfterLease(
 		return fmt.Errorf("release workflow claim interrupted work: %w", err)
 	}
 	if discardInterrupted {
-		m.logger.Debugf(
+		logging.FromContext(ctx, m.logger).Debugf(
 			"releaseworkflow: startup operation recovery decision=interrupt reason=expired_work workflow=%s operation=%s",
 			current.WorkflowID,
 			current.OperationID,
@@ -2453,7 +2472,7 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 		result.Media = currentSnapshot(state.Media, ref.ID)
 		if m.activeInputs == nil || admitted {
 			if err := m.finalizeRetainedMedia(ctx, ownerID, workflowID, result.Media, false); err != nil {
-				m.logger.Warnf(
+				logging.FromContext(ctx, m.logger).Warnf(
 					"releaseworkflow: workflow=%s stage=media_cleanup state=retry_pending cause=%s",
 					workflowID,
 					logging.SanitizeMessage(err.Error()),
@@ -2580,7 +2599,7 @@ func (m *Module) MediaPlan(
 			plan.ExistingArtifacts = append([]api.MediaArtifact(nil), media.Artifacts...)
 		}
 	}
-	m.logMediaInventory("plan", plan.ExistingArtifacts)
+	m.logMediaInventory(ctx, "plan", plan.ExistingArtifacts)
 	return plan, nil
 }
 
@@ -3619,6 +3638,11 @@ func (m *Module) apply(
 	now time.Time,
 	command mutation,
 ) (CommandResult, error) {
+	switch command.(type) {
+	case PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand:
+	default:
+		state.PendingDuplicateReuse = nil
+	}
 	switch typed := command.(type) {
 	case ReplaceFactInstructionsCommand:
 		return m.replaceFactInstructions(ctx, ownerID, state, nextRevision, now, typed)
@@ -3699,6 +3723,9 @@ func (m *Module) invalidateWorkflowPrivateResources(
 	state *State,
 ) error {
 	var preserved []string
+	if pending := state.PendingDuplicateReuse; pending != nil {
+		preserved = append(preserved, dupePrivateResourceID(pending.Assessment.ID))
+	}
 	if state.Workflow.AudioAnalysis != nil {
 		if analysis, ok := state.AudioAnalyses[state.Workflow.AudioAnalysis.ID]; ok &&
 			analysis.Revision == state.Workflow.AudioAnalysis.Revision {
@@ -4059,7 +4086,13 @@ func (m *Module) restorePendingAudioAnalysis(
 	retained, err := m.private.Get(ownerID, sourceWorkflowID, audioAnalysisPrivateResourceID(analysis.AttemptID), now)
 	if err != nil {
 		if !errors.Is(err, ErrPrivateResourceUnavailable) {
-			m.logger.Warnf("release workflow audio analysis restore skipped workflow=%s state=retained_resource_unavailable", state.Workflow.ID)
+			logging.FromContext(
+				ctx,
+				m.logger,
+			).Warnf(
+				"release workflow audio analysis restore skipped workflow=%s state=retained_resource_unavailable",
+				state.Workflow.ID,
+			)
 		}
 		return nil, nil
 	}
@@ -4857,7 +4890,7 @@ func applyPreflightInteractionPolicy(
 	}
 	for index := range assessment.Results {
 		result := &assessment.Results[index]
-		if len(result.RequiredActions) == 0 {
+		if !hasPendingRequiredAction(result.RequiredActions) {
 			continue
 		}
 		projectionIndex, ok := projectionIndexes[result.TrackerID]
@@ -5017,7 +5050,9 @@ func (m *Module) stampPreflightActions(
 				}
 				action.ID = api.RequiredActionID(id)
 			}
-			action.Status = api.RequiredActionStatusPending
+			if action.Status != api.RequiredActionStatusResolved {
+				action.Status = api.RequiredActionStatusPending
+			}
 			action.WorkflowRevision = revision
 			action.TrackerID = result.TrackerID
 			action.CreatedAt = now
@@ -5123,7 +5158,17 @@ func (m *Module) checkDuplicates(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve duplicate subject: %w", err)
 	}
-	snapshot, privateEvidence, err := m.dupeBuilder.Build(ctx, subject, projections, preflight, now, command.SkipRemote)
+	reuse, err := m.pendingDuplicateReuse(ownerID, state, projections, command, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	var snapshot api.DupeAssessment
+	var privateEvidence any
+	if incremental, ok := m.dupeBuilder.(IncrementalDupeAssessmentBuilder); ok && reuse != nil {
+		snapshot, privateEvidence, err = incremental.BuildWithReuse(ctx, subject, projections, preflight, now, command.SkipRemote, *reuse)
+	} else {
+		snapshot, privateEvidence, err = m.dupeBuilder.Build(ctx, subject, projections, preflight, now, command.SkipRemote)
+	}
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build duplicate assessment: %w", err)
 	}
@@ -5160,6 +5205,7 @@ func (m *Module) checkDuplicates(
 			return CommandResult{}, fmt.Errorf("release workflow retain duplicate evidence: %w", err)
 		}
 	}
+	state.PendingDuplicateReuse = nil
 	return result, nil
 }
 
@@ -6626,7 +6672,7 @@ func (m *Module) generateDescriptions(
 			if err != nil {
 				return CommandResult{}, fmt.Errorf("release workflow fingerprint restored descriptions: %w", err)
 			}
-			m.logger.Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
+			logging.FromContext(ctx, m.logger).Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
 		}
 	}
 	if len(snapshot.Descriptions) == 0 {
@@ -6665,6 +6711,9 @@ func (m *Module) generateDescriptions(
 func cloneDescriptionInstructions(input api.DescriptionInstructions) api.DescriptionInstructions {
 	cloned := input
 	cloned.Overrides = append([]api.DescriptionOverrideInput(nil), input.Overrides...)
+	for index := range cloned.Overrides {
+		cloned.Overrides[index].TrackerIDs = slices.Clone(input.Overrides[index].TrackerIDs)
+	}
 	cloned.QuestionnaireAnswers = make(map[api.TrackerID]map[string]string, len(input.QuestionnaireAnswers))
 	for trackerID, answers := range input.QuestionnaireAnswers {
 		clonedAnswers := make(map[string]string, len(answers))
@@ -6752,14 +6801,24 @@ func (m *Module) mutateDescriptionOverride(
 		if strings.EqualFold(strings.TrimSpace(override.GroupKey), groupKey) {
 			matchedOverride = true
 			if source != nil {
-				overrides = append(overrides, api.DescriptionOverrideInput{GroupKey: groupKey, Source: *source})
+				overrides = append(overrides, api.DescriptionOverrideInput{
+					GroupKey:   groupKey,
+					Source:     *source,
+					Final:      true,
+					TrackerIDs: slices.Clone(current.Descriptions[targetIndex].TrackerIDs),
+				})
 			}
 			continue
 		}
 		overrides = append(overrides, override)
 	}
 	if source != nil && !matchedOverride {
-		overrides = append(overrides, api.DescriptionOverrideInput{GroupKey: groupKey, Source: *source})
+		overrides = append(overrides, api.DescriptionOverrideInput{
+			GroupKey:   groupKey,
+			Source:     *source,
+			Final:      true,
+			TrackerIDs: slices.Clone(current.Descriptions[targetIndex].TrackerIDs),
+		})
 	}
 	instructions.Overrides = overrides
 	if err := instructions.Validate(); err != nil {
@@ -7569,7 +7628,7 @@ func (m *Module) executeUploads(
 	}
 	results = completeUploadExecutionResults(prepared.plan.Trackers, results, executionErr, trackerIDs)
 	authority := prepared.execution.RegisteredArtifactAuthority()
-	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, results, authority)
+	return m.publishUploadResult(ctx, ownerID, state, nextRevision, now, prepared, results, authority)
 }
 
 func uploadTrackerSelected(trackerID api.TrackerID, requested []api.TrackerID) bool {
@@ -7705,7 +7764,7 @@ func (m *Module) retryFailedUploads(
 	if priorAuthority, ok := m.registeredArtifactAuthority(ownerID, state.Workflow.ID, prior.ID, now); ok {
 		authority = mergeRegisteredArtifactAuthorities(priorAuthority, authority)
 	}
-	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, merged, authority)
+	return m.publishUploadResult(ctx, ownerID, state, nextRevision, now, prepared, merged, authority)
 }
 
 func (m *Module) retryClientInjections(
@@ -7785,7 +7844,7 @@ func (m *Module) retryClientInjections(
 	if err != nil {
 		return CommandResult{}, err
 	}
-	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, merged, authority)
+	return m.publishUploadResult(ctx, ownerID, state, nextRevision, now, prepared, merged, authority)
 }
 
 func (m *Module) registeredArtifactAuthority(
@@ -7975,6 +8034,7 @@ func validateUploadExecutionTrackerIDs(
 }
 
 func (m *Module) publishUploadResult(
+	ctx context.Context,
 	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
@@ -8015,7 +8075,7 @@ func (m *Module) publishUploadResult(
 			cloneRegisteredArtifactAuthority(authority),
 			now.Add(workflowCommandTTL),
 		); err != nil {
-			m.logger.Warnf(
+			logging.FromContext(ctx, m.logger).Warnf(
 				"releaseworkflow: registered artifact authority retention failed workflow=%s decision=unavailable",
 				state.Workflow.ID,
 			)
@@ -8276,6 +8336,8 @@ func (m *Module) resolveAction(
 	var currentDupes *api.DupeAssessment
 	if state.Workflow.Dupes != nil {
 		currentDupes = currentSnapshot(state.Dupes, state.Workflow.Dupes.ID)
+	} else if pending := state.PendingDuplicateReuse; pending != nil {
+		currentDupes = currentSnapshot(state.Dupes, pending.Assessment.ID)
 	}
 	if action, ok := releaseNameConfirmationAction(currentProjections, command.Answer.ActionID); ok {
 		if strictDuplicateForTracker(currentDupes, action.TrackerID) {
@@ -8289,6 +8351,7 @@ func (m *Module) resolveAction(
 		}
 		return m.authorizeTrackerRules(ctx, ownerID, state, nextRevision, now, projection, action, command.Answer)
 	}
+	state.PendingDuplicateReuse = nil
 	index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.ID == command.Answer.ActionID && action.Status == api.RequiredActionStatusPending
 	})

@@ -33,7 +33,6 @@ const baseProps = {
     "HDB",
     "PTP",
     "RTF",
-    "THR",
     "SLOW",
     "ASC",
     "PLAINAPI",
@@ -337,19 +336,6 @@ describe("SettingsPage", () => {
           requiresPasskey: false,
         },
         {
-          trackerID: "THR",
-          displayName: "THR",
-          authKind: "credential_login",
-          supportsCookieFile: false,
-          supportsLogin: true,
-          supportsAutoLogin: true,
-          supportsTOTP: false,
-          supportsManual2FA: false,
-          supportsRemoteValidation: true,
-          requiresAPIKey: false,
-          requiresPasskey: false,
-        },
-        {
           trackerID: "ASC",
           displayName: "ASC",
           authKind: "cookies",
@@ -390,7 +376,6 @@ describe("SettingsPage", () => {
     const ffTitle = await screen.findByText("FF");
     const flTitle = await screen.findByText("FL");
     const rtfTitle = await screen.findByText("RTF");
-    const thrTitle = await screen.findByText("THR");
     const ascTitle = await screen.findByText("ASC");
     const btnCard = btnTitle.closest(".tracker-auth-card");
     const arCard = arTitle.closest(".tracker-auth-card");
@@ -398,7 +383,6 @@ describe("SettingsPage", () => {
     const ffCard = ffTitle.closest(".tracker-auth-card");
     const flCard = flTitle.closest(".tracker-auth-card");
     const rtfCard = rtfTitle.closest(".tracker-auth-card");
-    const thrCard = thrTitle.closest(".tracker-auth-card");
     const ascCard = ascTitle.closest(".tracker-auth-card");
 
     expect(btnCard).not.toBeNull();
@@ -407,7 +391,6 @@ describe("SettingsPage", () => {
     expect(ffCard).not.toBeNull();
     expect(flCard).not.toBeNull();
     expect(rtfCard).not.toBeNull();
-    expect(thrCard).not.toBeNull();
     expect(ascCard).not.toBeNull();
     expect(
       within(btnCard as HTMLElement).getByRole("button", { name: "Check Auth — BTN" }),
@@ -426,9 +409,6 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
     expect(
       within(rtfCard as HTMLElement).getByRole("button", { name: "Check Auth — RTF" }),
-    ).toBeInTheDocument();
-    expect(
-      within(thrCard as HTMLElement).getByRole("button", { name: "Check Auth — THR" }),
     ).toBeInTheDocument();
     expect(
       within(ascCard as HTMLElement).queryByRole("button", { name: "Check Auth — ASC" }),

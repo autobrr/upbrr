@@ -179,6 +179,9 @@ func TestOpenActiveInputDistinguishesLoadFromCorrectionApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open active input: %v", err)
 	}
+	if opened.SourcePath != sourcePath {
+		t.Fatalf("opened source path = %q, want %q", opened.SourcePath, sourcePath)
+	}
 	activeRevision := opened.Revision
 	t.Cleanup(func() {
 		_, _ = core.ReleaseActiveInput(context.Background(), "active-input-owner", api.ReleaseActiveInputRequest{
@@ -214,6 +217,74 @@ func TestOpenActiveInputDistinguishesLoadFromCorrectionApply(t *testing.T) {
 	if refreshed.Revision <= opened.Revision || len(verified) != 2 ||
 		verified[1].ExternalFreshness != api.ExternalFreshnessReuse {
 		t.Fatalf("refreshed active input = %#v, verified preparations = %#v", refreshed, verified)
+	}
+}
+
+func TestActiveInputSnapshotRetainsSourceBeforeBlockedPreparationProducesRelease(t *testing.T) {
+	repo, err := db.Open(filepath.Join(t.TempDir(), "blocked-input.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	persistent, err := releaseworkflow.NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := releaseworkflow.New(
+		persistent,
+		releaseworkflow.NewMemoryPrivateResourceStore(),
+		releaseworkflow.ReleasePreparerFunc{PrepareResolvedFunc: func(context.Context, api.ResolvedPreparationInput) (api.PrepareResult, error) {
+			return api.PrepareResult{}, &api.StaleContentCorrectionsError{
+				Corrections: api.ReleaseCorrectionsSnapshot{Revision: 1, Corrections: api.StoredReleaseCorrectionsV1{
+					Version:            1,
+					Metadata:           api.MetadataOverrides{Title: new("Saved title")},
+					StaleContentFields: []api.CorrectionField{api.CorrectionFieldMetadataTitle},
+				}},
+				CurrentBinding: api.ContentBinding{SourceFingerprint: "current-source"},
+			}
+		}},
+		releaseworkflow.WithActiveInputs(repo, func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+			return api.InputRecord{
+				CanonicalPath: input.SourcePath,
+				SourceVersion: "verified",
+				Manifest:      []byte(`{"identity":{"digest":"verified"}}`),
+			}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workflow.Shutdown(context.Background()) })
+	input := api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv")}
+	slot, err := workflow.OpenInput(t.Context(), "input-owner", releaseworkflow.OpenInputRequest{Input: input, IdempotencyKey: "open-blocked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workflow.Execute(t.Context(), "input-owner", releaseworkflow.PrepareReleaseCommand{
+		WorkflowID:       slot.WorkflowID,
+		ExpectedRevision: 1,
+		Input:            input,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	core := &Core{workflow: workflow, logger: api.NopLogger{}}
+	for range 2 {
+		view, err := core.GetActiveInput(t.Context(), "input-owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if view.SourcePath != input.SourcePath || view.Current == nil || view.Current.Release != nil ||
+			view.Current.Workflow.Status != api.WorkflowStatusBlocked || len(view.Current.Workflow.RequiredActions) != 1 ||
+			view.Current.Workflow.RequiredActions[0].Kind != api.RequiredActionConfirmCorrections {
+			t.Fatalf("blocked active input snapshot = %#v", view)
+		}
+	}
+	foreign, err := core.GetActiveInput(t.Context(), "other-owner")
+	if !errors.Is(err, api.ErrActiveInputBusy) || foreign.SourcePath != "" || foreign.Current != nil {
+		t.Fatalf("foreign input snapshot = %#v, err=%v", foreign, err)
 	}
 }
 
@@ -367,7 +438,7 @@ func TestPreviousProcessInputDoesNotAdvertiseLegacyRecovery(t *testing.T) {
 	t.Cleanup(func() { _ = restarted.Shutdown(context.Background()) })
 	view, err := (&Core{workflow: restarted}).GetActiveInput(t.Context(), "cli")
 	if err != nil || view.State != api.ActiveInputRecovering || view.Revision != opened.Revision ||
-		view.Current != nil || len(view.RecoveryWorkflowIDs) != 0 {
+		view.Current != nil || view.SourcePath != "" || len(view.RecoveryWorkflowIDs) != 0 {
 		t.Fatalf("previous-process input = %#v, err=%v", view, err)
 	}
 }

@@ -59,6 +59,11 @@ func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update 
 		return api.ResolvedPreparationInput{}, err
 	}
 	values := correctionValues(raw.Instructions)
+	if update.Mode != api.ReleaseCorrectionUpdateInherit {
+		// Explicit updates own new version writes; raw instructions may be retained
+		// workflow state that the update replaces or resets.
+		values.ReleaseName.Repack = nil
+	}
 	if err := (api.ReleaseCorrectionPatch{Values: values}).Validate(); err != nil {
 		return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: validate correction values: %w", err)
 	}

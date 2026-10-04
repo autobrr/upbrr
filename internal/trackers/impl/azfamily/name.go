@@ -26,7 +26,7 @@ var (
 	phdLimitedPattern    = regexp.MustCompile(`(?i)\bLIMITED\b`)
 	phdCriterionPattern  = regexp.MustCompile(`(?i)\bCriterion Collection\b`)
 	phdAnniversary       = regexp.MustCompile(`(?i)\b\d{1,3}(?:st|nd|rd|th)\s+Anniversary Edition\b`)
-	phdDirectorPattern   = regexp.MustCompile("(?i)\\bDirector[’'`]s\\s+Cut\\b")
+	phdDirectorPattern   = regexp.MustCompile("(?i)\\bDirector[’'`]?s\\s+Cut\\b")
 	phdExtendedPattern   = regexp.MustCompile(`(?i)\bExtended\s+Cut\b`)
 	phdTheatricalPattern = regexp.MustCompile(`(?i)\bTheatrical\s+Cut\b`)
 	phdH264Pattern       = regexp.MustCompile(`(?i)\bH\.264\b`)
@@ -38,10 +38,10 @@ func releaseNamePolicy(site siteDefinition) trackers.ReleaseNamePolicyBinding {
 	movieYearProvider := api.IdentityProviderTMDB
 	switch site.Name {
 	case "CZ":
-		version = "v6"
+		version = "v7"
 		movieYearProvider = api.IdentityProviderIMDB
 	case "PHD":
-		version = "v3"
+		version = "v4"
 	}
 	return trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy(
 		fmt.Sprintf("azfamily/%s/%s", strings.ToLower(site.Name), version),
@@ -113,7 +113,7 @@ func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubjec
 	title := cinemaZTitle(meta)
 	if title == "" {
 		return &trackers.NameRuleError{
-			Rule:   "azfamily/cz/v6",
+			Rule:   "azfamily/cz/v7",
 			Role:   api.NameRoleTitle,
 			Reason: "no Latin-safe title is available; set a Latin-safe manual original title and reprepare",
 		}
@@ -125,6 +125,9 @@ func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubjec
 		return err
 	}
 	if err := normalizeCinemaZEdition(editor); err != nil {
+		return err
+	}
+	if err := normalizeCinemaZCut(editor); err != nil {
 		return err
 	}
 	if err := normalizeUppercaseComponent(editor, api.NameRoleHybrid); err != nil {
@@ -206,6 +209,9 @@ func applyPHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject) e
 		return err
 	}
 	if err := normalizePHDEdition(editor); err != nil {
+		return err
+	}
+	if err := normalizePHDCut(editor); err != nil {
 		return err
 	}
 	if isTV(meta) {
@@ -307,10 +313,16 @@ func normalizeCinemaZEdition(editor *trackers.NameEditor) error {
 		value = czCriterionPattern.ReplaceAllString(value, "")
 		value = czResolutionPattern.ReplaceAllString(value, "")
 		value = czAnniversaryPattern.ReplaceAllString(value, "")
+		value = czUppercasePattern.ReplaceAllStringFunc(value, strings.ToUpper)
+		return strings.Join(strings.Fields(value), " ")
+	})
+}
+
+func normalizeCinemaZCut(editor *trackers.NameEditor) error {
+	return normalizeNameComponent(editor, api.NameRoleCut, func(value string) string {
 		value = czExtendedPattern.ReplaceAllString(value, "EXT")
 		value = czDirectorPattern.ReplaceAllString(value, "DC")
 		value = czTheatricalPattern.ReplaceAllString(value, "TC")
-		value = czUppercasePattern.ReplaceAllStringFunc(value, strings.ToUpper)
 		return strings.Join(strings.Fields(value), " ")
 	})
 }
@@ -320,6 +332,12 @@ func normalizePHDEdition(editor *trackers.NameEditor) error {
 		value = phdLimitedPattern.ReplaceAllString(value, "")
 		value = phdCriterionPattern.ReplaceAllString(value, "")
 		value = phdAnniversary.ReplaceAllString(value, "")
+		return strings.Join(strings.Fields(value), " ")
+	})
+}
+
+func normalizePHDCut(editor *trackers.NameEditor) error {
+	return normalizeNameComponent(editor, api.NameRoleCut, func(value string) string {
 		value = phdDirectorPattern.ReplaceAllString(value, "DC")
 		value = phdExtendedPattern.ReplaceAllString(value, "Extended")
 		value = phdTheatricalPattern.ReplaceAllString(value, "Theatrical")

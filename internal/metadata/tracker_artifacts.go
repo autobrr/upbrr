@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -55,25 +57,21 @@ func (s *Service) persistTrackerArtifacts(
 	result trackerdata.Result,
 	keepImages bool,
 ) []string {
+	logger := logging.FromContext(ctx, s.logger)
+
 	if strings.TrimSpace(result.Description) == "" && (len(result.Validated) == 0 || !keepImages) {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: tracker artifacts skipped tracker=%s reason=no_description_or_images", tracker)
-		}
+		logger.Debugf("metadata: tracker artifacts skipped tracker=%s reason=no_description_or_images", tracker)
 		return nil
 	}
 
 	tmpRoot, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: tracker artifacts temp dir failed tracker=%s: %v", tracker, err)
-		}
+		logger.Warnf("metadata: tracker artifacts temp dir failed tracker=%s: %v", tracker, err)
 		return nil
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: tracker artifacts temp dir failed tracker=%s: %v", tracker, err)
-		}
+		logger.Warnf("metadata: tracker artifacts temp dir failed tracker=%s: %v", tracker, err)
 		return nil
 	}
 
@@ -83,42 +81,32 @@ func (s *Service) persistTrackerArtifacts(
 	}
 	artifactDir := filepath.Join(tmpDir, trackerDir)
 	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: tracker artifact dir failed tracker=%s: %v", tracker, err)
-		}
+		logger.Warnf("metadata: tracker artifact dir failed tracker=%s: %v", tracker, err)
 		return nil
 	}
-	if s.logger != nil {
-		s.logger.Debugf(
-			"metadata: tracker artifacts tracker=%s dir=%s desc=%t images=%d keepImages=%t",
-			tracker,
-			artifactDir,
-			strings.TrimSpace(result.Description) != "",
-			len(result.Validated),
-			keepImages,
-		)
-	}
+	logger.Debugf(
+		"metadata: tracker artifacts tracker=%s dir=%s desc=%t images=%d keepImages=%t",
+		tracker,
+		artifactDir,
+		strings.TrimSpace(result.Description) != "",
+		len(result.Validated),
+		keepImages,
+	)
 
 	if strings.TrimSpace(result.Description) != "" {
 		name := sanitizeFilename(strings.ToLower(tracker)) + "_description.txt"
 		path := filepath.Join(artifactDir, name)
 		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
-			if s.logger != nil {
-				s.logger.Debugf("metadata: tracker description exists tracker=%s path=%s", tracker, path)
-			}
+			logger.Debugf("metadata: tracker description exists tracker=%s path=%s", tracker, path)
 		} else if err := os.WriteFile(path, []byte(result.Description), 0o600); err != nil {
-			if s.logger != nil {
-				s.logger.Warnf("metadata: tracker description save failed tracker=%s: %v", tracker, err)
-			}
-		} else if s.logger != nil {
-			s.logger.Debugf("metadata: tracker description saved tracker=%s path=%s", tracker, path)
+			logger.Warnf("metadata: tracker description save failed tracker=%s: %v", tracker, err)
+		} else {
+			logger.Debugf("metadata: tracker description saved tracker=%s path=%s", tracker, path)
 		}
 	}
 
 	if !keepImages || len(result.Validated) == 0 {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: tracker images skipped tracker=%s keepImages=%t validated=%d", tracker, keepImages, len(result.Validated))
-		}
+		logger.Debugf("metadata: tracker images skipped tracker=%s keepImages=%t validated=%d", tracker, keepImages, len(result.Validated))
 		return nil
 	}
 
@@ -146,7 +134,7 @@ func (s *Service) persistTrackerArtifacts(
 		return nil
 	}
 	if strings.EqualFold(tracker, "PTP") {
-		client = trackers.PTPDescriptionImageHTTPClient(ctx, client, s.cfg, s.logger)
+		client = trackers.PTPDescriptionImageHTTPClient(ctx, client, s.cfg, logger)
 	}
 
 	successfulByIndex := make([]string, len(result.Validated))
@@ -165,18 +153,14 @@ func (s *Service) persistTrackerArtifacts(
 				if imagehost.IsWsrvProxyURL(task.url) {
 					artifactURL = imagehost.DirectImageURL(task.url)
 					if artifactURL == "" {
-						if s.logger != nil {
-							s.logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=invalid_proxy_source", tracker, task.index+1)
-						}
+						logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=invalid_proxy_source", tracker, task.index+1)
 						continue
 					}
 				}
 				fileName := buildImageFilename(artifactURL, task.index)
 				outPath := filepath.Join(artifactDir, fileName)
 				if info, err := os.Stat(outPath); err == nil && info.Size() > 0 {
-					if s.logger != nil {
-						s.logger.Debugf("metadata: tracker image exists tracker=%s index=%d path=%s", tracker, task.index+1, outPath)
-					}
+					logger.Debugf("metadata: tracker image exists tracker=%s index=%d path=%s", tracker, task.index+1, outPath)
 					successfulByIndex[task.index] = task.url
 					continue
 				}
@@ -187,14 +171,10 @@ func (s *Service) persistTrackerArtifacts(
 					}
 					return nil
 				}); err != nil {
-					if s.logger != nil {
-						s.logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=%s", tracker, task.index+1, err.Error())
-					}
+					logger.Warnf("metadata: tracker image save failed tracker=%s index=%d reason=%s", tracker, task.index+1, err.Error())
 					continue
 				}
-				if s.logger != nil {
-					s.logger.Debugf("metadata: tracker image saved tracker=%s index=%d path=%s", tracker, task.index+1, outPath)
-				}
+				logger.Debugf("metadata: tracker image saved tracker=%s index=%d path=%s", tracker, task.index+1, outPath)
 				successfulByIndex[task.index] = task.url
 			}
 		})

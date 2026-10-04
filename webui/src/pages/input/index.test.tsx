@@ -95,6 +95,7 @@ const inputFacet = (): InputFacet => ({
       search: { skip: false, client: "" },
     },
     corrections: null,
+    correctionReview: null,
     valueFields: [],
     resetFields: [],
     confirmFields: [],
@@ -824,6 +825,90 @@ describe("InputPage", () => {
     expect(screen.getByText("TMDB generation 2")).toBeVisible();
   });
 
+  it("preserves the selected TVDB display language when provider data refreshes", () => {
+    const base = readyInputFacet(1);
+    const preview = base.view.preview!;
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        preview: {
+          ...preview,
+          Identity: { ...preview.Identity, TVDBID: 77 },
+          Display: {
+            ...preview.Display,
+            Providers: [
+              {
+                Provider: "tvdb",
+                ID: 77,
+                DisplayID: "77",
+                URL: "",
+                Provenance: "resolver",
+                SummaryAvailable: true,
+                Summary: providerSummary("Original title"),
+                Details: {
+                  TVDB: {
+                    Name: "Original title",
+                    NameEnglish: "English title",
+                    OriginalLanguage: "ja",
+                    HasEnglish: true,
+                  } as TVDBMetadata,
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const pageProps = {
+      sourcePathHistory: [],
+      handleBrowseFile: vi.fn(),
+      handleBrowseFolder: vi.fn(),
+      trackerUploadItems: [],
+      showExternalIDInputUI: false,
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+      trackerIconSrcByName: {},
+    };
+    const { rerender } = render(<InputPage facet={facet} {...pageProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Original" }));
+    expect(screen.getByRole("button", { name: "Original" })).toHaveClass("toggle-active");
+    rerender(
+      <InputPage
+        facet={{ ...facet, view: { ...facet.view, preview: structuredClone(facet.view.preview) } }}
+        {...pageProps}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Original" })).toHaveClass("toggle-active");
+    const refreshed = structuredClone(facet.view.preview!);
+    for (const change of ["generation", "provider", "source"]) {
+      if (change === "generation") refreshed.Release.Generation += 1;
+      if (change === "provider") {
+        refreshed.Identity.TVDBID = 78;
+        refreshed.Display.Providers[0].ID = 78;
+      }
+      if (change === "source") refreshed.Release.SourcePath = "C:\\media\\Other.Release.2026.mkv";
+      rerender(
+        <InputPage
+          facet={{ ...facet, view: { ...facet.view, preview: structuredClone(refreshed) } }}
+          {...pageProps}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "English" })).toHaveClass("toggle-active");
+      fireEvent.click(screen.getByRole("button", { name: "Original" }));
+    }
+    const tvdbProvider = refreshed.Display.Providers[0];
+    if (tvdbProvider.Provider !== "tvdb") throw new Error("TVDB fixture missing");
+    tvdbProvider.Details.TVDB.HasEnglish = false;
+    rerender(
+      <InputPage
+        facet={{ ...facet, view: { ...facet.view, preview: structuredClone(refreshed) } }}
+        {...pageProps}
+      />,
+    );
+    expect(screen.queryByRole("group", { name: "TVDB language display" })).not.toBeInTheDocument();
+  });
+
   it("uses provider preview images while opening full-size artwork in the lightbox", () => {
     const base = readyInputFacet(1);
     const preview = base.view.preview!;
@@ -1020,6 +1105,10 @@ describe("InputPage", () => {
 
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(1, { NoEpisodeTitle: true });
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(2, { NoDistributor: true });
+    fireEvent.change(screen.getByLabelText("No edition"), { target: { value: "yes" } });
+    expect(facet.changeReleaseName).toHaveBeenNthCalledWith(3, { NoEdition: true });
+    fireEvent.change(screen.getByLabelText("No edition"), { target: { value: "no" } });
+    expect(facet.changeReleaseName).toHaveBeenNthCalledWith(4, { NoEdition: false });
   });
 
   it("removes each metadata provider without overriding untouched IDs", () => {
@@ -1436,7 +1525,7 @@ describe("InputPage", () => {
     ["tv", "", true],
     ["tv", "unknown", true],
   ] as const)(
-    "updates year editing for category change from %s to %s",
+    "preserves year restrictions when category changes from %s to saved value %s",
     (preparedCategory, draftCategory, locked) => {
       const base = readyInputFacet(1);
       const release = preparedRelease();
@@ -1448,8 +1537,6 @@ describe("InputPage", () => {
         },
       };
       const { rerender } = render(<InputCorrectionEditor facet={facet} />);
-      fireEvent.change(screen.getByLabelText("Category"), { target: { value: draftCategory } });
-      expect(facet.changeReleaseName).toHaveBeenCalledWith({ Category: draftCategory });
       rerender(
         <InputCorrectionEditor
           facet={{
@@ -1465,6 +1552,124 @@ describe("InputPage", () => {
       else expect(screen.getByLabelText("Manual year")).not.toHaveAttribute("readonly");
     },
   );
+
+  it("keeps Repack explicit, cleared, automatic, and saved values separate from Edition", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: { ...release, Media: { ...release.Media, Repack: "REPACK2" } },
+        intent: { ...base.view.intent, releaseName: { Edition: "Extended" } },
+      },
+    };
+    const { container, rerender } = render(<InputCorrectionEditor facet={facet} />);
+    const row = () =>
+      within(
+        container.querySelector<HTMLElement>('[data-correction-field="release_name.repack"]')!,
+      );
+    expect(screen.getByRole("combobox", { name: "Release version" })).toHaveValue("REPACK2");
+    expect(row().getByText("Automatic value")).toBeInTheDocument();
+    expect(
+      row()
+        .getAllByRole("option")
+        .map((option) => option.getAttribute("value")),
+    ).toEqual(["", "REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP"]);
+    for (const value of ["PROPER3", ""]) {
+      fireEvent.change(screen.getByLabelText("Release version"), { target: { value } });
+      expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+        Edition: "Extended",
+        Repack: value,
+      });
+      rerender(
+        <InputCorrectionEditor
+          facet={{
+            ...facet,
+            view: {
+              ...facet.view,
+              intent: { ...facet.view.intent, releaseName: { Edition: "Extended", Repack: value } },
+            },
+          }}
+        />,
+      );
+      expect(screen.getByLabelText("Release version")).toHaveValue(value);
+      expect(screen.getByLabelText("Edition")).toHaveValue("Extended");
+      expect(row().getByText("Manual value · Applied")).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Auto Release version" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.repack" });
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            resetFields: [{ field: "release_name.repack" }],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("Release version")).toHaveValue("REPACK2");
+    expect(row().getByText("Auto reset pending")).toBeInTheDocument();
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            intent: {
+              ...facet.view.intent,
+              releaseName: { Edition: "Extended", Repack: " proper " },
+            },
+            corrections: {
+              revision: 1,
+              corrections: {
+                version: 1,
+                identity: {},
+                releaseName: { Repack: " proper " },
+                metadata: {},
+              },
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("Release version")).toHaveValue("PROPER");
+    expect(row().getByText("Manual value · Applied")).toBeInTheDocument();
+  });
+
+  it("keeps an unsupported saved release version visible until correction or Auto", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: {
+          ...base.view.intent,
+          releaseName: { Edition: "Extended", Repack: "Legacy-Version" },
+        },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    const control = screen.getByRole("combobox", { name: "Release version" });
+    expect(control).toHaveValue("LEGACY-VERSION");
+    expect(
+      within(control).getByRole("option", { name: "Unsupported current value: LEGACY-VERSION" }),
+    ).toBeDisabled();
+    expect(facet.view.intent.releaseName.Repack).toBe("Legacy-Version");
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    for (const value of ["PROPER", ""]) {
+      fireEvent.change(control, { target: { value } });
+      expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+        Edition: "Extended",
+        Repack: value,
+      });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Auto Release version" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.repack" });
+  });
 
   it("renders the complete source-level correction inventory", () => {
     const base = readyInputFacet(1);
@@ -1490,6 +1695,7 @@ describe("InputPage", () => {
       "release_name.tag",
       "release_name.service",
       "release_name.edition",
+      "release_name.repack",
       "release_name.season",
       "release_name.episode",
       "release_name.episode_title",
@@ -1710,3 +1916,398 @@ describe("InputPage", () => {
     expect(screen.getByLabelText("PTP No English subtitles")).toHaveValue("auto");
   });
 });
+
+it.each([
+  ["Director's Cut", "", "", "", "Director's Cut"],
+  ["Extended Cut", "Collector's", "IMAX", "", "Extended Cut Collector's IMAX"],
+  ["Theatrical / Extended", "", "IMAX", "2in1", "2in1"],
+])(
+  "displays canonical edition parts for correction (%s)",
+  (Cut, Edition, Presentation, EditionSet, expected) => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: {
+          ...release,
+          Media: { ...release.Media, Cut, Edition, Presentation, EditionSet },
+        },
+      },
+    };
+    const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+    expect(screen.getByLabelText("Edition")).toHaveValue(expected);
+
+    for (const Edition of ["Custom Edition", ""]) {
+      fireEvent.change(screen.getByLabelText("Edition"), { target: { value: Edition } });
+      expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ Edition });
+      rerender(
+        <InputCorrectionEditor
+          facet={{
+            ...facet,
+            view: { ...facet.view, intent: { ...facet.view.intent, releaseName: { Edition } } },
+          }}
+        />,
+      );
+      expect(screen.getByLabelText("Edition")).toHaveValue(Edition);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Auto Edition" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.edition" });
+    rerender(<InputCorrectionEditor facet={facet} />);
+    expect(screen.getByLabelText("Edition")).toHaveValue(expected);
+  },
+);
+
+describe("saved correction review", () => {
+  const reviewFacet = (): InputFacet => {
+    const base = inputFacet();
+    const previous = {
+      category: "movie",
+      sourceFingerprint: "previous-source",
+      providerIds: { tmdbId: 101, imdbId: 0, tvdbId: 0, tvmazeId: 0, malId: 0 },
+    };
+    return {
+      ...base,
+      view: {
+        ...base.view,
+        status: "awaiting_input",
+        selectedSource: base.view.sourceDraft,
+        intent: {
+          ...base.view.intent,
+          metadata: { AlternateTitle: "Saved example", Genres: ["Drama"] },
+        },
+        corrections: {
+          revision: 4,
+          corrections: {
+            version: 1,
+            identity: {},
+            releaseName: { Edition: "Unrelated edition" },
+            metadata: { AlternateTitle: "Saved example", Genres: ["Drama"] },
+            staleContentFields: ["metadata.alternate_title", "metadata.genres"],
+            contentBindings: { "metadata.alternate_title": previous, "metadata.genres": previous },
+          },
+        },
+        correctionReview: {
+          revision: 4,
+          fields: ["metadata.alternate_title", "metadata.genres"],
+          previousBindings: { "metadata.alternate_title": previous, "metadata.genres": previous },
+          currentBinding: {
+            ...previous,
+            category: "tv",
+            sourceFingerprint: "current-source",
+            providerIds: { ...previous.providerIds, tmdbId: 0 },
+          },
+        },
+      },
+    };
+  };
+
+  it("shows affected values and changed evidence before any release snapshot exists", () => {
+    const facet = reviewFacet();
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+    const panel = screen.getByRole("region", { name: "Saved values need review" });
+    expect(within(panel).getByText("Saved example")).toBeInTheDocument();
+    expect(within(panel).getByText("Drama")).toBeInTheDocument();
+    expect(within(panel).getAllByText(/source identity changed/i)).toHaveLength(2);
+    expect(within(panel).getAllByText(/movie.*tv/i)).toHaveLength(2);
+    expect(within(panel).getAllByText(/TMDB.*101.*unavailable/i)).toHaveLength(2);
+    expect(within(panel).getAllByText(/automatic value.*not available/i)).toHaveLength(2);
+    expect(within(panel).queryByText("Unrelated edition")).not.toBeInTheDocument();
+    expect(screen.queryByText("Workflow release snapshot is unavailable.")).not.toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Apply and continue" })).toBeDisabled();
+  });
+
+  it("queues keep, edit, and selected automatic resets through existing correction controls", () => {
+    const facet = reviewFacet();
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+    const alternate = screen.getByRole("group", { name: "Alternate title" });
+    fireEvent.click(within(alternate).getByRole("button", { name: "Keep saved value" }));
+    expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "metadata.alternate_title" });
+    fireEvent.change(within(alternate).getByLabelText("Edit Alternate title"), {
+      target: { value: "Replacement example" },
+    });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({
+      AlternateTitle: "Replacement example",
+      Genres: ["Drama"],
+    });
+    fireEvent.click(within(alternate).getByRole("button", { name: "Use automatic value" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "metadata.alternate_title" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use automatic values for all affected fields" }),
+    );
+    expect(facet.resetCorrection).toHaveBeenCalledTimes(3);
+    expect(facet.resetCorrection).toHaveBeenLastCalledWith({ field: "metadata.genres" });
+  });
+
+  it("lists every supported content-bound correction, preserving explicit empty and zero values", () => {
+    const base = reviewFacet();
+    const fields = [
+      "metadata.title",
+      "metadata.alternate_title",
+      "metadata.original_title",
+      "metadata.genres",
+      "metadata.original_language",
+      "release_name.manual_year",
+      "release_name.manual_date",
+      "release_name.season",
+      "release_name.episode",
+      "release_name.episode_title",
+    ];
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        correctionReview: { ...base.view.correctionReview!, fields },
+        corrections: {
+          ...base.view.corrections!,
+          corrections: {
+            ...base.view.corrections!.corrections,
+            metadata: {
+              Title: "Example title",
+              AlternateTitle: "",
+              OriginalTitle: "Example original",
+              Genres: [],
+              OriginalLanguage: "en",
+            },
+            releaseName: {
+              ManualYear: 0,
+              ManualDate: "2026-10-04",
+              Season: "01",
+              Episode: "02",
+              EpisodeTitle: "Example episode",
+            },
+          },
+        },
+      },
+    };
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+    for (const label of [
+      "Title",
+      "Alternate title",
+      "Original title",
+      "Genres",
+      "Original language",
+      "Manual year",
+      "Manual date",
+      "Season",
+      "Episode",
+      "Episode title",
+    ]) {
+      expect(screen.getByRole("group", { name: label })).toBeInTheDocument();
+    }
+    expect(screen.getByText("Empty value")).toBeInTheDocument();
+    expect(screen.getByText("Empty list")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "Manual year" })).getByText("0"),
+    ).toBeInTheDocument();
+  });
+
+  it("applies pending choices and preserves provider-owned edit restrictions", () => {
+    const base = reviewFacet();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        correctionDirty: true,
+        confirmFields: [{ field: "metadata.alternate_title" }],
+        correctionReview: {
+          ...base.view.correctionReview!,
+          fields: ["metadata.alternate_title", "metadata.title", "release_name.manual_year"],
+        },
+        corrections: {
+          ...base.view.corrections!,
+          corrections: {
+            ...base.view.corrections!.corrections,
+            metadata: { Title: "Saved title", AlternateTitle: "Saved example" },
+            releaseName: { ManualYear: 2026 },
+          },
+        },
+      },
+    };
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+    expect(screen.getByLabelText("Edit Title")).toBeDisabled();
+    expect(screen.getByLabelText("Edit Manual year")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Apply and continue" }));
+    expect(facet.prepareSource).toHaveBeenCalledWith(facet.view.selectedSource, facet.view.intent);
+  });
+});
+
+it("offers supported Input choices and applies their canonical correction values", () => {
+  const facet = inputFacet();
+  render(<InputCorrectionEditor facet={facet} />);
+  for (const [label, value] of [
+    ["Category", "movie"],
+    ["Type", "WEBDL"],
+    ["Source", "Blu-ray"],
+    ["Resolution", "1080p"],
+  ]) {
+    const choice = screen.getByRole("combobox", { name: label });
+    expect([...choice.querySelectorAll("option")].some((option) => option.value === value)).toBe(
+      true,
+    );
+    fireEvent.change(choice, { target: { value } });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ [label]: value });
+  }
+  const service = screen.getByRole("combobox", { name: "Service" });
+  fireEvent.focus(service);
+  const initialCount = screen.getAllByRole("option").length;
+  fireEvent.change(service, { target: { value: "AMZ" } });
+  fireEvent.click(screen.getByRole("option", { name: "Amazon Prime Video (AMZN)" }));
+  expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ Service: "AMZN" });
+  fireEvent.click(screen.getByRole("button", { name: "Browse Service" }));
+  expect(screen.getAllByRole("option")).toHaveLength(initialCount);
+});
+
+it("keeps blank and unknown saved dropdown values and resets local search with Auto", () => {
+  const base = inputFacet();
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      intent: {
+        ...base.view.intent,
+        releaseName: { Category: "Legacy", Type: "", Service: "Custom service" },
+      },
+    },
+  };
+  const { rerender, unmount } = render(<InputCorrectionEditor facet={facet} />);
+  expect(screen.getByRole("combobox", { name: "Category" })).toHaveValue("Legacy");
+  expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("");
+  const service = screen.getByRole("combobox", { name: "Service" });
+  expect(service).toHaveValue("Custom service");
+  fireEvent.change(service, { target: { value: "AMZ" } });
+  fireEvent.click(screen.getByRole("button", { name: "Auto Service" }));
+  expect(facet.resetCorrection).toHaveBeenLastCalledWith({ field: "release_name.service" });
+  rerender(<InputCorrectionEditor facet={base} />);
+  expect(screen.getByRole("combobox", { name: "Service" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  unmount();
+  render(<InputCorrectionEditor facet={facet} />);
+  expect(screen.getByRole("combobox", { name: "Service" })).toHaveValue("Custom service");
+});
+
+it("shows automatic choices and confirms retained values without changing correction semantics", () => {
+  const base = inputFacet();
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      release: preparedRelease(),
+      intent: { ...base.view.intent, releaseName: { Service: "NF" } },
+      corrections: {
+        revision: 1,
+        corrections: {
+          version: 1,
+          identity: {},
+          metadata: {},
+          releaseName: { Service: "NF" },
+          staleContentFields: ["release_name.service"],
+          contentBindings: {},
+        },
+      },
+    },
+  };
+  render(<InputCorrectionEditor facet={facet} />);
+  expect(screen.getByRole("combobox", { name: "Category" })).toHaveValue("movie");
+  expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("ENCODE");
+  expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("BluRay");
+  expect(screen.getByRole("combobox", { name: "Resolution" })).toHaveValue("1080p");
+  expect(screen.getByRole("combobox", { name: "Service" })).toHaveValue("NF");
+  fireEvent.click(screen.getByRole("button", { name: "Confirm saved Service" }));
+  expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "release_name.service" });
+  expect(facet.changeReleaseName).not.toHaveBeenCalled();
+  const region = screen.getByRole("combobox", { name: "Region" });
+  expect(region).toHaveValue("A");
+  fireEvent.focus(region);
+  const count = within(screen.getByRole("listbox", { name: "Region suggestions" })).getAllByRole(
+    "option",
+  ).length;
+  expect(count).toBeGreaterThan(20);
+  fireEvent.change(region, { target: { value: "kIngdom" } });
+  expect(screen.getByRole("option", { name: "United Kingdom (GBR)" })).toBeInTheDocument();
+  fireEvent.keyDown(region, { key: "ArrowDown" });
+  fireEvent.keyDown(region, { key: "Enter" });
+  expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ Service: "NF", Region: "GBR" });
+});
+
+it("browses the shared distributor catalog and applies names while preserving custom and numeric corrections", () => {
+  const base = inputFacet();
+  const facet: InputFacet = { ...base, view: { ...base.view, release: preparedRelease() } };
+  const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+  const distributor = screen.getByRole("combobox", { name: "Distributor" });
+  expect(distributor).toHaveValue("Example Distributor");
+  fireEvent.focus(distributor);
+  const list = () => within(screen.getByRole("listbox", { name: "Distributor suggestions" }));
+  expect(list().getAllByRole("option")).toHaveLength(965);
+  fireEvent.change(distributor, { target: { value: "vInegar" } });
+  expect(list().getAllByRole("option")).toHaveLength(1);
+  fireEvent.keyDown(distributor, { key: "ArrowDown" });
+  fireEvent.keyDown(distributor, { key: "Enter" });
+  expect(facet.changeMetadata).toHaveBeenLastCalledWith({ Distributor: "VINEGAR SYNDROME" });
+  fireEvent.change(distributor, { target: { value: "" } });
+  expect(list().getAllByRole("option")).toHaveLength(965);
+  for (const value of ["Custom publisher", "922", ""]) {
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            intent: { ...facet.view.intent, metadata: { Distributor: value } },
+          },
+        }}
+      />,
+    );
+    expect(distributor).toHaveValue(value);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Auto Distributor" }));
+  expect(facet.resetCorrection).toHaveBeenLastCalledWith({ field: "metadata.distributor" });
+  expect(screen.getByRole("combobox", { name: "Distributor" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+});
+
+it.each([
+  ["Category", "movie", "release_name.category"],
+  ["Type", "WEBDL", "release_name.type"],
+  ["Source", "Blu-ray", "release_name.source"],
+  ["Resolution", "1080p", "release_name.resolution"],
+] as const)(
+  "%s retains legacy values until selection or Auto and survives remount",
+  (key, value, field) => {
+    const base = inputFacet();
+    const facet: InputFacet = {
+      ...base,
+      view: { ...base.view, intent: { ...base.view.intent, releaseName: { [key]: "Legacy" } } },
+    };
+    const { rerender, unmount } = render(<InputCorrectionEditor facet={facet} />);
+    const choice = screen.getByRole("combobox", { name: key });
+    expect(choice).toHaveValue("Legacy");
+    expect(
+      within(choice).getByRole("option", { name: /Unsupported current value/ }),
+    ).toBeDisabled();
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    fireEvent.change(choice, { target: { value } });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ [key]: value });
+    fireEvent.click(screen.getByRole("button", { name: `Auto ${key}` }));
+    expect(facet.resetCorrection).toHaveBeenCalledExactlyOnceWith({ field });
+    expect(facet.changeReleaseName).toHaveBeenCalledTimes(1);
+    vi.mocked(facet.changeReleaseName).mockClear();
+    rerender(<InputCorrectionEditor facet={base} />);
+    expect(screen.getByRole("combobox", { name: key })).toHaveValue("");
+    expect(
+      within(screen.getByRole("combobox", { name: key })).getByRole("option", {
+        name: `Choose ${key}`,
+      }),
+    ).toBeDisabled();
+    expect(base.changeReleaseName).not.toHaveBeenCalled();
+    unmount();
+    render(<InputCorrectionEditor facet={facet} />);
+    expect(screen.getByRole("combobox", { name: key })).toHaveValue("Legacy");
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+  },
+);

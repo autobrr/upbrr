@@ -35,7 +35,6 @@ var uploadHosts = map[string]struct{}{
 	"samaritano":   {},
 	"seedpool_cdn": {},
 	"sharex":       {},
-	"thr":          {},
 	"utppm":        {},
 	"zipline":      {},
 }

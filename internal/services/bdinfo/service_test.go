@@ -46,7 +46,7 @@ Audio: English / AC3 / 2.0 / 384 kbps / 48 kHz
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	result, err := svc.ParseOutput(testFile)
+	result, err := svc.ParseOutput(t.Context(), testFile)
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
@@ -78,7 +78,7 @@ without specific fields`
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	result, err := svc.ParseOutput(testFile)
+	result, err := svc.ParseOutput(t.Context(), testFile)
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestParseOutputStandaloneSummary(t *testing.T) {
 		t.Fatalf("write standalone summary: %v", err)
 	}
 
-	result, err := New(api.NopLogger{}).ParseOutput(testFile)
+	result, err := New(api.NopLogger{}).ParseOutput(t.Context(), testFile)
 	if err != nil {
 		t.Fatalf("parse standalone summary: %v", err)
 	}

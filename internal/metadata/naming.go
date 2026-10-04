@@ -20,7 +20,7 @@ import (
 var (
 	namingTVPathHintPattern = regexp.MustCompile(`(?i)[\\/](tv|tvshows?|series)[\\/]`)
 	namingTVNameHintPattern = regexp.MustCompile(
-		`(?i)\bS\d{1,4}(?:E\d{1,3})?\b|\b\d{1,4}x\d{2,3}\b|\b(?:season|series)\s*\d+\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
+		`(?i)\bS(?:\d{2}|\d{4})(?:E\d{1,3})?\b|\b(?:season|series)\s*(?:\d{2}|\d{4})\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
 	)
 	namingSubsPleaseHintPattern = regexp.MustCompile(`(?i)subsplease`)
 	namingAnimeEpisodeHint      = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)
@@ -52,7 +52,9 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 
 	category := normalizeNamingCategory(req.Category)
 	typeValue := strings.ToUpper(strings.TrimSpace(req.Type))
-	typeValue = normalizeReleaseTypeForCategory(category, typeValue, strings.TrimSpace(req.Source), "")
+	if !req.ManualType {
+		typeValue = normalizeReleaseTypeForCategory(category, typeValue, strings.TrimSpace(req.Source), "")
+	}
 	matchType := normalizeReleaseType(typeValue)
 	logger.Tracef(
 		"metadata: release name input category=%q type=%q normalized_type=%q source=%q season=%q episode=%q date=%q manual_date=%t",
@@ -116,6 +118,9 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		Episode:        episode,
 		EpisodeTitle:   episodeTitle,
 		DailyDate:      dailyDate,
+		EditionSet:     strings.TrimSpace(req.EditionSet),
+		Cut:            strings.TrimSpace(req.Cut),
+		Presentation:   strings.TrimSpace(req.Presentation),
 		Edition:        edition,
 		Repack:         repack,
 		Resolution:     resolution,
@@ -138,6 +143,9 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		hybrid = "Hybrid"
 	}
 	edition = removeHybrid(edition)
+	if retained.EditionSet != "" {
+		edition, retained.Cut, retained.Presentation = "", "", ""
+	}
 	retained.Edition = edition
 	retained.Hybrid = hybrid
 	retained.VideoFormat = releaseNameVideoFormat(matchType)
@@ -303,6 +311,25 @@ func generatedReleaseNameDocument(
 	components := make([]api.ReleaseNameComponent, 0, 18)
 	appendComponents := func(values ...releaseNameDocumentValue) {
 		for _, value := range values {
+			if value.role == api.NameRoleEdition {
+				components = append(components, api.ReleaseNameComponent{
+					Role:           api.NameRoleEditionSet,
+					Value:          retained.EditionSet,
+					AvailableValue: retained.EditionSet,
+					Present:        retained.EditionSet != "",
+					Join:           " ",
+				})
+				components = append(
+					components,
+					api.ReleaseNameComponent{
+						Role:           api.NameRoleCut,
+						Value:          retained.Cut,
+						AvailableValue: retained.Cut,
+						Present:        retained.Cut != "",
+						Join:           " ",
+					},
+				)
+			}
 			components = append(components, api.ReleaseNameComponent{
 				Role:           value.role,
 				Value:          value.value,
@@ -311,6 +338,18 @@ func generatedReleaseNameDocument(
 				Join:           value.join,
 				AttachTo:       append([]api.ReleaseNameRole(nil), value.attachTo...),
 			})
+			if value.role == api.NameRoleEdition {
+				components = append(
+					components,
+					api.ReleaseNameComponent{
+						Role:           api.NameRolePresentation,
+						Value:          retained.Presentation,
+						AvailableValue: retained.Presentation,
+						Present:        retained.Presentation != "",
+						Join:           " ",
+					},
+				)
+			}
 		}
 	}
 	space := func(role api.ReleaseNameRole, value string) releaseNameDocumentValue {
@@ -478,6 +517,7 @@ func generatedReleaseNameDocument(
 				space(api.NameRoleTitle, title),
 				space(api.NameRoleAlternateTitle, alternateTitle),
 				space(api.NameRoleYear, year),
+				space(api.NameRoleRepack, repack),
 				space(api.NameRoleResolution, resolution),
 				space(api.NameRoleSource, ""),
 				space(api.NameRoleVideoFormat, "DVDRip"),
@@ -653,6 +693,7 @@ func generatedReleaseNameDocument(
 				space(api.NameRoleYear, year),
 				space(api.NameRoleAlternateTitle, alternateTitle),
 				seasonComponent,
+				space(api.NameRoleRepack, repack),
 				space(api.NameRoleResolution, resolution),
 				space(api.NameRoleSource, ""),
 				space(api.NameRoleVideoFormat, "DVDRip"),
@@ -791,6 +832,9 @@ type retainedReleaseNameValues struct {
 	Episode        string
 	DailyDate      string
 	EpisodeTitle   string
+	EditionSet     string
+	Cut            string
+	Presentation   string
 	Edition        string
 	Hybrid         string
 	Repack         string
@@ -849,6 +893,21 @@ func retainUnavailableReleaseNameComponents(
 		{
 			role:  api.NameRoleEpisodeTitle,
 			value: values.EpisodeTitle,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleEditionSet,
+			value: values.EditionSet,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleCut,
+			value: values.Cut,
+			join:  " ",
+		},
+		{
+			role:  api.NameRolePresentation,
+			value: values.Presentation,
 			join:  " ",
 		},
 		{
@@ -984,7 +1043,7 @@ func retainedReleaseNameComponentIndex(components []api.ReleaseNameComponent, ro
 func retainedReleaseNameAnchors(role api.ReleaseNameRole) []api.ReleaseNameRole {
 	order := []api.ReleaseNameRole{
 		api.NameRoleSeason, api.NameRoleEpisode, api.NameRoleDailyDate, api.NameRoleEpisodeTitle,
-		api.NameRolePart, api.NameRoleThreeD, api.NameRoleEdition, api.NameRoleHybrid,
+		api.NameRolePart, api.NameRoleThreeD, api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation, api.NameRoleHybrid,
 		api.NameRoleRepack, api.NameRoleResolution, api.NameRoleRegion, api.NameRoleSource,
 	}
 	if index := slices.Index(order, role); index >= 0 {
@@ -1200,7 +1259,12 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		tvdbYearFromAlias = meta.ProviderMetadata.TVDB.YearFromAlias
 	}
 
-	typeValue = normalizeReleaseTypeForCategory(category, typeValue, source, meta.SourcePath)
+	manualType := meta.ReleaseNameOverrides.Type != nil && strings.TrimSpace(*meta.ReleaseNameOverrides.Type) != ""
+	if manualType {
+		typeValue = normalizeReleaseType(*meta.ReleaseNameOverrides.Type)
+	} else {
+		typeValue = normalizeReleaseTypeForCategory(category, typeValue, source, meta.SourcePath)
+	}
 
 	logger.Tracef(
 		"metadata: release name request resolved category=%q type=%q base_type=%q source=%q season=%q episode=%q date=%q tv_pack=%t year=%d search_year=%q year_source=%q tvdb_year_from_alias=%t",
@@ -1233,6 +1297,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	return api.ReleaseNameRequest{
 		Category:      category,
 		Type:          typeValue,
+		ManualType:    manualType,
 		Title:         title,
 		AltTitle:      altTitle,
 		Year:          year,
@@ -1255,6 +1320,9 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		DiscType:      meta.DiscType,
 		Region:        meta.Region,
 		DVDSize:       meta.Release.Size,
+		EditionSet:    meta.EditionSet,
+		Cut:           meta.Cut,
+		Presentation:  meta.Presentation,
 		Edition:       meta.Edition,
 		SearchYear:    searchYear,
 		DailyDate:     dailyDate,

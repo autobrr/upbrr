@@ -28,6 +28,9 @@ const (
 	NameRoleDailyDate      ReleaseNameRole = "daily_date"
 	NameRolePart           ReleaseNameRole = "part"
 	NameRoleThreeD         ReleaseNameRole = "3d"
+	NameRoleEditionSet     ReleaseNameRole = "edition_set"
+	NameRoleCut            ReleaseNameRole = "cut"
+	NameRolePresentation   ReleaseNameRole = "presentation"
 	NameRoleEdition        ReleaseNameRole = "edition"
 	NameRoleHybrid         ReleaseNameRole = "hybrid"
 	NameRoleRepack         ReleaseNameRole = "repack"
@@ -190,7 +193,7 @@ func (role ReleaseNameRole) Valid() bool {
 	switch role {
 	case NameRoleTitle, NameRoleAlternateTitle, NameRoleYear, NameRoleSeason, NameRoleEpisode,
 		NameRoleEpisodeTitle, NameRoleDailyDate, NameRolePart, NameRoleThreeD,
-		NameRoleEdition, NameRoleHybrid, NameRoleRepack, NameRoleResolution,
+		NameRoleEditionSet, NameRoleCut, NameRoleEdition, NameRolePresentation, NameRoleHybrid, NameRoleRepack, NameRoleResolution,
 		NameRoleRegion, NameRoleUHD, NameRoleSource, NameRoleDVDSystem, NameRoleDVDSize, NameRoleService,
 		NameRoleVideoFormat, NameRoleHDR, NameRoleVideoCodec, NameRoleVideoEncode, NameRoleAudio,
 		NameRoleDubbed, NameRoleDualAudio, NameRoleLanguageMarker, NameRoleLocale, NameRoleDistributor, NameRoleSubtitleMarker, NameRoleGroup, NameRoleOriginalGroup:

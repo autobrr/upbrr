@@ -15,6 +15,8 @@ Discuss large behavior changes before implementation. Read the repository [contr
 
 ## Report a defect
 
+Start with the [bug report template](https://github.com/autobrr/upbrr/blob/main/.github/ISSUE_TEMPLATE/bug_report.md) and keep its required headings. Search open and closed issues first. For development or PR builds, read the relevant documentation Markdown files in the repository at your build’s commit or branch; the published site describes released versions.
+
 Include:
 
 1. upbrr version and build identifier;
@@ -22,7 +24,11 @@ Include:
 3. affected surface: CLI, Web UI, API, tracker, image host, or client;
 4. shortest reproduction;
 5. expected and actual outcome;
-6. sanitized logs.
+6. relevant sanitized logs or screenshots, when helpful.
+
+New bug reports missing essential template information are automatically labeled `invalid` and closed with an explanation. Optional sections and extra details are allowed. Correct the report and ask a maintainer to reopen it; corrections and new evidence are welcome. See the [exact validation criteria and exemptions](https://github.com/autobrr/upbrr/blob/main/CONTRIBUTING.md#automated-bug-report-completeness-check).
+
+For a new capability, use the [feature request template](https://github.com/autobrr/upbrr/blob/main/.github/ISSUE_TEMPLATE/feature_request.md); feature requests are exempt from bug-report validation.
 
 Use synthetic release data such as `Example.Release.2026.1080p-GRP` and `tt1234567`.
 

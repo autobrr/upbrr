@@ -15,14 +15,14 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "unit3d-lst-payload-v2",
+		ID: "unit3d-lst-payload-v3",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
 			}
 			failures := make([]api.RuleFailure, 0, 6)
-			if strings.TrimSpace(subject.Edition) != "" {
-				if _, ok := editionID(subject.Edition); !ok {
+			if subject.EditionLabel() != "" {
+				if _, ok := editionID(subject.EditionLabel()); !ok {
 					failures = append(failures, trackers.NewRuleFailure(
 						"unsupported_edition",
 						"LST does not support the supplied edition",

@@ -164,3 +164,24 @@ func TestApplyExternalIDsRetainsReturnedReferences(t *testing.T) {
 		t.Fatalf("returned IDs = IMDb:%d TVDB:%d", result.ExternalIMDbID, result.ExternalTVDBID)
 	}
 }
+
+func TestApplySearchHintsRejectsUnsupportedSeasonCategory(t *testing.T) {
+	t.Parallel()
+	for _, token := range []string{"1x05", "S1E03"} {
+		t.Run(token, func(t *testing.T) {
+			filename := "Example Show " + token
+			got := applySearchHints(SearchInput{Filename: filename})
+			if got.Category == "TV" || got.DontSwitch {
+				t.Fatalf("rejected token locked search to TV: %+v", got)
+			}
+			got = applySearchHints(SearchInput{Filename: filename, Category: "TV"})
+			if got.Category != "TV" {
+				t.Fatalf("explicit category changed: %+v", got)
+			}
+		})
+	}
+	got := applySearchHints(SearchInput{Filename: "Example Show S01E03"})
+	if got.Category != "TV" || !got.DontSwitch {
+		t.Fatalf("valid episode lost TV preference: %+v", got)
+	}
+}

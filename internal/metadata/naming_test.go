@@ -911,10 +911,9 @@ func TestValidateReleaseNameFactInstructions(t *testing.T) {
 			Episode:    new(""),
 			ManualDate: new(""),
 		},
-		{Season: new("5"), Episode: new("7")},
 		{Season: new("05"), Episode: new("07")},
 		{Season: new("S05"), Episode: new("E07")},
-		{Season: new("s5"), Episode: new("e7")},
+		{Season: new("s05"), Episode: new("e7")},
 		{Season: new("99"), Episode: new("999")},
 		{Season: new("2026"), Episode: new("03")},
 		{Season: new("S2026"), Episode: new("E03")},
@@ -927,6 +926,8 @@ func TestValidateReleaseNameFactInstructions(t *testing.T) {
 	}
 
 	invalid := []api.ReleaseNameOverrides{
+		{Season: new("5")},
+		{Season: new("S123")},
 		{Season: new("S01E05")},
 		{Season: new("S01-S02")},
 		{Season: new("1x05")},
@@ -1943,10 +1944,92 @@ func (l *captureLogger) contains(value string) bool {
 }
 
 func TestYearNumberedSeasonCategoryHints(t *testing.T) {
-	for _, path := range []string{"Example.Show.S2026E03.1080p.mkv", "Example.Show.S2026.1080p", "Example.Show.2026x03.1080p.mkv"} {
+	for _, path := range []string{"Example.Show.S2026E03.1080p.mkv", "Example.Show.S2026.1080p"} {
 		meta := preparationstate.State{SourcePath: path}
 		if !isLikelyTV(meta) || inferCategoryFromMetadata(meta) != "TV" {
 			t.Errorf("year-numbered season %q was not classified as TV", path)
 		}
+	}
+}
+
+func TestReleaseVersionOverrideKeepsEditionIndependent(t *testing.T) {
+	for _, value := range []string{"", "PROPER", "REPACK", "REPACK2", "REPACK3", "PROPER2", "PROPER3", "RERIP"} {
+		t.Run(value, func(t *testing.T) {
+			meta := preparationstate.State{
+				Edition:              "Uncut",
+				Repack:               "REPACK",
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Repack: new(value)},
+			}
+			if err := validateReleaseNameFactInstructions(meta.ReleaseNameOverrides); err != nil {
+				t.Fatal(err)
+			}
+			applyReleaseNameValueOverrides(&meta)
+			if meta.Repack != value || meta.Edition != "Uncut" {
+				t.Fatalf("repack=%q edition=%q", meta.Repack, meta.Edition)
+			}
+		})
+	}
+	meta := preparationstate.State{
+		Edition: "Uncut",
+		Repack:  "REPACK",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Edition:   new(""),
+			Repack:    new(" proper "),
+			NoEdition: new(true),
+		},
+	}
+	applyReleaseNameValueOverrides(&meta)
+	if meta.Repack != "PROPER" || meta.Edition != "" {
+		t.Fatalf("explicit override lost: %#v", meta)
+	}
+	if err := validateReleaseNameFactInstructions(api.ReleaseNameOverrides{Repack: new("unrecognized")}); !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("invalid repack error=%v", err)
+	}
+}
+
+func TestDVDReleaseVersionPrecedesResolution(t *testing.T) {
+	t.Parallel()
+	for _, category := range []string{"MOVIE", "TV"} {
+		t.Run(category, func(t *testing.T) {
+			result := BuildReleaseName(api.ReleaseNameRequest{
+				Category:    category,
+				Type:        "DVDRIP",
+				Title:       "PROPER 2001 Tales",
+				Year:        2026,
+				SearchYear:  "2026",
+				Season:      "S01",
+				Source:      "DVD",
+				Resolution:  "480p",
+				Repack:      "REPACK2",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0",
+				Tag:         "-GRP",
+			}, api.NopLogger{})
+			if !strings.Contains(result.Name, "REPACK2 480p DVDRip") || !strings.HasPrefix(result.Name, "PROPER 2001 Tales 2026") {
+				t.Fatalf("name=%q", result.Name)
+			}
+		})
+	}
+}
+
+func TestSeasonCategoryHintTokenWidths(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		token string
+		tv    bool
+	}{
+		{"768x576", false}, {"1920x800", false}, {"1x05", false}, {"2026x03", false},
+		{"S1E03", false}, {"S123E03", false}, {"S12345E03", false}, {"S1", false}, {"S123", false}, {"Season 1", false}, {"Series 123", false},
+		{"S01E03", true}, {"S00E03", true}, {"S01", true}, {"Season 01", true}, {"Series 2026", true}, {"2026.03.04", true},
+	} {
+		t.Run(tc.token, func(t *testing.T) {
+			meta := preparationstate.State{SourcePath: "Example.Show." + tc.token + ".1080p.mkv"}
+			if got := isLikelyTV(meta); got != tc.tv {
+				t.Errorf("isLikelyTV = %t, want %t", got, tc.tv)
+			}
+			if got := inferCategoryFromMetadata(meta); (got == "TV") != tc.tv {
+				t.Errorf("inferred category = %s, want TV=%t", got, tc.tv)
+			}
+		})
 	}
 }

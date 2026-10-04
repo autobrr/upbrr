@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -38,6 +39,10 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 }
 
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	apiKey := gpwAPIKey(s.cfg)
 	if apiKey == "" {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing api_key for tracker", nil)

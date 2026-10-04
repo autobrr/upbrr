@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Locator, type Page, type Response } from "@playwright/test";
 import type {
@@ -506,6 +506,20 @@ type CorrectionCase = {
 // Sample each distinct editor control; production Go tests retain the broad field matrix.
 const releaseDetailCorrections: readonly CorrectionCase[] = [
   {
+    field: "release_name.type",
+    label: "Type",
+    group: "ReleaseName",
+    key: "Type",
+    values: ["WEBDL", "ENCODE"],
+  },
+  {
+    field: "metadata.distributor",
+    label: "Distributor",
+    group: "Metadata",
+    key: "Distributor",
+    values: ["ARROW", "VINEGAR SYNDROME", ""],
+  },
+  {
     field: "release_name.service",
     label: "Service",
     group: "ReleaseName",
@@ -543,10 +557,42 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
   },
 ];
 
+test("embedded Input finite choices support keyboard selection without custom or blank entry", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    for (const label of ["Category", "Type", "Source", "Resolution"]) {
+      const control = page.getByRole("combobox", { name: label, exact: true });
+      const options = await control
+        .locator("option:not(:disabled)")
+        .evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value));
+      expect(options.length).toBeGreaterThan(1);
+      expect(options).not.toContain("");
+      await expect(
+        page.getByRole("button", { name: `Enter custom ${label}`, exact: true }),
+      ).toHaveCount(0);
+      await control.selectOption(options[0]);
+      await control.focus();
+      await control.press("ArrowDown");
+      await control.press("Enter");
+      await expect(control).toHaveValue(options[1]);
+      await page.getByRole("button", { name: `Auto ${label}`, exact: true }).click();
+    }
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 // The fixed evidence collector proves editor transport and durable instructions here.
 // Production preparation tests separately verify regenerated names and media facts.
 for (const correction of releaseDetailCorrections) {
-  test(`embedded web persists Release Details ${correction.label} edits, clear and Auto`, async ({
+  test(`embedded web persists Release Details ${correction.label} edits and Auto`, async ({
     page,
   }) => {
     const workspace = await createE2EWorkspace({ mediaKind: correction.mediaKind });
@@ -564,7 +610,11 @@ for (const correction of releaseDetailCorrections) {
       const row = page.locator(`[data-correction-field="${correction.field}"]`);
       const boolean = typeof correction.values[0] === "boolean";
       const control = row.getByRole(
-        boolean ? "combobox" : correction.key === "ManualYear" ? "spinbutton" : "textbox",
+        boolean || ["Type", "Service", "Distributor"].includes(correction.key)
+          ? "combobox"
+          : correction.key === "ManualYear"
+            ? "spinbutton"
+            : "textbox",
         { name: correction.label, exact: true },
       );
       const automaticValue = await control.inputValue();
@@ -593,8 +643,23 @@ for (const correction of releaseDetailCorrections) {
               : value === 0
                 ? ""
                 : String(value);
-          if (boolean) await control.selectOption(text);
-          else await control.fill(text);
+          if (boolean || correction.key === "Type") await control.selectOption(text);
+          else if (["Service", "Distributor"].includes(correction.key) && text) {
+            await control.fill(
+              correction.key === "Service"
+                ? text === "AMZN"
+                  ? "aMz"
+                  : "netfl"
+                : text === "ARROW"
+                  ? "aRrOw"
+                  : "vInegar",
+            );
+            const choices = row.getByRole("option");
+            await expect(choices).toHaveCount(1);
+            await control.press("ArrowDown");
+            await control.press("Enter");
+            await expect(control).toHaveValue(text);
+          } else await control.fill(text);
           await expect(row.getByText("Manual change pending", { exact: true })).toBeVisible();
           const saved = waitForAppMethod(page, "OpenActiveInput");
           await page.getByRole("button", { name: "Refresh metadata" }).click();
@@ -661,6 +726,170 @@ for (const correction of releaseDetailCorrections) {
     }
   });
 }
+
+test("embedded web recovers saved corrections before a release snapshot and preserves history", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await page.getByRole("textbox", { name: "Alternate title", exact: true }).fill("Example AKA");
+    await page.getByRole("textbox", { name: "Original language", exact: true }).fill("Spanish");
+    await page.getByRole("textbox", { name: "Genres", exact: true }).fill("Drama, Mystery");
+    await page.getByRole("textbox", { name: "Edition", exact: true }).fill("Collector Edition");
+    const saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    expect((await saved).ok()).toBe(true);
+    let snapshot = await waitForMetadataReady(page, app.url);
+    expect(snapshot.current?.corrections?.corrections.metadata).toMatchObject({
+      AlternateTitle: "Example AKA",
+      OriginalLanguage: "Spanish",
+      Genres: ["Drama", "Mystery"],
+    });
+
+    for (const resolution of ["individual", "bulk"] as const) {
+      await test.step(`${resolution} resolution survives reload and resumes preparation`, async () => {
+        const previousWorkflowID = snapshot.current?.workflow.id;
+        const closed = waitForAppMethod(page, "ReleaseActiveInput");
+        await page.getByRole("button", { name: "Close input" }).click();
+        expect((await activeInputFromResponse(await closed)).state).toBe("empty");
+        // Change the real source fingerprint while retaining its saved correction and history keys.
+        await appendFile(workspace.sourcePath, `changed synthetic content: ${resolution}\n`);
+        if (resolution === "individual") {
+          await page.getByRole("button", { name: "History", exact: true }).click();
+          await expect(page.getByText(workspace.sourcePath, { exact: true })).toBeVisible();
+          const opened = waitForAppMethod(page, "OpenActiveInput");
+          await page.getByRole("button", { name: "Open input", exact: true }).click();
+          expect((await opened).ok()).toBe(true);
+        } else {
+          await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+          const opened = waitForAppMethod(page, "OpenActiveInput");
+          await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+          expect((await opened).ok()).toBe(true);
+        }
+        const review = page.getByRole("region", { name: "Saved values need review" });
+        await expect(review).toBeVisible();
+        await expect(page.getByText(/Workflow release snapshot is unavailable/)).toHaveCount(0);
+        const response = await page
+          .context()
+          .request.get(new URL("api/app/GetActiveInput", app!.url).toString());
+        expect(response.ok()).toBe(true);
+        const blocked = (await response.json()) as ActiveInputSnapshot;
+        expect(blocked.current?.workflow.id).not.toBe(previousWorkflowID);
+        expect(blocked.current?.release ?? null).toBeNull();
+        expect(blocked.current?.operation?.status).toBe("blocked");
+        const action = blocked.current?.workflow.requiredActions?.find(
+          (candidate) => candidate.kind === "confirm_corrections" && candidate.status === "pending",
+        );
+        const affectedFields = ["metadata.alternate_title", "metadata.original_language"];
+        if (resolution === "individual") affectedFields.push("metadata.genres");
+        expect([...(action?.correctionConfirmation?.fields ?? [])].sort()).toEqual(
+          [...affectedFields].sort(),
+        );
+        expect(blocked.current?.corrections?.corrections.releaseName.Edition).toBe(
+          "Collector Edition",
+        );
+        const restored = waitForAppMethod(page, "GetActiveInput");
+        await page.reload();
+        const reloaded = await activeInputFromResponse(await restored);
+        expect(reloaded.current?.release ?? null).toBeNull();
+        expect(reloaded.current?.workflow.requiredActions).toContainEqual(action);
+        await expect(review).toBeVisible();
+        await expect(
+          review.getByText("Source identity changed since this value was saved."),
+        ).toHaveCount(affectedFields.length);
+        await expect(review.getByRole("group", { name: "Edition", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeDisabled();
+        const apply = review.getByRole("button", { name: "Apply and continue", exact: true });
+        await expect(apply).toBeDisabled();
+        if (resolution === "individual") {
+          const alternate = review.getByRole("group", { name: "Alternate title", exact: true });
+          await expect(alternate.getByText("Example AKA", { exact: true })).toBeVisible();
+          await alternate.getByRole("button", { name: "Keep saved value", exact: true }).click();
+          await review
+            .getByRole("textbox", { name: "Edit Original language", exact: true })
+            .fill("Japanese");
+          await review
+            .getByRole("group", { name: "Genres", exact: true })
+            .getByRole("button", { name: "Use automatic value", exact: true })
+            .click();
+        } else {
+          await review
+            .getByRole("button", {
+              name: "Use automatic values for all affected fields",
+              exact: true,
+            })
+            .click();
+        }
+        const synchronized = waitForAppMethod(page, "GetActiveInput");
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        expect((await synchronized).ok()).toBe(true);
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+            ),
+        );
+        await expect(
+          review.getByText("Choose how to resolve this saved value.", { exact: true }),
+        ).toHaveCount(0);
+        await expect(apply).toBeEnabled();
+        const continued = waitForAppMethod(page, "OpenActiveInput");
+        await apply.click();
+        const continuedResponse = await continued;
+        expect(continuedResponse.ok()).toBe(true);
+        const command = workflowCommandBody(
+          "OpenActiveInput",
+          continuedResponse.request().postDataJSON(),
+        );
+        expect((command.intent as { correctionPatch: unknown }).correctionPatch).toEqual({
+          values: {
+            Identity: {},
+            ReleaseName: {},
+            Metadata: resolution === "individual" ? { OriginalLanguage: "Japanese" } : {},
+          },
+          resetFields:
+            resolution === "individual"
+              ? [{ field: "metadata.genres" }]
+              : affectedFields.map((field) => ({ field })),
+          confirmFields: resolution === "individual" ? [{ field: "metadata.alternate_title" }] : [],
+          expectedRevision: blocked.current?.corrections?.revision,
+        });
+        snapshot = await waitForMetadataReady(page, app!.url);
+        await expect(review).toHaveCount(0);
+        expect(snapshot.current?.workflow.id).toBe(blocked.current?.workflow.id);
+        expect(snapshot.current?.corrections?.corrections.staleContentFields ?? []).toEqual([]);
+        const expectedMetadata = {
+          AlternateTitle: resolution === "individual" ? "Example AKA" : null,
+          OriginalLanguage: resolution === "individual" ? "Japanese" : null,
+          Genres: null,
+        };
+        expect(snapshot.current?.corrections?.corrections.metadata).toMatchObject(expectedMetadata);
+        expect(snapshot.current?.factInstructions?.instructions.Metadata).toMatchObject(
+          expectedMetadata,
+        );
+        expect(snapshot.current?.corrections?.corrections.releaseName.Edition).toBe(
+          "Collector Edition",
+        );
+        expect(snapshot.current?.factInstructions?.instructions.ReleaseName.Edition).toBe(
+          "Collector Edition",
+        );
+      });
+    }
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    await expect(page.getByText(workspace.sourcePath, { exact: true })).toBeVisible();
+    await expect(page.getByText("No stored releases found.")).toHaveCount(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
 
 test("embedded web persists Release Details audio track language edits, clear and Auto", async ({
   page,
@@ -978,13 +1207,13 @@ test("embedded web retains Release Details corrections without downstream workfl
     await expect(page.getByRole("textbox", { name: "Title", exact: true })).toBeDisabled();
     await expect(page.getByRole("textbox", { name: "Original title", exact: true })).toBeDisabled();
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
-    const categoryInput = page.getByRole("textbox", { name: "Category", exact: true });
-    await categoryInput.fill("TV");
+    const categoryInput = page.getByRole("combobox", { name: "Category", exact: true });
+    await categoryInput.selectOption("tv");
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeDisabled();
-    await categoryInput.fill("movie");
+    await categoryInput.selectOption("movie");
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     await page.getByRole("button", { name: "Auto Category", exact: true }).click();
-    await expect(page.getByRole("textbox", { name: "Category", exact: true })).not.toHaveValue("");
+    await expect(page.getByRole("combobox", { name: "Category", exact: true })).not.toHaveValue("");
     for (const group of [
       "Provider IDs",
       "Release name",
@@ -1473,6 +1702,7 @@ test("embedded web restores edited descriptions after reopening an input", async
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
   try {
+    await page.clock.install();
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Dupe Check" }).click();
@@ -1500,6 +1730,10 @@ test("embedded web restores edited descriptions after reopening an input", async
 <blockquote>HTML and [b]custom notes[/b] together.</blockquote>
 [right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]`;
     await page.getByRole("textbox").fill(editedDescription);
+    const refreshed = waitForAppMethod(page, "GetActiveInput");
+    await page.clock.runFor(15_000);
+    expect((await refreshed).ok()).toBe(true);
+    await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
     await page.getByRole("button", { name: "Render" }).click();
     const renderedPreview = page
       .getByRole("heading", { name: "Rendered Raw Preview" })
@@ -1868,3 +2102,117 @@ test("embedded metadata warns about mixed source seasons and clears after switch
     await workspace.cleanup();
   }
 });
+
+for (const size of [
+  { width: 1800, height: 100 },
+  { width: 100, height: 1800 },
+  { width: 1800, height: 1400 },
+  { width: 64, height: 48 },
+]) {
+  test(`embedded image lightbox preserves ${size.width}x${size.height} pixels across viewport changes`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace();
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace);
+      await fetchMetadata(page, app.url, workspace.sourcePath);
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+      await page.getByRole("checkbox", { name: "HDS" }).check();
+      await runDuplicateCheck(page);
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      await page.route("**/api/app/release-workflow-media?*", (route) =>
+        route.fulfill({
+          contentType: "image/svg+xml",
+          body: `<svg xmlns="http://www.w3.org/2000/svg" width="${size.width}" height="${size.height}"><rect width="100%" height="100%" fill="#537da8"/></svg>`,
+        }),
+      );
+
+      await page.getByRole("button", { name: "Generate screenshots" }).click();
+      const thumbnail = page.getByRole("img", { name: "Screenshot 1", exact: true });
+      await expect(thumbnail).toBeVisible();
+      await thumbnail.click();
+      const dialog = page.getByRole("dialog", { name: "Screenshot 1" });
+      const image = dialog.getByRole("img");
+      const scrollArea = dialog.getByRole("region", { name: "Image", exact: true });
+      const close = dialog.getByRole("button", { name: "Close image preview" });
+      await expect
+        .poll(() =>
+          image.evaluate((img: HTMLImageElement) => ({
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          })),
+        )
+        .toEqual(size);
+
+      for (const viewport of [
+        { width: 1280, height: 900 },
+        { width: 390, height: 640 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ colorScheme: viewport.width === 390 ? "dark" : "light" });
+        await expect
+          .poll(async () => {
+            const box = await dialog.boundingBox();
+            return box && { width: box.width, height: box.height, x: box.x, y: box.y };
+          })
+          .toEqual({ width: viewport.width - 16, height: viewport.height - 16, x: 8, y: 8 });
+        const imageBox = await image.boundingBox();
+        expect(imageBox?.width).toBe(size.width);
+        expect(imageBox?.height).toBe(size.height);
+        await scrollArea.evaluate((element) => element.scrollTo(0, 0));
+        const start = await scrollArea.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const img = element.querySelector("img")!.getBoundingClientRect();
+          return { left: img.left - box.left, top: img.top - box.top };
+        });
+        expect(start.left).toBeGreaterThanOrEqual(0);
+        expect(start.top).toBe(0);
+        const overflow = await scrollArea.evaluate((element) => ({
+          x: element.scrollWidth > element.clientWidth,
+          y: element.scrollHeight > element.clientHeight,
+          width: element.clientWidth,
+          height: element.clientHeight,
+        }));
+        expect(overflow.x).toBe(size.width > overflow.width);
+        expect(overflow.y).toBe(size.height > overflow.height);
+        if (overflow.y) {
+          await scrollArea.focus();
+          await scrollArea.press("ArrowDown");
+          await expect
+            .poll(() => scrollArea.evaluate((element) => element.scrollTop))
+            .toBeGreaterThan(0);
+        }
+        await scrollArea.evaluate((element) =>
+          element.scrollTo(element.scrollWidth, element.scrollHeight),
+        );
+        const end = await scrollArea.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const img = element.querySelector("img")!.getBoundingClientRect();
+          return {
+            right: img.right - (box.left + element.clientWidth),
+            bottom: img.bottom - (box.top + element.clientHeight),
+          };
+        });
+        expect(end.right).toBeLessThanOrEqual(1);
+        expect(end.bottom).toBeLessThanOrEqual(1);
+        await expect(close).toBeInViewport();
+      }
+      await close.click();
+      await expect(dialog).toHaveCount(0);
+      await thumbnail.click();
+      await scrollArea.focus();
+      await expect
+        .poll(() =>
+          scrollArea.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop })),
+        )
+        .toEqual({ x: 0, y: 0 });
+      await scrollArea.press("Escape");
+      await expect(dialog).toHaveCount(0);
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -40,6 +41,8 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 }
 
 func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
+	h.logger = logging.FromContext(ctx, h.logger)
+
 	if h.http == nil {
 		return dupe.Failed(dupe.FailureInternal, "ASC handler misconfigured: no HTTP client", nil)
 	}

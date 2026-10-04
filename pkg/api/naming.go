@@ -63,8 +63,10 @@ func (p ReleaseNameElementPolicy) Normalized() ReleaseNameElementPolicy {
 }
 
 type ReleaseNameRequest struct {
-	Category     string
-	Type         string
+	Category string
+	Type     string
+	// ManualType keeps an explicit type correction authoritative over inferred source signals.
+	ManualType   bool
 	Title        string
 	AltTitle     string
 	Year         int
@@ -91,6 +93,9 @@ type ReleaseNameRequest struct {
 	DiscType           string
 	Region             string
 	DVDSize            string
+	EditionSet         string
+	Cut                string
+	Presentation       string
 	Edition            string
 	SearchYear         string
 	DailyDate          string
@@ -132,12 +137,14 @@ type ReleaseNameResult struct {
 }
 
 type ReleaseNameOverrides struct {
-	Category     *string
-	Type         *string
-	Source       *string
-	Resolution   *string
-	Tag          *string
-	Service      *string
+	Category   *string
+	Type       *string
+	Source     *string
+	Resolution *string
+	Tag        *string
+	Service    *string
+	// Repack replaces the detected release version; empty clears it and nil keeps automatic detection.
+	Repack       *string
 	Edition      *string
 	Season       *string
 	Episode      *string
@@ -157,4 +164,45 @@ type ReleaseNameOverrides struct {
 	NoDual           *bool
 	DualAudio        *bool
 	Region           *string
+}
+
+// IsSupportedReleaseVersion reports whether value names a supported release version
+// or explicitly clears it. Matching ignores case and surrounding whitespace without changing value.
+func IsSupportedReleaseVersion(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "", "REPACK", "REPACK2", "REPACK3", "PROPER", "PROPER2", "PROPER3", "RERIP":
+		return true
+	default:
+		return false
+	}
+}
+
+// EditionLabel returns the finalized edition wording used by tracker payloads
+// and duplicate comparison. EditionSet only controls rendered naming; this
+// label retains detailed categories for validation. Naming policies should use
+// their independent components in the generated document.
+func (s UploadSubject) EditionLabel() string {
+	return releaseEditionLabel(s.Cut, s.Edition, s.Presentation)
+}
+
+// EditionLabel returns the same finalized label used by upload payloads, so
+// preflight validation evaluates the exact cut, edition, and presentation facts.
+func (s TrackerValidationSubject) EditionLabel() string {
+	return releaseEditionLabel(s.Cut, s.Edition, s.Presentation)
+}
+
+// EditionLabel joins finalized release categories for duplicate subjects that
+// do not carry the upload projection. It never reads a rendered release name.
+func (r ReleaseInfo) EditionLabel() string {
+	return releaseEditionLabel(strings.Join(r.Cut, " "), strings.Join(r.Edition, " "), strings.Join(r.Presentation, " "))
+}
+
+func releaseEditionLabel(cut, edition, presentation string) string {
+	parts := make([]string, 0, 3)
+	for _, value := range []string{cut, edition, presentation} {
+		if value = strings.TrimSpace(value); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, " ")
 }
