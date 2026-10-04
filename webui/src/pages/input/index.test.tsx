@@ -1510,7 +1510,7 @@ describe("InputPage", () => {
     ["tv", "", true],
     ["tv", "unknown", true],
   ] as const)(
-    "updates year editing for category change from %s to %s",
+    "preserves year restrictions when category changes from %s to saved value %s",
     (preparedCategory, draftCategory, locked) => {
       const base = readyInputFacet(1);
       const release = preparedRelease();
@@ -1522,11 +1522,6 @@ describe("InputPage", () => {
         },
       };
       const { rerender } = render(<InputCorrectionEditor facet={facet} />);
-      fireEvent.click(screen.getByRole("button", { name: "Enter custom Category" }));
-      fireEvent.change(screen.getByRole("textbox", { name: "Category" }), {
-        target: { value: draftCategory },
-      });
-      expect(facet.changeReleaseName).toHaveBeenCalledWith({ Category: draftCategory });
       rerender(
         <InputCorrectionEditor
           facet={{
@@ -2083,7 +2078,7 @@ it("shows automatic choices and confirms retained values without changing correc
   };
   render(<InputCorrectionEditor facet={facet} />);
   expect(screen.getByRole("combobox", { name: "Category" })).toHaveValue("movie");
-  expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("encode");
+  expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("ENCODE");
   expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("BluRay");
   expect(screen.getByRole("combobox", { name: "Resolution" })).toHaveValue("1080p");
   expect(screen.getByRole("combobox", { name: "Service" })).toHaveValue("NF");
@@ -2141,3 +2136,44 @@ it("browses the shared distributor catalog and applies names while preserving cu
     "false",
   );
 });
+
+it.each([
+  ["Category", "movie", "release_name.category"],
+  ["Type", "WEBDL", "release_name.type"],
+  ["Source", "Blu-ray", "release_name.source"],
+  ["Resolution", "1080p", "release_name.resolution"],
+] as const)(
+  "%s retains legacy values until selection or Auto and survives remount",
+  (key, value, field) => {
+    const base = inputFacet();
+    const facet: InputFacet = {
+      ...base,
+      view: { ...base.view, intent: { ...base.view.intent, releaseName: { [key]: "Legacy" } } },
+    };
+    const { rerender, unmount } = render(<InputCorrectionEditor facet={facet} />);
+    const choice = screen.getByRole("combobox", { name: key });
+    expect(choice).toHaveValue("Legacy");
+    expect(
+      within(choice).getByRole("option", { name: /Unsupported current value/ }),
+    ).toBeDisabled();
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    fireEvent.change(choice, { target: { value } });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ [key]: value });
+    fireEvent.click(screen.getByRole("button", { name: `Auto ${key}` }));
+    expect(facet.resetCorrection).toHaveBeenCalledExactlyOnceWith({ field });
+    expect(facet.changeReleaseName).toHaveBeenCalledTimes(1);
+    vi.mocked(facet.changeReleaseName).mockClear();
+    rerender(<InputCorrectionEditor facet={base} />);
+    expect(screen.getByRole("combobox", { name: key })).toHaveValue("");
+    expect(
+      within(screen.getByRole("combobox", { name: key })).getByRole("option", {
+        name: `Choose ${key}`,
+      }),
+    ).toBeDisabled();
+    expect(base.changeReleaseName).not.toHaveBeenCalled();
+    unmount();
+    render(<InputCorrectionEditor facet={facet} />);
+    expect(screen.getByRole("combobox", { name: key })).toHaveValue("Legacy");
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+  },
+);

@@ -14,43 +14,31 @@ type Props = Readonly<{
   onChange: (value: string) => void;
 }>;
 
-/** Native choices retain unknown saved values and an explicit custom-entry path. */
+/** Only supported choices are selectable; unavailable current values stay visible until selection or Auto. */
 export function CorrectionSelect({ id, label, value, options, onChange }: Props) {
-  const [custom, setCustom] = useState(false);
+  const selected = options.find((option) => option.value.toLowerCase() === value.toLowerCase());
   return (
-    <div className="grid min-w-0 gap-2">
-      <Select
-        id={custom ? `${id}-choices` : id}
-        aria-label={custom ? `${label} choices` : label}
-        value={value}
-        onChange={(event) => {
-          const next = event.target.value;
-          setCustom(false);
-          onChange(next);
-        }}
-      >
-        <option value="">Blank</option>
-        {value && !options.some((option) => option.value === value) ? (
-          <option value={value}>{value}</option>
-        ) : null}
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </Select>
-      <Button type="button" aria-label={`Enter custom ${label}`} onClick={() => setCustom(true)}>
-        Custom value
-      </Button>
-      {custom ? (
-        <input
-          id={id}
-          aria-label={label}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        />
+    <Select
+      id={id}
+      aria-label={label}
+      value={selected?.value ?? value}
+      onChange={(event) => {
+        if (options.some((option) => option.value === event.target.value)) {
+          onChange(event.target.value);
+        }
+      }}
+    >
+      {!selected ? (
+        <option value={value} disabled>
+          {value ? `Unsupported current value: ${value}` : `Choose ${label}`}
+        </option>
       ) : null}
-    </div>
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </Select>
   );
 }
 

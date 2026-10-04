@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
+import correctionChoices from "./correctionChoices.json";
 
 afterEach(cleanup);
 const options = [
@@ -71,37 +72,61 @@ it("supports keyboard selection, dismissal, native text editing and custom value
   expect(input).toHaveAttribute("aria-expanded", "false");
 });
 
-it("keeps native select values, blank corrections and custom entry separate from Auto", () => {
+it.each(["Category", "Type", "Source", "Resolution"] as const)(
+  "%s offers only supported choices without changing an unsupported or missing current value",
+  (label) => {
+    const onChange = vi.fn();
+    const options = correctionChoices[label];
+    const { rerender } = render(
+      <CorrectionSelect
+        id="choice"
+        label={label}
+        value="Legacy"
+        options={options}
+        onChange={onChange}
+      />,
+    );
+    const choice = screen.getByRole("combobox", { name: label });
+    expect(choice.tagName).toBe("SELECT");
+    expect(choice).toHaveValue("Legacy");
+    expect(
+      within(choice).getByRole("option", { name: "Unsupported current value: Legacy" }),
+    ).toBeDisabled();
+    expect(screen.queryByRole("button", { name: `Enter custom ${label}` })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(choice).queryByRole("option", { name: "Blank" })).not.toBeInTheDocument();
+    expect(
+      Array.from(
+        choice.querySelectorAll("option:not(:disabled)"),
+        (option) => (option as HTMLOptionElement).value,
+      ),
+    ).toEqual(options.map((option) => option.value));
+    expect(onChange).not.toHaveBeenCalled();
+    rerender(
+      <CorrectionSelect id="choice" label={label} value="" options={options} onChange={onChange} />,
+    );
+    expect(choice).toHaveValue("");
+    expect(within(choice).getByRole("option", { name: `Choose ${label}` })).toBeDisabled();
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(choice, { target: { value: "" } });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(choice, { target: { value: options[0].value } });
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(options[0].value);
+  },
+);
+
+it("displays supported automatic casing without writing a correction", () => {
   const onChange = vi.fn();
-  const { rerender } = render(
+  render(
     <CorrectionSelect
       id="type"
       label="Type"
-      value="Legacy"
-      options={options}
+      value="encode"
+      options={correctionChoices.Type}
       onChange={onChange}
     />,
   );
-  const choice = screen.getByRole("combobox", { name: "Type" });
-  expect(choice).toHaveValue("Legacy");
-  expect(within(choice).getByRole("option", { name: "Legacy" })).toBeInTheDocument();
-  fireEvent.change(choice, { target: { value: "AMZN" } });
-  expect(onChange).toHaveBeenLastCalledWith("AMZN");
-  fireEvent.change(choice, { target: { value: "" } });
-  expect(onChange).toHaveBeenLastCalledWith("");
-  fireEvent.click(screen.getByRole("button", { name: "Enter custom Type" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "Type" }), { target: { value: "Custom" } });
-  expect(onChange).toHaveBeenLastCalledWith("Custom");
-  rerender(
-    <CorrectionSelect
-      key="reset"
-      id="type"
-      label="Type"
-      value="NF"
-      options={options}
-      onChange={onChange}
-    />,
-  );
-  expect(screen.queryByRole("textbox", { name: "Type" })).not.toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("NF");
+  expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("ENCODE");
+  expect(screen.queryByRole("option", { name: /Unsupported/ })).not.toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
 });

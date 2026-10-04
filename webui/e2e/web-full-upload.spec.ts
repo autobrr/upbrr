@@ -509,7 +509,7 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     label: "Type",
     group: "ReleaseName",
     key: "Type",
-    values: ["WEBDL", "ENCODE", ""],
+    values: ["WEBDL", "ENCODE"],
   },
   {
     field: "metadata.distributor",
@@ -556,10 +556,42 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
   },
 ];
 
+test("embedded Input finite choices support keyboard selection without custom or blank entry", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    for (const label of ["Category", "Type", "Source", "Resolution"]) {
+      const control = page.getByRole("combobox", { name: label, exact: true });
+      const options = await control
+        .locator("option:not(:disabled)")
+        .evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value));
+      expect(options.length).toBeGreaterThan(1);
+      expect(options).not.toContain("");
+      await expect(
+        page.getByRole("button", { name: `Enter custom ${label}`, exact: true }),
+      ).toHaveCount(0);
+      await control.selectOption(options[0]);
+      await control.focus();
+      await control.press("ArrowDown");
+      await control.press("Enter");
+      await expect(control).toHaveValue(options[1]);
+      await page.getByRole("button", { name: `Auto ${label}`, exact: true }).click();
+    }
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 // The fixed evidence collector proves editor transport and durable instructions here.
 // Production preparation tests separately verify regenerated names and media facts.
 for (const correction of releaseDetailCorrections) {
-  test(`embedded web persists Release Details ${correction.label} edits, clear and Auto`, async ({
+  test(`embedded web persists Release Details ${correction.label} edits and Auto`, async ({
     page,
   }) => {
     const workspace = await createE2EWorkspace({ mediaKind: correction.mediaKind });

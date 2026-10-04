@@ -21,8 +21,8 @@ type CorrectionChoice struct {
 	Label string `json:"label"`
 }
 
-// CorrectionChoices returns known Input suggestions without restricting custom
-// corrections. Services use the naming alias map; regions and resolutions merge
+// CorrectionChoices returns known Input values and display labels.
+// Services use the naming alias map; regions and resolutions merge
 // parser tags with values produced by the metadata providers. The generator adds
 // tracker-owned catalog suggestions without coupling metadata to tracker implementations.
 func CorrectionChoices() (map[string][]CorrectionChoice, error) {
