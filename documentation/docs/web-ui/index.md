@@ -44,7 +44,7 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
-Background workflow updates preserve an unsubmitted **Source path**, unsaved **Descriptions** text, and the selected TVDB preview language for the same input. Description drafts are cleared when the active input, prepared generation, or selected trackers change. Use **Save group** to retain the complete edited description, including image order and custom text placement, without adding generated sections again. **Reset group** replaces that group with its generated description.
+Background workflow updates preserve an unsubmitted **Source path**, unsaved **Descriptions** text, and the selected TVDB preview language for the same input. Description drafts are cleared when the active input, prepared generation, or selected trackers change. **Render** previews the current editor text without saving it. Use **Save group** to retain the complete edited description, including image order and custom text placement, without adding generated sections again. **Reset group** replaces that group with its generated description.
 
 On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
 

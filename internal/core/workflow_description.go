@@ -545,7 +545,9 @@ func (b workflowDescriptionBuilder) resolveSubject(
 			}) {
 				continue
 			}
-			if strings.EqualFold(baseGroup, "default") ||
+			// Saved groups carry exact membership; the projection's optional group
+			// can be empty when the tracker supplies its default during rendering.
+			if len(override.TrackerIDs) > 0 || strings.EqualFold(baseGroup, "default") ||
 				strings.EqualFold(strings.TrimSpace(projection.DescriptionGroup), baseGroup) {
 				trackersForGroup = append(trackersForGroup, string(projection.TrackerID))
 			}

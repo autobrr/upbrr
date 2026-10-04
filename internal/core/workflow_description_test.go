@@ -14,6 +14,8 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/trackers"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -624,16 +626,16 @@ func TestWorkflowDescriptionOverridesPreservePerGroupFinalSource(t *testing.T) {
 			TrackerIDs: []api.TrackerID{"alpha"},
 		},
 		{
-GroupKey: "unit3d|pixhost|global",
- Source: "Custom notes to compose.",
- TrackerIDs: []api.TrackerID{"BETA"},
-},
+			GroupKey:   "unit3d|pixhost|global",
+			Source:     "Custom notes to compose.",
+			TrackerIDs: []api.TrackerID{"BETA"},
+		},
 		{
-GroupKey: "unit3d|removed|global",
- Source: "Unselected tracker description.",
- Final: true,
- TrackerIDs: []api.TrackerID{"REMOVED"},
-},
+			GroupKey:   "unit3d|removed|global",
+			Source:     "Unselected tracker description.",
+			Final:      true,
+			TrackerIDs: []api.TrackerID{"REMOVED"},
+		},
 	}}
 	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
 		{
@@ -655,5 +657,42 @@ GroupKey: "unit3d|removed|global",
 	if len(groups) != 2 || !groups[0].Final || groups[1].Final || resolver.input.DescriptionGroupsFinal ||
 		!slices.Equal(groups[0].Trackers, []string{"ALPHA"}) || !slices.Equal(groups[1].Trackers, []string{"BETA"}) {
 		t.Fatalf("saved and generated groups lost their distinct source contracts: %+v", groups)
+	}
+}
+
+func TestWorkflowDescriptionSaveKeepsEditedRegisteredGroup(t *testing.T) {
+	t.Parallel()
+	registry := trackerimpl.MustNewRegistry()
+	descriptor, ok := registry.LookupDescriptor("AITHER")
+	if !ok {
+		t.Fatal("AITHER missing")
+	}
+	builder := workflowDescriptionBuilder{
+		resolver: &workflowDescriptionResolverFake{},
+		trackers: trackers.NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry),
+	}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID:        "AITHER",
+		DescriptionGroup: descriptor.DescriptionGroup,
+		Artifacts:        api.TrackerArtifactRequirements{Description: true},
+	}}}
+	build := func(instructions api.DescriptionInstructions) api.DescriptionSet {
+		t.Helper()
+		result, err := builder.Build(t.Context(), api.ReleaseRef{SourcePath: "Example.mkv"}, projections, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, instructions, time.Now())
+		if err != nil || len(result.Descriptions) != 1 {
+			t.Fatalf("build failed: %+v %v", result, err)
+		}
+		return result
+	}
+	generated := build(api.DescriptionInstructions{})
+	source := generated.Descriptions[0].Source + "\nOwner edit"
+	saved := build(api.DescriptionInstructions{Overrides: []api.DescriptionOverrideInput{{
+		GroupKey:   generated.Descriptions[0].GroupKey,
+		Source:     source,
+		Final:      true,
+		TrackerIDs: generated.Descriptions[0].TrackerIDs,
+	}}})
+	if saved.Descriptions[0].Source != source {
+		t.Fatalf("Save group reverted edit: want %q, got %q", source, saved.Descriptions[0].Source)
 	}
 }

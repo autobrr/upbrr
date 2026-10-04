@@ -14,12 +14,15 @@ import type {
   MediaCaptureInstructions,
   ReleaseWorkflowCurrent,
   TrackerProjectionInstructions,
+  SaveReleaseWorkflowDescriptionOverrideRequest,
   WorkflowContinuation,
 } from "../api/generated/release-workflow";
 import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
 import DescriptionBuilderPage from "../pages/description_builder";
 import ScreenshotsPage from "../pages/screenshots";
 import type { ReleaseSessionPorts } from "./ports";
+import { setAppRequestHandlerForTests } from "../api/client";
+import { productionReleaseSessionPorts } from "./production";
 
 const preview = (sourcePath: string, generation: number): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -3617,6 +3620,111 @@ describe("useReleaseSession", () => {
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("preserves edited source through Render then Save group", async () => {
+    const workflowID = "workflow-descriptions";
+    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const withPreparedDescription = (
+      revision: number,
+      source = "generated source",
+    ): ReleaseWorkflowCurrent => ({
+      ...workflowCurrentFromPreview(
+        workflowCurrentWithDescriptions(workflowID, revision, source, undefined, {
+          "https://images.example.invalid/full.png": "https://images.example.invalid/preview.png",
+        }),
+        preview(sourcePath, 1),
+      ),
+      projections: {
+        status: "ready",
+        projections: [
+          {
+            trackerId: "AITHER",
+            displayName: "AITHER",
+            artifacts: {
+              screenshotCount: 0,
+              dvdMenuCount: 0,
+              imageHosting: false,
+              description: true,
+            },
+          },
+        ],
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+    });
+    const render = vi.fn(async (raw: string) => `<p>${raw}</p>`);
+    const requests: unknown[] = [];
+    setAppRequestHandlerForTests(async (method, body) => {
+      expect(method).toBe("SaveReleaseWorkflowDescriptionOverride");
+      requests.push(body);
+      const command = body as SaveReleaseWorkflowDescriptionOverrideRequest;
+      return withPreparedDescription(8, command.override.source);
+    });
+    const saveDescriptionOverride =
+      productionReleaseSessionPorts().workflow.saveDescriptionOverride;
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const ports = {
+      ...portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => withPreparedDescription(7),
+          saveDescriptionOverride,
+        }),
+      }),
+      descriptions: { render },
+    };
+    function DescriptionEditor() {
+      const session = useReleaseSession();
+      return <DescriptionBuilderPage facet={session.descriptions} sourcePath={sourcePath} />;
+    }
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <DescriptionEditor />
+        </ReleaseSessionProvider>
+      ),
+    });
+    try {
+      await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(7));
+      fireEvent.click(screen.getByRole("button", { name: "Expand AITHER" }));
+      const editor = screen.getByRole("textbox", { name: "Raw description for AITHER" });
+      fireEvent.change(editor, { target: { value: "edited source" } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Render AITHER" }));
+      });
+
+      expect(render).toHaveBeenCalledWith(
+        "edited source",
+        { "https://images.example.invalid/full.png": "https://images.example.invalid/preview.png" },
+        expect.any(AbortSignal),
+      );
+      expect(result.current.descriptions.view.renderedByGroup.unit3d).toBe("<p>edited source</p>");
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Save group AITHER" }));
+      });
+
+      expect(requests).toEqual([
+        expect.objectContaining({
+          workflowId: workflowID,
+          expectedRevision: 7,
+          override: {
+            descriptions: { id: withPreparedDescription(7).descriptions!.id, revision: 7 },
+            groupKey: "unit3d",
+            source: "edited source",
+          },
+        }),
+      ]);
+      expect(editor).toHaveValue("edited source");
+      expect(result.current.descriptions.view.artifact?.descriptions[0]?.source).toBe(
+        "edited source",
+      );
+      expect(result.current.descriptions.view.dirtyGroups).toEqual([]);
+    } finally {
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      setAppRequestHandlerForTests(null);
+    }
   });
 
   it("prepares through the backend workflow and retains only its compatibility preview", async () => {
