@@ -212,7 +212,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.OriginalLanguage, "ol", "", "Override original language")
 	fs.StringVar(&opts.Edition, "edition", "", "Override edition text")
 	fs.StringVar(&opts.Edition, "repack", "", "Override edition text")
-	fs.StringVar(&opts.Season, "season", "", "Override season value (single token such as 5 or S05)")
+	fs.StringVar(&opts.Season, "season", "", "Override season value (two or four digits, such as 05 or S2026)")
 	fs.StringVar(&opts.Episode, "episode", "", "Override episode value (single token such as 5 or E05)")
 	fs.StringVar(&opts.EpisodeTitle, "episode-title", "", "Override episode title")
 	fs.StringVar(&opts.EpisodeTitle, "manual-episode-title", "", "Override episode title")

@@ -193,7 +193,7 @@ The PTP `no_english_subtitles=yes/no` Input answer remains an explicit override 
 
 ### Naming fields
 
-Season tokens accept up to four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S2026E03` for an episode or `S2026` for a season pack.
+Season tokens require exactly two or four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized; use `S01E05` instead.
 
 | Option                        | Aliases                                           | Purpose                                                                                     |
 | ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -206,7 +206,7 @@ Season tokens accept up to four digits, including year-numbered seasons such as 
 | `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                                                                       |
 | `--original-language <value>` | `-original-language`, `-ol`                       | Override original language.                                                                 |
 | `--edition <value>`           | `-edition`, `-repack`                             | Override edition text, replacing automatic cut, presentation, and multi-edition set labels. |
-| `--season <value>`            | `-season`                                         | Override one season token, such as `5` or `S05`.                                            |
+| `--season <value>`            | `-season`                                         | Override one season token, such as `05` or `S05`.                                           |
 | `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                           |
 | `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                     |
 | `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                            |

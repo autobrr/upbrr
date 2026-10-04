@@ -215,3 +215,46 @@ func TestParseReleaseInfo(t *testing.T) {
 		})
 	}
 }
+
+func TestParseReleaseInfoSeasonTokenWidths(t *testing.T) {
+	t.Parallel()
+	for _, token := range []string{"768x576", "1920x800", "1x05", "01x05", "2026x03", "S1E03", "S123E03", "S12345E03", "S1", "S123", "Season 1", "Series 123", "S1E03E04", "S123E03E04"} {
+		t.Run(token, func(t *testing.T) {
+			got := ParseReleaseInfo("Example.Show." + token + ".1080p.WEB-DL.mkv")
+			if got.Season != 0 || got.Episode != 0 || got.Category == "TV" {
+				t.Fatalf("rejected token %q produced season=%d episode=%d category=%s", token, got.Season, got.Episode, got.Category)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		input           string
+		season, episode int
+	}{
+		{"S01E03", 1, 3}, {"S2026E03", 2026, 3}, {"S01", 1, 0}, {"S2026", 2026, 0}, {"S01E03E04", 1, 3}, {"S2026E03E04", 2026, 3},
+		{"Season.01.Episode.03", 1, 3}, {"S01S02", 1, 0}, {"S01.Disc02", 1, 0}, {"S00E03", 0, 3}, {"E03", 0, 3},
+		{"1x05.S02E04", 2, 4}, {"S1E03.S02E04", 2, 4}, {"768x576.S2026E03", 2026, 3},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			got := ParseReleaseInfo("Example.Show." + tc.input + ".1080p.WEB-DL.mkv")
+			if got.Season != tc.season || got.Episode != tc.episode {
+				t.Fatalf("valid token %q produced season=%d episode=%d; want %d,%d", tc.input, got.Season, got.Episode, tc.season, tc.episode)
+			}
+		})
+	}
+}
+
+func TestParseReleaseInfoPreservesDailyAndAbsoluteEpisodes(t *testing.T) {
+	t.Parallel()
+	daily := ParseReleaseInfo("Example.Show.2026.03.04.1080p.WEB-DL.mkv")
+	if daily.Category != "TV" || daily.Year != 2026 || daily.Month != 3 || daily.Day != 4 {
+		t.Fatalf("daily date changed: %+v", daily)
+	}
+	anime := ParseReleaseInfo("[GRP] Example Anime - 123 (1080p).mkv")
+	if anime.Episode != 123 || anime.Category != "TV" {
+		t.Fatalf("absolute episode changed: %+v", anime)
+	}
+	release := ParseReleaseInfo("Example.Movie.2026.1920x800.1080p.WEB-DL.x264-GRP.mkv")
+	if release.Year != 2026 || release.Resolution != "1080p" || release.Source != "Web" || release.Group != "GRP" {
+		t.Fatalf("technical fields changed: %+v", release)
+	}
+}

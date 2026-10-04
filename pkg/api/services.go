@@ -877,7 +877,7 @@ func cloneTrackerValidationValue[T any](value T) T {
 }
 
 var (
-	validationSeasonPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{1,3})`)
+	validationSeasonPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{2}|\d{4})(?:E|S\d|[^a-z0-9]|$)`)
 	validationEpisodePattern = regexp.MustCompile(`(?i)E(\d{1,4})`)
 	validationArchivePart    = regexp.MustCompile(`(?i)^\.r\d{2,3}$`)
 )
