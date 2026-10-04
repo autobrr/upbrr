@@ -12,7 +12,7 @@ import (
 
 func TestReleaseNamePolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/tvc/v2" {
+	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/tvc/v3" {
 		t.Fatalf("TVC release-name policy = %q", got)
 	}
 }
@@ -40,5 +40,20 @@ func TestResolveNameUsesOnlyAvailableTVPresentationFacts(t *testing.T) {
 	base.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
 	if got := resolveName(base); strings.Contains(got, "Example Show") {
 		t.Fatalf("manual-empty name restored release title = %q", got)
+	}
+}
+
+func TestResolveNameHEVCDoesNotRewriteTitleBrackets(t *testing.T) {
+	t.Parallel()
+	subject := api.UploadSubject{
+		Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Release:    api.ReleaseInfo{Title: "Example [HEVC] Show", Resolution: "1080p"},
+		Type:       "WEBDL",
+		VideoCodec: "HEVC",
+		SeasonInt:  1,
+		EpisodeInt: 2,
+	}
+	if got, want := resolveName(subject), "Example [HEVC] Show S01E02 [1080p WEB-DL EVC HEVC]"; got != want {
+		t.Fatalf("HEVC name = %q, want %q", got, want)
 	}
 }

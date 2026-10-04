@@ -933,3 +933,16 @@ func TestPublicProjectionBlanksPrivateDownloadsAndSanitizesURLQueries(t *testing
 		}
 	}
 }
+
+func TestDuplicateTargetWithoutProjectionRetainsEditionParts(t *testing.T) {
+	t.Parallel()
+	legacy := duplicateTargetForEvaluation(api.DuplicateSubject{Release: api.ReleaseInfo{Edition: []string{"Extended Collector's Open Matte"}}})
+	structured := duplicateTargetForEvaluation(api.DuplicateSubject{Release: api.ReleaseInfo{
+		Cut:          []string{"Extended"},
+		Edition:      []string{"Collector's"},
+		Presentation: []string{"Open Matte"},
+	}})
+	if structured.Edition != legacy.Edition || structured.Edition == "" {
+		t.Fatalf("structured target edition = %q, legacy = %q", structured.Edition, legacy.Edition)
+	}
+}

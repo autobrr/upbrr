@@ -61,6 +61,11 @@ type migrationExecutor interface {
 var migrationRegistry = []migrationStep{
 	{id: baselineMigrationID, apply: createBaselineSchema},
 	{
+		id:        "2026_10_preserve_release_cut",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migratePreserveReleaseCut,
+	},
+	{
 		id:        "2026_10_add_metadata_evidence",
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateAddMetadataEvidence,
@@ -1949,6 +1954,27 @@ func migrateUploadedImageAccountScope(ctx context.Context, exec migrationExecuto
 	_, err = exec.ExecContext(ctx, `ALTER TABLE uploaded_images ADD COLUMN account_scope TEXT NOT NULL DEFAULT ''`)
 	if err != nil {
 		return fmt.Errorf("db add uploaded image account scope: %w", err)
+	}
+	return nil
+}
+
+func migratePreserveReleaseCut(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "file_metadata")
+	if err != nil {
+		return err
+	}
+	if !tablePresent {
+		return nil
+	}
+	exists, err := tableColumnExists(ctx, exec, "file_metadata", "release_cut")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE file_metadata ADD COLUMN release_cut TEXT NOT NULL DEFAULT '[]'`); err != nil {
+		return fmt.Errorf("db: preserve release cut: %w", err)
 	}
 	return nil
 }

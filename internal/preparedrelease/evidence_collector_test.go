@@ -428,3 +428,16 @@ func TestApplyBlurayFactInstructionRejectsUnknownCandidate(t *testing.T) {
 		t.Fatalf("error = %v, want not found", err)
 	}
 }
+
+func TestMapCollectedFactsRetainsEditionSetAndDetailedCategories(t *testing.T) {
+	t.Parallel()
+	facts := mapCollectedFacts(preparationstate.State{
+		EditionSet:   "2in1",
+		Cut:          "Theatrical / Extended",
+		Edition:      "Collector's",
+		Presentation: "IMAX",
+	})
+	if facts.Media.EditionSet != "2in1" || facts.Naming.EditionSet != "2in1" || !slices.Equal(facts.Naming.Cuts, []string{"Theatrical / Extended"}) || !slices.Equal(facts.Naming.Editions, []string{"Collector's"}) || !slices.Equal(facts.Naming.Presentations, []string{"IMAX"}) {
+		t.Fatalf("edition set facts = %#v / %#v", facts.Media, facts.Naming)
+	}
+}

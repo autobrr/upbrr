@@ -93,40 +93,57 @@ retain their own contracts; an unknown resolution must not be inferred from the 
 
 Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete supported role set is:
 
-| Name object | Role |
-| ----------- | ---- |
-| Main title | `api.NameRoleTitle` |
-| AKA / alternate title | `api.NameRoleAlternateTitle` |
-| Year | `api.NameRoleYear` |
-| Season | `api.NameRoleSeason` |
-| Episode | `api.NameRoleEpisode` |
-| Episode title | `api.NameRoleEpisodeTitle` |
-| Daily date | `api.NameRoleDailyDate` |
-| Part | `api.NameRolePart` |
-| 3D marker | `api.NameRoleThreeD` |
-| Edition | `api.NameRoleEdition` |
-| Hybrid marker | `api.NameRoleHybrid` |
-| Repack marker | `api.NameRoleRepack` |
-| Resolution | `api.NameRoleResolution` |
-| Region | `api.NameRoleRegion` |
-| UHD marker | `api.NameRoleUHD` |
-| Source | `api.NameRoleSource` |
-| DVD system | `api.NameRoleDVDSystem` |
-| DVD size | `api.NameRoleDVDSize` |
-| Service | `api.NameRoleService` |
-| Video format | `api.NameRoleVideoFormat` |
-| HDR | `api.NameRoleHDR` |
-| Video codec | `api.NameRoleVideoCodec` |
-| Video encode | `api.NameRoleVideoEncode` |
-| Audio | `api.NameRoleAudio` |
-| Dubbed marker | `api.NameRoleDubbed` |
-| Dual-audio marker | `api.NameRoleDualAudio` |
-| Language marker | `api.NameRoleLanguageMarker` |
-| Series locale / disambiguation | `api.NameRoleLocale` |
-| Disc distributor | `api.NameRoleDistributor` |
-| Subtitle-language marker | `api.NameRoleSubtitleMarker` |
-| Release group | `api.NameRoleGroup` |
-| Original group retained alongside a custom group | `api.NameRoleOriginalGroup` |
+| Name object                                      | Role                         |
+| ------------------------------------------------ | ---------------------------- |
+| Main title                                       | `api.NameRoleTitle`          |
+| AKA / alternate title                            | `api.NameRoleAlternateTitle` |
+| Year                                             | `api.NameRoleYear`           |
+| Season                                           | `api.NameRoleSeason`         |
+| Episode                                          | `api.NameRoleEpisode`        |
+| Episode title                                    | `api.NameRoleEpisodeTitle`   |
+| Daily date                                       | `api.NameRoleDailyDate`      |
+| Part                                             | `api.NameRolePart`           |
+| 3D marker                                        | `api.NameRoleThreeD`         |
+| Multi-edition set label                          | `api.NameRoleEditionSet`     |
+| Cut (for example, Director’s Cut)                | `api.NameRoleCut`            |
+| Edition                                          | `api.NameRoleEdition`        |
+| Presentation (IMAX / Open Matte)                 | `api.NameRolePresentation`   |
+| Hybrid marker                                    | `api.NameRoleHybrid`         |
+| Repack marker                                    | `api.NameRoleRepack`         |
+| Resolution                                       | `api.NameRoleResolution`     |
+| Region                                           | `api.NameRoleRegion`         |
+| UHD marker                                       | `api.NameRoleUHD`            |
+| Source                                           | `api.NameRoleSource`         |
+| DVD system                                       | `api.NameRoleDVDSystem`      |
+| DVD size                                         | `api.NameRoleDVDSize`        |
+| Service                                          | `api.NameRoleService`        |
+| Video format                                     | `api.NameRoleVideoFormat`    |
+| HDR                                              | `api.NameRoleHDR`            |
+| Video codec                                      | `api.NameRoleVideoCodec`     |
+| Video encode                                     | `api.NameRoleVideoEncode`    |
+| Audio                                            | `api.NameRoleAudio`          |
+| Dubbed marker                                    | `api.NameRoleDubbed`         |
+| Dual-audio marker                                | `api.NameRoleDualAudio`      |
+| Language marker                                  | `api.NameRoleLanguageMarker` |
+| Series locale / disambiguation                   | `api.NameRoleLocale`         |
+| Disc distributor                                 | `api.NameRoleDistributor`    |
+| Subtitle-language marker                         | `api.NameRoleSubtitleMarker` |
+| Release group                                    | `api.NameRoleGroup`          |
+| Original group retained alongside a custom group | `api.NameRoleOriginalGroup`  |
+
+Cut, edition, and presentation are resolved separately during preparation. Parser cut tags
+remain cuts; exact Open Matte edition and IMAX collection evidence becomes presentation.
+Filename edition evidence takes precedence over provider runtime labels; IMDb attributes are
+categorized only as fallback when the filename has no edition evidence. Selected multi-edition
+playlists have a separate set identity: two distinct variants render only `2in1`, while larger
+sets retain their existing labeled aggregate. Individual category facts remain available for
+validation, but the generated document does not expose them for inclusion while a set label is
+active. A manual edition value is not reclassified as cut or presentation evidence and protects the set
+and all three category roles; clearing or omitting edition
+protects their absence. Do not classify edition text to recover these roles. For tracker payload
+fields that need a combined label, `UploadSubject.EditionLabel()` joins the finalized categories;
+name policies must still edit their individual components. Older prepared contracts require
+preparation again rather than parsing stored names to fill the new roles.
 
 These roles are defined in `pkg/api/naming_document.go`; not every release layout contains every
 role. Editing targets the whole component, so audio subfields, for example, are not separately
@@ -141,16 +158,16 @@ substring matching to select semantic objects. If the title contains the same wo
 edition, omitting `NameRoleEdition` must leave the title untouched. The central renderer owns
 spacing and attachment after edits; `Separator: "."` requests dotted output.
 
-| Editor operation | Effect | Mandatory authority required for the target role |
-| ---------------- | ------ | ----------------------------------------------- |
-| `Omit(role)` | Hide the component | `NamePresence` |
-| `Include(role)` | Show the component, restoring an available value if needed | `NamePresence` |
-| `Set(role, value)` | Change its display value without changing presence | `NameValue` |
-| `SetJoin(role, join)` | Change the separator before a component, preserving attachment anchors | `NameOrder` |
-| `MoveBefore(role, anchor)` | Move a present component before a present anchor | `NameOrder` |
-| `MoveAfter(role, anchor)` | Move a present component after a present anchor | `NameOrder` |
-| `InsertBefore(role, value, anchor)` | Add or update a component at an explicit anchor | `NamePresence`, `NameValue`, and `NameOrder` |
-| `InsertAfter(role, value, anchor)` | Add or update a component after an explicit anchor | `NamePresence`, `NameValue`, and `NameOrder` |
+| Editor operation                    | Effect                                                                 | Mandatory authority required for the target role |
+| ----------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------ |
+| `Omit(role)`                        | Hide the component                                                     | `NamePresence`                                   |
+| `Include(role)`                     | Show the component, restoring an available value if needed             | `NamePresence`                                   |
+| `Set(role, value)`                  | Change its display value without changing presence                     | `NameValue`                                      |
+| `SetJoin(role, join)`               | Change the separator before a component, preserving attachment anchors | `NameOrder`                                      |
+| `MoveBefore(role, anchor)`          | Move a present component before a present anchor                       | `NameOrder`                                      |
+| `MoveAfter(role, anchor)`           | Move a present component after a present anchor                        | `NameOrder`                                      |
+| `InsertBefore(role, value, anchor)` | Add or update a component at an explicit anchor                        | `NamePresence`, `NameValue`, and `NameOrder`     |
+| `InsertAfter(role, value, anchor)`  | Add or update a component after an explicit anchor                     | `NamePresence`, `NameValue`, and `NameOrder`     |
 
 Use `PresentRoles()` for a detached snapshot of the editor's current present roles in render
 order. Select anchors after edits have run, since manual protection can prevent an optional
@@ -704,17 +721,17 @@ represented by `BannedGroupPolicy` needs a typed policy extension, not a tracker
 
 `unit3d.Profile` can also declare:
 
-| Profile field      | Purpose                                                      |
-| ------------------ | ------------------------------------------------------------ |
+| Profile field       | Purpose                                                             |
+| ------------------- | ------------------------------------------------------------------- |
 | `ReleaseNamePolicy` | Versioned structured naming, including explicit mandatory authority |
-| `ValidationPolicy` | Versioned site constructibility/custom policy binding        |
-| `AudioPolicy`      | Multi-language/bloat policy beyond release eligibility rules |
-| `DupePolicy`       | Candidate-comparison semantics after duplicate search        |
-| `UploadArtifact`   | Torrent source/announce personalization                      |
-| `ImageHost`        | Accepted, private, or conditional image hosts                |
-| `TorrentIdentity`  | Extra announce/comment aliases and torrent reuse preferences |
-| `ClaimPolicy`      | Generic claim orchestration requirements                     |
-| `DescriptionGroup` | Site-specific saved description override group               |
+| `ValidationPolicy`  | Versioned site constructibility/custom policy binding               |
+| `AudioPolicy`       | Multi-language/bloat policy beyond release eligibility rules        |
+| `DupePolicy`        | Candidate-comparison semantics after duplicate search               |
+| `UploadArtifact`    | Torrent source/announce personalization                             |
+| `ImageHost`         | Accepted, private, or conditional image hosts                       |
+| `TorrentIdentity`   | Extra announce/comment aliases and torrent reuse preferences        |
+| `ClaimPolicy`       | Generic claim orchestration requirements                            |
+| `DescriptionGroup`  | Site-specific saved description override group                      |
 
 Keep construction in `profile.go`; move substantial policy logic or data into a clearly named
 site-local file. If a capability does not exist, extend the typed profile/definition contract once

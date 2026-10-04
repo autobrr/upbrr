@@ -102,6 +102,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 		Disc:       release.Disc,
 		Season:     season,
 		Episode:    episode,
+		Cut:        append([]string{}, release.Cut...),
 		Edition:    append([]string{}, release.Edition...),
 		Other:      other,
 	}

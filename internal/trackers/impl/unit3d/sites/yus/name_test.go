@@ -71,8 +71,68 @@ func TestYUSStructuredName(t *testing.T) {
 }
 func TestYUSPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/yus/v3" || p.Structured == nil {
+	if p.ID != "unit3d/yus/v4" || p.Structured == nil {
 		t.Fatalf("%#v", p)
+	}
+}
+
+func TestYUSCanonicalCutPresentationAndEdition(t *testing.T) {
+	t.Parallel()
+	subject := yusSubject(t, api.ReleaseNameRequest{
+		Category:     "MOVIE",
+		Type:         "WEBDL",
+		Title:        "Collector's Cut IMAX Story",
+		Year:         2026,
+		Cut:          "Extended Cut",
+		Edition:      "Collector's Cut",
+		Presentation: "Open Matte IMAX",
+		Resolution:   "1080p",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+	})
+	if got, want := yusName(t, subject, nil), "Collector's Cut IMAX Story 2026 Extended Cut Open Matte IMAX 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("canonical modifiers = %q, want %q", got, want)
+	}
+	manual := subject
+	manual.GeneratedName = subject.GeneratedName.Clone()
+	for index := range manual.GeneratedName.Components {
+		component := &manual.GeneratedName.Components[index]
+		if component.Role == api.NameRoleEdition {
+			component.Manual = true
+			continue
+		}
+		if component.Role == api.NameRoleEditionSet || component.Role == api.NameRoleCut || component.Role == api.NameRolePresentation {
+			component.Manual, component.Present = true, false
+		}
+	}
+	manual.ReleaseName = manual.GeneratedName.Render().Name
+	if got := yusName(t, manual, nil); got != manual.ReleaseName {
+		t.Fatalf("manual modifier choices = %q, want %q", got, manual.ReleaseName)
+	}
+	opaque := subject
+	opaque.GeneratedName = nil
+	if got := yusName(t, opaque, nil); got != opaque.ReleaseName {
+		t.Fatalf("opaque name = %q, want %q", got, opaque.ReleaseName)
+	}
+}
+
+func TestYUSCanonicalEditionSet(t *testing.T) {
+	t.Parallel()
+	subject := yusSubject(t, api.ReleaseNameRequest{
+		Category:     "MOVIE",
+		Type:         "WEBDL",
+		Title:        "2in1 Extended Collector's Open Matte Story",
+		Year:         2026,
+		EditionSet:   "2in1",
+		Cut:          "Extended",
+		Edition:      "Collector's",
+		Presentation: "Open Matte",
+		Resolution:   "1080p",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+	})
+	if got, want := yusName(t, subject, nil), "2in1 Extended Collector's Open Matte Story 2026 2in1 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("edition set = %q, want %q", got, want)
 	}
 }
 func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
@@ -101,11 +161,14 @@ func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 			Year:       r.Year,
 			Resolution: r.Resolution,
 		},
-		Type:        r.Type,
-		DiscType:    r.DiscType,
-		Edition:     r.Edition,
-		VideoEncode: r.VideoEncode,
-		VideoCodec:  r.VideoCodec,
+		Type:         r.Type,
+		DiscType:     r.DiscType,
+		EditionSet:   r.EditionSet,
+		Cut:          r.Cut,
+		Edition:      r.Edition,
+		Presentation: r.Presentation,
+		VideoEncode:  r.VideoEncode,
+		VideoCodec:   r.VideoCodec,
 	}
 }
 func yusName(t *testing.T, s api.UploadSubject, o *string) string {

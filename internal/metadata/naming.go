@@ -118,6 +118,9 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		Episode:        episode,
 		EpisodeTitle:   episodeTitle,
 		DailyDate:      dailyDate,
+		EditionSet:     strings.TrimSpace(req.EditionSet),
+		Cut:            strings.TrimSpace(req.Cut),
+		Presentation:   strings.TrimSpace(req.Presentation),
 		Edition:        edition,
 		Repack:         repack,
 		Resolution:     resolution,
@@ -140,6 +143,9 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		hybrid = "Hybrid"
 	}
 	edition = removeHybrid(edition)
+	if retained.EditionSet != "" {
+		edition, retained.Cut, retained.Presentation = "", "", ""
+	}
 	retained.Edition = edition
 	retained.Hybrid = hybrid
 	retained.VideoFormat = releaseNameVideoFormat(matchType)
@@ -305,6 +311,25 @@ func generatedReleaseNameDocument(
 	components := make([]api.ReleaseNameComponent, 0, 18)
 	appendComponents := func(values ...releaseNameDocumentValue) {
 		for _, value := range values {
+			if value.role == api.NameRoleEdition {
+				components = append(components, api.ReleaseNameComponent{
+					Role:           api.NameRoleEditionSet,
+					Value:          retained.EditionSet,
+					AvailableValue: retained.EditionSet,
+					Present:        retained.EditionSet != "",
+					Join:           " ",
+				})
+				components = append(
+					components,
+					api.ReleaseNameComponent{
+						Role:           api.NameRoleCut,
+						Value:          retained.Cut,
+						AvailableValue: retained.Cut,
+						Present:        retained.Cut != "",
+						Join:           " ",
+					},
+				)
+			}
 			components = append(components, api.ReleaseNameComponent{
 				Role:           value.role,
 				Value:          value.value,
@@ -313,6 +338,18 @@ func generatedReleaseNameDocument(
 				Join:           value.join,
 				AttachTo:       append([]api.ReleaseNameRole(nil), value.attachTo...),
 			})
+			if value.role == api.NameRoleEdition {
+				components = append(
+					components,
+					api.ReleaseNameComponent{
+						Role:           api.NameRolePresentation,
+						Value:          retained.Presentation,
+						AvailableValue: retained.Presentation,
+						Present:        retained.Presentation != "",
+						Join:           " ",
+					},
+				)
+			}
 		}
 	}
 	space := func(role api.ReleaseNameRole, value string) releaseNameDocumentValue {
@@ -793,6 +830,9 @@ type retainedReleaseNameValues struct {
 	Episode        string
 	DailyDate      string
 	EpisodeTitle   string
+	EditionSet     string
+	Cut            string
+	Presentation   string
 	Edition        string
 	Hybrid         string
 	Repack         string
@@ -851,6 +891,21 @@ func retainUnavailableReleaseNameComponents(
 		{
 			role:  api.NameRoleEpisodeTitle,
 			value: values.EpisodeTitle,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleEditionSet,
+			value: values.EditionSet,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleCut,
+			value: values.Cut,
+			join:  " ",
+		},
+		{
+			role:  api.NameRolePresentation,
+			value: values.Presentation,
 			join:  " ",
 		},
 		{
@@ -986,7 +1041,7 @@ func retainedReleaseNameComponentIndex(components []api.ReleaseNameComponent, ro
 func retainedReleaseNameAnchors(role api.ReleaseNameRole) []api.ReleaseNameRole {
 	order := []api.ReleaseNameRole{
 		api.NameRoleSeason, api.NameRoleEpisode, api.NameRoleDailyDate, api.NameRoleEpisodeTitle,
-		api.NameRolePart, api.NameRoleThreeD, api.NameRoleEdition, api.NameRoleHybrid,
+		api.NameRolePart, api.NameRoleThreeD, api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation, api.NameRoleHybrid,
 		api.NameRoleRepack, api.NameRoleResolution, api.NameRoleRegion, api.NameRoleSource,
 	}
 	if index := slices.Index(order, role); index >= 0 {
@@ -1263,6 +1318,9 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		DiscType:      meta.DiscType,
 		Region:        meta.Region,
 		DVDSize:       meta.Release.Size,
+		EditionSet:    meta.EditionSet,
+		Cut:           meta.Cut,
+		Presentation:  meta.Presentation,
 		Edition:       meta.Edition,
 		SearchYear:    searchYear,
 		DailyDate:     dailyDate,

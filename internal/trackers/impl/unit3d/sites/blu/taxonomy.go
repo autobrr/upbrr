@@ -18,7 +18,7 @@ func categoryIDs(category api.CanonicalCategory) []string {
 }
 
 func categoryID(meta api.UploadSubject) string {
-	if strings.Contains(strings.ToUpper(strings.TrimSpace(meta.Edition)), "FANRES") {
+	if strings.Contains(strings.ToUpper(meta.EditionLabel()), "FANRES") {
 		return "3"
 	}
 	return unit3d.DefaultCategoryID(meta)

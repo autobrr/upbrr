@@ -390,7 +390,7 @@ func hasSingleFileFolder(meta api.RuleSubject) bool {
 func hasReleaseToken(meta api.RuleSubject, tokens []string) bool {
 	values := make([]string, 0, len(meta.Release.Other)+len(meta.Release.Edition)+2)
 	values = append(values, meta.Release.Other...)
-	values = append(values, meta.Release.Edition...)
+	values = append(values, meta.Release.EditionLabel())
 	if meta.ReleaseName != "" {
 		values = append(values, meta.ReleaseName)
 	}
