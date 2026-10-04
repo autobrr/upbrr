@@ -825,6 +825,105 @@ describe("sessionReducer active input snapshots", () => {
     expect(state.preparationDirty).toBe(false);
   });
 
+  it.each(["active input", "workflow publication"])(
+    "drops identity-stale confirmations during %s resync while retaining ordinary drafts",
+    (resync) => {
+      const sourcePath = "C:\\media\\Correction.Review.2026.mkv";
+      const initial = initialSessionState();
+      const review = {
+        revision: 3,
+        fields: ["metadata.title"],
+        previousBindings: {},
+        currentBinding: {
+          category: "movie",
+          providerIds: { imdbId: 0, tmdbId: 111, tvdbId: 0, tvmazeId: 0, malId: 0 },
+          sourceFingerprint: "source-one",
+        },
+      };
+      const base = current("workflow-draft", 3);
+      const reviewed: ReleaseWorkflowCurrent = {
+        ...base,
+        workflow: {
+          ...base.workflow,
+          requiredActions: [
+            {
+              id: "action-corrections",
+              kind: "confirm_corrections",
+              status: "pending",
+              workflowRevision: 3,
+              createdAt: "2026-07-20T00:00:00Z",
+              prompt: "Review corrections.",
+              correctionConfirmation: review,
+            },
+          ],
+        },
+      };
+      const snapshot = {
+        state: "active",
+        revision: 1,
+        inputId: "input-draft",
+        sourceVersion: "source-one",
+        current: reviewed,
+      };
+      let state = sessionReducer(initial, {
+        type: "active_input_applied",
+        snapshot,
+        status: "ready",
+        preview: preview(sourcePath, 1),
+        intent: initial.preparationIntent,
+        capturedInputEditRevision: 0,
+      });
+      state = sessionReducer(state, {
+        type: "correction_confirmed",
+        field: { field: "metadata.title" },
+      });
+      state = sessionReducer(state, { type: "metadata_changed", value: { Genres: ["Comedy"] } });
+      const resynchronize = (incoming: ReleaseWorkflowCurrent) => {
+        state = sessionReducer(
+          state,
+          resync === "active input"
+            ? {
+                type: "active_input_applied",
+                snapshot: { ...snapshot, current: incoming },
+                status: "ready",
+                preview: preview(sourcePath, 1),
+                intent: initial.preparationIntent,
+                capturedInputEditRevision: state.inputEditRevision,
+                preserveInputDraft: true,
+              }
+            : { type: "workflow_current_published", current: incoming, status: "ready" },
+        );
+      };
+      resynchronize(structuredClone(reviewed));
+      expect(state.correctionConfirmFields).toEqual([{ field: "metadata.title" }]);
+      const changedIdentity: ReleaseWorkflowCurrent = {
+        ...reviewed,
+        workflow: {
+          ...reviewed.workflow,
+          revision: 4,
+          requiredActions: [
+            {
+              ...reviewed.workflow.requiredActions![0],
+              workflowRevision: 4,
+              correctionConfirmation: {
+                ...review,
+                currentBinding: {
+                  ...review.currentBinding,
+                  providerIds: { ...review.currentBinding.providerIds, tmdbId: 222 },
+                },
+              },
+            },
+          ],
+        },
+      };
+      resynchronize(changedIdentity);
+      expect(state.correctionConfirmFields).toEqual([]);
+      expect(state.preparationIntent.metadata).toEqual({ Genres: ["Comedy"] });
+      expect(state.correctionValueFields).toEqual([{ field: "metadata.genres" }]);
+      expect(state.correctionDirty).toBe(true);
+    },
+  );
+
   it("preserves an unaccepted correction during same-input resync and clears it on source switch", () => {
     const sourcePath = "C:\\media\\Draft.Release.2026.mkv";
     const initial = initialSessionState();

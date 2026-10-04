@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { expect, type Locator, type Page, type Response } from "@playwright/test";
+import { appendFile } from "node:fs/promises";
 import type {
   ActiveInputSnapshot,
   ReleaseWorkflowCurrent,
@@ -659,6 +660,170 @@ for (const correction of releaseDetailCorrections) {
     }
   });
 }
+
+test("embedded web recovers saved corrections before a release snapshot and preserves history", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await page.getByRole("textbox", { name: "Alternate title", exact: true }).fill("Example AKA");
+    await page.getByRole("textbox", { name: "Original language", exact: true }).fill("Spanish");
+    await page.getByRole("textbox", { name: "Genres", exact: true }).fill("Drama, Mystery");
+    await page.getByRole("textbox", { name: "Edition", exact: true }).fill("Collector Edition");
+    const saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    expect((await saved).ok()).toBe(true);
+    let snapshot = await waitForMetadataReady(page, app.url);
+    expect(snapshot.current?.corrections?.corrections.metadata).toMatchObject({
+      AlternateTitle: "Example AKA",
+      OriginalLanguage: "Spanish",
+      Genres: ["Drama", "Mystery"],
+    });
+
+    for (const resolution of ["individual", "bulk"] as const) {
+      await test.step(`${resolution} resolution survives reload and resumes preparation`, async () => {
+        const previousWorkflowID = snapshot.current?.workflow.id;
+        const closed = waitForAppMethod(page, "ReleaseActiveInput");
+        await page.getByRole("button", { name: "Close input" }).click();
+        expect((await activeInputFromResponse(await closed)).state).toBe("empty");
+        // Change the real source fingerprint while retaining its saved correction and history keys.
+        await appendFile(workspace.sourcePath, `changed synthetic content: ${resolution}\n`);
+        if (resolution === "individual") {
+          await page.getByRole("button", { name: "History", exact: true }).click();
+          await expect(page.getByText(workspace.sourcePath, { exact: true })).toBeVisible();
+          const opened = waitForAppMethod(page, "OpenActiveInput");
+          await page.getByRole("button", { name: "Open input", exact: true }).click();
+          expect((await opened).ok()).toBe(true);
+        } else {
+          await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+          const opened = waitForAppMethod(page, "OpenActiveInput");
+          await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+          expect((await opened).ok()).toBe(true);
+        }
+        const review = page.getByRole("region", { name: "Saved values need review" });
+        await expect(review).toBeVisible();
+        await expect(page.getByText(/Workflow release snapshot is unavailable/)).toHaveCount(0);
+        const response = await page
+          .context()
+          .request.get(new URL("api/app/GetActiveInput", app!.url).toString());
+        expect(response.ok()).toBe(true);
+        const blocked = (await response.json()) as ActiveInputSnapshot;
+        expect(blocked.current?.workflow.id).not.toBe(previousWorkflowID);
+        expect(blocked.current?.release ?? null).toBeNull();
+        expect(blocked.current?.operation?.status).toBe("blocked");
+        const action = blocked.current?.workflow.requiredActions?.find(
+          (candidate) => candidate.kind === "confirm_corrections" && candidate.status === "pending",
+        );
+        const affectedFields = ["metadata.alternate_title", "metadata.original_language"];
+        if (resolution === "individual") affectedFields.push("metadata.genres");
+        expect([...(action?.correctionConfirmation?.fields ?? [])].sort()).toEqual(
+          [...affectedFields].sort(),
+        );
+        expect(blocked.current?.corrections?.corrections.releaseName.Edition).toBe(
+          "Collector Edition",
+        );
+        const restored = waitForAppMethod(page, "GetActiveInput");
+        await page.reload();
+        const reloaded = await activeInputFromResponse(await restored);
+        expect(reloaded.current?.release ?? null).toBeNull();
+        expect(reloaded.current?.workflow.requiredActions).toContainEqual(action);
+        await expect(review).toBeVisible();
+        await expect(
+          review.getByText("Source identity changed since this value was saved."),
+        ).toHaveCount(affectedFields.length);
+        await expect(review.getByRole("group", { name: "Edition", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeDisabled();
+        const apply = review.getByRole("button", { name: "Apply and continue", exact: true });
+        await expect(apply).toBeDisabled();
+        if (resolution === "individual") {
+          const alternate = review.getByRole("group", { name: "Alternate title", exact: true });
+          await expect(alternate.getByText("Example AKA", { exact: true })).toBeVisible();
+          await alternate.getByRole("button", { name: "Keep saved value", exact: true }).click();
+          await review
+            .getByRole("textbox", { name: "Edit Original language", exact: true })
+            .fill("Japanese");
+          await review
+            .getByRole("group", { name: "Genres", exact: true })
+            .getByRole("button", { name: "Use automatic value", exact: true })
+            .click();
+        } else {
+          await review
+            .getByRole("button", {
+              name: "Use automatic values for all affected fields",
+              exact: true,
+            })
+            .click();
+        }
+        const synchronized = waitForAppMethod(page, "GetActiveInput");
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        expect((await synchronized).ok()).toBe(true);
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+            ),
+        );
+        await expect(
+          review.getByText("Choose how to resolve this saved value.", { exact: true }),
+        ).toHaveCount(0);
+        await expect(apply).toBeEnabled();
+        const continued = waitForAppMethod(page, "OpenActiveInput");
+        await apply.click();
+        const continuedResponse = await continued;
+        expect(continuedResponse.ok()).toBe(true);
+        const command = workflowCommandBody(
+          "OpenActiveInput",
+          continuedResponse.request().postDataJSON(),
+        );
+        expect((command.intent as { correctionPatch: unknown }).correctionPatch).toEqual({
+          values: {
+            Identity: {},
+            ReleaseName: {},
+            Metadata: resolution === "individual" ? { OriginalLanguage: "Japanese" } : {},
+          },
+          resetFields:
+            resolution === "individual"
+              ? [{ field: "metadata.genres" }]
+              : affectedFields.map((field) => ({ field })),
+          confirmFields: resolution === "individual" ? [{ field: "metadata.alternate_title" }] : [],
+          expectedRevision: blocked.current?.corrections?.revision,
+        });
+        snapshot = await waitForMetadataReady(page, app!.url);
+        await expect(review).toHaveCount(0);
+        expect(snapshot.current?.workflow.id).toBe(blocked.current?.workflow.id);
+        expect(snapshot.current?.corrections?.corrections.staleContentFields ?? []).toEqual([]);
+        const expectedMetadata = {
+          AlternateTitle: resolution === "individual" ? "Example AKA" : null,
+          OriginalLanguage: resolution === "individual" ? "Japanese" : null,
+          Genres: null,
+        };
+        expect(snapshot.current?.corrections?.corrections.metadata).toMatchObject(expectedMetadata);
+        expect(snapshot.current?.factInstructions?.instructions.Metadata).toMatchObject(
+          expectedMetadata,
+        );
+        expect(snapshot.current?.corrections?.corrections.releaseName.Edition).toBe(
+          "Collector Edition",
+        );
+        expect(snapshot.current?.factInstructions?.instructions.ReleaseName.Edition).toBe(
+          "Collector Edition",
+        );
+      });
+    }
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    await expect(page.getByText(workspace.sourcePath, { exact: true })).toBeVisible();
+    await expect(page.getByText("No stored releases found.")).toHaveCount(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
 
 test("embedded web persists Release Details audio track language edits, clear and Auto", async ({
   page,

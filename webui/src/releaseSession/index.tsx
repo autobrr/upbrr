@@ -29,7 +29,7 @@ import type {
 } from "../api/generated/release-workflow";
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
-import { initialSessionState, sessionReducer } from "./reducer";
+import { initialSessionState, pendingCorrectionReview, sessionReducer } from "./reducer";
 import { canExecuteUpload } from "./uploadEligibility";
 import { routeAccess, type TrackerWorkflowRequirements } from "./navigation";
 import {
@@ -608,7 +608,9 @@ export function ReleaseSessionProvider({
     const controller = new AbortController();
     controllers.current.activeInput = controller;
     const capturedInputEditRevision = stateRef.current.inputEditRevision;
-    const preserveCurrentDraft = preserveInputDraft || stateRef.current.preparationDirty;
+    // Correction choices can exist before the first prepared release.
+    const preserveCurrentDraft =
+      preserveInputDraft || stateRef.current.preparationDirty || stateRef.current.correctionDirty;
     const draftInputID = stateRef.current.activeInput.inputID;
     const draftSourceVersion = stateRef.current.activeInput.sourceVersion;
     const keepLocalDraft = (snapshot: ActiveInputSnapshot) =>
@@ -1137,7 +1139,7 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset" | "candidate",
     sourcePath: string,
     intent: PreparationIntent,
-    controls: Readonly<{ confirmBDMVRescan: boolean }>,
+    controls: Readonly<{ confirmBDMVRescan: boolean; acceptPendingInput?: boolean }>,
     commandRevision: number,
     correlationID: string,
     controller: AbortController,
@@ -1213,7 +1215,19 @@ export function ReleaseSessionProvider({
       }
       if (dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
         publishWorkflowCurrent(current, "ready");
-        return false;
+        return Boolean(controls.acceptPendingInput && !controller.signal.aborted);
+      }
+      if (pendingCorrectionReview(current)) {
+        const accepted = applyActiveInputSnapshot(
+          activeSnapshotWithCurrent(current),
+          "ready",
+          update.inputEditRevision,
+          false,
+          intent,
+          sourcePath,
+          update.selectedTrackers,
+        );
+        return Boolean(controls.acceptPendingInput && accepted && !controller.signal.aborted);
       }
       const trackerInputAnswers = Object.fromEntries(
         Object.entries(update.trackerInputAnswers).filter(([tracker]) =>
@@ -1278,7 +1292,9 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset",
     requestedSource: string,
     requestedIntent: PreparationIntent,
-    controls = { confirmBDMVRescan: false },
+    controls: Readonly<{ confirmBDMVRescan: boolean; acceptPendingInput?: boolean }> = {
+      confirmBDMVRescan: false,
+    },
   ): Promise<boolean> => {
     if (activeAuthority.current.state === "recovering" && !hasOpaqueRecoveringInput()) return false;
     const sourcePath = requestedSource.trim();
@@ -2474,6 +2490,7 @@ export function ReleaseSessionProvider({
         correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
         corrections: workflowView.current?.corrections || null,
+        correctionReview: pendingCorrectionReview(workflowView.current),
         valueFields: state.correctionValueFields,
         resetFields: state.correctionResetFields,
         confirmFields: state.correctionConfirmFields,
@@ -2570,7 +2587,10 @@ export function ReleaseSessionProvider({
       cancelPreparation,
       prepareSource: (sourcePath, intent) => runPreparationFor("prepare", sourcePath, intent),
       openSource: (sourcePath) =>
-        runPreparationFor("prepare", sourcePath, emptyPreparationIntent()),
+        runPreparationFor("prepare", sourcePath, emptyPreparationIntent(), {
+          confirmBDMVRescan: false,
+          acceptPendingInput: true,
+        }),
       recoverLegacyWorkflow,
       close: releaseActiveInput,
       resetSource: (sourcePath, intent) => runPreparationFor("reset", sourcePath, intent),

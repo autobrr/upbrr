@@ -23,6 +23,7 @@ import type {
   AudioAnalysisSelectionMode,
   AudioAnalysisVariant,
   MediaTrackFacts,
+  CorrectionConfirmation,
   CorrectionFieldRef,
   DupeAssessment,
   DupeDecision,
@@ -139,6 +140,8 @@ export type InputFacet = Readonly<{
     correctionDirty: boolean;
     intent: PreparationIntent;
     corrections: ReleaseCorrectionsSnapshot | null;
+    /** Saved content corrections awaiting review, including before a release exists. */
+    correctionReview: CorrectionConfirmation | null;
     /** Manual fields changed locally but not yet applied by metadata refresh. */
     valueFields: readonly CorrectionFieldRef[];
     resetFields: readonly CorrectionFieldRef[];
@@ -182,7 +185,7 @@ export type InputFacet = Readonly<{
   /** Aborts local preparation/workflow requests; this does not close the durable active input. */
   cancelPreparation(): void;
   prepareSource(sourcePath: string, intent: PreparationIntent): Promise<boolean>;
-  /** Explicitly opens or refreshes a source and reports whether its returned state was accepted. */
+  /** Reports an accepted open or refresh, including a pause for correction or playlist review. */
   openSource(sourcePath: string): Promise<boolean>;
   /** Claims a listed legacy workflow for reconciliation only while the input slot is empty. */
   recoverLegacyWorkflow(workflowID: string): Promise<boolean>;

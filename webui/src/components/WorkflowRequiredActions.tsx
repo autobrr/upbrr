@@ -8,6 +8,7 @@ import type { ReleaseRoute } from "../releaseSession/types";
 const actionRoutes: Readonly<Record<string, ReleaseRoute>> = {
   answer_questionnaire: "upload",
   confirm_rescan: "input",
+  confirm_corrections: "input",
   reprepare: "input",
   select_metadata: "input",
   select_playlist: "input",
@@ -16,6 +17,7 @@ const actionRoutes: Readonly<Record<string, ReleaseRoute>> = {
 const actionLabels: Readonly<Record<string, string>> = {
   answer_questionnaire: "Answer tracker questions",
   confirm_rescan: "Review source",
+  confirm_corrections: "Review saved values",
   reprepare: "Review source",
   select_metadata: "Review metadata",
   select_playlist: "Select playlist",
