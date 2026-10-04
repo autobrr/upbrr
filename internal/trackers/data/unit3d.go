@@ -643,7 +643,11 @@ func (c *Client) SearchTorrentsWithEvidenceBound(
 		c.logger.Debugf("unit3d: %s missing API key; request will be unauthenticated", tracker)
 	}
 
-	tmdbID, _ := strconv.Atoi(strings.TrimSpace(params.Get("tmdbId")))
+	tmdbValue := params.Get("tmdbId")
+	if tmdbValue == "" {
+		tmdbValue = params.Get("tmdb")
+	}
+	tmdbID, _ := strconv.Atoi(strings.TrimSpace(tmdbValue))
 	endpoints := []unit3dSearchEndpoint{{
 		url:          strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "filter"),
 		filterTMDBID: tmdbID,
@@ -744,7 +748,7 @@ func (c *Client) searchUnit3DEndpoint(
 				"continuation": usingContinuation,
 				"work_tmdb_id": endpoint.filterTMDBID,
 			}
-			for _, key := range []string{"tmdbId", "categories[]", "types[]", "resolutions[]", "name", "seasonNumber", "episodeNumber", "perPage", "page"} {
+			for _, key := range []string{"tmdbId", "tmdb", "categories[]", "types[]", "resolutions[]", "name", "seasonNumber", "episodeNumber", "perPage", "page"} {
 				if values, present := query[key]; present {
 					requestParams[key] = values
 				}

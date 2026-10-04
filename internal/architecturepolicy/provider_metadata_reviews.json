@@ -1264,7 +1264,7 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/acm/profile.go:Profile": {
-    "sha256": "46626357c9bdac1d9682611a524c8af09f9646bd93e16f54749815507fc1584e",
+    "sha256": "0081ca2b2b1df12354ddcfa815080f583a7b0fa14ec32fb8ba2e55d4db1338a2",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/acm/taxonomy.go:resolveACMKeywords": {
@@ -1448,16 +1448,20 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/profile.go:Profile": {
-    "sha256": "8cf26f738cb129bfc836d82e09da05150545674052d1f99102b67d09cfd497fd",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "e7e621a4849cff1bc03d25eabac5022fe9ef45c03ccfd31b137ec3b2e6b927cc",
+    "reason": "Blu-ray region validation consumes finalized Region after manual release-name corrections and uses the same effective site resolver as payload preparation. Existing source-bound provider/animation checks and manual precedence are unchanged."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ValidationPolicy": {
-    "sha256": "055e5ae26a8e5548316ce1fffa4726405ed78ae04518466191281e6c615ed343",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "05a07d21fdbfe153c87661859a441c4ccb33c5ea0c41886e990540df145e2da9",
+    "reason": "Blu-ray region validation consumes finalized Region after manual release-name corrections and uses the same effective site resolver as payload preparation. Existing source-bound provider/animation checks and manual precedence are unchanged."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/validation.go:validationPolicy": {
+    "sha256": "3f6cedfc1a6a43a50891a7b8088339730d7170dcdaa9a7b539ffecfedfe11a5d",
+    "reason": "Blu-ray region validation consumes finalized Region after manual release-name corrections and uses the same effective site resolver as payload preparation. Existing source-bound provider/animation checks and manual precedence are unchanged."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:checkRules": {
-    "sha256": "d5a4847be8b6a363b8e6a385c0f762077ca3cca10f21000497d47a44c3f54a6a",
-    "reason": "Removes the concert keyword restriction; retained media checks use finalized facts and existing source-bound animation helpers without changing manual precedence."
+    "sha256": "d1222f78cf1dc29ba78da3c21a077241badb20299f1424666562b5bcb1cb1708",
+    "reason": "Blu-ray region validation consumes finalized Region after manual release-name corrections and uses the same effective site resolver as payload preparation. Existing source-bound provider/animation checks and manual precedence are unchanged."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ulcxEncodeFailures": {
     "sha256": "b0ca152d8cd761b869f7cb87f07b19e8a70b244414942791117825ebacf43de9",
@@ -1484,7 +1488,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/upload.go:buildUnit3DData": {
-    "sha256": "c08267537232172d40e049edfb7e31cb3c4e641fe131ccaa59b6e4613b2526c5",
+    "sha256": "d16217030214b6c4aa2e910e149e01616fa657eef98619b605115378ecaccfec",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {

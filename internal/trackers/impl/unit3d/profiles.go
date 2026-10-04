@@ -5,6 +5,7 @@ package unit3d
 
 import (
 	"context"
+	"net/url"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -29,6 +30,12 @@ type SiteProfile struct {
 	ResolveTypeID func(meta api.UploadSubject) string
 	// ResolveResolutionID optionally maps prepared metadata to a site resolution identifier.
 	ResolveResolutionID func(meta api.UploadSubject) string
+	// ResolveRegionID maps site country extensions/overrides to positive numeric IDs.
+	// Empty output uses the standard catalog; unknown names are never guessed.
+	ResolveRegionID func(string) string
+	// ResolveDistributorID maps site publisher extensions/overrides to positive IDs.
+	// Empty output uses the standard catalog. Implement in the site's taxonomy.go.
+	ResolveDistributorID func(string) string
 	// ResolveCategoryID optionally selects the upload category from finalized facts.
 	// A custom resolver requires CategoryIDs; empty or out-of-family IDs are unsupported.
 	ResolveCategoryID func(meta api.UploadSubject) string
@@ -38,6 +45,9 @@ type SiteProfile struct {
 	// and return positive integer IDs; empty or invalid families are unsupported.
 	// Without either category callback, movies use category 1 and TV uses category 2.
 	CategoryIDs func(api.CanonicalCategory) []string
+	// AdjustSearchParams adapts a validated work/category query to a site API dialect.
+	// It must preserve provider identity and category scope; it may remove narrowing.
+	AdjustSearchParams func(url.Values)
 	// ApplyAdditionalPayload appends site-owned fields to a prepared payload.
 	ApplyAdditionalPayload func(req trackers.PreparationInput, data map[string]string)
 	// FinalizeDescription applies final site-owned description transformations.

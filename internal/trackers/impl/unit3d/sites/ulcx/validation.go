@@ -18,19 +18,32 @@ import (
 
 // ValidationPolicy returns ULCX's tracker-specific semantic checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
+	return validationPolicy(unit3d.RegionID)
+}
+
+func validationPolicy(regionID func(string) string) trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-ulcx-policy-v5",
-		Check: checkRules,
+		ID: "unit3d-ulcx-policy-v6",
+		Check: func(ctx context.Context, meta api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error) {
+			return checkRules(ctx, meta, logger, regionID)
+		},
 	}
 }
 
 // checkRules enforces general, video, subtitles/audio, screenshots, and
-// description requirements.
-func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
+// description requirements, including a resolvable country for Blu-ray discs.
+func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger, regionID func(string) string) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
 	failures := make([]api.RuleFailure, 0, 10)
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && regionID(meta.Region) == "" {
+		failures = append(failures, trackers.NewRuleFailure(
+			"ulcx_bluray_region",
+			"ULCX Blu-ray discs require a region; set a recognized country code or positive tracker region ID before uploading.",
+			api.RuleDispositionStrict,
+		))
+	}
 	ruleSubject := unit3d.ValidationRuleSubject(meta)
 	disc := unit3d.IsDiscType(meta.DiscType)
 	extraKinds := []api.PackageFileKind{
