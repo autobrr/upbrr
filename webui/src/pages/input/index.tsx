@@ -11,7 +11,7 @@ import RenderedDescription from "../../components/RenderedDescription";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
-import { InputCorrectionEditor } from "./InputCorrectionEditor";
+import { InputCorrectionEditor, SavedCorrectionReview } from "./InputCorrectionEditor";
 import { settingsStyle } from "../../settings/style";
 import type {
   DetailBlock,
@@ -1065,13 +1065,21 @@ export default function InputPage(props: Props) {
     return hasTVDBEnglishDisplay(selectedPreview);
   }, [selectedPreview]);
 
+  const selectedPreviewProvider = selectedPreview?.Provider;
+  const selectedPreviewID = selectedPreview?.ID;
   useEffect(() => {
-    if (selectedPreview?.Provider !== "tvdb") {
+    if (selectedPreviewProvider !== "tvdb") {
       setTVDBDisplayMode("original");
       return;
     }
     setTVDBDisplayMode(tvdbToggleEnabled ? "english" : "original");
-  }, [selectedPreview, tvdbToggleEnabled]);
+  }, [
+    selectedPreviewProvider,
+    selectedPreviewID,
+    preview.Release.SourcePath,
+    preview.Release.Generation,
+    tvdbToggleEnabled,
+  ]);
 
   const selectedPreviewTitle = useMemo(() => {
     if (!selectedPreview) return "";
@@ -1150,6 +1158,8 @@ export default function InputPage(props: Props) {
           Build a release name and preview external metadata before you upload.
         </p>
       </header>
+
+      {view.correctionReview ? <SavedCorrectionReview facet={facet} /> : null}
 
       {playlist.required ? (
         <section className={`${pageStyle.panel} mx-auto grid w-full max-w-2xl gap-3`}>

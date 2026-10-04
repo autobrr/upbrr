@@ -20,7 +20,6 @@ func (c *Core) GetActiveInput(ctx context.Context, owner string) (api.ActiveInpu
 	if err != nil {
 		return api.ActiveInputSnapshot{}, classifyOperationError(api.OperationKindPreparation, err)
 	}
-	view := activeInputView(slot)
 	if slot.State != api.ActiveInputEmpty && !c.workflow.OwnsActiveInput(slot) {
 		// Previous-process work remains protected, but startup must not load
 		// its prepared release or implicitly resume its workflow.
@@ -32,6 +31,10 @@ func (c *Core) GetActiveInput(ctx context.Context, owner string) (api.ActiveInpu
 			}, nil
 		}
 		return api.ActiveInputSnapshot{State: api.ActiveInputRecovering, Revision: slot.Revision}, nil
+	}
+	view, err := c.activeInputView(ctx, slot)
+	if err != nil {
+		return api.ActiveInputSnapshot{}, err
 	}
 	if slot.WorkflowID != "" {
 		current, currentErr := c.workflow.Current(ctx, owner, slot.WorkflowID)
@@ -130,6 +133,7 @@ func (c *Core) OpenActiveInput(ctx context.Context, owner string, request api.Op
 	slot, err := c.workflow.OpenInput(ctx, owner, releaseworkflow.OpenInputRequest{
 		ExpectedRevision: request.ExpectedRevision,
 		Input:            *request.Request.Intent.Preparation,
+		CorrectionPatch:  request.Request.Intent.CorrectionPatch,
 		IdempotencyKey:   request.Request.IdempotencyKey,
 	})
 	if err != nil {
@@ -139,12 +143,30 @@ func (c *Core) OpenActiveInput(ctx context.Context, owner string, request api.Op
 	if err != nil {
 		return api.ActiveInputSnapshot{}, fmt.Errorf("read opened input workflow: %w", err)
 	}
-	request.Request.Authority = &api.WorkflowAuthority{WorkflowID: slot.WorkflowID, ExpectedRevision: current.Workflow.Revision}
-	current, err = c.ContinueReleaseWorkflow(ctx, owner, request.Request)
+	if patch := request.Request.Intent.CorrectionPatch; patch != nil && len(patch.ConfirmFields) > 0 &&
+		(prior.InputID != slot.InputID || prior.SourceVersion != slot.SourceVersion) {
+		// None of a mixed review patch applies to newly verified content. Rebuild
+		// the review from saved corrections before asking for fresh choices.
+		request.Request.Intent.CorrectionPatch = nil
+		if current.FactInstructions != nil {
+			request.Request.Intent.FactInstructions = &current.FactInstructions.Instructions
+			request.Request.Intent.Preparation.Instructions = current.FactInstructions.Instructions
+		}
+	}
+	// OpenInput has validated the admission fingerprint. A correction replay
+	// reads its committed outcome; it must not bind a discarded Keep to a newer
+	// review. An interrupted Apply leaves that review for a fresh explicit action.
+	if prior.IdempotencyKey != request.Request.IdempotencyKey || request.Request.Intent.CorrectionPatch == nil {
+		request.Request.Authority = &api.WorkflowAuthority{WorkflowID: slot.WorkflowID, ExpectedRevision: current.Workflow.Revision}
+		current, err = c.ContinueReleaseWorkflow(ctx, owner, request.Request)
+		if err != nil {
+			return api.ActiveInputSnapshot{}, err
+		}
+	}
+	view, err := c.activeInputView(ctx, slot)
 	if err != nil {
 		return api.ActiveInputSnapshot{}, err
 	}
-	view := activeInputView(slot)
 	view.Current = &current
 	return view, nil
 }
@@ -194,16 +216,21 @@ func (c *Core) releaseHistoryInput(ctx context.Context, sourcePath string) error
 	return nil
 }
 
-func activeInputView(slot api.ActiveInputRecord) api.ActiveInputSnapshot {
+func (c *Core) activeInputView(ctx context.Context, slot api.ActiveInputRecord) (api.ActiveInputSnapshot, error) {
 	view := api.ActiveInputSnapshot{
 		State:    slot.State,
 		Revision: slot.Revision,
 		InputID:  slot.InputID,
 	}
 	if slot.InputID != "" {
+		sourcePath, err := c.workflow.InputSourcePath(ctx, slot.InputID)
+		if err != nil {
+			return api.ActiveInputSnapshot{}, fmt.Errorf("read active input source: %w", err)
+		}
+		view.SourcePath = sourcePath
 		// Scope the public revision to the opaque input ID instead of exposing a content digest.
 		digest := sha256.Sum256([]byte(slot.InputID + "\x00" + slot.SourceVersion))
 		view.SourceVersion = hex.EncodeToString(digest[:])
 	}
-	return view
+	return view, nil
 }

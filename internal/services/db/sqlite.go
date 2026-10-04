@@ -337,7 +337,7 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 			release_source, release_resolution, release_codec, release_audio, release_hdr, release_ext,
 			release_language, release_site, release_genre, release_channels, release_collection,
 			release_region, release_size, release_group, release_disc,
-			release_edition, release_other, source_size
+			release_cut, release_edition, release_other, source_size
 		FROM file_metadata
 		WHERE path = ?
 	`, path)
@@ -346,6 +346,7 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 	var updatedAt string
 	var fileList string
 	var sceneValue int
+	var releaseCut string
 	var releaseEdition string
 	var releaseOther string
 	var releaseCodec string
@@ -386,6 +387,7 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 		&metadata.Size,
 		&metadata.Group,
 		&metadata.Disc,
+		&releaseCut,
 		&releaseEdition,
 		&releaseOther,
 		&metadata.SourceSize,
@@ -399,6 +401,11 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 	if fileList != "" {
 		if parsed, err := decodeFileList(fileList); err == nil {
 			metadata.FileList = parsed
+		}
+	}
+	if releaseCut != "" {
+		if parsed, err := decodeStringList(releaseCut); err == nil {
+			metadata.Cut = parsed
 		}
 	}
 	if releaseEdition != "" {
@@ -462,6 +469,7 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 	}
 
 	fileList := encodeFileList(metadata.FileList)
+	releaseCut := encodeStringList(metadata.Cut)
 	releaseEdition := encodeStringList(metadata.Edition)
 	releaseOther := encodeStringList(metadata.Other)
 	releaseCodec := encodeStringList(metadata.Codec)
@@ -480,9 +488,9 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 			release_source, release_resolution, release_codec, release_audio, release_hdr, release_ext,
 			release_language, release_site, release_genre, release_channels, release_collection,
 			release_region, release_size, release_group, release_disc,
-			release_edition, release_other, source_size
+			release_cut, release_edition, release_other, source_size
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			info_hash = excluded.info_hash,
 			updated_at = excluded.updated_at,
@@ -516,6 +524,7 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 			release_size = excluded.release_size,
 			release_group = excluded.release_group,
 			release_disc = excluded.release_disc,
+			release_cut = excluded.release_cut,
 			release_edition = excluded.release_edition,
 			release_other = excluded.release_other,
 			source_size = excluded.source_size
@@ -553,6 +562,7 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 		metadata.Size,
 		metadata.Group,
 		metadata.Disc,
+		releaseCut,
 		releaseEdition,
 		releaseOther,
 		metadata.SourceSize,

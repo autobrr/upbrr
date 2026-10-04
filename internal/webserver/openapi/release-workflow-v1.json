@@ -173,6 +173,9 @@
           "revision": {
             "type": "integer"
           },
+          "sourcePath": {
+            "type": "string"
+          },
           "sourceVersion": {
             "type": "string"
           },
@@ -1423,11 +1426,20 @@
       "DescriptionOverrideInput": {
         "type": "object",
         "properties": {
+          "final": {
+            "type": "boolean"
+          },
           "groupKey": {
             "type": "string"
           },
           "source": {
             "type": "string"
+          },
+          "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
           }
         },
         "required": [
@@ -3347,6 +3359,9 @@
           "Container": {
             "type": "string"
           },
+          "Cut": {
+            "type": "string"
+          },
           "Distributor": {
             "type": "string"
           },
@@ -3354,6 +3369,9 @@
             "$ref": "#/components/schemas/FactProvenance"
           },
           "Edition": {
+            "type": "string"
+          },
+          "EditionSet": {
             "type": "string"
           },
           "HDR": {
@@ -3388,6 +3406,9 @@
           },
           "OriginalLanguageProvenance": {
             "$ref": "#/components/schemas/FactProvenance"
+          },
+          "Presentation": {
+            "type": "string"
           },
           "PrimaryAudioTrackID": {
             "type": "string"
@@ -3468,9 +3489,11 @@
           "Channels",
           "Commentary",
           "Container",
+          "Cut",
           "Distributor",
           "DistributorProvenance",
           "Edition",
+          "EditionSet",
           "HDR",
           "HDRFacts",
           "HardcodedSubs",
@@ -3481,6 +3504,7 @@
           "MediaInfoUniqueID",
           "OriginalLanguage",
           "OriginalLanguageProvenance",
+          "Presentation",
           "PrimaryAudioTrackID",
           "Region",
           "Repack",
@@ -3906,10 +3930,19 @@
           "Collection": {
             "type": "string"
           },
+          "Cuts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "Day": {
             "type": "integer"
           },
           "Disc": {
+            "type": "string"
+          },
+          "EditionSet": {
             "type": "string"
           },
           "Editions": {
@@ -3988,6 +4021,12 @@
           "Personal": {
             "type": "boolean"
           },
+          "Presentations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "Region": {
             "type": "string"
           },
@@ -4046,8 +4085,10 @@
           "CleanName",
           "Codecs",
           "Collection",
+          "Cuts",
           "Day",
           "Disc",
+          "EditionSet",
           "Editions",
           "Extension",
           "Filename",
@@ -4065,6 +4106,7 @@
           "OriginalTitleProvenance",
           "Other",
           "Personal",
+          "Presentations",
           "Region",
           "ReleaseName",
           "Resolution",

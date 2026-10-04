@@ -89,8 +89,8 @@ func TestEditionFromMetaMultiPlaylistAggregatesIMDbMatches(t *testing.T) {
 		},
 	}
 
-	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
-	if edition != "2in1 Theatrical / Extended" {
+	edition, repack := combinedEditionFromMeta(meta, mediaInfoDoc{})
+	if edition != "2in1" {
 		t.Fatalf("expected aggregated edition, got %q", edition)
 	}
 	if repack != "" {
@@ -518,7 +518,7 @@ func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 		},
 	}
 
-	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	edition, _ := combinedEditionFromMeta(meta, mediaInfoDoc{})
 	if edition != "Director's Cut" {
 		t.Fatalf("expected deduped edition, got %q", edition)
 	}
@@ -550,7 +550,7 @@ func TestEditionFromMetaMultiDiscAggregatesProviderBackedEditions(t *testing.T) 
 			},
 		}}},
 	}
-	if edition, _ := editionFromMeta(meta, mediaInfoDoc{}); edition != "2in1 Theatrical / Extended" {
+	if edition, _ := combinedEditionFromMeta(meta, mediaInfoDoc{}); edition != "2in1" {
 		t.Fatalf("multi-disc edition = %q", edition)
 	}
 }
@@ -579,7 +579,7 @@ func TestEditionFromMetaDoesNotPromoteSplitOrExtrasDurations(t *testing.T) {
 			},
 		}}},
 	}
-	if edition, _ := editionFromMeta(meta, mediaInfoDoc{}); edition != "" {
+	if edition, _ := combinedEditionFromMeta(meta, mediaInfoDoc{}); edition != "" {
 		t.Fatalf("split/extras durations invented edition %q", edition)
 	}
 }
@@ -611,7 +611,7 @@ func TestEditionFromMetaMultiPlaylistTieBreaksEqualRuntimeMatches(t *testing.T) 
 		},
 	}
 
-	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	edition, _ := combinedEditionFromMeta(meta, mediaInfoDoc{})
 	if edition != "Director's Cut" {
 		t.Fatalf("expected deterministic tie-broken edition, got %q", edition)
 	}
@@ -641,7 +641,7 @@ func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
 		},
 	}
 
-	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	edition, _ := combinedEditionFromMeta(meta, mediaInfoDoc{})
 	if edition != "Collector's" {
 		t.Fatalf("expected fallback edition, got %q", edition)
 	}
@@ -670,7 +670,7 @@ func TestEditionFromMetaMatchesIMDbRuntimeForSingleFile(t *testing.T) {
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7502.000"}]}}`)
 
-	edition, repack := editionFromMeta(meta, doc)
+	edition, repack := combinedEditionFromMeta(meta, doc)
 	if edition != "Extended" {
 		t.Fatalf("expected IMDb runtime edition, got %q", edition)
 	}
@@ -701,7 +701,7 @@ func TestEditionFromMetaIgnoresIMDbRuntimeTheatricalOnlyForSingleFile(t *testing
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7502.000"}]}}`)
 
-	edition, _ := editionFromMeta(meta, doc)
+	edition, _ := combinedEditionFromMeta(meta, doc)
 	if edition != "" {
 		t.Fatalf("expected theatrical-only IMDb runtime match to be ignored, got %q", edition)
 	}
@@ -731,7 +731,7 @@ func TestEditionFromMetaChoosesClosestIMDbRuntimeForSingleFile(t *testing.T) {
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7478.000"}]}}`)
 
-	edition, _ := editionFromMeta(meta, doc)
+	edition, _ := combinedEditionFromMeta(meta, doc)
 	if edition != "Extended" {
 		t.Fatalf("expected closest IMDb runtime edition, got %q", edition)
 	}
@@ -760,7 +760,7 @@ func TestEditionFromMetaSuppressesEditionWhenCloserIMDbRuntimeIsTheatrical(t *te
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7498.000"}]}}`)
 
-	edition, _ := editionFromMeta(meta, doc)
+	edition, _ := combinedEditionFromMeta(meta, doc)
 	if edition != "" {
 		t.Fatalf("expected closer theatrical match to suppress edition, got %q", edition)
 	}
@@ -792,7 +792,7 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenManualEditionOverridePresent(t *test
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7500.000"}]}}`)
 
-	edition, _ := editionFromMeta(meta, doc)
+	edition, _ := combinedEditionFromMeta(meta, doc)
 	if edition != "Collector's" {
 		t.Fatalf("expected parsed release edition when manual override skips IMDb auto edition, got %q", edition)
 	}
@@ -822,7 +822,7 @@ func TestEditionFromMetaPromotesOnlyExactHybridOther(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			edition, _ := editionFromMeta(preparationstate.State{Release: tc.release}, mediaInfoDoc{})
+			edition, _ := combinedEditionFromMeta(preparationstate.State{Release: tc.release}, mediaInfoDoc{})
 			if edition != tc.want {
 				t.Fatalf("expected edition %q, got %q", tc.want, edition)
 			}
@@ -834,9 +834,12 @@ func TestEditionFromMetaRetainsAvailableValueWhenNoEditionOverridePresent(t *tes
 	noEdition := true
 	meta := preparationstate.State{
 		ReleaseNameOverrides: api.ReleaseNameOverrides{NoEdition: &noEdition},
-		Edition:              "IMAX",
-		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}, Other: []string{"HYBRiD"}},
-		Identity:             api.ExternalIdentity{Category: "MOVIE"},
+		Release: api.ReleaseInfo{
+			Collection: "IMAX",
+			Edition:    []string{"Collectors.Edition"},
+			Other:      []string{"HYBRiD"},
+		},
+		Identity: api.ExternalIdentity{Category: "MOVIE"},
 		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
@@ -857,9 +860,9 @@ func TestEditionFromMetaRetainsAvailableValueWhenNoEditionOverridePresent(t *tes
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7500.000"}]}}`)
 
-	edition, _ := editionFromMeta(meta, doc)
-	if edition != "Extended Hybrid" {
-		t.Fatalf("expected available edition when no-edition override is present, got %q", edition)
+	edition, _ := combinedEditionFromMeta(meta, doc)
+	if edition != "IMAX Collectors Hybrid" {
+		t.Fatalf("expected available filename edition when no-edition override is present, got %q", edition)
 	}
 }
 
@@ -888,7 +891,7 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenAnimeOverridePresent(t *testing.T) {
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7500.000"}]}}`)
 
-	edition, _ := editionFromMeta(meta, doc)
+	edition, _ := combinedEditionFromMeta(meta, doc)
 	if edition != "" {
 		t.Fatalf("expected anime override to skip IMDb runtime edition, got %q", edition)
 	}
@@ -899,7 +902,7 @@ func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
 		Release: api.ReleaseInfo{Edition: []string{"Limited", "Extended", "Edition", "REPACK2"}},
 	}
 
-	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
+	edition, repack := combinedEditionFromMeta(meta, mediaInfoDoc{})
 	if edition != "Extended" {
 		t.Fatalf("expected cleaned edition, got %q", edition)
 	}
@@ -913,7 +916,7 @@ func TestEditionFromMetaDropsPunctuationOnlyEditionResidue(t *testing.T) {
 		Release: api.ReleaseInfo{Edition: []string{"Limited.Edition", "Limited.Edition"}},
 	}
 
-	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
+	edition, repack := combinedEditionFromMeta(meta, mediaInfoDoc{})
 	if edition != "" {
 		t.Fatalf("expected punctuation-only edition residue to be dropped, got %q", edition)
 	}
@@ -927,7 +930,7 @@ func TestEditionFromMetaTrimsPunctuationAroundKeptEdition(t *testing.T) {
 		Release: api.ReleaseInfo{Edition: []string{"Limited.Edition", "Extended.Edition"}},
 	}
 
-	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	edition, _ := combinedEditionFromMeta(meta, mediaInfoDoc{})
 	if edition != "Extended" {
 		t.Fatalf("expected punctuation around kept edition to be trimmed, got %q", edition)
 	}
@@ -938,7 +941,7 @@ func TestEditionFromMetaStripsRepackAliasesFromEdition(t *testing.T) {
 		Release: api.ReleaseInfo{Edition: []string{"Director's", "Cut", "V3"}},
 	}
 
-	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
+	edition, repack := combinedEditionFromMeta(meta, mediaInfoDoc{})
 	if edition != "Director's Cut" {
 		t.Fatalf("expected cleaned edition without repack alias, got %q", edition)
 	}
@@ -982,7 +985,7 @@ func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			edition, repack := editionFromMeta(preparationstate.State{SourcePath: tc.path}, mediaInfoDoc{})
+			edition, repack := combinedEditionFromMeta(preparationstate.State{SourcePath: tc.path}, mediaInfoDoc{})
 			if edition != "" {
 				t.Fatalf("expected empty edition, got %q", edition)
 			}
@@ -1053,7 +1056,7 @@ func TestEditionFromMetaMatchesIMDbRuntimeFromDurationString(t *testing.T) {
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration/String":"2 h 5 min"}]}}`)
 
-	edition, _ := editionFromMeta(meta, doc)
+	edition, _ := combinedEditionFromMeta(meta, doc)
 	if edition != "Extended" {
 		t.Fatalf("expected IMDb runtime edition from duration string, got %q", edition)
 	}
@@ -1082,7 +1085,7 @@ func TestEditionFromMetaPreservesIMDbEditionAttributeText(t *testing.T) {
 	}
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7500.000"}]}}`)
 
-	edition, _ := editionFromMeta(meta, doc)
+	edition, _ := combinedEditionFromMeta(meta, doc)
 	if edition != "IMAX Remastered Version" {
 		t.Fatalf("expected preserved IMDb attribute edition, got %q", edition)
 	}
@@ -2200,6 +2203,9 @@ func TestDeriveMediaFactsFromCollectedUHDDiscSummary(t *testing.T) {
 			if meta.BitDepth != tt.bitDepth {
 				t.Fatalf("bit depth = %q, want %q", meta.BitDepth, tt.bitDepth)
 			}
+			if meta.VideoCodec != "HEVC" || meta.VideoEncode != "" || !strings.Contains(meta.ReleaseName, "HEVC") {
+				t.Fatalf("disc video naming = codec %q encode %q name %q", meta.VideoCodec, meta.VideoEncode, meta.ReleaseName)
+			}
 			if meta.HDRFacts.Origin != api.HDREvidenceBDInfo || meta.HDRFacts.Status != api.HDREvidenceComplete ||
 				!slices.Equal(meta.HDRFacts.Formats, tt.hdrFormats) {
 				t.Fatalf("HDR facts = %#v, want complete BDInfo formats %v", meta.HDRFacts, tt.hdrFormats)
@@ -3009,6 +3015,16 @@ func TestCanonicalAudioLanguagePreservesEstablishedAliasesAndMultipleLanguages(t
 			t.Fatalf("canonical audio language %q = %q, want %q", input, got, want)
 		}
 	}
+}
+
+// combinedEditionFromMeta keeps historical cleanup and runtime-selection assertions
+// independent of the newly separate canonical components.
+func combinedEditionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, string) {
+	parts := editionFromMeta(meta, doc)
+	if parts.Set != "" {
+		return parts.Set, parts.Repack
+	}
+	return strings.Join(strings.Fields(strings.Join([]string{parts.Cut, parts.Presentation, parts.Edition}, " ")), " "), parts.Repack
 }
 
 func TestDeriveMediaFactsReleaseVersionCorrections(t *testing.T) {

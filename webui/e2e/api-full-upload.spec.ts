@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { expect, test } from "@playwright/test";
+import { appendFile } from "node:fs/promises";
+import type {
+  ActiveInputSnapshot,
+  ReleaseCorrectionPatch,
+} from "../src/api/generated/release-workflow";
 import {
   createE2EAPIToken,
   createE2EWorkspace,
@@ -569,6 +574,268 @@ test("composite operation cancellation stops the active tracker stage", async ()
     const currentResponse = await client.get(accepted.workflow.id);
     const current = (await currentResponse.json()) as WorkflowV1Current;
     expect(current.uploadResult).toBeUndefined();
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("active input API resolves saved corrections before a release snapshot without deleting history", async () => {
+  const workspace = await createE2EWorkspace();
+  const app = await startApp(workspace);
+  try {
+    const authResponse = await fetch(new URL("api/auth/status", app.url));
+    expect(authResponse.ok).toBe(true);
+    const auth = (await authResponse.json()) as { csrfToken: string };
+    expect(auth.csrfToken).toBeTruthy();
+    const call = (method: string, body?: unknown) =>
+      fetch(new URL(`api/app/${method}`, app.url), {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Csrf-Token": auth.csrfToken,
+          Origin: new URL(app.url).origin,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    let active: ActiveInputSnapshot = { state: "empty", revision: 0 };
+    const readActive = async () => {
+      const response = await call("GetActiveInput");
+      expect(response.status, await response.clone().text()).toBe(200);
+      active = (await response.json()) as ActiveInputSnapshot;
+      return active;
+    };
+    const open = (idempotencyKey: string, correctionPatch?: ReleaseCorrectionPatch) =>
+      call("OpenActiveInput", {
+        expectedRevision: active.revision,
+        request: {
+          idempotencyKey,
+          goal: "input_ready",
+          intent: {
+            preparation: { SourcePath: workspace.sourcePath },
+            trackerIds: [releaseWorkflowParityFixture.trackerID],
+            ...(correctionPatch ? { correctionPatch } : {}),
+          },
+        },
+      });
+    const settle = async (response: Response, status: "blocked" | "completed") => {
+      expect(response.status, await response.clone().text()).toBe(200);
+      // Active-input commands advance one transition; follow the same desired-state API as the UI.
+      for (let transition = 0; transition < 32; transition += 1) {
+        await expect
+          .poll(async () => (await readActive()).current?.operation?.status || "idle")
+          .not.toMatch(/^(queued|running)$/);
+        const current = active.current!;
+        const continued = await call("ContinueReleaseWorkflow", {
+          authority: {
+            workflowId: current.workflow.id,
+            expectedRevision: current.workflow.revision,
+          },
+          idempotencyKey: `continue-${current.workflow.id}-${current.workflow.revision}`,
+          goal: "input_ready",
+          intent: {
+            interaction: "interactive",
+            trackerIds: [releaseWorkflowParityFixture.trackerID],
+            ...(!current.release
+              ? {
+                  preparation: {
+                    SourcePath: workspace.sourcePath,
+                    Instructions: current.factInstructions?.instructions,
+                  },
+                }
+              : {}),
+          },
+        });
+        expect(continued.status, await continued.clone().text()).toBe(200);
+        await expect
+          .poll(async () => (await readActive()).current?.operation?.status || "idle")
+          .not.toMatch(/^(queued|running)$/);
+        if (active.current?.workflow.revision === current.workflow.revision) break;
+        if (
+          (active.current?.operation?.status === "blocked" &&
+            active.current.workflow.requiredActions?.some(
+              (action) => action.status === "pending",
+            )) ||
+          active.current?.inputReadiness?.status === "completed"
+        )
+          break;
+      }
+      expect(active.current?.operation?.status).toBe(status);
+      if (status === "completed") expect(active.current?.inputReadiness?.status).toBe("completed");
+      return active;
+    };
+    const changeSource = async () => {
+      const closed = await call("ReleaseActiveInput", { expectedRevision: active.revision });
+      expect(closed.status, await closed.clone().text()).toBe(200);
+      active = (await closed.json()) as ActiveInputSnapshot;
+      expect(active.state).toBe("empty");
+      await appendFile(workspace.sourcePath, `changed synthetic content: ${active.revision}\n`);
+    };
+    const emptyValues = { Identity: {}, ReleaseName: {}, Metadata: {} };
+    await readActive();
+    await settle(
+      await open("save-content-corrections", {
+        values: {
+          Identity: {},
+          ReleaseName: { Edition: "Collector Edition" },
+          Metadata: {
+            AlternateTitle: "Example AKA",
+            OriginalLanguage: "Spanish",
+            Genres: ["Drama", "Mystery"],
+          },
+        },
+        expectedRevision: 0,
+      }),
+      "completed",
+    );
+    const preparedWorkflowID = active.current?.workflow.id;
+    await changeSource();
+    let blocked = await settle(await open("reopen-changed-content"), "blocked");
+    expect(blocked.sourcePath).toBe(workspace.sourcePath);
+    expect(blocked.current?.workflow.id).not.toBe(preparedWorkflowID);
+    expect(blocked.current?.release ?? null).toBeNull();
+    let review = blocked.current?.workflow.requiredActions?.find(
+      (action) => action.kind === "confirm_corrections" && action.status === "pending",
+    );
+    expect(review?.correctionConfirmation?.fields).toEqual([
+      "metadata.alternate_title",
+      "metadata.genres",
+      "metadata.original_language",
+    ]);
+    const reloaded = await readActive();
+    expect(reloaded.current?.release ?? null).toBeNull();
+    expect(reloaded.sourcePath).toBe(workspace.sourcePath);
+    expect(reloaded.current?.workflow.requiredActions).toContainEqual(review);
+
+    await test.step("changed-source mixed correction replay retains the fresh review", async () => {
+      const request = {
+        expectedRevision: active.revision,
+        request: {
+          idempotencyKey: "changed-during-saved-value-review",
+          goal: "input_ready",
+          intent: {
+            preparation: { SourcePath: workspace.sourcePath },
+            trackerIds: [releaseWorkflowParityFixture.trackerID],
+            correctionPatch: {
+              values: { ...emptyValues, Metadata: { OriginalLanguage: "French" } },
+              confirmFields: [{ field: "metadata.alternate_title" }],
+              resetFields: [{ field: "metadata.genres" }],
+              expectedRevision: active.current!.corrections!.revision,
+            },
+          },
+        },
+      };
+      await appendFile(
+        workspace.sourcePath,
+        "source changed while saved values were under review\n",
+      );
+      const refreshed = await settle(await call("OpenActiveInput", request), "blocked");
+      expect(refreshed.sourceVersion).not.toBe(blocked.sourceVersion);
+      expect(refreshed.current?.release ?? null).toBeNull();
+      expect(refreshed.current?.corrections?.corrections.metadata).toEqual(
+        blocked.current?.corrections?.corrections.metadata,
+      );
+      expect(refreshed.current?.corrections?.corrections.staleContentFields).toEqual(
+        review?.correctionConfirmation?.fields,
+      );
+      const freshReview = refreshed.current?.workflow.requiredActions?.find(
+        (action) => action.kind === "confirm_corrections" && action.status === "pending",
+      );
+      expect(freshReview?.correctionConfirmation?.currentBinding.sourceFingerprint).not.toBe(
+        review?.correctionConfirmation?.currentBinding.sourceFingerprint,
+      );
+      // Retry the complete original body, including its now-old active-input revision.
+      const replayed = await settle(await call("OpenActiveInput", request), "blocked");
+      expect(replayed.current?.release ?? null).toBeNull();
+      expect(replayed.current?.corrections).toEqual(refreshed.current?.corrections);
+      expect(replayed.current?.workflow.requiredActions).toContainEqual(freshReview);
+      expect(replayed.current?.corrections?.corrections.releaseName.Edition).toBe(
+        "Collector Edition",
+      );
+      const conflictingRequest = structuredClone(request);
+      conflictingRequest.request.intent.correctionPatch.values.Metadata.OriginalLanguage = "German";
+      const conflict = await call("OpenActiveInput", conflictingRequest);
+      expect(conflict.status, await conflict.clone().text()).toBe(409);
+      blocked = await readActive();
+      expect(blocked.current?.corrections).toEqual(refreshed.current?.corrections);
+      expect(blocked.current?.workflow.requiredActions).toContainEqual(freshReview);
+      review = freshReview;
+    });
+
+    const outdated = await open("reject-outdated-correction-revision", {
+      values: emptyValues,
+      confirmFields: [{ field: "metadata.alternate_title" }],
+      expectedRevision: blocked.current!.corrections!.revision - 1,
+    });
+    expect(outdated.status, await outdated.clone().text()).toBe(409);
+    await readActive();
+    expect(active.current?.corrections).toEqual(blocked.current?.corrections);
+    expect(active.current?.workflow.requiredActions).toContainEqual(review);
+
+    await settle(
+      await open("keep-one-saved-value", {
+        values: emptyValues,
+        confirmFields: [{ field: "metadata.alternate_title" }],
+        expectedRevision: active.current!.corrections!.revision,
+      }),
+      "blocked",
+    );
+    expect(active.current?.release ?? null).toBeNull();
+    expect(active.current?.corrections?.corrections.staleContentFields).toEqual([
+      "metadata.genres",
+      "metadata.original_language",
+    ]);
+    expect(active.current?.corrections?.corrections.metadata.AlternateTitle).toBe("Example AKA");
+    await readActive();
+    await settle(
+      await open("edit-and-reset-remaining-values", {
+        values: { ...emptyValues, Metadata: { OriginalLanguage: "Japanese" } },
+        resetFields: [{ field: "metadata.genres" }],
+        expectedRevision: active.current!.corrections!.revision,
+      }),
+      "completed",
+    );
+    expect(active.current?.workflow.id).toBe(blocked.current?.workflow.id);
+    expect(active.current?.release).toBeTruthy();
+    expect(active.current?.corrections?.corrections.staleContentFields ?? []).toEqual([]);
+    expect(active.current?.corrections?.corrections.metadata).toMatchObject({
+      AlternateTitle: "Example AKA",
+      OriginalLanguage: "Japanese",
+      Genres: null,
+    });
+    expect(active.current?.corrections?.corrections.releaseName.Edition).toBe("Collector Edition");
+
+    await changeSource();
+    await settle(await open("reopen-before-affected-reset"), "blocked");
+    expect(active.current?.release ?? null).toBeNull();
+    const affected = active.current?.corrections?.corrections.staleContentFields;
+    expect(affected).toEqual(["metadata.alternate_title", "metadata.original_language"]);
+    await settle(
+      await open("reset-only-affected-values", {
+        values: emptyValues,
+        resetFields: affected!.map((field) => ({ field })),
+        expectedRevision: active.current!.corrections!.revision,
+      }),
+      "completed",
+    );
+    expect(active.current?.corrections?.corrections.staleContentFields ?? []).toEqual([]);
+    expect(active.current?.corrections?.corrections.metadata).toMatchObject({
+      AlternateTitle: null,
+      OriginalLanguage: null,
+      Genres: null,
+    });
+    expect(active.current?.corrections?.corrections.releaseName.Edition).toBe("Collector Edition");
+    expect(active.current?.factInstructions?.instructions.ReleaseName.Edition).toBe(
+      "Collector Edition",
+    );
+    const history = await call("ListHistory", {});
+    expect(history.status, await history.clone().text()).toBe(200);
+    expect(await history.json()).toContainEqual(
+      expect.objectContaining({ SourcePath: workspace.sourcePath }),
+    );
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
   } finally {
     await app.stop();
     await workspace.cleanup();

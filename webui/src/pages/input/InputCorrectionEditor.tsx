@@ -17,6 +17,8 @@ import type { PreparedRelease } from "../../types";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
 import { settingsStyle } from "../../settings/style";
+import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
+import correctionChoices from "./correctionChoices.json";
 
 const hasOwn = (value: object, key: PropertyKey) =>
   Object.prototype.hasOwnProperty.call(value, key);
@@ -251,30 +253,36 @@ const releaseStringFields: ReadonlyArray<{
   field: string;
   label: string;
   key: keyof ReleaseNameOverrides;
+  choices?: readonly { value: string; label: string }[];
+  searchable?: boolean;
   automatic: (release: PreparedRelease | null) => string | number;
 }> = [
   {
     field: "release_name.category",
     label: "Category",
     key: "Category",
+    choices: correctionChoices.Category,
     automatic: (r) => r?.Identity?.Category || "",
   },
   {
     field: "release_name.type",
     label: "Type",
     key: "Type",
+    choices: correctionChoices.Type,
     automatic: (r) => r?.Naming?.Type || "",
   },
   {
     field: "release_name.source",
     label: "Source",
     key: "Source",
+    choices: correctionChoices.Source,
     automatic: (r) => r?.Naming?.Source || "",
   },
   {
     field: "release_name.resolution",
     label: "Resolution",
     key: "Resolution",
+    choices: correctionChoices.Resolution,
     automatic: (r) => r?.Naming?.Resolution || "",
   },
   {
@@ -287,13 +295,17 @@ const releaseStringFields: ReadonlyArray<{
     field: "release_name.service",
     label: "Service",
     key: "Service",
+    choices: correctionChoices.Service,
+    searchable: true,
     automatic: (r) => r?.Media?.Service || "",
   },
   {
     field: "release_name.edition",
     label: "Edition",
     key: "Edition",
-    automatic: (r) => r?.Media?.Edition || "",
+    automatic: (r) =>
+      r?.Media?.EditionSet ||
+      [r?.Media?.Cut, r?.Media?.Edition, r?.Media?.Presentation].filter(Boolean).join(" "),
   },
   {
     field: "release_name.repack",
@@ -335,6 +347,8 @@ const releaseStringFields: ReadonlyArray<{
     field: "release_name.region",
     label: "Region",
     key: "Region",
+    choices: correctionChoices.Region,
+    searchable: true,
     automatic: (r) => r?.Naming?.Region || r?.Media?.Region || "",
   },
 ];
@@ -549,6 +563,203 @@ const bindingSummary = (binding: ContentBinding | undefined) => {
   return `${binding.category || "unknown category"}${providerIDs ? ` · ${providerIDs}` : ""}`;
 };
 
+const correctionReviewReasons = (previous: ContentBinding | undefined, current: ContentBinding) => {
+  if (!previous) return ["The identity evidence saved with this value is unavailable."];
+  const reasons: string[] = [];
+  if (previous.sourceFingerprint !== current.sourceFingerprint) {
+    reasons.push("Source identity changed since this value was saved.");
+  }
+  if (previous.category !== current.category) {
+    reasons.push(
+      `Category changed: ${previous.category || "unavailable"} → ${current.category || "unavailable"}.`,
+    );
+  }
+  for (const key of Object.keys(previous.providerIds) as Array<
+    keyof ContentBinding["providerIds"]
+  >) {
+    const before = previous.providerIds[key];
+    const after = current.providerIds[key];
+    if (before !== after) {
+      reasons.push(
+        `${key.replace(/Id$/, "").toUpperCase()} identity changed: ${before || "unavailable"} → ${after || "unavailable"}.`,
+      );
+    }
+  }
+  return reasons.length
+    ? reasons
+    : ["Review this saved value against the current source identity."];
+};
+
+/** Reviews only blocked saved corrections, including before a release snapshot exists. */
+export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>) {
+  const { view } = facet;
+  const review = view.correctionReview;
+  const saved = view.corrections?.corrections;
+  if (!review || !saved) return null;
+  const busy = view.status === "running";
+  const category = (
+    view.intent.releaseName.Category ?? review.currentBinding.category
+  ).toLowerCase();
+  const isTV = ["tv", "television", "series", "episode"].includes(category);
+  const statusFor = (field: string) => {
+    if (view.resetFields.some((ref) => ref.field === field)) return "Use automatic value pending";
+    if (view.valueFields.some((ref) => ref.field === field)) return "Edited value pending";
+    if (view.confirmFields.some((ref) => ref.field === field)) return "Keep saved value pending";
+    return "Choose how to resolve this saved value.";
+  };
+  return (
+    <section
+      className={`${inputSectionClass} border-[var(--status-warning)]`}
+      aria-labelledby="saved-correction-review-title"
+    >
+      <div>
+        <h2 id="saved-correction-review-title">Saved values need review</h2>
+        <p className="text-sm text-muted-foreground">
+          The source or metadata identity changed. Review each saved value before continuing; it may
+          still be correct.
+        </p>
+      </div>
+      <fieldset className="m-0 grid min-w-0 gap-4 border-0 p-0" disabled={busy}>
+        <legend className="sr-only">Affected saved values</legend>
+        {review.fields.map((field) => {
+          const releaseField = releaseStringFields.find((candidate) => candidate.field === field);
+          const metadataField = metadataStringFields.find((candidate) => candidate.field === field);
+          const listField = metadataListFields.find((candidate) => candidate.field === field);
+          const definition = releaseField || metadataField || listField;
+          const label = definition?.label || field.replaceAll("_", " ").replaceAll(".", " · ");
+          const savedValue = releaseField
+            ? saved.releaseName[releaseField.key]
+            : metadataField
+              ? saved.metadata[metadataField.key]
+              : listField
+                ? saved.metadata[listField.key]
+                : undefined;
+          const edited = view.valueFields.some((ref) => ref.field === field);
+          const draftValue = !edited
+            ? savedValue
+            : releaseField
+              ? view.intent.releaseName[releaseField.key]
+              : metadataField
+                ? view.intent.metadata[metadataField.key]
+                : listField
+                  ? view.intent.metadata[listField.key]
+                  : undefined;
+          const readOnly =
+            metadataField?.key === "Title" ||
+            metadataField?.key === "OriginalTitle" ||
+            (releaseField?.key === "ManualYear" && isTV);
+          const valueText =
+            savedValue === undefined || savedValue === null
+              ? "Unavailable"
+              : Array.isArray(savedValue)
+                ? savedValue.join(", ") || "Empty list"
+                : savedValue === ""
+                  ? "Empty value"
+                  : String(savedValue);
+          const id = `review-${field}`;
+          return (
+            <fieldset
+              key={field}
+              className="grid min-w-0 gap-3 rounded-md border border-foreground/15 p-3"
+            >
+              <legend className="px-1 font-semibold">{label}</legend>
+              <dl className="grid min-w-0 gap-1 text-sm">
+                <dt className="font-medium">Saved value</dt>
+                <dd className="m-0 break-words">{valueText}</dd>
+              </dl>
+              <ul className="m-0 grid gap-1 pl-4 text-sm text-muted-foreground">
+                {correctionReviewReasons(review.previousBindings[field], review.currentBinding).map(
+                  (reason) => (
+                    <li key={reason}>{reason}</li>
+                  ),
+                )}
+              </ul>
+              <p className="text-sm text-muted-foreground">
+                Automatic value is not available yet; it will be derived when preparation continues.
+              </p>
+              {definition ? (
+                <div className={inputFieldClass}>
+                  <label htmlFor={id}>Edit {label}</label>
+                  {listField ? (
+                    <CommaListInput
+                      id={id}
+                      label={`Edit ${label}`}
+                      value={Array.isArray(draftValue) ? draftValue : []}
+                      onChange={(value) =>
+                        facet.changeMetadata({ ...view.intent.metadata, [listField.key]: value })
+                      }
+                    />
+                  ) : (
+                    <input
+                      id={id}
+                      type={releaseField?.key === "ManualYear" ? "number" : "text"}
+                      readOnly={readOnly}
+                      disabled={readOnly}
+                      value={
+                        draftValue === undefined || draftValue === null ? "" : String(draftValue)
+                      }
+                      onChange={(event) => {
+                        if (readOnly) return;
+                        if (releaseField)
+                          facet.changeReleaseName({
+                            ...view.intent.releaseName,
+                            [releaseField.key]:
+                              releaseField.key === "ManualYear"
+                                ? Number(event.target.value)
+                                : event.target.value,
+                          });
+                        else if (metadataField)
+                          facet.changeMetadata({
+                            ...view.intent.metadata,
+                            [metadataField.key]: event.target.value,
+                          });
+                      }}
+                    />
+                  )}
+                  {readOnly ? (
+                    <span className="text-xs text-muted-foreground">
+                      This field remains provider-owned and cannot be edited here.
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" onClick={() => facet.confirmCorrection(refFor(field))}>
+                  Keep saved value
+                </Button>
+                <Button type="button" onClick={() => facet.resetCorrection(refFor(field))}>
+                  Use automatic value
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground" role="status">
+                {statusFor(field)}
+              </p>
+            </fieldset>
+          );
+        })}
+        <div className="flex flex-wrap justify-between gap-2">
+          <Button
+            type="button"
+            className="max-w-full"
+            onClick={() => review.fields.forEach((field) => facet.resetCorrection(refFor(field)))}
+          >
+            Use automatic values for all affected fields
+          </Button>
+          <Button
+            type="button"
+            disabled={!view.correctionDirty || !(view.selectedSource || view.sourceDraft).trim()}
+            onClick={() =>
+              void facet.prepareSource(view.selectedSource || view.sourceDraft, view.intent)
+            }
+          >
+            {busy ? "Applying..." : "Apply and continue"}
+          </Button>
+        </div>
+      </fieldset>
+    </section>
+  );
+}
+
 /**
  * Shows pending edits and applied overrides while the release session owns transport.
  * Auto resets local text drafts; automatic facts are rederived on metadata refresh.
@@ -637,11 +848,14 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
       <div className={inputSectionClass}>
         <div className={settingsStyle.title}>Release name</div>
         <div className={inputGridClass}>
-          {releaseStringFields.map(({ field, label, key, automatic }) => {
+          {releaseStringFields.map(({ field, label, key, automatic, choices, searchable }) => {
             const readOnly = key === "ManualYear" && isTV;
             const manual = !readOnly && hasOwn(view.intent.releaseName, key);
             const rawValue = manual ? view.intent.releaseName[key] : automatic(release);
             const numeric = key === "ManualYear";
+            const value =
+              rawValue === null || rawValue === undefined || rawValue === 0 ? "" : String(rawValue);
+            const ChoiceControl = searchable ? CorrectionSearch : CorrectionSelect;
             return (
               <CorrectionRow
                 key={field}
@@ -653,7 +867,16 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
-                {key === "Repack" ? (
+                {choices ? (
+                  <ChoiceControl
+                    key={draftKey(field)}
+                    id={`correction-${field}-value`}
+                    label={label}
+                    value={value}
+                    options={choices}
+                    onChange={(next) => setReleaseName(key, next)}
+                  />
+                ) : key === "Repack" ? (
                   <Select
                     id={`correction-${field}-value`}
                     aria-label={label}
@@ -678,11 +901,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     type={numeric ? "number" : "text"}
                     readOnly={readOnly}
                     disabled={readOnly}
-                    value={
-                      rawValue === null || rawValue === undefined || rawValue === 0
-                        ? ""
-                        : String(rawValue)
-                    }
+                    value={value}
                     onChange={(event) => {
                       if (readOnly) return;
                       setReleaseName(
@@ -738,16 +957,27 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
-                <input
-                  id={`correction-${field}-value`}
-                  aria-label={label}
-                  readOnly={readOnly}
-                  disabled={readOnly}
-                  value={typeof value === "string" ? value : ""}
-                  onChange={(event) => {
-                    if (!readOnly) setMetadata(key, event.target.value);
-                  }}
-                />
+                {key === "Distributor" ? (
+                  <CorrectionSearch
+                    key={draftKey(field)}
+                    id={`correction-${field}-value`}
+                    label={label}
+                    value={typeof value === "string" ? value : ""}
+                    options={correctionChoices.Distributor}
+                    onChange={(next) => setMetadata(key, next)}
+                  />
+                ) : (
+                  <input
+                    id={`correction-${field}-value`}
+                    aria-label={label}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                    value={typeof value === "string" ? value : ""}
+                    onChange={(event) => {
+                      if (!readOnly) setMetadata(key, event.target.value);
+                    }}
+                  />
+                )}
               </CorrectionRow>
             );
           })}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -208,7 +209,9 @@ func cleanRTFSearchTitle(meta api.DuplicateSubject) string {
 }
 
 func (h *dupeSearcher) search(ctx context.Context, params url.Values, apiKey string) (int, any, error) {
-	dupe.TraceSearchRequest(h.logger, "RTF", http.MethodGet, "/api/torrent", map[string]any{
+	logger := logging.FromContext(ctx, h.logger)
+
+	dupe.TraceSearchRequest(logger, "RTF", http.MethodGet, "/api/torrent", map[string]any{
 		"includingDead": params.Get("includingDead"),
 		"imdbId":        params.Get("imdbId"),
 		"search":        params.Get("search"),
@@ -221,12 +224,14 @@ func (h *dupeSearcher) search(ctx context.Context, params url.Values, apiKey str
 }
 
 func (h *dupeSearcher) ensureAPIKey(ctx context.Context, cfg config.TrackerConfig) (string, error) {
+	logger := logging.FromContext(ctx, h.logger)
+
 	if token := h.cachedAPIKey(); token != "" {
 		return token, nil
 	}
 	cached, err := loadCachedRTFAPIKey(ctx, h.dbPath, defaultBaseURL, cfg)
-	if err != nil && h.logger != nil {
-		h.logger.Warnf("trackers: RTF failed to load refreshed API session: %v", err)
+	if err != nil {
+		logger.Warnf("trackers: RTF failed to load refreshed API session: %v", err)
 	}
 	if cached != "" {
 		h.cacheRTFAPIKey(cached)
@@ -285,8 +290,10 @@ func (h *dupeSearcher) cachedAPIKey() string {
 }
 
 func (h *dupeSearcher) persistAPIKeySession(ctx context.Context, cfg config.TrackerConfig, token string) {
-	if err := persistRefreshedRTFAPIKey(ctx, h.dbPath, defaultBaseURL, cfg, token); err != nil && h.logger != nil {
-		h.logger.Warnf("trackers: RTF failed to persist refreshed API session: %v", err)
+	logger := logging.FromContext(ctx, h.logger)
+
+	if err := persistRefreshedRTFAPIKey(ctx, h.dbPath, defaultBaseURL, cfg, token); err != nil {
+		logger.Warnf("trackers: RTF failed to persist refreshed API session: %v", err)
 	}
 }
 

@@ -16,7 +16,7 @@ func additionalPayload(req trackers.PreparationInput, data map[string]string) {
 	} else {
 		data["draft_queue_opt_in"] = "0"
 	}
-	if editionID, ok := editionID(req.Meta.Edition); ok {
+	if editionID, ok := editionID(req.Meta.EditionLabel()); ok {
 		data["edition_id"] = editionID
 	}
 	if hdrDV, ok := mediafacts.Unit3DHDRDVFromFacts(req.Meta.HDRFacts); ok {
@@ -73,6 +73,7 @@ func editionID(edition string) (string, bool) {
 		"theatrical cut":      "8",
 		"uncut":               "9",
 		"unrated":             "10",
+		"unrated cut":         "10",
 		"x cut":               "11",
 		"alternative cut":     "12",
 		"other":               "0",

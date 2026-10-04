@@ -72,8 +72,68 @@ func TestYUSStructuredName(t *testing.T) {
 }
 func TestYUSPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/yus/v4" || p.Structured == nil {
+	if p.ID != "unit3d/yus/v5" || p.Structured == nil {
 		t.Fatalf("%#v", p)
+	}
+}
+
+func TestYUSCanonicalCutPresentationAndEdition(t *testing.T) {
+	t.Parallel()
+	subject := yusSubject(t, api.ReleaseNameRequest{
+		Category:     "MOVIE",
+		Type:         "WEBDL",
+		Title:        "Collector's Cut IMAX Story",
+		Year:         2026,
+		Cut:          "Extended Cut",
+		Edition:      "Collector's Cut",
+		Presentation: "Open Matte IMAX",
+		Resolution:   "1080p",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+	})
+	if got, want := yusName(t, subject, nil), "Collector's Cut IMAX Story 2026 Extended Cut Open Matte IMAX 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("canonical modifiers = %q, want %q", got, want)
+	}
+	manual := subject
+	manual.GeneratedName = subject.GeneratedName.Clone()
+	for index := range manual.GeneratedName.Components {
+		component := &manual.GeneratedName.Components[index]
+		if component.Role == api.NameRoleEdition {
+			component.Manual = true
+			continue
+		}
+		if component.Role == api.NameRoleEditionSet || component.Role == api.NameRoleCut || component.Role == api.NameRolePresentation {
+			component.Manual, component.Present = true, false
+		}
+	}
+	manual.ReleaseName = manual.GeneratedName.Render().Name
+	if got := yusName(t, manual, nil); got != manual.ReleaseName {
+		t.Fatalf("manual modifier choices = %q, want %q", got, manual.ReleaseName)
+	}
+	opaque := subject
+	opaque.GeneratedName = nil
+	if got := yusName(t, opaque, nil); got != opaque.ReleaseName {
+		t.Fatalf("opaque name = %q, want %q", got, opaque.ReleaseName)
+	}
+}
+
+func TestYUSCanonicalEditionSet(t *testing.T) {
+	t.Parallel()
+	subject := yusSubject(t, api.ReleaseNameRequest{
+		Category:     "MOVIE",
+		Type:         "WEBDL",
+		Title:        "2in1 Extended Collector's Open Matte Story",
+		Year:         2026,
+		EditionSet:   "2in1",
+		Cut:          "Extended",
+		Edition:      "Collector's",
+		Presentation: "Open Matte",
+		Resolution:   "1080p",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+	})
+	if got, want := yusName(t, subject, nil), "2in1 Extended Collector's Open Matte Story 2026 2in1 1080p WEB-DL H.264-GRP"; got != want {
+		t.Fatalf("edition set = %q, want %q", got, want)
 	}
 }
 func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
@@ -102,12 +162,15 @@ func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 			Year:       r.Year,
 			Resolution: r.Resolution,
 		},
-		Type:        r.Type,
-		DiscType:    r.DiscType,
-		Edition:     r.Edition,
-		Repack:      r.Repack,
-		VideoEncode: r.VideoEncode,
-		VideoCodec:  r.VideoCodec,
+		Type:         r.Type,
+		DiscType:     r.DiscType,
+		EditionSet:   r.EditionSet,
+		Cut:          r.Cut,
+		Edition:      r.Edition,
+		Repack:       r.Repack,
+		Presentation: r.Presentation,
+		VideoEncode:  r.VideoEncode,
+		VideoCodec:   r.VideoCodec,
 	}
 }
 func yusName(t *testing.T, s api.UploadSubject, o *string) string {
@@ -129,34 +192,32 @@ func yusName(t *testing.T, s api.UploadSubject, o *string) string {
 
 func TestYUSCutAndReleaseVersion(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		edition string
-		want    string
-	}{
-		{edition: "Extended", want: "Extended "},
-		{edition: "Uncut", want: "Uncut "},
-		{edition: "Director's Cut", want: "Director's Cut "},
-		{edition: "IMAX", want: "IMAX "},
-		{edition: "Open Matte", want: "Open Matte "},
-		{edition: "20th Anniversary"},
-		{edition: "Remastered"},
-		{edition: "Limited"},
-		{},
+	for _, tc := range []struct{ cut, edition, presentation, want string }{
+		{cut: "Extended", want: "Extended "},
+		{cut: "Uncut", want: "Uncut "},
+		{cut: "Director's Cut", want: "Director's Cut "},
+		{cut: "Alternate Version", want: "Alternate Version "},
+		{presentation: "IMAX", want: "IMAX "},
+		{presentation: "Open Matte", want: "Open Matte "},
+		{edition: "20th Anniversary"}, {edition: "Remastered"}, {edition: "Limited"},
+		{edition: "Cutting Edge"}, {edition: "Uncut"}, {},
 	} {
-		t.Run(tc.edition, func(t *testing.T) {
+		t.Run(strings.TrimSpace(tc.cut+" "+tc.edition+" "+tc.presentation), func(t *testing.T) {
 			for _, version := range []string{"REPACK", "PROPER", "REPACK2"} {
 				subject := yusSubject(t, api.ReleaseNameRequest{
-					Category:   "MOVIE",
-					Type:       "ENCODE",
-					Title:      "Cut Version",
-					Year:       2026,
-					Edition:    tc.edition,
-					Repack:     version,
-					Resolution: "1080p",
-					Source:     "BluRay",
-					Tag:        "-GRP",
+					Category:     "MOVIE",
+					Type:         "ENCODE",
+					Title:        "Cutting Edge Uncut Story",
+					Year:         2026,
+					Cut:          tc.cut,
+					Edition:      tc.edition,
+					Presentation: tc.presentation,
+					Repack:       version,
+					Resolution:   "1080p",
+					Source:       "BluRay",
+					Tag:          "-GRP",
 				})
-				want := "Cut Version 2026 " + tc.want + version + " 1080p BluRay-GRP"
+				want := "Cutting Edge Uncut Story 2026 " + tc.want + version + " 1080p BluRay-GRP"
 				if got := yusName(t, subject, nil); got != want {
 					t.Fatalf("%s: name = %q, want %q", version, got, want)
 				}
@@ -172,7 +233,8 @@ func TestYUSCutVersionDiscDistributor(t *testing.T) {
 		DiscType:   "BDMV",
 		Title:      "Example Film",
 		Year:       2026,
-		Edition:    "Extended",
+		Cut:        "Extended",
+		Edition:    "Limited",
 		Repack:     "PROPER",
 		Resolution: "1080p",
 		Source:     "BluRay",
@@ -192,7 +254,7 @@ func TestYUSCutVersionDVDOrder(t *testing.T) {
 		DiscType: "DVD",
 		Title:    "Example Film",
 		Year:     2026,
-		Edition:  "Uncut",
+		Cut:      "Uncut",
 		Repack:   "PROPER",
 		Source:   "PAL DVD",
 		DVDSize:  "DVD9",
@@ -249,7 +311,7 @@ func TestYUSVersionTVIdentityAndDVDRip(t *testing.T) {
 			Episode:            "E02",
 			EpisodeTitle:       "A New Day",
 			ManualEpisodeTitle: true,
-			Edition:            "Extended",
+			Cut:                "Extended",
 			Repack:             "PROPER",
 			Resolution:         "1080p",
 			Tag:                "-GRP",
@@ -280,7 +342,7 @@ func TestYUSDVDRipRetainsAvailableCuts(t *testing.T) {
 				Title:      "Example Release",
 				Year:       2026,
 				SearchYear: "2026",
-				Edition:    "Uncut",
+				Cut:        "Uncut",
 				Repack:     "PROPER",
 				Resolution: "480p",
 				Source:     "DVD",
@@ -291,13 +353,48 @@ func TestYUSDVDRipRetainsAvailableCuts(t *testing.T) {
 			}
 			for index := range subject.GeneratedName.Components {
 				component := &subject.GeneratedName.Components[index]
-				if component.Role == api.NameRoleEdition {
+				if component.Role == api.NameRoleCut {
 					component.Manual = true
 					component.Present = false
 				}
 			}
 			if got := yusName(t, subject, nil); strings.Contains(got, "Uncut") {
 				t.Fatalf("manual omission changed: %q", got)
+			}
+		})
+	}
+}
+
+func TestYUSReleaseVersionKeepsEditionSetAtomic(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{"WEBDL", "DVDRIP", "DISC"} {
+		t.Run(typ, func(t *testing.T) {
+			req := api.ReleaseNameRequest{
+				Category:     "MOVIE",
+				Type:         typ,
+				Title:        "Example Film",
+				Year:         2026,
+				EditionSet:   "2in1",
+				Cut:          "Extended",
+				Edition:      "Collector's",
+				Presentation: "IMAX",
+				Repack:       "PROPER",
+				Resolution:   "480p",
+				Source:       "PAL DVD",
+				Tag:          "-GRP",
+			}
+			if typ == "DISC" {
+				req.DiscType = "DVD"
+				req.DVDSize = "DVD9"
+			}
+			got := yusName(t, yusSubject(t, req), nil)
+			if !strings.Contains(got, "2in1 PROPER") {
+				t.Fatalf("set/version ordering=%q", got)
+			}
+			for _, hidden := range []string{"Extended", "Collector's", "IMAX"} {
+				if strings.Contains(got, hidden) {
+					t.Fatalf("set exposed hidden detail %q: %q", hidden, got)
+				}
 			}
 		})
 	}

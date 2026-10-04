@@ -169,6 +169,8 @@ Stop the embedded server after inspection so later runs do not reuse an old proc
 
 For theme, page layout, and rendered-description changes, check the embedded UI at desktop and mobile widths in the supported light and dark modes. `make e2e` covers representative theme, MediaInfo, and description states; the separate visual suites sweep more routes and palette combinations. The [Web UI development guide](./webui/README.md) describes the styling and rendering owners, and [Playwright guidance](./webui/e2e/AGENTS.md) lists the visual commands.
 
+Input correction suggestions are generated from the backend's metadata dictionaries. After changing supported service, region, resolution, or distributor values, run `make correction-choices` and include the updated `webui/src/pages/input/correctionChoices.json`. `make correction-choices-check` (also part of `make lint`) checks for drift. Category, Type, Source, and Resolution controls accept only the generated choices; Service, Region, and Distributor retain custom entry.
+
 ### Backend
 
 ```sh
@@ -362,6 +364,7 @@ This project uses [AGENTS.md](https://agents.md/) — an open standard for guidi
 
 - [`webui/AGENTS.md`](./webui/AGENTS.md) for frontend, React, CSS, TypeScript, and browser checks.
 - [`internal/AGENTS.md`](./internal/AGENTS.md) for Go, path/log policy, trackers/config/domain rules, runtime architecture, lint/check policy, and generated/scratch path risks.
+- [`internal/trackers/AGENTS.md`](./internal/trackers/AGENTS.md) for tracker semantic ownership, shared Unit3D defaults, site extensions, and duplicate-search contracts.
 - [`cmd/upbrr/AGENTS.md`](./cmd/upbrr/AGENTS.md) for CLI flags, prompts, and unattended behavior.
 - [`pkg/api/AGENTS.md`](./pkg/api/AGENTS.md) for cross-entrypoint API/runtime contracts.
 - [`webui/e2e/AGENTS.md`](./webui/e2e/AGENTS.md) for Playwright E2E harness rules and commands.

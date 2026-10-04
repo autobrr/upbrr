@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
@@ -48,6 +49,8 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, l
 // any metadata obtained before a description or image failure. Description and image
 // fields honor OnlyID and KeepImages independently.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
+	logger := logging.FromContext(ctx, l.logger)
+
 	cfg, apiKey := bhdConfig(l.cfg)
 	rssKey := strings.TrimSpace(cfg.BhdRSSKey)
 	if len(apiKey) < minDataTokenLength || len(rssKey) < minDataTokenLength {
@@ -104,10 +107,10 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 			}
 			description = bhdString(body["result"])
 			if description == "" {
-				l.logger.Debugf("bhd: description lookup empty reason=empty_response")
+				logger.Debugf("bhd: description lookup empty reason=empty_response")
 			}
 		} else {
-			l.logger.Debugf("bhd: description lookup skipped reason=missing_torrent_id")
+			logger.Debugf("bhd: description lookup skipped reason=missing_torrent_id")
 		}
 	} else {
 		description = bhdString(first["description"])
@@ -118,7 +121,7 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	}
 	var imageErr error
 	if req.KeepImages {
-		result.Images, imageErr = trackerdata.PrepareDescriptionImages(ctx, l.http, "BHD", l.logger, report.Images)
+		result.Images, imageErr = trackerdata.PrepareDescriptionImages(ctx, l.http, "BHD", logger, report.Images)
 	}
 	validatedCount := 0
 	for _, image := range result.Images {
@@ -126,10 +129,10 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 			validatedCount++
 		}
 	}
-	l.logger.Debugf("bhd: description source=%s raw=%d cleaned=%d images=%d validated=%d onlyID=%t keepImages=%t",
+	logger.Debugf("bhd: description source=%s raw=%d cleaned=%d images=%d validated=%d onlyID=%t keepImages=%t",
 		descriptionSource, len(description), len(result.Description), len(report.Images), validatedCount, req.OnlyID, req.KeepImages)
 	for _, note := range report.Notes {
-		l.logger.Debugf("bhd: description note kind=%s msg=%s", note.Kind, note.Message)
+		logger.Debugf("bhd: description note kind=%s msg=%s", note.Kind, note.Message)
 	}
 	if imageErr != nil {
 		return result, fmt.Errorf("bhd: prepare description images: %w", imageErr)

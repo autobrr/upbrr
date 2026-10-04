@@ -44,6 +44,8 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+Background workflow updates preserve an unsubmitted **Source path**, unsaved **Descriptions** text, and the selected TVDB preview language for the same input. Description drafts are cleared when the active input, prepared generation, or selected trackers change. **Render** previews the current editor text without saving it. Use **Save group** to retain the complete edited description, including image order and custom text placement, without adding generated sections again. **Reset group** replaces that group with its generated description.
+
 On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
 
 After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
@@ -62,6 +64,8 @@ See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and t
 
 Use **Input** to correct provider IDs, genre, release naming fields, and languages before duplicate checking. **Title** and **Original title** are read-only; **Manual year** is editable for movies and locked for TV. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
 
+**Category**, **Type**, **Source**, and **Resolution** accept only the supported dropdown choices. They have no custom-entry or blank option. If a current value is missing or unsupported, a disabled placeholder keeps it visible without creating a correction; choose a supported value or use **Auto**. **Service**, **Region**, and **Distributor** (under **Metadata and languages**) offer searchable suggestions: focus the field or use its browse button to see all choices, then type a partial name or code to filter. Service choices show the full name and acronym, and selecting one stores the recognized acronym. Distributor suggestions come from the shared UNIT3D publisher catalog; selecting one keeps the publisher name so each tracker can resolve its own ID. Region suggestions include the shared country codes. Custom names and explicit numeric tracker IDs remain editable. Use the arrow keys and **Enter** to select a suggestion, or **Escape** to dismiss the list. Clearing a searchable field keeps an explicit blank correction; use **Auto** to restore automatic detection.
+
 Edited fields show a pending change until you apply **Refresh metadata**. Applied overrides remain marked **Manual value · Applied** after refresh. **Auto** clears the local draft and queues removal of the saved correction; the field shows **Auto reset pending** until refresh derives the automatic value. The previous prepared value may remain visible while that reset is pending.
 
 Use **Release version** to set `PROPER`, `REPACK`, their supported numbered variants, or `RERIP` independently of **Edition**. Choose **None** to remove the detected version, or **Auto** to restore detection. Leave cut or edition text in **Edition**. The legacy **No edition** option also suppresses an automatic release version; an explicit **Release version** selection takes precedence.
@@ -73,6 +77,8 @@ Corrections survive metadata refresh, history reload, and restart. Explicit valu
 Tracker naming policies can declare mandatory rules for specific name components. Those rules take precedence over manual naming choices for that tracker only; they do not change the saved Input facts. When a rule overrides a choice or replaces a complete manual name, the review shows an explanation beside the effective tracker name. This authority is part of the tracker implementation, not a user setting.
 
 A complete manual name has no reliable component boundaries. If a mandatory rule cannot safely apply to it, clear the complete-name override and regenerate the automatic name. A tracker policy may explicitly rebuild it instead. Confirm the effective name shown in review: submitting an edit that would be changed by enforcement does not confirm the unseen replacement.
+
+The **Edition** field shows the detected cut, edition, and presentation labels, or just `2in1` for a two-edition set. Replace or clear this field to override those automatic labels, or set **No edition** to **Yes** to omit them. Apply **Refresh metadata**; choose **Auto** on the edited control to restore automatic handling.
 
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
 

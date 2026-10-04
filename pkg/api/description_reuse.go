@@ -42,6 +42,9 @@ func (r ReusableDescriptionRecord) Clone() ReusableDescriptionRecord {
 	}
 	cloned.Description.TrackerResults = slices.Clone(r.Description.TrackerResults)
 	cloned.Description.Overrides = slices.Clone(r.Description.Overrides)
+	for index := range cloned.Description.Overrides {
+		cloned.Description.Overrides[index].TrackerIDs = slices.Clone(r.Description.Overrides[index].TrackerIDs)
+	}
 	return cloned
 }
 

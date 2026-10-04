@@ -73,8 +73,44 @@ func TestULCXStructuredName(t *testing.T) {
 }
 func TestULCXPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/ulcx/v3" || p.Structured == nil {
+	if p.ID != "unit3d/ulcx/v4" || p.Structured == nil {
 		t.Fatalf("%#v", p)
+	}
+}
+
+func TestULCXUsesCanonicalHybridRole(t *testing.T) {
+	t.Parallel()
+	subject := ulcxSubject(t, api.ReleaseNameRequest{
+		Category:    "MOVIE",
+		Type:        "WEBDL",
+		Title:       "Hybrid Collector Story",
+		Year:        2026,
+		WebDV:       true,
+		Resolution:  "1080p",
+		VideoEncode: "H.265",
+		Tag:         "-GRP",
+	})
+	subject.WebDV = false
+	if got, want := ulcxName(t, subject, nil), "Hybrid Collector Story 2026 1080p WEB-DL H.265-GRP"; got != want {
+		t.Fatalf("canonical hybrid = %q, want %q", got, want)
+	}
+	if hybrid, ok := subject.GeneratedName.Component(api.NameRoleHybrid); !ok || !hybrid.Present || hybrid.AvailableValue != "Hybrid" {
+		t.Fatalf("tracker projection changed canonical hybrid: %+v", hybrid)
+	}
+	manual := subject
+	manual.GeneratedName = subject.GeneratedName.Clone()
+	for index := range manual.GeneratedName.Components {
+		if manual.GeneratedName.Components[index].Role == api.NameRoleHybrid {
+			manual.GeneratedName.Components[index].Manual = true
+		}
+	}
+	if got := ulcxName(t, manual, nil); got != subject.ReleaseName {
+		t.Fatalf("manual hybrid = %q, want %q", got, subject.ReleaseName)
+	}
+	nonWeb := subject
+	nonWeb.Type = "ENCODE"
+	if got := ulcxName(t, nonWeb, nil); got != subject.ReleaseName {
+		t.Fatalf("non-WEB hybrid = %q, want %q", got, subject.ReleaseName)
 	}
 }
 func ulcxSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {

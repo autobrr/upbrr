@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	trackerscatalog "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -192,6 +193,10 @@ func (s *Service) Capabilities(_ context.Context) (caps []api.TrackerAuthCapabil
 
 // Status returns local tracker auth state derived from config, encrypted cookie storage, and stored cookies.
 func (s *Service) Status(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	defer func() {
 		if err != nil {
 			s.logWarnf("tracker auth: status failed tracker=%s: %v", trackerLogID(trackerID), err)
@@ -253,6 +258,10 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 // resolution is configured. Returned cookie counts and RFC3339 timestamps are
 // rebuilt after login or deletion side effects complete.
 func (s *Service) Validate(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	defer func() {
 		if err != nil {
 			s.logWarnf("tracker auth: validation failed tracker=%s: %v", trackerLogID(trackerID), err)

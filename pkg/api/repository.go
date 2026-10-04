@@ -131,6 +131,7 @@ type FileMetadata struct {
 	Size       string
 	Group      string
 	Disc       string
+	Cut        []string
 	Edition    []string
 	Other      []string
 }

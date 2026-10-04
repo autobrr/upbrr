@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -99,16 +100,17 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 	if err := ctx.Err(); err != nil {
 		return Evidence{}, fmt.Errorf("client discovery: canceled before search: %w", err)
 	}
+	logger := logging.FromContext(ctx, m.logger)
 	if input.Policy.Skip {
-		m.logger.Debugf("client discovery: decision=skip reason=requested")
+		logger.Debugf("client discovery: decision=skip reason=requested")
 		return Evidence{Disposition: DispositionSkipped}, nil
 	}
 	if m.clients == nil {
-		m.logger.Debugf("client discovery: decision=skip reason=client_unavailable")
+		logger.Debugf("client discovery: decision=skip reason=client_unavailable")
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 
-	m.logger.Debugf("client discovery: decision=start files=%d disc=%t", len(input.FileList), strings.TrimSpace(input.DiscType) != "")
+	logger.Debugf("client discovery: decision=start files=%d disc=%t", len(input.FileList), strings.TrimSpace(input.DiscType) != "")
 	result, err := m.clients.SearchPathedTorrents(ctx, api.ClientSubject{
 		SourcePath: strings.TrimSpace(input.SourcePath),
 		FileList:   append([]string(nil), input.FileList...),
@@ -122,7 +124,7 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		return Evidence{}, fmt.Errorf("client discovery: search canceled: %w", ctxErr)
 	}
 	if err != nil {
-		m.logger.Debugf("client discovery: decision=degrade reason=search_failed")
+		logger.Debugf("client discovery: decision=degrade reason=search_failed")
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 	evidence := normalizeEvidence(result)
@@ -130,7 +132,7 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		evidence.TorrentDataVerified = false
 	}
 	evidence.Disposition = DispositionSearched
-	m.logger.Debugf(
+	logger.Debugf(
 		"client discovery: decision=complete matched=%t trackers=%d ids=%d reusable_torrent=%t",
 		evidence.FoundTrackerMatch,
 		len(evidence.MatchedTrackers),

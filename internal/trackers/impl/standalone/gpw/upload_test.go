@@ -39,6 +39,31 @@ func TestBuildFieldsPersonalReleaseAndExclusiveFlags(t *testing.T) {
 	}
 }
 
+func TestBuildFieldsPreservesStructuredEditionParts(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		legacy     string
+		structured api.UploadSubject
+	}{
+		{"mixed", "Extended Collector's Open Matte", api.UploadSubject{
+			Cut:          "Extended",
+			Edition:      "Collector's",
+			Presentation: "Open Matte",
+		}},
+		{"cut only", "Extended", api.UploadSubject{Cut: "Extended"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, subject := range []api.UploadSubject{{Edition: test.legacy}, test.structured} {
+				fields := buildFields(trackers.PreparationInput{Meta: subject}, config.TrackerConfig{}, "description", "group", nil)
+				if fields["movie_edition_information"] != "on" || fields["remaster_title"] != test.legacy {
+					t.Fatalf("edition flag = %q, remaster title = %q, want on and %q", fields["movie_edition_information"], fields["remaster_title"], test.legacy)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildFieldsNewGroupYearPreservesManualAuthority(t *testing.T) {
 	t.Parallel()
 

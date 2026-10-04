@@ -14,26 +14,23 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v4", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v5", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
 }
 
 func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
 	if err := applyYUSTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
-	if edition, ok := editor.Component(api.NameRoleEdition); ok && strings.TrimSpace(edition.Value) != "" {
-		if !isYUSCut(edition.Value) {
-			if err := editor.Omit(api.NameRoleEdition); err != nil {
-				return fmt.Errorf("omit YUS non-cut edition: %w", err)
-			}
-		} else {
-			if err := editor.Include(api.NameRoleEdition); err != nil {
-				return fmt.Errorf("include YUS cut: %w", err)
-			}
-			if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-				if err := editor.MoveBefore(api.NameRoleEdition, api.NameRoleRepack); err != nil {
-					return fmt.Errorf("move YUS DVD cut before version: %w", err)
-				}
+	if err := editor.Omit(api.NameRoleEdition); err != nil {
+		return fmt.Errorf("omit YUS edition: %w", err)
+	}
+	for _, role := range []api.ReleaseNameRole{api.NameRoleEditionSet, api.NameRoleCut, api.NameRolePresentation} {
+		if err := editor.Include(role); err != nil {
+			return fmt.Errorf("include YUS %s: %w", role, err)
+		}
+		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+			if err := editor.MoveBefore(role, api.NameRoleRepack); err != nil {
+				return fmt.Errorf("move YUS DVD %s before version: %w", role, err)
 			}
 		}
 	}
@@ -100,16 +97,4 @@ func insertYUSDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubjec
 func isYUSFullDisc(meta api.UploadSubject) bool {
 	nameType := strings.TrimSpace(meta.Type)
 	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
-}
-
-// isYUSCut reports whether an edition contains a cut or presentation marker
-// retained by YUS's naming policy.
-func isYUSCut(value string) bool {
-	lower := strings.ToLower(strings.TrimSpace(value))
-	for _, marker := range []string{"cut", "director", "extended", "unrated", "uncut", "censored", "imax", "3d", "open matte"} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
 }

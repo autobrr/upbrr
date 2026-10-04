@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/dvdvideo/graph"
 	"github.com/autobrr/upbrr/internal/dvdvideo/render"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
@@ -117,13 +118,19 @@ func newService(
 // prepared DVDs. It preserves collection-wide coverage before adding another
 // image from any disc.
 func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems int) (api.DVDMenuCaptureResult, error) {
+	var fallback api.Logger
+	if s != nil {
+		fallback = s.logger
+	}
+	logger := logging.FromContext(ctx, fallback)
+
 	result := api.DVDMenuCaptureResult{
 		SourcePath:       meta.SourcePath,
 		SelectedLanguage: defaultLanguage,
 		MaxItems:         maxItems,
 	}
 	if s != nil && s.logger != nil {
-		s.logger.Debugf(
+		logger.Debugf(
 			"DVD menus: capture requested disc_type=%s discs=%d max_items=%d",
 			strings.ToUpper(strings.TrimSpace(meta.DiscType)),
 			len(dvdMenuDiscs(meta)),
@@ -150,7 +157,7 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 		return result, err
 	}
 
-	s.logger.Infof(
+	logger.Infof(
 		"DVD menus: capture started discs=%d language=%s region=%d max_items=%d engine_version=%s ffmpeg_dvdvideo=%t",
 		len(discs),
 		defaultLanguage,
@@ -168,18 +175,18 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 		if resolveErr != nil {
 			result.Partial = true
 			result.Warnings = appendWarning(result.Warnings, uncoveredDVDMenuWarning(disc, "disc_source_unavailable"))
-			s.logger.Warnf("DVD menus: disc unavailable disc_id=%s", disc.ID)
+			logger.Warnf("DVD menus: disc unavailable disc_id=%s", disc.ID)
 			continue
 		}
-		s.logger.Debugf("DVD menus: disc capture started disc_id=%s", disc.ID)
+		logger.Debugf("DVD menus: disc capture started disc_id=%s", disc.ID)
 		engineResult, captureErr := s.captureDirectory(ctx, videoTS, s.runner, executable, engine.Options{
 			Traversal:      graph.Options{Language: defaultLanguage, MaxItems: maxItems},
 			ProcessTimeout: engine.DefaultProcessTimeout,
 			Deinterlace:    true,
 			Capability:     &capability,
-			Logger:         s.logger,
+			Logger:         logger,
 			Progress: func(update engine.Progress) {
-				s.logger.Debugf(
+				logger.Debugf(
 					"DVD menus: progress disc_id=%s phase=%s inventoried=%d states=%d buttons=%d captured=%d warnings=%d",
 					disc.ID,
 					update.Phase,
@@ -212,7 +219,7 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 				Code:     warning.Code,
 				Message:  warning.Message,
 			})
-			s.logger.Debugf("DVD menus: warning recorded disc_id=%s code=%s", disc.ID, warning.Code)
+			logger.Debugf("DVD menus: warning recorded disc_id=%s code=%s", disc.ID, warning.Code)
 		}
 		if hasStructuralDVDMenuCapture(engineResult.Captures) {
 			result.Warnings = appendWarning(result.Warnings, api.DVDMenuCaptureWarning{
@@ -232,7 +239,7 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 			continue
 		}
 		capturedDiscs = append(capturedDiscs, dvdMenuDiscResult{disc: disc, result: engineResult})
-		s.logger.Debugf("DVD menus: disc capture complete disc_id=%s captured=%d", disc.ID, len(engineResult.Captures))
+		logger.Debugf("DVD menus: disc capture complete disc_id=%s captured=%d", disc.ID, len(engineResult.Captures))
 	}
 
 	selected := allocateDVDMenuCaptures(capturedDiscs, maxItems)
@@ -256,7 +263,7 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 	}
 	result.Truncated = result.Truncated || totalAvailable > len(selected)
 	result.Complete = !result.Partial && !result.Truncated
-	s.logger.Debugf("DVD menus: persistence started images=%d", len(selected))
+	logger.Debugf("DVD menus: persistence started images=%d", len(selected))
 
 	api.ReportDVDMenuProgress(ctx, api.DVDMenuProgressUpdate{
 		Phase:           "persisting",
@@ -275,18 +282,18 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 	images, records, selections, created, err := writeCaptureImages(ctx, tmpDir, base, selected)
 	if err != nil {
 		removeCreatedFiles(created)
-		s.logger.Warnf("DVD menus: persistence failed stage=write created=%d", len(created))
+		logger.Warnf("DVD menus: persistence failed stage=write created=%d", len(created))
 		return result, err
 	}
-	s.logger.Debugf("DVD menus: persistence files ready created=%d", len(created))
+	logger.Debugf("DVD menus: persistence files ready created=%d", len(created))
 	replaced, err := s.repo.ReplaceDVDMenuScreenshots(ctx, meta.MediaBinding, records, selections)
 	if err != nil {
 		removeCreatedFiles(created)
-		s.logger.Warnf("DVD menus: persistence failed stage=database created=%d", len(created))
+		logger.Warnf("DVD menus: persistence failed stage=database created=%d", len(created))
 		return result, fmt.Errorf("DVD menus: persist capture: %w", err)
 	}
 	result.Images = images
-	s.logger.Debugf("DVD menus: persistence complete stored=%d replaced=%d", len(images), len(replaced))
+	logger.Debugf("DVD menus: persistence complete stored=%d replaced=%d", len(images), len(replaced))
 
 	cleanupFailed := 0
 	for _, oldPath := range replaced {
@@ -305,10 +312,10 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 			Code:    "cleanup_failed",
 			Message: "Some replaced local DVD menu files could not be removed.",
 		})
-		s.logger.Warnf("DVD menus: replaced file cleanup incomplete count=%d", cleanupFailed)
+		logger.Warnf("DVD menus: replaced file cleanup incomplete count=%d", cleanupFailed)
 	}
 	if result.Partial || result.Truncated {
-		s.logger.Warnf(
+		logger.Warnf(
 			"DVD menus: capture incomplete captured=%d discovered=%d states=%d buttons=%d partial=%t truncated=%t warnings=%d",
 			len(result.Images),
 			result.DiscoveredMenus,
@@ -319,7 +326,7 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 			len(result.Warnings),
 		)
 	}
-	s.logger.Infof(
+	logger.Infof(
 		"DVD menus: capture complete captured=%d discovered=%d states=%d buttons=%d complete=%t partial=%t truncated=%t warnings=%d",
 		len(result.Images),
 		result.DiscoveredMenus,
@@ -483,6 +490,7 @@ func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath
 	if s == nil || s.repo == nil {
 		return errors.New("DVD menus: screenshot lifecycle repository not configured")
 	}
+	logger := logging.FromContext(ctx, s.logger)
 	trimmedPath := strings.TrimSpace(imagePath)
 	if !meta.MediaBinding.Valid() || trimmedPath == "" {
 		return internalerrors.ErrInvalidInput
@@ -520,7 +528,7 @@ func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath
 			// Neither the file nor its records exist, so a repeated delete has
 			// nothing left to remove and reports the end state it asked for. Any
 			// other not-found error still has local state to answer for.
-			s.logger.Debugf("DVD menus: image already absent source=%s", meta.SourcePath)
+			logger.Debugf("DVD menus: image already absent source=%s", meta.SourcePath)
 			return nil
 		}
 		return fmt.Errorf("DVD menus: delete records: %w", err)
@@ -541,9 +549,9 @@ func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath
 		}
 	}
 	if deleted.UploadedLinks > 0 {
-		s.logger.Warnf("DVD menus: local image removed but remote assets may remain count=%d", deleted.UploadedLinks)
+		logger.Warnf("DVD menus: local image removed but remote assets may remain count=%d", deleted.UploadedLinks)
 	}
-	s.logger.Infof("DVD menus: image removed source=%s", deleted.Selection.Source)
+	logger.Infof("DVD menus: image removed source=%s", deleted.Selection.Source)
 	return nil
 }
 
@@ -558,9 +566,15 @@ func (s *Service) Capability(ctx context.Context) (api.DVDMenuEngineInfo, error)
 // resolveCapability resolves and probes FFmpeg, reusing a cached successful
 // probe only while executable path, size, and modification time remain equal.
 func (s *Service) resolveCapability(ctx context.Context) (string, render.Capability, api.DVDMenuEngineInfo, error) {
+	var fallback api.Logger
+	if s != nil {
+		fallback = s.logger
+	}
+	logger := logging.FromContext(ctx, fallback)
+
 	info := baseEngineInfo()
 	if s != nil && s.logger != nil {
-		s.logger.Debugf("DVD menus: FFmpeg capability check started required_options=%d", requiredFFmpegMenuOptions)
+		logger.Debugf("DVD menus: FFmpeg capability check started required_options=%d", requiredFFmpegMenuOptions)
 	}
 	if err := ctx.Err(); err != nil {
 		return "", render.Capability{}, info, fmt.Errorf("DVD menus: capability canceled: %w", err)
@@ -570,12 +584,12 @@ func (s *Service) resolveCapability(ctx context.Context) (string, render.Capabil
 	}
 	executable, err := s.resolveExecutable()
 	if err != nil {
-		s.logger.Debugf("DVD menus: FFmpeg capability unavailable stage=resolve")
+		logger.Debugf("DVD menus: FFmpeg capability unavailable stage=resolve")
 		return "", render.Capability{}, info, fmt.Errorf("DVD menus: resolve FFmpeg: %w", err)
 	}
 	identity, err := inspectExecutable(executable)
 	if err != nil {
-		s.logger.Debugf("DVD menus: FFmpeg capability unavailable stage=inspect")
+		logger.Debugf("DVD menus: FFmpeg capability unavailable stage=inspect")
 		return "", render.Capability{}, info, err
 	}
 
@@ -583,17 +597,17 @@ func (s *Service) resolveCapability(ctx context.Context) (string, render.Capabil
 	if s.capabilityCache.valid && s.capabilityCache.identity == identity {
 		capability := s.capabilityCache.capability
 		s.capabilityMu.Unlock()
-		s.logger.Debugf("DVD menus: FFmpeg capability cache hit dvdvideo=%t options=%d", capability.Available, len(capability.Options))
+		logger.Debugf("DVD menus: FFmpeg capability cache hit dvdvideo=%t options=%d", capability.Available, len(capability.Options))
 		return executable, capability, engineInfo(capability), nil
 	}
 	s.capabilityMu.Unlock()
 
-	s.logger.Debugf("DVD menus: FFmpeg capability probe started")
+	logger.Debugf("DVD menus: FFmpeg capability probe started")
 	capability, err := render.Probe(ctx, s.runner, executable)
 	if err != nil {
 		info = engineInfo(capability)
 		info.MissingFFmpegOptions = missingFFmpegOptions(err)
-		s.logger.Debugf("DVD menus: FFmpeg capability incompatible missing_options=%d", len(info.MissingFFmpegOptions))
+		logger.Debugf("DVD menus: FFmpeg capability incompatible missing_options=%d", len(info.MissingFFmpegOptions))
 		return "", render.Capability{}, info, fmt.Errorf("DVD menus: FFmpeg capability: %w", err)
 	}
 	s.capabilityMu.Lock()
@@ -603,7 +617,7 @@ func (s *Service) resolveCapability(ctx context.Context) (string, render.Capabil
 		valid:      true,
 	}
 	s.capabilityMu.Unlock()
-	s.logger.Debugf("DVD menus: FFmpeg capability probe complete dvdvideo=%t options=%d", capability.Available, len(capability.Options))
+	logger.Debugf("DVD menus: FFmpeg capability probe complete dvdvideo=%t options=%d", capability.Available, len(capability.Options))
 	return executable, capability, engineInfo(capability), nil
 }
 

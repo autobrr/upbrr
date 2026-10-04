@@ -882,7 +882,7 @@ func TestResolveExternalIDsPreservesExplicitEpisodeIMDbID(t *testing.T) {
 func TestEnsureExternalClientsInitializesKeylessAniListWithoutTMDBAPIKey(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 
-	tmdbClient, anilistClient, _, _, _ := svc.ensureExternalClients()
+	tmdbClient, anilistClient, _, _, _ := svc.ensureExternalClients(t.Context())
 	if tmdbClient != nil {
 		t.Fatal("expected TMDB client to remain unavailable without API key")
 	}

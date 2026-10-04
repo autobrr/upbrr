@@ -1,4 +1,4 @@
-.PHONY: help build backend frontend frontend-bundle dev dev-frontend test test-go test-go-fast test-frontend e2e e2e-build e2e-web e2e-cli lint lint-json logpolicy pathpolicy literalpolicy architecturepolicy workflow-contracts workflow-contracts-check literalpolicy-fix precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
+.PHONY: help build backend frontend frontend-bundle dev dev-frontend test test-go test-go-fast test-frontend e2e e2e-build e2e-web e2e-cli lint lint-json logpolicy pathpolicy literalpolicy architecturepolicy workflow-contracts workflow-contracts-check correction-choices correction-choices-check literalpolicy-fix precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
@@ -46,6 +46,8 @@ help:
 	@echo   make architecturepolicy Run architecture ownership policy check
 	@echo   make workflow-contracts Generate workflow OpenAPI and WebUI transport types
 	@echo   make workflow-contracts-check Check workflow OpenAPI and WebUI type drift
+	@echo   make correction-choices Generate Input correction suggestions
+	@echo   make correction-choices-check Check Input correction suggestion drift
 	@echo   make lint-json          Write Go lint JSON to lint-report.json
 	@echo   make logpolicy          Run logging policy check
 	@echo   make pathpolicy         Run path portability policy check
@@ -123,7 +125,7 @@ e2e-web: e2e-build
 e2e-cli: e2e-build
 	pnpm --dir webui exec playwright test --project=cli-full-upload
 
-lint: architecturepolicy pathpolicy literalpolicy workflow-contracts-check
+lint: architecturepolicy pathpolicy literalpolicy workflow-contracts-check correction-choices-check
 	golangci-lint run $(GOLANGCI_FLAGS) ./...
 
 lint-json:
@@ -146,6 +148,12 @@ workflow-contracts:
 
 workflow-contracts-check:
 	go run ./cmd/workflowcontractgen -check
+
+correction-choices:
+	go run ./cmd/correctionchoicesgen
+
+correction-choices-check:
+	go run ./cmd/correctionchoicesgen -check
 
 literalpolicy-fix:
 	go run ./cmd/literalpolicy -fix

@@ -185,6 +185,7 @@ var trackerUploadResponsibilityPatterns = []struct {
 
 var unit3DCallbackFiles = map[string]string{
 	"ApplyAdditionalPayload": "payload.go",
+	"AdjustSearchParams":     "dupe.go",
 	"BuildDescription":       "description.go",
 	"BuildName":              "name.go",
 	"CategoryIDs":            "taxonomy.go",
@@ -192,6 +193,8 @@ var unit3DCallbackFiles = map[string]string{
 	"InputSchema":            "questionnaire.go",
 	"InputReadiness":         "questionnaire.go",
 	"ResolveCategoryID":      "taxonomy.go",
+	"ResolveRegionID":        "taxonomy.go",
+	"ResolveDistributorID":   "taxonomy.go",
 	"ResolveKeywords":        "taxonomy.go",
 	"ResolveResolutionID":    "taxonomy.go",
 	"ResolveTypeID":          "taxonomy.go",

@@ -585,7 +585,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 			ScreenshotCount: 1,
 		},
 	}}
-	attempts, prepared := builder.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, api.UploadSubject{})
+	attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), snapshot, retained, projections, api.UploadSubject{})
 	if !prepared || len(attempts) != 1 || attempts[0].Host != "pixhost" || attempts[0].UsageScope != "global" ||
 		!slices.Equal(attempts[0].ArtifactIDs, []api.PublicResourceID{"screen-selected"}) ||
 		len(attempts[0].Results) != 1 || attempts[0].Results[0].ID != "hosted-selected" {
@@ -610,7 +610,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 	fallbackLink.AccountScope = fallbackAccountScope
 	fallbackLink.RawURL = fallbackSnapshot.Artifacts[2].URL
 	fallbackRetained.HostedImages["hosted-selected"] = fallbackLink
-	attempts, prepared = builder.restoredHostedImageAttemptsForSubject(fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{})
+	attempts, prepared = builder.restoredHostedImageAttemptsForSubject(t.Context(), fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{})
 	if !prepared || len(attempts) != 1 || attempts[0].Host != "imgbb" || len(attempts[0].Results) != 1 ||
 		attempts[0].Results[0].ID != "hosted-selected" {
 		t.Fatalf("current fallback host did not restore cached coverage: %#v, prepared=%t", attempts, prepared)
@@ -623,7 +623,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 	removedFallback.ImageHosting.Host2 = ""
 	builder.config = removedFallback
 	builder.media.cfg = removedFallback
-	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
 		t.Fatalf("removed fallback host accepted cached link: %#v, prepared=%t", attempts, prepared)
 	}
 
@@ -636,7 +636,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 	scopeMismatchLink := scopeMismatchRetained.HostedImages["hosted-selected"]
 	scopeMismatchLink.UsageScope = "tracker:ONE"
 	scopeMismatchRetained.HostedImages["hosted-selected"] = scopeMismatchLink
-	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(fallbackSnapshot, scopeMismatchRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), fallbackSnapshot, scopeMismatchRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
 		t.Fatalf("changed fallback scope accepted cached link: %#v, prepared=%t", attempts, prepared)
 	}
 
@@ -644,7 +644,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 	changedFallbackAccount.ImageHosting.Host3 = "sharex"
 	builder.config = changedFallbackAccount
 	builder.media.cfg = changedFallbackAccount
-	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
 		t.Fatalf("changed fallback account accepted cached link: %#v, prepared=%t", attempts, prepared)
 	}
 	builder.config = cfg
@@ -657,7 +657,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 		Selected: true,
 		Order:    5,
 	})
-	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(missingMenu, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), missingMenu, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
 		t.Fatalf("selected DVD menu without a hosted link accepted: %#v, prepared=%t", attempts, prepared)
 	}
 	coveredMenu := missingMenu
@@ -682,7 +682,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 		RawURL:       "https://images.invalid/menu-selected.png",
 	}
 	coveredRetained.HostedSources["hosted-menu"] = "menu-selected"
-	attempts, prepared = builder.restoredHostedImageAttemptsForSubject(coveredMenu, coveredRetained, projections, api.UploadSubject{})
+	attempts, prepared = builder.restoredHostedImageAttemptsForSubject(t.Context(), coveredMenu, coveredRetained, projections, api.UploadSubject{})
 	if !prepared || len(attempts) != 1 ||
 		!slices.Equal(attempts[0].ArtifactIDs, []api.PublicResourceID{"screen-selected", "menu-selected"}) ||
 		len(attempts[0].Results) != 2 || attempts[0].Results[0].ID != "hosted-selected" || attempts[0].Results[1].ID != "hosted-menu" {
@@ -693,7 +693,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 	changedHost.ImageHosting.Host1 = "imgbb"
 	builder.config = changedHost
 	builder.media.cfg = changedHost
-	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), snapshot, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
 		t.Fatalf("changed current host accepted cached link: %#v, prepared=%t", attempts, prepared)
 	}
 
@@ -704,7 +704,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 	partial.Artifacts[1].Selected = true
 	partialProjections := append([]api.TrackerReleaseProjection(nil), projections...)
 	partialProjections[0].Artifacts.ScreenshotCount = 2
-	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(partial, retained, partialProjections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), partial, retained, partialProjections, api.UploadSubject{}); prepared || len(attempts) != 0 {
 		t.Fatalf("partial cached links accepted: %#v, prepared=%t", attempts, prepared)
 	}
 
@@ -712,7 +712,7 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 	changedAccount.ImageHosting.Host3 = "sharex"
 	builder.config = changedAccount
 	builder.media.cfg = changedAccount
-	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), snapshot, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
 		t.Fatalf("changed host account accepted cached link: %#v, prepared=%t", attempts, prepared)
 	}
 }
@@ -4353,7 +4353,7 @@ func TestWorkflowMediaReusesDifferentSavedHostsForSelectedTrackers(t *testing.T)
 		!targets[1].ReuseOnly || !slices.Equal(targets[1].Trackers, []string{"BETA"}) {
 		t.Fatalf("saved-image targets = %#v", targets)
 	}
-	if attempts, prepared := (workflowMediaBuilder{media: &mediaModule{registry: registry}}).restoredHostedImageAttemptsForSubject(
+	if attempts, prepared := (workflowMediaBuilder{media: &mediaModule{registry: registry}}).restoredHostedImageAttemptsForSubject(t.Context(),
 		snapshot, retained, projections, api.UploadSubject{},
 	); !prepared || len(attempts) != 2 || len(attempts[0].Results) != 2 || len(attempts[1].Results) != 2 {
 		t.Fatalf("policy-specific saved image coverage: attempts=%#v prepared=%t", attempts, prepared)
@@ -4385,7 +4385,7 @@ func TestWorkflowMediaReusesDifferentSavedHostsForSelectedTrackers(t *testing.T)
 	if err != nil || len(targets) != 1 || targets[0].Host != "pixhost" || targets[0].ReuseOnly {
 		t.Fatalf("mixed eligible hosts must upload all selected screenshots: targets=%#v err=%v", targets, err)
 	}
-	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(),
 		snapshot, retained, mixedHostProjection, api.UploadSubject{},
 	); prepared || len(attempts) != 0 {
 		t.Fatalf("mixed eligible hosts restored as complete: attempts=%#v prepared=%t", attempts, prepared)

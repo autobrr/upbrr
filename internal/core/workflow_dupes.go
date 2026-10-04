@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -70,9 +71,7 @@ func (b workflowDupeBuilder) build(
 	if b.service == nil {
 		return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: service is required")
 	}
-	if b.logger == nil {
-		b.logger = api.NopLogger{}
-	}
+	b.logger = logging.FromContext(ctx, b.logger)
 	if preflight.Status != api.StageStatusReady || !preflight.ExpiresAt.After(checkedAt) {
 		return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: preflight is stale or not ready")
 	}

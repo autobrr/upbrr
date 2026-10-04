@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -102,9 +103,7 @@ func (b workflowPreflightBuilder) Build(
 	if b.registry == nil {
 		return api.TrackerPreflightAssessment{}, nil, errors.New("tracker preflight: tracker registry is required")
 	}
-	if b.logger == nil {
-		b.logger = api.NopLogger{}
-	}
+	b.logger = logging.FromContext(ctx, b.logger)
 	if b.banned == nil {
 		b.banned = trackers.NewBannedGroupCheckerWithRegistry(b.config.MainSettings.DBPath, b.registry)
 	}

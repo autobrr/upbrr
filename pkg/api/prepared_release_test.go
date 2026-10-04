@@ -135,7 +135,9 @@ func TestPreparedReleaseCloneDetachesCollections(t *testing.T) {
 			},
 		},
 		Naming: NamingFacts{
-			Codecs: []string{"H.264"},
+			Cuts:          []string{"Extended"},
+			Presentations: []string{"Open Matte"},
+			Codecs:        []string{"H.264"},
 			GeneratedReleaseNames: GeneratedReleaseNameVariants{
 				IncludeEpisodeTitle: ReleaseNameVariant{
 					Name: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",
@@ -173,6 +175,8 @@ func TestPreparedReleaseCloneDetachesCollections(t *testing.T) {
 		t.Fatalf("clone: %v", err)
 	}
 	cloned.Source.Entries[0].Path = "changed.mkv"
+	cloned.Naming.Cuts[0] = "changed"
+	cloned.Naming.Presentations[0] = "changed"
 	cloned.Naming.Codecs[0] = "changed"
 	cloned.Naming.GeneratedReleaseNames.IncludeEpisodeTitle.Name = "changed"
 	cloned.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
@@ -182,6 +186,9 @@ func TestPreparedReleaseCloneDetachesCollections(t *testing.T) {
 
 	if source.Source.Entries[0].Path == cloned.Source.Entries[0].Path {
 		t.Fatal("source entries share storage")
+	}
+	if source.Naming.Cuts[0] == cloned.Naming.Cuts[0] || source.Naming.Presentations[0] == cloned.Naming.Presentations[0] {
+		t.Fatal("naming edition categories share storage")
 	}
 	if source.Naming.Codecs[0] == cloned.Naming.Codecs[0] {
 		t.Fatal("naming codecs share storage")
