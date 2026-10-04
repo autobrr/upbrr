@@ -24,40 +24,46 @@ func TestSynthesizeScreenshotSlotsSelectionsSkipDecorativeImages(t *testing.T) {
 		second    = "[center][img]" + secondURL + "[/img][/center]"
 	)
 	for _, tc := range []struct {
-		name        string
-		description string
-		urls        []string
-		selected    int
+		name           string
+		description    string
+		urls           []string
+		selectedOrders []int
 	}{
 		{
-			name:        "screenshots only",
-			description: first + second,
-			urls:        []string{firstURL, secondURL},
-			selected:    2,
+			name:           "screenshots only",
+			description:    first + second,
+			urls:           []string{firstURL, secondURL},
+			selectedOrders: []int{0, 1},
 		},
 		{
-			name:        "leading logo and poster",
-			description: logo + poster + first + second,
-			urls:        []string{logoURL, posterURL, firstURL, secondURL},
-			selected:    2,
+			name:           "leading logo and poster",
+			description:    logo + poster + first + second,
+			urls:           []string{logoURL, posterURL, firstURL, secondURL},
+			selectedOrders: []int{0, 1},
 		},
 		{
-			name:        "interleaved decorative images",
-			description: first + logo + poster + second,
-			urls:        []string{firstURL, logoURL, posterURL, secondURL},
-			selected:    2,
+			name:           "interleaved decorative images",
+			description:    first + logo + poster + second,
+			urls:           []string{firstURL, logoURL, posterURL, secondURL},
+			selectedOrders: []int{0, 1},
 		},
 		{
-			name:        "unselected screenshot stays excluded",
-			description: logo + first + second,
-			urls:        []string{logoURL, firstURL, secondURL},
-			selected:    1,
+			name:           "unselected screenshot stays excluded",
+			description:    logo + first + second,
+			urls:           []string{logoURL, firstURL, secondURL},
+			selectedOrders: []int{0},
+		},
+		{
+			name:           "unselected first screenshot preserves later order",
+			description:    logo + poster + first + second,
+			urls:           []string{logoURL, posterURL, firstURL, secondURL},
+			selectedOrders: []int{1},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			sourcePath := t.TempDir()
-			selections := []api.ScreenshotFinalSelection{
+			available := []api.ScreenshotFinalSelection{
 				{
 					ImagePath: filepath.Join(sourcePath, "first.png"),
 					DiscID:    "first-disc",
@@ -68,11 +74,15 @@ func TestSynthesizeScreenshotSlotsSelectionsSkipDecorativeImages(t *testing.T) {
 					DiscID:    "second-disc",
 					Order:     1,
 				},
-			}[:tc.selected]
+			}
+			selections := make([]api.ScreenshotFinalSelection, 0, len(tc.selectedOrders))
+			for _, order := range tc.selectedOrders {
+				selections = append(selections, available[order])
+			}
 			repo := &stubRepo{selections: selections}
 			selectedByURL := make(map[string]api.ScreenshotFinalSelection, len(selections))
-			for index, selection := range selections {
-				selectedByURL[[]string{firstURL, secondURL}[index]] = selection
+			for _, selection := range selections {
+				selectedByURL[[]string{firstURL, secondURL}[selection.Order]] = selection
 				repo.uploads = append(repo.uploads, api.UploadedImageLink{
 					ImagePath:  selection.ImagePath,
 					Host:       "imgbb",
@@ -132,9 +142,21 @@ func TestAttachSelectionPathsToSlotsPreservesExistingPathsAndPositions(t *testin
 	secondPath := filepath.Join(dir, "second.png")
 	thirdPath := filepath.Join(dir, "third.png")
 	attachSelectionPathsToSlots(slots, []api.ScreenshotFinalSelection{
-		{ImagePath: filepath.Join(dir, "first.png"), DiscID: "first-disc"},
-		{ImagePath: " " + secondPath + " ", DiscID: "second-disc"},
-		{ImagePath: thirdPath, DiscID: "third-disc"},
+		{
+ImagePath: filepath.Join(dir, "first.png"),
+ DiscID: "first-disc",
+ Order: 0,
+},
+		{
+ImagePath: " " + secondPath + " ",
+ DiscID: "second-disc",
+ Order: 1,
+},
+		{
+ImagePath: thirdPath,
+ DiscID: "third-disc",
+ Order: 2,
+},
 	})
 	want := []api.ScreenshotSlot{
 		decorative,
@@ -155,5 +177,42 @@ func TestAttachSelectionPathsToSlotsPreservesExistingPathsAndPositions(t *testin
 	}
 	if !reflect.DeepEqual(slots, want) {
 		t.Fatalf("attached selections = %#v, want %#v", slots, want)
+	}
+}
+
+func TestAttachSelectionPathsToSlotsPreservesSparseOrders(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	selections := []api.ScreenshotFinalSelection{
+		{ImagePath: filepath.Join(dir, "first.png"), Order: 0},
+		{ImagePath: filepath.Join(dir, "third.png"), Order: 2},
+	}
+	slots := []api.ScreenshotSlot{
+		{}, {RenderInScreenshots: true}, {RenderInScreenshots: true}, {}, {RenderInScreenshots: true},
+	}
+	attachSelectionPathsToSlots(slots, selections)
+	if slots[1].ImagePath != selections[0].ImagePath || slots[2].ImagePath != "" || slots[4].ImagePath != selections[1].ImagePath {
+		t.Fatal("a later selected image shifted into the gap")
+	}
+	if selections[0].Order != 0 || selections[1].Order != 2 {
+		t.Fatal("selection orders changed")
+	}
+}
+
+func TestFilterTrackerArtifactSelectionsPreservesUnselectedGaps(t *testing.T) {
+	t.Parallel()
+	const normalURL = "https://images.example.invalid/normal.png"
+	dir := filepath.Join(t.TempDir(), "aither")
+	selections := []api.ScreenshotFinalSelection{
+		{ImagePath: filepath.Join(dir, "comparison.png"), Order: 0},
+		{ImagePath: filepath.Join(dir, buildTrackerArtifactImageName(normalURL, 0)), Order: 2},
+	}
+	records := []api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{normalURL}}}
+	filtered := filterTrackerArtifactSelections(selections, records, descriptionAssetsTestRegistry(t))
+	if len(filtered) != 1 || filtered[0].ImagePath != selections[1].ImagePath || filtered[0].Order != 1 {
+		t.Fatalf("filtered positions did not retain the unselected gap: %+v", filtered)
+	}
+	if selections[1].Order != 2 {
+		t.Fatal("filter mutated stored selection order")
 	}
 }

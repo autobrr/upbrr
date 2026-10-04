@@ -549,7 +549,6 @@ func synthesizeScreenshotSlots(
 		trackerRecords = FilterUnverifiedTrackerImages(ctx, repo, registry, meta.TrackerData, logger)
 	}
 	selections = filterTrackerArtifactSelections(selections, trackerRecords, registry)
-	sort.Slice(selections, func(i, j int) bool { return selections[i].Order < selections[j].Order })
 	uploads, err := uploadedImagesFromSource(ctx, meta, repo, preloaded)
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err
@@ -592,11 +591,19 @@ func filterTrackerArtifactSelections(
 	records []api.TrackerMetadata,
 	registry *Registry,
 ) []api.ScreenshotFinalSelection {
-	filtered := make([]api.ScreenshotFinalSelection, 0, len(selections))
-	for _, selection := range selections {
-		if trackerArtifactPathAllowed(selection.ImagePath, records, registry) {
-			filtered = append(filtered, selection)
+	ordered := slices.Clone(selections)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Order < ordered[j].Order })
+	filtered := ordered[:0]
+	removed := 0
+	for _, selection := range ordered {
+		if !trackerArtifactPathAllowed(selection.ImagePath, records, registry) {
+			removed++
+			continue
 		}
+		// Comparison artifacts have no rendered slot. Discount only those
+		// removed positions, retaining gaps for missing normal selections.
+		selection.Order -= removed
+		filtered = append(filtered, selection)
 	}
 	return filtered
 }
@@ -790,19 +797,23 @@ func rangeCovered(start int, end int, covered [][2]int) bool {
 	return false
 }
 
-// attachSelectionPathsToSlots pairs selections with renderable slots in order,
-// preserving existing paths without shifting subsequent selections.
+// attachSelectionPathsToSlots matches stored selection orders to renderable
+// slot ordinals, preserving gaps and existing paths without counting decoration.
 func attachSelectionPathsToSlots(slots []api.ScreenshotSlot, selections []api.ScreenshotFinalSelection) {
-	selectionIdx := 0
+	selectionsByOrder := make(map[int]api.ScreenshotFinalSelection, len(selections))
+	for _, selection := range selections {
+		selectionsByOrder[selection.Order] = selection
+	}
+	renderableOrder := 0
 	for idx := range slots {
 		if !slots[idx].RenderInScreenshots {
 			continue
 		}
-		if selectionIdx >= len(selections) {
-			break
+		selection, selected := selectionsByOrder[renderableOrder]
+		renderableOrder++
+		if !selected {
+			continue
 		}
-		selection := selections[selectionIdx]
-		selectionIdx++
 		if strings.TrimSpace(slots[idx].ImagePath) != "" {
 			continue
 		}
