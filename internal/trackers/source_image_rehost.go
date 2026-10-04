@@ -18,6 +18,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	"github.com/autobrr/upbrr/internal/config"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -37,6 +39,8 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 	assets *DescriptionAssets,
 	preloaded *preloadedDescriptionAssetData,
 ) error {
+	logger := logging.FromContext(ctx, s.logger)
+
 	if assets == nil {
 		return nil
 	}
@@ -110,7 +114,7 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 	if slices.ContainsFunc(urls, func(rawURL string) bool {
 		return isPTPDescriptionImageURL(imagehost.DirectImageURL(rawURL))
 	}) {
-		client = PTPDescriptionImageHTTPClient(ctx, client, s.cfg, s.logger)
+		client = PTPDescriptionImageHTTPClient(ctx, client, s.cfg, logger)
 	}
 	images := make([]api.ScreenshotImage, 0, len(urls)+len(menuIndices))
 	for index, rawURL := range urls {
@@ -123,17 +127,17 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 				images = append(images, api.ScreenshotImage{Index: index, Path: fullPath})
 				continue
 			}
-			if err := downloadDescriptionSlotImage(ctx, client, preferredURL, fullPath); err == nil {
+			err := downloadDescriptionSlotImage(ctx, client, preferredURL, fullPath)
+			if err == nil {
 				images = append(images, api.ScreenshotImage{Index: index, Path: fullPath})
 				continue
-			} else if s.logger != nil {
-				s.logger.Debugf(
-					"trackers: full-size source image fallback tracker=%s image=%d reason=%s",
-					tracker,
-					index+1,
-					descriptionSlotImageFailureReason(err),
-				)
 			}
+			logger.Debugf(
+				"trackers: full-size source image fallback tracker=%s image=%d reason=%s",
+				tracker,
+				index+1,
+				descriptionSlotImageFailureReason(err),
+			)
 		}
 		if cached := cachedSourceDescriptionImagePath(tmpDir, rawURL, meta, preloaded); cached != "" {
 			if uploadable := uploadableCachedSourceImagePath(cached, pathValue); uploadable != "" {
@@ -143,12 +147,10 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 		}
 		if info, statErr := os.Stat(pathValue); statErr != nil || info.IsDir() || info.Size() == 0 {
 			if err := downloadDescriptionSlotImage(ctx, client, rawURL, pathValue); err != nil {
-				if s.logger != nil {
-					s.logger.Warnf(
-						"trackers: source-only description image download failed tracker=%s image=%d reason=%s",
-						tracker, index+1, descriptionSlotImageFailureReason(err),
-					)
-				}
+				logger.Warnf(
+					"trackers: source-only description image download failed tracker=%s image=%d reason=%s",
+					tracker, index+1, descriptionSlotImageFailureReason(err),
+				)
 				return fmt.Errorf("trackers: %s description image %d could not be downloaded: %s", tracker, index+1, descriptionSlotImageFailureReason(err))
 			}
 		}
@@ -162,9 +164,7 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 		}
 		images = append(images, api.ScreenshotImage{Index: len(images), Path: menu.Path})
 	}
-	if s.logger != nil {
-		s.logger.Debugf("trackers: source-only description rehost decision tracker=%s images=%d candidate_hosts=%d", tracker, len(images), len(hosts))
-	}
+	logger.Debugf("trackers: source-only description rehost decision tracker=%s images=%d candidate_hosts=%d", tracker, len(images), len(hosts))
 	uploads, err := uploadedImagesFromSource(ctx, meta, s.repo, preloaded)
 	if err != nil && !errorsIsNotFound(err) {
 		return err
@@ -189,17 +189,15 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 		if len(missing) > 0 {
 			uploaded, uploadErr := s.images.Upload(ctx, imageHostingSubject(meta), host, scope, missing)
 			if uploadErr != nil {
-				cleanupUploadedImages(ctx, s.repo, meta.MediaBinding, uploaded, s.logger)
+				cleanupUploadedImages(ctx, s.repo, meta.MediaBinding, uploaded, logger)
 				lastErr = uploadErr
-				if s.logger != nil {
-					s.logger.Warnf(
-						"trackers: source-only description image upload failed tracker=%s host=%s count=%d reason=%s",
-						tracker,
-						host,
-						len(missing),
-						safeTrackerMessage(uploadErr),
-					)
-				}
+				logger.Warnf(
+					"trackers: source-only description image upload failed tracker=%s host=%s count=%d reason=%s",
+					tracker,
+					host,
+					len(missing),
+					safeTrackerMessage(uploadErr),
+				)
 				continue
 			}
 			uploadedNow = uploaded
@@ -234,7 +232,7 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 			}
 		}
 		if !complete {
-			cleanupUploadedImages(ctx, s.repo, meta.MediaBinding, uploadedNow, s.logger)
+			cleanupUploadedImages(ctx, s.repo, meta.MediaBinding, uploadedNow, logger)
 			continue
 		}
 		if preloaded != nil {
@@ -248,9 +246,7 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 			assets.MenuImages[menuIndex].WebURL = upload.WebURL
 			assets.MenuImages[menuIndex].UploadedAt = upload.UploadedAt
 		}
-		if s.logger != nil {
-			s.logger.Infof("trackers: source-only description images rehosted tracker=%s host=%s count=%d", tracker, host, len(images))
-		}
+		logger.Infof("trackers: source-only description images rehosted tracker=%s host=%s count=%d", tracker, host, len(images))
 		return nil
 	}
 	return fmt.Errorf("trackers: %s description images could not be rehosted: %w", tracker, lastErr)

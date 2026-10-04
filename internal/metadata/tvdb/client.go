@@ -27,6 +27,7 @@ import (
 	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -217,6 +218,8 @@ func wash64(value string) (string, bool) {
 // order unchanged. Selection prefers an exact result year, then an English alias
 // carrying that year, and otherwise the first result; no matches return zero.
 func (c *Client) SearchSeries(ctx context.Context, filename, year string) ([]SeriesSearchResult, int, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	filename, year = applyReleaseHints(filename, year)
 	results, err := c.searchSeries(ctx, filename, year)
 	if err != nil {
@@ -227,9 +230,7 @@ func (c *Client) SearchSeries(ctx context.Context, filename, year string) ([]Ser
 	}
 
 	selected := selectBestSeries(results, year)
-	if c.logger != nil {
-		c.logger.Infof("tvdb: series search query=%q year=%q results=%d selected_id=%d", filename, year, len(results), selected)
-	}
+	logger.Infof("tvdb: series search query=%q year=%q results=%d selected_id=%d", filename, year, len(results), selected)
 	return results, selected, nil
 }
 
@@ -243,6 +244,8 @@ func (c *Client) GetEpisodes(ctx context.Context, seriesID int, query EpisodeQue
 // the requested episode evidence. Series-detail refreshes and cache writes are
 // best-effort; episode fetch failures return no partial result.
 func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, query EpisodeQuery, language string) (EpisodesData, string, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if seriesID == 0 {
 		return EpisodesData{}, "", errNotFound
 	}
@@ -256,9 +259,7 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 	if cachePath != "" {
 		if cached, ok := readEpisodesCache(cachePath); ok {
 			if episodeIsPresent(cached.Episodes, query) {
-				if c.logger != nil {
-					c.logger.Tracef("tvdb: episodes cache hit series_id=%d language=%s episodes=%d", seriesID, languageKey, len(cached.Episodes))
-				}
+				logger.Tracef("tvdb: episodes cache hit series_id=%d language=%s episodes=%d", seriesID, languageKey, len(cached.Episodes))
 				if upgraded, ok := applyLegacySeriesYearProvenance(cached); ok {
 					cached = upgraded
 					_ = writeEpisodesCache(cachePath, cached)
@@ -271,8 +272,8 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 						if cachePath != "" {
 							_ = writeEpisodesCache(cachePath, cached)
 						}
-					} else if c.logger != nil {
-						c.logger.Debugf(
+					} else {
+						logger.Debugf(
 							"tvdb: cached episodes series metadata refresh failed series_id=%d: %s",
 							seriesID,
 							redaction.RedactValue(err.Error(), nil),
@@ -281,9 +282,7 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 				}
 				return cached, specificSeriesAlias(cached), nil
 			}
-			if c.logger != nil {
-				c.logger.Debugf("tvdb: cached episodes missing requested data for %d language=%s", seriesID, languageKey)
-			}
+			logger.Debugf("tvdb: cached episodes missing requested data for %d language=%s", seriesID, languageKey)
 		}
 	}
 
@@ -294,8 +293,8 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 	details := seriesDetails{}
 	if fetchedDetails, err := c.fetchSeriesDetails(ctx, seriesID, language); err == nil {
 		details = fetchedDetails
-	} else if c.logger != nil {
-		c.logger.Debugf("tvdb: episodes series metadata lookup failed series_id=%d error=%s", seriesID, redaction.RedactValue(err.Error(), nil))
+	} else {
+		logger.Debugf("tvdb: episodes series metadata lookup failed series_id=%d error=%s", seriesID, redaction.RedactValue(err.Error(), nil))
 	}
 	data := EpisodesData{
 		Episodes:             episodes,
@@ -314,9 +313,7 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 	if cachePath != "" && len(episodes) > 0 {
 		_ = writeEpisodesCache(cachePath, data)
 	}
-	if c.logger != nil {
-		c.logger.Debugf("tvdb: episodes loaded series_id=%d language=%s episodes=%d aliases=%d", seriesID, languageKey, len(episodes), len(details.aliases))
-	}
+	logger.Debugf("tvdb: episodes loaded series_id=%d language=%s episodes=%d aliases=%d", seriesID, languageKey, len(episodes), len(details.aliases))
 
 	return data, specificSeriesAlias(data), nil
 }
@@ -337,6 +334,8 @@ func normalizeIMDbRemote(value string) string {
 // tvMovie is true, episode-parent and movie matches are additional fallbacks.
 // Missing remote IDs return zero without error.
 func (c *Client) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	imdbRemote := normalizeIMDbRemote(imdbID)
 	if imdbRemote != "" {
 		id, name, ok, err := c.searchRemoteID(ctx, imdbRemote, tvMovie)
@@ -344,9 +343,7 @@ func (c *Client) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvM
 			return 0, "", err
 		}
 		if ok {
-			if c.logger != nil {
-				c.logger.Infof("tvdb: external match imdb=%s tvdb_id=%d name=%q", imdbRemote, id, name)
-			}
+			logger.Infof("tvdb: external match imdb=%s tvdb_id=%d name=%q", imdbRemote, id, name)
 			return id, name, nil
 		}
 	}
@@ -357,9 +354,7 @@ func (c *Client) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvM
 			return 0, "", err
 		}
 		if ok {
-			if c.logger != nil {
-				c.logger.Infof("tvdb: external match tmdb=%s tvdb_id=%d name=%q", tmdbID, id, name)
-			}
+			logger.Infof("tvdb: external match tmdb=%s tvdb_id=%d name=%q", tmdbID, id, name)
 			return id, name, nil
 		}
 	}
@@ -391,6 +386,8 @@ func (c *Client) GetSeriesMetadata(ctx context.Context, seriesID int) (SeriesMet
 // English translation metadata. Translation failure does not fail the primary
 // result; naming years are exposed only with recorded provenance.
 func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int, language string) (SeriesMetadata, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if seriesID == 0 {
 		return SeriesMetadata{}, errNotFound
 	}
@@ -421,8 +418,8 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	metadata.PosterThumbnail = extractPosterThumbnailURL(resp.Data.Artworks, metadata.Poster)
 	metadata.PosterThumbnailLookupAttempted = true
 	seriesTranslation, translationErr := c.fetchSeriesTranslation(ctx, metadata.TVDBID, "eng")
-	if translationErr != nil && c.logger != nil {
-		c.logger.Debugf("tvdb: series english translation lookup failed series_id=%d: %v", metadata.TVDBID, translationErr)
+	if translationErr != nil {
+		logger.Debugf("tvdb: series english translation lookup failed series_id=%d: %v", metadata.TVDBID, translationErr)
 	}
 	seriesMeta := seriesTranslationMetadata(resp.Data, seriesTranslation)
 	if strings.TrimSpace(seriesMeta.title) != "" {
@@ -453,22 +450,20 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	metadata.HasEnglish = strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.OverviewEnglish) != ""
 	metadata.NameDisambiguation = c.seriesNameDisambiguation(ctx, metadata)
 
-	if c.logger != nil {
-		c.logger.Tracef(
-			"tvdb: series metadata loaded series_id=%d language=%q name=%q first_aired=%q api_year=%d selected_year=%d series_year=%d series_year_source=%q series_year_confidence=%q name_english=%q slug=%q",
-			seriesID,
-			normalizeLanguageParam(language),
-			metadata.Name,
-			metadata.FirstAired,
-			int(resp.Data.Year),
-			metadata.Year,
-			metadata.SeriesYear,
-			metadata.SeriesYearSource,
-			metadata.SeriesYearConfidence,
-			metadata.NameEnglish,
-			metadata.Slug,
-		)
-	}
+	logger.Tracef(
+		"tvdb: series metadata loaded series_id=%d language=%q name=%q first_aired=%q api_year=%d selected_year=%d series_year=%d series_year_source=%q series_year_confidence=%q name_english=%q slug=%q",
+		seriesID,
+		normalizeLanguageParam(language),
+		metadata.Name,
+		metadata.FirstAired,
+		int(resp.Data.Year),
+		metadata.Year,
+		metadata.SeriesYear,
+		metadata.SeriesYearSource,
+		metadata.SeriesYearConfidence,
+		metadata.NameEnglish,
+		metadata.Slug,
+	)
 
 	return metadata, nil
 }
@@ -485,6 +480,8 @@ func (c *Client) GetNameDisambiguation(ctx context.Context, input NameDisambigua
 }
 
 func (c *Client) GetIMDBFromEpisodeID(ctx context.Context, episodeID int) (string, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if episodeID == 0 {
 		return "", errNotFound
 	}
@@ -497,9 +494,7 @@ func (c *Client) GetIMDBFromEpisodeID(ctx context.Context, episodeID int) (strin
 	for _, remote := range resp.Data.RemoteIDs {
 		if remote.Type == 2 || strings.EqualFold(remote.SourceName, "IMDB") {
 			imdbID := strings.TrimSpace(remote.ID)
-			if c.logger != nil {
-				c.logger.Infof("tvdb: episode imdb lookup episode_id=%d imdb=%s", episodeID, imdbID)
-			}
+			logger.Infof("tvdb: episode imdb lookup episode_id=%d imdb=%s", episodeID, imdbID)
 			return imdbID, nil
 		}
 	}
@@ -599,6 +594,8 @@ func (c *Client) searchSeriesNameDisambiguation(
 	metadata SeriesMetadata,
 	fallbackYear bool,
 ) NameDisambiguation {
+	logger := logging.FromContext(ctx, c.logger)
+
 	canonicalName := canonicalTVDBSeriesName(metadata.NameEnglish)
 	if canonicalName == "" {
 		return NameDisambiguation{
@@ -616,25 +613,23 @@ func (c *Client) searchSeriesNameDisambiguation(
 		country:      cases.Fold().String(norm.NFKC.String(strings.TrimSpace(metadata.OriginalCountry))),
 	}
 	if cached, ok := c.cachedNameDisambiguation(cacheKey); ok && !evidence.Enabled(ctx) {
-		c.logNameDisambiguation(metadata.TVDBID, cacheKey.canonicalKey, cached.resultCount, cached.evidence, true)
+		c.logNameDisambiguation(ctx, metadata.TVDBID, cacheKey.canonicalKey, cached.resultCount, cached.evidence, true)
 		return cached.evidence
 	}
 
 	results, err := c.searchSeries(ctx, canonicalName, "")
 	evidence := buildNameDisambiguation(metadata.TVDBID, canonicalName, metadata.Year, metadata.OriginalCountry, fallbackYear, results, err)
 	if err != nil {
-		if c.logger != nil {
-			c.logger.Debugf(
-				"tvdb: name disambiguation search failed series_id=%d query=%q error=%q",
-				metadata.TVDBID,
-				cacheKey.canonicalKey,
-				redaction.RedactValue(err.Error(), nil),
-			)
-		}
+		logger.Debugf(
+			"tvdb: name disambiguation search failed series_id=%d query=%q error=%q",
+			metadata.TVDBID,
+			cacheKey.canonicalKey,
+			redaction.RedactValue(err.Error(), nil),
+		)
 	} else {
 		c.cacheNameDisambiguation(cacheKey, nameDisambiguationCacheEntry{evidence: evidence, resultCount: len(results)})
 	}
-	c.logNameDisambiguation(metadata.TVDBID, cacheKey.canonicalKey, len(results), evidence, false)
+	c.logNameDisambiguation(ctx, metadata.TVDBID, cacheKey.canonicalKey, len(results), evidence, false)
 	return evidence
 }
 
@@ -654,11 +649,9 @@ func (c *Client) cacheNameDisambiguation(key nameDisambiguationCacheKey, entry n
 	c.disambiguationCache[key] = entry
 }
 
-func (c *Client) logNameDisambiguation(seriesID int, query string, resultCount int, evidence NameDisambiguation, cacheHit bool) {
-	if c.logger == nil {
-		return
-	}
-	c.logger.Tracef(
+func (c *Client) logNameDisambiguation(ctx context.Context, seriesID int, query string, resultCount int, evidence NameDisambiguation, cacheHit bool) {
+	logger := logging.FromContext(ctx, c.logger)
+	logger.Tracef(
 		"tvdb: name disambiguation series_id=%d query=%q result_count=%d same_name=%d same_year=%d include_year=%t include_locale=%t status=%s source=%s cache_hit=%t",
 		seriesID,
 		query,
@@ -926,6 +919,8 @@ type seriesDetails struct {
 }
 
 func (c *Client) fetchSeriesDetails(ctx context.Context, seriesID int, language string) (seriesDetails, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	path := fmt.Sprintf("/series/%d/extended", seriesID)
 	var resp seriesExtendedResponse
 	if err := c.getJSON(ctx, path, c.languageParamsFor(nil, language), &resp); err != nil {
@@ -933,8 +928,8 @@ func (c *Client) fetchSeriesDetails(ctx context.Context, seriesID int, language 
 	}
 	airsDays, airsTime, airsTimezone, airsTimezoneSource := extractTVDBAirsSchedule(resp.Data)
 	translation, translationErr := c.fetchSeriesTranslation(ctx, seriesID, "eng")
-	if translationErr != nil && c.logger != nil {
-		c.logger.Debugf("tvdb: series english translation lookup failed series_id=%d: %v", seriesID, translationErr)
+	if translationErr != nil {
+		logger.Debugf("tvdb: series english translation lookup failed series_id=%d: %v", seriesID, translationErr)
 	}
 	seriesMeta := seriesTranslationMetadata(resp.Data, translation)
 	return seriesDetails{

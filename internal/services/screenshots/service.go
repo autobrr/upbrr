@@ -117,6 +117,10 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 // while usable discs remain; cancellation, deadlines, and frame corruption
 // still return an error.
 func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	if s.repo != nil && !meta.MediaBinding.Valid() {
 		return api.ScreenshotPlan{}, internalerrors.ErrInvalidInput
 	}
@@ -414,6 +418,10 @@ func (s *Service) Capture(
 	selections []api.ScreenshotSelection,
 	purpose api.ScreenshotPurpose,
 ) (api.ScreenshotResult, error) {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	if len(selections) == 0 || (s.repo != nil && purpose != api.ScreenshotPurposePreview && !meta.MediaBinding.Valid()) {
 		return api.ScreenshotResult{}, internalerrors.ErrInvalidInput
 	}
@@ -880,6 +888,10 @@ func (s *Service) previewDisc(
 // one that left records behind, and calling Delete again converges because an
 // already-missing file is not an error.
 func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imagePath string) error {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled: %w", ctx.Err())
@@ -1208,6 +1220,10 @@ func isSQLiteBusyError(err error) bool {
 // preserving manual and automatic disc-menu selections. Menu-purpose images in
 // the input are ignored rather than reclassified as normal screenshots.
 func (s *Service) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSubject, images []api.ScreenshotImage) error {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	if s.repo == nil {
 		return nil
 	}
@@ -1755,6 +1771,10 @@ func validTrackerImageArtifact(pathValue string) bool {
 // ReusableTrackerImageLinks returns saved tracker images with decodable local
 // artifacts for the prepared source.
 func (s *Service) ReusableTrackerImageLinks(ctx context.Context, sourcePath string, release api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error) {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, sourcePath, release)
 	if err != nil {
 		return nil, fmt.Errorf("screenshots: reusable tracker images: %w", err)

@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  CorrectionConfirmation,
   CorrectionFieldRef,
   ReleaseCorrectionValues,
   ReleaseWorkflowCurrent,
@@ -591,6 +592,14 @@ const readyWorkflow = <T extends WorkflowState<unknown>>(value: T): T =>
     error: "",
   }) as T;
 
+/** Returns the backend's pending correction review independently of release preparation. */
+export const pendingCorrectionReview = (
+  current: ReleaseWorkflowCurrent | null,
+): CorrectionConfirmation | null =>
+  current?.workflow.requiredActions?.find(
+    (action) => action.kind === "confirm_corrections" && action.status === "pending",
+  )?.correctionConfirmation ?? null;
+
 const correctionRefKey = (value: CorrectionFieldRef) =>
   `${value.field}\u0000${value.trackId || ""}`;
 
@@ -870,6 +879,13 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         ...state,
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
         screenshots: invalidateStaleScreenshotPlan(state, action.current),
+        // Confirmation is specific to the reviewed revision and identity; ordinary edits can survive resync.
+        correctionConfirmFields: sameCorrectionValue(
+          pendingCorrectionReview(previous),
+          pendingCorrectionReview(action.current),
+        )
+          ? state.correctionConfirmFields
+          : [],
         descriptions: releaseChanged
           ? invalidateDescriptions(state.descriptions, "Prepared generation changed.")
           : state.descriptions,
@@ -1006,7 +1022,8 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           commandRevision: Math.max(state.commandRevision, current.workflow.revision),
         };
       }
-      if (!action.preview || !action.intent) {
+      const correctionReview = pendingCorrectionReview(current);
+      if ((!action.preview && !correctionReview) || !action.intent) {
         const requestedSourcePath = action.requestedSourcePath?.trim() || "";
         if (requestedSourcePath && action.intent && !sameDraftKey) {
           const reset = initialSessionState();
@@ -1057,9 +1074,13 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         };
       }
       const sourcePath =
-        action.preview.Release?.SourcePath?.trim() || action.preview.SourcePath.trim();
-      const release = action.preview.Release;
-      if (!sourcePath || !release?.Generation) return state;
+        action.preview?.Release?.SourcePath?.trim() ||
+        action.preview?.SourcePath.trim() ||
+        snapshot.sourcePath?.trim() ||
+        action.requestedSourcePath?.trim() ||
+        (sameDraftKey ? state.selectedSource : "");
+      const release = action.preview?.Release;
+      if (!correctionReview && (!sourcePath || !release?.Generation)) return state;
       const retainDraft =
         sameDraftKey &&
         (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);
@@ -1067,10 +1088,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       // Commands may publish a generation before the next active-input poll.
       const releaseChanged =
         !sameDraftKey ||
-        releaseRefChanged(workflowReleaseRef(previousCurrent) ?? base.release, {
-          SourcePath: sourcePath,
-          Generation: release.Generation,
-        });
+        (release
+          ? releaseRefChanged(workflowReleaseRef(previousCurrent) ?? base.release, {
+              SourcePath: sourcePath,
+              Generation: release.Generation,
+            })
+          : Boolean(base.release));
       const selectedTrackers = retainDraft
         ? state.selectedTrackers
         : normalizeNames(action.selectedTrackers || []);
@@ -1103,7 +1126,8 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           sourcePath,
           commandRevision: current.workflow.revision,
           inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
-          status: action.status === "running" ? "running" : "ready",
+          status:
+            action.status === "running" ? "running" : correctionReview ? "awaiting_input" : "ready",
           error: "",
           failure: null,
         },
@@ -1114,7 +1138,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           ? state.preparationIntent
           : clonePreparationIntent(action.intent),
         correctionResetFields: retainDraft ? state.correctionResetFields : [],
-        correctionConfirmFields: retainDraft ? state.correctionConfirmFields : [],
+        correctionConfirmFields:
+          retainDraft &&
+          sameCorrectionValue(pendingCorrectionReview(previousCurrent), correctionReview)
+            ? state.correctionConfirmFields
+            : [],
         correctionValueFields: retainDraft ? state.correctionValueFields : [],
         trackerInputAnswers:
           retainDraft || !action.trackerInputsAccepted
@@ -1124,7 +1152,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
                   ([tracker]) => !action.selectedTrackers?.includes(tracker),
                 ),
               ),
-        release: { SourcePath: sourcePath, Generation: release.Generation },
+        release: release ? { SourcePath: sourcePath, Generation: release.Generation } : null,
         preview: action.preview,
         selectedTrackers,
         descriptions: releaseChanged

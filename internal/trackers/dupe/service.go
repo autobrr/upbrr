@@ -169,6 +169,10 @@ func (s *Service) checkWithAssessment(
 		}
 		return summary, EmptyAssessment(), s.initErr
 	}
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	resolved := dedupeTrackers(trackerNames)
 	if len(resolved) == 0 {
 		summary.Notes = []string{"no trackers configured for dupe checking"}

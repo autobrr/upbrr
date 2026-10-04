@@ -9,6 +9,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -97,7 +99,7 @@ func (m *Module) authorizeTrackerRules(
 	} else {
 		delete(authorizations, projection.TrackerID)
 	}
-	m.logger.Infof("release workflow: tracker rule acknowledgement tracker=%s decision=%s", projection.TrackerID, decision)
+	logging.FromContext(ctx, m.logger).Infof("release workflow: tracker rule acknowledgement tracker=%s decision=%s", projection.TrackerID, decision)
 	if workflow.Dupes != nil {
 		state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *workflow.Dupes}
 	}

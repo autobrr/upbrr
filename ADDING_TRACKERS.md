@@ -1004,7 +1004,8 @@ Bound response bodies, sanitize remote diagnostics, and normalize entries into `
 
 #### TRACE request logging
 
-Use the factory's `deps.Logger()` to emit `dupe.TraceSearchRequest` immediately before each
+Use `logging.FromContext(ctx, deps.Logger())`, or resolve the same operation-local view from
+the adapter's stored logger at its request boundary, to emit `dupe.TraceSearchRequest` immediately before each
 duplicate-search API request. Log the actual selected request fields: provider or tracker-group
 IDs, complete category arrays, title fallback queries, any other scope filters, and page,
 offset, or limit values. Include every pagination request, fallback lookup, and search retry.

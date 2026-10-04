@@ -13,6 +13,7 @@ import (
 
 	bdrunner "github.com/autobrr/go-bdinfo/pkg/bdinfo"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -171,6 +172,8 @@ func (s *Service) ExecuteFullScan(ctx context.Context, bdmvPath string, outputDi
 }
 
 func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName string, outputPath string, summaryOnly bool) (ScanResult, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	if err := ctx.Err(); err != nil {
 		return ScanResult{}, fmt.Errorf("bdinfo: scan canceled: %w", err)
 	}
@@ -181,12 +184,12 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 		return ScanResult{}, fmt.Errorf("bdinfo: create output dir: %w", err)
 	}
 
-	s.logger.Debugf("bdinfo: bdmvPath=%s, playlistFile=%s, outputDir=%s", bdmvPath, playlistName, filepath.Dir(outputPath))
+	logger.Debugf("bdinfo: bdmvPath=%s, playlistFile=%s, outputDir=%s", bdmvPath, playlistName, filepath.Dir(outputPath))
 	if playlistName != "" {
-		s.logger.Debugf("bdinfo: normalized playlist name: %s", playlistName)
-		s.logger.Debugf("bdinfo: running in-process for playlist %s", playlistName)
+		logger.Debugf("bdinfo: normalized playlist name: %s", playlistName)
+		logger.Debugf("bdinfo: running in-process for playlist %s", playlistName)
 	} else {
-		s.logger.Debugf("bdinfo: running in-process full-disc scan")
+		logger.Debugf("bdinfo: running in-process full-disc scan")
 	}
 	result, err := runBDInfo(ctx, runRequest{
 		BDMVPath:     bdmvPath,
@@ -196,7 +199,7 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 		SummaryOnly:  summaryOnly,
 	})
 	if err != nil {
-		s.logger.Debugf("bdinfo: in-process execution failed: %v", err)
+		logger.Debugf("bdinfo: in-process execution failed: %v", err)
 		return ScanResult{}, fmt.Errorf("bdinfo: execution failed: %w", err)
 	}
 	if strings.TrimSpace(result.ReportPath) != "" {
@@ -213,16 +216,16 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 	}
 
 	if playlistName != "" {
-		s.logger.Debugf("bdinfo: successfully completed for playlist %s", playlistName)
+		logger.Debugf("bdinfo: successfully completed for playlist %s", playlistName)
 	} else {
-		s.logger.Debugf("bdinfo: successfully completed full-disc scan")
+		logger.Debugf("bdinfo: successfully completed full-disc scan")
 	}
 
 	if _, err := os.Stat(outputPath); err != nil {
 		return ScanResult{}, fmt.Errorf("bdinfo: output not found: %w", err)
 	}
 
-	s.logger.Debugf("bdinfo: output file found at %s", outputPath)
+	logger.Debugf("bdinfo: output file found at %s", outputPath)
 	return ScanResult{
 		ReportPath: outputPath,
 		ReportText: reportText,
@@ -232,7 +235,7 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 // ParseOutput extracts title, label, size, length, and quick-summary fields from
 // either a full BDInfo report or a persisted standalone quick summary. Missing
 // fields are omitted without an error.
-func (s *Service) ParseOutput(filePath string) (map[string]any, error) {
+func (s *Service) ParseOutput(ctx context.Context, filePath string) (map[string]any, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("bdinfo: read output: %w", err)
@@ -274,6 +277,6 @@ func (s *Service) ParseOutput(filePath string) (map[string]any, error) {
 		result["summary"] = summary
 	}
 
-	s.logger.Debugf("bdinfo: parsed output with %d fields", len(result))
+	logging.FromContext(ctx, s.logger).Debugf("bdinfo: parsed output with %d fields", len(result))
 	return result, nil
 }

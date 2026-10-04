@@ -20,6 +20,7 @@ import (
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -201,6 +202,10 @@ func sceneLocalCandidates(meta preparationstate.State) sceneCandidates {
 }
 
 func (d *srrdbDetector) Detect(ctx context.Context, meta preparationstate.State) (SceneResult, error) {
+	view := *d
+	view.logger = logging.FromContext(ctx, d.logger)
+	d = &view
+
 	cands := sceneLocalCandidates(meta)
 	if cands.empty() {
 		d.log().Tracef("metadata: scene detection skipped: no local candidates")

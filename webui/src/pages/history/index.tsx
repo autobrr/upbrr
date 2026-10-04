@@ -250,35 +250,37 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
         </aside>
 
         <div className="overflow-y-auto rounded-lg border border-border bg-card p-3">
+          {selectedPath ? (
+            <div className="mb-3 flex justify-end gap-2">
+              <button
+                type="button"
+                className="ghost"
+                disabled={opening || deleting || !overview || !onOpenInput}
+                onClick={() => void handleOpenInput()}
+              >
+                {opening ? "Opening..." : "Open input"}
+              </button>
+              <button
+                type="button"
+                className="ghost border-destructive text-destructive-text"
+                disabled={deleting}
+                onClick={() => {
+                  void handleDeleteRelease();
+                }}
+              >
+                {deleting ? "Removing..." : "Remove from database"}
+              </button>
+            </div>
+          ) : null}
+
           {detailLoading ? <p className="text-muted-foreground">Loading overview...</p> : null}
 
-          {!detailLoading && !overview ? (
+          {!selectedPath ? (
             <p className="text-muted-foreground">Select a stored release to view details.</p>
           ) : null}
 
           {overview ? (
             <div className="grid gap-3">
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={opening || deleting || detailLoading || !selectedPath || !onOpenInput}
-                  onClick={() => void handleOpenInput()}
-                >
-                  {opening ? "Opening..." : "Open input"}
-                </button>
-                <button
-                  type="button"
-                  className="ghost border-destructive text-destructive-text"
-                  disabled={deleting || detailLoading || !selectedPath}
-                  onClick={() => {
-                    void handleDeleteRelease();
-                  }}
-                >
-                  {deleting ? "Removing..." : "Remove from database"}
-                </button>
-              </div>
-
               <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 rounded-2xl border border-foreground/10 bg-card/80 p-4">
                 <div>
                   <p className={pageStyle.label}>Release</p>

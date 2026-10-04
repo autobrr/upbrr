@@ -10,7 +10,7 @@ import type { ApplicationInfo, MetadataPreview, TrackerCatalog } from "./types";
 import { emptyExternalIdentity } from "./utils/canonicalIdentity";
 import { sourcePathHistoryStorageKey } from "./utils/inputHistory";
 import { AppearanceProvider } from "./themes/provider";
-import type { ReleaseWorkflowCurrent } from "./api/generated/release-workflow";
+import type { ActiveInputSnapshot, ReleaseWorkflowCurrent } from "./api/generated/release-workflow";
 
 const storedValues = new Map<string, string>();
 const localStorageStub: Storage = {
@@ -200,6 +200,84 @@ describe("App shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Build Release Name" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Dupe Check" })).toBeDisabled());
+  });
+
+  it("opens History input at its pending correction review before a release exists", async () => {
+    const sourcePath = "C:\\media\\Saved.Review.2026.mkv";
+    const current: ReleaseWorkflowCurrent = {
+      continuation: { lifecycle: "waiting", disposition: "none", refs: {}, availableGoals: [] },
+      workflow: {
+        id: "workflow-saved-review",
+        revision: 2,
+        status: "blocked",
+        factInstructions: { id: "facts-saved-review", revision: 1 },
+        createdAt: "2026-08-05T00:00:00Z",
+        updatedAt: "2026-08-05T00:00:00Z",
+        requiredActions: [
+          {
+            id: "action-saved-review",
+            kind: "confirm_corrections",
+            status: "pending",
+            workflowRevision: 2,
+            createdAt: "2026-08-05T00:00:00Z",
+            prompt: "Review saved corrections.",
+            correctionConfirmation: {
+              revision: 3,
+              fields: ["metadata.title"],
+              previousBindings: {},
+              currentBinding: {
+                category: "movie",
+                sourceFingerprint: "source-changed",
+                providerIds: { imdbId: 0, tmdbId: 222, tvdbId: 0, tvmazeId: 0, malId: 0 },
+              },
+            },
+          },
+        ],
+      },
+      corrections: {
+        revision: 3,
+        corrections: {
+          version: 1,
+          identity: {},
+          releaseName: {},
+          metadata: { Title: "Saved title" },
+          staleContentFields: ["metadata.title"],
+        },
+      },
+    };
+    let snapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
+    setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetActiveInput") return snapshot;
+      if (method === "GetApplicationInfo") return applicationInfo();
+      if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
+      if (method === "ListTrackerCatalog") return trackerCatalog();
+      if (method === "ListHistory")
+        return [{ SourcePath: sourcePath, ReleaseTitle: "Saved review" }];
+      if (method === "GetHistoryOverview")
+        return { SourcePath: sourcePath, ReleaseTitle: "Saved review" };
+      if (method === "OpenActiveInput") {
+        snapshot = {
+          state: "active",
+          revision: 1,
+          inputId: "input-review",
+          sourceVersion: "source-one",
+          sourcePath,
+          current,
+        };
+        return snapshot;
+      }
+      if (method === "ContinueReleaseWorkflow") return current;
+      throw new Error(`unexpected app request: ${method}`);
+    });
+    render(createElement(App));
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
+    const open = await screen.findByRole("button", { name: "Open input" });
+    await waitFor(() => expect(open).toBeEnabled());
+    fireEvent.click(open);
+    expect(await screen.findByRole("region", { name: "Saved values need review" })).toBeVisible();
+    expect(screen.getByLabelText("Source path")).toHaveValue(sourcePath);
+    expect(window.location.pathname).toBe("/input");
+    expect(screen.queryByText(/Input could not be opened/)).not.toBeInTheDocument();
   });
 
   it("returns from Appearance to the main Settings section via the sidebar", async () => {

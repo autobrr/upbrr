@@ -75,8 +75,8 @@ var emptyCenterPattern = regexp.MustCompile(`(?is)\[center\]\s*\[/center\]`)
 type preloadedDescriptionAssetData struct {
 	registry              *Registry
 	descriptionOverrides  map[string]api.DescriptionOverride
-	groupDescriptions     map[string]string
-	trackerDescriptions   map[string]string
+	groupDescriptions     map[string]api.DescriptionBuilderGroup
+	trackerDescriptions   map[string]api.DescriptionBuilderGroup
 	ambiguousTrackers     map[string]struct{}
 	trackerRecords        []api.TrackerMetadata
 	selections            []api.ScreenshotFinalSelection
@@ -107,8 +107,8 @@ func clonePreloadedDescriptionAssetData(preloaded *preloadedDescriptionAssetData
 	return &preloadedDescriptionAssetData{
 		registry:              preloaded.registry,
 		descriptionOverrides:  cloneDescriptionOverrides(preloaded.descriptionOverrides),
-		groupDescriptions:     cloneStringMap(preloaded.groupDescriptions),
-		trackerDescriptions:   cloneStringMap(preloaded.trackerDescriptions),
+		groupDescriptions:     maps.Clone(preloaded.groupDescriptions),
+		trackerDescriptions:   maps.Clone(preloaded.trackerDescriptions),
 		ambiguousTrackers:     cloneStringSet(preloaded.ambiguousTrackers),
 		trackerRecords:        cloneTrackerMetadata(preloaded.trackerRecords),
 		selections:            append([]api.ScreenshotFinalSelection(nil), preloaded.selections...),
@@ -124,15 +124,6 @@ func cloneDescriptionOverrides(values map[string]api.DescriptionOverride) map[st
 		return nil
 	}
 	cloned := make(map[string]api.DescriptionOverride, len(values))
-	maps.Copy(cloned, values)
-	return cloned
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	cloned := make(map[string]string, len(values))
 	maps.Copy(cloned, values)
 	return cloned
 }
@@ -232,9 +223,9 @@ func resolveDescriptionAssets(
 	if (repo == nil || strings.TrimSpace(meta.SourcePath) == "") && meta.ExactMedia == nil {
 		description := meta.DescriptionOverride
 		final := false
-		if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(canonical) != "" {
-			description = canonical
-			final = meta.DescriptionGroupsFinal
+		if group := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(group.Source()) != "" {
+			description = group.Source()
+			final = meta.DescriptionGroupsFinal || group.Final
 		}
 		if final {
 			description = strings.TrimSpace(description)
@@ -555,8 +546,13 @@ func rewriteDescriptionSlotURLs(description string, slots []api.ScreenshotSlot, 
 		if renderable[shotIdx].SlotOrder != slot.SlotOrder {
 			continue
 		}
-		replacement := screenshotURLKey(screenshots[shotIdx])
+		shot := screenshots[shotIdx]
+		replacement := screenshotURLKey(shot)
 		shotIdx++
+		if preserveNonRenderable && (originalURL == strings.TrimSpace(shot.ImgURL) ||
+			originalURL == strings.TrimSpace(shot.RawURL) || originalURL == strings.TrimSpace(shot.WebURL)) {
+			continue
+		}
 		if replacement == "" {
 			continue
 		}
@@ -585,16 +581,16 @@ func resolveTrackerDescription(
 	if err := ctx.Err(); err != nil {
 		return "", false, false
 	}
-	if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(canonical) != "" {
+	if group := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(group.Source()) != "" {
 		if logger != nil {
 			logger.Tracef(
 				"trackers: canonical group description applied source=%s tracker=%s len=%d",
 				meta.SourcePath,
 				strings.TrimSpace(tracker),
-				len(strings.TrimSpace(canonical)),
+				len(group.Source()),
 			)
 		}
-		return canonical, true, meta.DescriptionGroupsFinal
+		return group.Source(), true, meta.DescriptionGroupsFinal || group.Final
 	}
 	if trimmed := strings.TrimSpace(meta.DescriptionOverride); trimmed != "" {
 		if logger != nil {
@@ -652,33 +648,41 @@ func resolveTrackerDescription(
 	return result, false, false
 }
 
-func descriptionGroupFromPreparedMeta(meta api.UploadSubject, tracker string, preloaded *preloadedDescriptionAssetData, registry *Registry) string {
+func descriptionGroupFromPreparedMeta(
+	meta api.UploadSubject,
+	tracker string,
+	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
+) api.DescriptionBuilderGroup {
 	if len(meta.DescriptionGroups) == 0 {
-		return ""
+		return api.DescriptionBuilderGroup{}
 	}
 
 	groupDescriptions, trackerDescriptions, ambiguousTrackers := preparedDescriptionGroupLookups(meta.DescriptionGroups, preloaded)
 	if len(groupDescriptions) == 0 && len(trackerDescriptions) == 0 && len(ambiguousTrackers) == 0 {
-		return ""
+		return api.DescriptionBuilderGroup{}
 	}
 
 	for _, groupKey := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker, registry) {
-		if description, ok := groupDescriptions[strings.ToUpper(strings.TrimSpace(groupKey))]; ok {
+		if description, ok := groupDescriptions[strings.ToUpper(strings.TrimSpace(groupKey))]; ok &&
+			(len(description.Trackers) == 0 || slices.ContainsFunc(description.Trackers, func(candidate string) bool {
+				return strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(tracker))
+			})) {
 			return description
 		}
 	}
 
 	normalizedTracker := strings.ToUpper(strings.TrimSpace(tracker))
 	if normalizedTracker == "" {
-		return ""
+		return api.DescriptionBuilderGroup{}
 	}
 	if _, ambiguous := ambiguousTrackers[normalizedTracker]; ambiguous {
-		return ""
+		return api.DescriptionBuilderGroup{}
 	}
 	if description, ok := trackerDescriptions[normalizedTracker]; ok {
 		return description
 	}
-	return ""
+	return api.DescriptionBuilderGroup{}
 }
 
 func descriptionOverrideLookupKeys(groups []api.DescriptionBuilderGroup, tracker string, registries ...*Registry) []string {
@@ -802,19 +806,19 @@ func appendUniqueDescriptionGroupKey(keys []string, groupKey string) []string {
 func preparedDescriptionGroupLookups(
 	groups []api.DescriptionBuilderGroup,
 	preloaded *preloadedDescriptionAssetData,
-) (map[string]string, map[string]string, map[string]struct{}) {
+) (map[string]api.DescriptionBuilderGroup, map[string]api.DescriptionBuilderGroup, map[string]struct{}) {
 	if preloaded != nil && (preloaded.groupDescriptions != nil || preloaded.trackerDescriptions != nil || preloaded.ambiguousTrackers != nil) {
 		return preloaded.groupDescriptions, preloaded.trackerDescriptions, preloaded.ambiguousTrackers
 	}
 
-	groupDescriptions := make(map[string]string, len(groups))
-	trackerDescriptions := make(map[string]string)
+	groupDescriptions := make(map[string]api.DescriptionBuilderGroup, len(groups))
+	trackerDescriptions := make(map[string]api.DescriptionBuilderGroup)
 	ambiguousTrackers := make(map[string]struct{})
 	for _, group := range groups {
 		source := group.Source()
 		normalizedGroupKey := strings.TrimSpace(group.GroupKey)
 		if normalizedGroupKey != "" {
-			groupDescriptions[strings.ToUpper(normalizedGroupKey)] = source
+			groupDescriptions[strings.ToUpper(normalizedGroupKey)] = group
 		}
 		for _, candidate := range group.Trackers {
 			normalizedTracker := strings.ToUpper(strings.TrimSpace(candidate))
@@ -825,12 +829,12 @@ func preparedDescriptionGroupLookups(
 				continue
 			}
 			if existing, ok := trackerDescriptions[normalizedTracker]; ok &&
-				!strings.EqualFold(strings.TrimSpace(existing), strings.TrimSpace(source)) {
+				(!strings.EqualFold(strings.TrimSpace(existing.Source()), strings.TrimSpace(source)) || existing.Final != group.Final) {
 				delete(trackerDescriptions, normalizedTracker)
 				ambiguousTrackers[normalizedTracker] = struct{}{}
 				continue
 			}
-			trackerDescriptions[normalizedTracker] = source
+			trackerDescriptions[normalizedTracker] = group
 		}
 	}
 

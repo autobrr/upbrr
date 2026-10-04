@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
+
 	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -152,7 +154,7 @@ func (m *Module) StartUpload(
 	request api.CreateReleaseWorkflowUploadRequest,
 ) (CommandResult, error) {
 	if m.liveTest != nil && request.Execution.Mode != api.ReleaseWorkflowUploadModeDebug {
-		m.logger.Warnf("workflow: operation=upload_execute state=blocked reason=live_test")
+		logging.FromContext(ctx, m.logger).Warnf("workflow: operation=upload_execute state=blocked reason=live_test")
 		return CommandResult{}, fmt.Errorf("live-test composite upload: %w", m.liveTest.RejectRequest(api.OperationKindUploadExecute))
 	}
 	return m.startUpload(ctx, ownerID, request, false)
@@ -184,6 +186,10 @@ func (m *Module) startUpload(
 	session, instructions, err := normalizeCompositeUploadRequest(request)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow normalize upload: %w", err)
+	}
+	ctx, err = m.withRunLogLevel(ctx, descriptionRunLogLevel(session.Intent.Descriptions))
+	if err != nil {
+		return CommandResult{}, err
 	}
 	if m.liveTest != nil {
 		session.Intent.NoSeed = true
@@ -2238,7 +2244,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		if !slices.Contains(state.Composite.RemoveTrackers, trackerID) {
 			state.Composite.RemoveTrackers = append(state.Composite.RemoveTrackers, trackerID)
 		}
-		m.logger.Infof("release workflow: declined tracker rule override tracker=%s decision=skip", trackerID)
+		logging.FromContext(ctx, m.logger).Infof("release workflow: declined tracker rule override tracker=%s decision=skip", trackerID)
 	case api.ReleaseWorkflowUploadFeedbackTrackerPreparation:
 		confirmed := command.Response.Confirmed
 		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{

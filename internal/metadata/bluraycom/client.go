@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -116,7 +117,7 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 		if fetchErr != nil {
 			continue
 		}
-		releases, parseErr := parseReleaseInfo(releasesHTML, input, c.logger)
+		releases, parseErr := parseReleaseInfo(releasesHTML, input, logging.FromContext(ctx, c.logger))
 		if parseErr != nil {
 			continue
 		}

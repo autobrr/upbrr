@@ -14,12 +14,15 @@ import type {
   MediaCaptureInstructions,
   ReleaseWorkflowCurrent,
   TrackerProjectionInstructions,
+  SaveReleaseWorkflowDescriptionOverrideRequest,
   WorkflowContinuation,
 } from "../api/generated/release-workflow";
 import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
 import DescriptionBuilderPage from "../pages/description_builder";
 import ScreenshotsPage from "../pages/screenshots";
 import type { ReleaseSessionPorts } from "./ports";
+import { setAppRequestHandlerForTests } from "../api/client";
+import { productionReleaseSessionPorts } from "./production";
 
 const preview = (sourcePath: string, generation: number): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -2188,6 +2191,345 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
+  it.each(["error", "stale", "closed"])(
+    "does not accept an open with outcome %s",
+    async (outcome) => {
+      const sourcePath = "C:\\media\\Rejected.Open.2026.mkv";
+      const response = createDeferred<ActiveInputSnapshot>();
+      const open = vi.fn(() => response.promise);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            activeInput: {
+              get: async (): Promise<ActiveInputSnapshot> =>
+                outcome === "closed"
+                  ? {
+                      state: "active",
+                      revision: 4,
+                      inputId: "input-current",
+                      sourceVersion: "source-previous",
+                      current: workflowCurrentFromPreview(
+                        workflowCurrent("workflow-current", 2),
+                        preview(sourcePath, 1),
+                      ),
+                    }
+                  : { state: "empty", revision: 4 },
+              open,
+            },
+          }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.input.view.activeInput.revision).toBe(4));
+        let opening!: Promise<boolean>;
+        act(() => {
+          opening = result.current.input.openSource(sourcePath);
+        });
+        await waitFor(() => expect(open).toHaveBeenCalledOnce());
+        if (outcome === "closed") {
+          await act(async () => expect(await result.current.input.close()).toBe(true));
+        }
+        await act(async () => {
+          if (outcome === "error") response.reject(new Error("Source could not be opened."));
+          else
+            response.resolve({
+              state: "active",
+              revision: outcome === "stale" ? 3 : 5,
+              inputId: "input-rejected",
+              sourceVersion: "source-one",
+              sourcePath,
+              current: workflowCurrentFromPreview(
+                workflowCurrent("workflow-rejected", 2),
+                preview(sourcePath, 1),
+              ),
+            });
+          expect(await opening).toBe(false);
+        });
+        expect(result.current.input.view.activeInput.state).toBe("empty");
+        expect(result.current.input.view.selectedSource).toBe("");
+        expect(result.current.workflow.view.current).toBeNull();
+      } finally {
+        unmount();
+      }
+    },
+  );
+
+  it.each(["confirm_corrections", "select_playlist"])(
+    "reports an accepted open separately from preparation readiness for %s",
+    async (kind) => {
+      const sourcePath = "C:\\media\\Pending.Review.2026.mkv";
+      const initial = workflowCurrent("workflow-pending-open", 2);
+      const current: ReleaseWorkflowCurrent = {
+        ...initial,
+        workflow: {
+          ...initial.workflow,
+          status: "blocked",
+          requiredActions: [
+            {
+              id: "action-review",
+              kind,
+              status: "pending",
+              workflowRevision: 2,
+              createdAt: initial.workflow.createdAt,
+              prompt: "Review the input.",
+              ...(kind === "confirm_corrections"
+                ? {
+                    correctionConfirmation: {
+                      revision: 3,
+                      fields: ["metadata.title"],
+                      previousBindings: {},
+                      currentBinding: {
+                        category: "movie",
+                        sourceFingerprint: "source-one",
+                        providerIds: { imdbId: 0, tmdbId: 222, tvdbId: 0, tvmazeId: 0, malId: 0 },
+                      },
+                    },
+                  }
+                : { options: [] }),
+            },
+          ],
+        },
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({ workflow: workflowPorts({ continue: async () => current }) }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+        await act(async () => expect(await result.current.input.openSource(sourcePath)).toBe(true));
+        expect(result.current.input.view.status).toBe("awaiting_input");
+        expect(result.current.input.view.error).toBe("");
+        expect(result.current.input.view.selectedSource).toBe(sourcePath);
+        expect(result.current.input.view.release).toBeNull();
+        await act(async () =>
+          expect(
+            await result.current.input.prepareSource(sourcePath, result.current.input.view.intent),
+          ).toBe(false),
+        );
+        expect(result.current.input.view.status).toBe("awaiting_input");
+      } finally {
+        unmount();
+      }
+    },
+  );
+
+  it.each(["keep", "edit", "reset"])(
+    "reviews saved corrections before a first release exists and applies %s with revision authority",
+    async (choice) => {
+      const sourcePath = "C:\\media\\Correction.Review.2026.mkv";
+      const workflowID = "workflow-correction-review";
+      const binding = {
+        category: "movie" as const,
+        providerIds: { imdbId: 0, tmdbId: 222, tvdbId: 0, tvmazeId: 0, malId: 0 },
+        sourceFingerprint: "source-current",
+      };
+      const review = {
+        revision: 3,
+        fields: ["metadata.title", "metadata.genres"],
+        previousBindings: {
+          "metadata.title": { ...binding, providerIds: { ...binding.providerIds, tmdbId: 111 } },
+        },
+        currentBinding: binding,
+      };
+      const initial = workflowCurrent(workflowID, 7);
+      let current: ReleaseWorkflowCurrent = {
+        ...initial,
+        workflow: {
+          ...initial.workflow,
+          status: "blocked",
+          requiredActions: [
+            {
+              id: "action-corrections",
+              kind: "confirm_corrections",
+              status: "pending",
+              workflowRevision: 7,
+              createdAt: initial.workflow.createdAt,
+              prompt: "Review saved corrections.",
+              correctionConfirmation: review,
+            },
+          ],
+        },
+        corrections: {
+          revision: 3,
+          corrections: {
+            version: 1,
+            identity: {},
+            releaseName: {},
+            metadata: { Title: "Saved title", Genres: ["Drama"] },
+            staleContentFields: review.fields,
+          },
+        },
+      };
+      let snapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
+      const open = vi.fn(
+        async (
+          request: Parameters<ReleaseSessionPorts["activeInput"]["open"]>[0],
+        ): Promise<ActiveInputSnapshot> => {
+          if (request.request.intent.correctionPatch) {
+            // Resolve one field first; the remaining review must remain available without a release.
+            const remaining = request.request.intent.correctionPatch.confirmFields?.some(
+              (field) => field.field === "metadata.genres",
+            )
+              ? []
+              : ["metadata.genres"];
+            current = {
+              ...current,
+              workflow: {
+                ...current.workflow,
+                revision: current.workflow.revision + 1,
+                requiredActions: remaining.length
+                  ? [
+                      {
+                        ...current.workflow.requiredActions![0],
+                        correctionConfirmation: { ...review, revision: 4, fields: remaining },
+                      },
+                    ]
+                  : [],
+              },
+              corrections: { ...current.corrections!, revision: 4 },
+            };
+            if (!remaining.length)
+              current = workflowCurrentFromPreview(current, preview(sourcePath, 1));
+          }
+          snapshot = {
+            state: "active",
+            revision: request.expectedRevision + 1,
+            inputId: "input-corrections",
+            sourceVersion: "source-one",
+            sourcePath,
+            current,
+          };
+          return snapshot;
+        },
+      );
+      const get = vi.fn(async () => structuredClone(snapshot));
+      const wrapper = wrapperFor(
+        portsFor({
+          activeInput: { open, get },
+          workflow: workflowPorts({ continue: async () => current }),
+        }),
+      );
+      let { result, unmount } = renderHook(useReleaseSession, { wrapper });
+      try {
+        act(() => result.current.input.updateSourceDraft(sourcePath));
+        await act(async () => expect(await result.current.input.prepare()).toBe(false));
+        expect(result.current.input.view.status).toBe("awaiting_input");
+        expect(result.current.input.view.error).toBe("");
+        expect(result.current.input.view.release).toBeNull();
+        expect(result.current.input.view.correctionReview).toEqual(review);
+        expect(result.current.input.view.intent.metadata).toEqual({
+          Title: "Saved title",
+          Genres: ["Drama"],
+        });
+        unmount();
+        ({ result, unmount } = renderHook(useReleaseSession, { wrapper }));
+        await waitFor(() => expect(result.current.input.view.status).toBe("awaiting_input"));
+        expect(result.current.input.view.selectedSource).toBe(sourcePath);
+        expect(result.current.input.view.intent.metadata).toEqual({
+          Title: "Saved title",
+          Genres: ["Drama"],
+        });
+        expect(result.current.input.view.correctionReview).toEqual(review);
+        act(() => {
+          if (choice === "keep")
+            result.current.input.confirmCorrection({ field: "metadata.title" });
+          if (choice === "edit")
+            result.current.input.changeMetadata({
+              ...result.current.input.view.intent.metadata,
+              Title: "Edited title",
+            });
+          if (choice === "reset") result.current.input.resetCorrection({ field: "metadata.title" });
+        });
+        const refreshOnFocus = async () => {
+          const calls = get.mock.calls.length;
+          await act(async () => fireEvent.focus(window));
+          await waitFor(() => expect(get).toHaveBeenCalledTimes(calls + 1));
+          await waitFor(() => expect(result.current.input.view.status).toBe("awaiting_input"));
+        };
+        await refreshOnFocus();
+        expect(result.current.input.view.correctionDirty).toBe(true);
+        expect(result.current.input.view.confirmFields).toEqual(
+          choice === "keep" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.resetFields).toEqual(
+          choice === "reset" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.valueFields).toEqual(
+          choice === "edit" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.intent.metadata.Title).toBe(
+          choice === "edit" ? "Edited title" : choice === "reset" ? undefined : "Saved title",
+        );
+        current = {
+          ...current,
+          workflow: {
+            ...current.workflow,
+            revision: current.workflow.revision + 1,
+            requiredActions: [
+              {
+                ...current.workflow.requiredActions![0],
+                workflowRevision: current.workflow.revision + 1,
+                correctionConfirmation: {
+                  ...review,
+                  currentBinding: {
+                    ...binding,
+                    providerIds: { ...binding.providerIds, tmdbId: 333 },
+                  },
+                },
+              },
+            ],
+          },
+        };
+        snapshot = { ...snapshot, current };
+        await refreshOnFocus();
+        expect(result.current.input.view.confirmFields).toEqual([]);
+        expect(result.current.input.view.resetFields).toEqual(
+          choice === "reset" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.valueFields).toEqual(
+          choice === "edit" ? [{ field: "metadata.title" }] : [],
+        );
+        expect(result.current.input.view.intent.metadata.Title).toBe(
+          choice === "edit" ? "Edited title" : choice === "reset" ? undefined : "Saved title",
+        );
+        if (choice === "keep") {
+          act(() => result.current.input.confirmCorrection({ field: "metadata.title" }));
+        }
+        await act(async () => expect(await result.current.input.prepare()).toBe(false));
+        expect(open.mock.calls[1][0]).toMatchObject({
+          expectedRevision: 1,
+          request: {
+            intent: {
+              correctionPatch: {
+                expectedRevision: 3,
+                confirmFields: choice === "keep" ? [{ field: "metadata.title" }] : [],
+                resetFields: choice === "reset" ? [{ field: "metadata.title" }] : [],
+                values: {
+                  Identity: {},
+                  ReleaseName: {},
+                  Metadata: choice === "edit" ? { Title: "Edited title" } : {},
+                },
+              },
+            },
+          },
+        });
+        expect(result.current.input.view.status).toBe("awaiting_input");
+        expect(result.current.input.view.error).toBe("");
+        expect(result.current.input.view.correctionReview?.fields).toEqual(["metadata.genres"]);
+        expect(result.current.input.view.confirmFields).toEqual([]);
+        expect(result.current.input.view.resetFields).toEqual([]);
+        expect(result.current.input.view.valueFields).toEqual([]);
+        act(() => result.current.input.confirmCorrection({ field: "metadata.genres" }));
+        await act(async () => expect(await result.current.input.prepare()).toBe(true));
+        expect(result.current.input.view.status).toBe("ready");
+        expect(result.current.input.view.correctionReview).toBeNull();
+      } finally {
+        unmount();
+      }
+    },
+  );
+
   it("keeps a same-input correction draft for an explicit retry after stale-review resync", async () => {
     const workflowID = "workflow-stale-correction";
     const sourcePath = "C:\\media\\Stale.Correction.2026.mkv";
@@ -3617,6 +3959,111 @@ describe("useReleaseSession", () => {
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("preserves edited source through Render then Save group", async () => {
+    const workflowID = "workflow-descriptions";
+    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const withPreparedDescription = (
+      revision: number,
+      source = "generated source",
+    ): ReleaseWorkflowCurrent => ({
+      ...workflowCurrentFromPreview(
+        workflowCurrentWithDescriptions(workflowID, revision, source, undefined, {
+          "https://images.example.invalid/full.png": "https://images.example.invalid/preview.png",
+        }),
+        preview(sourcePath, 1),
+      ),
+      projections: {
+        status: "ready",
+        projections: [
+          {
+            trackerId: "AITHER",
+            displayName: "AITHER",
+            artifacts: {
+              screenshotCount: 0,
+              dvdMenuCount: 0,
+              imageHosting: false,
+              description: true,
+            },
+          },
+        ],
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+    });
+    const render = vi.fn(async (raw: string) => `<p>${raw}</p>`);
+    const requests: unknown[] = [];
+    setAppRequestHandlerForTests(async (method, body) => {
+      expect(method).toBe("SaveReleaseWorkflowDescriptionOverride");
+      requests.push(body);
+      const command = body as SaveReleaseWorkflowDescriptionOverrideRequest;
+      return withPreparedDescription(8, command.override.source);
+    });
+    const saveDescriptionOverride =
+      productionReleaseSessionPorts().workflow.saveDescriptionOverride;
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const ports = {
+      ...portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => withPreparedDescription(7),
+          saveDescriptionOverride,
+        }),
+      }),
+      descriptions: { render },
+    };
+    function DescriptionEditor() {
+      const session = useReleaseSession();
+      return <DescriptionBuilderPage facet={session.descriptions} sourcePath={sourcePath} />;
+    }
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <DescriptionEditor />
+        </ReleaseSessionProvider>
+      ),
+    });
+    try {
+      await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(7));
+      fireEvent.click(screen.getByRole("button", { name: "Expand AITHER" }));
+      const editor = screen.getByRole("textbox", { name: "Raw description for AITHER" });
+      fireEvent.change(editor, { target: { value: "edited source" } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Render AITHER" }));
+      });
+
+      expect(render).toHaveBeenCalledWith(
+        "edited source",
+        { "https://images.example.invalid/full.png": "https://images.example.invalid/preview.png" },
+        expect.any(AbortSignal),
+      );
+      expect(result.current.descriptions.view.renderedByGroup.unit3d).toBe("<p>edited source</p>");
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Save group AITHER" }));
+      });
+
+      expect(requests).toEqual([
+        expect.objectContaining({
+          workflowId: workflowID,
+          expectedRevision: 7,
+          override: {
+            descriptions: { id: withPreparedDescription(7).descriptions!.id, revision: 7 },
+            groupKey: "unit3d",
+            source: "edited source",
+          },
+        }),
+      ]);
+      expect(editor).toHaveValue("edited source");
+      expect(result.current.descriptions.view.artifact?.descriptions[0]?.source).toBe(
+        "edited source",
+      );
+      expect(result.current.descriptions.view.dirtyGroups).toEqual([]);
+    } finally {
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      setAppRequestHandlerForTests(null);
+    }
   });
 
   it("prepares through the backend workflow and retains only its compatibility preview", async () => {

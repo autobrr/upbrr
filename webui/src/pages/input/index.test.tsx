@@ -95,6 +95,7 @@ const inputFacet = (): InputFacet => ({
       search: { skip: false, client: "" },
     },
     corrections: null,
+    correctionReview: null,
     valueFields: [],
     resetFields: [],
     confirmFields: [],
@@ -1828,6 +1829,180 @@ it.each([
     expect(screen.getByLabelText("Edition")).toHaveValue(expected);
   },
 );
+
+describe("saved correction review", () => {
+  const reviewFacet = (): InputFacet => {
+    const base = inputFacet();
+    const previous = {
+      category: "movie",
+      sourceFingerprint: "previous-source",
+      providerIds: { tmdbId: 101, imdbId: 0, tvdbId: 0, tvmazeId: 0, malId: 0 },
+    };
+    return {
+      ...base,
+      view: {
+        ...base.view,
+        status: "awaiting_input",
+        selectedSource: base.view.sourceDraft,
+        intent: {
+          ...base.view.intent,
+          metadata: { AlternateTitle: "Saved example", Genres: ["Drama"] },
+        },
+        corrections: {
+          revision: 4,
+          corrections: {
+            version: 1,
+            identity: {},
+            releaseName: { Edition: "Unrelated edition" },
+            metadata: { AlternateTitle: "Saved example", Genres: ["Drama"] },
+            staleContentFields: ["metadata.alternate_title", "metadata.genres"],
+            contentBindings: { "metadata.alternate_title": previous, "metadata.genres": previous },
+          },
+        },
+        correctionReview: {
+          revision: 4,
+          fields: ["metadata.alternate_title", "metadata.genres"],
+          previousBindings: { "metadata.alternate_title": previous, "metadata.genres": previous },
+          currentBinding: {
+            ...previous,
+            category: "tv",
+            sourceFingerprint: "current-source",
+            providerIds: { ...previous.providerIds, tmdbId: 0 },
+          },
+        },
+      },
+    };
+  };
+
+  it("shows affected values and changed evidence before any release snapshot exists", () => {
+    const facet = reviewFacet();
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+    const panel = screen.getByRole("region", { name: "Saved values need review" });
+    expect(within(panel).getByText("Saved example")).toBeInTheDocument();
+    expect(within(panel).getByText("Drama")).toBeInTheDocument();
+    expect(within(panel).getAllByText(/source identity changed/i)).toHaveLength(2);
+    expect(within(panel).getAllByText(/movie.*tv/i)).toHaveLength(2);
+    expect(within(panel).getAllByText(/TMDB.*101.*unavailable/i)).toHaveLength(2);
+    expect(within(panel).getAllByText(/automatic value.*not available/i)).toHaveLength(2);
+    expect(within(panel).queryByText("Unrelated edition")).not.toBeInTheDocument();
+    expect(screen.queryByText("Workflow release snapshot is unavailable.")).not.toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Apply and continue" })).toBeDisabled();
+  });
+
+  it("queues keep, edit, and selected automatic resets through existing correction controls", () => {
+    const facet = reviewFacet();
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+    const alternate = screen.getByRole("group", { name: "Alternate title" });
+    fireEvent.click(within(alternate).getByRole("button", { name: "Keep saved value" }));
+    expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "metadata.alternate_title" });
+    fireEvent.change(within(alternate).getByLabelText("Edit Alternate title"), {
+      target: { value: "Replacement example" },
+    });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({
+      AlternateTitle: "Replacement example",
+      Genres: ["Drama"],
+    });
+    fireEvent.click(within(alternate).getByRole("button", { name: "Use automatic value" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "metadata.alternate_title" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use automatic values for all affected fields" }),
+    );
+    expect(facet.resetCorrection).toHaveBeenCalledTimes(3);
+    expect(facet.resetCorrection).toHaveBeenLastCalledWith({ field: "metadata.genres" });
+  });
+
+  it("lists every supported content-bound correction, preserving explicit empty and zero values", () => {
+    const base = reviewFacet();
+    const fields = [
+      "metadata.title",
+      "metadata.alternate_title",
+      "metadata.original_title",
+      "metadata.genres",
+      "metadata.original_language",
+      "release_name.manual_year",
+      "release_name.manual_date",
+      "release_name.season",
+      "release_name.episode",
+      "release_name.episode_title",
+    ];
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        correctionReview: { ...base.view.correctionReview!, fields },
+        corrections: {
+          ...base.view.corrections!,
+          corrections: {
+            ...base.view.corrections!.corrections,
+            metadata: {
+              Title: "Example title",
+              AlternateTitle: "",
+              OriginalTitle: "Example original",
+              Genres: [],
+              OriginalLanguage: "en",
+            },
+            releaseName: {
+              ManualYear: 0,
+              ManualDate: "2026-10-04",
+              Season: "01",
+              Episode: "02",
+              EpisodeTitle: "Example episode",
+            },
+          },
+        },
+      },
+    };
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+    for (const label of [
+      "Title",
+      "Alternate title",
+      "Original title",
+      "Genres",
+      "Original language",
+      "Manual year",
+      "Manual date",
+      "Season",
+      "Episode",
+      "Episode title",
+    ]) {
+      expect(screen.getByRole("group", { name: label })).toBeInTheDocument();
+    }
+    expect(screen.getByText("Empty value")).toBeInTheDocument();
+    expect(screen.getByText("Empty list")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "Manual year" })).getByText("0"),
+    ).toBeInTheDocument();
+  });
+
+  it("applies pending choices and preserves provider-owned edit restrictions", () => {
+    const base = reviewFacet();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        correctionDirty: true,
+        confirmFields: [{ field: "metadata.alternate_title" }],
+        correctionReview: {
+          ...base.view.correctionReview!,
+          fields: ["metadata.alternate_title", "metadata.title", "release_name.manual_year"],
+        },
+        corrections: {
+          ...base.view.corrections!,
+          corrections: {
+            ...base.view.corrections!.corrections,
+            metadata: { Title: "Saved title", AlternateTitle: "Saved example" },
+            releaseName: { ManualYear: 2026 },
+          },
+        },
+      },
+    };
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+    expect(screen.getByLabelText("Edit Title")).toBeDisabled();
+    expect(screen.getByLabelText("Edit Manual year")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Apply and continue" }));
+    expect(facet.prepareSource).toHaveBeenCalledWith(facet.view.selectedSource, facet.view.intent);
+  });
+});
 
 it("offers supported Input choices and applies their canonical correction values", () => {
   const facet = inputFacet();

@@ -13,6 +13,7 @@ export type ActiveInputSnapshot = Readonly<{
   inputId?: string;
   recoveryWorkflowIds?: readonly WorkflowID[];
   revision: number;
+  sourcePath?: string;
   sourceVersion?: string;
   state: ActiveInputState;
 }>;
@@ -347,8 +348,10 @@ export type DescriptionInstructions = Readonly<{
 }>;
 
 export type DescriptionOverrideInput = Readonly<{
+  final?: boolean;
   groupKey: string;
   source: string;
+  trackerIds?: readonly TrackerID[];
 }>;
 
 export type DescriptionOverrideMutation = Readonly<{

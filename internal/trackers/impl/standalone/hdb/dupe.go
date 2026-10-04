@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -61,6 +62,10 @@ func newDuplicateAdapterAt(deps dupe.Dependencies, baseURL string) dupe.Adapter 
 }
 
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
+	view := *s
+	view.logger = logging.FromContext(ctx, s.logger)
+	s = &view
+
 	if s.http == nil {
 		return dupe.Failed(dupe.FailureInternal, "HDB handler misconfigured: no HTTP client", nil)
 	}
