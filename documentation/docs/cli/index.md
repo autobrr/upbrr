@@ -181,7 +181,7 @@ Saved corrections use a newer database format. Older binaries do not support wri
 
 Supply known hardcoded languages directly: `-hc English Forced`, `-hc "English Full"`, or `-hc Spanish`. Coverage is retained as `English (Forced)` or `English (Full)`. Explicit hardcoded languages enable hardcoded handling and let PTP derive the correct subtitle/trumpable fields without asking again. `--hardcoded-subtitle-languages "English (Forced), Spanish"` also accepts a language list.
 
-Custom names are allowed: use the attached form `-hc="Custom Dialect"` (quote multiword names). Unknown space-separated values remain source paths, so bare `-hc` never consumes a custom-named source folder. If a source name could be confused with a language, end the options explicitly, for example `-hc -- "Spanish"`. Put other options before `--`.
+Custom names are allowed: use the attached form `-hc="Custom Dialect"` (quote multiword names). Unknown space-separated values remain source paths, so bare `-hc` never consumes a custom-named source folder. If a source name could be confused with a language, end the options explicitly, for example `-hc -- "Spanish"`. Put other options before `--`. For unlisted custom names, a trailing bare `Full` or `Forced` stays part of the name; use `(Full)`/`(Forced)` or `- Full`/`- Forced` to specify coverage.
 
 Bare `-hc` or `-hc=""` explicitly marks unknown hardcoded languages, clearing saved language choices and requiring PTP's additional review. Legacy boolean forms such as `-hc=true`, `-hc=false`, and `--hardcoded-subs=false` remain supported; explicit false disables hardcoded handling.
 

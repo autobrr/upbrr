@@ -119,3 +119,21 @@ func TestLanguageCoveragePreservesExplicitFullAndForced(t *testing.T) {
 		t.Fatalf("custom=%v", got)
 	}
 }
+
+func TestSubtitleLanguagePartsPreservesCustomBareSuffixes(t *testing.T) {
+	for _, test := range []struct {
+		input, base, coverage string
+	}{
+		{"Custom Dialect Full", "Custom Dialect Full", ""},
+		{"Custom Dialect Forced", "Custom Dialect Forced", ""},
+		{"Custom Dialect (Full)", "Custom Dialect", "Full"},
+		{"Custom Dialect - Forced", "Custom Dialect", "Forced"},
+		{"English Full", "English", "Full"},
+		{"en Forced", "en", "Forced"},
+	} {
+		base, coverage := SubtitleLanguageParts(test.input)
+		if base != test.base || coverage != test.coverage {
+			t.Errorf("%q = (%q, %q), want (%q, %q)", test.input, base, coverage, test.base, test.coverage)
+		}
+	}
+}

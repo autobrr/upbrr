@@ -98,7 +98,8 @@ func NormalizeLanguageLabel(value string) string {
 }
 
 // SubtitleLanguageParts separates an explicit Full/Forced suffix from a language
-// without guessing coverage for unqualified labels or discarding custom text.
+// without discarding custom text. Bare suffixes require a recognized language;
+// parenthetical and hyphenated suffixes explicitly qualify any language name.
 func SubtitleLanguageParts(value string) (string, string) {
 	value = strings.TrimSpace(value)
 	lower := strings.ToLower(value)
@@ -106,7 +107,13 @@ func SubtitleLanguageParts(value string) (string, string) {
 		mode := strings.ToLower(coverage)
 		for _, suffix := range []string{" (" + mode + ")", " - " + mode, " " + mode} {
 			if strings.HasSuffix(lower, suffix) {
-				return strings.TrimSpace(value[:len(value)-len(suffix)]), coverage
+				base := strings.TrimSpace(value[:len(value)-len(suffix)])
+				if suffix == " "+mode {
+					if _, recognized := resolveCompleteLanguageTag(base); !recognized {
+						continue
+					}
+				}
+				return base, coverage
 			}
 		}
 	}

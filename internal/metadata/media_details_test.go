@@ -3134,3 +3134,19 @@ func TestHardcodedCoverageKeepsBaseLanguageFacts(t *testing.T) {
 		t.Fatalf("coverage=%v", input.HardcodedSubtitleCoverage)
 	}
 }
+
+func TestHardcodedCoveragePreservesCustomBareNames(t *testing.T) {
+	languages := []string{"Custom Dialect Full", "Custom Dialect Forced"}
+	input := preparationstate.State{MetadataOverrides: api.MetadataOverrides{HardcodedSubtitleLanguages: &languages}}
+	if err := applyMetadataOverrides(&input); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(input.HardcodedSubtitleLanguages, languages) {
+		t.Fatalf("custom language names changed: %v", input.HardcodedSubtitleLanguages)
+	}
+	for _, detail := range input.HardcodedSubtitleCoverage {
+		if detail.Coverage != api.SubtitleCoverageUnspecified {
+			t.Fatalf("custom language acquired inferred coverage: %#v", detail)
+		}
+	}
+}
