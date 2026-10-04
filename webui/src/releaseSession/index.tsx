@@ -1139,7 +1139,7 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset" | "candidate",
     sourcePath: string,
     intent: PreparationIntent,
-    controls: Readonly<{ confirmBDMVRescan: boolean }>,
+    controls: Readonly<{ confirmBDMVRescan: boolean; acceptPendingInput?: boolean }>,
     commandRevision: number,
     correlationID: string,
     controller: AbortController,
@@ -1215,10 +1215,10 @@ export function ReleaseSessionProvider({
       }
       if (dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
         publishWorkflowCurrent(current, "ready");
-        return false;
+        return Boolean(controls.acceptPendingInput && !controller.signal.aborted);
       }
       if (pendingCorrectionReview(current)) {
-        applyActiveInputSnapshot(
+        const accepted = applyActiveInputSnapshot(
           activeSnapshotWithCurrent(current),
           "ready",
           update.inputEditRevision,
@@ -1227,7 +1227,7 @@ export function ReleaseSessionProvider({
           sourcePath,
           update.selectedTrackers,
         );
-        return false;
+        return Boolean(controls.acceptPendingInput && accepted && !controller.signal.aborted);
       }
       const trackerInputAnswers = Object.fromEntries(
         Object.entries(update.trackerInputAnswers).filter(([tracker]) =>
@@ -1292,7 +1292,9 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset",
     requestedSource: string,
     requestedIntent: PreparationIntent,
-    controls = { confirmBDMVRescan: false },
+    controls: Readonly<{ confirmBDMVRescan: boolean; acceptPendingInput?: boolean }> = {
+      confirmBDMVRescan: false,
+    },
   ): Promise<boolean> => {
     if (activeAuthority.current.state === "recovering" && !hasOpaqueRecoveringInput()) return false;
     const sourcePath = requestedSource.trim();
@@ -2585,7 +2587,10 @@ export function ReleaseSessionProvider({
       cancelPreparation,
       prepareSource: (sourcePath, intent) => runPreparationFor("prepare", sourcePath, intent),
       openSource: (sourcePath) =>
-        runPreparationFor("prepare", sourcePath, emptyPreparationIntent()),
+        runPreparationFor("prepare", sourcePath, emptyPreparationIntent(), {
+          confirmBDMVRescan: false,
+          acceptPendingInput: true,
+        }),
       recoverLegacyWorkflow,
       close: releaseActiveInput,
       resetSource: (sourcePath, intent) => runPreparationFor("reset", sourcePath, intent),

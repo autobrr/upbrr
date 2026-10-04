@@ -733,7 +733,7 @@ test("embedded web recovers saved corrections before a release snapshot and pres
         expect(reloaded.current?.workflow.requiredActions).toContainEqual(action);
         await expect(review).toBeVisible();
         await expect(
-          review.getByText("Source content changed since this value was saved."),
+          review.getByText("Source identity changed since this value was saved."),
         ).toHaveCount(affectedFields.length);
         await expect(review.getByRole("group", { name: "Edition", exact: true })).toHaveCount(0);
         await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeDisabled();

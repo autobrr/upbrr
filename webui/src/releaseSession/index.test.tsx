@@ -2188,6 +2188,129 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
+  it.each(["error", "stale", "closed"])(
+    "does not accept an open with outcome %s",
+    async (outcome) => {
+      const sourcePath = "C:\\media\\Rejected.Open.2026.mkv";
+      const response = createDeferred<ActiveInputSnapshot>();
+      const open = vi.fn(() => response.promise);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            activeInput: {
+              get: async (): Promise<ActiveInputSnapshot> =>
+                outcome === "closed"
+                  ? {
+                      state: "active",
+                      revision: 4,
+                      inputId: "input-current",
+                      sourceVersion: "source-previous",
+                      current: workflowCurrentFromPreview(
+                        workflowCurrent("workflow-current", 2),
+                        preview(sourcePath, 1),
+                      ),
+                    }
+                  : { state: "empty", revision: 4 },
+              open,
+            },
+          }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.input.view.activeInput.revision).toBe(4));
+        let opening!: Promise<boolean>;
+        act(() => {
+          opening = result.current.input.openSource(sourcePath);
+        });
+        await waitFor(() => expect(open).toHaveBeenCalledOnce());
+        if (outcome === "closed") {
+          await act(async () => expect(await result.current.input.close()).toBe(true));
+        }
+        await act(async () => {
+          if (outcome === "error") response.reject(new Error("Source could not be opened."));
+          else
+            response.resolve({
+              state: "active",
+              revision: outcome === "stale" ? 3 : 5,
+              inputId: "input-rejected",
+              sourceVersion: "source-one",
+              sourcePath,
+              current: workflowCurrentFromPreview(
+                workflowCurrent("workflow-rejected", 2),
+                preview(sourcePath, 1),
+              ),
+            });
+          expect(await opening).toBe(false);
+        });
+        expect(result.current.input.view.activeInput.state).toBe("empty");
+        expect(result.current.input.view.selectedSource).toBe("");
+        expect(result.current.workflow.view.current).toBeNull();
+      } finally {
+        unmount();
+      }
+    },
+  );
+
+  it.each(["confirm_corrections", "select_playlist"])(
+    "reports an accepted open separately from preparation readiness for %s",
+    async (kind) => {
+      const sourcePath = "C:\\media\\Pending.Review.2026.mkv";
+      const initial = workflowCurrent("workflow-pending-open", 2);
+      const current: ReleaseWorkflowCurrent = {
+        ...initial,
+        workflow: {
+          ...initial.workflow,
+          status: "blocked",
+          requiredActions: [
+            {
+              id: "action-review",
+              kind,
+              status: "pending",
+              workflowRevision: 2,
+              createdAt: initial.workflow.createdAt,
+              prompt: "Review the input.",
+              ...(kind === "confirm_corrections"
+                ? {
+                    correctionConfirmation: {
+                      revision: 3,
+                      fields: ["metadata.title"],
+                      previousBindings: {},
+                      currentBinding: {
+                        category: "movie",
+                        sourceFingerprint: "source-one",
+                        providerIds: { imdbId: 0, tmdbId: 222, tvdbId: 0, tvmazeId: 0, malId: 0 },
+                      },
+                    },
+                  }
+                : { options: [] }),
+            },
+          ],
+        },
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({ workflow: workflowPorts({ continue: async () => current }) }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+        await act(async () => expect(await result.current.input.openSource(sourcePath)).toBe(true));
+        expect(result.current.input.view.status).toBe("awaiting_input");
+        expect(result.current.input.view.error).toBe("");
+        expect(result.current.input.view.selectedSource).toBe(sourcePath);
+        expect(result.current.input.view.release).toBeNull();
+        await act(async () =>
+          expect(
+            await result.current.input.prepareSource(sourcePath, result.current.input.view.intent),
+          ).toBe(false),
+        );
+        expect(result.current.input.view.status).toBe("awaiting_input");
+      } finally {
+        unmount();
+      }
+    },
+  );
+
   it.each(["keep", "edit", "reset"])(
     "reviews saved corrections before a first release exists and applies %s with revision authority",
     async (choice) => {
