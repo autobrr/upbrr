@@ -16,6 +16,7 @@ import (
 	gomediainfo "github.com/autobrr/go-mediainfo"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -91,6 +92,8 @@ func NewService(logger api.Logger, analyzer Analyzer) *Service {
 // is analyzed on every call. Errors return no Result, although a failed JSON
 // write may leave the text file.
 func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
+	logger := logging.FromContext(ctx, s.logger)
+
 	select {
 	case <-ctx.Done():
 		return Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -122,9 +125,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	}
 	textPath := filepath.Join(tmpDir, "mediainfo.txt")
 	jsonPath := filepath.Join(tmpDir, "MediaInfo.json")
-	if s.logger != nil {
-		s.logger.Debugf("mediainfo: checking cache at %s (text=%v json=%v)", tmpDir, fileExists(textPath), fileExists(jsonPath))
-	}
+	logger.Debugf("mediainfo: checking cache at %s (text=%v json=%v)", tmpDir, fileExists(textPath), fileExists(jsonPath))
 	if fileExists(textPath) && fileExists(jsonPath) {
 		hasErrors, err := conformanceError(jsonPath, req.DiscType)
 		if err == nil && !hasErrors {
@@ -145,9 +146,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 			if err != nil {
 				return Result{}, err
 			}
-			if s.logger != nil {
-				s.logger.Debugf("mediainfo: reusing existing artifacts from %s", tmpDir)
-			}
+			logger.Debugf("mediainfo: reusing existing artifacts from %s", tmpDir)
 			return Result{
 				JSONPath: jsonPath,
 				TextPath: textPath,
@@ -158,18 +157,14 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 				VOBJSON:  vobJSON,
 			}, nil
 		}
-		if s.logger != nil {
-			if err != nil {
-				s.logger.Warnf("mediainfo: conformance check failed, regenerating: %v", err)
-			} else if hasErrors {
-				s.logger.Infof("mediainfo: conformance errors found, regenerating")
-			}
+		if err != nil {
+			logger.Warnf("mediainfo: conformance check failed, regenerating: %v", err)
+		} else if hasErrors {
+			logger.Infof("mediainfo: conformance errors found, regenerating")
 		}
 	}
 
-	if s.logger != nil {
-		s.logger.Debugf("mediainfo: analyzing %s", target.AnalyzePath)
-	}
+	logger.Debugf("mediainfo: analyzing %s", target.AnalyzePath)
 
 	textOutput, jsonOutput, err := s.analyzer.Analyze(ctx, target.AnalyzePath)
 	if err != nil {
@@ -185,9 +180,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("mediainfo: write json: %w", err)
 	}
 
-	if s.logger != nil {
-		s.logger.Debugf("mediainfo: exported to %s", tmpDir)
-	}
+	logger.Debugf("mediainfo: exported to %s", tmpDir)
 
 	vobText, vobJSON, err := analyzeVOB(ctx, s.analyzer, target.VOBPath)
 	if err != nil {

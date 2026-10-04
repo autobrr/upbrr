@@ -501,7 +501,7 @@ func checkRuleAcknowledgementImageHost(
 				selected[extraID] = struct{}{}
 			}
 			subject := api.UploadSubject{}
-			targets, err := builder.media.resolveImageUploadTargets([]string{"OE"}, subject, "", test.failedHosts)
+			targets, err := builder.media.resolveImageUploadTargets(t.Context(), []string{"OE"}, subject, "", test.failedHosts)
 			if err != nil || len(targets) != 1 || targets[0].Host != test.wantHost {
 				t.Fatalf("configured upload target = %#v, error=%v", targets, err)
 			}
@@ -510,7 +510,7 @@ func checkRuleAcknowledgementImageHost(
 			if err != nil || len(targets) != 1 || targets[0].Host != test.wantHost || targets[0].ReuseOnly != test.wantPrepared {
 				t.Errorf("cached image selection changed OE configured target: targets=%#v error=%v", targets, err)
 			}
-			attempts, prepared := builder.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, subject)
+			attempts, prepared := builder.restoredHostedImageAttemptsForSubject(t.Context(), snapshot, retained, projections, subject)
 			if prepared != test.wantPrepared || (prepared && (len(attempts) != 1 || attempts[0].Host != test.wantHost)) {
 				t.Errorf("restored image coverage changed OE configured target: attempts=%#v prepared=%t", attempts, prepared)
 			}

@@ -21,6 +21,7 @@ import (
 
 	"github.com/autobrr/rls"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
 
@@ -66,6 +67,8 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 // return no partial result. Missing runtime and plot values default to 60 minutes
 // and "No plot available", and episode data is limited to the first 500 entries.
 func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (Info, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	info := Info{}
 	id := metautil.NormalizeIMDbID(imdbID)
 	if id == "" {
@@ -284,12 +287,10 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		info.TVYear = closest
 	}
 
-	if c.logger != nil {
-		c.logger.Tracef("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
-	}
+	logger.Tracef("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
 
-	if debug && c.logger != nil {
-		c.logger.Debugf("imdb: info loaded for %s", id)
+	if debug {
+		logger.Debugf("imdb: info loaded for %s", id)
 	}
 
 	return info, nil
@@ -301,6 +302,8 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 // Unattended selects the top ambiguous candidate, while interactive mode returns
 // candidates with a zero IMDbID. Quickie validates only the first result.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	results := []map[string]any{}
 	imdbID := 0
 	attempted := 0
@@ -377,9 +380,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 			imdbID = metautil.ParseIMDbNumeric(id)
 		}
 		if imdbID != 0 {
-			if c.logger != nil {
-				c.logger.Infof("imdb: search auto-selected id=%d title=%q year=%d category=%s", imdbID, titleText, year, category)
-			}
+			logger.Infof("imdb: search auto-selected id=%d title=%q year=%d category=%s", imdbID, titleText, year, category)
 			return SearchResult{IMDbID: imdbID, AutoSelected: true}, nil
 		}
 		return SearchResult{}, nil
@@ -388,9 +389,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	if len(results) == 1 {
 		imdbID = metautil.ParseIMDbNumeric(getStringFromMap(results[0], "node", "title", "id"))
 		if imdbID != 0 {
-			if c.logger != nil {
-				c.logger.Infof("imdb: search auto-selected single result id=%d", imdbID)
-			}
+			logger.Infof("imdb: search auto-selected single result id=%d", imdbID)
 			return SearchResult{IMDbID: imdbID, AutoSelected: true}, nil
 		}
 	}
@@ -407,9 +406,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 				second = candidates[1].Similarity
 			}
 			if best.Similarity-second >= 0.10 {
-				if c.logger != nil {
-					c.logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
-				}
+				logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
 				return SearchResult{
 					IMDbID:       best.IMDbID,
 					Candidates:   candidates,
@@ -418,9 +415,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 			}
 		}
 		if input.Unattended {
-			if c.logger != nil {
-				c.logger.Infof("imdb: search unattended auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
-			}
+			logger.Infof("imdb: search unattended auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
 			return SearchResult{
 				IMDbID:       best.IMDbID,
 				Candidates:   candidates,
@@ -477,6 +472,8 @@ func applyReleaseHints(input SearchInput) SearchInput {
 // episode references. Empty IDs and missing titles return an empty result without
 // error; request and decode failures return no partial result.
 func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) (EpisodeLookup, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
 	id := metautil.NormalizeIMDbID(imdbID)
 	if id == "" {
 		return EpisodeLookup{}, nil
@@ -524,23 +521,23 @@ func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) 
 	lookup.Series.SeriesID = getStringFromMap(seriesObj, "id")
 	lookup.Series.SeriesTitle = getStringFromMap(seriesObj, "titleText", "text")
 
-	if debug && c.logger != nil {
-		c.logger.Debugf("imdb: episode lookup loaded for %s", id)
+	if debug {
+		logger.Debugf("imdb: episode lookup loaded for %s", id)
 	}
-	if c.logger != nil {
-		c.logger.Tracef(
-			"imdb: episode lookup loaded id=%s series=%q season=%s episode=%s",
-			id,
-			lookup.Series.SeriesTitle,
-			lookup.Series.SeasonText,
-			lookup.Series.EpisodeText,
-		)
-	}
+	logger.Tracef(
+		"imdb: episode lookup loaded id=%s series=%q season=%s episode=%s",
+		id,
+		lookup.Series.SeriesTitle,
+		lookup.Series.SeasonText,
+		lookup.Series.EpisodeText,
+	)
 
 	return lookup, nil
 }
 
 func (c *Client) runSearch(ctx context.Context, filename string, searchYear int, category string, duration int, wide bool) []map[string]any {
+	logger := logging.FromContext(ctx, c.logger)
+
 	if filename == "" {
 		return nil
 	}
@@ -575,9 +572,7 @@ func (c *Client) runSearch(ctx context.Context, filename string, searchYear int,
 	const query = `query SearchTitles($constraints: AdvancedTitleSearchConstraints!) { advancedTitleSearch(first: 10, constraints: $constraints) { total edges { node { title { id titleText { text } titleType { text } releaseYear { year } plot { plotText { plainText } } } } } } }`
 	var response map[string]any
 	if err := c.postGraphQL(ctx, "SearchTitles", query, map[string]any{"constraints": constraints}, &response); err != nil {
-		if c.logger != nil {
-			c.logger.Debugf("imdb: title lookup failed year=%d wide=%t error=%s", searchYear, wide, redaction.RedactValue(err.Error(), nil))
-		}
+		logger.Debugf("imdb: title lookup failed year=%d wide=%t error=%s", searchYear, wide, redaction.RedactValue(err.Error(), nil))
 		return nil
 	}
 	return getList(response, "data", "advancedTitleSearch", "edges")
@@ -633,6 +628,8 @@ func (c *Client) postGraphQL(ctx context.Context, operationName string, query st
 }
 
 func (c *Client) uncachedGraphQL(ctx context.Context, operationName string, query string, variables map[string]any, target any) error {
+	logger := logging.FromContext(ctx, c.logger)
+
 	queryHash := sha256.Sum256([]byte(query))
 	hash := hex.EncodeToString(queryHash[:])
 	payload := graphQLRequest{
@@ -661,9 +658,7 @@ func (c *Client) uncachedGraphQL(ctx context.Context, operationName string, quer
 	}
 	if known && persistedQueryNotFound(responseBody) {
 		c.knownPersistedQueries.Delete(cacheKey)
-		if c.logger != nil {
-			c.logger.Debugf("imdb: persisted query cache miss operation=%s action=register", operationName)
-		}
+		logger.Debugf("imdb: persisted query cache miss operation=%s action=register", operationName)
 		payload.Query = query
 		responseBody, err = c.executeGraphQLRequest(ctx, http.MethodPost, payload)
 		if err != nil {

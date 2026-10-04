@@ -746,7 +746,7 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
-	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]any, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, _ context.Context, filePath string) (map[string]any, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
@@ -1252,7 +1252,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
-	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]any, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, _ context.Context, filePath string) (map[string]any, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
@@ -1375,7 +1375,7 @@ func TestPrepareBDMVDirectPlaylistInvokesBDInfoForParentAndRoot(t *testing.T) {
 		}
 		return outputPath, nil
 	}
-	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]any, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, _ context.Context, filePath string) (map[string]any, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
@@ -1569,7 +1569,7 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 			ReportText: fullReport,
 		}, nil
 	}
-	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]any, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, _ context.Context, filePath string) (map[string]any, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
