@@ -3211,6 +3211,7 @@ export function ReleaseSessionProvider({
         projections: workflowView.current?.projections || null,
         ignoredDupesFor: state.ignoredDupesFor,
         questionnaireDirty,
+        workflowBusy: Boolean(controllers.current.workflow),
         options: uploadOptions,
         liveTest,
         mutationsAllowed: mutationsAllowed && state.activeInput.state !== "recovering",

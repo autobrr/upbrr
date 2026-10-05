@@ -210,7 +210,10 @@ export default function TrackerUploadPage({ facet }: Props) {
             variant="primary"
             type="button"
             disabled={
-              view.questionnaireDirty || view.dryRunStatus === "running" || !hasDryRunCandidate
+              view.questionnaireDirty ||
+              view.workflowBusy ||
+              view.dryRunStatus === "running" ||
+              !hasDryRunCandidate
             }
             onClick={() => void facet.runDryRun()}
           >
@@ -221,6 +224,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             type="button"
             disabled={
               view.questionnaireDirty ||
+              view.workflowBusy ||
               !view.mutationsAllowed ||
               uploadRunning ||
               !hasExecutableUpload
@@ -238,7 +242,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             <button
               className="ghost"
               type="button"
-              disabled={view.questionnaireDirty || !view.mutationsAllowed}
+              disabled={view.questionnaireDirty || view.workflowBusy || !view.mutationsAllowed}
               onClick={() => void facet.retry()}
             >
               Retry failed uploads
@@ -248,7 +252,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             <button
               className="ghost"
               type="button"
-              disabled={!view.mutationsAllowed}
+              disabled={view.workflowBusy || !view.mutationsAllowed}
               onClick={() => void facet.retryClientInjection()}
             >
               Retry client injection
