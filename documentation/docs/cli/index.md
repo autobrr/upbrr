@@ -10,11 +10,16 @@ upbrr [options] <input path>...
 upbrr serve [options]
 upbrr api-token <list|revoke> [options]
 upbrr auth <password|browse-roots> [options]
+upbrr live-test <init|cleanup> [options]
 ```
 
-On Windows, examples use `upbrr.exe`. Put options before input paths.
+On Windows, examples use `upbrr.exe`. Put options before input paths for consistent behavior across commands. Use `--` to end option parsing when a path begins with a hyphen or could be mistaken for an option value.
 
-Use executable help as the exact reference for your installed version:
+Upload, `serve`, `auth`, and `api-token` options accept either one or two leading hyphens, including the aliases below. The exception is `--console-log-level`, which requires two hyphens for its full name; `-cll` and `--cll` also work. Boolean options can use `=true` or `=false`; use the equals sign instead of a separate value. The `-hc` language shorthand has additional forms described under [PTP subtitle review](#ptp-subtitle-review).
+
+Omitted correction flags preserve saved values, and omitted configuration overrides use the active configuration. Workflow switches such as `--debug`, `--no-seed`, and `--unattended` are off unless enabled. Numeric and audio-selection defaults are noted below.
+
+Use `--help` (also `-h`) as the exact option-name reference for your installed version:
 
 ```powershell
 .\upbrr.exe --help
@@ -46,8 +51,10 @@ Run duplicate and site checks without uploading:
 Process at most five entries from a queue folder:
 
 ```powershell
-.\upbrr.exe --queue "D:\upload-queue" --limit-queue 5
+.\upbrr.exe --queue uploads --limit-queue 5 "D:\upload-queue"
 ```
+
+`--queue` supplies a non-empty queue name. Supply exactly one queue-root path separately. The CLI gathers first-level media files and release folders in sorted order, then applies `--limit-queue`; `0` means no limit. An item failure does not stop later queue entries, but the command returns a nonzero summary result if any item failed. Cancellation stops the queue.
 
 ### Multi-disc folders
 
@@ -96,21 +103,26 @@ Trackers with a confirmed upload of the same verified submitted content are excl
 | `--version`                 | `-version`                 | Print version and exit.                                     |
 | `--cleanup`                 | `-cleanup`                 | Delete all stored release content and exit.                 |
 
+`--create-auth`, `--export-config`, and `--import-config` are mutually exclusive. Config exports omit plaintext secrets unless `--export-config-plaintext` is supplied; protect plaintext exports as credentials. See [configuration import and export](../configuration/index.md#import-configuration) for config selection and encryption requirements.
+
 ## Execution
 
-| Option                        | Aliases                       | Purpose                                                                               |
-| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
-| `--queue <path>`              | `-queue`                      | Process an entire folder queue.                                                       |
-| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit queued items processed.                                                         |
-| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                 |
-| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                      |
-| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                     |
-| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run. |
-| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.             |
-| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                            |
-| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                               |
-| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                  |
-| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                         |
+| Option                        | Aliases                       | Purpose                                                                                  |
+| ----------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
+| `--queue <name>`              | `-queue`                      | Name a queue; supply its root as the single input path.                                  |
+| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit queued items processed; defaults to `0` (unlimited). Negative values are rejected. |
+| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                    |
+| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                         |
+| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                        |
+| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.    |
+| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                |
+| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                               |
+| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                             |
+| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                  |
+| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                     |
+| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                            |
+
+`--live-test` and `--live-test-max-images` are development options described under [`live-test`](#live-test). There is no `--dry-run` option; use `--debug --no-seed` for preparation without tracker submission or client injection.
 
 ## Tracker selection and IDs
 
@@ -127,6 +139,8 @@ Trackers with a confirmed upload of the same verified submitted content are excl
 | `--btn <id-or-url>`        | `-btn`                     | Supply a BTN torrent ID or URL.     |
 | `--bhd <id-or-url>`        | `-bhd`                     | Supply a BHD torrent ID or URL.     |
 | `--ulcx <id-or-url>`       | `-ulcx`                    | Supply a ULCX torrent ID or URL.    |
+
+Omitting `--trackers` uses the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Tracker ID flags supply lookup identities and do not select upload destinations.
 
 ## Release overrides
 
@@ -211,6 +225,7 @@ Season tokens require exactly two or four digits, including year-numbered season
 | `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                     |
 | `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                            |
 | `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                 |
+| `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                    |
 | `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                       |
 | `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                        |
 | `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                      |
@@ -225,6 +240,10 @@ Season tokens require exactly two or four digits, including year-numbered season
 
 Filename cut, edition, and presentation labels take priority over provider runtime labels. If selected playlists identify two distinct editions, automatic naming uses only `2in1`, without listing the individual editions. Manual `--edition` and `--no-edition` choices take precedence over these automatic labels.
 
+`-repack` remains an alias for `--edition`. It does not set the independent **Release version** correction. Set that correction in the Web UI; use `--reset-input release_name.repack` to restore automatic version detection from the CLI. The legacy `--no-edition` option also suppresses an automatic release version, but a saved explicit **Release version** selection takes precedence. See [Input corrections](../web-ui/index.md#correct-input-facts).
+
+If `--use-season-episode` has neither an explicit season/episode nor a matching TMDB episode, an existing daily date is retained with a warning. `--use-season-episode=false` selects daily-date naming when a date is available.
+
 ## Metadata IDs
 
 | Option          | Aliases   | Purpose             |
@@ -234,6 +253,8 @@ Filename cut, edition, and presentation labels take priority over provider runti
 | `--mal <id>`    | `-mal`    | Override MAL ID.    |
 | `--tvdb <id>`   | `-tvdb`   | Override TVDB ID.   |
 | `--tvmaze <id>` | `-tvmaze` | Override TVmaze ID. |
+
+TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint overrides the category. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
 
 During the **Metadata correct?** loop, correcting the same active input reuses provider lookups for unchanged inputs, including lookups that returned no result. A later run can retry those empty results. Completed fetch failures remain retained until the input is removed from **History**. Changing the source, provider ID, or lookup query requests its own result.
 
@@ -257,55 +278,60 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 
 ## Tracker overrides
 
-| Option                | Aliases                      | Purpose                                   |
-| --------------------- | ---------------------------- | ----------------------------------------- |
-| `--skip-dupe-check`   | `-skip-dupe-check`, `-sdc`   | Skip duplicate checking.                  |
-| `--skip-dupe-asking`  | `-skip-dupe-asking`, `-sda`  | Skip duplicate asking.                    |
-| `--double-dupe-check` | `-double-dupe-check`, `-ddc` | Run a double duplicate check.             |
-| `--foreign`           | `-foreign`                   | Mark a TIK release as foreign.            |
-| `--opera`             | `-opera`                     | Mark a TIK release as opera or musical.   |
-| `--asian`             | `-asian`                     | Mark a TIK release as Asian.              |
-| `--disctype <value>`  | `-disctype`                  | Override TIK disc type.                   |
-| `--commentary`        | `-commentary`, `-mc`         | Mark release as containing commentary.    |
-| `--personalrelease`   | `-personalrelease`, `-pr`    | Explicitly set personal-release handling. |
-| `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.         |
-| `--webdv`             | `-webdv`                     | Mark release as WEB-DV.                   |
-| `--not-anime`         | `-not-anime`                 | Force release to be treated as not anime. |
-| `--anon`              | `-anon`, `-a`                | Upload anonymously.                       |
-| `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.           |
-| `--modq`              | `-modq`, `-mq`               | Opt into mod queue where supported.       |
-| `--channel <value>`   | `-channel`, `-ch`            | Override SPD channel.                     |
+| Option                | Aliases                      | Purpose                                                                 |
+| --------------------- | ---------------------------- | ----------------------------------------------------------------------- |
+| `--skip-dupe-check`   | `-skip-dupe-check`, `-sdc`   | Skip remote tracker duplicate searches.                                 |
+| `--skip-dupe-asking`  | `-skip-dupe-asking`, `-sda`  | Choose upload when duplicate evidence needs a decision.                 |
+| `--double-dupe-check` | `-double-dupe-check`, `-ddc` | Request two duplicate checks instead of one.                            |
+| `--foreign`           | `-foreign`                   | Mark a TIK release as foreign.                                          |
+| `--opera`             | `-opera`                     | Mark a TIK release as opera or musical.                                 |
+| `--asian`             | `-asian`                     | Mark a TIK release as Asian.                                            |
+| `--disctype <value>`  | `-disctype`                  | Override TIK disc type.                                                 |
+| `--commentary`        | `-commentary`, `-mc`         | Mark release as containing commentary.                                  |
+| `--personalrelease`   | `-personalrelease`, `-pr`    | Explicitly set personal-release handling.                               |
+| `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.                                       |
+| `--webdv`             | `-webdv`                     | Mark release as WEB-DV.                                                 |
+| `--not-anime`         | `-not-anime`                 | Force release to be treated as not anime.                               |
+| `--anime`             | `-anime`                     | Explicitly set anime handling; `false` clears the anime classification. |
+| `--anon`              | `-anon`, `-a`                | Upload anonymously.                                                     |
+| `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.                                         |
+| `--modq`              | `-modq`, `-mq`               | Opt into mod queue where supported.                                     |
+| `--channel <value>`   | `-channel`, `-ch`            | Override SPD channel.                                                   |
 
 `--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omit the option to leave **Personal Release** on **Auto**, where each tracker's configured personal-release groups can supply the default.
+
+Duplicate options do not bypass authoritative client blocks or the workflow's explicit tracker-approval requirement. Strict `--unattended` still cannot answer that approval prompt. `--anime` and `--not-anime` cannot be combined, even with explicit false values.
+
+TIK `--disctype` accepts `BD100`, `BD66`, `BD50`, `BD25`, `NTSC DVD9`, `NTSC DVD5`, `PAL DVD9`, `PAL DVD5`, `CUSTOM`, or `3D`. Quote values containing spaces.
 
 ## Screenshots, images, and descriptions
 
 Without `--screens`, the CLI uses `screenshot_handling.screens` when selected trackers require screenshots. Tracker-specific image counts and limits still apply. An override below a tracker's screenshot requirements can block that upload.
 
-| Option                       | Aliases                             | Purpose                                               |
-| ---------------------------- | ----------------------------------- | ----------------------------------------------------- |
-| `--screens <count>`          | `-screens`, `-s`                    | Override the configured screenshot count.             |
-| `--manual_frames <list>`     | `-manual_frames`, `-mf`             | Use comma-separated frame numbers.                    |
-| `--comparison <paths>`       | `-comparison`, `-comps`             | Set one comparison folder or comma-separated folders. |
-| `--comparison_index <index>` | `-comparison_index`, `-comps_index` | Select the primary comparison index.                  |
-| `--menu-images <path>`       | `-menu-images`                      | Import manually captured disc-menu screenshots.       |
-| `--get-dvd-menus`            | `-get-dvd-menus`                    | Capture distinct menus from extracted DVD `VIDEO_TS`. |
-| `--imghost <name>`           | `-imghost`, `-ih`                   | Override image host.                                  |
-| `--skip-imagehost-upload`    | `-skip-imagehost-upload`, `-siu`    | Skip automatic image-host uploads.                    |
-| `--descfile <path>`          | `-descfile`, `-df`                  | Use a custom description file.                        |
-| `--desclink <url>`           | `-desclink`, `-pb`                  | Use a custom description link.                        |
+| Option                       | Aliases                             | Purpose                                                                        |
+| ---------------------------- | ----------------------------------- | ------------------------------------------------------------------------------ |
+| `--screens <count>`          | `-screens`, `-s`                    | Override the configured screenshot count.                                      |
+| `--manual_frames <list>`     | `-manual_frames`, `-mf`             | Use comma-separated positive frame numbers.                                    |
+| `--comparison <paths>`       | `-comparison`, `-comps`             | Set one comparison folder or comma-separated folders.                          |
+| `--comparison_index <index>` | `-comparison_index`, `-comps_index` | Select a one-based primary comparison path; omission keeps the supplied order. |
+| `--menu-images <path>`       | `-menu-images`                      | Import manually captured disc-menu screenshots.                                |
+| `--get-dvd-menus`            | `-get-dvd-menus`                    | Capture distinct menus from extracted DVD `VIDEO_TS`.                          |
+| `--imghost <name>`           | `-imghost`, `-ih`                   | Override a supported, non-tracker-owned image host.                            |
+| `--skip-imagehost-upload`    | `-skip-imagehost-upload`, `-siu`    | Skip automatic image-host uploads.                                             |
+| `--descfile <path>`          | `-descfile`, `-df`                  | Use a custom description file.                                                 |
+| `--desclink <url>`           | `-desclink`, `-pb`                  | Use a custom description link.                                                 |
 
 ### Audio analysis
 
 Use `--audio-analysis` to analyze prepared audio tracks during the upload workflow, or `--audio-analysis-only` to analyze one file without configuration or upload.
 
-| Option                   | Purpose                                                                   |
-| ------------------------ | ------------------------------------------------------------------------- |
-| `--audio-analysis`       | Generate local images during upload.                                      |
-| `--audio-analysis-only`  | Analyze one media file without configuration or upload.                   |
-| `--audio-output <path>`  | Required output directory for `--audio-analysis-only`.                    |
-| `--audio-tracks <value>` | Select `primary`, `all`, or comma-separated one-based audio ordinals.     |
-| `--audio-images <value>` | Generate `both`, `waveform`, or `spectrogram` images. Defaults to `both`. |
+| Option                   | Purpose                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| `--audio-analysis`       | Generate local images during upload.                                            |
+| `--audio-analysis-only`  | Analyze one media file without configuration or upload.                         |
+| `--audio-output <path>`  | Required output directory for `--audio-analysis-only`.                          |
+| `--audio-tracks <value>` | Select `primary` (default), `all`, or comma-separated one-based audio ordinals. |
+| `--audio-images <value>` | Generate `both`, `waveform`, or `spectrogram` images. Defaults to `both`.       |
 
 Generate waveform and spectrogram images for the prepared primary audio track:
 
@@ -327,24 +353,28 @@ Analyze only audio and save it outside managed temporary storage:
 
 The numeric selectors are audio-only ordinals, not container-wide stream indexes. Repeated ordinals are ignored, and results retain source track order. `--audio-tracks` and `--audio-images` require either analysis mode.
 
+`--audio-output` is only valid with `--audio-analysis-only`. Standalone analysis requires exactly one regular media file and accepts only its four audio-analysis options; do not combine it with `--config`, upload options, or `--audio-analysis`.
+
 During upload, the CLI prints the path of every successfully retained PNG and statistics file. Standalone analysis prints paths to PNGs and statistics files in a new directory under `--audio-output`. A partial or failed analysis exits nonzero, even when some artifacts succeeded. See [Audio analysis](../workflow/audio-analysis.md) for output, retry, and retention behavior.
 
 ## Client and torrent
 
-| Option                   | Aliases                            | Purpose                                                          |
-| ------------------------ | ---------------------------------- | ---------------------------------------------------------------- |
-| `--client <name>`        | `-client`                          | Override torrent client.                                         |
-| `--qbit-tag <value>`     | `-qbit-tag`, `-qbt`                | Override qBittorrent tag.                                        |
-| `--qbit-cat <value>`     | `-qbit-cat`, `-qbc`                | Override qBittorrent category.                                   |
-| `--force-recheck`        | `-force-recheck`, `-frc`           | Force recheck of matched qBittorrent torrents before validation. |
-| `--no-seed`              | `-no-seed`, `-ns`                  | Do not inject into torrent clients.                              |
-| `--skip_auto_torrent`    | `-skip_auto_torrent`, `-sat`       | Skip automated torrent-client searching.                         |
-| `--keep-folder`          | `-keep-folder`, `-kf`              | Keep a supplied folder instead of selecting its video file.      |
-| `--onlyID`               | `-onlyID`                          | Only retrieve tracker metadata IDs.                              |
-| `--infohash <hash>`      | `-infohash`, `-th`, `-torrenthash` | Override the v1 info hash.                                       |
-| `--max-piece-size <MiB>` | `-max-piece-size`, `-mps`          | Set maximum torrent piece size in MiB.                           |
-| `--nohash`               | `-nohash`, `-nh`                   | Reuse existing torrents only; do not generate a new torrent.     |
-| `--rehash`               | `-rehash`, `-rh`                   | Force generation of a fresh torrent.                             |
+| Option                   | Aliases                            | Purpose                                                                                  |
+| ------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| `--client <name>`        | `-client`                          | Override torrent client.                                                                 |
+| `--qbit-tag <value>`     | `-qbit-tag`, `-qbt`                | Override qBittorrent tag.                                                                |
+| `--qbit-cat <value>`     | `-qbit-cat`, `-qbc`                | Override qBittorrent category.                                                           |
+| `--force-recheck`        | `-force-recheck`, `-frc`           | Force recheck of matched qBittorrent torrents before validation.                         |
+| `--no-seed`              | `-no-seed`, `-ns`                  | Do not inject into torrent clients.                                                      |
+| `--skip_auto_torrent`    | `-skip_auto_torrent`, `-sat`       | Skip automated torrent-client searching.                                                 |
+| `--keep-folder`          | `-keep-folder`, `-kf`              | Keep a supplied folder instead of selecting its video file.                              |
+| `--onlyID`               | `-onlyID`                          | Limit tracker metadata lookup to IDs where supported; does not stop the upload workflow. |
+| `--infohash <hash>`      | `-infohash`, `-th`, `-torrenthash` | Supply a 40-character hexadecimal v1 info hash.                                          |
+| `--max-piece-size <MiB>` | `-max-piece-size`, `-mps`          | Override the configured maximum: `1`, `2`, `4`, `8`, `16`, `32`, `64`, or `128` MiB.     |
+| `--nohash`               | `-nohash`, `-nh`                   | Reuse existing torrents only; do not generate a new torrent.                             |
+| `--rehash`               | `-rehash`, `-rh`                   | Force generation of a fresh torrent.                                                     |
+
+`--nohash` and `--rehash` cannot be combined, even with explicit false values.
 
 ## `serve`
 
@@ -354,18 +384,18 @@ upbrr serve [options]
 
 `--config` seeds an empty database. For an existing database, the server uses its stored settings. Use Settings or configuration import to activate later changes.
 
-| Option                     | Purpose                                                  |
-| -------------------------- | -------------------------------------------------------- |
-| `--config <path>`          | Use a config file path.                                  |
-| `--addr <host:port>`       | Set the complete listen address.                         |
-| `--host <host>`            | Set the listen host.                                     |
-| `--port <port>`            | Set the listen port.                                     |
-| `--base-url <url-or-path>` | Set the external Web UI URL or path prefix.              |
-| `--persist-listen`         | Persist listen host and port to `web-config.json`.       |
-| `--persist-web-config`     | Persist supplied Web UI serve settings.                  |
-| `--dev-no-auth`            | Disable Web auth for local development on loopback only. |
+| Option                     | Purpose                                                                    |
+| -------------------------- | -------------------------------------------------------------------------- |
+| `--config <path>`          | Use a config file path.                                                    |
+| `--addr <host:port>`       | Set the complete listen address.                                           |
+| `--host <host>`            | Set the listen host.                                                       |
+| `--port <port>`            | Set the decimal listen port, from `1` through `65535`.                     |
+| `--base-url <url-or-path>` | Set the external Web UI URL or path prefix.                                |
+| `--persist-listen`         | Persist listen host and port to `web-config.json`.                         |
+| `--persist-web-config`     | Persist the full resolved Web UI settings, including listen host and port. |
+| `--dev-no-auth`            | Disable Web auth for local development on loopback only.                   |
 
-See [Web server and reverse proxy](../configuration/web-server.md) for precedence and proxy examples.
+`--addr` cannot be combined with `--host` or `--port`. Without overrides, the listener defaults to `localhost:7480`; environment variables and saved settings can change it. `--live-test` and `--live-test-max-images` also apply to `serve`. See [Web server and reverse proxy](../configuration/web-server.md) for precedence and proxy examples.
 
 ## `auth`
 
@@ -414,3 +444,20 @@ Revoke by token ID:
 List and revoke accept `--config`.
 
 See the [API reference](../api/index.md) before granting `workflow:execute`.
+
+## `live-test`
+
+These development commands create an isolated profile from existing configuration and authentication state, or clean up image uploads recorded by that profile. They do not replace normal upload commands.
+
+```text
+upbrr live-test init --run-dir <path> [--config <path>] [--prefer-deletable-hosts]
+upbrr live-test cleanup --run-dir <path>
+```
+
+Use double-hyphen option names for these subcommands. `init` requires a new immediate child of the operating system's private cache directory under `upbrr-live-testing/runs`; `cleanup` requires an existing run. `--config` selects the source configuration. `--prefer-deletable-hosts` defaults to false and changes image-host preferences only inside the new profile. The profile includes sensitive configuration and authentication material; keep it private.
+
+To use the profile with an upload command or `serve`, pass `--live-test --config <profile-config-path>`. Tracker submission and torrent-client writes are disabled. `--live-test-max-images <count>` requires `--live-test`, accepts `0` through `500`, and defaults to `0`, which keeps captured images local. A positive value permits that many journaled image-upload attempts. The budget cannot change after the run starts.
+
+Upload-mode `--live-test` cannot be combined with `--create-auth`, `--export-config`, `--import-config`, `--cleanup`, or `--delete-tmp`. Use the dedicated `live-test init` and `live-test cleanup` commands for profile management.
+
+`cleanup` attempts deletion only for journaled images owned by the run and reports uploads that must remain on their host. Unknown or failed outcomes require manual reconciliation. Once cleanup starts, the profile cannot be used for further preparation. For the opt-in runner and safety requirements, see the [live-testing guide](https://github.com/autobrr/upbrr/blob/main/scripts/live-testing/README.md).

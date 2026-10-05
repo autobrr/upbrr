@@ -42,6 +42,14 @@ If HTML loads but assets, login, API calls, or live progress fail under `/upbrr/
 
 See the [reverse proxy guide](../configuration/web-server.md#path-prefix-proxy).
 
+## An operation was interrupted by restart
+
+Startup retains completed operation checkpoints and marks unfinished operations interrupted. It can wait for prior-process input and work leases to expire before cleanup. It does not automatically repeat the interrupted command. Reopen the retained input from **History**, or explicitly continue a workflow that was waiting for feedback.
+
+For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup marks unresolved external attempts failed locally and clears their retry blocks after leases expire; a local failure is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
+
+If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
+
 ## FFmpeg is not found
 
 Run `ffmpeg -version` in the same environment that starts upbrr. On Windows, add FFmpeg's directory to `PATH` before starting upbrr or its service. Containers already include FFmpeg.
@@ -105,7 +113,8 @@ Upload preflight does not silently log in or mutate auth state. Fix auth on the 
 ## No screenshots or image links
 
 - Confirm FFmpeg access and screenshot count.
-- Confirm the chosen image host is configured and allowed by the tracker.
+- For imported screenshots, enable **Settings → Metadata → Keep images**, inspect **Tracker Data**, and use **Saved tracker images → Use saved images** on **Screenshots** when offered. Only usable validated images are eligible; an imported comparison block alone does not supply ordinary screenshots.
+- Confirm the chosen image host is configured and allowed by the tracker. Images tied to their source tracker may need downloading and rehosting, even when they display correctly in the original description.
 - Review host-specific failure messages without copying credentials or raw responses.
 - Check `min_successful_image_uploads`: zero requires the whole batch to succeed; a positive value permits a partially successful batch only after that many images publish.
 - Use `--skip-imagehost-upload` only when you will supply valid hosted images another way.

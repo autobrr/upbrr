@@ -14,9 +14,9 @@ THR support, including its tracker-owned image host, has been removed because th
 1. Open **Settings**.
 2. Open the tracker section.
 3. Enter only the requested credentials and options.
-4. save settings;
-5. import cookies, sign in, or test authentication when those actions are available;
-6. add the tracker to default selection only after it reports ready.
+4. Save settings.
+5. Import cookies, sign in, or test authentication when those actions are available.
+6. Add the tracker to default selection only after it reports ready.
 
 Auth requirements vary. A tracker can require an API key, passkey, cookie session, username/password login, 2FA, or a supported combination. upbrr stores managed tracker cookies encrypted in SQLite.
 
@@ -30,7 +30,7 @@ Never paste tracker credentials, cookies, announce URLs, OTP secrets, or raw aut
 - CLI `--trackers-remove` removes trackers from that run.
 - The Web UI lets you select trackers from the Input page.
 
-The final upload authority is the exact tracker subset approved after duplicate review. Later stages must not silently add disabled, blocked, or unapproved trackers.
+CLI workflows that require post-duplicate approval use the exact tracker subset you approve. The Web UI uses its per-stage tracker selections. Later stages do not add disabled, blocked, or unselected trackers.
 
 ## Duplicate checks and rules
 
@@ -40,7 +40,9 @@ Tracker adapters normalize duplicate results into a common review surface. A tra
 - a not-run result with a reason, such as missing auth or metadata;
 - an attempted search failure.
 
-Rule and validation outcomes can block a live upload while still allowing debug preparation so you can inspect later stages. Subjective or incomplete tracker rules remain manual decisions.
+Warnings that permit an override can block a live upload while allowing debug preparation. Strict validation failures block every mode. Subjective or incomplete tracker rules remain manual decisions.
+
+Unit3D duplicate searches cover the complete movie or TV category family, including site-specific categories such as anime or season packs. They do not filter by upload type, resolution, or individual episode number; the evaluator compares the returned release variants and overlapping content. A TV season may still narrow the search, except where the site needs a broader query, as described for [ACM](#acm-diagnostics).
 
 Tracker settings can restrict duplicate competition by incoming release group. When a tag matches that tracker's **Duplicate bypass groups** or **Internal groups**, confirmed candidates from other groups coexist and are omitted from slot-capacity decisions. Exact duplicates, same-group candidates, conflicting evidence, and unknown groups keep their normal duplicate result. See [tracker group policy lists](../web-ui/settings/trackers.md#group-policy-lists).
 
@@ -53,6 +55,12 @@ Some tracker warnings permit an explicit override. On **Dupe Check**, read the w
 Approval applies only to that tracker and its current warning set. After the initial duplicate check, changing its warning toggle rechecks only that tracker when eligible. Other trackers keep their fresh, unchanged duplicate evidence and decisions. Turning the toggle off withdraws approval and skips that tracker's search until it is eligible again. Changed inputs, configuration, or expired evidence still require fresh checks. Changed warnings or a new prepared generation require renewed approval. Strict failures remain blocked and cannot be overridden, including in debug mode.
 
 The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override.
+
+## Tracker questions
+
+On **Dupe Checking**, open **Tracker questions** for a selected tracker, review any required fields, and choose **Apply tracker answers**. Loading the questions uses existing prepared facts without contacting the tracker. Applying answers refreshes the assessment; it does not upload or start another duplicate search. Unanswered required fields block only their tracker, and unapplied edits must be applied before dry runs or uploads. See [the questionnaire workflow](../workflow/index.md#tracker-questions) for retained duplicate evidence and questions discovered during preparation.
+
+PTP can ask you to review subtitle and trumpable tags when neither English subtitles nor a first English audio track are established, or hardcoded languages are unknown. Known hardcoded-language corrections, including **English (Full)** and **English (Forced)**, supply that evidence directly. Review every applicable choice; contradictory English and no-English claims block PTP. Choosing **English Softsubs Exist (Mislabeled)** does not correct a media track’s language. Use [Input language corrections](../workflow/index.md#subtitle-review) for that, or follow the [CLI subtitle-review guide](../cli/index.md#ptp-subtitle-review).
 
 ## Names and payloads
 

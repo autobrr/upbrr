@@ -11,14 +11,14 @@ Use **Settings → Metadata** to control how preparation gathers reusable torren
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
 | **Skip auto torrent**            | Off     | Skips automated torrent-client searching during preparation.                                           |
 | **Skip tracker filename lookup** | Off     | Prevents filename-based tracker-data lookup when no tracker ID is already known.                       |
-| **Keep images**                  | On      | Preserves tracker-sourced image evidence for descriptions.                                             |
+| **Keep images**                  | On      | Retains validated tracker images for screenshot reuse and descriptions.                                |
 | **Only ID**                      | Off     | Limits supported tracker-data lookups to identity fields.                                              |
 | **Use largest playlist**         | Off     | Lets unattended CLI preparation choose the largest Blu-ray playlist instead of requiring confirmation. |
 | **Get Bluray info**              | Off     | Enables blu-ray.com matching for BDMV or DVD sources with an IMDb ID.                                  |
 | **Bluray score**                 | `94.5`  | Sets the normal blu-ray.com candidate score threshold.                                                 |
 | **Bluray single score**          | `89.5`  | Sets the threshold used when only one candidate is available.                                          |
 
-**Keep images** and **Only ID** work independently. With both enabled, supported trackers can still supply images while omitting description text.
+**Keep images** and **Only ID** work independently. With both enabled, supported trackers can still supply images while omitting description text. Imported comparison blocks stay in descriptions and are excluded from the ordinary screenshot set. To reuse eligible saved screenshots, open **Screenshots** and choose **Use saved images** when offered.
 
 ## Advanced compatibility fields
 

@@ -40,10 +40,10 @@ Supported environment variables:
 | `UPBRR_WEB_OPEN_BROWSER`    | Whether to open a browser at startup                |
 | `UPBRR_WEB_TRUSTED_PROXIES` | Comma-separated trusted proxy addresses or networks |
 
-Use `--persist-web-config` to save supplied `serve` settings. Add `--persist-listen` when the listen host or port should also be saved.
+Use `--persist-web-config` to save the full effective `serve` configuration, including listen settings. To save only an explicitly supplied `--addr`, `--host`, or `--port`, use `--persist-listen` instead. Persistence happens after the listener binds successfully.
 
 ```powershell
-.\upbrr.exe serve --host 127.0.0.1 --port 7480 --persist-listen --persist-web-config
+.\upbrr.exe serve --host 127.0.0.1 --port 7480 --persist-listen
 ```
 
 ## First-run authentication and browse policy

@@ -71,6 +71,8 @@ Import Upload Assistant Python, upbrr YAML, or upbrr JSON:
 
 Import merges the supplied data with current defaults before saving it. Review warnings and inspect Settings afterward.
 
+For Upload Assistant Python files, see [migration guidance](../getting-started/migrate-from-upload-assistant.md) for supported assignments and skipped incomplete client entries. Retired THR settings and Pronfo fields are removed when configuration is loaded or imported.
+
 ## Export configuration
 
 The default YAML export preserves secret values in encrypted form:

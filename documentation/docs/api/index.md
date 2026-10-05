@@ -62,6 +62,14 @@ The current API registers these top-level resources:
 
 Methods, request bodies, response schemas, status codes, idempotency rules, and nested workflow routes can change as the alpha API evolves. Generate clients from the OpenAPI document shipped with the binary you run.
 
+### Tracker questionnaires
+
+The `trackers_projected` workflow goal prepares selected tracker names and questionnaire requirements before duplicate assessment. Read each tracker's returned questionnaire schema and current answers rather than hard-coding field names or assuming all trackers ask the same questions. Requirements can depend on the prepared release, saved answers, or later tracker lookup results.
+
+Submit questionnaire answers through the projection instructions defined by the running OpenAPI contract. Changing only those answers can retain compatible duplicate evidence; changes to the release, selection, or relevant tracker context can invalidate it. Use the resulting workflow state and required actions to decide the next step. Questionnaire projection is not upload approval.
+
+See [Tracker questions](../workflow/index.md#tracker-questions) for the equivalent browser workflow.
+
 ### Audio-analysis routes
 
 Audio analysis is a workflow-bound optional operation:

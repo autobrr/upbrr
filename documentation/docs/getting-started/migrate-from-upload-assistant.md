@@ -23,6 +23,10 @@ The importer accepts:
 
 Read every warning. Unknown legacy keys, unsupported tracker fields, and unsupported image-host settings can be omitted or adjusted.
 
+Python imports accept both `config = {...}` and type-annotated assignments such as `config: dict = {...}`. The importer reads supported literal values; it does not execute the Python file.
+
+Unused incomplete torrent-client examples are skipped with a warning. A client referenced by default, search, injection, or tracker settings is retained for validation instead of silently discarded. Complete or remove those references before retrying a rejected import. THR and its retired Pronfo settings are no longer imported.
+
 The Web UI also provides config import in **Settings**.
 
 ## Convert to YAML first
@@ -59,4 +63,4 @@ Existing browse roots remain unchanged when application config is imported.
 
 ## Validate the migration
 
-Check metadata credentials, trackers, image hosts, torrent clients, screenshot settings, and post-upload behavior. Then run one workflow with `--debug --no-seed` or use the Web UI dry run before submitting anything.
+Check metadata credentials, trackers, image hosts, torrent clients, screenshot settings, and post-upload behavior. Then run one workflow with `--debug --no-seed`, or select **Skip client injection** before the Web UI **Dry Run**, before submitting anything.
