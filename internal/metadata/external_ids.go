@@ -1513,12 +1513,18 @@ func shouldFetchAniListMetadata(malID int, metadata *api.AniListMetadata) bool {
 }
 
 // shouldUseTVDBForCategory reports whether TVDB data may be used for the resolved media category.
-// Any explicit MOVIE category is authoritative over TV hints from MediaInfo, stored IDs, release data, or the filename.
+// Explicit category corrections win over parsed and retained evidence. Without a
+// correction, any known Movie category continues to block TVDB acquisition.
 func shouldUseTVDBForCategory(meta preparationstate.State, ids api.ExternalIdentity) bool {
-	candidates := []string{string(ids.Category), string(meta.Identity.Category), meta.MediaInfoCategory, meta.Release.Category}
 	if meta.ReleaseNameOverrides.Category != nil {
-		candidates = append(candidates, *meta.ReleaseNameOverrides.Category)
+		switch normalizeCategory(*meta.ReleaseNameOverrides.Category) {
+		case "TV":
+			return true
+		case "MOVIE":
+			return false
+		}
 	}
+	candidates := []string{string(ids.Category), string(meta.Identity.Category), meta.MediaInfoCategory, meta.Release.Category}
 	for _, candidate := range candidates {
 		if normalizeCategory(candidate) == "MOVIE" {
 			return false

@@ -247,7 +247,7 @@ func TestProjectionContinuationRefreshesPersistedGroupSchemasWithoutRepreparing(
 					t.Fatalf("legacy group field retained: %s", field.Key)
 				}
 			}
-			if preparations != 1 || updated.Release.Release.Generation != prepared.Generation || updated.Release.Release.Compatibility != prepared.Compatibility || prepared.Compatibility.ContractVersion != "prepared-release-v26" {
+			if preparations != 1 || updated.Release.Release.Generation != prepared.Generation || updated.Release.Release.Compatibility != prepared.Compatibility || prepared.Compatibility.ContractVersion != preparedrelease.ContractVersion {
 				t.Fatal("schema upgrade changed prepared generation")
 			}
 		})
