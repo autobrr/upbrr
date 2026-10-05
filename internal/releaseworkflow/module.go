@@ -5615,8 +5615,12 @@ func (m *Module) captureMedia(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build media artifacts: %w", err)
 	}
-	snapshot.ImageRequirementsPrepared = false
-	snapshot.ImageHostUploadSkipped = false
+	// Stale prep flags from priorMedia would skip UploadMediaImages / MediaSelection.
+	// Fresh builds keep any ImageRequirementsPrepared set by the builder.
+	if priorMedia != nil {
+		snapshot.ImageRequirementsPrepared = false
+		snapshot.ImageHostUploadSkipped = false
+	}
 	requirementsFingerprint, err := mediaRequirementsFingerprint(eligibleProjections.Projections)
 	if err != nil {
 		return CommandResult{}, err
