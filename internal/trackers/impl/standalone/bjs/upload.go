@@ -193,7 +193,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 		description:   description,
 		releaseName:   releaseName,
 		fields:        fields,
-		questionnaire: buildQuestionnaire(req.Meta, fields),
+		questionnaire: buildQuestionnaire(req.Meta),
 	}
 	if reason := validateFields(fields); reason != "" {
 		state.blockedReason = reason

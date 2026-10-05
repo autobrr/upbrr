@@ -14,15 +14,16 @@ import (
 // Profile returns FL identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                "FL",
-		BaseURL:             baseURL,
-		DescriptionGroup:    "fl",
-		UploadContentMode:   trackers.UploadContentModeDescription,
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   namePolicy(),
-		NewDuplicateAdapter: newDuplicateAdapter,
-		ValidationPolicy:    validationPolicy(),
+		Name:                    "FL",
+		BaseURL:                 baseURL,
+		DescriptionGroup:        "fl",
+		UploadContentMode:       trackers.UploadContentModeDescription,
+		PrepareDescription:      prepareDescription,
+		PrepareUpload:           prepareUpload,
+		ProjectionQuestionnaire: projectionQuestionnaire,
+		ReleaseNamePolicy:       namePolicy(),
+		NewDuplicateAdapter:     newDuplicateAdapter,
+		ValidationPolicy:        validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source: "FL",
 		},

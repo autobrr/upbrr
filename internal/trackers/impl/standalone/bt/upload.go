@@ -196,7 +196,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 		description:   description,
 		releaseName:   releaseName,
 		fields:        fields,
-		questionnaire: buildQuestionnaire(req.Meta, fields),
+		questionnaire: buildQuestionnaire(req.Meta),
 	}
 	switch {
 	case len(fields["image"]) == 0 || strings.TrimSpace(fields["image"][0]) == "":

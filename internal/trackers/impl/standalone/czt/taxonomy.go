@@ -156,7 +156,7 @@ func firstCodec(meta api.UploadSubject) string {
 	return ""
 }
 
-// cztCategories lists CZTeam upload categories for the upload-time override
+// cztCategories lists CZTeam upload categories for the questionnaire override
 // dropdown. upbrr auto-detects only video categories from metadata; everything
 // else (software, games, music, XXX, images, docs, …) is chosen here.
 var cztCategories = []cztCategory{

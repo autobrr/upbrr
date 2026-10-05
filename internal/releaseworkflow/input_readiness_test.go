@@ -324,6 +324,51 @@ func (e registryQuestionnaireEvaluator) Evaluate(_ context.Context, subject api.
 	return result, nil
 }
 
+func TestTrackerInputResetClearsPreviouslyStagedConditionalField(t *testing.T) {
+	preparer := testPreparer()
+	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+		return api.UploadSubject{
+			SourcePath:                  input.Release.SourcePath,
+			Source:                      "BluRay",
+			Type:                        "ENCODE",
+			Identity:                    api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			ProviderMetadata:            api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: "Action"}},
+			TrackerQuestionnaireAnswers: input.QuestionnaireAnswers,
+		}, nil
+	}
+	module, repository := newTestModule(t, preparer, WithInputReadinessEvaluator(registryQuestionnaireEvaluator{registry: trackerimpl.MustNewRegistry()}))
+	current := executeCommand(t, module, CreateWorkflowCommand{Instructions: api.ReleaseFactInstructions{}})
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "Example.Release.2026"},
+	})
+	for _, value := range []*string{new("drama"), nil} {
+		current = executeCommand(t, module, EvaluateInputReadinessCommand{
+			WorkflowID:          current.Workflow.ID,
+			ExpectedRevision:    current.Workflow.Revision,
+			TrackerIDs:          []api.TrackerID{"ANT"},
+			TrackerInputAnswers: map[api.TrackerID]map[string]*string{"ANT": {"tags": value}},
+		})
+	}
+	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := state.TrackerInputAnswers["ANT"]["tags"]; exists {
+		t.Fatal("reset retained the tracker override")
+	}
+	_, err = module.Execute(t.Context(), testOwnerID, EvaluateInputReadinessCommand{
+		WorkflowID:          current.Workflow.ID,
+		ExpectedRevision:    current.Workflow.Revision,
+		TrackerIDs:          []api.TrackerID{"ANT"},
+		TrackerInputAnswers: map[api.TrackerID]map[string]*string{"ANT": {"unknown_field": nil}},
+	})
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("unknown new reset field accepted: %v", err)
+	}
+}
+
 func TestPTPInputResetClearsHiddenReviewField(t *testing.T) {
 	preparer := testPreparer()
 	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {

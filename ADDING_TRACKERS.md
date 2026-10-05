@@ -1054,9 +1054,7 @@ missing required questionnaire answers, or unavailable prepared media. Add combi
 validation behavior to `internal/trackers/rules_test.go`; add tracker-package tests for
 protocol-specific pure mapping or complex validation.
 
-New tracker-local reviews belong on Dupe Checking. PTP exposes these controls before duplicate
-checking; other existing trackers can still return their schemas during upload preparation, and
-OE retains its existing Input evidence controls. Bind `ProjectionQuestionnaire` in the standalone
+Tracker-local reviews belong on Dupe Checking. Bind `ProjectionQuestionnaire` in the standalone
 profile or Unit3D site profile, implemented in `questionnaire.go`. The callback receives finalized
 `PreparationInput`, including the centrally resolved name in `Projection.UploadReleaseName`, and
 must perform no I/O or payload preparation. Return backend-owned fields with stable keys,

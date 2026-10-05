@@ -77,6 +77,7 @@ describe("DupeCheckPage", () => {
               kind: "multiselect",
               required: false,
               options: ["First"],
+              help: "Choose matching values",
             },
           ],
         },
@@ -92,8 +93,13 @@ describe("DupeCheckPage", () => {
     const overview = screen.getByRole("textbox", { name: /Overview/ });
     expect(overview.tagName).toBe("TEXTAREA");
     expect(overview).toHaveValue("A retained answer");
+    expect(overview).toHaveAccessibleName("Overview *");
+    expect(overview).toHaveAccessibleDescription("Describe this release");
     expect(overview).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "First" })).toBeDisabled();
+    expect(screen.getByRole("group", { name: "Choices" })).toHaveAccessibleDescription(
+      "Choose matching values",
+    );
     expect(screen.getByRole("button", { name: "Apply tracker answers" })).toBeDisabled();
     expect(screen.queryByLabelText("Other question *")).not.toBeInTheDocument();
     expect(screen.getByText("Describe this release")).toBeInTheDocument();
@@ -107,8 +113,14 @@ describe("DupeCheckPage", () => {
           trackerId: "EXAMPLE",
           displayName: "Example Tracker",
           questionnaire: [
-            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
-            { key: "note", label: "Note", required: false },
+            {
+              key: "edition",
+              label: "Edition",
+              options: ["Standard", "Extended"],
+              required: true,
+              help: "Select the matching edition",
+            },
+            { key: "note", label: "Note", required: false, help: "Explain the correction" },
           ],
         },
       ],
@@ -117,8 +129,14 @@ describe("DupeCheckPage", () => {
       facetFor({ projections, questionnaires: projections.projections }, { answerQuestionnaire }),
     );
 
-    fireEvent.change(screen.getByLabelText("Edition *"), { target: { value: "Extended" } });
-    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Synthetic note" } });
+    const edition = screen.getByRole("combobox", { name: /Edition/ });
+    const note = screen.getByRole("textbox", { name: /Note/ });
+    expect(edition).toHaveAccessibleName("Edition *");
+    expect(note).toHaveAccessibleName("Note");
+    expect(edition).toHaveAccessibleDescription("Select the matching edition");
+    expect(note).toHaveAccessibleDescription("Explain the correction");
+    fireEvent.change(edition, { target: { value: "Extended" } });
+    fireEvent.change(note, { target: { value: "Synthetic note" } });
     expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "edition", "Extended");
     expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "note", "Synthetic note");
   });
@@ -178,6 +196,9 @@ describe("DupeCheckPage", () => {
     );
 
     expect(screen.getByRole("combobox", { name: "Edition *" })).toHaveValue("Legacy");
+    expect(screen.getByRole("combobox", { name: "Edition *" })).not.toHaveAttribute(
+      "aria-describedby",
+    );
     expect(screen.getByRole("option", { name: "Legacy (saved)" })).toBeInTheDocument();
   });
 

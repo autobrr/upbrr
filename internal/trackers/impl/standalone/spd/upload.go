@@ -65,7 +65,7 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
 	if state.blockedReason != "" {
-		return trackers.PreparedOperation{}, fmt.Errorf("trackers: SPD %s", state.blockedReason)
+		return trackers.PreparedOperation{}, trackers.NewQuestionnairePreparationFailure("SPD", state.blockedReason, state.questionnaire)
 	}
 
 	body, err := json.Marshal(state.payload)
@@ -219,7 +219,9 @@ func resolveChannel(ctx context.Context, req trackers.PreparationInput) (string,
 	if err == nil && id != "" {
 		return id, "", nil
 	}
-	return "", "answer the channel questionnaire with a valid channel id or tag", buildChannelQuestionnaire(input)
+	questionnaire := buildChannelQuestionnaire("")
+	questionnaire.Fields[0].Help = "The previous channel could not be resolved. Enter a valid channel ID or tag."
+	return "", "answer the channel questionnaire with a valid channel id or tag", questionnaire
 }
 
 func lookupChannelID(ctx context.Context, apiKey string, input string) (string, error) {

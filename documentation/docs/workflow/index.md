@@ -147,9 +147,9 @@ Debug mode is not a non-mutating dry run. It can perform screenshots, image uplo
 
 ## Tracker questions
 
-Answer PTP's tracker-specific questions on **Dupe Checking**, alongside release-name and duplicate review. Questions can include text, multiline notes, dropdowns, or multiple choices. Choose **Apply tracker answers** to refresh the review, then continue duplicate checking on the same page. Applying answers does not upload or start another duplicate search. Changes that have not been applied block dry runs and uploads.
+Answer tracker-specific questions on **Dupe Checking**, alongside release-name and duplicate review. Questions come from the selected trackers and can include text, multiline notes, dropdowns, or multiple choices. Choose **Apply tracker answers** to refresh the review, then continue duplicate checking on the same page. Applying answers does not upload or start another duplicate search. Changes that have not been applied block dry runs and uploads.
 
-Some new-group or channel requirements can only be confirmed during tracker preparation. Their exact required fields, including questions from other trackers, are also shown on **Dupe Checking** when preparation reports them. Existing-group uploads do not require new-group-only details. OE's source and encoding notes remain in **Input**, alongside canonical metadata and language corrections.
+Some new-group or channel requirements can only be confirmed during tracker preparation. Their exact required fields are also shown on **Dupe Checking** when preparation reports them. Existing-group uploads do not require new-group-only details. Tracker-local source and encoding notes are answered here; canonical metadata and language corrections remain in **Input**.
 
 ### Subtitle review
 

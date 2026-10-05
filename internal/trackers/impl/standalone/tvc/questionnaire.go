@@ -15,8 +15,11 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 )
 
-func buildQuestionnaire(req trackers.PreparationInput) *api.TrackerQuestionnaire {
-	releaseName, _ := req.ReviewedUploadName()
+func projectionQuestionnaire(req trackers.PreparationInput) *api.TrackerQuestionnaire {
+	releaseName := ""
+	if req.Projection != nil {
+		releaseName = req.Projection.UploadReleaseName
+	}
 	return &api.TrackerQuestionnaire{
 		Tracker: "TVC",
 		Fields: []api.TrackerQuestionnaireField{{

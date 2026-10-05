@@ -561,15 +561,22 @@ export default function DupeCheckPage({
               {projection.questionnaire?.map((field) => {
                 const answer =
                   view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? field.value ?? "";
+                const fieldId = `questionnaire-${projection.trackerId}-${field.key}`;
+                const labelId = `${fieldId}-label`;
+                const helpId = field.help ? `${fieldId}-help` : undefined;
                 if (field.kind === "multiselect") {
                   const selected = answer.split(",").filter(Boolean);
                   return (
-                    <fieldset className="grid gap-2" key={field.key}>
+                    <fieldset className="grid gap-2" key={field.key} aria-describedby={helpId}>
                       <legend>
                         {field.label || field.key}
                         {field.required ? " *" : ""}
                       </legend>
-                      {field.help ? <p className="text-muted-foreground">{field.help}</p> : null}
+                      {field.help ? (
+                        <p id={helpId} className="text-muted-foreground">
+                          {field.help}
+                        </p>
+                      ) : null}
                       {(field.options || []).map((option) => (
                         <label className="flex items-center gap-2" key={option}>
                           <input
@@ -594,15 +601,19 @@ export default function DupeCheckPage({
                 }
                 return (
                   <label className="grid gap-1" key={field.key}>
-                    <span className={pageStyle.label}>
+                    <span id={labelId} className={pageStyle.label}>
                       {field.label || field.key}
                       {field.required ? " *" : ""}
                     </span>
                     {field.help ? (
-                      <span className="text-muted-foreground text-sm">{field.help}</span>
+                      <span id={helpId} className="text-muted-foreground text-sm">
+                        {field.help}
+                      </span>
                     ) : null}
                     {field.options?.length ? (
                       <Select
+                        aria-labelledby={labelId}
+                        aria-describedby={helpId}
                         value={answer}
                         onChange={(event) =>
                           facet.answerQuestionnaire(
@@ -624,6 +635,8 @@ export default function DupeCheckPage({
                       </Select>
                     ) : field.kind === "textarea" ? (
                       <textarea
+                        aria-labelledby={labelId}
+                        aria-describedby={helpId}
                         value={answer}
                         onChange={(event) =>
                           facet.answerQuestionnaire(
@@ -635,6 +648,8 @@ export default function DupeCheckPage({
                       />
                     ) : (
                       <input
+                        aria-labelledby={labelId}
+                        aria-describedby={helpId}
                         value={answer}
                         onChange={(event) =>
                           facet.answerQuestionnaire(

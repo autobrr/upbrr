@@ -5,6 +5,8 @@ package gpw
 
 import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -50,4 +52,15 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string, answers map[stri
 		},
 	}
 	return &api.TrackerQuestionnaire{Tracker: "GPW", Fields: fields}
+}
+
+// projectionQuestionnaire offers new-group inputs without assuming remote group absence.
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	questionnaire := buildQuestionnaire(input.Meta, "", standalone.QuestionnaireAnswers(input.Meta, "GPW"))
+	for index := range questionnaire.Fields {
+		field := &questionnaire.Fields[index]
+		field.Required = input.Meta.Identity.IMDBID == 0 && field.Required
+		field.Help = "Used only when creating a new GPW group. Existing-group uploads ignore this field; group lookup runs during upload preparation."
+	}
+	return questionnaire
 }

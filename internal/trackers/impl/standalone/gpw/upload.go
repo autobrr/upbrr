@@ -61,7 +61,7 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
 	if state.blockedReason != "" {
-		return trackers.PreparedOperation{}, fmt.Errorf("trackers: GPW %s", state.blockedReason)
+		return trackers.PreparedOperation{}, trackers.NewQuestionnairePreparationFailure("GPW", state.blockedReason, state.questionnaire)
 	}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, []commonhttp.FileField{{
 		FieldName: "file_input",
@@ -275,7 +275,7 @@ func buildFields(
 		fields["data_source"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["data_source"]), "imdb")
 		fields["identifier"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["identifier"]), resolveIdentifier(meta))
 		fields["desc"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["desc"]), resolveOverview(meta))
-		fields["image"] = strings.TrimSpace(answers["poster_url"])
+		fields["image"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["poster_url"]), resolvePoster(meta))
 		fields["maindesc"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["main_desc"]), resolveOverview(meta))
 		fields["name"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["title"]), meta.Release.Title)
 		fields["releasetype"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["release_type"]), resolveMovieType(meta))

@@ -17,11 +17,10 @@ func Profile() unit3d.Profile {
 		BannedGroups:      BannedGroups(),
 		ReleaseNamePolicy: namePolicy(),
 		Site: unit3d.SiteProfile{
-			BuildDescription:       buildDescription,
-			InputSchema:            inputSchema,
-			InputReadiness:         inputReadiness,
-			ResolveTypeID:          typeID,
-			ApplyAdditionalPayload: additionalPayload,
+			BuildDescription:        buildDescription,
+			ProjectionQuestionnaire: projectionQuestionnaire,
+			ResolveTypeID:           typeID,
+			ApplyAdditionalPayload:  additionalPayload,
 		},
 		ImageHost: &trackers.ImageHostPolicy{
 			AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},

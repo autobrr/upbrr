@@ -216,7 +216,7 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 		description:   description,
 		releaseName:   releaseName,
 		fields:        fields,
-		questionnaire: buildQuestionnaire(req),
+		questionnaire: projectionQuestionnaire(req),
 		blockedReason: validateUpload(req.TrackerConfig, assets),
 	}, nil
 }
