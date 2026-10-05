@@ -257,3 +257,32 @@ func testWorkflowCommandContext() ReleaseWorkflowCommandContext {
 		IdempotencyKey:   "intent-1",
 	}
 }
+
+func TestProjectionOnlyContinuationRejectsUnrelatedMutations(t *testing.T) {
+	for _, scenario := range []string{"valid", "no authority", "facts", "tracker input", "action", "approval"} {
+		t.Run(scenario, func(t *testing.T) {
+			request := ContinueReleaseWorkflowRequest{
+Authority: &WorkflowAuthority{WorkflowID: "projection", ExpectedRevision: 1},
+ IdempotencyKey: "project",
+ Goal: WorkflowGoalTrackersProjected,
+ Intent: WorkflowIntent{TrackerIDs: []TrackerID{"PTP"}},
+}
+			switch scenario {
+			case "no authority":
+				request.Authority = nil
+			case "facts":
+				request.Intent.FactInstructions = &ReleaseFactInstructions{}
+			case "tracker input":
+				request.Intent.TrackerInputAnswers = map[TrackerID]map[string]*string{"PTP": {"trumpable_review": new("yes")}}
+			case "action":
+				request.Answers = []RequiredActionAnswer{{ActionID: "answer"}}
+			case "approval":
+				request.TrackerApproval = &TrackerApproval{}
+			}
+			err := request.Validate()
+			if (err == nil) != (scenario == "valid") {
+				t.Fatalf("validation=%v", err)
+			}
+		})
+	}
+}

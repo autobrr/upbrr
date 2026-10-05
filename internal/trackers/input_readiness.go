@@ -103,8 +103,15 @@ func EvaluateInputReadiness(registry *Registry, selected []api.TrackerID, subjec
 			}
 		}
 		descriptor, found := registry.LookupDescriptor(string(trackerID))
-		if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); found && ok {
-			if schema := provider.ProjectionQuestionnaire(PreparationInput{Tracker: string(trackerID), Meta: subject}); schema != nil {
+		if found {
+			input := PreparationInput{Tracker: string(trackerID), Meta: subject}
+			var schema *api.TrackerQuestionnaire
+			if provider, ok := descriptor.Definition.(TrackerAnswerSchemaProvider); ok {
+				schema = provider.TrackerAnswerSchema(input)
+			} else if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); ok {
+				schema = provider.ProjectionQuestionnaire(input)
+			}
+			if schema != nil {
 				evaluation.TrackerQuestionnaires = append(evaluation.TrackerQuestionnaires, *schema)
 			}
 		}

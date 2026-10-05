@@ -3639,7 +3639,7 @@ func (m *Module) apply(
 	command mutation,
 ) (CommandResult, error) {
 	switch command.(type) {
-	case PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand:
+	case ProjectTrackersCommand, PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand:
 	default:
 		state.PendingDuplicateReuse = nil
 	}
@@ -4567,7 +4567,15 @@ func (m *Module) projectTrackers(
 	now time.Time,
 	command ProjectTrackersCommand,
 ) (CommandResult, error) {
-	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, command, nil)
+	questionnaireOnly, err := stageQuestionnaireDuplicateReuse(state, command)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	var authorizations map[api.TrackerID]api.WorkflowFingerprint
+	if questionnaireOnly && state.Workflow.TrackerProjections != nil {
+		authorizations = projectionRuleAuthorizations(state.Projections[state.Workflow.TrackerProjections.ID])
+	}
+	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, command, authorizations)
 }
 
 func (m *Module) projectTrackersWithRuleAuthorizations(
@@ -4873,7 +4881,15 @@ func (m *Module) preflightTrackers(
 		return CommandResult{}, err
 	}
 	setWorkflowStageStatus(&state.Workflow, finalSet.Status, finalSet.RequiredActions, finalSet.Failures)
-	return CommandResult{Preflight: &assessment, Projections: &finalSet}, nil
+	reused, err := m.rebindQuestionnaireDupes(ctx, ownerID, state, nextRevision, now, command, finalSet, assessment)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return CommandResult{
+		Preflight:   &assessment,
+		Projections: &finalSet,
+		Dupes:       reused,
+	}, nil
 }
 
 func applyPreflightInteractionPolicy(
@@ -5172,11 +5188,18 @@ func (m *Module) checkDuplicates(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build duplicate assessment: %w", err)
 	}
+	return m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, privateEvidence, command.CheckOrdinal)
+}
+
+func (m *Module) publishBuiltDupes(
+	ownerID string, state *State, nextRevision api.WorkflowRevision, now time.Time,
+	projections api.TrackerReleaseProjectionSet, snapshot api.DupeAssessment, privateEvidence any, checkOrdinal uint8,
+) (CommandResult, error) {
 	if err := validateDupeBuild(projections, snapshot); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build duplicate assessment: %w", err)
 	}
-	snapshot.CheckOrdinal = normalizedDuplicateCheckOrdinal(command.CheckOrdinal)
-	snapshot.InputFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+	snapshot.CheckOrdinal = normalizedDuplicateCheckOrdinal(checkOrdinal)
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		BuilderFingerprint api.WorkflowFingerprint
 		CheckOrdinal       uint8
 	}{
@@ -5186,6 +5209,7 @@ func (m *Module) checkDuplicates(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint duplicate assessment ordinal: %w", err)
 	}
+	snapshot.InputFingerprint = fingerprint
 	if err := m.stampDupeActions(&snapshot, nextRevision, now); err != nil {
 		return CommandResult{}, err
 	}
@@ -5197,7 +5221,7 @@ func (m *Module) checkDuplicates(
 	if privateEvidence != nil && result.Dupes != nil {
 		if err := m.private.Put(
 			ownerID,
-			workflow.ID,
+			state.Workflow.ID,
 			dupePrivateResourceID(result.Dupes.ID),
 			privateEvidence,
 			result.Dupes.ExpiresAt,

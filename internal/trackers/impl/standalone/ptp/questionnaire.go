@@ -79,9 +79,18 @@ var subtitleReviewOptions = []string{
 	"Hardcoded Subs (Non-English)",
 }
 
-// projectionQuestionnaire exposes subtitle review and optional new-group inputs.
-// Group existence is checked remotely during upload preparation, never here.
+// projectionQuestionnaire exposes only the applicable subtitle review controls.
+// New-group requirements are discovered during remote upload preparation.
 func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	return &api.TrackerQuestionnaire{
+		Tracker: "PTP",
+		Fields:  append(subtitleReviewFields(input.Meta, standalone.QuestionnaireAnswers(input.Meta, "PTP")), legacySubtitleField(input.Meta)),
+	}
+}
+
+// TrackerAnswerSchema retains CLI staging for group fields without publishing
+// speculative new-group requirements or making them canonical Input gates.
+func (d *Definition) TrackerAnswerSchema(input trackers.PreparationInput) *api.TrackerQuestionnaire {
 	questionnaire := buildQuestionnaire(input.Meta, "")
 	questionnaire.Fields = append(questionnaire.Fields, legacySubtitleField(input.Meta))
 	for index := range questionnaire.Fields {

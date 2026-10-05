@@ -1178,6 +1178,10 @@ func newSchemaBuilder() *schemaBuilder {
 		owners:   make(map[string]reflect.Type),
 		visiting: make(map[reflect.Type]bool),
 		enums: map[reflect.Type][]any{
+			reflect.TypeFor[api.WorkflowGoal](): stringValues(
+				"prepared", "input_ready", "trackers_projected", "trackers_assessed", "duplicates_decided",
+				"media_ready", "descriptions_ready", "upload_reviewed", "dry_run", "uploaded",
+			),
 			reflect.TypeFor[api.ReleaseWorkflowUploadMode]():           stringValues("upload", "debug"),
 			reflect.TypeFor[api.ReleaseWorkflowPreparedReleaseMode]():  stringValues("allow", "require"),
 			reflect.TypeFor[api.ReleaseWorkflowDuplicateDisposition](): stringValues("ask", "block", "upload"),

@@ -278,7 +278,7 @@ describe("web client", () => {
     initializeWebClient("stale-csrf", false);
 
     const request = {
-      goal: "prepared",
+      goal: "prepared" as const,
       idempotencyKey: "create-1",
       intent: {
         factInstructions: {

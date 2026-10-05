@@ -12,19 +12,18 @@ import (
 // Profile returns GPW identity, preparation, dupe, bans, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		ProjectionQuestionnaire: projectionQuestionnaire,
-		UsesMenuImages:          true,
-		Name:                    "GPW",
-		BaseURL:                 baseURL,
-		DescriptionGroup:        "gpw",
-		UploadContentMode:       trackers.UploadContentModeDescription,
-		AuthCapability:          authcontract.APIKeyCapability("GPW"),
-		PrepareDescription:      prepareDescription,
-		PrepareUpload:           prepareUpload,
-		NewDuplicateAdapter:     newDuplicateAdapter,
-		ValidationPolicy:        validationPolicy(),
-		BannedGroups:            bannedGroups(),
-		UploadArtifactPolicy:    &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
+		UsesMenuImages:       true,
+		Name:                 "GPW",
+		BaseURL:              baseURL,
+		DescriptionGroup:     "gpw",
+		UploadContentMode:    trackers.UploadContentModeDescription,
+		AuthCapability:       authcontract.APIKeyCapability("GPW"),
+		PrepareDescription:   prepareDescription,
+		PrepareUpload:        prepareUpload,
+		NewDuplicateAdapter:  newDuplicateAdapter,
+		ValidationPolicy:     validationPolicy(),
+		BannedGroups:         bannedGroups(),
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
 			AllowedHosts: []string{"kshare", "pixhost", "pterclub", "ilikeshots", "imgbox"},
 		},
@@ -34,5 +33,8 @@ func Profile() standalone.Profile {
 	}
 }
 
+// Definition keeps legacy group-answer staging separate from visible review questions.
+type Definition struct{ *standalone.Definition }
+
 // New returns a fresh GPW definition from its tracker-local profile.
-func New() *standalone.Definition { return standalone.MustNew(Profile()) }
+func New() *Definition { return &Definition{Definition: standalone.MustNew(Profile())} }

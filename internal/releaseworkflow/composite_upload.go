@@ -1232,6 +1232,7 @@ func compositeUploadGoalReached(current CommandResult, session *compositeUploadS
 		return current.UploadResult != nil
 	case api.WorkflowGoalPrepared,
 		api.WorkflowGoalInputReady,
+		api.WorkflowGoalTrackersProjected,
 		api.WorkflowGoalTrackersAssessed,
 		api.WorkflowGoalDuplicatesDecided,
 		api.WorkflowGoalMediaReady,

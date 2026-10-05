@@ -11455,7 +11455,19 @@
         "type": "string"
       },
       "WorkflowGoal": {
-        "type": "string"
+        "type": "string",
+        "enum": [
+          "prepared",
+          "input_ready",
+          "trackers_projected",
+          "trackers_assessed",
+          "duplicates_decided",
+          "media_ready",
+          "descriptions_ready",
+          "upload_reviewed",
+          "dry_run",
+          "uploaded"
+        ]
       },
       "WorkflowID": {
         "type": "string"

@@ -16,7 +16,6 @@ const current = (): ReleaseWorkflowCurrent =>
           trackerId: "EXAMPLE",
           displayName: "Example Tracker",
           questionnaire: [
-            { key: "poster", label: "Poster", required: false, value: "" },
             { key: "subtitle", label: "Subtitle review", required: true, value: "no" },
           ],
         },
@@ -49,7 +48,7 @@ describe("workflowQuestionnaires", () => {
     const workflow = current();
     const questions = workflowQuestionnaires(workflow);
     expect(questions).toHaveLength(1);
-    expect(questions[0].questionnaire).toEqual([
+    expect(questions[0].preparationQuestionnaire).toEqual([
       {
         key: "poster",
         label: "Poster",
@@ -57,10 +56,46 @@ describe("workflowQuestionnaires", () => {
         value: "",
         help: "A new group requires a poster",
       },
-      { key: "subtitle", label: "Subtitle review", required: true, value: "no" },
       { key: "director", label: "Director", required: true, value: "Example Director" },
     ]);
-    expect(workflow.projections?.projections[0].questionnaire?.[0].required).toBe(false);
+    expect(questions[0].questionnaire).toEqual([
+      { key: "subtitle", label: "Subtitle review", required: true, value: "no" },
+    ]);
+    expect(workflow.projections?.projections[0].questionnaire).toHaveLength(1);
+  });
+
+  it("keeps late validation of a pure question in its original panel", () => {
+    const workflow = current();
+    const updated: ReleaseWorkflowCurrent = {
+      ...workflow,
+      dryRun: {
+        ...workflow.dryRun!,
+        reports: [
+          {
+            ...workflow.dryRun!.reports[0],
+            questionnaire: [
+              {
+                key: "subtitle",
+                label: "Subtitle review",
+                required: true,
+                value: "",
+                help: "Review this choice again",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    expect(workflowQuestionnaires(updated)[0].questionnaire).toEqual([
+      {
+        key: "subtitle",
+        label: "Subtitle review",
+        required: true,
+        value: "",
+        help: "Review this choice again",
+      },
+    ]);
+    expect(workflowQuestionnaires(updated)[0].preparationQuestionnaire).toEqual([]);
   });
 
   it("preserves exact reviewed URL values when late reports redact display values", () => {
@@ -73,7 +108,8 @@ describe("workflowQuestionnaires", () => {
         projections: [
           {
             ...workflow.projections!.projections[0],
-            questionnaire: [{ key: "poster", label: "Poster", required: false, value: reviewed }],
+            questionnaire: [],
+            questionnaireAnswers: { poster: reviewed },
           },
         ],
       },
@@ -94,7 +130,7 @@ describe("workflowQuestionnaires", () => {
         ],
       },
     };
-    expect(workflowQuestionnaires(updated)[0].questionnaire?.[0]).toEqual({
+    expect(workflowQuestionnaires(updated)[0].preparationQuestionnaire?.[0]).toEqual({
       key: "poster",
       label: "Poster",
       required: true,
@@ -111,9 +147,7 @@ describe("workflowQuestionnaires", () => {
         projections: [
           {
             ...workflow.projections!.projections[0],
-            questionnaire: [
-              { key: "channel", label: "Channel", required: true, value: "rejected" },
-            ],
+            questionnaire: [],
             questionnaireAnswers: { channel: "rejected" },
           },
         ],
@@ -136,7 +170,7 @@ describe("workflowQuestionnaires", () => {
         ],
       },
     };
-    expect(workflowQuestionnaires(updated)[0].questionnaire?.[0]).toEqual({
+    expect(workflowQuestionnaires(updated)[0].preparationQuestionnaire?.[0]).toEqual({
       key: "channel",
       label: "Channel",
       required: true,

@@ -441,3 +441,62 @@ func TestPTPInputResetClearsHiddenReviewField(t *testing.T) {
 		t.Fatalf("unknown new reset field accepted: %v", err)
 	}
 }
+
+func TestPrivateGroupAnswerSchemasPreserveCLIStagingWithoutInputGates(t *testing.T) {
+	registry := trackerimpl.MustNewRegistry()
+	for _, tracker := range []api.TrackerID{"PTP", "GPW"} {
+		t.Run(string(tracker), func(t *testing.T) {
+			preparer := testPreparer()
+			preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+				return api.UploadSubject{
+SourcePath: input.Release.SourcePath,
+ Source: "BluRay",
+ Type: "ENCODE",
+ AudioLanguages: []string{"French"},
+ Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+ TrackerQuestionnaireAnswers: input.QuestionnaireAnswers,
+}, nil
+			}
+			module, repository := newTestModule(t, preparer, WithInputReadinessEvaluator(registryQuestionnaireEvaluator{registry: registry}))
+			current := executeCommand(t, module, CreateWorkflowCommand{})
+			current = executeCommand(t, module, PrepareReleaseCommand{
+WorkflowID: current.Workflow.ID,
+ ExpectedRevision: current.Workflow.Revision,
+ Input: api.PrepareInput{SourcePath: "Example.Release.2026"},
+})
+			keys := []string{"title", "year", "poster", "tags", "trailer", "album_desc"}
+			if tracker == "GPW" {
+				keys = []string{"poster_url", "director_imdb", "director_name", "director_chinese", "tags"}
+			}
+			for _, value := range []*string{new("original"), new("updated"), nil} {
+				answers := make(map[string]*string, len(keys))
+				for _, key := range keys {
+					answers[key] = value
+				}
+				current = executeCommand(t, module, EvaluateInputReadinessCommand{
+WorkflowID: current.Workflow.ID,
+ ExpectedRevision: current.Workflow.Revision,
+ TrackerIDs: []api.TrackerID{tracker},
+ TrackerInputAnswers: map[api.TrackerID]map[string]*string{tracker: answers},
+})
+				if len(current.InputReadiness.Schemas) != 0 {
+					t.Fatal("legacy group schema became an Input control")
+				}
+				state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, key := range keys {
+					got, exists := state.TrackerInputAnswers[tracker][key]
+					if value == nil {
+						if exists {
+							t.Fatalf("null did not remove %s", key)
+						}
+					} else if got != *value {
+						t.Fatalf("staged %s=%q", key, got)
+					}
+				}
+			}
+		})
+	}
+}

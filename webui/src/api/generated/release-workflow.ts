@@ -2807,7 +2807,7 @@ export type WorkflowFailure = Readonly<{
 
 export type WorkflowFingerprint = string;
 
-export type WorkflowGoal = string;
+export type WorkflowGoal = "prepared" | "input_ready" | "trackers_projected" | "trackers_assessed" | "duplicates_decided" | "media_ready" | "descriptions_ready" | "upload_reviewed" | "dry_run" | "uploaded";
 
 export type WorkflowID = string;
 

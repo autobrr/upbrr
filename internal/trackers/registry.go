@@ -95,6 +95,9 @@ func (r *Registry) Register(def Definition) error {
 		if _, ok := def.(ProjectionQuestionnaireProvider); ok {
 			descriptor.ProjectorVersion += "-questionnaire-v2"
 		}
+		if _, ok := def.(TrackerAnswerSchemaProvider); ok {
+			descriptor.ProjectorVersion += "-answer-schema-v1"
+		}
 		if provider, ok := def.(ReleaseNamePolicyProvider); ok {
 			descriptor.ReleaseNamePolicy = provider.ReleaseNamePolicy()
 		} else {

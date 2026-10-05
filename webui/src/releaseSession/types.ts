@@ -212,8 +212,12 @@ export type DuplicatesFacet = Readonly<{
     selectedTrackers: readonly string[];
     questionnaires: readonly Pick<
       TrackerReleaseProjection,
-      "trackerId" | "displayName" | "questionnaire"
+      "trackerId" | "displayName" | "questionnaire" | "questionnaireAnswers"
     >[];
+    /** Late-only fields from the exact current tracker preparation report. */
+    preparationQuestionnaires: DuplicatesFacet["view"]["questionnaires"];
+    questionnaireStatus: FacetStatus;
+    questionnaireError: string;
     questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
     /** Local edits differ from the exact reviewed tracker answers. */
     questionnaireDirty: boolean;
@@ -224,6 +228,8 @@ export type DuplicatesFacet = Readonly<{
   run(): Promise<boolean>;
   cancel(): Promise<boolean>;
   chooseTrackers(trackers: readonly string[]): void;
+  /** Discover questions from prepared facts without preflight or external tracker requests. */
+  refreshQuestionnaires(): Promise<boolean>;
   answerQuestionnaire(tracker: string, key: string, value: string): void;
   /** Apply tracker answers and refresh their required questions without uploading or starting a duplicate search. */
   applyQuestionnaireAnswers(): Promise<boolean>;

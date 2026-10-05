@@ -479,6 +479,13 @@ type ProjectionQuestionnaireProvider interface {
 	ProjectionQuestionnaire(PreparationInput) *api.TrackerQuestionnaire
 }
 
+// TrackerAnswerSchemaProvider overrides the private accepted-answer schema used
+// by legacy CLI staging. It neither publishes Input controls nor gates readiness.
+// Other trackers use their ProjectionQuestionnaire schema for staging.
+type TrackerAnswerSchemaProvider interface {
+	TrackerAnswerSchema(PreparationInput) *api.TrackerQuestionnaire
+}
+
 // UploadArtifactPolicy declares tracker torrent personalization fields.
 type UploadArtifactPolicy struct {
 	// Source replaces the torrent info dictionary's private-tracker source field.

@@ -54,8 +54,9 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string, answers map[stri
 	return &api.TrackerQuestionnaire{Tracker: "GPW", Fields: fields}
 }
 
-// projectionQuestionnaire offers new-group inputs without assuming remote group absence.
-func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+// TrackerAnswerSchema accepts legacy group inputs without publishing speculative
+// group requirements before remote upload preparation determines applicability.
+func (d *Definition) TrackerAnswerSchema(input trackers.PreparationInput) *api.TrackerQuestionnaire {
 	questionnaire := buildQuestionnaire(input.Meta, "", standalone.QuestionnaireAnswers(input.Meta, "GPW"))
 	for index := range questionnaire.Fields {
 		field := &questionnaire.Fields[index]

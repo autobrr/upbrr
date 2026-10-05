@@ -308,7 +308,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"poster_url", "director_imdb", "director_name", "director_chinese", "tags"},
 		descriptionGroup:  "gpw",
 		releaseNamePolicy: "standalone/canonical/v1",
-		projectorVersion:  "standalone-v2-questionnaire-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2-answer-schema-v1",
 		principalName:     "name",
 	},
 	{
@@ -396,7 +396,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"title", "year", "poster", "tags", "trailer", "album_desc"},
 		descriptionGroup:  "ptp",
 		releaseNamePolicy: "standalone/canonical/v1",
-		projectorVersion:  "standalone-v2-questionnaire-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2-answer-schema-v1",
 		principalName:     "title",
 	},
 	{

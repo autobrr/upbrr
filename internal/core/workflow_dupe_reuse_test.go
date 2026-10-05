@@ -15,8 +15,11 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -418,5 +421,150 @@ func TestWorkflowDupeReuseRejectsChangedOrStaleEvidence(t *testing.T) {
 				t.Fatalf("new local-client match did not block: %#v", result)
 			}
 		})
+	}
+}
+
+func TestQuestionnaireRebindRejectsChangedDuplicateContextWithoutSearching(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*workflowDupeReuseFixture)
+	}{
+		{"answers only", func(*workflowDupeReuseFixture) {}},
+		{"source", func(f *workflowDupeReuseFixture) { f.projections.ReleaseRef.SourcePath += ".changed" }},
+		{"generation", func(f *workflowDupeReuseFixture) { f.projections.ReleaseRef.Generation++ }},
+		{"name", func(f *workflowDupeReuseFixture) { f.projections.Projections[1].UploadReleaseName += ".changed" }},
+		{"search", func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicateSearchFingerprint = "changed" }},
+		{"target", func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicateTargetFingerprint = "changed" }},
+		{"configuration", func(f *workflowDupeReuseFixture) { f.projections.Projections[1].ConfigFingerprint = "changed" }},
+		{"policy", func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicatePolicyFingerprint = "changed" }},
+		{"rules", func(f *workflowDupeReuseFixture) {
+			f.projections.Projections[1].RuleAuthorizationFingerprint = "changed"
+		}},
+		{"resources", func(f *workflowDupeReuseFixture) {
+			f.projections.Projections[1].PreparedResourceFingerprint = "changed"
+		}},
+		{"expiry", func(f *workflowDupeReuseFixture) { f.reuse.Assessment.Results[1].FreshUntil = f.now }},
+		{"private evidence", func(f *workflowDupeReuseFixture) { f.reuse.PrivateEvidence = nil }},
+		{"skip mode", func(f *workflowDupeReuseFixture) { f.skipRemote = true }},
+		{"in client", func(f *workflowDupeReuseFixture) { f.subject.MatchedTrackers = []string{"BETA"} }},
+		{"old in client", func(f *workflowDupeReuseFixture) { f.reuse.Assessment.Results[1].Matches[0].Reason = "in_client" }},
+		{"readiness", func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DupeReady = false }},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			f := newWorkflowDupeReuseFixture(t)
+			f.reuse.QuestionnaireOnly = true
+			f.reuse.InvalidatedTrackers = nil
+			f.projections.Projections[1].QuestionnaireAnswers = map[string]string{"review": "yes"}
+			f.projections.Projections[1].Questionnaire = []api.TrackerQuestionnaireRequirement{{Key: "review", Value: "yes"}}
+			test.change(&f)
+			assessment, _, err := f.builder.RebindQuestionnaire(t.Context(), f.subject, f.projections, f.preflight, f.now, f.skipRemote, f.reuse)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(assessment.Results) > 0; got != (test.name == "answers only") {
+				t.Fatalf("rebind=%t", got)
+			}
+			for trackerID, calls := range f.service.calls {
+				if calls != 1 {
+					t.Fatalf("rebind remotely searched %s", trackerID)
+				}
+			}
+			if test.name == "answers only" && !assessment.Results[1].FreshUntil.Equal(f.reuse.Assessment.Results[1].FreshUntil) {
+				t.Fatal("freshness changed")
+			}
+		})
+	}
+}
+
+func TestNamingQuestionnaireEditsRemainDuplicateRelevant(t *testing.T) {
+	registry := trackerimpl.MustNewRegistry()
+	generated := metadata.BuildReleaseName(api.ReleaseNameRequest{
+		Category:    "MOVIE",
+		Type:        "WEBDL",
+		Title:       "Example Movie",
+		Year:        2026,
+		Resolution:  "1080p",
+		Source:      "WEB",
+		VideoEncode: "H.264",
+		Tag:         "-GRP",
+	}, nil)
+	for tracker, key := range map[string]string{"FL": "name", "TVC": "name_override"} {
+		t.Run(tracker, func(t *testing.T) {
+			subject := api.UploadSubject{
+				ReleaseName:   generated.Name,
+				GeneratedName: generated.GeneratedName,
+				Type:          "WEBDL",
+				Source:        "WEB",
+				Identity:      api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 123},
+				Release: api.ReleaseInfo{
+					Title:      "Example Movie",
+					Year:       2026,
+					Resolution: "1080p",
+				},
+			}
+			input := trackers.PreparationInput{Tracker: tracker, Meta: subject}
+			first, failure := registry.ProjectRelease(t.Context(), input, "", "", "")
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			input.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{tracker: {key: "Changed Reviewed Name-GRP"}}
+			second, failure := registry.ProjectRelease(t.Context(), input, "", "", "")
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			a, err := reusableDupeProjectionFingerprint(first, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := reusableDupeProjectionFingerprint(second, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.UploadReleaseName == second.UploadReleaseName || a == b {
+				t.Fatal("naming questionnaire change retained duplicate fingerprint")
+			}
+		})
+	}
+}
+
+func TestQuestionnaireRebindPreservesUnchangedSkippedSibling(t *testing.T) {
+	f := newWorkflowDupeReuseFixture(t)
+	f.reuse.QuestionnaireOnly = true
+	f.reuse.InvalidatedTrackers = nil
+	f.projections.Projections[0].QuestionnaireAnswers = map[string]string{"review": "yes"}
+	for _, projections := range []*api.TrackerReleaseProjectionSet{&f.projections, &f.reuse.Projections} {
+		projection := &projections.Projections[1]
+		projection.Readiness = api.ReadinessStatusBlocked
+		projection.DupeReady = false
+		projection.UploadReady = false
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint(f.reuse.Projections.Projections[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.reuse.Assessment.Results[1].ProjectionFingerprint = fingerprint
+	f.reuse.Assessment.Results[1].Decision = api.DupeDecisionSkipped
+	f.reuse.Assessment.Results[1].Status = api.StageStatusSkipped
+	f.reuse.Assessment.Results[1].Matches = nil
+	f.preflight.Results[1].State = api.TrackerPreflightStateActionRequired
+	assessment, _, err := f.builder.RebindQuestionnaire(t.Context(), f.subject, f.projections, f.preflight, f.now, false, f.reuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assessment.Results) != len(f.projections.Projections) || assessment.Results[1].Decision != api.DupeDecisionSkipped {
+		t.Fatal("unchanged blocked sibling forced a duplicate search")
+	}
+	for trackerID, calls := range f.service.calls {
+		if calls != 1 {
+			t.Fatalf("rebind searched %s", trackerID)
+		}
+	}
+	// A newly blocked lane must retain its original private baseline, not republish authority.
+	f.projections.Projections[0].Readiness = api.ReadinessStatusBlocked
+	f.projections.Projections[0].DupeReady = false
+	assessment, _, err = f.builder.RebindQuestionnaire(t.Context(), f.subject, f.projections, f.preflight, f.now, false, f.reuse)
+	if err != nil || len(assessment.Results) != 0 {
+		t.Fatalf("new incomplete answer rebound authority: %+v, %v", assessment, err)
 	}
 }

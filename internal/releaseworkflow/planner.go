@@ -156,6 +156,9 @@ func (m *Module) Continue(
 	if current.Workflow.Status == api.WorkflowStatusCanceled {
 		return current, nil
 	}
+	if request.Goal == api.WorkflowGoalTrackersProjected {
+		return m.continueTrackerProjection(ctx, ownerID, request, current)
+	}
 	if request.Intent.Preparation != nil && request.Intent.Preparation.Force && current.Release != nil &&
 		!continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
 		operation, startErr := m.Start(ctx, ownerID, ResetReleaseCommand{
@@ -782,6 +785,10 @@ func planContinuationCommandWithReadiness(
 	key := func(stage string) string {
 		return continuationIdempotencyKey(request.IdempotencyKey, stage, revision)
 	}
+	if request.Goal == api.WorkflowGoalTrackersProjected &&
+		(current.Release == nil || !continuationPreparationSatisfied(current.Release, request.Intent.Preparation)) {
+		return nil, "preparation-required"
+	}
 	if current.Release == nil {
 		if request.Intent.Preparation == nil {
 			return nil, "prepare"
@@ -810,7 +817,8 @@ func planContinuationCommandWithReadiness(
 	if len(trackerIDs) == 0 && current.Selection != nil {
 		trackerIDs = append(trackerIDs, current.Selection.TrackerIDs...)
 	}
-	if includeInputReadiness && (len(request.Intent.TrackerInputAnswers) > 0 || !inputReadinessMatches(current.InputReadiness, current, trackerIDs)) {
+	if includeInputReadiness && request.Goal != api.WorkflowGoalTrackersProjected &&
+		(len(request.Intent.TrackerInputAnswers) > 0 || !inputReadinessMatches(current.InputReadiness, current, trackerIDs)) {
 		if inputReadinessBlocked(current.InputReadiness) && len(request.Intent.TrackerInputAnswers) == 0 {
 			return nil, "input-not-ready"
 		}
@@ -828,7 +836,8 @@ func planContinuationCommandWithReadiness(
 		}
 		return nil, ""
 	}
-	if current.Projections == nil || !trackerIntentMatches(request.Intent, current) {
+	if current.Projections == nil || !trackerIntentMatches(request.Intent, current) ||
+		(request.Goal == api.WorkflowGoalTrackersProjected && !trackerProjectionGoalSatisfied(current)) {
 		return ProjectTrackersCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
@@ -838,17 +847,22 @@ func planContinuationCommandWithReadiness(
 			IdempotencyKey:   key("project-trackers"),
 		}, "project-trackers"
 	}
+	if request.Goal == api.WorkflowGoalTrackersProjected {
+		return nil, ""
+	}
 	interaction := continuationInteractionMode(request.Intent)
 	if !continuationPreflightCurrent(current, now) ||
 		(interaction == api.InteractionModeUnattended &&
 			preflightRequiresManualAction(current.Preflight, current.Projections)) {
 		return PreflightTrackersCommand{
-			WorkflowID:       workflowID,
-			ExpectedRevision: revision,
-			InputFingerprint: current.Projections.InputFingerprint,
-			Interaction:      interaction,
-			ExecutionMode:    request.Intent.ExecutionMode,
-			IdempotencyKey:   key("preflight-trackers"),
+			SkipRemoteDuplicates: request.Intent.SkipRemoteDuplicates,
+			DuplicateCheckCount:  request.Intent.DuplicateCheckCount,
+			WorkflowID:           workflowID,
+			ExpectedRevision:     revision,
+			InputFingerprint:     current.Projections.InputFingerprint,
+			Interaction:          interaction,
+			ExecutionMode:        request.Intent.ExecutionMode,
+			IdempotencyKey:       key("preflight-trackers"),
 		}, "preflight-trackers"
 	}
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalTrackersAssessed) {
@@ -1088,7 +1102,7 @@ func workflowGoalRank(goal api.WorkflowGoal) int {
 		return 1
 	case api.WorkflowGoalInputReady:
 		return 2
-	case api.WorkflowGoalTrackersAssessed:
+	case api.WorkflowGoalTrackersProjected, api.WorkflowGoalTrackersAssessed:
 		return 3
 	case api.WorkflowGoalDuplicatesDecided:
 		return 4
@@ -1249,11 +1263,16 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 		return false
 	}
 
+	if workflowGoalRank(request.Goal) >= workflowGoalRank(api.WorkflowGoalTrackersProjected) && !trackerIntentMatches(request.Intent, current) {
+		return false
+	}
 	switch request.Goal {
 	case api.WorkflowGoalPrepared:
 		return current.Release != nil && continuationPreparationSatisfied(current.Release, request.Intent.Preparation)
 	case api.WorkflowGoalInputReady:
 		return inputReadinessGoalSatisfied(current.InputReadiness, current, request.Intent.TrackerIDs)
+	case api.WorkflowGoalTrackersProjected:
+		return trackerProjectionGoalSatisfied(current)
 	case api.WorkflowGoalTrackersAssessed:
 		return current.Preflight != nil && current.Projections != nil
 	case api.WorkflowGoalDuplicatesDecided:

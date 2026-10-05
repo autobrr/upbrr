@@ -312,3 +312,43 @@ func TestDuplicateReuseRejectsRuleActionWithPendingStrictEvidence(t *testing.T) 
 		}
 	}
 }
+
+func TestQuestionnaireDuplicateReuseRetainsOnlyAnswerTransitions(t *testing.T) {
+	for _, scenario := range []string{"answers", "selection", "execution", "settings", "name", "screenshots", "no change"} {
+		t.Run(scenario, func(t *testing.T) {
+			_, repository, _, current := newDuplicateReuseWorkflow(t)
+			baseline := *current.Workflow.Dupes
+			state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := ProjectTrackersCommand{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}, Instructions: map[api.TrackerID]api.TrackerProjectionInstructions{"ALPHA": {Questionnaire: map[string]*string{"review": new("yes")}}}}
+			instruction := command.Instructions["ALPHA"]
+			switch scenario {
+			case "selection":
+				command.TrackerIDs = []api.TrackerID{"ALPHA"}
+			case "execution":
+				command.ExecutionMode = api.WorkflowExecutionModeDebug
+			case "settings":
+				instruction.TrackerConfig.Anon = new(false)
+			case "name":
+				instruction.UploadReleaseName = api.WorkflowPatch[string]{Present: true, Value: "Changed.Name-GRP"}
+			case "screenshots":
+				instruction.ScreenshotCount = new(4)
+			case "no change":
+				instruction.Questionnaire = nil
+			}
+			command.Instructions["ALPHA"] = instruction
+			only, err := stageQuestionnaireDuplicateReuse(&state, command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := scenario == "answers"; only != want || (state.PendingDuplicateReuse != nil) != want {
+				t.Fatalf("only=%t pending=%+v", only, state.PendingDuplicateReuse)
+			}
+			if only && state.PendingDuplicateReuse.Assessment != baseline {
+				t.Fatal("wrong baseline")
+			}
+		})
+	}
+}

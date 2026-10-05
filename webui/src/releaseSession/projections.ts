@@ -25,13 +25,13 @@ export type PendingInputUpdate = Readonly<{
   selectedTrackers: readonly string[];
 }>;
 
-/** Shows late tracker questions only for the exact currently reviewed projection set. */
+/** Separates pure tracker questions from exact late-only preparation requirements. */
 export const workflowQuestionnaires = (
   current: ReleaseWorkflowCurrent | null | undefined,
-): Pick<
+): (Pick<
   TrackerReleaseProjection,
   "trackerId" | "displayName" | "questionnaire" | "questionnaireAnswers"
->[] => {
+> & { preparationQuestionnaire: TrackerReleaseProjection["questionnaire"] })[] => {
   const projections = current?.projections;
   if (!projections) return [];
   const dryRun = current.dryRun;
@@ -43,19 +43,28 @@ export const workflowQuestionnaires = (
       : [];
   return projections.projections.map((projection) => {
     const fields = new Map((projection.questionnaire || []).map((field) => [field.key, field]));
+    const preparationQuestionnaire: NonNullable<
+      TrackerReleaseProjection["questionnaire"]
+    >[number][] = [];
     for (const field of reports.find((report) => report.trackerId === projection.trackerId)
       ?.questionnaire || []) {
-      // A required empty value reports missing or rejected input; retain that validation result.
+      // An empty required value rejects prior input. Display-only report values never become answers.
       const rejectedOrMissing = field.required && !(field.value ?? "").trim();
-      fields.set(field.key, {
+      const reviewed = fields.get(field.key);
+      const updated = {
         ...field,
-        value: rejectedOrMissing ? field.value : (fields.get(field.key)?.value ?? field.value),
-      });
+        value: rejectedOrMissing
+          ? field.value
+          : (reviewed?.value ?? projection.questionnaireAnswers?.[field.key] ?? field.value),
+      };
+      if (reviewed) fields.set(field.key, updated);
+      else preparationQuestionnaire.push(updated);
     }
     return {
       trackerId: projection.trackerId,
       displayName: projection.displayName,
       questionnaire: [...fields.values()],
+      preparationQuestionnaire,
       questionnaireAnswers: projection.questionnaireAnswers,
     };
   });

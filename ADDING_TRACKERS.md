@@ -1054,7 +1054,11 @@ missing required questionnaire answers, or unavailable prepared media. Add combi
 validation behavior to `internal/trackers/rules_test.go`; add tracker-package tests for
 protocol-specific pure mapping or complex validation.
 
-Tracker-local reviews belong on Dupe Checking. Bind `ProjectionQuestionnaire` in the standalone
+Tracker-local reviews appear on Dupe Checking when the tracker is selected, before duplicate
+checks. Selection uses the projection-only `trackers_projected` goal against an existing exact
+prepared generation; it must not prepare or enrich metadata, authenticate, refresh remote bans,
+check claims, or search duplicates. Missing preparation remains a preparation prerequisite.
+Bind `ProjectionQuestionnaire` in the standalone
 profile or Unit3D site profile, implemented in `questionnaire.go`. The callback receives finalized
 `PreparationInput`, including the centrally resolved name in `Projection.UploadReleaseName`, and
 must perform no I/O or payload preparation. Return backend-owned fields with stable keys,
@@ -1064,19 +1068,32 @@ include display defaults; they do not become answers automatically. The projecti
 map clears earlier answers; an omitted legacy map has no new answer authority. The
 projector emits a tracker-scoped questionnaire action even alongside an unrelated strict failure;
 answering the questionnaire never waives that failure. Do not turn an upload review into a global
-Input prerequisite. Legacy explicit CLI answer staging may validate against these pure schemas,
-but does not publish them as Input controls or block canonical Input readiness. CLI and WebUI
+Input prerequisite. Legacy explicit CLI answer staging validates against these pure schemas by default,
+but does not publish them as Input controls or block canonical Input readiness. A tracker whose
+accepted CLI fields exceed its visible questions may implement `TrackerAnswerSchemaProvider` on
+its definition. Return one combined pure schema; it is used only for private answer validation,
+including edits and null resets. Do not use `InputSchemaProvider` for this purpose, because that
+publishes canonical Input controls and removes their keys from projection instructions. CLI and WebUI
 render select, text, and comma-separated
 multiselect answers. Multiselect option labels must not contain commas. Accepted values travel in
 the exact projection and are reused during payload preparation. Keep canonical fact corrections
 in Input rather than mutating media facts from a tracker answer.
 
-When a requirement depends on remote group/channel lookup, expose editable fields early without
-guessing the remote result. Keep conditional fields optional until applicability is known. If
-existing upload preparation discovers missing required answers, return
+Keep speculative new-group metadata out of the normal question panel. PTP and GPW retain those
+fields in their private accepted-answer schemas for CLI staging. If existing upload preparation
+discovers missing required answers after remote group lookup, return
 `NewQuestionnairePreparationFailure` with the precise schema. This preserves a non-submittable
-failure and exposes the current dry-run report's questionnaire on Dupe Checking; it does not add
-remote calls to projection. Canonical prepared-release contract versions do not change for
+failure and exposes the exact-current dry-run report's contextual questions on Dupe Checking;
+it does not add remote calls to projection. Actual tracker decisions, missing-data questions,
+and upload overrides remain normal projection questions.
+
+Applying questionnaire-only edits runs existing preflight, then may rebind fresh duplicate
+evidence to the new exact finalized projection without another remote duplicate search.
+Only questionnaire schema/answer data and publication stamps are excluded from that comparison;
+names, search/target semantics, configuration, policy, rules, resources, readiness, source,
+generation, private evidence, skip mode, and in-client restrictions still apply. A temporarily
+incomplete answer retains only a private reuse baseline, with no current duplicate or upload
+authority. Rebinding never extends duplicate freshness. Canonical prepared-release contract versions do not change for
 tracker-only questionnaire semantics; version the tracker projector instead.
 
 ### 7. Add optional capabilities

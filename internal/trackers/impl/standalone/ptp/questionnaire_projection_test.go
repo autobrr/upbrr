@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestProjectionQuestionnairePreservesGroupAnswersAndLegacyIntent(t *testing.T) {
+func TestTrackerAnswerSchemaPreservesGroupAnswersAndLegacyIntent(t *testing.T) {
 	for _, imdb := range []int{0, 123} {
 		answers := map[string]string{
 			"title":                "Reviewed title",
@@ -21,7 +21,7 @@ func TestProjectionQuestionnairePreservesGroupAnswersAndLegacyIntent(t *testing.
 			"no_english_subtitles": "no",
 		}
 		meta := api.UploadSubject{Identity: api.ExternalIdentity{IMDBID: imdb}, TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": answers}}
-		schema := New().ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
+		schema := New().TrackerAnswerSchema(trackers.PreparationInput{Meta: meta})
 		for _, field := range schema.Fields {
 			if want, exists := answers[field.Key]; exists && field.Value != want {
 				t.Fatalf("lost %s answer: %q want %q", field.Key, field.Value, want)
@@ -41,5 +41,15 @@ func TestLegacySubtitleConflictRemainsTrackerLocal(t *testing.T) {
 	field := legacySubtitleField(meta)
 	if !field.Required || field.Value != "" || validateNoEnglishSubtitles(meta) == "" {
 		t.Fatalf("conflict lost: %+v", field)
+	}
+}
+
+func TestProjectionQuestionnaireContainsOnlySubtitleReview(t *testing.T) {
+	for _, imdb := range []int{0, 123} {
+		meta := api.UploadSubject{Identity: api.ExternalIdentity{IMDBID: imdb}, AudioLanguages: []string{"French"}}
+		schema := New().ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
+		if schema == nil || len(schema.Fields) != 2 || schema.Fields[0].Key != "trumpable_review" || schema.Fields[1].Key != "no_english_subtitles" {
+			t.Fatalf("projection leaked group fields: %#v", schema)
+		}
 	}
 }

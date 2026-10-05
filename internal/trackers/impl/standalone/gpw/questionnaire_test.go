@@ -10,10 +10,13 @@ import (
 	"testing"
 )
 
-func TestProjectionQuestionnaireDefersUnknownGroupRequirements(t *testing.T) {
+func TestTrackerAnswerSchemaDefersUnknownGroupRequirements(t *testing.T) {
+	if schema := New().ProjectionQuestionnaire(trackers.PreparationInput{}); schema != nil {
+		t.Fatal("normal projection exposed speculative new-group fields")
+	}
 	for _, imdb := range []int{0, 123} {
 		meta := api.UploadSubject{Identity: api.ExternalIdentity{IMDBID: imdb}, TrackerQuestionnaireAnswers: map[string]map[string]string{"GPW": {"director_imdb": "nm0000123"}}}
-		schema := projectionQuestionnaire(trackers.PreparationInput{Meta: meta})
+		schema := New().TrackerAnswerSchema(trackers.PreparationInput{Meta: meta})
 		if len(schema.Fields) != 5 {
 			t.Fatalf("schema=%+v", schema)
 		}

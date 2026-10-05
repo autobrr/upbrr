@@ -28,7 +28,7 @@ describe("productionReleaseSessionPorts", () => {
     const sourcePath = "C:\\media\\Example Disc\\BDMV";
     const signal = new AbortController().signal;
     const request = {
-      goal: "prepared",
+      goal: "prepared" as const,
       intent: {
         factInstructions: {
           Identity: {},
