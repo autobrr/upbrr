@@ -2062,6 +2062,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		return CommandResult{}, fmt.Errorf("%w: upload feedback action is stale", ErrRevisionConflict)
 	}
 	resolvedByCommand := false
+	reproject := false
 	var result CommandResult
 	if action.Kind == api.RequiredActionReconcileSubmission {
 		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
@@ -2164,7 +2165,7 @@ func (m *Module) applyCompositeUploadFeedback(
 				state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = instruction
 				resolvedByCommand = true
 			} else {
-				invalidateTrackerAndDownstream(&state.Workflow)
+				reproject = true
 			}
 		}
 	case api.ReleaseWorkflowUploadFeedbackQuestionnaire:
@@ -2174,7 +2175,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		instruction := state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID]
 		instruction.Questionnaire = cloneStringPointerMap(command.Response.Questionnaire)
 		state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = instruction
-		invalidateTrackerAndDownstream(&state.Workflow)
+		reproject = true
 	case api.ReleaseWorkflowUploadFeedbackDuplicateReview:
 		if state.Composite.Intent.DuplicateDecisions == nil {
 			state.Composite.Intent.DuplicateDecisions = make(map[api.TrackerID]api.DupeDecision)
@@ -2263,6 +2264,24 @@ func (m *Module) applyCompositeUploadFeedback(
 		}
 		resolvedByCommand = true
 	case api.ReleaseWorkflowUploadFeedbackReconciliation:
+	}
+	if reproject {
+		if state.Workflow.Selection == nil || state.Workflow.TrackerProjections == nil {
+			return CommandResult{}, fmt.Errorf("%w: tracker feedback projection authority is unavailable", ErrInvalidTransition)
+		}
+		// Rebuild actions while the prior projection still owns name and rule
+		// acknowledgements. Its duplicate and upload authority is invalidated.
+		projections := state.Projections[state.Workflow.TrackerProjections.ID]
+		state.PendingDuplicateReuse = nil
+		if _, err := m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
+			WorkflowID:       command.WorkflowID,
+			ExpectedRevision: command.ExpectedRevision,
+			TrackerIDs:       state.Selections[state.Workflow.Selection.ID].TrackerIDs,
+			Instructions:     state.Composite.Intent.ProjectionInstructions,
+			ExecutionMode:    projections.ExecutionMode,
+		}, projectionRuleAuthorizations(projections)); err != nil {
+			return CommandResult{}, err
+		}
 	}
 	if !resolvedByCommand {
 		state.Workflow.RequiredActions = slices.DeleteFunc(state.Workflow.RequiredActions, func(candidate api.RequiredAction) bool {
