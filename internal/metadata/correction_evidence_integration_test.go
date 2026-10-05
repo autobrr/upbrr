@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
+	"github.com/autobrr/upbrr/internal/metadata/tvdb"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -591,6 +592,137 @@ func TestPreparedMovieYearCorrectionReusesProviderEvidence(t *testing.T) {
 	}
 }
 
+func TestPreparedExplicitTVAcquiresTVDBDespiteParsedMovie(t *testing.T) {
+	for _, aliasYear := range []bool{false, true} {
+		for _, edit := range []string{"automatic", "before refresh", "after refresh", "with category correction"} {
+			t.Run(fmt.Sprintf("alias=%t/%s", aliasYear, edit), func(t *testing.T) {
+				fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Movie.2026.1080p.WEB-DL.H264-GRP.mkv")
+				fixture.input.Instructions.Category = new(api.CanonicalCategoryMovie)
+				fixture.tvdb = tvdb.NewClient(fixture.http, nil, "synthetic-api-key", "")
+				fixture.tvdbAliasYear = aliasYear
+				module, repo := fixture.open(t)
+				movie := prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+				if movie.Release.Naming.Year != 2026 {
+					t.Fatalf("automatic Movie year = %d, want 2026", movie.Release.Naming.Year)
+				}
+				input := api.PrepareInput{SourcePath: fixture.input.SourcePath}
+				for _, phase := range []string{"before refresh", "refresh", "after refresh"} {
+					update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+					input.ExternalFreshness = api.ExternalFreshnessReuse
+					switch phase {
+					case "refresh":
+						input.ExternalFreshness = api.ExternalFreshnessRefresh
+					case edit:
+						update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+							Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{ManualYear: new(2030)}},
+						}}
+					}
+					movie = prepareCorrectionEvidence(t, module, input, update)
+				}
+				wantMovieYear := 2026
+				if edit == "before refresh" || edit == "after refresh" {
+					wantMovieYear = 2030
+				}
+				if movie.Release.Identity.Category != api.CanonicalCategoryMovie || movie.Release.Naming.Year != wantMovieYear ||
+					fixture.requests()["/v4/series/555003/extended"] != 0 || fixture.requests()["/v4/search"] != 0 {
+					t.Fatal("explicit Movie lost year authority or fetched TVDB")
+				}
+				input.ExternalFreshness = api.ExternalFreshnessReuse
+				update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+					Values: api.ReleaseCorrectionValues{
+						Identity: api.ExternalIDOverrides{TVDBID: new(555003)},
+						ReleaseName: api.ReleaseNameOverrides{
+							Category: new("TV"),
+							Season:   new("01"),
+							Episode:  new("01"),
+						},
+					},
+				}}
+				if edit == "with category correction" {
+					update.Patch.Values.ReleaseName.ManualYear = new(2030)
+				}
+				for _, step := range []string{"correct to TV", "refresh", "SQLite reopen"} {
+					switch step {
+					case "refresh":
+						input.ExternalFreshness = api.ExternalFreshnessRefresh
+						update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+					case "SQLite reopen":
+						if err := repo.Close(); err != nil {
+							t.Fatal(err)
+						}
+						module, repo = fixture.open(t)
+						input.ExternalFreshness = api.ExternalFreshnessLoad
+					}
+					before := fixture.requests()
+					result := prepareCorrectionEvidence(t, module, input, update)
+					after := fixture.requests()
+					for _, endpoint := range []string{"/v4/series/555003/extended", "/v4/search"} {
+						if step == "refresh" && after[endpoint] <= before[endpoint] {
+							t.Errorf("refresh reused stale TVDB response for %s", endpoint)
+						}
+						if step == "SQLite reopen" && after[endpoint] != before[endpoint] {
+							t.Errorf("SQLite reopen did not reuse TVDB response for %s", endpoint)
+						}
+					}
+					if after["/v4/series/555003/extended"] == 0 || after["/v4/search"] == 0 {
+						t.Errorf("%s: explicit TV correction skipped TVDB series/disambiguation acquisition", step)
+					}
+					provider := result.Release.ProviderMetadata.TVDB
+					if provider == nil || provider.NameEnglish != "Example Series" || provider.Year != 2024 || provider.YearFromAlias != aliasYear || !provider.PosterThumbnailLookupAttempted ||
+						provider.NameDisambiguation.Status != api.MetadataEvidenceStatusPartial ||
+						provider.NameDisambiguation.CanonicalName != "Example Series" || provider.NameDisambiguation.SeriesYear != 2024 ||
+						provider.NameDisambiguation.Source != "tvdb_v4_search_unpaged" {
+						t.Errorf("%s: prepared TVDB series/alias/disambiguation evidence missing", step)
+					}
+					wantYear := 0
+					if aliasYear {
+						wantYear = 2024
+					}
+					if result.Release.Identity.Category != api.CanonicalCategoryTV || result.Release.Naming.Year != wantYear ||
+						result.Release.Naming.YearProvenance != api.FactProvenanceAutomatic {
+						t.Errorf("%s: prepared category/year = %s/%d, want TV/%d", step, result.Release.Identity.Category, result.Release.Naming.Year, wantYear)
+					}
+					if result.Corrections.Corrections.ReleaseName.ManualYear != nil || result.EffectiveInstructions.ReleaseName.ManualYear != nil {
+						t.Errorf("%s: manual Movie year survived TV correction", step)
+					}
+					if _, bound := result.Corrections.Corrections.ContentBindings[api.CorrectionFieldReleaseNameManualYear]; bound {
+						t.Errorf("%s: manual-year content binding survived TV correction", step)
+					}
+					display, err := preparedrelease.ProjectDisplay(result.Release)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if display.ReleaseName != result.Release.Naming.ReleaseName || strings.Contains(display.ReleaseName, "2030") ||
+						strings.Contains(display.ReleaseName, "2026") || strings.Contains(display.ReleaseName, "2024") != aliasYear {
+						t.Errorf("%s: display name violates TVDB year authority: %q", step, display.ReleaseName)
+					}
+				}
+				if aliasYear && edit == "automatic" {
+					old, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					old.Compatibility.ContractVersion = "prepared-release-v26"
+					old.Naming.Year = 0
+					old.ProviderMetadata.TVDB = &api.TVDBMetadata{TVDBID: 555003}
+					if err := repo.CommitPreparedRelease(t.Context(), old); err != nil {
+						t.Fatal(err)
+					}
+					if err := repo.Close(); err != nil {
+						t.Fatal(err)
+					}
+					module, _ = fixture.open(t)
+					input.ExternalFreshness = api.ExternalFreshnessReuse
+					updated := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+					if updated.Release.Generation != old.Generation+1 || updated.Release.Naming.Year != 2024 {
+						t.Errorf("pre-TVDB-correction generation reused: generation=%d year=%d", updated.Release.Generation, updated.Release.Naming.Year)
+					}
+				}
+			})
+		}
+	}
+}
+
 func preserveCorrectionGeneration(t *testing.T, release *api.PreparedRelease) {
 	t.Helper()
 	original, err := release.Clone()
@@ -605,11 +737,13 @@ func preserveCorrectionGeneration(t *testing.T, release *api.PreparedRelease) {
 }
 
 type correctionEvidenceFixture struct {
-	dbPath string
-	input  api.PrepareInput
-	http   *http.Client
-	mu     sync.Mutex
-	calls  map[string]int
+	dbPath        string
+	input         api.PrepareInput
+	http          *http.Client
+	tvdb          TVDBClient
+	tvdbAliasYear bool
+	mu            sync.Mutex
+	calls         map[string]int
 }
 
 func newCorrectionEvidenceFixture(t *testing.T) *correctionEvidenceFixture {
@@ -646,9 +780,13 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 			},
 		},
 		calls: make(map[string]int),
+		tvdb:  &stubTVDB{},
 	}
 	fixture.http = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		key := request.URL.Path
+		if request.URL.Host == "api4.thetvdb.com" && key == "/v4/series/555003/extended" && request.URL.RawQuery != "" {
+			key += "?" + request.URL.RawQuery
+		}
 		fixture.mu.Lock()
 		fixture.calls[key]++
 		fixture.mu.Unlock()
@@ -656,6 +794,27 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 		switch {
 		case request.URL.Host == "scene.example.invalid":
 			body = `{"resultsCount":0,"results":[]}`
+		case request.URL.Host == "api4.thetvdb.com":
+			switch request.URL.Path {
+			case "/v4/login":
+				body = `{"data":{"token":"synthetic-token"}}`
+			case "/v4/series/555003/extended":
+				body = `{"data":{"id":555003,"name":"Example Series","year":"2024","firstAired":"2024-01-01","originalLanguage":"eng"}}`
+			case "/v4/series/555003/translations/eng":
+				body = `{"data":{"name":"Example Series","aliases":[]}}`
+				if fixture.tvdbAliasYear {
+					body = `{"data":{"name":"Example Series","aliases":["Example Series (2024)"]}}`
+				}
+			case "/v4/search":
+				if query := request.URL.Query(); query.Get("query") != "Example Series" || query.Get("type") != "series" || len(query) != 2 {
+					t.Error("TVDB disambiguation did not search the unfiltered canonical series name")
+				}
+				body = `{"data":[{"tvdb_id":"555003","name":"Example Series","primary_language":"eng","year":"2024"}]}`
+			case "/v4/series/555003/episodes/default":
+				body = `{"data":{"episodes":[{"id":555301,"name":"The First Signal","seasonNumber":1,"number":1,"aired":"2024-01-01"}],"slug":"example-series"}}`
+			case "/v4/episodes/555301/translations/eng":
+				body = `{"data":{"name":"The First Signal"}}`
+			}
 		case request.URL.Host != "api.themoviedb.org":
 			t.Errorf("unexpected HTTP destination: %s", request.URL.Host)
 		case key == "/3/tv/555001":
@@ -726,7 +885,7 @@ func (f *correctionEvidenceFixture) open(t *testing.T) (*preparedrelease.Module,
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(newSRRDBDetector(f.http, "https://scene.example.invalid", "", "")),
 		WithTMDBClient(tmdb.NewClient(f.http, nil, "synthetic-api-key")),
-		WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
+		WithIMDBClient(&stubIMDB{}), WithTVDBClient(f.tvdb), WithTVmazeClient(&stubTVmaze{}))
 	collector, err := preparedrelease.NewEvidenceCollector(service)
 	if err != nil {
 		t.Fatal(err)

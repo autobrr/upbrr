@@ -23,6 +23,7 @@ import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
 import DescriptionBuilderPage from "../pages/description_builder";
 import ScreenshotsPage from "../pages/screenshots";
 import DupeCheckPage from "../pages/dupe_check";
+import TrackerUploadPage from "../pages/tracker_upload";
 import type { ReleaseSessionPorts } from "./ports";
 import { setAppRequestHandlerForTests } from "../api/client";
 import { productionReleaseSessionPorts } from "./production";
@@ -6828,7 +6829,9 @@ describe("useReleaseSession", () => {
       command = result.current.menuImages.capture();
     });
     await waitFor(() => expect(captureSignal).toBeDefined());
+    expect(result.current.upload.view.workflowBusy).toBe(true);
     act(() => result.current.menuImages.cancelCapture());
+    expect(result.current.upload.view.workflowBusy).toBe(false);
 
     expect(captureSignal?.aborted).toBe(true);
     expect(result.current.menuImages.view.status).toBe("idle");
@@ -6897,6 +6900,51 @@ describe("useReleaseSession", () => {
       expect.any(AbortSignal),
     );
     expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-1");
+  });
+
+  it("keeps upload actions disabled while another workflow command owns execution", async () => {
+    const workflowID = "workflow-pending-description";
+    const current = workflowCurrentWithDescriptions(workflowID, 7, "generated source");
+    const pending = createDeferred<ReleaseWorkflowCurrent>();
+    const saveDescriptionOverride = vi.fn(() => pending.promise);
+    const dryRunUploads = vi.fn(async (value: ReleaseWorkflowCurrent) => value);
+    const ports = portsFor({
+      resumeWorkflowID: workflowID,
+      workflow: workflowPorts({
+        current: async () => current,
+        saveDescriptionOverride,
+        dryRunUploads,
+      }),
+    });
+    function UploadPage() {
+      const session = useReleaseSession();
+      return <TrackerUploadPage facet={session.upload} />;
+    }
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <UploadPage />
+        </ReleaseSessionProvider>
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    const dryRun = screen.getByRole("button", { name: "Run dry run" });
+    expect(dryRun).toBeEnabled();
+    let save!: Promise<boolean>;
+    act(() => {
+      save = result.current.descriptions.save("unit3d");
+    });
+    await waitFor(() => expect(saveDescriptionOverride).toHaveBeenCalledOnce());
+    expect(result.current.workflow.view.status).toBe("running");
+    fireEvent.click(dryRun);
+    expect(dryRunUploads).not.toHaveBeenCalled();
+    expect(dryRun).toBeDisabled();
+    pending.resolve(current);
+    await act(() => save);
+    expect(dryRun).toBeEnabled();
+    await act(async () => fireEvent.click(dryRun));
+    expect(dryRunUploads).toHaveBeenCalledOnce();
   });
 
   it("hydrates hosted-image outcomes from the workflow media snapshot", async () => {

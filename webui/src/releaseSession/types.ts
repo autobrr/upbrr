@@ -410,6 +410,8 @@ export type UploadFacet = Readonly<{
     ignoredDupesFor: readonly string[];
     /** Local edits differ from the exact reviewed tracker answers. */
     questionnaireDirty: boolean;
+    /** A workflow command currently owns execution, so another action cannot start. */
+    workflowBusy: boolean;
     options: UploadRunOptions;
     /** Whether the owning process enforces live-testing restrictions. */
     liveTest: boolean;

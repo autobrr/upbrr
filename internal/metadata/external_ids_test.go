@@ -6474,3 +6474,67 @@ func TestResolveExternalIDsLocalizedFetchUsesVariantCachePaths(t *testing.T) {
 		t.Fatalf("expected TV content_ratings append, got %q", tmdbClient.localizedInputs[0].AppendToResponse)
 	}
 }
+
+func TestShouldUseTVDBHonorsExplicitCategoryBeforeParsedEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name, parsed, resolved string
+		explicit               *string
+		want                   bool
+	}{
+		{
+			name:     "explicit TV overrides parsed Movie",
+			parsed:   "MOVIE",
+			resolved: "TV",
+			explicit: new("TV"),
+			want:     true,
+		},
+		{
+			name:     "explicit TV overrides retained Movie",
+			parsed:   "MOVIE",
+			resolved: "MOVIE",
+			explicit: new(" tv "),
+			want:     true,
+		},
+		{
+			name:     "explicit Movie blocks TV hints",
+			parsed:   "TV",
+			resolved: "TV",
+			explicit: new("MOVIE"),
+		},
+		{
+			name:     "uncorrected Movie still blocks TV",
+			parsed:   "MOVIE",
+			resolved: "TV",
+		},
+		{
+			name:     "uncorrected TV still permits TVDB",
+			parsed:   "TV",
+			resolved: "TV",
+			want:     true,
+		},
+		{
+			name:     "blank correction keeps existing Movie precedence",
+			parsed:   "MOVIE",
+			resolved: "TV",
+			explicit: new(""),
+		},
+		{
+			name:     "unsupported correction keeps existing TV behavior",
+			parsed:   "TV",
+			resolved: "TV",
+			explicit: new("OTHER"),
+			want:     true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := preparationstate.State{
+				Release:              api.ReleaseInfo{Category: test.parsed},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Category: test.explicit},
+			}
+			got := shouldUseTVDBForCategory(meta, api.ExternalIdentity{Category: api.CanonicalCategory(test.resolved)})
+			if got != test.want {
+				t.Fatalf("TVDB eligible = %t, want %t", got, test.want)
+			}
+		})
+	}
+}

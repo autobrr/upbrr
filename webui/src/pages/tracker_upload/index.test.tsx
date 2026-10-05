@@ -18,6 +18,7 @@ const uploadFacet = (
     projections: null,
     ignoredDupesFor: [],
     questionnaireDirty: false,
+    workflowBusy: false,
     options: { noSeed: false, runLogLevel: "info" },
     liveTest: false,
     mutationsAllowed: true,
@@ -115,6 +116,61 @@ describe("TrackerUploadPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start upload" }));
     expect(runDryRun).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("blocks initiating actions during workflow commands but keeps cancellation available", () => {
+    const facet = uploadFacet({
+      trackerOutcomes: [
+        { trackerId: "EXAMPLE", uploadEligibility: "eligible" },
+      ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+      result: {
+        results: [
+          { trackerId: "EXAMPLE", submissionStatus: "failed" },
+          {
+            trackerId: "OTHER",
+            submissionStatus: "completed",
+            clientInjectionStatus: "failed",
+            clientFailureCode: "client_injection",
+          },
+        ],
+      } as unknown as NonNullable<UploadFacet["view"]["result"]>,
+    });
+    const { rerender } = renderPage(facet);
+    const actionNames = [
+      "Run dry run",
+      "Start upload",
+      "Retry failed uploads",
+      "Retry client injection",
+    ];
+    for (const name of actionNames) expect(screen.getByRole("button", { name })).toBeEnabled();
+    rerender(
+      <TrackerUploadPage facet={{ ...facet, view: { ...facet.view, workflowBusy: true } }} />,
+    );
+    for (const name of actionNames) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    for (const method of [facet.runDryRun, facet.start, facet.retry, facet.retryClientInjection])
+      expect(method).not.toHaveBeenCalled();
+    rerender(
+      <TrackerUploadPage
+        facet={{ ...facet, view: { ...facet.view, workflowBusy: true, uploadStatus: "running" } }}
+      />,
+    );
+    const cancel = screen.getByRole("button", { name: "Cancel upload" });
+    expect(cancel).toBeEnabled();
+    fireEvent.click(cancel);
+    expect(facet.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a resumed backend dry run disabled without a local command owner", () => {
+    const facet = uploadFacet({ dryRunStatus: "running", workflowBusy: false });
+    renderPage(facet);
+    const dryRun = screen.getByRole("button", { name: "Running dry run..." });
+    expect(dryRun).toBeDisabled();
+    fireEvent.click(dryRun);
+    expect(facet.runDryRun).not.toHaveBeenCalled();
   });
 
   it("renders submission exclusions and suppresses actions when every tracker is excluded", () => {
