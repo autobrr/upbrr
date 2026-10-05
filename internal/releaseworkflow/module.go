@@ -5615,6 +5615,8 @@ func (m *Module) captureMedia(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build media artifacts: %w", err)
 	}
+	snapshot.ImageRequirementsPrepared = false
+	snapshot.ImageHostUploadSkipped = false
 	requirementsFingerprint, err := mediaRequirementsFingerprint(eligibleProjections.Projections)
 	if err != nil {
 		return CommandResult{}, err
