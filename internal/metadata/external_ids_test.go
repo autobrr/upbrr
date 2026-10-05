@@ -1185,7 +1185,7 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 	}
 }
 
-func TestResolveExternalIDsMovieCategoryVetoesEarlierTVCandidate(t *testing.T) {
+func TestResolveExternalIDsExplicitMovieCategoryVetoesEarlierTVCandidate(t *testing.T) {
 	repo := &fakeRepo{
 		fileMetadata: api.FileMetadata{
 			Path:     "/media/file.mkv",
@@ -1213,7 +1213,8 @@ func TestResolveExternalIDsMovieCategoryVetoesEarlierTVCandidate(t *testing.T) {
 			Title:    "Example",
 			Year:     2024,
 		},
-		TrackerData: []api.TrackerMetadata{{Category: "TV", TVDBID: 12345}},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Category: new("MOVIE")},
+		TrackerData:          []api.TrackerMetadata{{Category: "TV", TVDBID: 12345}},
 	})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
