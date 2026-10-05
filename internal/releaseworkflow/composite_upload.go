@@ -49,6 +49,8 @@ type compositeUploadSession struct {
 	FeedbackSequence         uint64                                      `json:"feedbackSequence,omitempty"`
 	FeedbackReceipts         map[string]compositeUploadFeedbackReceipt   `json:"feedbackReceipts,omitempty"`
 	TerminalReason           string                                      `json:"terminalReason,omitempty"`
+	// DuplicateAllowUpload retains request-level policy across evidence refreshes.
+	DuplicateAllowUpload []api.TrackerID `json:"duplicateAllowUpload,omitempty"`
 }
 
 type compositeUploadManualMedia struct {
@@ -415,8 +417,9 @@ func normalizeCompositeUploadRequest(
 	if request.Duplicates.CheckCount != nil && *request.Duplicates.CheckCount == 2 {
 		checkCount = 2
 	}
+	allowUpload := normalizeCompositeTrackerIDs(request.Duplicates.AllowUpload)
 	decisions := make(map[api.TrackerID]api.DupeDecision)
-	for _, trackerID := range normalizeCompositeTrackerIDs(request.Duplicates.AllowUpload) {
+	for _, trackerID := range allowUpload {
 		decisions[trackerID] = api.DupeDecisionIgnored
 	}
 	media, selection := compositeUploadMediaIntent(request.Media)
@@ -459,6 +462,7 @@ func normalizeCompositeUploadRequest(
 		Confirm:                  request.Unattended.Confirm,
 		PreparedRelease:          request.Execution.PreparedRelease,
 		DuplicateDisposition:     onEvidence,
+		DuplicateAllowUpload:     allowUpload,
 		RemoveTrackers:           normalizeCompositeTrackerIDs(request.Trackers.Remove),
 		DefaultProjection:        cloneCompositeUploadProjection(request.Trackers.DefaultProjection),
 		RequestedScreenshotCount: cloneIntPointer(request.Media.Screenshots.Count),
@@ -2273,6 +2277,10 @@ func (m *Module) applyCompositeUploadFeedback(
 		// acknowledgements. Its duplicate and upload authority is invalidated.
 		projections := state.Projections[state.Workflow.TrackerProjections.ID]
 		state.PendingDuplicateReuse = nil
+		state.Composite.Intent.DuplicateDecisions = make(map[api.TrackerID]api.DupeDecision, len(state.Composite.DuplicateAllowUpload))
+		for _, trackerID := range state.Composite.DuplicateAllowUpload {
+			state.Composite.Intent.DuplicateDecisions[trackerID] = api.DupeDecisionIgnored
+		}
 		if _, err := m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
 			WorkflowID:       command.WorkflowID,
 			ExpectedRevision: command.ExpectedRevision,

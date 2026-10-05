@@ -16,8 +16,19 @@ import (
 
 func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 	for _, kind := range []api.ReleaseWorkflowUploadFeedbackKind{api.ReleaseWorkflowUploadFeedbackQuestionnaire, api.ReleaseWorkflowUploadFeedbackTrackerInput} {
-		for _, duplicateTracker := range []api.TrackerID{"ALPHA", "BETA"} {
-			t.Run(string(kind)+"/"+string(duplicateTracker), func(t *testing.T) {
+		for _, test := range []struct {
+			duplicateTracker api.TrackerID
+			priorDecision    api.DupeDecision
+			allowUpload      bool
+		}{
+			{duplicateTracker: "ALPHA"},
+			{duplicateTracker: "BETA"},
+			{duplicateTracker: "BETA", priorDecision: api.DupeDecisionIgnored},
+			{duplicateTracker: "BETA", priorDecision: api.DupeDecisionAccepted},
+			{duplicateTracker: "BETA", allowUpload: true},
+		} {
+			duplicateTracker, priorDecision := test.duplicateTracker, test.priorDecision
+			t.Run(fmt.Sprintf("%s/%s/%s/allow=%t", kind, duplicateTracker, priorDecision, test.allowUpload), func(t *testing.T) {
 				module, _, uploads := newCompositeUploadTestModule(t)
 				duplicateBase := compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, duplicateTracker, "similar_release")
 				checks := 0
@@ -53,6 +64,9 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 				})
 				request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "feedback-recheck")
 				request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateAsk
+				if test.allowUpload {
+					request.Duplicates.AllowUpload = []api.TrackerID{duplicateTracker}
+				}
 				started, err := module.StartUpload(t.Context(), testOwnerID, request)
 				if err != nil {
 					t.Fatal(err)
@@ -63,9 +77,18 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 					actionKind = api.RequiredActionProvideTrackerInput
 				}
 				action := pendingCompositeFeedbackAction(t, current, actionKind, "ALPHA")
-				oldReview := pendingCompositeFeedbackAction(t, current, api.RequiredActionReviewDuplicates, duplicateTracker)
+				var oldReview api.RequiredAction
+				if !test.allowUpload {
+					oldReview = pendingCompositeFeedbackAction(t, current, api.RequiredActionReviewDuplicates, duplicateTracker)
+				}
 				if current.Dupes == nil {
 					t.Fatal("initial duplicate evidence absent")
+				}
+				if priorDecision != "" {
+					current = submitCompositeFeedbackForTest(t, module, current, oldReview, api.ReleaseWorkflowUploadFeedbackResponse{
+						Kind:            api.ReleaseWorkflowUploadFeedbackDuplicateReview,
+						DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{TrackerID: duplicateTracker, Decision: priorDecision},
+					}, "review-prior-duplicates")
 				}
 				prior := current.Dupes.ID
 				response := api.ReleaseWorkflowUploadFeedbackResponse{Kind: kind}
@@ -85,6 +108,18 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 				current = waitCompositeUploadTestOperation(t, module, resumed)
 				if current.Dupes == nil || current.Dupes.ID == prior || checks < 2 {
 					t.Fatalf("feedback did not refresh duplicate evidence: dupes=%#v checks=%d operation=%#v", current.Dupes, checks, current.Operation)
+				}
+				if test.allowUpload {
+					pendingCompositeTrackerApproval(t, current)
+					if !slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
+						return result.TrackerID == duplicateTracker && result.Decision == api.DupeDecisionIgnored
+					}) {
+						t.Fatal("request-level duplicate policy was discarded")
+					}
+					if current.TrackerApproval != nil || uploads.execution != nil {
+						t.Fatal("request-level duplicate policy bypassed tracker approval")
+					}
+					return
 				}
 				review := pendingCompositeFeedbackAction(t, current, api.RequiredActionReviewDuplicates, duplicateTracker)
 				if review.ID == oldReview.ID {
