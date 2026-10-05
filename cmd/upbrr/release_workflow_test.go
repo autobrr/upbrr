@@ -1330,6 +1330,8 @@ func TestCLIWorkflowUnattendedDefersQuestionnaireToCentralPolicy(t *testing.T) {
 			TrackerID: "ALPHA",
 			Questionnaire: []api.TrackerQuestionnaireRequirement{{
 				Key:      "edition",
+				Kind:     "select",
+				Options:  []string{"yes", "no"},
 				Required: true,
 			}},
 		}}},
@@ -2100,5 +2102,57 @@ func TestCLIQuestionnaireDoesNotPromoteDisplayedDefaults(t *testing.T) {
 	changed, err := collectCLIWorkflowQuestionnaires(bufio.NewReader(strings.NewReader("")), &output, api.InteractionModeInteractive, projections, instructions)
 	if err != nil || changed || len(instructions["FL"].Questionnaire) != 0 || output.Len() != 0 {
 		t.Fatalf("displayed default became explicit or prompted: %+v changed=%t output=%q error=%v", instructions, changed, output.String(), err)
+	}
+}
+
+func TestCLIQuestionnaireYesNoShorthand(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		answer  string
+		options []string
+		kind    string
+		want    string
+	}{
+		{"yes shorthand", "y", []string{"yes", "no"}, "select", "yes"},
+		{"no shorthand", "n", []string{"yes", "no"}, "select", "no"},
+		{"yes word", "yes", []string{"yes", "no"}, "select", "yes"},
+		{"no word", "no", []string{"yes", "no"}, "select", "no"},
+		{"case and whitespace", " YEs ", []string{"no", "yes"}, "select", "yes"},
+		{"uppercase shorthand", " N ", []string{"yes", "no"}, "select", "no"},
+		{"invalid boolean", "maybe", []string{"yes", "no"}, "select", ""},
+		{"required blank", "", []string{"yes", "no"}, "select", ""},
+		{"unrelated select", "y", []string{"yellow", "blue"}, "select", ""},
+		{"three options", "y", []string{"yes", "no", "auto"}, "select", ""},
+		{"multiselect unchanged", "y", []string{"yes", "no"}, "multiselect", ""},
+		{"text unchanged", "y", nil, "text", "y"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
+			projections := &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+				TrackerID: "PTP",
+				Questionnaire: []api.TrackerQuestionnaireRequirement{{
+					Key:      "trumpable_review",
+					Kind:     test.kind,
+					Options:  test.options,
+					Required: true,
+				}},
+			}}}
+			changed, err := collectCLIWorkflowQuestionnaires(bufio.NewReader(strings.NewReader(test.answer+"\n")), io.Discard, api.InteractionModeInteractive, projections, instructions)
+			if test.want == "" {
+				if err == nil || changed || len(instructions) != 0 {
+					t.Fatalf("invalid answer accepted: changed=%v err=%v instructions=%#v", changed, err, instructions)
+				}
+				return
+			}
+			if err != nil || !changed {
+				t.Fatalf("answer rejected: changed=%v err=%v", changed, err)
+			}
+			got := instructions["PTP"].Questionnaire["trumpable_review"]
+			if got == nil || *got != test.want {
+				t.Fatalf("canonical answer = %v, want %q", got, test.want)
+			}
+		})
 	}
 }
