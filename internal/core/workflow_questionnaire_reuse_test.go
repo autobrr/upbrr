@@ -5,10 +5,13 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -21,14 +24,18 @@ import (
 )
 
 func TestContinuePTPQuestionnaireRebindsOnlyCompatibleDuplicateEvidence(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "PTP")
+	testContinueQuestionnaireReuse(t, "PTP", "")
 }
 
 func TestContinueANTQuestionnaireRebindsOnlyCompatibleDuplicateEvidence(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "ANT")
+	testContinueQuestionnaireReuse(t, "ANT", "")
 }
 
-func testContinueQuestionnaireReuse(t *testing.T, trackerID api.TrackerID) {
+func TestContinueQuestionnaireReusesEvidenceWithConfirmedSibling(t *testing.T) {
+	testContinueQuestionnaireReuse(t, "PTP", "ANT")
+}
+
+func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker api.TrackerID) {
 	t.Helper()
 	registry := trackerimpl.MustNewRegistry()
 	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}, Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{string(trackerID): {
@@ -45,6 +52,37 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID api.TrackerID) {
 		t.Fatal(err)
 	}
 	const releaseName = "Example.Movie.2026.1080p.BluRay.x264-GRP"
+	sourcePath := filepath.Join(t.TempDir(), releaseName+".mkv")
+	content := []byte("verified questionnaire release bytes")
+	if err := os.WriteFile(sourcePath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(content)
+	sourceIdentity := api.SourceContentIdentity{
+		Version: api.SourceContentIdentityVersion,
+		Digest:  hex.EncodeToString(digest[:]),
+		Files: []api.VerifiedSourceFile{{
+			LocalPath: sourcePath,
+			Size:      int64(len(content)),
+			SHA256:    hex.EncodeToString(digest[:]),
+		}},
+	}
+	fences := workflowSubmissionFenceRepositoryFake{records: make(map[string]api.SubmissionFenceRecord)}
+	if submittedTracker != "" {
+		identity, err := workflowSubmissionContentIdentity(api.TorrentSubject{SourcePath: sourcePath}, sourceIdentity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		descriptor, ok := registry.LookupDescriptor(string(submittedTracker))
+		if !ok {
+			t.Fatal("submitted tracker is not registered")
+		}
+		site, err := trackers.CanonicalSubmissionTrackerSite(descriptor.Name, descriptor.BaseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fences.records[identity.Digest+"|"+site] = api.SubmissionFenceRecord{Status: api.WorkflowEffectStatusSucceeded, ConfirmedAt: new(time.Now().UTC())}
+	}
 	preparations := 0
 	preparer := releaseworkflow.ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
@@ -60,9 +98,10 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID api.TrackerID) {
 		},
 		SubjectFunc: func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
 			return api.UploadSubject{
-				SourcePath:  input.Release.SourcePath,
-				Trackers:    input.Trackers,
-				ReleaseName: releaseName,
+				SourcePath:     input.Release.SourcePath,
+				SourceIdentity: sourceIdentity,
+				Trackers:       input.Trackers,
+				ReleaseName:    releaseName,
 				Release: api.ReleaseInfo{
 					Title:      "Example Movie",
 					Year:       2026,
@@ -100,6 +139,7 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID api.TrackerID) {
 	}}}
 	repository := releaseworkflow.NewMemoryRepository()
 	module, err := releaseworkflow.New(repository, releaseworkflow.NewMemoryPrivateResourceStore(), preparer,
+		releaseworkflow.WithSubmissionHistoryFilter(workflowSubmissionHistoryFilter{fences: fences, registry: registry}),
 		releaseworkflow.WithTrackerProjectionBuilder(projector),
 		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{
 			registry: registry,
@@ -126,12 +166,15 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID api.TrackerID) {
 	current, err = module.Execute(ctx, owner, releaseworkflow.PrepareReleaseCommand{
 		WorkflowID:       current.Workflow.ID,
 		ExpectedRevision: current.Workflow.Revision,
-		Input:            api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), releaseName+".mkv")},
+		Input:            api.PrepareInput{SourcePath: sourcePath},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	intent := api.WorkflowIntent{TrackerIDs: []api.TrackerID{trackerID}}
+	if submittedTracker != "" {
+		intent.TrackerIDs = append(intent.TrackerIDs, submittedTracker)
+	}
 	attempt := 0
 	settle := func(goal api.WorkflowGoal) {
 		attempt++
@@ -181,6 +224,12 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID api.TrackerID) {
 			answers["subtitle_tags"] = tags
 		}
 		intent.ProjectionInstructions = map[api.TrackerID]api.TrackerProjectionInstructions{trackerID: {Questionnaire: answers}}
+		if submittedTracker != "" {
+			intent.ProjectionInstructions[submittedTracker] = api.TrackerProjectionInstructions{
+				UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: "Already.Submitted.Name-GRP"},
+				Questionnaire:     map[string]*string{"tags": new("retained submitted answer")},
+			}
+		}
 	}
 	settle(api.WorkflowGoalTrackersProjected)
 	if current.Operation == nil || current.Operation.Status != api.StageStatusBlocked {
@@ -213,11 +262,24 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID api.TrackerID) {
 	if trackerID == "ANT" {
 		steps = []questionnaireEdit{{"drama, mystery", nil, true}, {"", nil, false}, {"drama", nil, true}}
 	}
+	if submittedTracker != "" {
+		steps = []questionnaireEdit{{"yes", new("English Softsubs Exist (Mislabeled)"), true}, {"no", nil, true}, {"", nil, false}, {"no", nil, true}}
+	}
 	for _, step := range steps {
 		setAnswers(step.review, step.tags)
 		settle(api.WorkflowGoalTrackersAssessed)
 		if len(dupes.projections) != 1 {
 			t.Fatal("Apply repeated a remote duplicate search")
+		}
+		if submittedTracker != "" {
+			if !slices.Equal(current.Selection.TrackerIDs, []api.TrackerID{trackerID}) || len(current.Projections.Projections) != 1 || current.Projections.Projections[0].TrackerID != trackerID ||
+				len(current.Workflow.SubmissionExclusions) != 1 || current.Workflow.SubmissionExclusions[0].TrackerID != submittedTracker {
+				t.Fatal("questionnaire Apply restored an already submitted lane")
+			}
+			retained := current.ProjectionInstructions.Instructions[submittedTracker]
+			if retained.UploadReleaseName.Value != "Already.Submitted.Name-GRP" || retained.Questionnaire["tags"] == nil || *retained.Questionnaire["tags"] != "retained submitted answer" {
+				t.Fatal("Apply discarded retained excluded-tracker instructions")
+			}
 		}
 		if !step.ready {
 			if current.Dupes != nil || current.Workflow.DryRun != nil {

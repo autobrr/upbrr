@@ -377,9 +377,9 @@ test("embedded web reviews default tracker questions before dupes and retains co
     expect(original.checkedAt).toBeTruthy();
     expect(original.searchFingerprint).toBeTruthy();
     const requestsBeforeEdit = duplicateRequests;
-    await tags.fill("drama, mystery");
+    await tags.fill("drama,mystery");
     const reapplied = await applyTrackerAnswers(page);
-    expect(reapplied.projections?.projections[0].questionnaireAnswers?.tags).toBe("drama, mystery");
+    expect(reapplied.projections?.projections[0].questionnaireAnswers?.tags).toBe("drama,mystery");
     expect(reapplied.dupes?.results).toHaveLength(1);
     const retained = reapplied.dupes!.results[0];
     expect(retained).toEqual({
@@ -395,7 +395,7 @@ test("embedded web reviews default tracker questions before dupes and retains co
     expect(duplicateRequests).toBe(requestsBeforeEdit);
     expect([...goals.values()].filter((goal) => goal === "duplicates_decided")).toHaveLength(1);
     expect([...goals.values()].filter((goal) => goal === "trackers_assessed")).toHaveLength(2);
-    await expect(tags).toHaveValue("drama, mystery");
+    await expect(tags).toHaveValue("drama,mystery");
     await expect(summary).not.toContainText("Unapplied changes");
     await expect(page.getByRole("button", { name: "Screenshots" })).toBeEnabled();
   } finally {
@@ -1677,8 +1677,11 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     expect(workspace.fake.counters.clientInjections).toBe(effectsAfterUpload.clientInjections);
 
     await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
-    await expect(page.getByRole("checkbox", { name: "HDS" })).toBeChecked();
-    await runDuplicateCheck(page);
+    // Page-open discovery excludes confirmed submissions without another duplicate search.
+    await expect(
+      page.getByText("All selected trackers were already uploaded. No upload is needed."),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeDisabled();
     const excludedResponse = await page
       .context()
       .request.get(new URL("api/app/GetActiveInput", app.url).toString());
@@ -1695,9 +1698,6 @@ test("embedded web runs image upload, direct tracker upload, and history", async
 
     await expect(page.getByLabel("Submission exclusions")).toContainText("HDS");
     await expect(page.getByLabel("Submission exclusions")).toContainText("Already uploaded");
-    await expect(
-      page.getByText("All selected trackers were already uploaded. No upload is needed."),
-    ).toBeVisible();
     expect(workspace.fake.counters).toEqual(effectsAfterUpload);
     expect(workspace.fake.trackerUploadBodies).toHaveLength(1);
 

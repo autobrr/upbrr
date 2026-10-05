@@ -52,7 +52,8 @@ func (m *Module) pendingDuplicateReuse(
 }
 
 // stageQuestionnaireDuplicateReuse retains the original baseline across incomplete
-// answer edits. All other selection, instruction, and execution changes discard it.
+// answer edits. Confirmed submissions are excluded from selection comparison;
+// other selection, instruction, and execution changes discard the baseline.
 func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersCommand) (bool, error) {
 	pending := state.PendingDuplicateReuse
 	state.PendingDuplicateReuse = nil
@@ -63,9 +64,10 @@ func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersComma
 	projections := state.Projections[workflow.TrackerProjections.ID]
 	selection := state.Selections[workflow.Selection.ID]
 	instructions := state.ProjectionInstructions[workflow.ProjectionInstructions.ID]
+	desired := normalizeContinuationTrackerIDs(withoutConfirmedSubmissions(command.TrackerIDs, workflow.SubmissionExclusions))
 	if projections.Revision != workflow.TrackerProjections.Revision || selection.Revision != workflow.Selection.Revision ||
 		instructions.Revision != workflow.ProjectionInstructions.Revision ||
-		!slices.Equal(normalizeContinuationTrackerIDs(command.TrackerIDs), normalizeContinuationTrackerIDs(selection.TrackerIDs)) ||
+		!slices.Equal(desired, normalizeContinuationTrackerIDs(selection.TrackerIDs)) ||
 		api.NormalizeWorkflowExecutionMode(command.ExecutionMode) != api.NormalizeWorkflowExecutionMode(projections.ExecutionMode) {
 		return false, nil
 	}
