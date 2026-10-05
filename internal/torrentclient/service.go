@@ -344,7 +344,14 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 	return nil
 }
 
-func (s *Service) injectQbit(ctx context.Context, name string, client config.TorrentClientConfig, meta api.ClientSubject, torrent api.TorrentResult) error {
+func (s *Service) injectQbit(
+	ctx context.Context,
+	name string,
+	client config.TorrentClientConfig,
+	meta api.ClientSubject,
+	torrent api.TorrentResult,
+) (err error) {
+	defer func() { err = safeClientError(err, client.QbitHost()) }()
 	logger := logging.FromContext(ctx, s.logger)
 	host := strings.TrimSpace(client.QbitHost())
 	if host == "" {
@@ -430,8 +437,8 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	defer cancel()
 
 	logger.Debugf(
-		"clients: connecting to qbit %s timeout=%s retries=%d",
-		redaction.RedactValue(host, nil),
+		"clients: connecting to qbit client=%s timeout=%s retries=%d",
+		name,
 		qbitInjectHTTPTimeout,
 		qbitInjectHTTPRetryAttempts,
 	)
