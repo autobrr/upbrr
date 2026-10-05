@@ -72,11 +72,11 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 		}
 	}
 
-	// Category and Type intentionally come from different sources: Category is
-	// the movie/TV content class from the RLS parser, while Type is the derived
+	// Category and Type intentionally come from different sources: Category uses
+	// source context with an RLS fallback, while Type is the derived
 	// release format (for example WEBDL, REMUX, or ENCODE) used elsewhere.
 	return api.ReleaseInfo{
-		Category:   metautil.ReleaseCategoryFromRLS(release.Type.String()),
+		Category:   detectedSourceCategory(trimmed, metautil.ReleaseCategoryFromRLS(release.Type.String())),
 		Type:       typeValue,
 		Artist:     release.Artist,
 		Title:      release.Title,

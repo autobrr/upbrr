@@ -48,13 +48,7 @@ var (
 	searchInnerWhitespace  = regexp.MustCompile(`\s+`)
 	tvdbAliasYearPattern   = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
 	tvdbAliasYearCleanup   = regexp.MustCompile(`\s*\(?\b(?:19\d{2}|20\d{2})\b\)?\s*`)
-	tvPathHintPattern      = regexp.MustCompile(`(?i)[\\/](tv|tvshows?|series)[\\/]`)
-	tvNameHintPattern      = regexp.MustCompile(
-		`(?i)\bS(?:\d{2}|\d{4})(?:E\d{1,3})?\b|\b(?:season|series)\s*(?:\d{2}|\d{4})\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
-	)
-	subsPleaseHintPattern = regexp.MustCompile(`(?i)subsplease`)
-	animeEpisodeHint      = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)
-	genericEpisodePattern = regexp.MustCompile(
+	genericEpisodePattern  = regexp.MustCompile(
 		`(?i)^episode\s*#?\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s*$`,
 	)
 	placeholderTitlePattern = regexp.MustCompile(`(?i)^(?:tba|tbd|tbc|tdc)$`)
@@ -1926,15 +1920,15 @@ func resolveCategoryPreference(meta preparationstate.State) string {
 			return category
 		}
 	}
-	// A known movie category wins before tracker or MediaInfo TV candidates can make the resolver keep TVDB state.
-	for _, candidate := range []string{string(meta.Identity.Category), meta.Release.Category, meta.MediaInfoCategory} {
-		if normalizeCategory(candidate) == "MOVIE" {
-			return "MOVIE"
-		}
-	}
 	for _, record := range meta.TrackerData {
 		if normalized := normalizeCategory(string(record.Category)); normalized != "" {
 			return normalized
+		}
+	}
+	// Preserve existing identity and local-media precedence after explicit and tracker categories.
+	for _, candidate := range []string{string(meta.Identity.Category), meta.Release.Category, meta.MediaInfoCategory} {
+		if normalizeCategory(candidate) == "MOVIE" {
+			return "MOVIE"
 		}
 	}
 	if normalized := normalizeCategory(string(meta.Identity.Category)); normalized != "" {
@@ -3249,13 +3243,5 @@ func isLikelyTV(meta preparationstate.State) bool {
 	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
 		return true
 	}
-	path := filepath.ToSlash(strings.ToLower(strings.TrimSpace(meta.SourcePath)))
-	if tvPathHintPattern.MatchString(path) {
-		return true
-	}
-	base := strings.ToLower(pathutil.Base(meta.SourcePath))
-	if tvNameHintPattern.MatchString(base) {
-		return true
-	}
-	return subsPleaseHintPattern.MatchString(path) && animeEpisodeHint.MatchString(base)
+	return sourceHasTVCategory(meta.SourcePath)
 }

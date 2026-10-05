@@ -4,7 +4,6 @@
 package metadata
 
 import (
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -17,15 +16,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var (
-	namingTVPathHintPattern = regexp.MustCompile(`(?i)[\\/](tv|tvshows?|series)[\\/]`)
-	namingTVNameHintPattern = regexp.MustCompile(
-		`(?i)\bS(?:\d{2}|\d{4})(?:E\d{1,3})?\b|\b(?:season|series)\s*(?:\d{2}|\d{4})\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
-	)
-	namingSubsPleaseHintPattern = regexp.MustCompile(`(?i)subsplease`)
-	namingAnimeEpisodeHint      = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)
-	namingWebDLFilenamePattern  = regexp.MustCompile(`(?i)(^|[ ._-])web([ ._-]|$)|web-?dl`)
-)
+var namingWebDLFilenamePattern = regexp.MustCompile(`(?i)(^|[ ._-])web([ ._-]|$)|web-?dl`)
 
 // BuildReleaseName normalizes category and format signals, applies the request's
 // manual omission controls, and builds tracker-style name variants. Unsupported
@@ -1655,9 +1646,6 @@ func inferCategoryFromMetadata(meta preparationstate.State) string {
 	if meta.HasTVSeasonEpisodeSignal() {
 		return "TV"
 	}
-	if category := normalizeNamingCategory(meta.Release.Category); category != "" {
-		return category
-	}
 	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
 		return "TV"
 	}
@@ -1665,13 +1653,8 @@ func inferCategoryFromMetadata(meta preparationstate.State) string {
 	if strings.Contains(releaseType, "TV") || strings.Contains(releaseType, "SERIES") || strings.Contains(releaseType, "EPISODE") {
 		return "TV"
 	}
-	sourcePath := filepath.ToSlash(strings.TrimSpace(meta.SourcePath))
-	pathHint := pathutil.Base(meta.SourcePath)
-	if namingTVPathHintPattern.MatchString(sourcePath) || namingTVNameHintPattern.MatchString(pathHint) {
-		return "TV"
-	}
-	if namingSubsPleaseHintPattern.MatchString(sourcePath) && namingAnimeEpisodeHint.MatchString(pathHint) {
-		return "TV"
+	if category := detectedSourceCategory(meta.SourcePath, meta.Release.Category); category != "" {
+		return category
 	}
 	return "MOVIE"
 }
