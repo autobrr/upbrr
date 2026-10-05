@@ -555,3 +555,16 @@ func TestCompositeUploadRoutesAndSchemasAreGenerated(t *testing.T) {
 		t.Fatalf("composite feedback enum = %#v", kindSchema)
 	}
 }
+
+func TestQuestionnaireAnswerAuthoritySchemaAllowsLegacyOmission(t *testing.T) {
+	builder := buildContractSchemaBuilder()
+	projection := builder.schemas["TrackerReleaseProjection"]
+	if projection == nil || projection.Properties["questionnaireAnswers"] == nil {
+		t.Fatal("missing answer authority schema")
+	}
+	for _, required := range projection.Required {
+		if required == "questionnaireAnswers" {
+			t.Fatal("legacy omitted answer authority declared required")
+		}
+	}
+}

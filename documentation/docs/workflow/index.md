@@ -145,11 +145,17 @@ Check save path, category, tags, automatic management, staging mode, and source-
 
 Debug mode is not a non-mutating dry run. It can perform screenshots, image uploads, remote searches, tracker preparation, and later workflow effects. Add `--no-seed` when testing without client injection.
 
-## Tracker subtitle questions
+## Tracker questions
+
+Answer PTP's tracker-specific questions on **Dupe Checking**, alongside release-name and duplicate review. Questions can include text, multiline notes, dropdowns, or multiple choices. Choose **Apply tracker answers** to refresh the review, then continue duplicate checking on the same page. Applying answers does not upload or start another duplicate search. Changes that have not been applied block dry runs and uploads.
+
+Some new-group or channel requirements can only be confirmed during tracker preparation. Their exact required fields, including questions from other trackers, are also shown on **Dupe Checking** when preparation reports them. Existing-group uploads do not require new-group-only details. OE's source and encoding notes remain in **Input**, alongside canonical metadata and language corrections.
+
+### Subtitle review
 
 Set regular and hardcoded subtitle languages with the editable language dropdowns in Input. The hardcoded list offers English (Full) and English (Forced); the ordinary list suggests base-language names. Both lists accept custom text. Adding or removing a hardcoded language controls hardcoded handling; there is no separate hardcoded-subtitles toggle. Auto resets the language correction and any retained legacy boolean override.
 
-PTP can require an explicit subtitle/trumpable review before its lane proceeds. Known hardcoded language corrections already provide the necessary intent and avoid another prompt. In the Web UI, open **Review & Upload**, answer the backend-provided **Tracker questions**, and choose **Apply tracker answers**. This refreshes the questions without submitting a torrent; a first answer may reveal additional choices or a language field. Select every applicable subtitle choice before applying again.
+PTP can require an explicit subtitle/trumpable review before its lane proceeds. Known hardcoded language corrections already provide the necessary intent and avoid another prompt. In the Web UI, answer the backend-provided **Tracker questions** on **Dupe Checking**, and choose **Apply tracker answers**. This refreshes the questions without submitting a torrent or starting another duplicate search; a first answer may reveal additional choices or a language field. Select every applicable subtitle choice before applying again, then run or continue the duplicate check on the same page.
 
 Changing a reviewed answer invalidates dependent tracker work. Complete any duplicate and other workflow stages requested afterward. The final payload uses the accepted answers from the exact reviewed projection.
 

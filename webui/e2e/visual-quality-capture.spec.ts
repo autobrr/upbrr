@@ -1590,7 +1590,7 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
                   await intercept.fulfill({ response, body: JSON.stringify(snapshot) });
                 });
               }
-              if (route === "upload") {
+              if (route === "duplicates") {
                 await page.route("**/api/app/GetActiveInput", async (intercept) => {
                   const response = await intercept.fetch();
                   const snapshot = await response.json();
@@ -1639,7 +1639,7 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
               if (route === "input") {
                 await expect(page.getByTestId("input-tracker-fields")).toHaveCount(1);
               }
-              if (route === "upload") {
+              if (route === "duplicates") {
                 await expect(page.getByRole("combobox", { name: "Edition *" })).toBeVisible();
               }
               const mainText = await page.getByRole("main").innerText();
@@ -1692,7 +1692,7 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
                     : null,
               });
               await page.waitForTimeout(1500);
-              if (route === "input" || route === "upload" || route === "tracker-data")
+              if (route === "input" || route === "duplicates" || route === "tracker-data")
                 await page.unroute("**/api/app/GetActiveInput");
             }
           }

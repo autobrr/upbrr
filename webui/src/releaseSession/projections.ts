@@ -8,6 +8,7 @@ import type {
   ReleaseFactInstructions,
   ReleaseCorrectionPatch,
   ReleaseWorkflowCurrent,
+  TrackerReleaseProjection,
   PrepareInput as WorkflowPrepareInput,
   WorkflowIntent,
 } from "../api/generated/release-workflow";
@@ -23,6 +24,42 @@ export type PendingInputUpdate = Readonly<{
   trackerInputAnswers: NonNullable<WorkflowIntent["trackerInputAnswers"]>;
   selectedTrackers: readonly string[];
 }>;
+
+/** Shows late tracker questions only for the exact currently reviewed projection set. */
+export const workflowQuestionnaires = (
+  current: ReleaseWorkflowCurrent | null | undefined,
+): Pick<
+  TrackerReleaseProjection,
+  "trackerId" | "displayName" | "questionnaire" | "questionnaireAnswers"
+>[] => {
+  const projections = current?.projections;
+  if (!projections) return [];
+  const dryRun = current.dryRun;
+  const reports =
+    dryRun?.workflowId === current.workflow.id &&
+    dryRun.projectionSet.id === projections.id &&
+    dryRun.projectionSet.revision === projections.revision
+      ? dryRun.reports
+      : [];
+  return projections.projections.map((projection) => {
+    const fields = new Map((projection.questionnaire || []).map((field) => [field.key, field]));
+    for (const field of reports.find((report) => report.trackerId === projection.trackerId)
+      ?.questionnaire || []) {
+      // A required empty value reports missing or rejected input; retain that validation result.
+      const rejectedOrMissing = field.required && !(field.value ?? "").trim();
+      fields.set(field.key, {
+        ...field,
+        value: rejectedOrMissing ? field.value : (fields.get(field.key)?.value ?? field.value),
+      });
+    }
+    return {
+      trackerId: projection.trackerId,
+      displayName: projection.displayName,
+      questionnaire: [...fields.values()],
+      questionnaireAnswers: projection.questionnaireAnswers,
+    };
+  });
+};
 
 export const workflowViewValue = <T>(value: unknown): T => structuredClone(value) as T;
 

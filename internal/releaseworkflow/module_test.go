@@ -5421,3 +5421,33 @@ func testFingerprint(t *testing.T, value string) api.WorkflowFingerprint {
 	}
 	return fingerprint
 }
+
+func TestUploadDryRunReportsPreserveLateQuestionnaireAndRecoveryAction(t *testing.T) {
+	questionnaire := []api.TrackerQuestionnaireRequirement{{
+		Key:      "channel",
+		Kind:     "select",
+		Label:    "Channel",
+		Value:    "unknown",
+		Required: true,
+		Options:  []string{"unknown", "1"},
+	}}
+	tracker := api.UploadPlanTracker{
+		TrackerID:       "SPD",
+		Status:          api.StageStatusFailed,
+		Questionnaire:   questionnaire,
+		RequiredActions: []api.RequiredAction{{Kind: api.RequiredActionAnswerQuestionnaire, Prompt: "Choose a valid channel"}},
+	}
+	reports := uploadDryRunReports([]api.UploadPlanTracker{tracker})
+	if len(reports) != 1 || len(reports[0].Questionnaire) != 1 || reports[0].Questionnaire[0].Value != "unknown" || !reports[0].Questionnaire[0].Required {
+		t.Fatalf("late questionnaire missing from failed report: %+v", reports)
+	}
+	reports[0].Questionnaire[0].Options[0] = "changed"
+	if questionnaire[0].Options[0] != "unknown" {
+		t.Fatal("report shares questionnaire options")
+	}
+	module, _ := newTestModule(t, testPreparer())
+	actions, err := module.stampUploadPlanActions(api.UploadPlan{Trackers: []api.UploadPlanTracker{tracker}, ExpiresAt: time.Now().Add(time.Hour)}, 2, time.Now())
+	if err != nil || len(actions) != 1 || actions[0].Kind != api.RequiredActionAnswerQuestionnaire || actions[0].TrackerID != "SPD" || actions[0].Status != api.RequiredActionStatusPending {
+		t.Fatalf("late questionnaire recovery action=%+v error=%v", actions, err)
+	}
+}

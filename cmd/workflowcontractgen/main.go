@@ -1329,7 +1329,7 @@ func (b *schemaBuilder) addFields(result *schema, value reflect.Type) {
 			fieldSchema = &schema{Type: "string"}
 		}
 		result.Properties[jsonName] = fieldSchema
-		if !options["omitempty"] && field.Type.Kind() != reflect.Pointer {
+		if !options["omitempty"] && !options["omitzero"] && field.Type.Kind() != reflect.Pointer {
 			result.Required = append(result.Required, jsonName)
 		}
 	}

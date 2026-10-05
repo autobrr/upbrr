@@ -1032,8 +1032,8 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
-    "sha256": "2054a5eb968bbde96d354e24d7eaa2250e9e28ad1a4805029f0b9860d041759d",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "e62b2547dbb023be8c4bfa8e89aa03e908ef2e830218d56eb631c1d8d0cfd205",
+    "reason": "New-group controls now display nonempty questionnaire title/year/poster/tags/trailer/description overrides before the same defaults used by payload construction. PreferredTitle/PreferredYear and manual genres still govern provider fallbacks; existing-group and subtitle behavior are preserved."
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveTags": {
     "sha256": "fecad8f9407d55cdbed88f221a1c28133159eea0bb7b9da7416d4a06c6c68042",
@@ -1044,20 +1044,20 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:buildUploadFields": {
-    "sha256": "e2a7b1446f23a8e9497d37d60a0c2949a895c54bf4245be19353fbc7a52bd6dc",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "cfbaa57633d908124b719b6db045a6c5e7bf8a58970b379d4bc001c24f2279ac",
+    "reason": "New-group uploads now reject empty effective tags, matching the required questionnaire field. Nonempty explicit tags still precede resolveTags; manual genres including manual-empty retain authority over existing provider defaults. The existing-group early return and title/year/poster/trailer/description precedence are unchanged."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
-    "sha256": "9455217c49ca0fdfb19e266e7b17a9c2ca5fd87fb2ac81f86f5f9689fab17338",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "1d4e2479e064e2e86bd7b816cff1f511410f7866280d144236da0069afcb0e1a",
+    "reason": "Adds recovery metadata for missing required questionnaire fields after payload construction fails. Existing-group lookup and explicit poster/title/year/tags/trailer/description precedence remain unchanged, using the exact prepared subject and existing provider fallback helpers."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:resolveGroupTitleYear": {
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66",
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "sha256": "9d1cb915962e904b0b995976bf3cb7fbfc57dee02951ed58ad9ec4f18431b6a0",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "884e38000ceb020dd4997b63469b5cf7990751201c9e66e4a6c66ae013d50789",
+    "reason": "Adds strict validation of the tracker-local no-English answer against finalized subtitle evidence. Canonical movie/taxonomy/container checks and their existing manual/provider resolution paths are unchanged; no provider evidence is replaced by questionnaire claims."
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "sha256": "ec1109c066bcccc24b157edbfd5d0cc7e08e41e0093e4db75bcbeaf20bac3555",

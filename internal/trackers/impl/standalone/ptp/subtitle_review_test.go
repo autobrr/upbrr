@@ -108,8 +108,8 @@ func TestPTPSubtitleReviewConditions(t *testing.T) {
 		{name: "explicit legacy no", meta: api.UploadSubject{TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": {"no_english_subtitles": "no"}}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			q := New().ProjectionQuestionnaire(tt.meta)
-			if (q != nil) != tt.want {
+			q := subtitleReviewFields(tt.meta, tt.meta.TrackerQuestionnaireAnswers["PTP"])
+			if (len(q) > 0) != tt.want {
 				t.Fatalf("questionnaire=%#v want review %v", q, tt.want)
 			}
 		})
@@ -174,7 +174,7 @@ func TestPTPProjectionCapturesReviewedPayloadChoices(t *testing.T) {
 			Category:   "MOVIE",
 			Resolution: "1080p",
 		},
-		Identity:       api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		Identity:       api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 123},
 		Container:      "mkv",
 		Source:         "BluRay",
 		Type:           "ENCODE",
@@ -251,7 +251,7 @@ func TestPTPReviewDoesNotOverrideCorrectedEnglishEvidence(t *testing.T) {
 		} else {
 			corrected.SubtitleLanguages = []string{"English"}
 		}
-		if New().ProjectionQuestionnaire(corrected) != nil {
+		if len(subtitleReviewFields(corrected, corrected.TrackerQuestionnaireAnswers["PTP"])) != 0 {
 			t.Fatal("stale missing-English question survived correction")
 		}
 		_, tags, err := reviewedSubtitles(corrected, answers)
@@ -318,7 +318,7 @@ func TestPTPPresetHardcodedLanguagesAvoidPrompts(t *testing.T) {
 			Release:                    api.ReleaseInfo{Resolution: "1080p"},
 			Container:                  "mkv",
 		}
-		if New().ProjectionQuestionnaire(meta) != nil {
+		if len(subtitleReviewFields(meta, meta.TrackerQuestionnaireAnswers["PTP"])) != 0 {
 			t.Fatalf("preset %s asked again", tt.language)
 		}
 		fields, err := buildUploadFields(meta, "description", "123", nil, "")
@@ -329,7 +329,7 @@ func TestPTPPresetHardcodedLanguagesAvoidPrompts(t *testing.T) {
 			t.Fatalf("%s payload=%v", tt.language, fields)
 		}
 	}
-	if New().ProjectionQuestionnaire(api.UploadSubject{HardcodedSubs: true}) == nil {
+	if len(subtitleReviewFields(api.UploadSubject{HardcodedSubs: true}, nil)) == 0 {
 		t.Fatal("unknown hardcoded language must prompt")
 	}
 }

@@ -89,6 +89,14 @@ func (d *Definition) UseGenericDescriptionCleanup() bool {
 	return d.profile.Site.BuildDescription == nil
 }
 
+// ProjectionQuestionnaire returns site-owned controls before duplicate checking.
+func (d *Definition) ProjectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	if d.profile.Site.ProjectionQuestionnaire == nil {
+		return nil
+	}
+	return d.profile.Site.ProjectionQuestionnaire(input)
+}
+
 // InputSchema returns site-owned controls for required preparation evidence.
 func (d *Definition) InputSchema(subject api.UploadSubject) *api.TrackerQuestionnaire {
 	if d.profile.Site.InputSchema == nil {

@@ -72,13 +72,6 @@ export default function TrackerUploadPage({ facet }: Props) {
   const { view } = facet;
   const [expandedTrackers, setExpandedTrackers] = useState<Record<string, boolean>>({});
   const selected = useMemo(() => new Set(view.selectedTrackers), [view.selectedTrackers]);
-  const questionnaireProjections = useMemo(
-    () =>
-      (view.projections?.projections || []).filter(
-        (projection) => selected.has(projection.trackerId) && projection.questionnaire?.length,
-      ),
-    [selected, view.projections],
-  );
   const trackerCards = useMemo(() => {
     const reports = view.dryRunResult?.reports || [];
     const reportsByTracker = new Map(reports.map((report) => [report.trackerId, report]));
@@ -149,100 +142,10 @@ export default function TrackerUploadPage({ facet }: Props) {
         </p>
       </header>
 
-      {questionnaireProjections.length ? (
-        <section className={`${pageStyle.panel} grid gap-3`}>
-          <h2>Tracker questions</h2>
-          {view.questionnaireDirty ? (
-            <p role="status">Apply tracker answers before running a dry run or upload.</p>
-          ) : null}
-          <Button
-            onClick={() => void facet.applyQuestionnaireAnswers()}
-            disabled={uploadRunning || view.dryRunStatus === "running"}
-          >
-            Apply tracker answers
-          </Button>
-          {questionnaireProjections.map((projection) => (
-            <fieldset className="grid gap-3" key={projection.trackerId}>
-              <legend className="font-semibold">{projection.displayName}</legend>
-              {projection.questionnaire?.map((field) => {
-                const answer =
-                  view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? field.value ?? "";
-                if (field.kind === "multiselect") {
-                  const selected = answer.split(",").filter(Boolean);
-                  return (
-                    <fieldset className="grid gap-2" key={field.key}>
-                      <legend>
-                        {field.label || field.key}
-                        {field.required ? " *" : ""}
-                      </legend>
-                      {field.help ? <p className="text-muted-foreground">{field.help}</p> : null}
-                      {(field.options || []).map((option) => (
-                        <label className="flex items-center gap-2" key={option}>
-                          <input
-                            type="checkbox"
-                            checked={selected.includes(option)}
-                            onChange={(event) =>
-                              facet.answerQuestionnaire(
-                                projection.trackerId,
-                                field.key,
-                                (event.target.checked
-                                  ? [...selected, option]
-                                  : selected.filter((value) => value !== option)
-                                ).join(","),
-                              )
-                            }
-                          />
-                          {option}
-                        </label>
-                      ))}
-                    </fieldset>
-                  );
-                }
-                return (
-                  <label className="grid gap-1" key={field.key}>
-                    <span className={pageStyle.label}>
-                      {field.label || field.key}
-                      {field.required ? " *" : ""}
-                    </span>
-                    {field.options?.length ? (
-                      <Select
-                        value={answer}
-                        onChange={(event) =>
-                          facet.answerQuestionnaire(
-                            projection.trackerId,
-                            field.key,
-                            event.target.value,
-                          )
-                        }
-                      >
-                        <option value="">Select</option>
-                        {answer && !field.options.includes(answer) ? (
-                          <option value={answer}>{answer} (saved)</option>
-                        ) : null}
-                        {field.options.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </Select>
-                    ) : (
-                      <input
-                        value={answer}
-                        onChange={(event) =>
-                          facet.answerQuestionnaire(
-                            projection.trackerId,
-                            field.key,
-                            event.target.value,
-                          )
-                        }
-                      />
-                    )}
-                  </label>
-                );
-              })}
-            </fieldset>
-          ))}
-        </section>
+      {view.questionnaireDirty ? (
+        <p role="status">
+          Apply your tracker answer changes on Dupe Checking before running a dry run or upload.
+        </p>
       ) : null}
 
       {view.submissionExclusions.length ? (

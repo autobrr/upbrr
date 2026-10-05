@@ -236,7 +236,7 @@ type TrackerArtifactRequirements struct {
 type TrackerQuestionnaireRequirement struct {
 	// Kind identifies the renderer; multiselect values use comma-separated option labels.
 	Kind string `json:"kind,omitempty"`
-	// Value is the validated answer captured with this exact projection.
+	// Value is the validated answer or display default for this field; QuestionnaireAnswers owns exact answer intent.
 	Value    string   `json:"value,omitempty"`
 	Help     string   `json:"help,omitempty"`
 	Key      string   `json:"key"`
@@ -270,6 +270,9 @@ type TrackerPolicyDecision struct {
 
 // TrackerReleaseProjection is one exact tracker-local interpretation of a release.
 type TrackerReleaseProjection struct {
+	// QuestionnaireAnswers owns exact tracker-scoped answers after projection instructions.
+	// An empty object clears prior answers; nil identifies a legacy projection without this authority.
+	QuestionnaireAnswers map[string]string        `json:"questionnaireAnswers,omitzero"`
 	TrackerID            TrackerID                `json:"trackerId"`
 	DisplayName          string                   `json:"displayName"`
 	CanonicalReleaseName string                   `json:"canonicalReleaseName"`
@@ -651,26 +654,27 @@ type UploadPlanFile struct {
 
 // UploadPlanTracker is the sanitized semantic projection of one retained prepared operation.
 type UploadPlanTracker struct {
-	TrackerID              TrackerID            `json:"trackerId"`
-	DisplayName            string               `json:"displayName"`
-	UploadReleaseName      string               `json:"uploadReleaseName"`
-	Taxonomy               TrackerTaxonomy      `json:"taxonomy"`
-	DescriptionGroup       string               `json:"descriptionGroup,omitempty"`
-	Endpoint               string               `json:"endpoint,omitempty"`
-	Fields                 []UploadPlanField    `json:"fields,omitempty"`
-	Files                  []UploadPlanFile     `json:"files,omitempty"`
-	Eligible               bool                 `json:"eligible"`
-	Status                 StageStatus          `json:"status,omitempty"`
-	ClientInjectionStatus  StageStatus          `json:"clientInjectionStatus,omitempty"`
-	ClientInjectionMessage string               `json:"clientInjectionMessage,omitempty"`
-	Warnings               []string             `json:"warnings,omitempty"`
-	RequiredActions        []RequiredAction     `json:"requiredActions,omitempty"`
-	Failures               []WorkflowFailure    `json:"failures,omitempty"`
-	PreparedOperationID    PublicResourceID     `json:"preparedOperationId,omitempty"`
-	TorrentArtifactID      PublicResourceID     `json:"torrentArtifactId,omitempty"`
-	TorrentFingerprint     WorkflowFingerprint  `json:"torrentFingerprint,omitempty"`
-	ClientFailureCode      OperationFailureCode `json:"clientFailureCode,omitempty"`
-	SemanticFingerprint    WorkflowFingerprint  `json:"semanticFingerprint"`
+	Questionnaire          []TrackerQuestionnaireRequirement `json:"questionnaire,omitempty"`
+	TrackerID              TrackerID                         `json:"trackerId"`
+	DisplayName            string                            `json:"displayName"`
+	UploadReleaseName      string                            `json:"uploadReleaseName"`
+	Taxonomy               TrackerTaxonomy                   `json:"taxonomy"`
+	DescriptionGroup       string                            `json:"descriptionGroup,omitempty"`
+	Endpoint               string                            `json:"endpoint,omitempty"`
+	Fields                 []UploadPlanField                 `json:"fields,omitempty"`
+	Files                  []UploadPlanFile                  `json:"files,omitempty"`
+	Eligible               bool                              `json:"eligible"`
+	Status                 StageStatus                       `json:"status,omitempty"`
+	ClientInjectionStatus  StageStatus                       `json:"clientInjectionStatus,omitempty"`
+	ClientInjectionMessage string                            `json:"clientInjectionMessage,omitempty"`
+	Warnings               []string                          `json:"warnings,omitempty"`
+	RequiredActions        []RequiredAction                  `json:"requiredActions,omitempty"`
+	Failures               []WorkflowFailure                 `json:"failures,omitempty"`
+	PreparedOperationID    PublicResourceID                  `json:"preparedOperationId,omitempty"`
+	TorrentArtifactID      PublicResourceID                  `json:"torrentArtifactId,omitempty"`
+	TorrentFingerprint     WorkflowFingerprint               `json:"torrentFingerprint,omitempty"`
+	ClientFailureCode      OperationFailureCode              `json:"clientFailureCode,omitempty"`
+	SemanticFingerprint    WorkflowFingerprint               `json:"semanticFingerprint"`
 }
 
 // UploadPlan is a safe projection of exact retained private prepared operations.

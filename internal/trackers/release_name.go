@@ -686,6 +686,7 @@ func PrepareInputWithReleaseNamePolicy(
 			nil,
 		)
 	}
+	input = applyReviewedQuestionnaire(input)
 	resolved, err := resolveProjectedReleaseNames(input, binding)
 	if err == nil && releaseNamesMatchProjection(input, binding, resolved, *reviewed) {
 		return input, nil

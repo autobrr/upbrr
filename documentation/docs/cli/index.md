@@ -158,7 +158,7 @@ Exit code `0` means Input is ready. Exit code `2` means required input prevents 
 | `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                           |
 | `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                               |
 | `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                              |
-| `--tracker-input "PTP:no_english_subtitles=yes"`  | Answer a tracker Input field; `no` and `auto` are also supported.                                      |
+| `--tracker-input "PTP:no_english_subtitles=yes"`  | Answer a tracker-specific field; `no` and `auto` are also supported.                                   |
 
 Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages.
 
@@ -189,7 +189,7 @@ PTP also asks for a decision when English subtitles or a first English audio tra
 
 The review is tracker-specific. Strict `--unattended` never prompts and skips PTP when its required review is unanswered; other eligible trackers remain available. `--unattended_confirm` permits the required questions. Existing global tracker-approval requirements still apply.
 
-The PTP `no_english_subtitles=yes/no` Input answer remains an explicit override for non-hardcoded releases. Correct mislabeled media tracks using the language corrections above; a tracker tagging answer does not rewrite the source media or canonical track languages.
+The PTP `no_english_subtitles=yes/no` tracker answer remains an explicit override for non-hardcoded releases. Correct mislabeled media tracks using the language corrections above; a tracker tagging answer does not rewrite the source media or canonical track languages.
 
 ### Naming fields
 

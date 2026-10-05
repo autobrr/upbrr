@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -22,40 +24,40 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string) *api.TrackerQues
 			Key:      "title",
 			Label:    "Group Title",
 			Kind:     "text",
-			Value:    title,
+			Value:    metautil.FirstNonEmptyTrimmed(answers["title"], title),
 			Required: true,
 		}, api.TrackerQuestionnaireField{
 			Key:         "year",
 			Label:       "Year",
 			Kind:        "text",
-			Value:       year,
+			Value:       metautil.FirstNonEmptyTrimmed(answers["year"], year),
 			Required:    false,
 			Placeholder: "Release year",
 		}, api.TrackerQuestionnaireField{
 			Key:      "poster",
 			Label:    "Poster URL",
 			Kind:     "text",
-			Value:    resolvePoster(meta),
+			Value:    metautil.FirstNonEmptyTrimmed(answers["poster"], resolvePoster(meta)),
 			Required: true,
 		}, api.TrackerQuestionnaireField{
 			Key:         "tags",
 			Label:       "Tags",
 			Kind:        "text",
-			Value:       resolveTags(meta),
+			Value:       metautil.FirstNonEmptyTrimmed(answers["tags"], resolveTags(meta)),
 			Required:    true,
 			Placeholder: "Comma separated tags",
 		}, api.TrackerQuestionnaireField{
 			Key:         "trailer",
 			Label:       "Trailer URL",
 			Kind:        "text",
-			Value:       resolveTrailer(meta),
+			Value:       metautil.FirstNonEmptyTrimmed(answers["trailer"], resolveTrailer(meta)),
 			Required:    false,
 			Placeholder: "YouTube trailer URL",
 		}, api.TrackerQuestionnaireField{
 			Key:      "album_desc",
 			Label:    "Group Description",
 			Kind:     "textarea",
-			Value:    resolveOverview(meta),
+			Value:    metautil.FirstNonEmptyTrimmed(answers["album_desc"], resolveOverview(meta)),
 			Required: false,
 		})
 	}
@@ -77,15 +79,20 @@ var subtitleReviewOptions = []string{
 	"Hardcoded Subs (Non-English)",
 }
 
-// ProjectionQuestionnaire requests an explicit, tracker-scoped subtitle decision.
-// It never changes canonical language facts or introduces a global Input gate.
-func (d *Definition) ProjectionQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
-	answers := standalone.QuestionnaireAnswers(meta, "PTP")
-	fields := subtitleReviewFields(meta, answers)
-	if len(fields) == 0 {
-		return nil
+// projectionQuestionnaire exposes subtitle review and optional new-group inputs.
+// Group existence is checked remotely during upload preparation, never here.
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	questionnaire := buildQuestionnaire(input.Meta, "")
+	questionnaire.Fields = append(questionnaire.Fields, legacySubtitleField(input.Meta))
+	for index := range questionnaire.Fields {
+		field := &questionnaire.Fields[index]
+		switch field.Key {
+		case "title", "year", "poster", "tags", "trailer", "album_desc":
+			field.Required = input.Meta.Identity.IMDBID == 0 && field.Required
+			field.Help = "Used only when creating a new PTP group. Existing-group uploads ignore this field; group lookup runs during upload preparation."
+		}
 	}
-	return &api.TrackerQuestionnaire{Tracker: "PTP", Fields: fields}
+	return questionnaire
 }
 
 func subtitleReviewFields(meta api.UploadSubject, answers map[string]string) []api.TrackerQuestionnaireField {
@@ -212,4 +219,40 @@ func validateSubtitleReview(meta api.UploadSubject, answers map[string]string, s
 		return errors.New("PTP No English Subtitles conflicts with English subtitle evidence or choices")
 	}
 	return nil
+}
+
+func legacySubtitleField(meta api.UploadSubject) api.TrackerQuestionnaireField {
+	value := strings.ToLower(strings.TrimSpace(standalone.QuestionnaireAnswers(meta, "PTP")["no_english_subtitles"]))
+	if value == "" {
+		value = "auto"
+	}
+	field := api.TrackerQuestionnaireField{
+		Key:     "no_english_subtitles",
+		Label:   "No English Subtitles",
+		Kind:    "select",
+		Options: []string{"auto", "yes", "no"},
+		Value:   value,
+		Help:    "Auto uses finalized subtitle and hardcoded-subtitle languages.",
+	}
+	if reason := validateNoEnglishSubtitles(meta); reason != "" {
+		field.Value = ""
+		field.Required = true
+		field.Help = reason
+	}
+	return field
+}
+
+func validateNoEnglishSubtitles(meta api.UploadSubject) string {
+	value := strings.ToLower(strings.TrimSpace(standalone.QuestionnaireAnswers(meta, "PTP")["no_english_subtitles"]))
+	if value == "" || value == "auto" || value == "no" {
+		return ""
+	}
+	if value != "yes" {
+		return "PTP No English Subtitles must be auto, yes, or no"
+	}
+	allSubtitles := append(append([]string(nil), meta.SubtitleLanguages...), meta.HardcodedSubtitleLanguages...)
+	if ptpHasEnglishLanguage(allSubtitles) {
+		return "PTP No English Subtitles conflicts with finalized English subtitle evidence"
+	}
+	return ""
 }

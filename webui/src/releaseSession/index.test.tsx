@@ -762,11 +762,15 @@ const selectAndPrepare = async (
 describe("tracker workflow capabilities", () => {
   it("opens the questionnaire surface without opening unrelated blocked stages", () => {
     const continuation = {
-      availableGoals: [{ goal: "upload_reviewed", available: false }],
+      availableGoals: [
+        { goal: "trackers_assessed", available: true },
+        { goal: "upload_reviewed", available: false },
+      ],
       requiredActions: [{ kind: "answer_questionnaire", status: "pending", trackerId: "PTP" }],
     } as unknown as WorkflowContinuation;
     const access = routeAccess(continuation, false, { needsImages: true, needsDescriptions: true });
-    expect(access.upload.available).toBe(true);
+    expect(access.duplicates.available).toBe(true);
+    expect(access.upload.available).toBe(false);
     expect(access.screenshots.available).toBe(false);
     expect(access.descriptions.available).toBe(false);
   });
@@ -5039,6 +5043,11 @@ describe("useReleaseSession", () => {
               ...current.projections,
               projections: current.projections.projections.map((projection) => ({
                 ...projection,
+                questionnaireAnswers: Object.fromEntries(
+                  Object.entries(args[2][projection.trackerId]?.questionnaire || {}).filter(
+                    ([, value]) => value != null,
+                  ),
+                ) as Record<string, string>,
                 questionnaire: [
                   {
                     key: "choices",
@@ -5060,17 +5069,21 @@ describe("useReleaseSession", () => {
       wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ project }) })),
     });
     await selectAndPrepare(result, "C:\\media\\Example");
-    act(() => result.current.upload.answerQuestionnaire("AITHER", "choices", "Second"));
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "First"));
+    expect(result.current.upload.view.questionnaireDirty).toBe(true);
+    await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+    expect(result.current.upload.view.questionnaireDirty).toBe(false);
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "Second"));
     expect(result.current.upload.view.questionnaireDirty).toBe(true);
     await act(async () => {
       expect(await result.current.upload.runDryRun()).toBe(false);
       expect(await result.current.upload.start()).toBe(false);
     });
-    await act(() => result.current.upload.applyQuestionnaireAnswers());
+    await act(() => result.current.duplicates.applyQuestionnaireAnswers());
     expect(result.current.upload.view.questionnaireDirty).toBe(false);
-    act(() => result.current.upload.answerQuestionnaire("AITHER", "choices", " French "));
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", " French "));
     expect(result.current.upload.view.questionnaireDirty).toBe(true);
-    await act(() => result.current.upload.applyQuestionnaireAnswers());
+    await act(() => result.current.duplicates.applyQuestionnaireAnswers());
     expect(result.current.upload.view.questionnaireDirty).toBe(false);
   });
 
@@ -5088,8 +5101,8 @@ describe("useReleaseSession", () => {
     project.mockClear();
     checkDuplicates.mockClear();
     executeUploads.mockClear();
-    act(() => result.current.upload.answerQuestionnaire("AITHER", "choices", "First,Second"));
-    await act(() => result.current.upload.applyQuestionnaireAnswers());
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "First,Second"));
+    await act(() => result.current.duplicates.applyQuestionnaireAnswers());
     expect(project).toHaveBeenCalled();
     expect(project.mock.calls[project.mock.calls.length - 1]?.[2].AITHER?.questionnaire).toEqual({
       choices: "First,Second",
@@ -5098,18 +5111,233 @@ describe("useReleaseSession", () => {
     expect(executeUploads).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    "answers exact late tracker requirements on Dupe Checking with previously submitted selection=%s",
+    async (alreadySubmitted) => {
+      const active = workflowPorts();
+      const workflowID = "workflow-late-questions";
+      const prepared = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 2),
+        preview("C:\\media\\Example", 1),
+      );
+      const projected = await active.project(
+        prepared,
+        ["AITHER"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const retained: ReleaseWorkflowCurrent = {
+        ...projected,
+        projectionInstructions: {
+          instructions: { AITHER: { questionnaire: { trailer: null } } },
+        } as unknown as NonNullable<ReleaseWorkflowCurrent["projectionInstructions"]>,
+        workflow: {
+          ...projected.workflow,
+          submissionExclusions: alreadySubmitted
+            ? [
+                {
+                  trackerId: "UPLOADED",
+                  reason: "already_uploaded",
+                  confirmedAt: "2026-07-20T00:00:00Z",
+                },
+              ]
+            : [],
+        },
+        projections: {
+          ...projected.projections!,
+          id: "projections-late",
+          revision: 3,
+          projections: projected.projections!.projections.map((projection) => ({
+            ...projection,
+            questionnaireAnswers: {},
+            questionnaire: [
+              { key: "poster", label: "Poster URL", required: false, value: "" },
+              {
+                key: "trailer",
+                label: "Trailer",
+                required: false,
+                value: "https://www.youtube.com/watch?v=EXAMPLE",
+              },
+            ],
+          })),
+        },
+        dryRun: {
+          workflowId: workflowID,
+          projectionSet: { id: "projections-late", revision: 3 },
+          status: "failed",
+          reports: [
+            {
+              trackerId: "AITHER",
+              status: "failed",
+              questionnaire: [
+                { key: "poster", label: "Poster URL", required: true, value: "" },
+                {
+                  key: "trailer",
+                  label: "Trailer",
+                  required: false,
+                  value: "https://www.youtube.com/watch",
+                },
+                { key: "director", label: "Director", required: true, value: "Example Director" },
+              ],
+            },
+          ],
+        } as unknown as NonNullable<ReleaseWorkflowCurrent["dryRun"]>,
+      };
+      const project = vi.fn(async (...args: Parameters<TestWorkflowPorts["project"]>) => {
+        const current = await active.project(
+          args[0],
+          args[1].filter((tracker) => tracker !== "UPLOADED"),
+          args[2],
+          args[3],
+          args[4],
+        );
+        return {
+          ...current,
+          dryRun: undefined,
+          projections: {
+            ...current.projections!,
+            id: "projections-applied",
+            revision: 4,
+            projections: current.projections!.projections.map((projection) => ({
+              ...projection,
+              questionnaireAnswers: Object.fromEntries(
+                Object.entries(args[2].AITHER?.questionnaire || {}).filter(
+                  ([, value]) => value != null,
+                ),
+              ) as Record<string, string>,
+              questionnaire: [
+                {
+                  key: "trailer",
+                  label: "Trailer",
+                  required: false,
+                  value:
+                    args[2].AITHER?.questionnaire?.trailer ??
+                    "https://www.youtube.com/watch?v=EXAMPLE",
+                },
+                {
+                  key: "poster",
+                  label: "Poster URL",
+                  required: false,
+                  value: args[2].AITHER?.questionnaire?.poster ?? "",
+                },
+                {
+                  key: "director",
+                  label: "Director",
+                  required: false,
+                  value: args[2].AITHER?.questionnaire?.director ?? "Example Director",
+                },
+              ],
+            })),
+          },
+        };
+      });
+      const checkDuplicates = vi.fn(active.checkDuplicates);
+      const executeUploads = vi.fn(active.executeUploads);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({
+              current: async () => retained,
+              project,
+              checkDuplicates,
+              executeUploads,
+              dryRunUploads: async (current) => ({
+                ...current,
+                dryRun: {
+                  ...retained.dryRun!,
+                  projectionSet: {
+                    id: current.projections!.id,
+                    revision: current.projections!.revision,
+                  },
+                },
+              }),
+            }),
+          }),
+        ),
+      });
+      await waitFor(() =>
+        expect(result.current.workflow.view.current?.workflow.id).toBe(workflowID),
+      );
+      act(() =>
+        result.current.duplicates.chooseTrackers(
+          alreadySubmitted ? ["AITHER", "UPLOADED"] : ["AITHER"],
+        ),
+      );
+      await waitFor(() =>
+        expect(result.current.duplicates.view.questionnaires[0]?.questionnaire?.[0].required).toBe(
+          true,
+        ),
+      );
+      act(() =>
+        result.current.duplicates.answerQuestionnaire(
+          "AITHER",
+          "poster",
+          "https://example.com/poster.jpg",
+        ),
+      );
+      expect(result.current.upload.view.questionnaireDirty).toBe(true);
+      await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+      expect(project.mock.calls[project.mock.calls.length - 1]?.[2].AITHER?.questionnaire).toEqual({
+        poster: "https://example.com/poster.jpg",
+        trailer: null,
+      });
+      expect(
+        result.current.duplicates.view.questionnaires[0]?.questionnaire?.find(
+          (field) => field.key === "trailer",
+        )?.value,
+      ).toBe("https://www.youtube.com/watch?v=EXAMPLE");
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(false);
+      expect(result.current.duplicates.view.questionnaires[0]?.questionnaire?.[0].required).toBe(
+        false,
+      );
+      await act(() => result.current.upload.runDryRun());
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(false);
+      act(() =>
+        result.current.duplicates.answerQuestionnaire(
+          "AITHER",
+          "trailer",
+          "https://www.youtube.com/watch?v=OTHER",
+        ),
+      );
+      await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+      await act(() => result.current.upload.runDryRun());
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(false);
+      expect(checkDuplicates).not.toHaveBeenCalled();
+      expect(executeUploads).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects questionnaire apply for a changed tracker selection", async () => {
+    const active = workflowPorts();
+    const project = vi.fn(active.project);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ project }) })),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "First"));
+    act(() => result.current.duplicates.chooseTrackers(["BLU"]));
+    project.mockClear();
+    await act(async () =>
+      expect(await result.current.duplicates.applyQuestionnaireAnswers()).toBe(false),
+    );
+    expect(result.current.duplicates.view.questionnaires).toEqual([]);
+    expect(project).not.toHaveBeenCalled();
+  });
+
   it("carries workflow drafts across refreshes and clears them after another input opens", async () => {
     const { result } = renderHook(useReleaseSession, { wrapper: wrapperFor(portsFor()) });
     await selectAndPrepare(result, "C:\\media\\Example");
     act(() => result.current.upload.chooseTrackers(["AITHER", "BLU"]));
     act(() => result.current.upload.changeOptions({ noSeed: true, runLogLevel: "debug" }));
-    act(() => result.current.upload.answerQuestionnaire("AITHER", "season", "1"));
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "season", "1"));
 
     await act(() => result.current.input.prepare());
     expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
     expect(result.current.upload.view.options.noSeed).toBe(true);
     expect(result.current.upload.view.options.runLogLevel).toBe("debug");
-    expect(result.current.upload.view.questionnaireAnswers.AITHER).toEqual({ season: "1" });
+    expect(result.current.duplicates.view.questionnaireAnswers.AITHER).toEqual({ season: "1" });
 
     act(() => result.current.input.selectSource("C:\\media\\Other"));
     expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
@@ -5118,7 +5346,7 @@ describe("useReleaseSession", () => {
     expect(result.current.upload.view.selectedTrackers).toEqual([]);
     expect(result.current.upload.view.options.noSeed).toBe(false);
     expect(result.current.upload.view.options.runLogLevel).toBe("info");
-    expect(result.current.upload.view.questionnaireAnswers).toEqual({});
+    expect(result.current.duplicates.view.questionnaireAnswers).toEqual({});
   });
 
   it("keeps independent facets concurrent and suppresses stale media completion", async () => {

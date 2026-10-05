@@ -476,7 +476,7 @@ type InputSchemaProvider interface {
 // finalized facts without payload preparation or I/O. Unanswered required fields
 // block only this tracker through the shared questionnaire action policy.
 type ProjectionQuestionnaireProvider interface {
-	ProjectionQuestionnaire(api.UploadSubject) *api.TrackerQuestionnaire
+	ProjectionQuestionnaire(PreparationInput) *api.TrackerQuestionnaire
 }
 
 // UploadArtifactPolicy declares tracker torrent personalization fields.

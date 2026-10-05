@@ -670,14 +670,14 @@ func TestDuplicateTargetRetainsSeparatedEditionParts(t *testing.T) {
 
 type reviewQuestionnaireDefinition struct{ stubDefinition }
 
-func (d reviewQuestionnaireDefinition) ProjectionQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
+func (d reviewQuestionnaireDefinition) ProjectionQuestionnaire(input PreparationInput) *api.TrackerQuestionnaire {
 	return &api.TrackerQuestionnaire{Tracker: d.name, Fields: []api.TrackerQuestionnaireField{{
 		Key:      "review",
 		Label:    "Review",
 		Kind:     "select",
 		Options:  []string{"yes", "no"},
 		Required: true,
-		Value:    meta.TrackerQuestionnaireAnswers[d.name]["review"],
+		Value:    input.Meta.TrackerQuestionnaireAnswers[d.name]["review"],
 	}}}
 }
 
@@ -720,5 +720,34 @@ func TestProjectionQuestionnaireIsTrackerScopedAndRetained(t *testing.T) {
 		if failure != nil || !other.UploadReady || len(other.RequiredActions) > 0 {
 			t.Fatalf("other tracker affected: %#v %v", other, failure)
 		}
+	}
+}
+
+type blockedQuestionnaireDefinition struct{ reviewQuestionnaireDefinition }
+
+func (blockedQuestionnaireDefinition) ValidationPolicy() ValidationPolicyBinding {
+	return ValidationPolicyBinding{ID: "questionnaire-strict-test-v1", Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
+		return []api.RuleFailure{NewRuleFailure("unrelated_strict", "unsupported source", api.RuleDispositionStrict)}, nil
+	}}
+}
+
+func TestProjectionQuestionnaireRemainsActionableWithStrictFailure(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(blockedQuestionnaireDefinition{reviewQuestionnaireDefinition{stubDefinition{name: "ONE"}}}); err != nil {
+		t.Fatal(err)
+	}
+	projection, failure := registry.ProjectRelease(t.Context(), PreparationInput{
+		Tracker: "ONE", Meta: api.UploadSubject{ReleaseName: "Example.Movie.2026.1080p-GRP"},
+	}, "input", "catalog", "config")
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if !slices.ContainsFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionAnswerQuestionnaire && action.TrackerID == "ONE"
+	}) {
+		t.Fatalf("missing questionnaire action with strict failure: %+v", projection)
+	}
+	if projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady || projection.UploadReady || len(projection.Failures) == 0 {
+		t.Fatalf("questionnaire waived strict failure: %+v", projection)
 	}
 }

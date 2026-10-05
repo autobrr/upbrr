@@ -24,6 +24,9 @@ const facetFor = (
     ignoredTrackers: [],
     selectedTrackers: ["EXAMPLE"],
     releaseNameOverrides: {},
+    questionnaires: [],
+    questionnaireAnswers: {},
+    questionnaireDirty: false,
     error: "",
     ...view,
   },
@@ -34,6 +37,8 @@ const facetFor = (
   acknowledgeReleaseName: vi.fn(async () => true),
   acknowledgeRules: vi.fn(async () => true),
   setIgnored: vi.fn(),
+  answerQuestionnaire: vi.fn(),
+  applyQuestionnaireAnswers: vi.fn(async () => true),
   ...commands,
 });
 
@@ -50,6 +55,132 @@ const renderPage = (facet: DuplicatesFacet, trackers = ["EXAMPLE"]) =>
   );
 
 describe("DupeCheckPage", () => {
+  it("renders selected tracker multiline questions and locks review while applying", () => {
+    const facet = facetFor({
+      status: "running",
+      questionnaireDirty: true,
+      questionnaires: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            {
+              key: "overview",
+              label: "Overview",
+              kind: "textarea",
+              required: true,
+              help: "Describe this release",
+            },
+            {
+              key: "choices",
+              label: "Choices",
+              kind: "multiselect",
+              required: false,
+              options: ["First"],
+            },
+          ],
+        },
+        {
+          trackerId: "OTHER",
+          displayName: "Other Tracker",
+          questionnaire: [{ key: "other", label: "Other question", required: true }],
+        },
+      ],
+      questionnaireAnswers: { EXAMPLE: { overview: "A retained answer" } },
+    });
+    renderPage(facet);
+    const overview = screen.getByRole("textbox", { name: /Overview/ });
+    expect(overview.tagName).toBe("TEXTAREA");
+    expect(overview).toHaveValue("A retained answer");
+    expect(overview).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "First" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Apply tracker answers" })).toBeDisabled();
+    expect(screen.queryByLabelText("Other question *")).not.toBeInTheDocument();
+    expect(screen.getByText("Describe this release")).toBeInTheDocument();
+  });
+
+  it("collects questionnaire answers from current workflow projections", () => {
+    const answerQuestionnaire = vi.fn();
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
+            { key: "note", label: "Note", required: false },
+          ],
+        },
+      ],
+    } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>;
+    renderPage(
+      facetFor({ projections, questionnaires: projections.projections }, { answerQuestionnaire }),
+    );
+
+    fireEvent.change(screen.getByLabelText("Edition *"), { target: { value: "Extended" } });
+    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Synthetic note" } });
+    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "edition", "Extended");
+    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "note", "Synthetic note");
+  });
+
+  it("renders backend multiselect choices and applies them without uploading", () => {
+    const answerQuestionnaire = vi.fn();
+    const applyQuestionnaireAnswers = vi.fn(async () => true);
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            {
+              key: "choices",
+              label: "Subtitle choices",
+              kind: "multiselect",
+              required: true,
+              options: ["Full", "Forced"],
+              value: "Full",
+            },
+          ],
+        },
+      ],
+    } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>;
+    const facet = facetFor(
+      { projections, questionnaires: projections.projections },
+      { answerQuestionnaire, applyQuestionnaireAnswers },
+    );
+    renderPage(facet);
+    expect(screen.getByRole("checkbox", { name: "Full" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Forced" }));
+    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "choices", "Full,Forced");
+    fireEvent.click(screen.getByRole("button", { name: "Apply tracker answers" }));
+    expect(applyQuestionnaireAnswers).toHaveBeenCalledOnce();
+    expect(facet.run).not.toHaveBeenCalled();
+  });
+
+  it("shows a saved questionnaire answer missing from current options", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
+          ],
+        },
+      ],
+    } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>;
+    renderPage(
+      facetFor({
+        projections,
+        questionnaires: projections.projections,
+        questionnaireAnswers: { EXAMPLE: { edition: "Legacy" } },
+      }),
+    );
+
+    expect(screen.getByRole("combobox", { name: "Edition *" })).toHaveValue("Legacy");
+    expect(screen.getByRole("option", { name: "Legacy (saved)" })).toBeInTheDocument();
+  });
+
   it.each([
     { faviconOnly: false, useFavicons: true, visibleName: true },
     { faviconOnly: true, useFavicons: true, visibleName: false },

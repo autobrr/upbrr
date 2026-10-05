@@ -107,6 +107,14 @@ func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.CanonicalReleaseNamePolicy()
 }
 
+// ProjectionQuestionnaire returns profile-owned controls without preparing an upload.
+func (d *Definition) ProjectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	if d.profile.ProjectionQuestionnaire == nil {
+		return nil
+	}
+	return d.profile.ProjectionQuestionnaire(input)
+}
+
 // Prepare dispatches intent through the tracker-local profile callbacks.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
 	if input.Intent == trackers.PreparationIntentDescriptionPreview && !d.profile.UploadContentMode.UsesDescription() {

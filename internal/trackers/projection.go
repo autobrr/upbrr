@@ -20,6 +20,8 @@ import (
 // remote work. Readiness remains unproven until naming, generic rules,
 // metadata policy, and tracker-native validation complete.
 func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection {
+	answers := make(map[string]string)
+	maps.Copy(answers, input.Meta.TrackerQuestionnaireAnswers[strings.ToUpper(strings.TrimSpace(input.Tracker))])
 	canonicalName := canonicalProjectionName(input.Meta)
 	if canonicalName == "" {
 		canonicalName = "unresolved"
@@ -50,6 +52,7 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 	target := duplicateTarget(input.Meta)
 	target.Names = append([]string{canonicalName}, target.Names...)
 	projection := api.TrackerReleaseProjection{
+		QuestionnaireAnswers: answers,
 		TrackerID:            api.TrackerID(strings.ToUpper(strings.TrimSpace(input.Tracker))),
 		DisplayName:          strings.ToUpper(strings.TrimSpace(input.Tracker)),
 		CanonicalReleaseName: canonicalName,
@@ -142,7 +145,7 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		DuplicateCriteria:   criteria,
 		DuplicateTarget:     target,
 		DescriptionGroup:    strings.ToLower(strings.TrimSpace(preview.DescriptionGroup)),
-		Questionnaire:       projectQuestionnaire(preview.Questionnaire),
+		Questionnaire:       ProjectQuestionnaire(preview.Questionnaire),
 		Readiness:           readiness,
 		DupeReady:           dupeReady,
 		UploadReady:         dupeReady,
@@ -169,28 +172,28 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 	return projection, nil
 }
 
+// applyReviewedQuestionnaire restores only exact answer authority, before name
+// verification or payload preparation can consult mutable caller answers.
+func applyReviewedQuestionnaire(input PreparationInput) PreparationInput {
+	if input.Projection == nil || input.Projection.QuestionnaireAnswers == nil {
+		return input
+	}
+	input.Meta.TrackerQuestionnaireAnswers = maps.Clone(input.Meta.TrackerQuestionnaireAnswers)
+	if input.Meta.TrackerQuestionnaireAnswers == nil {
+		input.Meta.TrackerQuestionnaireAnswers = make(map[string]map[string]string)
+	}
+	input.Meta.TrackerQuestionnaireAnswers[string(input.Projection.TrackerID)] = maps.Clone(input.Projection.QuestionnaireAnswers)
+	return input
+}
+
 func applyReviewedProjection(input PreparationInput) PreparationInput {
+	input = applyReviewedQuestionnaire(input)
 	if input.Projection == nil {
 		return input
 	}
 	projection := *input.Projection
 	input.Projection = &projection
-	if len(projection.Questionnaire) > 0 {
-		input.Meta.TrackerQuestionnaireAnswers = maps.Clone(input.Meta.TrackerQuestionnaireAnswers)
-		if input.Meta.TrackerQuestionnaireAnswers == nil {
-			input.Meta.TrackerQuestionnaireAnswers = make(map[string]map[string]string)
-		}
-		answers := maps.Clone(input.Meta.TrackerQuestionnaireAnswers[string(projection.TrackerID)])
-		if answers == nil {
-			answers = make(map[string]string)
-		}
-		for _, field := range projection.Questionnaire {
-			if field.Value != "" {
-				answers[field.Key] = field.Value
-			}
-		}
-		input.Meta.TrackerQuestionnaireAnswers[string(projection.TrackerID)] = answers
-	}
+
 	if value := strings.TrimSpace(projection.Taxonomy.Type.Label); value != "" {
 		input.Meta.Type = value
 	}
@@ -332,7 +335,8 @@ func projectionProviderIDs(identity api.ExternalIdentity) []api.TrackerProviderI
 	return result
 }
 
-func projectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {
+// ProjectQuestionnaire returns detached tracker-owned fields for safe workflow review.
+func ProjectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {
 	if questionnaire == nil {
 		return nil
 	}
@@ -573,11 +577,11 @@ func (r *Registry) ProjectRelease(
 	}
 	if failure == nil {
 		if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); ok {
-			projection.Questionnaire = projectQuestionnaire(provider.ProjectionQuestionnaire(input.Meta))
-			if projection.Readiness == api.ReadinessStatusReady &&
-				slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
-					return field.Required && strings.TrimSpace(field.Value) == ""
-				}) {
+			input.Projection = &projection
+			projection.Questionnaire = ProjectQuestionnaire(provider.ProjectionQuestionnaire(input))
+			if slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+				return field.Required && strings.TrimSpace(field.Value) == ""
+			}) {
 				projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
 					Kind:      api.RequiredActionAnswerQuestionnaire,
 					TrackerID: projection.TrackerID,
@@ -585,7 +589,9 @@ func (r *Registry) ProjectRelease(
 				})
 				projection.UploadReady = false
 				projection.DupeReady = false
-				projection.Readiness = api.ReadinessStatusBlocked
+				if projection.Readiness != api.ReadinessStatusIneligible {
+					projection.Readiness = api.ReadinessStatusBlocked
+				}
 			}
 		}
 	}

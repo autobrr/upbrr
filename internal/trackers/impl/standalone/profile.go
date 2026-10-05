@@ -31,6 +31,8 @@ type Profile struct {
 	SourceOnlyImageReusable func(string, []api.TrackerMetadata) bool
 	PrepareDescription      DescriptionPreparer
 	PrepareUpload           trackers.UploadPreparer
+	// ProjectionQuestionnaire exposes pure tracker-local controls before duplicate checking.
+	ProjectionQuestionnaire func(trackers.PreparationInput) *api.TrackerQuestionnaire
 	ReleaseNamePolicy       trackers.ReleaseNamePolicyBinding
 	NewDuplicateAdapter     func(dupe.Dependencies) dupe.Adapter
 	Rules                   *trackers.RuleSet

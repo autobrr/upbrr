@@ -33,6 +33,19 @@ const continuation = (requiredActions: readonly RequiredAction[]): WorkflowConti
 });
 
 describe("WorkflowRequiredActions", () => {
+  it("routes tracker questions to Dupe Checking", () => {
+    const navigate = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([action({ kind: "answer_questionnaire" })])}
+        onConfirm={vi.fn()}
+        onNavigate={navigate}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Answer tracker questions" }));
+    expect(navigate).toHaveBeenCalledWith("duplicates");
+  });
+
   it("keeps source evidence visible while showing Blu-ray playlist progress", () => {
     render(
       <WorkflowOperationProgress

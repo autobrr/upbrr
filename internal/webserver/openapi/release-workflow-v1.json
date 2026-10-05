@@ -9519,6 +9519,12 @@
           "preparedOperationId": {
             "$ref": "#/components/schemas/PublicResourceID"
           },
+          "questionnaire": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerQuestionnaireRequirement"
+            }
+          },
           "semanticFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
@@ -10413,6 +10419,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TrackerQuestionnaireRequirement"
+            }
+          },
+          "questionnaireAnswers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
             }
           },
           "readiness": {

@@ -7522,6 +7522,7 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 			TorrentArtifactID:   tracker.TorrentArtifactID,
 			TorrentFingerprint:  tracker.TorrentFingerprint,
 			SemanticFingerprint: tracker.SemanticFingerprint,
+			Questionnaire:       append([]api.TrackerQuestionnaireRequirement(nil), tracker.Questionnaire...),
 			ClientInjection: api.ClientInjectionOutcome{
 				Status:  tracker.ClientInjectionStatus,
 				Message: tracker.ClientInjectionMessage,
@@ -7529,6 +7530,12 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 			Warnings: append([]string(nil), tracker.Warnings...),
 			Failures: failures,
 		})
+	}
+	for reportIndex := range reports {
+		for fieldIndex := range reports[reportIndex].Questionnaire {
+			field := &reports[reportIndex].Questionnaire[fieldIndex]
+			field.Options = slices.Clone(field.Options)
+		}
 	}
 	return reports
 }

@@ -5,6 +5,7 @@ import { pageStyle } from "../../components/ui/pageStyle";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { PillCheckbox } from "../../components/ui/checkbox";
+import { Select } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
@@ -441,7 +442,7 @@ function WorkflowDupeAssessmentView({
   );
 }
 
-/** Presents per-tracker duplicate evidence, policy acknowledgements, and release-name review. */
+/** Presents per-tracker duplicate evidence, policy acknowledgements, tracker questions, and release-name review. */
 export default function DupeCheckPage({
   facet,
   sourcePath,
@@ -459,6 +460,9 @@ export default function DupeCheckPage({
   const trackerIDs = workflowTrackerIDs(assessment, preflight, projections);
   const ignoredTrackers = new Set(view.ignoredTrackers);
   const selectedTrackers = new Set(view.selectedTrackers);
+  const questionnaireProjections = view.questionnaires.filter(
+    (projection) => selectedTrackers.has(projection.trackerId) && projection.questionnaire?.length,
+  );
   const trackerSelectionRequired = selectedTrackers.size === 0;
   const dupeLoading = view.status === "running";
   const excludedTrackerIDs = new Set(submissionExclusions.map((exclusion) => exclusion.trackerId));
@@ -539,6 +543,115 @@ export default function DupeCheckPage({
           {dupeLoading ? `Checking ${view.completed}/${view.total || "?"}...` : "Run dupe check"}
         </Button>
       </section>
+
+      {questionnaireProjections.length ? (
+        <section className={`${pageStyle.panel} grid gap-3`}>
+          <h2>Tracker questions</h2>
+          {view.questionnaireDirty ? (
+            <p role="status">
+              Apply tracker answers to refresh the review, then continue duplicate checking.
+            </p>
+          ) : null}
+          <Button onClick={() => void facet.applyQuestionnaireAnswers()} disabled={dupeLoading}>
+            Apply tracker answers
+          </Button>
+          {questionnaireProjections.map((projection) => (
+            <fieldset className="grid gap-3" disabled={dupeLoading} key={projection.trackerId}>
+              <legend className="font-semibold">{projection.displayName}</legend>
+              {projection.questionnaire?.map((field) => {
+                const answer =
+                  view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? field.value ?? "";
+                if (field.kind === "multiselect") {
+                  const selected = answer.split(",").filter(Boolean);
+                  return (
+                    <fieldset className="grid gap-2" key={field.key}>
+                      <legend>
+                        {field.label || field.key}
+                        {field.required ? " *" : ""}
+                      </legend>
+                      {field.help ? <p className="text-muted-foreground">{field.help}</p> : null}
+                      {(field.options || []).map((option) => (
+                        <label className="flex items-center gap-2" key={option}>
+                          <input
+                            type="checkbox"
+                            checked={selected.includes(option)}
+                            onChange={(event) =>
+                              facet.answerQuestionnaire(
+                                projection.trackerId,
+                                field.key,
+                                (event.target.checked
+                                  ? [...selected, option]
+                                  : selected.filter((value) => value !== option)
+                                ).join(","),
+                              )
+                            }
+                          />
+                          {option}
+                        </label>
+                      ))}
+                    </fieldset>
+                  );
+                }
+                return (
+                  <label className="grid gap-1" key={field.key}>
+                    <span className={pageStyle.label}>
+                      {field.label || field.key}
+                      {field.required ? " *" : ""}
+                    </span>
+                    {field.help ? (
+                      <span className="text-muted-foreground text-sm">{field.help}</span>
+                    ) : null}
+                    {field.options?.length ? (
+                      <Select
+                        value={answer}
+                        onChange={(event) =>
+                          facet.answerQuestionnaire(
+                            projection.trackerId,
+                            field.key,
+                            event.target.value,
+                          )
+                        }
+                      >
+                        <option value="">Select</option>
+                        {answer && !field.options.includes(answer) ? (
+                          <option value={answer}>{answer} (saved)</option>
+                        ) : null}
+                        {field.options.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : field.kind === "textarea" ? (
+                      <textarea
+                        value={answer}
+                        onChange={(event) =>
+                          facet.answerQuestionnaire(
+                            projection.trackerId,
+                            field.key,
+                            event.target.value,
+                          )
+                        }
+                      />
+                    ) : (
+                      <input
+                        value={answer}
+                        onChange={(event) =>
+                          facet.answerQuestionnaire(
+                            projection.trackerId,
+                            field.key,
+                            event.target.value,
+                          )
+                        }
+                      />
+                    )}
+                  </label>
+                );
+              })}
+            </fieldset>
+          ))}
+        </section>
+      ) : null}
 
       {view.error ? <p className={pageStyle.error}>{view.error}</p> : null}
 

@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -564,12 +563,8 @@ func (b workflowDescriptionBuilder) resolveSubject(
 			Final:          override.Final,
 		})
 	}
-	questionnaire := make(map[string]map[string]string, len(instructions.QuestionnaireAnswers))
-	for trackerID, answers := range instructions.QuestionnaireAnswers {
-		cloned := make(map[string]string, len(answers))
-		maps.Copy(cloned, answers)
-		questionnaire[string(trackerID)] = cloned
-	}
+	questionnaire := workflowQuestionnaireAnswers(instructions.QuestionnaireAnswers, descriptionTargets)
+
 	subject, err := b.resolver.ResolveUploadSubject(ctx, api.UploadSubjectInput{
 		Release:                release,
 		Trackers:               trackerNames,

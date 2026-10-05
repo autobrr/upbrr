@@ -35,6 +35,7 @@ func (m *Module) evaluateInputReadiness(
 	for index := range trackerIDs {
 		trackerNames[index] = string(trackerIDs[index])
 	}
+	previousAnswers := cloneTrackerInputAnswers(state.TrackerInputAnswers)
 	if trackerInputAnswersChanged(state.TrackerInputAnswers, command.TrackerInputAnswers) {
 		applyTrackerInputAnswers(state, command.TrackerInputAnswers)
 		invalidateTrackerAndDownstream(&state.Workflow)
@@ -56,7 +57,12 @@ func (m *Module) evaluateInputReadiness(
 		}
 		evaluation.Fields = append(globalEvaluation.Fields, evaluation.Fields...)
 	}
-	if err := validateTrackerInputPatch(command.TrackerInputAnswers, trackerIDs, evaluation.Schemas); err != nil {
+	if err := validateTrackerInputPatch(
+		command.TrackerInputAnswers,
+		trackerIDs,
+		slices.Concat(evaluation.Schemas, evaluation.TrackerQuestionnaires),
+		previousAnswers,
+	); err != nil {
 		return CommandResult{}, err
 	}
 	id, err := m.newID("input_readiness")
@@ -92,7 +98,12 @@ func (m *Module) evaluateInputReadiness(
 	return CommandResult{InputReadiness: &snapshot}, nil
 }
 
-func validateTrackerInputPatch(patch map[api.TrackerID]map[string]*string, selected []api.TrackerID, schemas []api.TrackerQuestionnaire) error {
+func validateTrackerInputPatch(
+	patch map[api.TrackerID]map[string]*string,
+	selected []api.TrackerID,
+	schemas []api.TrackerQuestionnaire,
+	previous map[string]map[string]string,
+) error {
 	for trackerID, fields := range patch {
 		if !slices.Contains(selected, trackerID) {
 			return fmt.Errorf("%w: tracker input target is not selected", ErrInvalidTransition)
@@ -100,16 +111,33 @@ func validateTrackerInputPatch(patch map[api.TrackerID]map[string]*string, selec
 		index := slices.IndexFunc(schemas, func(schema api.TrackerQuestionnaire) bool {
 			return strings.EqualFold(schema.Tracker, string(trackerID))
 		})
-		if index < 0 {
-			return fmt.Errorf("%w: tracker has no local input schema", ErrInvalidTransition)
-		}
 		for key, value := range fields {
+			// Resetting an accepted answer may remove its conditional schema field.
+			if _, staged := previous[string(trackerID)][key]; value == nil && staged {
+				continue
+			}
+			if index < 0 {
+				return fmt.Errorf("%w: tracker has no local input schema", ErrInvalidTransition)
+			}
 			fieldIndex := slices.IndexFunc(schemas[index].Fields, func(field api.TrackerQuestionnaireField) bool { return field.Key == key })
 			if fieldIndex < 0 {
 				return fmt.Errorf("%w: unknown tracker input field", ErrInvalidTransition)
 			}
 			field := schemas[index].Fields[fieldIndex]
-			if value != nil && ((len(field.Options) > 0 && !slices.Contains(field.Options, *value)) || (field.Required && strings.TrimSpace(*value) == "")) {
+			if value == nil {
+				continue
+			}
+			choices := []string{*value}
+			if field.Kind == "multiselect" {
+				choices = nil
+				for choice := range strings.SplitSeq(*value, ",") {
+					if choice = strings.TrimSpace(choice); choice != "" {
+						choices = append(choices, choice)
+					}
+				}
+			}
+			if (field.Required && (len(choices) == 0 || strings.TrimSpace(*value) == "")) ||
+				(len(field.Options) > 0 && slices.ContainsFunc(choices, func(choice string) bool { return !slices.Contains(field.Options, choice) })) {
 				return fmt.Errorf("%w: invalid tracker input value", ErrInvalidTransition)
 			}
 		}

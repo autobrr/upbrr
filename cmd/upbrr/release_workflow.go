@@ -1043,17 +1043,24 @@ func collectCLIWorkflowQuestionnaires(
 	}
 	changed := false
 	for _, projection := range projections.Projections {
-		instruction := instructions[projection.TrackerID]
-		for _, field := range projection.Questionnaire {
-			if field.Value != "" && instruction.Questionnaire[field.Key] == nil {
+		instruction, retained := instructions[projection.TrackerID]
+		if projection.QuestionnaireAnswers != nil {
+			instruction.Questionnaire = nil
+			for key, value := range projection.QuestionnaireAnswers {
 				if instruction.Questionnaire == nil {
 					instruction.Questionnaire = make(map[string]*string)
 				}
-				instruction.Questionnaire[field.Key] = new(field.Value)
+				instruction.Questionnaire[key] = new(value)
 			}
-			if !field.Required || instruction.Questionnaire[field.Key] != nil {
+			if retained || len(instruction.Questionnaire) > 0 {
+				instructions[projection.TrackerID] = instruction
+			}
+		}
+		for _, field := range projection.Questionnaire {
+			if !field.Required || field.Value != "" {
 				continue
 			}
+
 			if interaction == api.InteractionModeUnattended {
 				continue
 			}

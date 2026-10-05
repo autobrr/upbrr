@@ -238,6 +238,12 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 	}
 	fields, err := buildUploadFields(req.Meta, description, groupID, answers, poster)
 	if err != nil {
+		questionnaire := buildQuestionnaire(req.Meta, groupID)
+		if questionnaire != nil && slices.ContainsFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool {
+			return field.Required && strings.TrimSpace(field.Value) == ""
+		}) {
+			return uploadState{}, trackers.NewQuestionnairePreparationFailure("PTP", err.Error(), questionnaire)
+		}
 		return uploadState{}, err
 	}
 	fields["AntiCsrfToken"] = "dry-run-token"
@@ -399,6 +405,9 @@ func buildUploadFields(meta api.UploadSubject, description string, groupID strin
 	}
 	if fields["image"] == "" {
 		return nil, errors.New("trackers: PTP missing poster for new group upload")
+	}
+	if strings.TrimSpace(fields["tags"]) == "" {
+		return nil, errors.New("trackers: PTP missing tags for new group upload")
 	}
 	return fields, nil
 }

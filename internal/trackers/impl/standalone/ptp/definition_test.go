@@ -321,12 +321,11 @@ func TestPTPInputReadinessUsesFinalizedHardcodedLanguages(t *testing.T) {
 		HardcodedSubtitleLanguages:  []string{"English"},
 		TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": {"no_english_subtitles": "yes"}},
 	})
-	if len(invalid) != 1 || invalid[0].Status != api.InputReadinessFieldInvalid || invalid[0].Key != "tracker_input.no_english_subtitles" {
+	if len(invalid) != 0 {
 		t.Fatalf("invalid=%#v", invalid)
 	}
-	if schema := definition.InputSchema(api.UploadSubject{}); schema == nil || len(schema.Fields) != 1 || schema.Fields[0].Value != "auto" ||
-		len(schema.Fields[0].Options) != 3 {
-		t.Fatalf("schema=%#v", schema)
+	if field := legacySubtitleField(api.UploadSubject{}); field.Value != "auto" || len(field.Options) != 3 {
+		t.Fatalf("legacy tracker field=%#v", field)
 	}
 }
 
@@ -1073,5 +1072,48 @@ func markTorrentWithPrivateMetadata(t *testing.T, torrentPath string) {
 	defer file.Close()
 	if err := torrentMeta.Write(file); err != nil {
 		t.Fatalf("write torrent: %v", err)
+	}
+}
+
+func TestNewGroupMissingOnlyTagsReturnsQuestionnaireFailure(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+	input := trackers.PreparationInput{
+		Tracker: "PTP",
+		Meta: api.UploadSubject{
+			SourcePath:  filepath.Join(tmp, "Example.Movie.mkv"),
+			TorrentPath: torrentPath,
+			ReleaseName: "Example.Movie.2026.1080p.BluRay.x264-GRP",
+			Release: api.ReleaseInfo{
+				Title:      "Example Movie",
+				Year:       2026,
+				Resolution: "1080p",
+			},
+			Container:      "mkv",
+			Source:         "BluRay",
+			VideoCodec:     "AVC",
+			AudioLanguages: []string{"English"},
+			Identity:       api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+				Title:  "Example Movie",
+				Year:   2026,
+				Poster: "https://images.example/poster.jpg",
+			}},
+		},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")}}),
+	}
+	_, err := New().prepareDryRun(t.Context(), input)
+	failure, ok := errors.AsType[*trackers.PreparationFailure](err)
+	// The dry-run adapter wraps the tracker failure; unwrap to its typed cause.
+	for ok && failure.Code() != "questionnaire_required" {
+		failure, ok = errors.AsType[*trackers.PreparationFailure](failure.Unwrap())
+	}
+	if !ok || !strings.Contains(failure.Message(), "missing tags") {
+		t.Fatalf("missing tags did not return recoverable questionnaire failure: %v", err)
+	}
+	input.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"PTP": {"tags": "drama"}}
+	if _, err := New().prepareDryRun(t.Context(), input); err != nil {
+		t.Fatalf("answered tags still failed: %v", err)
 	}
 }

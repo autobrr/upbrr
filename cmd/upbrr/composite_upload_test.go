@@ -869,3 +869,123 @@ func slicesEqual[T comparable](actual []T, expected []T) bool {
 	}
 	return true
 }
+
+func TestCLICompositeTrackerFeedbackCollectsCurrentLateQuestionnaire(t *testing.T) {
+	for _, test := range []struct{ tracker, key, previous, answer string }{{"GPW", "director_imdb", "", "nm0000123"}, {"PTP", "tags", "", "drama"}, {"SPD", "channel", "rejected-channel", "42"}} {
+		t.Run(test.tracker, func(t *testing.T) {
+			projection := api.TrackerReleaseProjection{
+				TrackerID:            api.TrackerID(test.tracker),
+				QuestionnaireAnswers: map[string]string{"retained": "saved", test.key: test.previous},
+				Questionnaire: []api.TrackerQuestionnaireRequirement{{
+					Key:   test.key,
+					Kind:  "text",
+					Label: test.key,
+					Value: test.previous,
+				}},
+			}
+			session := &cliWorkflowSession{
+				streams:       cliIO{out: io.Discard},
+				intent:        cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+				uploadRequest: api.Request{Trackers: []string{test.tracker}, TrackerQuestionnaireAnswers: map[string]map[string]string{test.tracker: {test.key: test.previous}}},
+				current: releaseworkflow.CommandResult{
+					Workflow: api.ReleaseWorkflow{ID: "workflow"},
+					Projections: &api.TrackerReleaseProjectionSet{
+						ID:          "projection",
+						Revision:    3,
+						Projections: []api.TrackerReleaseProjection{projection},
+					},
+					DryRun: &api.UploadDryRunResult{
+						WorkflowID:    "workflow",
+						ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: "projection", Revision: 3},
+						Reports: []api.TrackerDryRunReport{{TrackerID: api.TrackerID(test.tracker), Questionnaire: []api.TrackerQuestionnaireRequirement{{
+							Key:      test.key,
+							Kind:     "text",
+							Label:    test.key,
+							Required: true,
+						}}}},
+					},
+				},
+			}
+			feedback, declined, err := session.collectCompositeTrackerFeedback(bufio.NewReader(strings.NewReader(test.answer+"\n")), api.RequiredAction{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: api.TrackerID(test.tracker)}, api.ReleaseWorkflowUploadFeedback{})
+			if err != nil || declined || feedback.Response.Questionnaire == nil {
+				t.Fatalf("late questionnaire feedback=%+v declined=%t error=%v", feedback, declined, err)
+			}
+			answers := feedback.Response.Questionnaire.Answers
+			if answers[test.key] == nil || *answers[test.key] != test.answer || answers["retained"] == nil || *answers["retained"] != "saved" {
+				t.Fatalf("late required/corrected answer missing: %+v", answers)
+			}
+		})
+	}
+}
+
+func TestCLITrackerQuestionnaireIgnoresStaleReportsAndOtherTrackers(t *testing.T) {
+	current := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow"},
+		Projections: &api.TrackerReleaseProjectionSet{
+			ID:          "projection",
+			Revision:    3,
+			Projections: []api.TrackerReleaseProjection{{TrackerID: "GPW", Questionnaire: []api.TrackerQuestionnaireRequirement{{Key: "director_imdb"}}}, {TrackerID: "OTHER", Questionnaire: []api.TrackerQuestionnaireRequirement{{Key: "other", Required: true}}}},
+		},
+		DryRun: &api.UploadDryRunResult{
+			WorkflowID:    "workflow",
+			ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: "projection", Revision: 2},
+			Reports:       []api.TrackerDryRunReport{{TrackerID: "GPW", Questionnaire: []api.TrackerQuestionnaireRequirement{{Key: "director_imdb", Required: true}}}},
+		},
+	}
+	selected := cliTrackerQuestionnaireProjection(current, "GPW")
+	if len(selected.Projections) != 1 || selected.Projections[0].Questionnaire[0].Required {
+		t.Fatalf("stale or unrelated questionnaire selected: %+v", selected)
+	}
+	current.DryRun.ProjectionSet.Revision = 3
+	selected = cliTrackerQuestionnaireProjection(current, "GPW")
+	if !selected.Projections[0].Questionnaire[0].Required || current.Projections.Projections[0].Questionnaire[0].Required {
+		t.Fatal("late schema not detached from retained projection")
+	}
+}
+
+func TestCLICompositeSequentialFeedbackUsesLatestQuestionnaireAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		accepted map[string]string
+		want     string
+	}{
+		{"corrected accepted answer", map[string]string{"no_english_subtitles": "no"}, "no"},
+		{"cleared accepted answers", map[string]string{}, ""},
+		{"legacy original request", nil, "yes"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := &cliWorkflowSession{
+				streams:       cliIO{out: io.Discard},
+				intent:        cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+				uploadRequest: api.Request{Trackers: []string{"PTP"}, TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": {"no_english_subtitles": "yes"}}},
+				current: releaseworkflow.CommandResult{
+					Workflow: api.ReleaseWorkflow{ID: "workflow"},
+					Projections: &api.TrackerReleaseProjectionSet{
+						ID:          "projection",
+						Revision:    3,
+						Projections: []api.TrackerReleaseProjection{{TrackerID: "PTP", QuestionnaireAnswers: test.accepted}},
+					},
+					DryRun: &api.UploadDryRunResult{
+						WorkflowID:    "workflow",
+						ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: "projection", Revision: 3},
+						Reports: []api.TrackerDryRunReport{{TrackerID: "PTP", Questionnaire: []api.TrackerQuestionnaireRequirement{{
+							Key:      "tags",
+							Kind:     "text",
+							Label:    "Tags",
+							Required: true,
+						}}}},
+					},
+				},
+			}
+			feedback, _, err := session.collectCompositeTrackerFeedback(bufio.NewReader(strings.NewReader("drama\n")), api.RequiredAction{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: "PTP"}, api.ReleaseWorkflowUploadFeedback{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			answers := feedback.Response.Questionnaire.Answers
+			answer := answers["no_english_subtitles"]
+			if (test.want == "" && answer != nil) || (test.want != "" && (answer == nil || *answer != test.want)) || answers["tags"] == nil || *answers["tags"] != "drama" {
+				t.Fatalf("sequential feedback restored stale request: %+v", answers)
+			}
+		})
+	}
+}

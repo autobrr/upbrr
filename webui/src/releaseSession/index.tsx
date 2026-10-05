@@ -53,6 +53,7 @@ import {
   workflowPrepareInput,
   workflowSelectedInputTrackers,
   workflowViewValue,
+  workflowQuestionnaires,
   type PendingInputUpdate,
 } from "./projections";
 import type {
@@ -963,11 +964,9 @@ export function ReleaseSessionProvider({
             tracker,
             {
               questionnaire: {
-                ...Object.fromEntries(
-                  (projection?.questionnaire || [])
-                    .filter((field) => field.value !== undefined)
-                    .map((field) => [field.key, field.value!]),
-                ),
+                ...workflowView.current?.projectionInstructions?.instructions[tracker]
+                  ?.questionnaire,
+                ...projection?.questionnaireAnswers,
                 ...state.questionnaireAnswers[tracker],
               },
               ...(confirmedName !== undefined ? { uploadReleaseName: confirmedName } : {}),
@@ -1903,12 +1902,14 @@ export function ReleaseSessionProvider({
     );
   };
 
-  const questionnaireDirty = (workflowView.current?.projections?.projections || []).some(
+  const questionnaires = workflowQuestionnaires(workflowView.current);
+  const questionnaireDirty = questionnaires.some(
     (projection) =>
       state.selectedTrackers.includes(projection.trackerId) &&
       (projection.questionnaire || []).some((field) => {
         const draft = state.questionnaireAnswers[projection.trackerId]?.[field.key];
-        return draft !== undefined && draft.trim() !== (field.value ?? "").trim();
+        const accepted = projection.questionnaireAnswers?.[field.key] ?? "";
+        return draft !== undefined && draft.trim() !== accepted.trim();
       }),
   );
 
@@ -1980,7 +1981,15 @@ export function ReleaseSessionProvider({
   const workflowDupeAssessment = workflowView.current?.dupes || null;
   const workflowDupeSelection =
     workflowView.current?.projections?.projections.map((projection) => projection.trackerId) || [];
-  const duplicateAssessmentCurrent = sameNames(workflowDupeSelection, state.selectedTrackers);
+  const submittedTrackers = new Set(
+    (workflowView.current?.workflow.submissionExclusions || []).map(
+      (exclusion) => exclusion.trackerId,
+    ),
+  );
+  const duplicateAssessmentCurrent = sameNames(
+    workflowDupeSelection,
+    state.selectedTrackers.filter((tracker) => !submittedTrackers.has(tracker)),
+  );
   const duplicateOperation =
     workflowView.current?.operation?.operation === "duplicate_check"
       ? workflowView.current.operation
@@ -2646,6 +2655,9 @@ export function ReleaseSessionProvider({
         ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
         releaseNameOverrides: state.releaseNameOverrides,
+        questionnaires: duplicateAssessmentCurrent ? questionnaires : [],
+        questionnaireAnswers: state.questionnaireAnswers,
+        questionnaireDirty,
         error: workflowView.failure?.Message || state.duplicatesError || "",
       },
       run: async () => {
@@ -2678,6 +2690,12 @@ export function ReleaseSessionProvider({
         return completed;
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
+      answerQuestionnaire: (tracker, key, value) =>
+        dispatch({ type: "questionnaire_answered", tracker, key, value }),
+      applyQuestionnaireAnswers: async () => {
+        if (!access.duplicates.available || !duplicateAssessmentCurrent) return false;
+        return checkBackendDuplicates("trackers_assessed");
+      },
       confirmReleaseName: (tracker, value) =>
         dispatch({ type: "release_name_confirmed", tracker, value }),
       acknowledgeReleaseName: async (tracker, acknowledged) => {
@@ -3021,7 +3039,6 @@ export function ReleaseSessionProvider({
         selectedTrackers: state.selectedTrackers,
         projections: workflowView.current?.projections || null,
         ignoredDupesFor: state.ignoredDupesFor,
-        questionnaireAnswers: state.questionnaireAnswers,
         questionnaireDirty,
         options: uploadOptions,
         liveTest,
@@ -3035,9 +3052,6 @@ export function ReleaseSessionProvider({
         error: workflowView.failure?.Message || workflowView.error || state.uploadError || "",
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
-      answerQuestionnaire: (tracker, key, value) =>
-        dispatch({ type: "questionnaire_answered", tracker, key, value }),
-      applyQuestionnaireAnswers: () => checkBackendDuplicates("trackers_assessed"),
       changeOptions: (options: Partial<UploadRunOptions>) =>
         dispatch({
           type: "upload_options_changed",

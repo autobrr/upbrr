@@ -2277,6 +2277,7 @@ export type TrackerDryRunReport = Readonly<{
   fields?: readonly UploadPlanField[];
   files?: readonly UploadPlanFile[];
   preparedOperationId?: PublicResourceID;
+  questionnaire?: readonly TrackerQuestionnaireRequirement[];
   semanticFingerprint: WorkflowFingerprint;
   status: StageStatus;
   torrentArtifactId?: PublicResourceID;
@@ -2524,6 +2525,7 @@ export type TrackerReleaseProjection = Readonly<{
   projectorFingerprint: WorkflowFingerprint;
   providerIds?: readonly TrackerProviderID[];
   questionnaire?: readonly TrackerQuestionnaireRequirement[];
+  questionnaireAnswers?: Readonly<Record<string, string>>;
   readiness: ReadinessStatus;
   requiredActions?: readonly RequiredAction[];
   ruleAuthorizationFingerprint?: WorkflowFingerprint;
