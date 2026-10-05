@@ -117,9 +117,12 @@ const (
 // MediaTrackFacts describes only an inspected stream. An opaque resource ID and
 // exact manifest bind ordinal identities when native IDs are unavailable.
 type MediaTrackFacts struct {
-	ID                  string
-	Kind                MediaTrackKind
-	ResourceID          string
+	ID         string
+	Kind       MediaTrackKind
+	ResourceID string
+	// DiscID and PlaylistID scope streams inspected from a BDInfo playlist report.
+	DiscID              string
+	PlaylistID          string
 	ManifestFingerprint string
 	NativeID            string
 	Ordinal             int
@@ -133,6 +136,10 @@ type MediaTrackFacts struct {
 	LanguageProvenance  FactProvenance
 	Default             bool
 	Commentary          bool
+	// BitrateBitsPerSecond retains whole-bit BDInfo bitrate; zero means unavailable or invalid.
+	BitrateBitsPerSecond int64
+	// Hidden records BDInfo's hidden-stream marker, not a commentary classification.
+	Hidden bool
 }
 
 // ManualLanguageFacts contains the resolved manual lists used in generated descriptions.

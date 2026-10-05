@@ -144,6 +144,7 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		ProviderIDs:         append([]api.TrackerProviderID(nil), criteria.ProviderIDs...),
 		DuplicateCriteria:   criteria,
 		DuplicateTarget:     target,
+		EditionFeatures:     slices.Clone(preview.EditionFeatures),
 		DescriptionGroup:    strings.ToLower(strings.TrimSpace(preview.DescriptionGroup)),
 		Questionnaire:       ProjectQuestionnaire(preview.Questionnaire),
 		Readiness:           readiness,
@@ -218,6 +219,9 @@ func validatePreparedProjection(input PreparationInput, preview api.TrackerDryRu
 		return err
 	}
 	want := input.Projection
+	if want.EditionFeatures != nil && !slices.Equal(prepared.EditionFeatures, want.EditionFeatures) {
+		return errors.New("prepared edition/features differ from reviewed projection")
+	}
 	if prepared.UploadReleaseName != want.UploadReleaseName {
 		return fmt.Errorf(
 			"prepared upload name %q differs from reviewed projection %q",
@@ -370,6 +374,9 @@ func (r *Registry) ProjectRelease(
 		return blockedReleaseProjection(input, failure.Message()), failure
 	}
 	projection := pureReleaseProjection(input)
+	if descriptor.EditionFeatures != nil {
+		projection.EditionFeatures = slices.Clone(descriptor.EditionFeatures(input.Meta))
+	}
 	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetReleaseOrigin != nil {
 		projection.DuplicateTarget.ReleaseOrigin = strings.TrimSpace(descriptor.DupePolicy.TargetReleaseOrigin(input.Meta, input.Runtime.Internal))
 	}

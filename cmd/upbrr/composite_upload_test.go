@@ -336,11 +336,17 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 						TrackerID:         "ALPHA",
 						DisplayName:       "Alpha",
 						UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+						EditionFeatures: []api.TrackerEditionFeature{
+							{Label: "With Commentary", Selected: true},
+							{Label: "Remastered", Selected: true},
+							{Label: "Extended", Selected: false},
+						},
 					},
 					{
 						TrackerID:         "BETA",
 						DisplayName:       "Beta",
 						UploadReleaseName: "Example.Release.2026.BETA-GRP",
+						EditionFeatures:   []api.TrackerEditionFeature{{Label: "With Commentary", Selected: false}},
 					},
 				},
 			},
@@ -405,6 +411,17 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Dupe checking: 1/2\rDupe checking: 2/2\n") {
 		t.Fatalf("INFO output omitted dupe progress: %q", output.String())
+	}
+	for _, review := range []struct{ summary, prompt string }{
+		{"ALPHA edition/features: [With Commentary] [Remastered]", "Use Alpha"},
+		{"BETA edition/features: none", "Use Beta"},
+	} {
+		if !strings.Contains(output.String(), review.summary) || strings.Index(output.String(), review.summary) > strings.Index(output.String(), review.prompt) {
+			t.Fatalf("edition/features missing before approval: %q", output.String())
+		}
+	}
+	if strings.Contains(output.String(), "Extended") {
+		t.Fatal("CLI summary included unselected feature")
 	}
 	for _, prompt := range []string{
 		`Use Alpha as "Example.Release.2026.ALPHA-GRP"? [y/N]:`,
@@ -987,5 +1004,19 @@ func TestCLICompositeSequentialFeedbackUsesLatestQuestionnaireAuthority(t *testi
 				t.Fatalf("sequential feedback restored stale request: %+v", answers)
 			}
 		})
+	}
+}
+
+func TestCLICompositeEditionFeaturesDoNotPromptInUnattendedMode(t *testing.T) {
+	t.Parallel()
+	var output strings.Builder
+	session := &cliWorkflowSession{
+		intent:  cliWorkflowIntent{interaction: api.InteractionModeUnattended},
+		streams: cliIO{out: &output},
+		current: releaseworkflow.CommandResult{Projections: &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "EXAMPLE", EditionFeatures: []api.TrackerEditionFeature{{Label: "With Commentary", Selected: true}}}}}},
+	}
+	feedback, declined, err := session.collectCompositeUploadFeedback(t.Context(), nil, config.Config{}, api.NopLogger{}, api.RequiredAction{Kind: api.RequiredActionApproveTrackers})
+	if err == nil || !strings.Contains(err.Error(), "unattended") || declined || feedback.Response.TrackerApproval != nil || output.Len() != 0 {
+		t.Fatalf("unattended review: error=%v declined=%t output=%q", err, declined, output.String())
 	}
 }

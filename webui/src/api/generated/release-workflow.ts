@@ -904,6 +904,7 @@ export type MediaFacts = Readonly<{
   Presentation: string;
   PrimaryAudioTrackID: string;
   Region: string;
+  ReleaseFeatures?: readonly ReleaseFeature[];
   Repack: string;
   Service: string;
   ServiceLongName: string;
@@ -950,12 +951,15 @@ export type MediaPlanSavedImage = Readonly<{
 }>;
 
 export type MediaTrackFacts = Readonly<{
+  BitrateBitsPerSecond: number;
   ChannelLayout: string;
   Channels: number;
   Codec: string;
   Commentary: boolean;
   Default: boolean;
   DetectedLanguages: readonly string[];
+  DiscID: string;
+  Hidden: boolean;
   ID: string;
   Kind: MediaTrackKind;
   LanguageProvenance: FactProvenance;
@@ -963,6 +967,7 @@ export type MediaTrackFacts = Readonly<{
   ManifestFingerprint: string;
   NativeID: string;
   Ordinal: number;
+  PlaylistID: string;
   ResourceID: string;
   SampleRate: number;
   Title: string;
@@ -1175,6 +1180,7 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  Commentary?: boolean;
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
@@ -1316,6 +1322,8 @@ export type ReleaseFactInstructions = Readonly<{
   SourceLookup: string;
   TrackerIDs: Readonly<Record<string, string>>;
 }>;
+
+export type ReleaseFeature = string;
 
 export type ReleaseNameComponent = Readonly<{
   AttachTo?: readonly ReleaseNameRole[];
@@ -2272,6 +2280,7 @@ export type TrackerDerivedFlag = Readonly<{
 export type TrackerDryRunReport = Readonly<{
   clientInjection: ClientInjectionOutcome;
   displayName: string;
+  editionFeatures?: readonly TrackerEditionFeature[];
   endpoint?: string;
   failures?: readonly WorkflowFailure[];
   fields?: readonly UploadPlanField[];
@@ -2345,6 +2354,13 @@ export type TrackerDuplicateTarget = Readonly<{
   type?: string;
   videoCodec?: string;
   videoEncode?: string;
+}>;
+
+export type TrackerEditionFeature = Readonly<{
+  category: string;
+  evidence?: string;
+  label: string;
+  selected: boolean;
 }>;
 
 export type TrackerID = string;
@@ -2513,6 +2529,7 @@ export type TrackerReleaseProjection = Readonly<{
   duplicateSearchFingerprint: WorkflowFingerprint;
   duplicateTarget: TrackerDuplicateTarget;
   duplicateTargetFingerprint: WorkflowFingerprint;
+  editionFeatures?: readonly TrackerEditionFeature[];
   episodeTitleMode: EpisodeTitleMode;
   failures?: readonly WorkflowFailure[];
   inputFingerprint: WorkflowFingerprint;

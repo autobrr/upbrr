@@ -181,7 +181,7 @@ func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDr
 	if _, ok := fields["AntiCsrfToken"]; ok {
 		fields["AntiCsrfToken"] = "[redacted]"
 	}
-	return standalone.BuildPreview(standalone.PreviewSpec{
+	preview := standalone.BuildPreview(standalone.PreviewSpec{
 		Tracker:          "PTP",
 		ReadyMessage:     message,
 		BlockedReason:    blockedReason,
@@ -197,6 +197,8 @@ func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDr
 		}},
 		Questionnaire: buildQuestionnaire(meta, state.groupID),
 	})
+	preview.EditionFeatures = editionFeatures(meta)
+	return preview
 }
 
 func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dryRun bool, baseURL string) (uploadState, error) {
@@ -495,68 +497,6 @@ func resolveFailurePath(meta api.UploadSubject, dbPath string) (string, error) {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, "[PTP]upload_failure.html"), nil
-}
-
-func resolveRemasterTitle(meta api.UploadSubject) string {
-	parts := make([]string, 0, 8)
-	distributor := strings.ToUpper(strings.TrimSpace(meta.Distributor))
-	switch distributor {
-	case "WARNER ARCHIVE", "WARNER ARCHIVE COLLECTION", "WAC":
-		parts = append(parts, "Warner Archive Collection")
-	case "CRITERION", "CRITERION COLLECTION", "CC":
-		parts = append(parts, "The Criterion Collection")
-	case "MASTERS OF CINEMA", "MOC":
-		parts = append(parts, "Masters of Cinema")
-	}
-	edition := meta.EditionLabel()
-	switch {
-	case strings.Contains(strings.ToLower(edition), "director's cut"):
-		parts = append(parts, "Director's Cut")
-	case strings.Contains(strings.ToLower(edition), "extended"):
-		parts = append(parts, "Extended Edition")
-	case strings.Contains(strings.ToLower(edition), "theatrical"):
-		parts = append(parts, "Theatrical Cut")
-	case strings.Contains(strings.ToLower(edition), "uncut"):
-		parts = append(parts, "Uncut")
-	case strings.Contains(strings.ToLower(edition), "unrated"):
-		parts = append(parts, "Unrated")
-	case edition != "":
-		parts = append(parts, edition)
-	}
-	if strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
-		parts = append(parts, "Remux")
-	}
-	audio := strings.TrimSpace(meta.Audio)
-	if strings.Contains(audio, "DTS:X") {
-		parts = append(parts, "DTS:X")
-	}
-	if strings.Contains(audio, "Atmos") {
-		parts = append(parts, "Dolby Atmos")
-	}
-	if strings.Contains(audio, "Dual") {
-		parts = append(parts, "Dual Audio")
-	}
-	if strings.Contains(audio, "Dubbed") {
-		parts = append(parts, "English Dub")
-	}
-	if meta.HDR == "" && meta.BitDepth == "10" {
-		parts = append(parts, "10-bit")
-	}
-	if strings.Contains(meta.HDR, "DV") {
-		parts = append(parts, "Dolby Vision")
-	}
-	if strings.Contains(meta.HDR, "HDR10+") {
-		parts = append(parts, "HDR10+")
-	} else if strings.Contains(meta.HDR, "HDR") {
-		parts = append(parts, "HDR10")
-	}
-	if strings.Contains(meta.HDR, "HLG") {
-		parts = append(parts, "HLG")
-	}
-	if meta.HasCommentary {
-		parts = append(parts, "With Commentary")
-	}
-	return strings.Join(parts, " / ")
 }
 
 func resolveGroupTitleYear(meta api.UploadSubject) (string, string) {

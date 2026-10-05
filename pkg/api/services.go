@@ -428,6 +428,7 @@ type UploadSubject struct {
 	VideoEncode                 string
 	HasEncodeSettings           bool
 	BitDepth                    string
+	ReleaseFeatures             []ReleaseFeature
 	EditionSet                  string
 	Cut                         string
 	Presentation                string

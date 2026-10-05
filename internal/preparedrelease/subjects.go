@@ -105,6 +105,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		VideoEncode:                 release.Media.VideoEncode,
 		HasEncodeSettings:           release.Media.HasEncodeSettings,
 		BitDepth:                    release.Media.BitDepth,
+		ReleaseFeatures:             append([]api.ReleaseFeature(nil), release.Media.ReleaseFeatures...),
 		EditionSet:                  release.Media.EditionSet,
 		Cut:                         release.Media.Cut,
 		Presentation:                release.Media.Presentation,

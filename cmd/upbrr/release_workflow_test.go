@@ -2102,3 +2102,55 @@ func TestCLIQuestionnaireDoesNotPromoteDisplayedDefaults(t *testing.T) {
 		t.Fatalf("displayed default became explicit or prompted: %+v changed=%t output=%q error=%v", instructions, changed, output.String(), err)
 	}
 }
+
+func TestCLIInteractiveCommentaryCorrectionUsesExistingLoop(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"example.mkv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-commentary", Revision: 1},
+		Release: &api.ReleaseSnapshot{
+			Release: api.PreparedRelease{
+				Generation: 1,
+				Source:     api.SourceManifest{SourcePath: "example.mkv"},
+				Media:      api.MediaFacts{Commentary: true},
+			},
+			Display: api.PreparedReleaseDisplay{Commentary: true},
+		},
+		FactInstructions: &api.ReleaseFactInstructionSnapshot{CorrectionRevision: 1},
+	}
+	corrected := initial
+	corrected.Workflow.Revision = 2
+	corrected.Release = &api.ReleaseSnapshot{
+		Release: api.PreparedRelease{
+			Generation: 2,
+			Source:     api.SourceManifest{SourcePath: "example.mkv"},
+			Media:      api.MediaFacts{Commentary: false},
+		},
+		Display: api.PreparedReleaseDisplay{Commentary: false},
+	}
+	corrected.Selection = &api.TrackerSelection{}
+	coreSvc := &cliWorkflowCoreFake{current: initial}
+	corrections := 0
+	coreSvc.continueFn = func(request api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		if instructions := request.Intent.FactInstructions; instructions != nil && instructions.Metadata.Commentary != nil {
+			if *instructions.Metadata.Commentary {
+				t.Fatal("commentary=false correction was lost")
+			}
+			if coreSvc.current.Release.Release.Generation == 1 {
+				corrections++
+			}
+			coreSvc.current = corrected
+		}
+		return coreSvc.current, nil
+	}
+	var output strings.Builder
+	err = runCLIWorkflowInteractive(t.Context(), coreSvc, []string{"example.mkv"}, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0, config.Config{}, cliIO{in: strings.NewReader("n\n--commentary=false\ny\n"), out: &output}, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("run correction: %v, corrections=%d output=%q", err, corrections, output.String())
+	}
+	if corrections != 1 || !strings.Contains(output.String(), "Commentary: true") || !strings.Contains(output.String(), "Commentary: false") {
+		t.Fatalf("commentary correction loop = %d corrections, output %q", corrections, output.String())
+	}
+}

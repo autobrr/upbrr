@@ -259,6 +259,7 @@ type State struct {
 	VideoEncode                          string
 	HasEncodeSettings                    bool
 	BitDepth                             string
+	ReleaseFeatures                      []api.ReleaseFeature
 	EditionSet                           string
 	Cut                                  string
 	Presentation                         string

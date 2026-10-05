@@ -146,6 +146,7 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 
 	if overrides.Edition != nil {
+		meta.ReleaseFeatures = nil
 		meta.EditionSet = ""
 		meta.Cut = ""
 		meta.Presentation = ""
@@ -157,6 +158,7 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 		}
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
+		meta.ReleaseFeatures = nil
 		meta.Edition = ""
 		meta.EditionSet = ""
 		meta.Cut = ""
@@ -169,6 +171,14 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	if overrides.Repack != nil {
 		meta.Repack = strings.ToUpper(strings.TrimSpace(*overrides.Repack))
 	}
+
+	parts := ignoreSolitaryTheatrical(releaseEditionParts{
+		Set:          meta.EditionSet,
+		Cut:          meta.Cut,
+		Edition:      meta.Edition,
+		Presentation: meta.Presentation,
+	})
+	meta.Cut, meta.Edition, meta.Presentation = parts.Cut, parts.Edition, parts.Presentation
 
 	// Malformed values cannot reach this point: the merged instructions were
 	// validated when collection state was built.

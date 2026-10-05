@@ -122,6 +122,10 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		return preparationstate.State{}, err
 	}
 	meta.TrackCoverageComplete = len(meta.Discs) <= 1 && len(meta.FileList) <= 1 && len(meta.SelectedBDMVPlaylists) <= 1
+	// BDInfo report ordinals identify playlist evidence, not native decoder streams.
+	if slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool { return track.DiscID != "" || track.PlaylistID != "" }) {
+		meta.TrackCoverageComplete = false
+	}
 	meta.AudioLanguages = append([]string(nil), meta.TrackAudioLanguages...)
 	meta.SubtitleLanguages = append([]string(nil), meta.TrackSubtitleLanguages...)
 
@@ -129,6 +133,11 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	bdAudioLanguages, bdSubtitleLanguages := extractBDInfoLanguages(bdinfo)
 	if len(meta.AudioLanguages) == 0 {
 		meta.AudioLanguages = bdAudioLanguages
+		if len(meta.AudioLanguages) == 0 && !slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool {
+			return track.Kind == api.MediaTrackAudio && track.Commentary
+		}) {
+			meta.AudioLanguages, _ = extractMediaInfoLanguages(miDoc)
+		}
 	}
 	if len(meta.SubtitleLanguages) == 0 {
 		meta.SubtitleLanguages = bdSubtitleLanguages
@@ -143,7 +152,9 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	audio, channels, hasCommentary := audioFromMedia(meta, miDoc, bdinfo)
 	meta.Audio = audio
 	meta.Channels = channels
-	meta.HasCommentary = hasCommentary
+	meta.HasCommentary = hasCommentary || slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool {
+		return track.Kind == api.MediaTrackAudio && track.BitrateBitsPerSecond > 0 && track.Commentary
+	})
 	logger.Debugf("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
 
 	meta.Is3D = threeDFromMedia(miDoc, bdinfo)
@@ -227,6 +238,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 
 	parts := editionFromMeta(meta, miDoc)
 	meta.EditionSet, meta.Cut, meta.Edition, meta.Presentation, meta.Repack = parts.Set, parts.Cut, parts.Edition, parts.Presentation, parts.Repack
+	meta.ReleaseFeatures = parts.Features
 	meta.WebDV = false
 	logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
 
@@ -493,7 +505,8 @@ func audioFromMedia(meta preparationstate.State, doc mediaInfoDoc, bdinfo *discp
 		if track.Atmos != "" && !strings.Contains(strings.ToLower(codec), "atmos") {
 			extra = "Atmos"
 		}
-		return strings.Join(strings.Fields(strings.Join([]string{codec, channels, extra}, " ")), " "), channels, false
+		commentary := slices.ContainsFunc(bdinfo.Audio, isBDInfoCommentary)
+		return strings.Join(strings.Fields(strings.Join([]string{codec, channels, extra}, " ")), " "), channels, commentary
 	}
 
 	_, _, audioTracks := splitMediaInfoTracks(doc)
@@ -1875,6 +1888,7 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 // releaseEditionParts keeps evidence categories separate until name rendering.
 // Manual edition wording remains an authoritative whole value, never classified.
 type releaseEditionParts struct {
+	Features     []api.ReleaseFeature
 	Set          string
 	Cut          string
 	Edition      string
@@ -1908,20 +1922,34 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) releaseEditi
 	}
 	repack := repackFromMeta(meta, parts.Edition)
 	parts.Edition = cleanEditionText(repackPattern.ReplaceAllString(parts.Edition, ""))
+	applyReleaseFeatures(&parts, meta)
+	features, filenameSet := parts.Features, parts.Set
+	filenameEvidence = filenameEvidence || parts.Edition != "" || parts.Presentation != ""
 	if !hasManualEditionOverride(meta.ReleaseNameOverrides) {
 		multi := resolveMultiPlaylistEdition(meta)
 		if !filenameEvidence {
 			parts = resolveIMDbEditionFromMediaDuration(meta, doc)
-			if parts == (releaseEditionParts{}) {
+			if parts.Set == "" && parts.Cut == "" && parts.Edition == "" && parts.Presentation == "" {
 				parts = multi
 			}
 		}
-		parts.Set = multi.Set
+		if multi.Set != "" {
+			parts.Set = multi.Set
+		} else if parts.Set == "" {
+			parts.Set = filenameSet
+		}
 	}
-	if containsExactHybrid(meta.Release.Other) && !containsExactHybrid(strings.Fields(parts.Edition)) {
+	hybrid := containsExactHybrid(meta.Release.Other) || containsExactHybrid(strings.Fields(parts.Edition))
+	if hybrid && !hasManualEditionOverride(meta.ReleaseNameOverrides) {
+		// Hybrid already has its own naming role; it is not another edition.
+		parts.Edition = removeHybrid(parts.Edition)
+	}
+	parts = ignoreSolitaryTheatrical(parts)
+	if hybrid && !containsExactHybrid(strings.Fields(parts.Edition)) {
 		parts.Edition = strings.TrimSpace(parts.Edition + " Hybrid")
 	}
 	parts.Repack = strings.ToUpper(repack)
+	parts.Features = features
 	return parts
 }
 

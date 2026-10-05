@@ -146,6 +146,8 @@ Omitting `--trackers` uses the configured default trackers. `--site-upload` repl
 
 Explicit corrections take precedence over saved history and provider metadata. Omitting a correction flag preserves the saved value. Resetting a field removes its manual value and restores automatic detection. A boolean value such as `--commentary=false` is an explicit correction, not a reset.
 
+Metadata review always prints the effective `Commentary: true` or `Commentary: false` before confirmation. Answer No and enter `--commentary=false` to disable automatic commentary detection, then review the refreshed value. PTP's existing post-duplicate tracker approval also prints the selected edition/feature tags, or `none`. These displays add no prompts to `--unattended`. See [PTP editions and features](../trackers/index.md#ptp-editions-and-features) for detection and manual labels.
+
 ### Review Input without advancing the workflow
 
 ```powershell

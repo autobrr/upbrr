@@ -70,6 +70,18 @@ Generated DVDRip release names include the known resolution, such as `480p` or `
 
 Tracker-specific categories, source/type mappings, descriptions, media selection, questionnaires, and auth flows remain owned by the tracker adapter. A successful mapping does not prove the upload complies with every current site rule.
 
+### PTP editions and features
+
+PTP review shows the complete collection, edition, and feature catalogue with each option's selected or unselected state and supporting prepared facts. The selected labels produce the same `remaster_title` shown in the payload preview; a nonempty title also sets `remaster=on`. Review information is separate from the submitted fields. The CLI prints selected tags, or `none`, beside the upload name before the existing tracker approval prompt.
+
+Filename cuts and collection tokens, selected multi-edition sets, disc counts, and explicit feature markers contribute evidence. Compound editions retain their constituent cuts and the `2in1` marker. A solitary Theatrical cut or edition is ignored for every tracker, including recognized single manual values. Presentation and technical-feature annotations do not establish another edition. Actual additional editions and multi-cut sets remain intact; opaque manual Edition compounds retain their existing wording.
+
+Use **Edition** or `--edition` for explicit labels such as `Rifftrax`, `4K Restoration`, `4K Remaster`, `Extras`, `2-Disc Set`, or a supported 3D layout. A 2160p resolution does not establish a 4K restoration or remaster, and generic 3D does not establish a specific layout or a combined 2D/3D edition. Automatic feature annotations contribute PTP tags without changing other trackers' naming. Existing technical mappings remain in effect: for example, `10-bit` is selected only when HDR is absent.
+
+Blu-ray audio tracks with a known language and valid positive bitrate below 258 kbps are automatically classified as commentary. Hidden-stream status is retained separately and does not itself mean commentary. Main audio languages exclude only classified tracks, so another main track can retain the same language. The inspected track list identifies the disc, playlist, track, bitrate, hidden state, and commentary classification. Missing BDInfo track language cannot be borrowed from a MediaInfo stream without a reliable identity match; correct missing languages explicitly when needed.
+
+To override detection, set **Commentary** to **Yes** or **No** and refresh metadata, or use `--commentary=true` / `--commentary=false` (`--mc` is an alias). Explicit No survives re-preparation and removes `With Commentary`. No extra commentary prompt is introduced, including in unattended mode. Older prepared generations must be refreshed to use the new evidence and classification.
+
 ### Disc region and distributor IDs
 
 For Unit3D disc uploads, upbrr translates known country codes and publisher names to the standard UNIT3D numeric IDs. Matching is case-insensitive; explicit positive numeric IDs remain usable for site-specific entries. Tracker taxonomy implementations can add or override names without changing the shared defaults. Disc playback zones such as A/B/C are not country codes.

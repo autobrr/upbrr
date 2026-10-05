@@ -50,7 +50,11 @@ func ProjectDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, er
 		return api.PreparedReleaseDisplay{}, fmt.Errorf("prepared release: clone display source: %w", err)
 	}
 	release = detached
-	display := api.PreparedReleaseDisplay{ReleaseName: release.Naming.ReleaseName, Providers: []api.ProviderDisplay{}}
+	display := api.PreparedReleaseDisplay{
+		ReleaseName: release.Naming.ReleaseName,
+		Commentary:  release.Media.Commentary,
+		Providers:   []api.ProviderDisplay{},
+	}
 	identity := release.Identity
 	metadata := release.ProviderMetadata
 	if value := metadata.TMDB; value != nil {

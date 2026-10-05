@@ -86,6 +86,8 @@ A complete manual name has no reliable component boundaries. If a mandatory rule
 
 The **Edition** field shows the detected cut, edition, and presentation labels, or just `2in1` for a two-edition set. Replace or clear this field to override those automatic labels, or set **No edition** to **Yes** to omit them. Apply **Refresh metadata**; choose **Auto** on the edited control to restore automatic handling.
 
+A solitary Theatrical cut or edition is ignored; compound editions retain it. On PTP's Upload card, **Edition / features** shows all supported options, their effective selections, and evidence alongside the normal payload preview. See [PTP editions and features](../trackers/index.md#ptp-editions-and-features) for supported explicit labels and automatic Blu-ray commentary detection.
+
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
 
 Audio languages accept comma-separated values. Subtitle and hardcoded-subtitle languages use editable, searchable rows with **Remove** controls and an empty row for adding another language; custom names and comma-separated entries are accepted. Hardcoded English choices distinguish **English (Full)** from **English (Forced)**. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
