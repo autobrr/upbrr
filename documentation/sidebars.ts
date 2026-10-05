@@ -3,6 +3,7 @@ import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 const sidebars: SidebarsConfig = {
   docsSidebar: [
     "introduction",
+    "changelog/v0.4.0",
     {
       type: "category",
       label: "Getting started",

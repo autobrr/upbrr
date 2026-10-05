@@ -33,6 +33,8 @@ Use **Settings → Description** to control shared description builders. Tracker
 
 Header and signature values are tracker markup, commonly BBCode. Preview them before submission; malformed or unsupported markup is not made portable automatically.
 
+Imported comparison blocks remain in the description rather than becoming ordinary screenshots. Review the destination-specific formatting on **Descriptions**. **Save group** retains the complete edited output without appending generated sections again; use **Reset group** to rebuild the group from its generated description.
+
 :::note Compatibility fields
 
 **Multi screens**, **Pack thumb size**, **Char limit**, **File limit**, and Description's **Process limit** remain in the schema but have no current runtime reader.

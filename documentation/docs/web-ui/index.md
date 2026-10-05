@@ -34,7 +34,7 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 | **Input**          | Choose the source path, trackers, metadata IDs, and preparation options. |
 | **Tracker Data**   | Review tracker-derived metadata when available.                          |
 | **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
-| **Dupe Check**     | Review per-tracker search results, rules, and candidate upload names.    |
+| **Dupe Check**     | Answer tracker questions and review search results, rules, and names.    |
 | **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
 | **Screenshots**    | Generate, import, order, and select screenshots.                         |
 | **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
@@ -49,6 +49,12 @@ Background workflow updates preserve an unsubmitted **Source path**, unsaved **D
 On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
 
 After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
+
+### Reuse tracker images
+
+With **Settings → Metadata → Keep images** enabled, preparation can retain validated screenshots from tracker data. Inspect the imported description and images on **Tracker Data**, then open **Screenshots**. When **Saved tracker images** appears, choose **Use saved images** to include those images in the workflow. upbrr can capture additional frames when the retained images do not meet the requested count or tracker requirements.
+
+Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Imported comparison blocks remain part of the description and do not count as ordinary screenshots. See [image-host requirements](./settings/image-hosting.md).
 
 ### Generate audio analysis
 
@@ -82,7 +88,7 @@ The **Edition** field shows the detected cut, edition, and presentation labels, 
 
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
 
-Audio, subtitle, and hardcoded-subtitle fields accept comma-separated languages. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
+Audio languages accept comma-separated values. Subtitle and hardcoded-subtitle languages use editable, searchable rows with **Remove** controls and an empty row for adding another language; custom names and comma-separated entries are accepted. Hardcoded English choices distinguish **English (Full)** from **English (Forced)**. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
 
 Changing Movie/TV with the same TMDB ID loads metadata from the correct category. If the source or provider identity changes, saved content corrections may require confirmation, replacement, or reset. A changed track manifest requires selecting a current track again.
 
@@ -90,7 +96,7 @@ Input preparation stops after facts and local readiness. It does not run duplica
 
 ### Clear a metadata provider
 
-On **Input**, open **Edit Release Details** and find **External IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MAL. You can also delete an existing ID from its field.
+On **Input**, open **Edit Release Details** and find **Provider IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MAL. You can also delete an existing ID from its field.
 
 Click **Refresh metadata** to apply the change. The provider's ID and metadata are removed from the prepared release, and automatic lookups cannot restore them. Other providers remain available.
 
@@ -130,7 +136,7 @@ Use [Appearance](./settings/appearance.md) to choose a bundled theme and light o
 
 Opening a historical input checks its local source before adopting reusable content. Deleting an idle active release closes its input automatically; running work still prevents deletion. Deletion removes associated workflow, effect, reusable-media, and submission records, plus generated files managed by upbrr, even if the original source folder is missing. Local repeat-submission protection is removed with those records. Shared generated files and their directories are kept while another retained release still references them. Remote uploads and source media are unchanged.
 
-Restarting the application leaves the previous idle input closed. Its History and saved corrections remain available when you explicitly reopen it. Reloading a browser tab while the application keeps running restores the current input.
+Restarting the application leaves the previous idle input closed. Its History and saved corrections remain available when you explicitly reopen it. Unfinished operations are interrupted rather than automatically resumed; completed checkpoints are retained. Before retrying an interrupted upload, check the tracker and torrent client because startup can clear the local block on an unresolved attempt. See [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart). Reloading a browser tab while the application keeps running restores the current input.
 
 ## Logging
 

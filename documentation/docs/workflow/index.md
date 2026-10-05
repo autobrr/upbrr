@@ -15,11 +15,13 @@ One input can be active per database, shared by the Web UI and CLI. Tabs in the 
 
 Switching during local preparation cancels that work and waits for cleanup. A submission or uncertain remote outcome must finish or be reconciled before switching. Closing a browser tab does not release the input.
 
-After upgrading an existing database, an earlier interrupted external effect can require reconciliation before normal input work resumes. Inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. This process never repeats a submission automatically. Resolve every listed workflow before opening a new input.
+If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. Resolve every listed workflow before opening a new input.
 
 Every explicit open, history restore, or refresh checks the source path and inventory and hashes at most the first 1 MiB of each file. File sizes and modification times are checked before and after sampling. This is a lightweight identity check, not verification of every source byte. Torrent creation still performs its required piece hashing. A plain page reload reads the current state without starting another verification.
 
-A fresh application start leaves the previous idle input closed while retaining its History and saved corrections. Open it explicitly to continue. Work waiting for API feedback or external-outcome reconciliation remains available through explicit continuation or recovery; startup does not automatically resume it.
+A fresh application start leaves the previous idle input closed while retaining its History and saved corrections. Open it explicitly to continue. Startup retains completed operation checkpoints and interrupts unfinished work rather than automatically resuming it. A workflow already waiting for API feedback remains available for explicit continuation.
+
+Once prior-process input and work leases expire, startup marks unresolved external attempts failed locally and removes their local retry blocks. This does not establish whether the remote action completed. Check the tracker and torrent client before retrying an interrupted upload or injection. Confirmed successful submissions remain recorded. See [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart).
 
 Folder handling matters. `--keep-folder` preserves a supplied folder instead of processing only a selected video file.
 
@@ -56,7 +58,7 @@ Automatic category detection checks source folders and filenames for TV hints be
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
-Refresh obtains current provider facts and withdraws earlier duplicate decisions and upload approval. It preserves compatible screenshot content and hosted links. Reset requests a new preparation of the source; source or capture changes can make earlier images incompatible. A provider failure is reported rather than presenting old provider data as fresh.
+Refresh reapplies corrections and reuses provider evidence whose lookup inputs still match; it withdraws earlier duplicate decisions and upload approval. It preserves compatible screenshot content and hosted links. Reset requests a new preparation of the source; source or capture changes can make earlier images incompatible. A provider failure is reported rather than presenting old provider data as fresh.
 
 Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
 
@@ -102,6 +104,8 @@ Depending on the source and trackers, upbrr can:
 
 Automatic screenshot plans distribute the requested images across all prepared discs, with at least one planned image per disc. Manual frame numbers apply to every disc. Screenshot previews, captures, and DVD menu images remain grouped by disc; DVD menu capture can warn about partial coverage when its collection-wide safety cap or the available menus leave a disc uncovered.
 
+With **Keep images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, review **Saved tracker images** on **Screenshots** and choose **Use saved images**. Missing, invalid, or insufficient saved images can require new captures. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
+
 Capturing an additional frame keeps previously generated screenshots, including their selection and order, without adding those images again.
 
 Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode. Open an image to inspect it at its natural resolution in a nearly full-viewport lightbox. Scroll horizontally or vertically for larger images; **Close** and **Escape** remain available while scrolling.
@@ -126,7 +130,7 @@ After confirmed tracker success, upbrr records the tracker result and attempts t
 
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
-Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. Retained unknown outcomes require reconciliation and are never treated as confirmed success.
+Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Startup recovery can clear its retry block as described above; verify the remote outcome before another attempt.
 
 ## 8. Inject into clients
 

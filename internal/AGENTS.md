@@ -101,7 +101,7 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 - Pre-commit: Go format, log/path policies, frontend Prettier/ESLint on staged files.
 - Pre-push: `make lint` + frontend typecheck.
 - Do not rely on `make prepush` before a commit exists; run relevant checks pre-commit.
-- `make lint`: architecture, path, literal, workflow-contract checks + full `golangci-lint run --timeout=5m ./...`.
+- `make lint`: architecture, path, literal, workflow-contract, correction-choice checks + full `golangci-lint run --timeout=5m ./...`.
 - Fix failures in smallest relevant scope; never weaken checks, remove tests, or add broad `nolint` to hide failures.
 
 ## Generated / Scratch Path Risk

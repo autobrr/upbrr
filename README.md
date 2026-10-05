@@ -20,7 +20,7 @@ upbrr is a guided upload preparation app for private-tracker workflows. It helps
 
 ## Documentation
 
-Start with the [installation guide](https://upbrr.com/docs/getting-started/installation) and [quick start](https://upbrr.com/docs/getting-started/quick-start).
+Start with the [installation guide](https://upbrr.com/docs/getting-started/installation) and [quick start](https://upbrr.com/docs/getting-started/quick-start). The published site follows releases. For a development or PR build, read the [documentation source](./documentation/docs/) at that build’s commit or branch.
 
 - [Introduction](https://upbrr.com/docs/introduction)
 - [Migration from Upload Assistant](https://upbrr.com/docs/getting-started/migrate-from-upload-assistant)

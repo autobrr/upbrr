@@ -29,6 +29,8 @@ The Playwright harness starts embedded upbrr with `UPBRR_WEB_OPEN_BROWSER=false`
 
 The router is mounted inside the authenticated release provider so changing pages preserves release state. Settings drafts also live above the route outlet. Query holds ordinary reads; workflow snapshots and commands stay in `releaseSession`. Logging's live stream keeps its own bounded subscription.
 
+Tracker questionnaires, required fields, defaults, and reviewed upload/search names come from backend projections. Render those contracts through the release-session facets; do not derive tracker-specific rules in React. Questionnaire answers remain tracker-local, while canonical metadata and language corrections stay in Input. See [the tracker extension contract](../ADDING_TRACKERS.md#tracker-questions).
+
 Each browser route must also be listed in the Go host's UI fallback allowlist. Test direct links and reloads at `/` and a configured prefix such as `/upbrr/`; the host rewrites Vite's relative entry assets for nested routes. Never treat missing assets as UI routes.
 
 Theme palettes are static free assets. Appearance is browser local, applies before React mounts, and does not add a server configuration field. Add a theme through the catalog, palette, bootstrap, and theme tests together.

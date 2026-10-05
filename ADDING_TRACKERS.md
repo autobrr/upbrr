@@ -242,7 +242,8 @@ requires canonical clean-filename substitutions, apply `api.CleanReleaseNameFile
 selected component value before the tracker's presentation formatting.
 
 For fact-built names, use finalized `Release.Other`, `Release.Language`, and `Release.Audio`
-markers, or `Release.Version` for a parsed release version. Missing marker evidence must be
+markers, or `Release.Version` for the finalized release version, including an explicit version
+correction. Release version and edition are independent facts. Missing marker evidence must be
 resolved during source preparation, not recovered by searching a rendered name. The source
 parser retains only final typed technical markers; candidates classified as title text or a
 release group are not marker evidence. Treat ambiguous or unavailable markers as absent.
@@ -358,6 +359,13 @@ Standalone profiles must set `UploadContentMode` explicitly. Current protocol ex
 for `none`, ANT/RTF for `screenshots`, and most other standalone trackers for `description`.
 Changing a standalone tracker's workflow later should require only its profile and tracker-local
 adapter implementation; do not add tracker-name branches to core or tracker orchestration.
+
+Set `standalone.Profile.UsesMenuImages` when the adapter consumes selected DVD menu images,
+so shared preparation can rehost source-only menus for that tracker. Unit3D and AvistaZ families
+already declare this capability. A tracker that can retain its own source-only image links may
+bind `SourceOnlyImageReusable`; validate the URL and any required tracker-record provenance.
+The default rejects source-only reuse. Do not treat this callback as permission to reuse
+private links on a different tracker.
 
 ## Add a Unit3D tracker
 
@@ -521,20 +529,23 @@ func resolutionID(meta api.UploadSubject) string {
 
 Available site callbacks are:
 
-| Callback                 | Use                                                                          |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `BuildName`              | Legacy string naming; prefer `Profile.ReleaseNamePolicy` for component edits |
-| `BuildDescription`       | Replace shared Unit3D description rendering                                  |
-| `ResolveKeywords`        | Filter or remap the `keywords` field                                         |
-| `ResolveTypeID`          | Map prepared release facts to a site type ID                                 |
-| `ResolveResolutionID`    | Map prepared release facts to a site resolution ID                           |
-| `ResolveCategoryID`      | Map canonical category and site facts to a site category ID                  |
-| `CategoryIDs`            | Declare every native category ID in a canonical movie or TV family           |
-| `ResolveRegionID`        | Extend or override the shared disc country catalog                           |
-| `ResolveDistributorID`   | Extend or override the shared disc publisher catalog                         |
-| `AdjustSearchParams`     | Adapt a validated work/category query to a site API dialect                  |
-| `ApplyAdditionalPayload` | Add site-only upload fields after the common payload is built                |
-| `FinalizeDescription`    | Transform the completed shared description without replacing its build       |
+| Callback                  | Use                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `ProjectionQuestionnaire` | Pure tracker review fields; see [Tracker questions](#tracker-questions)      |
+| `InputSchema`             | Canonical Input controls for preparation evidence                            |
+| `InputReadiness`          | Pure readiness outcomes for required preparation evidence                    |
+| `BuildName`               | Legacy string naming; prefer `Profile.ReleaseNamePolicy` for component edits |
+| `BuildDescription`        | Replace shared Unit3D description rendering                                  |
+| `ResolveKeywords`         | Filter or remap the `keywords` field                                         |
+| `ResolveTypeID`           | Map prepared release facts to a site type ID                                 |
+| `ResolveResolutionID`     | Map prepared release facts to a site resolution ID                           |
+| `ResolveCategoryID`       | Map canonical category and site facts to a site category ID                  |
+| `CategoryIDs`             | Declare every native category ID in a canonical movie or TV family           |
+| `ResolveRegionID`         | Extend or override the shared disc country catalog                           |
+| `ResolveDistributorID`    | Extend or override the shared disc publisher catalog                         |
+| `AdjustSearchParams`      | Adapt a validated work/category query to a site API dialect                  |
+| `ApplyAdditionalPayload`  | Add site-only upload fields after the common payload is built                |
+| `FinalizeDescription`     | Transform the completed shared description without replacing its build       |
 
 An empty or `"0"` category, type, or resolution mapping is treated as unsupported by mandatory
 Unit3D constructibility and blocks the tracker before duplicate search. Upload preparation retains
@@ -1054,6 +1065,8 @@ missing required questionnaire answers, or unavailable prepared media. Add combi
 validation behavior to `internal/trackers/rules_test.go`; add tracker-package tests for
 protocol-specific pure mapping or complex validation.
 
+#### Tracker questions
+
 Tracker-local reviews appear on Dupe Checking when the tracker is selected, before duplicate
 checks. Selection uses the projection-only `trackers_projected` goal against an existing exact
 prepared generation; it must not prepare or enrich metadata, authenticate, refresh remote bans,
@@ -1118,6 +1131,9 @@ Declare static capabilities directly in `standalone.Profile`:
 | `TorrentIdentityPolicy`   | `profile.go`                 | Announce/comment identity and reuse behavior      |
 | `LocalizedMetadataLocale` | `profile.go`                 | Locale-specific tracker rendering                 |
 | `DescriptionGroup`        | `profile.go`                 | Saved description override group                  |
+| `ProjectionQuestionnaire` | `questionnaire.go`           | Pure review fields before duplicate checking      |
+| `UsesMenuImages`          | `profile.go`                 | Selected DVD menu-image consumption               |
+| `SourceOnlyImageReusable` | tracker-local policy         | Provenance-aware reuse of own source-only links   |
 | `DataPolicy`              | `profile.go`                 | Lookup cooldown/defer behavior                    |
 | `ClaimPolicy`             | `profile.go`                 | Active-claim orchestration                        |
 
@@ -1125,9 +1141,10 @@ Implement only capabilities the tracker needs. If new behavior cannot be express
 typed capability, extend the shared profile/registry contract; do not
 teach generic coordinators the tracker name.
 
-Rare dynamic interfaces stay on a small local wrapper embedding `*standalone.Definition`. Use this
-only for `NewDataLookup`, `DataLookupConfigured`, or `NewClaimChecker`; do not create an empty local
-definition type for static capabilities.
+Capabilities not exposed by `standalone.Profile` stay on a small local wrapper embedding
+`*standalone.Definition`. Use this for `NewDataLookup`, `DataLookupConfigured`, `NewClaimChecker`,
+or the private `TrackerAnswerSchemaProvider` contract described above. Do not create an empty
+local definition type for static profile capabilities.
 
 A `DataLookup` implementation must also implement `CacheKey` from the exact query inputs and
 asset demands it uses. Include its endpoint and relevant configuration; return `nil` when no
@@ -1174,7 +1191,8 @@ At minimum, cover:
 - duplicate request construction, result normalization, not-run states, and failures
 - exact taxonomy mapping, including unknown/unsupported inputs and no I/O
 - exact description output and technical-media selection/parsing
-- questionnaire field order, keys, defaults, normalization, and invalid/missing answers
+- pure questionnaire field order, keys, defaults, normalization, and invalid/missing answers
+- projection/CLI-answer-schema separation, exact accepted-answer payload use, and cleared answers
 - rule and banned-group behavior
 - validation policy ID, stable failure codes/reasons, constructibility, and normal/debug behavior
 - auth capability/effective requirements plus status/login/session/2FA behavior when implemented
