@@ -87,7 +87,8 @@ type BackendCommandAuthority = Readonly<{
   workflowID: string;
   workflowRevision: number;
 }>;
-type WorkflowCommandFailureAuthority = Omit<BackendCommandAuthority, "commandID">;
+type WorkflowCommandFailureAuthority = Omit<BackendCommandAuthority, "commandID"> &
+  Readonly<{ current: ReleaseWorkflowCurrent }>;
 type WorkflowCommandCallbacks = Readonly<{
   onAbort?: (authority: BackendCommandAuthority) => void;
   onError?: (error: unknown, authority: BackendCommandAuthority) => void;
@@ -139,6 +140,7 @@ const withWorkflowCommandFailureAuthority = (
 ) =>
   Object.assign(error, {
     [workflowCommandFailureAuthority]: {
+      current,
       operationID: operation.id,
       operationSequence: operation.sequence,
       workflowID: current.workflow.id,
@@ -841,9 +843,10 @@ export function ReleaseSessionProvider({
       } else {
         const failureAuthority = commandFailureAuthorityFromError(error);
         if (failureAuthority?.workflowID === commandAuthority.workflowID) {
+          const { current: _failedCurrent, ...authority } = failureAuthority;
           commandAuthority = {
             commandID,
-            ...failureAuthority,
+            ...authority,
           };
         }
         callbacks.onError?.(error, commandAuthority);
@@ -1120,11 +1123,14 @@ export function ReleaseSessionProvider({
             operationFailureFromError(error)?.Message ||
             "Tracker questions could not be loaded. Retry or prepare the selected source again.",
         });
-        // Keep the accepted workflow visible after a failed schema-only request.
+        // Settle the exact failure snapshot; queued reducer updates can be newer than stateRef.
         dispatch({
           type: "workflow_current_published",
           status: "ready",
-          current: stateRef.current.workflowView.current || initial,
+          current:
+            commandFailureAuthorityFromError(error)?.current ||
+            stateRef.current.workflowView.current ||
+            initial,
         });
       }
       return false;
@@ -2786,7 +2792,8 @@ export function ReleaseSessionProvider({
     duplicates: {
       view: {
         status:
-          duplicateStartPending ||
+          (duplicateStartPending &&
+            !(questionnaireRefreshPending && duplicateOperation?.command === "project_trackers")) ||
           (workflowView.status === "running" && !questionnaireRefreshPending)
             ? "running"
             : duplicatesReady

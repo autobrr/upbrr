@@ -763,7 +763,7 @@ export default function DupeCheckPage({
         <WorkflowDupeAssessmentView
           acknowledgeReleaseName={facet.acknowledgeReleaseName}
           assessment={assessment}
-          busy={dupeLoading}
+          busy={questionsBusy}
           confirmReleaseName={facet.confirmReleaseName}
           ignoredTrackers={ignoredTrackers}
           acknowledgeRules={facet.acknowledgeRules}
