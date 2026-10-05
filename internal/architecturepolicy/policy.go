@@ -184,20 +184,21 @@ var trackerUploadResponsibilityPatterns = []struct {
 }
 
 var unit3DCallbackFiles = map[string]string{
-	"ApplyAdditionalPayload": "payload.go",
-	"AdjustSearchParams":     "dupe.go",
-	"BuildDescription":       "description.go",
-	"BuildName":              "name.go",
-	"CategoryIDs":            "taxonomy.go",
-	"FinalizeDescription":    "description.go",
-	"InputSchema":            "questionnaire.go",
-	"InputReadiness":         "questionnaire.go",
-	"ResolveCategoryID":      "taxonomy.go",
-	"ResolveRegionID":        "taxonomy.go",
-	"ResolveDistributorID":   "taxonomy.go",
-	"ResolveKeywords":        "taxonomy.go",
-	"ResolveResolutionID":    "taxonomy.go",
-	"ResolveTypeID":          "taxonomy.go",
+	"ApplyAdditionalPayload":  "payload.go",
+	"AdjustSearchParams":      "dupe.go",
+	"BuildDescription":        "description.go",
+	"BuildName":               "name.go",
+	"CategoryIDs":             "taxonomy.go",
+	"FinalizeDescription":     "description.go",
+	"InputSchema":             "questionnaire.go",
+	"ProjectionQuestionnaire": "questionnaire.go",
+	"InputReadiness":          "questionnaire.go",
+	"ResolveCategoryID":       "taxonomy.go",
+	"ResolveRegionID":         "taxonomy.go",
+	"ResolveDistributorID":    "taxonomy.go",
+	"ResolveKeywords":         "taxonomy.go",
+	"ResolveResolutionID":     "taxonomy.go",
+	"ResolveTypeID":           "taxonomy.go",
 }
 
 var forbiddenTrackerImportPrefixes = []string{

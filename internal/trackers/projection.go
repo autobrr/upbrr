@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,8 @@ import (
 // remote work. Readiness remains unproven until naming, generic rules,
 // metadata policy, and tracker-native validation complete.
 func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection {
+	answers := make(map[string]string)
+	maps.Copy(answers, input.Meta.TrackerQuestionnaireAnswers[strings.ToUpper(strings.TrimSpace(input.Tracker))])
 	canonicalName := canonicalProjectionName(input.Meta)
 	if canonicalName == "" {
 		canonicalName = "unresolved"
@@ -49,6 +52,7 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 	target := duplicateTarget(input.Meta)
 	target.Names = append([]string{canonicalName}, target.Names...)
 	projection := api.TrackerReleaseProjection{
+		QuestionnaireAnswers: answers,
 		TrackerID:            api.TrackerID(strings.ToUpper(strings.TrimSpace(input.Tracker))),
 		DisplayName:          strings.ToUpper(strings.TrimSpace(input.Tracker)),
 		CanonicalReleaseName: canonicalName,
@@ -141,7 +145,7 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		DuplicateCriteria:   criteria,
 		DuplicateTarget:     target,
 		DescriptionGroup:    strings.ToLower(strings.TrimSpace(preview.DescriptionGroup)),
-		Questionnaire:       projectQuestionnaire(preview.Questionnaire),
+		Questionnaire:       ProjectQuestionnaire(preview.Questionnaire),
 		Readiness:           readiness,
 		DupeReady:           dupeReady,
 		UploadReady:         dupeReady,
@@ -168,12 +172,28 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 	return projection, nil
 }
 
+// applyReviewedQuestionnaire restores only exact answer authority, before name
+// verification or payload preparation can consult mutable caller answers.
+func applyReviewedQuestionnaire(input PreparationInput) PreparationInput {
+	if input.Projection == nil || input.Projection.QuestionnaireAnswers == nil {
+		return input
+	}
+	input.Meta.TrackerQuestionnaireAnswers = maps.Clone(input.Meta.TrackerQuestionnaireAnswers)
+	if input.Meta.TrackerQuestionnaireAnswers == nil {
+		input.Meta.TrackerQuestionnaireAnswers = make(map[string]map[string]string)
+	}
+	input.Meta.TrackerQuestionnaireAnswers[string(input.Projection.TrackerID)] = maps.Clone(input.Projection.QuestionnaireAnswers)
+	return input
+}
+
 func applyReviewedProjection(input PreparationInput) PreparationInput {
+	input = applyReviewedQuestionnaire(input)
 	if input.Projection == nil {
 		return input
 	}
 	projection := *input.Projection
 	input.Projection = &projection
+
 	if value := strings.TrimSpace(projection.Taxonomy.Type.Label); value != "" {
 		input.Meta.Type = value
 	}
@@ -315,7 +335,8 @@ func projectionProviderIDs(identity api.ExternalIdentity) []api.TrackerProviderI
 	return result
 }
 
-func projectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {
+// ProjectQuestionnaire returns detached tracker-owned fields for safe workflow review.
+func ProjectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {
 	if questionnaire == nil {
 		return nil
 	}
@@ -323,6 +344,9 @@ func projectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.Tracker
 	for index, field := range questionnaire.Fields {
 		result[index] = api.TrackerQuestionnaireRequirement{
 			Key:      strings.TrimSpace(field.Key),
+			Kind:     field.Kind,
+			Value:    field.Value,
+			Help:     field.Help,
 			Label:    strings.TrimSpace(field.Label),
 			Required: field.Required,
 			Options:  append([]string(nil), field.Options...),
@@ -549,6 +573,26 @@ func (r *Registry) ProjectRelease(
 				Blocking: false,
 				Message:  fmt.Sprintf("Non-scene release name confirmed for %s.", trackerName),
 			})
+		}
+	}
+	if failure == nil {
+		if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); ok {
+			input.Projection = &projection
+			projection.Questionnaire = ProjectQuestionnaire(provider.ProjectionQuestionnaire(input))
+			if slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+				return field.Required && strings.TrimSpace(field.Value) == ""
+			}) {
+				projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+					Kind:      api.RequiredActionAnswerQuestionnaire,
+					TrackerID: projection.TrackerID,
+					Prompt:    "Review tracker inputs for " + projection.DisplayName + ".",
+				})
+				projection.UploadReady = false
+				projection.DupeReady = false
+				if projection.Readiness != api.ReadinessStatusIneligible {
+					projection.Readiness = api.ReadinessStatusBlocked
+				}
+			}
 		}
 	}
 	return projection, failure

@@ -29,7 +29,12 @@ import type {
 } from "../api/generated/release-workflow";
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
-import { initialSessionState, pendingCorrectionReview, sessionReducer } from "./reducer";
+import {
+  initialSessionState,
+  pendingCorrectionReview,
+  sessionReducer,
+  type SessionState,
+} from "./reducer";
 import { canExecuteUpload } from "./uploadEligibility";
 import { routeAccess, type TrackerWorkflowRequirements } from "./navigation";
 import {
@@ -53,6 +58,7 @@ import {
   workflowPrepareInput,
   workflowSelectedInputTrackers,
   workflowViewValue,
+  workflowQuestionnaires,
   type PendingInputUpdate,
 } from "./projections";
 import type {
@@ -81,7 +87,8 @@ type BackendCommandAuthority = Readonly<{
   workflowID: string;
   workflowRevision: number;
 }>;
-type WorkflowCommandFailureAuthority = Omit<BackendCommandAuthority, "commandID">;
+type WorkflowCommandFailureAuthority = Omit<BackendCommandAuthority, "commandID"> &
+  Readonly<{ current: ReleaseWorkflowCurrent }>;
 type WorkflowCommandCallbacks = Readonly<{
   onAbort?: (authority: BackendCommandAuthority) => void;
   onError?: (error: unknown, authority: BackendCommandAuthority) => void;
@@ -133,6 +140,7 @@ const withWorkflowCommandFailureAuthority = (
 ) =>
   Object.assign(error, {
     [workflowCommandFailureAuthority]: {
+      current,
       operationID: operation.id,
       operationSequence: operation.sequence,
       workflowID: current.workflow.id,
@@ -167,6 +175,17 @@ const waitForWorkflowPoll = (signal: AbortSignal, delay = 1000) =>
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });
+
+const questionnaireSnapshotKey = (state: SessionState) =>
+  JSON.stringify([
+    state.activeInput.inputID,
+    state.activeInput.sourceVersion,
+    state.workflowView.current?.workflow.id,
+    state.workflowView.current?.release?.id,
+    state.workflowView.current?.release?.revision,
+    state.inputEditRevision,
+    state.selectedTrackers,
+  ]);
 
 const workflowStorageKey = "upbrr.activeReleaseWorkflow";
 
@@ -214,6 +233,11 @@ export function ReleaseSessionProvider({
     status: "running" | "error";
     message: string;
   }> | null>(null);
+  const [questionnaireRefresh, setQuestionnaireRefresh] = useState<Readonly<{
+    key: string;
+    status: "running" | "ready" | "error";
+    error: string;
+  }> | null>(null);
   const liveTest = testRuntime?.mode === "live_test";
   const mutationsAllowed = runtimeInfoReady && !liveTest;
   const uploadOptions = { ...state.uploadOptions, noSeed: liveTest || state.uploadOptions.noSeed };
@@ -221,6 +245,7 @@ export function ReleaseSessionProvider({
     () => normalizedNames(defaultTrackers),
     [defaultTrackers],
   );
+  const questionnaireController = useRef<AbortController | null>(null);
   const controllers = useRef<Partial<Record<ControllerKey, AbortController>>>({});
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -242,6 +267,7 @@ export function ReleaseSessionProvider({
   const lastWorkflowError = useRef<unknown>(null);
   const activePorts = useMemo(() => ports ?? productionReleaseSessionPorts(), [ports]);
   const workflowView = state.workflowView;
+  const questionnaireKey = questionnaireSnapshotKey(state);
 
   const backendCommandAuthority = (
     commandID: string,
@@ -817,9 +843,10 @@ export function ReleaseSessionProvider({
       } else {
         const failureAuthority = commandFailureAuthorityFromError(error);
         if (failureAuthority?.workflowID === commandAuthority.workflowID) {
+          const { current: _failedCurrent, ...authority } = failureAuthority;
           commandAuthority = {
             commandID,
-            ...failureAuthority,
+            ...authority,
           };
         }
         callbacks.onError?.(error, commandAuthority);
@@ -925,7 +952,9 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const checkBackendDuplicates = async (): Promise<boolean> => {
+  const checkBackendDuplicates = async (
+    goal: "trackers_assessed" | "duplicates_decided" = "duplicates_decided",
+  ): Promise<boolean> => {
     if (
       !workflowView.current ||
       controllers.current.workflow ||
@@ -960,12 +989,12 @@ export function ReleaseSessionProvider({
           return [
             tracker,
             {
-              questionnaire: Object.fromEntries(
-                Object.entries(state.questionnaireAnswers[tracker] || {}).map(([key, value]) => [
-                  key,
-                  value,
-                ]),
-              ),
+              questionnaire: {
+                ...workflowView.current?.projectionInstructions?.instructions[tracker]
+                  ?.questionnaire,
+                ...projection?.questionnaireAnswers,
+                ...state.questionnaireAnswers[tracker],
+              },
               ...(confirmedName !== undefined ? { uploadReleaseName: confirmedName } : {}),
             },
           ];
@@ -973,7 +1002,7 @@ export function ReleaseSessionProvider({
       );
       const current = await continueBackendGoal(
         workflowView.current,
-        "duplicates_decided",
+        goal,
         {
           trackerIds: [...state.selectedTrackers],
           projectionInstructions,
@@ -985,6 +1014,13 @@ export function ReleaseSessionProvider({
       releaseWorkflowController(controller);
       if (controller.signal.aborted) return false;
       acceptWorkflowCurrent(current);
+      // Acknowledged submissions yield to the returned validation; later user edits remain drafts.
+      dispatch({
+        type: "questionnaire_answers_applied",
+        current,
+        submitted: state.questionnaireAnswers,
+      });
+      setQuestionnaireRefresh({ key: questionnaireKey, status: "ready", error: "" });
       return true;
     } catch (error) {
       releaseWorkflowController(controller);
@@ -992,6 +1028,115 @@ export function ReleaseSessionProvider({
       return false;
     } finally {
       releaseWorkflowController(controller);
+    }
+  };
+
+  const refreshQuestionnaires = async (): Promise<boolean> => {
+    const initial = workflowView.current;
+    if (
+      !initial ||
+      controllers.current.workflow ||
+      isActiveWorkflowOperation(initial.operation) ||
+      !state.selectedTrackers.length
+    )
+      return false;
+    if (state.correctionDirty || !initial.release) {
+      setQuestionnaireRefresh({
+        key: questionnaireKey,
+        status: "error",
+        error:
+          "Apply Input changes and prepare the selected source before reviewing tracker questions.",
+      });
+      return false;
+    }
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    questionnaireController.current = controller;
+    setQuestionnaireRefresh({ key: questionnaireKey, status: "running", error: "" });
+    const expectedInputContentRevision =
+      state.inputEditRevision - state.trackerSelectionEditRevision;
+    const trackers = [...state.selectedTrackers];
+    try {
+      const current = await continueBackendGoal(
+        initial,
+        "trackers_projected",
+        {
+          trackerIds: trackers,
+          // Selection discovers schemas; only explicit Apply/Run may submit local drafts.
+          projectionInstructions: Object.fromEntries(
+            trackers.map((tracker) => [
+              tracker,
+              {
+                ...initial.projectionInstructions?.instructions[tracker],
+                questionnaire: {
+                  ...initial.projectionInstructions?.instructions[tracker]?.questionnaire,
+                  ...initial.projections?.projections.find(
+                    (projection) => projection.trackerId === tracker,
+                  )?.questionnaireAnswers,
+                },
+              },
+            ]),
+          ),
+        },
+        timestampedCommandID("workflow-questions", initial.workflow.revision),
+        controller.signal,
+      );
+      if (controller.signal.aborted) return false;
+      releaseWorkflowController(controller);
+      acceptWorkflowCurrent(current);
+      if (
+        !current.projections &&
+        !trackers.every((tracker) =>
+          current.workflow.submissionExclusions?.some(
+            (exclusion) => exclusion.trackerId === tracker,
+          ),
+        )
+      ) {
+        setQuestionnaireRefresh({
+          key: questionnaireKey,
+          status: "error",
+          error: "Prepare the selected source before reviewing tracker questions.",
+        });
+        return false;
+      }
+      const latest = stateRef.current;
+      const inputChanged =
+        expectedInputContentRevision !==
+        latest.inputEditRevision - latest.trackerSelectionEditRevision;
+      setQuestionnaireRefresh({
+        key:
+          inputChanged || sameNames(trackers, latest.selectedTrackers)
+            ? questionnaireSnapshotKey(latest)
+            : questionnaireKey,
+        status: inputChanged ? "error" : "ready",
+        error: inputChanged
+          ? "Apply Input changes and prepare the selected source before reviewing tracker questions."
+          : "",
+      });
+      return !inputChanged;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setQuestionnaireRefresh({
+          key: questionnaireKey,
+          status: "error",
+          error:
+            operationFailureFromError(error)?.Message ||
+            "Tracker questions could not be loaded. Retry or prepare the selected source again.",
+        });
+        // Settle the exact failure snapshot; queued reducer updates can be newer than stateRef.
+        dispatch({
+          type: "workflow_current_published",
+          status: "ready",
+          current:
+            commandFailureAuthorityFromError(error)?.current ||
+            stateRef.current.workflowView.current ||
+            initial,
+        });
+      }
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+      if (questionnaireController.current === controller) questionnaireController.current = null;
     }
   };
 
@@ -1899,8 +2044,19 @@ export function ReleaseSessionProvider({
     );
   };
 
+  const questionnaires = workflowQuestionnaires(workflowView.current);
+  const questionnaireDirty = state.selectedTrackers.some((tracker) => {
+    const accepted = questionnaires.find(
+      (projection) => projection.trackerId === tracker,
+    )?.questionnaireAnswers;
+    return Object.entries(state.questionnaireAnswers[tracker] || {}).some(
+      ([key, draft]) => draft.trim() !== (accepted?.[key] ?? "").trim(),
+    );
+  });
+
   const runDryRun = async (): Promise<boolean> => {
-    if (!workflowView.current || !hasDryRunCandidate(workflowView.current)) return false;
+    if (!workflowView.current || questionnaireDirty || !hasDryRunCandidate(workflowView.current))
+      return false;
     return runBackendWorkflow((current, commandID, signal) =>
       continueBackendGoal(
         current,
@@ -1913,7 +2069,7 @@ export function ReleaseSessionProvider({
   };
 
   const executeExactUpload = async (): Promise<boolean> => {
-    if (!mutationsAllowed) return false;
+    if (!mutationsAllowed || questionnaireDirty) return false;
     if (
       !workflowView.current ||
       controllers.current.workflow ||
@@ -1966,7 +2122,34 @@ export function ReleaseSessionProvider({
   const workflowDupeAssessment = workflowView.current?.dupes || null;
   const workflowDupeSelection =
     workflowView.current?.projections?.projections.map((projection) => projection.trackerId) || [];
-  const duplicateAssessmentCurrent = sameNames(workflowDupeSelection, state.selectedTrackers);
+  const submittedTrackers = new Set(
+    (workflowView.current?.workflow.submissionExclusions || []).map(
+      (exclusion) => exclusion.trackerId,
+    ),
+  );
+  const duplicateAssessmentCurrent = sameNames(
+    workflowDupeSelection,
+    state.selectedTrackers.filter((tracker) => !submittedTrackers.has(tracker)),
+  );
+  const questionnaireRefreshPending =
+    questionnaireRefresh?.status === "running" &&
+    controllers.current.workflow === questionnaireController.current &&
+    Boolean(questionnaireController.current);
+  const questionnaireRefreshCurrent = questionnaireRefresh?.key === questionnaireKey;
+  const questionnaireStatus = questionnaireRefreshPending
+    ? "running"
+    : questionnaireRefreshCurrent && questionnaireRefresh.status === "error"
+      ? "error"
+      : duplicateAssessmentCurrent &&
+          ((questionnaireRefreshCurrent && questionnaireRefresh.status === "ready") ||
+            (state.selectedTrackers.length > 0 &&
+              state.selectedTrackers.every((tracker) => submittedTrackers.has(tracker))))
+        ? "ready"
+        : "idle";
+  const questionnaireSnapshotCurrent =
+    duplicateAssessmentCurrent &&
+    questionnaireStatus !== "error" &&
+    (!questionnaireRefreshPending || questionnaireRefreshCurrent);
   const duplicateOperation =
     workflowView.current?.operation?.operation === "duplicate_check"
       ? workflowView.current.operation
@@ -2609,7 +2792,9 @@ export function ReleaseSessionProvider({
     duplicates: {
       view: {
         status:
-          duplicateStartPending || workflowView.status === "running"
+          (duplicateStartPending &&
+            !(questionnaireRefreshPending && duplicateOperation?.command === "project_trackers")) ||
+          (workflowView.status === "running" && !questionnaireRefreshPending)
             ? "running"
             : duplicatesReady
               ? "ready"
@@ -2632,6 +2817,17 @@ export function ReleaseSessionProvider({
         ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
         releaseNameOverrides: state.releaseNameOverrides,
+        questionnaires: questionnaireSnapshotCurrent ? questionnaires : [],
+        preparationQuestionnaires: questionnaireSnapshotCurrent
+          ? questionnaires.map((projection) => ({
+              ...projection,
+              questionnaire: projection.preparationQuestionnaire,
+            }))
+          : [],
+        questionnaireStatus,
+        questionnaireError: questionnaireRefreshCurrent ? questionnaireRefresh.error : "",
+        questionnaireAnswers: state.questionnaireAnswers,
+        questionnaireDirty,
         error: workflowView.failure?.Message || state.duplicatesError || "",
       },
       run: async () => {
@@ -2664,6 +2860,13 @@ export function ReleaseSessionProvider({
         return completed;
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
+      refreshQuestionnaires,
+      answerQuestionnaire: (tracker, key, value) =>
+        dispatch({ type: "questionnaire_answered", tracker, key, value }),
+      applyQuestionnaireAnswers: async () => {
+        if (!access.duplicates.available || !duplicateAssessmentCurrent) return false;
+        return checkBackendDuplicates("trackers_assessed");
+      },
       confirmReleaseName: (tracker, value) =>
         dispatch({ type: "release_name_confirmed", tracker, value }),
       acknowledgeReleaseName: async (tracker, acknowledged) => {
@@ -3007,7 +3210,7 @@ export function ReleaseSessionProvider({
         selectedTrackers: state.selectedTrackers,
         projections: workflowView.current?.projections || null,
         ignoredDupesFor: state.ignoredDupesFor,
-        questionnaireAnswers: state.questionnaireAnswers,
+        questionnaireDirty,
         options: uploadOptions,
         liveTest,
         mutationsAllowed: mutationsAllowed && state.activeInput.state !== "recovering",
@@ -3020,8 +3223,6 @@ export function ReleaseSessionProvider({
         error: workflowView.failure?.Message || workflowView.error || state.uploadError || "",
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
-      answerQuestionnaire: (tracker, key, value) =>
-        dispatch({ type: "questionnaire_answered", tracker, key, value }),
       changeOptions: (options: Partial<UploadRunOptions>) =>
         dispatch({
           type: "upload_options_changed",
@@ -3054,7 +3255,7 @@ export function ReleaseSessionProvider({
         return cancelBackendWorkflow("upload canceled");
       },
       retry: async () => {
-        if (!mutationsAllowed) return false;
+        if (!mutationsAllowed || questionnaireDirty) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
           .filter((item) => item.submissionStatus === "failed")

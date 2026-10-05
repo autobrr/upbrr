@@ -8,6 +8,7 @@ import type {
   ReleaseFactInstructions,
   ReleaseCorrectionPatch,
   ReleaseWorkflowCurrent,
+  TrackerReleaseProjection,
   PrepareInput as WorkflowPrepareInput,
   WorkflowIntent,
 } from "../api/generated/release-workflow";
@@ -23,6 +24,51 @@ export type PendingInputUpdate = Readonly<{
   trackerInputAnswers: NonNullable<WorkflowIntent["trackerInputAnswers"]>;
   selectedTrackers: readonly string[];
 }>;
+
+/** Separates pure tracker questions from exact late-only preparation requirements. */
+export const workflowQuestionnaires = (
+  current: ReleaseWorkflowCurrent | null | undefined,
+): (Pick<
+  TrackerReleaseProjection,
+  "trackerId" | "displayName" | "questionnaire" | "questionnaireAnswers"
+> & { preparationQuestionnaire: TrackerReleaseProjection["questionnaire"] })[] => {
+  const projections = current?.projections;
+  if (!projections) return [];
+  const dryRun = current.dryRun;
+  const reports =
+    dryRun?.workflowId === current.workflow.id &&
+    dryRun.projectionSet.id === projections.id &&
+    dryRun.projectionSet.revision === projections.revision
+      ? dryRun.reports
+      : [];
+  return projections.projections.map((projection) => {
+    const fields = new Map((projection.questionnaire || []).map((field) => [field.key, field]));
+    const preparationQuestionnaire: NonNullable<
+      TrackerReleaseProjection["questionnaire"]
+    >[number][] = [];
+    for (const field of reports.find((report) => report.trackerId === projection.trackerId)
+      ?.questionnaire || []) {
+      // An empty required value rejects prior input. Display-only report values never become answers.
+      const rejectedOrMissing = field.required && !(field.value ?? "").trim();
+      const reviewed = fields.get(field.key);
+      const updated = {
+        ...field,
+        value: rejectedOrMissing
+          ? field.value
+          : (reviewed?.value ?? projection.questionnaireAnswers?.[field.key] ?? field.value),
+      };
+      if (reviewed) fields.set(field.key, updated);
+      else preparationQuestionnaire.push(updated);
+    }
+    return {
+      trackerId: projection.trackerId,
+      displayName: projection.displayName,
+      questionnaire: [...fields.values()],
+      preparationQuestionnaire,
+      questionnaireAnswers: projection.questionnaireAnswers,
+    };
+  });
+};
 
 export const workflowViewValue = <T>(value: unknown): T => structuredClone(value) as T;
 

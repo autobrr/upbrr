@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -947,5 +948,70 @@ func workflowPreflightFixtures(
 		ID:          "projection-set-1",
 		Revision:    4,
 		Projections: []api.TrackerReleaseProjection{projection("ALPHA"), projection("BETA")},
+	}
+}
+
+type workflowQuestionnaireResourceDefinition struct {
+	workflowPreparedResourceDefinition
+}
+
+func (workflowQuestionnaireResourceDefinition) ValidationPolicy() trackerspkg.ValidationPolicyBinding {
+	return trackerspkg.ValidationPolicyBinding{ID: "resource-questionnaire-test-v1", Check: func(_ context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
+		if subject.MediaInfoTextReady && subject.QuestionnaireAnswers["override"] == "yes" {
+			return nil, nil
+		}
+		return []api.RuleFailure{trackerspkg.NewRuleFailure("required_answer_or_media", "prepared media and reviewed answer are required", api.RuleDispositionStrict)}, nil
+	}}
+}
+
+func TestWorkflowPreflightResourceRevalidationUsesExactQuestionnaireAnswers(t *testing.T) {
+	registry := trackerspkg.NewRegistry()
+	if err := registry.Register(workflowQuestionnaireResourceDefinition{}); err != nil {
+		t.Fatal(err)
+	}
+	mediaInfo := filepath.Join(t.TempDir(), "mediainfo.txt")
+	if err := os.WriteFile(mediaInfo, []byte("prepared media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		answers   map[string]string
+		staged    string
+		wantReady bool
+	}{
+		{"reviewed answer overrides staged value", map[string]string{"override": "yes"}, "no", true},
+		{"empty authority clears staged answer", map[string]string{}, "yes", false},
+		{"legacy authority preserves staging", nil, "yes", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := api.UploadSubject{
+				MediaInfoTextPath:           mediaInfo,
+				SceneNFOPath:                filepath.Join(t.TempDir(), "missing-optional.nfo"),
+				TrackerQuestionnaireAnswers: map[string]map[string]string{"RESOURCE": {"override": test.staged}},
+			}
+			resource := api.NewTrackerValidationSubject(subject, "RESOURCE").PreparedResourceFingerprint
+			initial := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+				TrackerID:                   "RESOURCE",
+				QuestionnaireAnswers:        test.answers,
+				Readiness:                   api.ReadinessStatusReady,
+				DupeReady:                   true,
+				UploadReady:                 true,
+				PreparedResourceFingerprint: api.WorkflowFingerprint(resource),
+			}}}
+			builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
+			assessment, finalized, err := builder.Build(t.Context(), subject, api.TrackerCatalogSnapshot{Trackers: []api.TrackerCatalogDescriptor{{TrackerID: "RESOURCE"}}}, api.TrackerRuntimeSnapshot{}, initial, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(finalized) != 1 || finalized[0].DupeReady != test.wantReady || (assessment.Results[0].State == api.TrackerPreflightStateReady) != test.wantReady {
+				t.Fatalf("reviewed answers lost after optional NFO disappeared: %+v / %+v", assessment.Results, finalized)
+			}
+			if finalized[0].PreparedResourceFingerprint == api.WorkflowFingerprint(resource) {
+				t.Fatal("fixture did not revalidate changed resources")
+			}
+			if subject.TrackerQuestionnaireAnswers["RESOURCE"]["override"] != test.staged {
+				t.Fatal("mutated source answers")
+			}
+		})
 	}
 }

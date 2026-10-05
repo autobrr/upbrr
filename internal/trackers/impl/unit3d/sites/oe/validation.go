@@ -182,7 +182,7 @@ func appendDescriptionRequirementFailure(
 	if meta.DescriptionGroupsFinal && !strings.Contains(description, answer) {
 		return append(failures, trackers.NewRuleFailure(
 			rule+"_description",
-			reason+"; retain the supplied evidence in the final description or update the Input field",
+			reason+"; retain the supplied evidence in the final description or update the tracker questionnaire",
 			api.RuleDispositionStrict,
 		))
 	}

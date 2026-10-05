@@ -6,28 +6,35 @@ package asc
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	return buildQuestionnaire(input.Meta)
+}
+
 func buildQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 	answers := standalone.QuestionnaireAnswers(meta, "ASC")
+	overview := strings.TrimSpace(resolveOverview(meta, answers))
+	genres := strings.TrimSpace(resolveGenres(meta, answers))
 	fields := make([]api.TrackerQuestionnaireField, 0, 2)
-	if strings.TrimSpace(resolveOverview(meta, answers)) == "" {
+	if _, answered := answers["overview"]; overview == "" || answered {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:      "overview",
 			Label:    "Sinopse",
 			Kind:     "textarea",
-			Value:    strings.TrimSpace(answers["overview"]),
+			Value:    overview,
 			Required: true,
 		})
 	}
-	if strings.TrimSpace(resolveGenres(meta, answers)) == "" {
+	if _, answered := answers["genre"]; genres == "" || answered {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "genre",
 			Label:       "Gêneros",
 			Kind:        "text",
-			Value:       strings.TrimSpace(answers["genre"]),
+			Value:       genres,
 			Placeholder: "Drama, Action",
 			Required:    true,
 		})

@@ -22,6 +22,9 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 			}
 			meta := standalone.UploadSubjectForValidation(subject)
 			failures := make([]api.RuleFailure, 0, 3)
+			if reason := validateNoEnglishSubtitles(meta); reason != "" {
+				failures = append(failures, trackers.NewRuleFailure("tracker_input.no_english_subtitles", reason, api.RuleDispositionStrict))
+			}
 			category, categoryErr := meta.Identity.RequireCategory()
 			if categoryErr != nil || category != api.CanonicalCategoryMovie {
 				failures = append(failures, trackers.NewRuleFailure(

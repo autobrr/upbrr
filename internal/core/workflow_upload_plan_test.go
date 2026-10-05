@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -219,12 +220,13 @@ func TestWorkflowUploadExecutionResolveActionReprojectsResolvedPreparation(t *te
 }
 
 type workflowRetainedUploadServiceFake struct {
-	projections  []api.TrackerReleaseProjection
-	failures     map[api.TrackerID]trackers.TrackerFailure
-	actions      map[api.TrackerID][]api.RequiredAction
-	torrentPaths map[api.TrackerID]string
-	results      []trackers.RetainedTrackerResult
-	subject      api.UploadSubject
+	questionnaires map[api.TrackerID]*api.TrackerQuestionnaire
+	projections    []api.TrackerReleaseProjection
+	failures       map[api.TrackerID]trackers.TrackerFailure
+	actions        map[api.TrackerID][]api.RequiredAction
+	torrentPaths   map[api.TrackerID]string
+	results        []trackers.RetainedTrackerResult
+	subject        api.UploadSubject
 }
 
 func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
@@ -242,6 +244,7 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 				Tracker:         string(projection.TrackerID),
 				Status:          "ready",
 				RequiredActions: append([]api.RequiredAction(nil), f.actions[projection.TrackerID]...),
+				Questionnaire:   f.questionnaires[projection.TrackerID],
 				Files: []api.TrackerDryRunFile{{
 					Field:   "file_input",
 					Path:    filepath.Join("preview", "must-not-drive-injection.torrent"),
@@ -1671,5 +1674,117 @@ func TestWorkflowTrackerArtifactIdentityIsTrackerScoped(t *testing.T) {
 			betaTorrent,
 			betaFingerprint,
 		)
+	}
+}
+
+func TestWorkflowUploadPlanRetainsLateQuestionnaireFailure(t *testing.T) {
+	service := &workflowRetainedUploadServiceFake{
+		failures: map[api.TrackerID]trackers.TrackerFailure{"GPW": {
+			Tracker: "GPW",
+			Code:    "questionnaire_required",
+			Message: "missing required new-group data",
+		}},
+		actions: map[api.TrackerID][]api.RequiredAction{"GPW": {{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: "GPW"}}},
+		questionnaires: map[api.TrackerID]*api.TrackerQuestionnaire{"GPW": {Tracker: "GPW", Fields: []api.TrackerQuestionnaireField{{
+			Key:      "director_imdb",
+			Kind:     "text",
+			Label:    "Director IMDb ID",
+			Required: true,
+		}}}},
+	}
+	builder := workflowUploadPlanBuilder{resolver: workflowUploadResolverFixed{subject: api.UploadSubject{SourcePath: filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")}}, trackers: service}
+	plan, execution, err := builder.Build(t.Context(),
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+			TrackerID:   "GPW",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		}}},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+			TrackerID: "GPW",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		}}},
+		workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{}, api.DescriptionInstructions{}, releaseworkflow.UploadPlanBuildOptions{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = execution.Release() }()
+	if len(plan.Trackers) != 1 {
+		t.Fatalf("trackers=%+v", plan.Trackers)
+	}
+	tracker := plan.Trackers[0]
+	if tracker.Eligible || tracker.Status != api.StageStatusFailed || len(tracker.Questionnaire) != 1 || tracker.Questionnaire[0].Key != "director_imdb" || !tracker.Questionnaire[0].Required || len(tracker.RequiredActions) != 1 {
+		t.Fatalf("late-required schema/failed authority not preserved: %+v", tracker)
+	}
+	before, err := workflowUploadTrackerSemanticFingerprint(api.TrackerReleaseProjection{}, tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker.Questionnaire[0].Required = false
+	after, err := workflowUploadTrackerSemanticFingerprint(api.TrackerReleaseProjection{}, tracker)
+	if err != nil || before == after {
+		t.Fatalf("questionnaire omitted from semantic fingerprint: %v", err)
+	}
+}
+
+func TestSanitizeWorkflowQuestionnaireDetachesAndRedactsValues(t *testing.T) {
+	schema := &api.TrackerQuestionnaire{Fields: []api.TrackerQuestionnaireField{
+		{Key: "api_key", Value: "private"},
+		{
+			Key:     "poster",
+			Value:   "https://images.example/poster.jpg?token=private",
+			Options: []string{"example"},
+		},
+		{Key: "trailer", Value: "https://www.youtube.com/watch?v=EXAMPLE#t=12"},
+	}}
+	fields := sanitizeWorkflowQuestionnaire(schema)
+	if fields[0].Value != "" || fields[1].Value != "" || fields[2].Value != schema.Fields[2].Value {
+		t.Fatalf("unsafe questionnaire=%+v", fields)
+	}
+	fields[1].Options[0] = "changed"
+	if schema.Fields[1].Options[0] != "example" {
+		t.Fatal("shared questionnaire storage")
+	}
+}
+
+func TestWorkflowQuestionnaireAnswersPreserveClearedConditionalFields(t *testing.T) {
+	projector, err := trackers.NewWorkflowProjector(impl.MustNewRegistry(), config.Config{}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := api.UploadSubject{
+		ReleaseName:                 "Example.Movie.2026.1080p-GRP",
+		Identity:                    api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		ProviderMetadata:            api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: "Action"}},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{"ANT": {"tags": "drama"}},
+	}
+	_, _, _, projections, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, subject, []api.TrackerID{"ANT"}, map[api.TrackerID]api.TrackerProjectionInstructions{"ANT": {Questionnaire: map[string]*string{"tags": nil}}}, nil, api.WorkflowExecutionModeNormal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projections.Projections) != 1 {
+		t.Fatalf("projections=%+v", projections)
+	}
+	projection := projections.Projections[0]
+	if projection.QuestionnaireAnswers == nil || len(projection.QuestionnaireAnswers) != 0 {
+		t.Fatalf("clear lacks exact empty authority: %+v", projection.QuestionnaireAnswers)
+	}
+	if slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool { return field.Key == "tags" }) {
+		t.Fatal("fixture must cover an auto-resolved field omitted from display schema")
+	}
+	encoded, err := json.Marshal(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored api.TrackerReleaseProjection
+	if err := json.Unmarshal(encoded, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.QuestionnaireAnswers == nil {
+		t.Fatal("empty answer authority lost through JSON")
+	}
+	answers := workflowQuestionnaireAnswers(map[api.TrackerID]map[string]string{"ANT": {"tags": "stale drama"}}, []api.TrackerReleaseProjection{restored})
+	if _, exists := answers["ANT"]["tags"]; exists {
+		t.Fatalf("cleared field revived: %+v", answers)
 	}
 }

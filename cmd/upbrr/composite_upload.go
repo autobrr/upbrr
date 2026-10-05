@@ -488,6 +488,42 @@ func selectCLICompositeOption(
 	return "", fmt.Errorf("upbrr: no valid option selected for %s", action.Kind)
 }
 
+// cliTrackerQuestionnaireProjection selects one action's controls and overlays
+// remote requirements only from the dry run bound to the current projection.
+func cliTrackerQuestionnaireProjection(current releaseworkflow.CommandResult, trackerID api.TrackerID) *api.TrackerReleaseProjectionSet {
+	if current.Projections == nil {
+		return nil
+	}
+	index := slices.IndexFunc(current.Projections.Projections, func(projection api.TrackerReleaseProjection) bool { return projection.TrackerID == trackerID })
+	if index < 0 {
+		return nil
+	}
+	selected := *current.Projections
+	projection := current.Projections.Projections[index]
+	projection.Questionnaire = slices.Clone(projection.Questionnaire)
+	if report := current.DryRun; report != nil && report.WorkflowID == current.Workflow.ID && report.ProjectionSet.ID == selected.ID &&
+		report.ProjectionSet.Revision == selected.Revision {
+		for _, tracker := range report.Reports {
+			if tracker.TrackerID != trackerID {
+				continue
+			}
+			for _, field := range tracker.Questionnaire {
+				fieldIndex := slices.IndexFunc(
+					projection.Questionnaire,
+					func(existing api.TrackerQuestionnaireRequirement) bool { return existing.Key == field.Key },
+				)
+				if fieldIndex < 0 {
+					projection.Questionnaire = append(projection.Questionnaire, field)
+				} else {
+					projection.Questionnaire[fieldIndex] = field
+				}
+			}
+		}
+	}
+	selected.Projections = []api.TrackerReleaseProjection{projection}
+	return &selected
+}
+
 func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 	reader *bufio.Reader,
 	action api.RequiredAction,
@@ -503,7 +539,13 @@ func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 		s.intent.trackerConfig,
 		s.intent.trackerSite,
 	)
-	_, err := collectCLIWorkflowQuestionnaires(reader, s.streams.out, s.intent.interaction, s.current.Projections, instructions)
+	_, err := collectCLIWorkflowQuestionnaires(
+		reader,
+		s.streams.out,
+		s.intent.interaction,
+		cliTrackerQuestionnaireProjection(s.current, action.TrackerID),
+		instructions,
+	)
 	if err != nil {
 		return feedback, false, err
 	}

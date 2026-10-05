@@ -343,6 +343,7 @@ type UploadSubject struct {
 	ManualLanguages            ManualLanguageFacts
 	HardcodedSubs              bool
 	HardcodedSubtitleLanguages []string
+	HardcodedSubtitleCoverage  []SubtitleLanguageCoverage
 	MediaBinding               PreparedMediaBinding
 	SourcePath                 string
 	Paths                      []string
@@ -493,6 +494,7 @@ type RuleSubject struct {
 	ManualLanguages            ManualLanguageFacts
 	HardcodedSubs              bool
 	HardcodedSubtitleLanguages []string
+	HardcodedSubtitleCoverage  []SubtitleLanguageCoverage
 	SourcePath                 string
 	VideoPath                  string
 	FileList                   []string
@@ -648,6 +650,7 @@ type TrackerValidationSubject struct {
 	ManualLanguages            ManualLanguageFacts
 	HardcodedSubs              bool
 	HardcodedSubtitleLanguages []string
+	HardcodedSubtitleCoverage  []SubtitleLanguageCoverage
 	SourcePath                 string
 	VideoPath                  string
 	FileList                   []string
@@ -765,6 +768,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		ManualLanguages:             cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:               subject.HardcodedSubs,
 		HardcodedSubtitleLanguages:  slices.Clone(subject.HardcodedSubtitleLanguages),
+		HardcodedSubtitleCoverage:   slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                  subject.SourcePath,
 		VideoPath:                   subject.VideoPath,
 		FileList:                    slices.Clone(subject.FileList),
@@ -1420,6 +1424,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:              subject.HardcodedSubs,
 		HardcodedSubtitleLanguages: slices.Clone(subject.HardcodedSubtitleLanguages),
+		HardcodedSubtitleCoverage:  slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                 subject.SourcePath,
 		VideoPath:                  subject.VideoPath,
 		FileList:                   slices.Clone(subject.FileList),
@@ -1471,6 +1476,7 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:              subject.HardcodedSubs,
 		HardcodedSubtitleLanguages: slices.Clone(subject.HardcodedSubtitleLanguages),
+		HardcodedSubtitleCoverage:  slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                 subject.SourcePath,
 		VideoPath:                  subject.VideoPath,
 		FileList:                   append([]string(nil), subject.FileList...),
@@ -1521,6 +1527,7 @@ type DescriptionSubject struct {
 	ManualLanguages             ManualLanguageFacts
 	HardcodedSubs               bool
 	HardcodedSubtitleLanguages  []string
+	HardcodedSubtitleCoverage   []SubtitleLanguageCoverage
 	MediaBinding                PreparedMediaBinding
 	SourcePath                  string
 	DiscType                    string
@@ -1565,6 +1572,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		ManualLanguages:             cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:               subject.HardcodedSubs,
 		HardcodedSubtitleLanguages:  slices.Clone(subject.HardcodedSubtitleLanguages),
+		HardcodedSubtitleCoverage:   slices.Clone(subject.HardcodedSubtitleCoverage),
 		MediaBinding:                subject.MediaBinding,
 		SourcePath:                  subject.SourcePath,
 		DiscType:                    subject.DiscType,

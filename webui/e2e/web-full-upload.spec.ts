@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { expect, type Locator, type Page, type Response } from "@playwright/test";
-import { appendFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import type {
   ActiveInputSnapshot,
   ReleaseWorkflowCurrent,
@@ -14,6 +14,7 @@ import {
   createMultiDVDSourceFixture,
   expectSingleCollectionTorrentUpload,
   fetchMetadata,
+  readE2EAuthCounters,
   releaseWorkflowParityFixture,
   startApp,
   test,
@@ -53,14 +54,14 @@ const expectEnabledState = async (locator: Locator, enabled: boolean) => {
   await expect(locator).toBeDisabled();
 };
 
-const runDuplicateCheck = async (
+const waitForWorkflowGoal = (
   page: Page,
-  expectedOperationStatus: "blocked" | "completed" | "failed" = "completed",
-): Promise<ReleaseWorkflowCurrent> => {
+  goal: "trackers_projected" | "trackers_assessed" | "duplicates_decided",
+): Promise<Response> => {
   let workflowID = "";
   let commandID = "";
   let operationID = "";
-  const settled = page.waitForResponse(async (candidate) => {
+  return page.waitForResponse(async (candidate) => {
     const isContinue = candidate.url().endsWith("/api/app/ContinueReleaseWorkflow");
     const isWorkflowRead = candidate.url().endsWith("/api/app/GetReleaseWorkflow");
     if (!isContinue && !isWorkflowRead) {
@@ -74,7 +75,7 @@ const runDuplicateCheck = async (
       workflowId?: string;
     } | null;
     if (isContinue) {
-      if (request?.goal !== "duplicates_decided") return false;
+      if (request?.goal !== goal) return false;
       const candidateWorkflowID = request.authority?.workflowId || "";
       const candidateCommandID = request.idempotencyKey || "";
       if (!workflowID) {
@@ -95,12 +96,25 @@ const runDuplicateCheck = async (
     if (!operationID || candidateOperationID !== operationID) return false;
     const operationStatus = current.operation?.status;
     if (operationStatus === "queued" || operationStatus === "running") return false;
+    if (goal === "trackers_projected") {
+      return operationStatus !== "completed" || Boolean(current.projections);
+    }
+    if (goal === "trackers_assessed") {
+      return operationStatus !== "completed" || Boolean(current.preflight);
+    }
     return (
       operationStatus !== "completed" ||
       Boolean(current.dupes) ||
       Boolean(current.workflow.submissionExclusions?.length)
     );
   });
+};
+
+const runDuplicateCheck = async (
+  page: Page,
+  expectedOperationStatus: "blocked" | "completed" | "failed" = "completed",
+): Promise<ReleaseWorkflowCurrent> => {
+  const settled = waitForWorkflowGoal(page, "duplicates_decided");
   await page.getByRole("button", { name: "Run dupe check" }).click();
   const response = await settled;
   expect(response.ok()).toBe(true);
@@ -118,6 +132,32 @@ const runDuplicateCheck = async (
     current.workflow.status !== "completed",
   );
   return current;
+};
+
+const antQuestionPanel = (page: Page) =>
+  page
+    .getByRole("region", { name: "Tracker questions", exact: true })
+    .locator("details")
+    .filter({ has: page.locator("summary").filter({ hasText: /^ANT(?: ·|$)/ }) });
+
+const applyTrackerAnswers = async (page: Page): Promise<ReleaseWorkflowCurrent> => {
+  const settled = waitForWorkflowGoal(page, "trackers_assessed");
+  const apply = page.getByRole("button", { name: "Apply tracker answers" });
+  await apply.click();
+  const response = await settled;
+  expect(response.ok()).toBe(true);
+  const current = (await response.json()) as ReleaseWorkflowCurrent;
+  expect(current.operation?.status).toBe("completed");
+  await expect(apply).toBeEnabled();
+  return current;
+};
+
+const answerAntTags = async (page: Page) => {
+  const questions = antQuestionPanel(page);
+  await expect(questions).not.toHaveAttribute("open");
+  await questions.locator("summary").click();
+  await questions.getByRole("textbox", { name: "Tags *", exact: true }).fill("drama");
+  await applyTrackerAnswers(page);
 };
 
 for (const scenario of [
@@ -172,6 +212,12 @@ for (const scenario of [
       for (const tracker of scenario.trackers) {
         await page.getByRole("checkbox", { name: tracker }).check();
       }
+      if (
+        scenario.trackers.some((tracker) => tracker === "ANT") &&
+        scenario.mediaKind === "movie"
+      ) {
+        await answerAntTags(page);
+      }
       await runDuplicateCheck(page);
       await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
 
@@ -224,6 +270,9 @@ for (const tracker of ["ANT", "BTN"] as const) {
             .uncheck();
           await page.getByRole("checkbox", { name: tracker }).check();
         }
+        if (tracker === "ANT") {
+          await answerAntTags(page);
+        }
         await runDuplicateCheck(page);
         if (tracker === "ANT") {
           await page.getByRole("button", { name: "Screenshots" }).click();
@@ -256,6 +305,104 @@ for (const tracker of ["ANT", "BTN"] as const) {
     });
   }
 }
+
+test("embedded web reviews default tracker questions before dupes and retains compatible evidence", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
+  let app: AppServer | undefined;
+  try {
+    const config = await readFile(workspace.configPath, "utf8");
+    await writeFile(
+      workspace.configPath,
+      config.replace('default_trackers: ["BTN"]', 'default_trackers: ["ANT"]'),
+    );
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const authBefore = await readE2EAuthCounters(workspace);
+    const countersBefore = { ...workspace.fake.counters };
+    const goals = new Map<string, string>();
+    let duplicateRequests = 0;
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/app/ContinueReleaseWorkflow")) {
+        const body = request.postDataJSON() as { goal: string; idempotencyKey: string };
+        goals.set(body.idempotencyKey, body.goal);
+        if (body.goal === "duplicates_decided") duplicateRequests += 1;
+      }
+    });
+    const projected = waitForWorkflowGoal(page, "trackers_projected");
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    const response = await projected;
+    expect(response.ok()).toBe(true);
+    const current = (await response.json()) as ReleaseWorkflowCurrent;
+    expect(current.operation?.status).toBe("blocked");
+    expect(current.projections?.projections.map((projection) => projection.trackerId)).toEqual([
+      "ANT",
+    ]);
+    expect(current.preflight).toBeFalsy();
+    expect(current.dupes).toBeFalsy();
+    expect([...goals.values()]).toEqual(["trackers_projected"]);
+    expect(await readE2EAuthCounters(workspace)).toEqual(authBefore);
+    expect(workspace.fake.counters).toEqual(countersBefore);
+    await expect(page.getByRole("checkbox", { name: "ANT", exact: true })).toBeChecked();
+
+    const questions = antQuestionPanel(page);
+    const summary = questions.locator("summary");
+    const tags = questions.getByRole("textbox", { name: "Tags *", exact: true });
+    await expect(questions).not.toHaveAttribute("open");
+    await expect(summary).toContainText("Required");
+    await expect(tags).toBeHidden();
+    await summary.focus();
+    await summary.press("Enter");
+    await expect(questions).toHaveAttribute("open");
+    await tags.fill("drama");
+    await summary.press("Space");
+    await expect(questions).not.toHaveAttribute("open");
+    await expect(summary).toContainText("Unapplied changes");
+    await expect(tags).toBeHidden();
+    await summary.press("Enter");
+    await expect(tags).toHaveValue("drama");
+    const applied = await applyTrackerAnswers(page);
+    expect(applied.dupes).toBeFalsy();
+    expect(applied.projections?.projections[0].questionnaireAnswers?.tags).toBe("drama");
+    await expect(questions).toHaveAttribute("open");
+    await expect(tags).toHaveValue("drama");
+    await expect(summary).not.toContainText("Unapplied changes");
+
+    const checked = await runDuplicateCheck(page);
+    expect(checked.dupes?.results).toHaveLength(1);
+    const original = checked.dupes!.results[0];
+    expect(original.trackerId).toBe("ANT");
+    expect(original.status).toBe("completed");
+    expect(original.checkedAt).toBeTruthy();
+    expect(original.searchFingerprint).toBeTruthy();
+    const requestsBeforeEdit = duplicateRequests;
+    await tags.fill("drama,mystery");
+    const reapplied = await applyTrackerAnswers(page);
+    expect(reapplied.projections?.projections[0].questionnaireAnswers?.tags).toBe("drama,mystery");
+    expect(reapplied.dupes?.results).toHaveLength(1);
+    const retained = reapplied.dupes!.results[0];
+    expect(retained).toEqual({
+      ...original,
+      projectionFingerprint: expect.any(String),
+    });
+    expect(retained.projectionFingerprint).not.toBe(original.projectionFingerprint);
+    expect(reapplied.dupes?.projectionSet).toEqual({
+      id: reapplied.projections?.id,
+      revision: reapplied.projections?.revision,
+    });
+    expect(reapplied.dupes?.projectionSet).not.toEqual(checked.dupes?.projectionSet);
+    expect(duplicateRequests).toBe(requestsBeforeEdit);
+    expect([...goals.values()].filter((goal) => goal === "duplicates_decided")).toHaveLength(1);
+    expect([...goals.values()].filter((goal) => goal === "trackers_assessed")).toHaveLength(2);
+    await expect(tags).toHaveValue("drama,mystery");
+    await expect(summary).not.toContainText("Unapplied changes");
+    await expect(page.getByRole("button", { name: "Screenshots" })).toBeEnabled();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
 
 test("embedded web reload restores the authoritative prepared workflow", async ({ page }) => {
   const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
@@ -1530,8 +1677,11 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     expect(workspace.fake.counters.clientInjections).toBe(effectsAfterUpload.clientInjections);
 
     await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
-    await expect(page.getByRole("checkbox", { name: "HDS" })).toBeChecked();
-    await runDuplicateCheck(page);
+    // Page-open discovery excludes confirmed submissions without another duplicate search.
+    await expect(
+      page.getByText("All selected trackers were already uploaded. No upload is needed."),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeDisabled();
     const excludedResponse = await page
       .context()
       .request.get(new URL("api/app/GetActiveInput", app.url).toString());
@@ -1548,9 +1698,6 @@ test("embedded web runs image upload, direct tracker upload, and history", async
 
     await expect(page.getByLabel("Submission exclusions")).toContainText("HDS");
     await expect(page.getByLabel("Submission exclusions")).toContainText("Already uploaded");
-    await expect(
-      page.getByText("All selected trackers were already uploaded. No upload is needed."),
-    ).toBeVisible();
     expect(workspace.fake.counters).toEqual(effectsAfterUpload);
     expect(workspace.fake.trackerUploadBodies).toHaveLength(1);
 

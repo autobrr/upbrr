@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -133,6 +134,9 @@ func (b workflowPreflightBuilder) Build(
 				continue
 			}
 			validationSubject := api.NewTrackerValidationSubject(checkedSubject, string(projection.TrackerID))
+			if projection.QuestionnaireAnswers != nil {
+				validationSubject.QuestionnaireAnswers = maps.Clone(projection.QuestionnaireAnswers)
+			}
 			checkedFingerprint := api.WorkflowFingerprint(validationSubject.PreparedResourceFingerprint)
 			if projection.PreparedResourceFingerprint == checkedFingerprint {
 				continue

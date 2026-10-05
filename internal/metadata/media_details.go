@@ -379,15 +379,33 @@ func applyMetadataOverrides(meta *preparationstate.State) error {
 	}
 	meta.HardcodedSubs = hasHardcodedSubtitleMarker(meta.SourcePath)
 	meta.HardcodedSubsProvenance = api.FactProvenanceAutomatic
+	meta.HardcodedSubtitleLanguages = nil
+	meta.HardcodedSubtitleCoverage = nil
+	meta.HardcodedSubtitleLanguagesProvenance = api.FactProvenanceAutomatic
+	if overrides.HardcodedSubtitleLanguages != nil {
+		for _, value := range languageutil.NormalizeLanguageList(*overrides.HardcodedSubtitleLanguages) {
+			language, coverage := languageutil.SubtitleLanguageParts(value)
+			meta.HardcodedSubtitleLanguages = append(meta.HardcodedSubtitleLanguages, language)
+			meta.HardcodedSubtitleCoverage = append(meta.HardcodedSubtitleCoverage, api.SubtitleLanguageCoverage{
+				Language: language,
+				Coverage: api.SubtitleCoverage(strings.ToLower(coverage)),
+			})
+		}
+		meta.HardcodedSubtitleLanguages = languageutil.NormalizeLanguageList(meta.HardcodedSubtitleLanguages)
+		meta.HardcodedSubtitleLanguagesProvenance = factProvenanceForList(meta.HardcodedSubtitleLanguages)
+		meta.HardcodedSubs = len(meta.HardcodedSubtitleLanguages) > 0
+		meta.HardcodedSubsProvenance = api.FactProvenanceManual
+	}
+	// Keep legacy explicit false authoritative; bare -hc can explicitly enable
+	// unknown hardcoded languages for a later tracker-scoped question.
 	if overrides.HardcodedSubs != nil {
 		meta.HardcodedSubs = *overrides.HardcodedSubs
 		meta.HardcodedSubsProvenance = api.FactProvenanceManual
 	}
-	meta.HardcodedSubtitleLanguages = nil
-	meta.HardcodedSubtitleLanguagesProvenance = api.FactProvenanceAutomatic
-	if meta.HardcodedSubs && overrides.HardcodedSubtitleLanguages != nil {
-		meta.HardcodedSubtitleLanguages = languageutil.NormalizeLanguageList(*overrides.HardcodedSubtitleLanguages)
-		meta.HardcodedSubtitleLanguagesProvenance = factProvenanceForList(meta.HardcodedSubtitleLanguages)
+	if !meta.HardcodedSubs && len(meta.HardcodedSubtitleLanguages) > 0 {
+		meta.HardcodedSubtitleLanguages = nil
+		meta.HardcodedSubtitleCoverage = nil
+		meta.HardcodedSubtitleLanguagesProvenance = api.FactProvenanceAutomatic
 	}
 	if overrides.PersonalRelease != nil {
 		meta.PersonalRelease = *overrides.PersonalRelease

@@ -22,6 +22,7 @@ func Profile() standalone.Profile {
 		LocalizedMetadataLocale: "pt-BR",
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
+		ProjectionQuestionnaire: projectionQuestionnaire,
 		ValidationPolicy:        validationPolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{
 			Scope:       trackers.MetadataScopeAny,

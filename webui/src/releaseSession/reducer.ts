@@ -117,6 +117,8 @@ export type SessionState = Readonly<{
   preparationDirty: boolean;
   correctionDirty: boolean;
   inputEditRevision: number;
+  /** Counts selection-only edits within inputEditRevision without treating them as fact changes. */
+  trackerSelectionEditRevision: number;
   preparationIntent: PreparationIntent;
   correctionResetFields: readonly CorrectionFieldRef[];
   correctionConfirmFields: readonly CorrectionFieldRef[];
@@ -249,6 +251,11 @@ export type SessionAction =
   | Readonly<{ type: "dupe_ignore_changed"; tracker: string; ignored: boolean }>
   | Readonly<{ type: "release_name_confirmed"; tracker: string; value: string }>
   | Readonly<{ type: "questionnaire_answered"; tracker: string; key: string; value: string }>
+  | Readonly<{
+      type: "questionnaire_answers_applied";
+      current: ReleaseWorkflowCurrent;
+      submitted: SessionState["questionnaireAnswers"];
+    }>
   | Readonly<{ type: "upload_options_changed"; value: Partial<UploadRunOptions> }>
   | Readonly<{
       type: "screenshot_selection_changed";
@@ -406,6 +413,7 @@ export const initialSessionState = (): SessionState => ({
   preparationDirty: false,
   correctionDirty: false,
   inputEditRevision: 0,
+  trackerSelectionEditRevision: 0,
   preparationIntent: emptyIntent(),
   correctionResetFields: [],
   correctionConfirmFields: [],
@@ -816,6 +824,9 @@ const trackerSelectionChanged = (
     ...state,
     preparationDirty: touched ? Boolean(state.release) : state.preparationDirty,
     inputEditRevision: touched ? state.inputEditRevision + 1 : state.inputEditRevision,
+    trackerSelectionEditRevision: touched
+      ? state.trackerSelectionEditRevision + 1
+      : state.trackerSelectionEditRevision,
     screenshots:
       state.screenshots.status === "error"
         ? {
@@ -950,6 +961,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
               sessionRevision: state.sessionRevision + 1,
               commandRevision: state.commandRevision,
               inputEditRevision: state.inputEditRevision,
+              trackerSelectionEditRevision: state.trackerSelectionEditRevision,
               sourceDraft: state.sourceDraft,
               preparation: state.preparation,
               sourceVerification: state.sourceVerification,
@@ -1040,6 +1052,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             sessionRevision: state.sessionRevision + 1,
             commandRevision: state.commandRevision,
             inputEditRevision: state.inputEditRevision,
+            trackerSelectionEditRevision: state.trackerSelectionEditRevision,
             sourceDraft: requestedSourcePath,
             selectedSource: requestedSourcePath,
             preparation: {
@@ -1135,6 +1148,9 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparationDirty: retainDraft,
         correctionDirty: retainDraft ? state.correctionDirty : false,
         inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
+        trackerSelectionEditRevision: retainDraft
+          ? state.trackerSelectionEditRevision
+          : base.trackerSelectionEditRevision,
         preparationIntent: retainDraft
           ? state.preparationIntent
           : clonePreparationIntent(action.intent),
@@ -1198,6 +1214,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparationDirty: false,
         correctionDirty: false,
         inputEditRevision: 0,
+        trackerSelectionEditRevision: 0,
         preparationIntent: emptyIntent(),
         correctionResetFields: [],
         correctionConfirmFields: [],
@@ -1648,6 +1665,28 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           [tracker]: { ...state.questionnaireAnswers[tracker], [key]: action.value },
         },
       };
+    }
+    case "questionnaire_answers_applied": {
+      if (
+        state.workflowView.current?.workflow.id !== action.current.workflow.id ||
+        state.workflowView.current.workflow.revision !== action.current.workflow.revision
+      )
+        return state;
+      const questionnaireAnswers = { ...state.questionnaireAnswers };
+      for (const projection of action.current.projections?.projections || []) {
+        const tracker = projection.trackerId;
+        const drafts = { ...questionnaireAnswers[tracker] };
+        for (const [key, submitted] of Object.entries(action.submitted[tracker] || {})) {
+          if (
+            drafts[key] === submitted &&
+            submitted.trim() === projection.questionnaireAnswers?.[key]?.trim()
+          )
+            delete drafts[key];
+        }
+        if (Object.keys(drafts).length) questionnaireAnswers[tracker] = drafts;
+        else delete questionnaireAnswers[tracker];
+      }
+      return { ...state, questionnaireAnswers };
     }
     case "upload_options_changed":
       return {

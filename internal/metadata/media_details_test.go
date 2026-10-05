@@ -121,7 +121,7 @@ func TestDeriveMediaFactsReturnsMediaInfoScanFailure(t *testing.T) {
 	}
 }
 
-func TestDeriveMediaFactsProjectsHardcodedSubtitleLanguagesOnlyWhenEnabled(t *testing.T) {
+func TestDeriveMediaFactsProjectsHardcodedSubtitleLanguageIntent(t *testing.T) {
 	t.Parallel()
 
 	languages := []string{"English", "French"}
@@ -150,15 +150,18 @@ func TestDeriveMediaFactsProjectsHardcodedSubtitleLanguagesOnlyWhenEnabled(t *te
 			wantManual:    true,
 		},
 		{
-			name:         "automatic no suppresses languages",
-			sourcePath:   "Example.Movie.2026-GRP.mkv",
-			wantSubsFrom: api.FactProvenanceAutomatic,
+			name:          "explicit languages enable hardcoded without marker",
+			sourcePath:    "Example.Movie.2026-GRP.mkv",
+			wantSubs:      true,
+			wantSubsFrom:  api.FactProvenanceManual,
+			wantLanguages: []string{"English", "French"},
+			wantManual:    true,
 		},
 		{
 			name:          "automatic marker retains languages",
 			sourcePath:    "Example.Movie.2026.HARDSUB-GRP.mkv",
 			wantSubs:      true,
-			wantSubsFrom:  api.FactProvenanceAutomatic,
+			wantSubsFrom:  api.FactProvenanceManual,
 			wantLanguages: []string{"English", "French"},
 			wantManual:    true,
 		},
@@ -3095,5 +3098,55 @@ func TestDeriveMediaFactsReleaseVersionCorrections(t *testing.T) {
 				t.Fatalf("detected version survived clear: %q", meta.ReleaseName)
 			}
 		})
+	}
+}
+
+func TestEmptyHardcodedLanguagesClearOrRetainExplicitUnknownIntent(t *testing.T) {
+	for _, enabled := range []*bool{nil, new(true), new(false)} {
+		languages := []string{}
+		input := preparationstate.State{
+			SourcePath:        "Example.Movie.2026.HARDSUB-GRP.mkv",
+			Release:           api.ReleaseInfo{Title: "Example Movie"},
+			MetadataOverrides: api.MetadataOverrides{HardcodedSubs: enabled, HardcodedSubtitleLanguages: &languages},
+		}
+		svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+		meta, err := svc.deriveMediaFacts(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := enabled != nil && *enabled
+		if meta.HardcodedSubs != want || len(meta.HardcodedSubtitleLanguages) != 0 {
+			t.Fatalf("empty languages = hardcoded %v languages %v", meta.HardcodedSubs, meta.HardcodedSubtitleLanguages)
+		}
+	}
+}
+
+func TestHardcodedCoverageKeepsBaseLanguageFacts(t *testing.T) {
+	languages := []string{"English Forced", "Spanish", "English Full", "Custom Dialect", "English"}
+	input := preparationstate.State{MetadataOverrides: api.MetadataOverrides{HardcodedSubtitleLanguages: &languages}}
+	if err := applyMetadataOverrides(&input); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(input.HardcodedSubtitleLanguages, []string{"English", "Spanish", "Custom Dialect"}) {
+		t.Fatalf("languages=%v", input.HardcodedSubtitleLanguages)
+	}
+	if len(input.HardcodedSubtitleCoverage) != 5 || input.HardcodedSubtitleCoverage[0].Coverage != api.SubtitleCoverageForced || input.HardcodedSubtitleCoverage[1].Coverage != api.SubtitleCoverageUnspecified || input.HardcodedSubtitleCoverage[2].Coverage != api.SubtitleCoverageFull || input.HardcodedSubtitleCoverage[4].Coverage != api.SubtitleCoverageUnspecified {
+		t.Fatalf("coverage=%v", input.HardcodedSubtitleCoverage)
+	}
+}
+
+func TestHardcodedCoveragePreservesCustomBareNames(t *testing.T) {
+	languages := []string{"Custom Dialect Full", "Custom Dialect Forced"}
+	input := preparationstate.State{MetadataOverrides: api.MetadataOverrides{HardcodedSubtitleLanguages: &languages}}
+	if err := applyMetadataOverrides(&input); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(input.HardcodedSubtitleLanguages, languages) {
+		t.Fatalf("custom language names changed: %v", input.HardcodedSubtitleLanguages)
+	}
+	for _, detail := range input.HardcodedSubtitleCoverage {
+		if detail.Coverage != api.SubtitleCoverageUnspecified {
+			t.Fatalf("custom language acquired inferred coverage: %#v", detail)
+		}
 	}
 }

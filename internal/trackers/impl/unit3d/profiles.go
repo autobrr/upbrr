@@ -14,6 +14,8 @@ import (
 
 // SiteProfile contains site-owned Unit3D taxonomy and preparation callbacks.
 type SiteProfile struct {
+	// ProjectionQuestionnaire exposes tracker-local review without payload preparation or I/O.
+	ProjectionQuestionnaire func(trackers.PreparationInput) *api.TrackerQuestionnaire
 	// InputSchema declares site-specific controls using finalized prepared facts.
 	InputSchema func(api.UploadSubject) *api.TrackerQuestionnaire
 	// InputReadiness evaluates site-specific required evidence without prompting.

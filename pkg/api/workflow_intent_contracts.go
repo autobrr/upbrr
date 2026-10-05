@@ -142,20 +142,21 @@ type ClientInjectionOutcome struct {
 
 // TrackerDryRunReport is one safe tracker-scoped dry-run outcome.
 type TrackerDryRunReport struct {
-	TrackerID           TrackerID              `json:"trackerId"`
-	DisplayName         string                 `json:"displayName"`
-	UploadReleaseName   string                 `json:"uploadReleaseName"`
-	Status              StageStatus            `json:"status"`
-	Endpoint            string                 `json:"endpoint,omitempty"`
-	Fields              []UploadPlanField      `json:"fields,omitempty"`
-	Files               []UploadPlanFile       `json:"files,omitempty"`
-	PreparedOperationID PublicResourceID       `json:"preparedOperationId,omitempty"`
-	TorrentArtifactID   PublicResourceID       `json:"torrentArtifactId,omitempty"`
-	TorrentFingerprint  WorkflowFingerprint    `json:"torrentFingerprint,omitempty"`
-	SemanticFingerprint WorkflowFingerprint    `json:"semanticFingerprint"`
-	ClientInjection     ClientInjectionOutcome `json:"clientInjection"`
-	Warnings            []string               `json:"warnings,omitempty"`
-	Failures            []WorkflowFailure      `json:"failures,omitempty"`
+	Questionnaire       []TrackerQuestionnaireRequirement `json:"questionnaire,omitempty"`
+	TrackerID           TrackerID                         `json:"trackerId"`
+	DisplayName         string                            `json:"displayName"`
+	UploadReleaseName   string                            `json:"uploadReleaseName"`
+	Status              StageStatus                       `json:"status"`
+	Endpoint            string                            `json:"endpoint,omitempty"`
+	Fields              []UploadPlanField                 `json:"fields,omitempty"`
+	Files               []UploadPlanFile                  `json:"files,omitempty"`
+	PreparedOperationID PublicResourceID                  `json:"preparedOperationId,omitempty"`
+	TorrentArtifactID   PublicResourceID                  `json:"torrentArtifactId,omitempty"`
+	TorrentFingerprint  WorkflowFingerprint               `json:"torrentFingerprint,omitempty"`
+	SemanticFingerprint WorkflowFingerprint               `json:"semanticFingerprint"`
+	ClientInjection     ClientInjectionOutcome            `json:"clientInjection"`
+	Warnings            []string                          `json:"warnings,omitempty"`
+	Failures            []WorkflowFailure                 `json:"failures,omitempty"`
 }
 
 // UploadDryRunResult retains one report per applicable tracker.

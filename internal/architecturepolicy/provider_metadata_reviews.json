@@ -123,6 +123,10 @@
     "sha256": "cd7742d81e9e5bcc1a499cfdd4b26eea685b53cec75d86b7ca5ad61d351523f4",
     "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together."
   },
+  "internal/trackers/impl/standalone/ant/questionnaire.go:projectionQuestionnaire": {
+    "sha256": "dc5014713e85961e91c20e6d8cfc40767c83ae4f7f7192b80f5be6491269b617",
+    "reason": "Projection reuses upload resolvers: normalized questionnaire type and tags take precedence; manual genres remain ahead of TMDB defaults. IMDb/TMDB type and adult evidence retain their existing order on the exact operation subject."
+  },
   "internal/trackers/impl/standalone/ant/taxonomy.go:detectAdult": {
     "sha256": "241c618ed9924a3390983d0eddfda979e6d08dd8f81e59125c365f277c31876d",
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
@@ -308,12 +312,12 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "sha256": "fca552fb353e0cc81630b2e15b01fc982bf5e630e933ddee638b451f9af78955",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "17b969ecdee139d2632c2a5d8e6a7283605adbea77550c561656c7ad9e3820a7",
+    "reason": "Adds the pure questionnaire binding only. Explicit requested upload names still precede resolved titles; existing manual title/original-title precedence, localized provider fallbacks, and anime search behavior are unchanged."
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
-    "sha256": "dbb2a21d1b8996eb40718fcd556e45797a1237b48c5c5ac2e52609bc73089ddb",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "294d2795f2333bc431df9aecd21e73a87f39747d30cdca1293a18eaa9007c2c3",
+    "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks."
   },
   "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAnimeAudioLanguage": {
     "sha256": "e586016f1fd04e44d9f4b8fc919fd51255d07283c7e4979f9a3987ad2998a20c",
@@ -411,6 +415,10 @@
     "sha256": "5fe899edd54364abb30b2e2b7f0f527d37d39014fff744c753cff9b06a043464",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
+  "internal/trackers/impl/standalone/bjs/questionnaire.go:buildQuestionnaire": {
+    "sha256": "651cdea2f15b1f2cbc80575888234297bcb123f6e71f192972b0ca44a370072e",
+    "reason": "Pure projection and upload schema use nonempty questionnaire overview/tags before exact-subject localized/base provider defaults. Scoped episode overview and manual-genre precedence are unchanged; blank answers retain existing fallback behavior."
+  },
   "internal/trackers/impl/standalone/bjs/taxonomy.go:resolveAdult": {
     "sha256": "b3881889b8e6eec2083de58f0f9d1fabeaae2bdd93467a072a5b8fe6f8874190",
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
@@ -432,8 +440,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bjs/upload.go:prepareUploadState": {
-    "sha256": "214822bbceaf5fc5a5c7c349dd58eefcb55553a95a701473190056df9dab515e",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "9cb6849531336e9a3edc563810927fe98037c0f80c2438e7614d215ca59a8834",
+    "reason": "Questionnaire construction now reads the same operation subject through pure overview/tag resolvers. Payload and schema both prefer explicit nonempty answers before localized/base provider defaults; reviewed upload-name authority and provider precedence are unchanged."
   },
   "internal/trackers/impl/standalone/bjs/upload.go:resolveCast": {
     "sha256": "9b8f42eadc3eb041624684b7a9ddb14125e3b63be4efe86511f62f119cd161a7",
@@ -512,8 +520,12 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/bt/profile.go:Profile": {
-    "sha256": "9895d549cf79ceb8f6c62ef0fda63a872061d0f7c584c231df741d470cc41e9b",
-    "reason": "Only the DVD menu image consumption capability changed; provider metadata and manual fact precedence remain unchanged."
+    "sha256": "6ffcfab4ae85b1176a1dde4c17a6dc47315af0edcc6afc4738c4c64226d8e7bf",
+    "reason": "Adds the pure questionnaire binding only. Existing anime search still honors manual title including manual-empty before TVDB/TMDB/IMDb fallbacks; upload naming and localized provider policy are unchanged."
+  },
+  "internal/trackers/impl/standalone/bt/questionnaire.go:buildQuestionnaire": {
+    "sha256": "446eb5769e269f66d93ef81d6ba2164739ef20d79bf84fb0de27448598961f55",
+    "reason": "Pure projection and upload schema prefer nonempty overview/tag answers to exact-subject localized/base provider defaults. Scoped episode overview and manual genres retain precedence; explicit blanks preserve fallback semantics without reading media files."
   },
   "internal/trackers/impl/standalone/bt/taxonomy.go:resolveAudio": {
     "sha256": "c405467e9a8ec1abed4c5afcd3385442599f6978a24af0eeb442699d30394699",
@@ -536,8 +548,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bt/upload.go:prepareUploadState": {
-    "sha256": "84b4ed75692a766a667443c46aefd8b47039a288df25f4757b57ca3ecf5b3f0f",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "d0dba88e93d4c7ae2d5455516ebf4c2ee297d73ed0c11d6e3ae2bf320a72e764",
+    "reason": "Uses the pure metadata-only questionnaire builder without changing payload resolution. Both schema and payload prefer nonempty questionnaire overview/tags before scoped/localized provider fallbacks; manual genres and reviewed upload-name authority remain unchanged."
   },
   "internal/trackers/impl/standalone/bt/upload.go:resolveBackdrop": {
     "sha256": "2842ae892c1c825799d93295362335f72a10bff09c99254573f07b8cc54765ed",
@@ -796,8 +808,8 @@
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/standalone/gpw/upload.go:buildFields": {
-    "sha256": "98f425f95a3c70ea528dc5e5ca35e1ea08dca05f9573a49e75f7128332921ed8",
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together."
+    "sha256": "533849b83ca160e65ee95ba3c2e70ce49e2144e914870f05a7e2c73beb9120db",
+    "reason": "New-group poster payload now matches the existing questionnaire: a nonempty explicit poster_url precedes resolvePoster, preserving TMDB-presence then IMDb-cover fallback. Director answer/default precedence and all other manual/provider selectors are unchanged; existing-group uploads still omit new-group fields."
   },
   "internal/trackers/impl/standalone/gpw/upload.go:prepareUploadState": {
     "sha256": "7219a10b243e5593d1b0884c6ded4f98fcd56ae6d216b49d3a897f3a82a65d64",
@@ -1032,8 +1044,8 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
-    "sha256": "0eebff6e96066f841747c804aada352ac3f10cd02bb2061824d521dcc45db344",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "e62b2547dbb023be8c4bfa8e89aa03e908ef2e830218d56eb631c1d8d0cfd205",
+    "reason": "New-group controls now display nonempty questionnaire title/year/poster/tags/trailer/description overrides before the same defaults used by payload construction. PreferredTitle/PreferredYear and manual genres still govern provider fallbacks; existing-group and subtitle behavior are preserved."
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveTags": {
     "sha256": "fecad8f9407d55cdbed88f221a1c28133159eea0bb7b9da7416d4a06c6c68042",
@@ -1044,20 +1056,20 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:buildUploadFields": {
-    "sha256": "0ebd39d321f8299bba67ceb8d1c9c737d37078dd6f41d6f242035464564c7988",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "cfbaa57633d908124b719b6db045a6c5e7bf8a58970b379d4bc001c24f2279ac",
+    "reason": "New-group uploads now reject empty effective tags, matching the required questionnaire field. Nonempty explicit tags still precede resolveTags; manual genres including manual-empty retain authority over existing provider defaults. The existing-group early return and title/year/poster/trailer/description precedence are unchanged."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
-    "sha256": "c18499be471ea708cbbc33dc5060235013ffdf60f225ed2449cdce76f8b76ddc",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "1d4e2479e064e2e86bd7b816cff1f511410f7866280d144236da0069afcb0e1a",
+    "reason": "Adds recovery metadata for missing required questionnaire fields after payload construction fails. Existing-group lookup and explicit poster/title/year/tags/trailer/description precedence remain unchanged, using the exact prepared subject and existing provider fallback helpers."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:resolveGroupTitleYear": {
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66",
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "sha256": "9d1cb915962e904b0b995976bf3cb7fbfc57dee02951ed58ad9ec4f18431b6a0",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "884e38000ceb020dd4997b63469b5cf7990751201c9e66e4a6c66ae013d50789",
+    "reason": "Adds strict validation of the tracker-local no-English answer against finalized subtitle evidence. Canonical movie/taxonomy/container checks and their existing manual/provider resolution paths are unchanged; no provider evidence is replaced by questionnaire claims."
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "sha256": "ec1109c066bcccc24b157edbfd5d0cc7e08e41e0093e4db75bcbeaf20bac3555",
@@ -1196,20 +1208,20 @@
     "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together."
   },
   "internal/trackers/impl/standalone/tvc/profile.go:Profile": {
-    "sha256": "e5fe06665f29950b4b03dbfc280f9ae5efdf95f2c3e864fe3c4f48de8e77f54c",
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together."
+    "sha256": "7a421f17084d1d98b83d4376f4ad70749748309145e1877d028b8b0efc7e3bd3",
+    "reason": "Adds the pure questionnaire binding only. Requested upload name still precedes name_override, then resolveName with PreferredTitle/PreferredYear; exact-subject provider defaults and manual-empty naming behavior are unchanged."
   },
   "internal/trackers/impl/standalone/tvc/taxonomy.go:resolveCategory": {
     "sha256": "0bdc38ca1b4a30b350b141481e69a19582e35a496825c0f9798a61e7026c736a",
     "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
   },
   "internal/trackers/impl/standalone/tvc/upload.go:prepareUploadState": {
-    "sha256": "0949ecb1168e582bba70d311049bf8557638ea04915a06179a5e5b761df8a197",
-    "reason": "Passes the runtime AddLogo setting into the reviewed TVC description builder; payload facts and manual precedence are unchanged."
+    "sha256": "985ac2a8da22171745a30c68ebf0d89fa97deebf6adbc6f160337b93e4407d28",
+    "reason": "Questionnaire reads the centrally resolved projection display name. Payload still requires ReviewedUploadName and uses unchanged description/category/keyword resolvers; explicit name overrides and manual title/year precedence remain upstream of provider defaults."
   },
   "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
-    "sha256": "b57d57edac45a5a154548adbaff6e095c57a60031a5fa1ce27aad02c33c3147d",
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together."
+    "sha256": "fb1b8cfec611043b6a093daab69461ae67bdb8dee55b152728c9903b13bea503",
+    "reason": "Canonical hardcoded-subtitle coverage is cloned alongside finalized language facts; provider and manual-precedence behavior is unchanged. The mapping and its callers were reviewed together."
   },
   "internal/trackers/impl/unit3d/additional_rules.go:Anime": {
     "sha256": "b0963b0520f2ab2c7ddf838ff6db4a01c086322786a58aecf9c6409243c0468f",

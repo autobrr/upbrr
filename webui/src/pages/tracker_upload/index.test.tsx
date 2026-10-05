@@ -17,7 +17,7 @@ const uploadFacet = (
     selectedTrackers: ["EXAMPLE"],
     projections: null,
     ignoredDupesFor: [],
-    questionnaireAnswers: {},
+    questionnaireDirty: false,
     options: { noSeed: false, runLogLevel: "info" },
     liveTest: false,
     mutationsAllowed: true,
@@ -31,7 +31,6 @@ const uploadFacet = (
     ...view,
   },
   chooseTrackers: vi.fn(),
-  answerQuestionnaire: vi.fn(),
   changeOptions: vi.fn(),
   runDryRun: vi.fn(async () => true),
   start: vi.fn(async () => true),
@@ -44,6 +43,25 @@ const uploadFacet = (
 const renderPage = (facet: UploadFacet) => render(<TrackerUploadPage facet={facet} />);
 
 describe("TrackerUploadPage", () => {
+  it("leaves tracker questions on Dupe Checking", () => {
+    renderPage(
+      uploadFacet({
+        projections: {
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              questionnaire: [{ key: "edition", label: "Edition", required: true }],
+            },
+          ],
+        } as unknown as NonNullable<UploadFacet["view"]["projections"]>,
+      }),
+    );
+    expect(screen.queryByRole("heading", { name: "Tracker questions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply tracker answers" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Edition *")).not.toBeInTheDocument();
+  });
+
   it("locks client injection and mutations while retaining the live-test dry run", () => {
     const facet = uploadFacet({
       liveTest: true,
@@ -264,49 +282,14 @@ describe("TrackerUploadPage", () => {
     expect(start).toHaveBeenCalledOnce();
   });
 
-  it("collects questionnaire answers from current workflow projections", () => {
-    const answerQuestionnaire = vi.fn();
-    const projections = {
-      projections: [
-        {
-          trackerId: "EXAMPLE",
-          displayName: "Example Tracker",
-          questionnaire: [
-            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
-            { key: "note", label: "Note", required: false },
-          ],
-        },
-      ],
-    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
-    renderPage(uploadFacet({ projections }, { answerQuestionnaire }));
-
-    fireEvent.change(screen.getByLabelText("Edition *"), { target: { value: "Extended" } });
-    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Synthetic note" } });
-    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "edition", "Extended");
-    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "note", "Synthetic note");
-  });
-
-  it("shows a saved questionnaire answer missing from current options", () => {
-    const projections = {
-      projections: [
-        {
-          trackerId: "EXAMPLE",
-          displayName: "Example Tracker",
-          questionnaire: [
-            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
-          ],
-        },
-      ],
-    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
-    renderPage(
-      uploadFacet({
-        projections,
-        questionnaireAnswers: { EXAMPLE: { edition: "Legacy" } },
-      }),
+  it("blocks preview and upload while questionnaire drafts are unapplied", () => {
+    const facet = uploadFacet({ questionnaireDirty: true });
+    renderPage(facet);
+    expect(screen.getByRole("button", { name: "Run dry run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start upload" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Apply your tracker answer changes on Dupe Checking",
     );
-
-    expect(screen.getByRole("combobox", { name: "Edition *" })).toHaveValue("Legacy");
-    expect(screen.getByRole("option", { name: "Legacy (saved)" })).toBeInTheDocument();
   });
 
   it("shows projection-backed tracker upload names before any dry run", () => {

@@ -16,6 +16,7 @@ import type { InputFacet } from "../../releaseSession/types";
 import type { PreparedRelease } from "../../types";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
+import { LanguageListInput } from "./LanguageListInput";
 import { settingsStyle } from "../../settings/style";
 import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
 import correctionChoices from "./correctionChoices.json";
@@ -441,7 +442,19 @@ const metadataListFields: ReadonlyArray<{
     field: "metadata.hardcoded_subtitle_languages",
     label: "Hardcoded subtitle languages",
     key: "HardcodedSubtitleLanguages",
-    automatic: (r) => r?.Media?.HardcodedSubtitleLanguages || [],
+    automatic: (r) =>
+      (r?.Media?.HardcodedSubtitleLanguages || []).flatMap((language) => {
+        const coverage = (r?.Media?.HardcodedSubtitleCoverage || []).filter(
+          (entry) => entry.Language === language,
+        );
+        return coverage.length
+          ? coverage.map((entry) =>
+              entry.Coverage
+                ? `${language} (${entry.Coverage === "forced" ? "Forced" : "Full"})`
+                : language,
+            )
+          : [language];
+      }),
   },
 ];
 
@@ -480,12 +493,6 @@ const metadataBooleanFields: ReadonlyArray<{
     label: "Anime",
     key: "Anime",
     automatic: (r) => Boolean(r?.Media?.Anime),
-  },
-  {
-    field: "metadata.hardcoded_subs",
-    label: "Hardcoded subtitles",
-    key: "HardcodedSubs",
-    automatic: (r) => Boolean(r?.Media?.HardcodedSubs),
   },
 ];
 
@@ -983,26 +990,53 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
             );
           })}
           {metadataListFields.map(({ field, label, key, automatic }) => {
-            const manual = hasOwn(view.intent.metadata, key);
-            const value = manual
-              ? (view.intent.metadata[key] as readonly string[] | null | undefined)
-              : automatic(release);
+            const hardcoded = key === "HardcodedSubtitleLanguages";
+            const manual =
+              hasOwn(view.intent.metadata, key) ||
+              (hardcoded && hasOwn(view.intent.metadata, "HardcodedSubs"));
+            const ListInput =
+              key === "SubtitleLanguages" || hardcoded ? LanguageListInput : CommaListInput;
+            const value =
+              hardcoded && view.intent.metadata.HardcodedSubs === false
+                ? []
+                : manual
+                  ? (view.intent.metadata[key] as readonly string[] | null | undefined)
+                  : automatic(release);
             return (
               <CorrectionRow
                 key={field}
                 field={field}
                 label={label}
                 status={statusFor(field, manual)}
-                stale={staleFields.has(field)}
-                onAuto={() => reset(field)}
-                onConfirm={() => confirm(field)}
+                stale={
+                  staleFields.has(field) ||
+                  (hardcoded && staleFields.has("metadata.hardcoded_subs"))
+                }
+                onAuto={() => {
+                  reset(field);
+                  if (hardcoded) reset("metadata.hardcoded_subs");
+                }}
+                onConfirm={() => {
+                  if (staleFields.has(field)) confirm(field);
+                  if (hardcoded && staleFields.has("metadata.hardcoded_subs"))
+                    confirm("metadata.hardcoded_subs");
+                }}
               >
-                <CommaListInput
+                <ListInput
+                  {...(hardcoded ? { coverage: true } : {})}
                   key={draftKey(field)}
                   id={`correction-${field}-value`}
                   label={label}
                   value={value}
-                  onChange={(next) => setMetadata(key, next)}
+                  onChange={(next) =>
+                    hardcoded
+                      ? facet.changeMetadata({
+                          ...view.intent.metadata,
+                          HardcodedSubtitleLanguages: next,
+                          HardcodedSubs: next.length > 0,
+                        })
+                      : setMetadata(key, next)
+                  }
                 />
               </CorrectionRow>
             );

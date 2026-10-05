@@ -1350,7 +1350,12 @@ describe("InputPage", () => {
         intent: {
           ...base.view.intent,
           identity: { TMDBID: 0 },
-          metadata: { OriginalLanguage: "", AudioLanguages: [], HardcodedSubs: false },
+          metadata: {
+            OriginalLanguage: "",
+            AudioLanguages: [],
+            HardcodedSubs: false,
+            HardcodedSubtitleLanguages: ["English (Full)"],
+          },
         },
       },
     };
@@ -1359,7 +1364,7 @@ describe("InputPage", () => {
       "identity.tmdb",
       "metadata.original_language",
       "metadata.audio_languages",
-      "metadata.hardcoded_subs",
+      "metadata.hardcoded_subtitle_languages",
     ]) {
       expect(
         within(
@@ -1371,7 +1376,8 @@ describe("InputPage", () => {
     expect(screen.getByRole("button", { name: "Remove TMDB ID" })).toBeDisabled();
     expect(screen.getByLabelText("Original language")).toHaveValue("");
     expect(screen.getByLabelText("Audio languages")).toHaveValue("");
-    expect(screen.getByLabelText("Hardcoded subtitles")).toHaveValue("no");
+    expect(screen.queryByLabelText("Hardcoded subtitles")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Hardcoded subtitle languages")).toHaveValue("");
   });
 
   it("clears only the selected language-list draft on Auto", () => {
@@ -1412,6 +1418,25 @@ describe("InputPage", () => {
     expect(screen.queryByText(/Metadata changes are pending/)).not.toBeInTheDocument();
   });
 
+  it("uses hardcoded language choices as the sole control and resets legacy state on Auto", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = { ...base, view: { ...base.view, release: preparedRelease() } };
+    render(<InputCorrectionEditor facet={facet} />);
+    expect(screen.queryByLabelText("Hardcoded subtitles")).not.toBeInTheDocument();
+    const input = screen.getByRole("combobox", { name: "Hardcoded subtitle languages" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "English (Forced)" } });
+    expect(facet.changeMetadata).toHaveBeenLastCalledWith({
+      HardcodedSubtitleLanguages: ["English (Forced)"],
+      HardcodedSubs: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Auto Hardcoded subtitle languages" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({
+      field: "metadata.hardcoded_subtitle_languages",
+    });
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "metadata.hardcoded_subs" });
+  });
+
   it("keeps explicit false, empty, and Auto correction intents distinct", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {
@@ -1425,10 +1450,15 @@ describe("InputPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Enter digits only.");
     expect(facet.changeIdentity).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByLabelText("Hardcoded subtitles"), {
-      target: { value: "no" },
+    fireEvent.focus(screen.getByLabelText("Hardcoded subtitle languages"));
+    fireEvent.change(screen.getByLabelText("Hardcoded subtitle languages"), {
+      target: { value: "Spanish" },
     });
-    expect(facet.changeMetadata).toHaveBeenCalledWith({ HardcodedSubs: false });
+    fireEvent.click(screen.getByRole("button", { name: "Remove Hardcoded subtitle languages 1" }));
+    expect(facet.changeMetadata).toHaveBeenCalledWith({
+      HardcodedSubs: false,
+      HardcodedSubtitleLanguages: [],
+    });
 
     fireEvent.change(screen.getByLabelText("Original language"), { target: { value: "" } });
     expect(facet.changeMetadata).toHaveBeenCalledWith({ OriginalLanguage: "" });
@@ -1712,7 +1742,6 @@ describe("InputPage", () => {
       "metadata.web_dv",
       "metadata.stream_optimized",
       "metadata.anime",
-      "metadata.hardcoded_subs",
     ]);
   });
 

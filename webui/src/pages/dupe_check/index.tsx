@@ -1,10 +1,12 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { useEffect, useRef } from "react";
 import { pageStyle } from "../../components/ui/pageStyle";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { PillCheckbox } from "../../components/ui/checkbox";
+import { Select } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
@@ -441,7 +443,7 @@ function WorkflowDupeAssessmentView({
   );
 }
 
-/** Presents per-tracker duplicate evidence, policy acknowledgements, and release-name review. */
+/** Presents per-tracker duplicate evidence, policy acknowledgements, tracker questions, and release-name review. */
 export default function DupeCheckPage({
   facet,
   sourcePath,
@@ -453,14 +455,37 @@ export default function DupeCheckPage({
   workflowComplete,
 }: Readonly<Props>) {
   const { view } = facet;
+  const refreshRef = useRef(facet.refreshQuestionnaires);
+  refreshRef.current = facet.refreshQuestionnaires;
+  useEffect(() => {
+    if (
+      view.questionnaireStatus === "idle" &&
+      view.status !== "running" &&
+      view.selectedTrackers.length
+    ) {
+      void refreshRef.current();
+    }
+  }, [view.questionnaireStatus, view.status, view.selectedTrackers]);
   const assessment = view.assessment || null;
   const preflight = view.preflight || null;
   const projections = view.projections || null;
   const trackerIDs = workflowTrackerIDs(assessment, preflight, projections);
   const ignoredTrackers = new Set(view.ignoredTrackers);
   const selectedTrackers = new Set(view.selectedTrackers);
+  const questionnaireProjections = view.questionnaires.filter(
+    (projection) => selectedTrackers.has(projection.trackerId) && projection.questionnaire?.length,
+  );
+  const preparationProjections = view.preparationQuestionnaires.filter(
+    (projection) => selectedTrackers.has(projection.trackerId) && projection.questionnaire?.length,
+  );
+  const questionnaireSections = [
+    { title: "Tracker questions", projections: questionnaireProjections },
+    { title: "Tracker preparation details", projections: preparationProjections },
+  ];
   const trackerSelectionRequired = selectedTrackers.size === 0;
+  const questionsLoading = view.questionnaireStatus === "running";
   const dupeLoading = view.status === "running";
+  const questionsBusy = dupeLoading || questionsLoading;
   const excludedTrackerIDs = new Set(submissionExclusions.map((exclusion) => exclusion.trackerId));
   const allSelectedTrackersAlreadyUploaded =
     workflowComplete &&
@@ -534,11 +559,175 @@ export default function DupeCheckPage({
           variant="primary"
           type="button"
           onClick={() => void facet.run()}
-          disabled={dupeLoading || !sourcePath.trim() || trackerSelectionRequired}
+          disabled={questionsBusy || !sourcePath.trim() || trackerSelectionRequired}
         >
           {dupeLoading ? `Checking ${view.completed}/${view.total || "?"}...` : "Run dupe check"}
         </Button>
       </section>
+
+      {questionsLoading ? <p role="status">Loading tracker questions…</p> : null}
+      {view.questionnaireError ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="status">{view.questionnaireError}</p>
+          <Button onClick={() => void facet.refreshQuestionnaires()} disabled={questionsBusy}>
+            Retry tracker questions
+          </Button>
+        </div>
+      ) : null}
+      {questionnaireProjections.length ||
+      preparationProjections.length ||
+      view.questionnaireDirty ? (
+        <section className={`${pageStyle.panel} grid gap-3`}>
+          {view.questionnaireDirty ? (
+            <p role="status">
+              Apply tracker answers to refresh the review. Compatible duplicate results are
+              retained.
+            </p>
+          ) : null}
+          <Button onClick={() => void facet.applyQuestionnaireAnswers()} disabled={questionsBusy}>
+            Apply tracker answers
+          </Button>
+          {questionnaireSections
+            .filter((section) => section.projections.length)
+            .map((section) => (
+              <section className="grid gap-3" key={section.title} aria-label={section.title}>
+                <h2>{section.title}</h2>
+                {section.projections.map((projection) => (
+                  <details className="rounded border border-border p-3" key={projection.trackerId}>
+                    <summary className="cursor-pointer font-semibold focus-visible:outline focus-visible:outline-ring">
+                      {projection.displayName}
+                      {projection.questionnaire?.some((field) => field.required)
+                        ? " · Required"
+                        : ""}
+                      {projection.questionnaire?.some((field) => {
+                        const draft = view.questionnaireAnswers[projection.trackerId]?.[field.key];
+                        return (
+                          draft !== undefined &&
+                          draft.trim() !==
+                            (projection.questionnaireAnswers?.[field.key] ?? "").trim()
+                        );
+                      })
+                        ? " · Unapplied changes"
+                        : ""}
+                    </summary>
+                    <fieldset className="mt-3 grid gap-3" disabled={questionsBusy}>
+                      <legend className="sr-only">{projection.displayName}</legend>
+                      {projection.questionnaire?.map((field) => {
+                        const draft = view.questionnaireAnswers[projection.trackerId]?.[field.key];
+                        const answer = draft ?? field.value ?? "";
+                        const fieldId = `questionnaire-${projection.trackerId}-${field.key}`;
+                        const labelId = `${fieldId}-label`;
+                        const helpId = field.help ? `${fieldId}-help` : undefined;
+                        if (field.kind === "multiselect") {
+                          const selected = answer.split(",").filter(Boolean);
+                          return (
+                            <fieldset
+                              className="grid gap-2"
+                              key={field.key}
+                              aria-describedby={helpId}
+                            >
+                              <legend>
+                                {field.label || field.key}
+                                {field.required ? " *" : ""}
+                              </legend>
+                              {field.help ? (
+                                <p id={helpId} className="text-muted-foreground">
+                                  {field.help}
+                                </p>
+                              ) : null}
+                              {(field.options || []).map((option) => (
+                                <label className="flex items-center gap-2" key={option}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selected.includes(option)}
+                                    onChange={(event) =>
+                                      facet.answerQuestionnaire(
+                                        projection.trackerId,
+                                        field.key,
+                                        (event.target.checked
+                                          ? [...selected, option]
+                                          : selected.filter((value) => value !== option)
+                                        ).join(","),
+                                      )
+                                    }
+                                  />
+                                  {option}
+                                </label>
+                              ))}
+                            </fieldset>
+                          );
+                        }
+                        return (
+                          <label className="grid gap-1" key={field.key}>
+                            <span id={labelId} className={pageStyle.label}>
+                              {field.label || field.key}
+                              {field.required ? " *" : ""}
+                            </span>
+                            {field.help ? (
+                              <span id={helpId} className="text-muted-foreground text-sm">
+                                {field.help}
+                              </span>
+                            ) : null}
+                            {field.options?.length ? (
+                              <Select
+                                aria-labelledby={labelId}
+                                aria-describedby={helpId}
+                                value={answer}
+                                onChange={(event) =>
+                                  facet.answerQuestionnaire(
+                                    projection.trackerId,
+                                    field.key,
+                                    event.target.value,
+                                  )
+                                }
+                              >
+                                <option value="">Select</option>
+                                {answer && !field.options.includes(answer) ? (
+                                  <option value={answer}>{answer} (saved)</option>
+                                ) : null}
+                                {field.options.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </Select>
+                            ) : field.kind === "textarea" ? (
+                              <textarea
+                                aria-labelledby={labelId}
+                                aria-describedby={helpId}
+                                value={answer}
+                                onChange={(event) =>
+                                  facet.answerQuestionnaire(
+                                    projection.trackerId,
+                                    field.key,
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            ) : (
+                              <input
+                                aria-labelledby={labelId}
+                                aria-describedby={helpId}
+                                value={answer}
+                                onChange={(event) =>
+                                  facet.answerQuestionnaire(
+                                    projection.trackerId,
+                                    field.key,
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </fieldset>
+                  </details>
+                ))}
+              </section>
+            ))}
+        </section>
+      ) : null}
 
       {view.error ? <p className={pageStyle.error}>{view.error}</p> : null}
 
@@ -574,7 +763,7 @@ export default function DupeCheckPage({
         <WorkflowDupeAssessmentView
           acknowledgeReleaseName={facet.acknowledgeReleaseName}
           assessment={assessment}
-          busy={dupeLoading}
+          busy={questionsBusy}
           confirmReleaseName={facet.confirmReleaseName}
           ignoredTrackers={ignoredTrackers}
           acknowledgeRules={facet.acknowledgeRules}

@@ -894,6 +894,7 @@ export type MediaFacts = Readonly<{
   HDRFacts: HDRFacts;
   HardcodedSubs: boolean;
   HardcodedSubsProvenance: FactProvenance;
+  HardcodedSubtitleCoverage?: readonly SubtitleLanguageCoverage[];
   HardcodedSubtitleLanguages: readonly string[];
   HardcodedSubtitleLanguagesProvenance: FactProvenance;
   HasEncodeSettings: boolean;
@@ -1972,6 +1973,13 @@ export type SubmissionExclusion = Readonly<{
   trackerId: TrackerID;
 }>;
 
+export type SubtitleCoverage = string;
+
+export type SubtitleLanguageCoverage = Readonly<{
+  Coverage: SubtitleCoverage;
+  Language: string;
+}>;
+
 export type TIKOverrides = Readonly<{
   Asian?: boolean | null;
   DiscType?: string | null;
@@ -2269,6 +2277,7 @@ export type TrackerDryRunReport = Readonly<{
   fields?: readonly UploadPlanField[];
   files?: readonly UploadPlanFile[];
   preparedOperationId?: PublicResourceID;
+  questionnaire?: readonly TrackerQuestionnaireRequirement[];
   semanticFingerprint: WorkflowFingerprint;
   status: StageStatus;
   torrentArtifactId?: PublicResourceID;
@@ -2471,10 +2480,13 @@ export type TrackerQuestionnaireField = Readonly<{
 }>;
 
 export type TrackerQuestionnaireRequirement = Readonly<{
+  help?: string;
   key: string;
+  kind?: string;
   label: string;
   options?: readonly string[];
   required: boolean;
+  value?: string;
 }>;
 
 export type TrackerReleaseName = Readonly<{
@@ -2513,6 +2525,7 @@ export type TrackerReleaseProjection = Readonly<{
   projectorFingerprint: WorkflowFingerprint;
   providerIds?: readonly TrackerProviderID[];
   questionnaire?: readonly TrackerQuestionnaireRequirement[];
+  questionnaireAnswers?: Readonly<Record<string, string>>;
   readiness: ReadinessStatus;
   requiredActions?: readonly RequiredAction[];
   ruleAuthorizationFingerprint?: WorkflowFingerprint;
@@ -2794,7 +2807,7 @@ export type WorkflowFailure = Readonly<{
 
 export type WorkflowFingerprint = string;
 
-export type WorkflowGoal = string;
+export type WorkflowGoal = "prepared" | "input_ready" | "trackers_projected" | "trackers_assessed" | "duplicates_decided" | "media_ready" | "descriptions_ready" | "upload_reviewed" | "dry_run" | "uploaded";
 
 export type WorkflowID = string;
 

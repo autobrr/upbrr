@@ -40,6 +40,7 @@ import type {
   SubmissionExclusion,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
+  TrackerReleaseProjection,
   TrackerProjectionInstructions,
   UploadDryRunResult,
   UploadResult,
@@ -209,6 +210,17 @@ export type DuplicatesFacet = Readonly<{
     total: number;
     ignoredTrackers: readonly string[];
     selectedTrackers: readonly string[];
+    questionnaires: readonly Pick<
+      TrackerReleaseProjection,
+      "trackerId" | "displayName" | "questionnaire" | "questionnaireAnswers"
+    >[];
+    /** Late-only fields from the exact current tracker preparation report. */
+    preparationQuestionnaires: DuplicatesFacet["view"]["questionnaires"];
+    questionnaireStatus: FacetStatus;
+    questionnaireError: string;
+    questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    /** Local edits differ from the exact reviewed tracker answers. */
+    questionnaireDirty: boolean;
     /** Local tracker-name edits keyed by normalized tracker ID. */
     releaseNameOverrides: Readonly<Record<string, string>>;
     error: string;
@@ -216,6 +228,11 @@ export type DuplicatesFacet = Readonly<{
   run(): Promise<boolean>;
   cancel(): Promise<boolean>;
   chooseTrackers(trackers: readonly string[]): void;
+  /** Discover questions from prepared facts without preflight or external tracker requests. */
+  refreshQuestionnaires(): Promise<boolean>;
+  answerQuestionnaire(tracker: string, key: string, value: string): void;
+  /** Apply tracker answers and refresh their required questions without uploading or starting a duplicate search. */
+  applyQuestionnaireAnswers(): Promise<boolean>;
   /** Stores a tracker-name edit locally without resolving its backend action. */
   confirmReleaseName(tracker: string, value: string): void;
   /** Resolves or reopens the backend naming action using the current local edit. */
@@ -391,7 +408,8 @@ export type UploadFacet = Readonly<{
     selectedTrackers: readonly string[];
     projections: TrackerReleaseProjectionSet | null;
     ignoredDupesFor: readonly string[];
-    questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    /** Local edits differ from the exact reviewed tracker answers. */
+    questionnaireDirty: boolean;
     options: UploadRunOptions;
     /** Whether the owning process enforces live-testing restrictions. */
     liveTest: boolean;
@@ -408,7 +426,6 @@ export type UploadFacet = Readonly<{
     error: string;
   }>;
   chooseTrackers(trackers: readonly string[]): void;
-  answerQuestionnaire(tracker: string, key: string, value: string): void;
   changeOptions(options: Partial<UploadRunOptions>): void;
   runDryRun(): Promise<boolean>;
   start(): Promise<boolean>;

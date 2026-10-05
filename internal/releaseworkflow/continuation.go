@@ -503,6 +503,7 @@ func projectAvailableGoals(current CommandResult) []api.GoalAvailability {
 	goals := []api.WorkflowGoal{
 		api.WorkflowGoalPrepared,
 		api.WorkflowGoalInputReady,
+		api.WorkflowGoalTrackersProjected,
 		api.WorkflowGoalTrackersAssessed,
 		api.WorkflowGoalDuplicatesDecided,
 		api.WorkflowGoalMediaReady,
@@ -542,7 +543,7 @@ func goalAvailability(current CommandResult, goal api.WorkflowGoal) (bool, strin
 			return false, goalReasonPreparationRequired, "Prepare a release first."
 		}
 		return true, goalReasonAvailable, ""
-	case api.WorkflowGoalTrackersAssessed:
+	case api.WorkflowGoalTrackersProjected, api.WorkflowGoalTrackersAssessed:
 		if current.Release == nil {
 			return false, goalReasonPreparationRequired, "Prepare the selected source first."
 		}

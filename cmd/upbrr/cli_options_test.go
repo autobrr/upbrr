@@ -1684,3 +1684,116 @@ func TestCLITrackerInputPreservesTextEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestHardcodedLanguageArgumentKeepsPathsAndLegacyBooleans(t *testing.T) {
+	for _, tt := range []struct {
+		name            string
+		args, languages []string
+		enabled         bool
+		path            string
+	}{
+		{
+			name:      "owner exact forced syntax",
+			args:      []string{"-hc", "English", "Forced", "movie.mkv"},
+			languages: []string{"English (Forced)"},
+			enabled:   true,
+			path:      "movie.mkv",
+		},
+		{
+			name:      "Spanish",
+			args:      []string{"-hc", "Spanish", "movie.mkv"},
+			languages: []string{"Spanish"},
+			enabled:   true,
+			path:      "movie.mkv",
+		},
+		{
+			name:      "quoted full",
+			args:      []string{"-hc", "English Full", "movie.mkv"},
+			languages: []string{"English (Full)"},
+			enabled:   true,
+			path:      "movie.mkv",
+		},
+		{
+			name:      "custom quoted",
+			args:      []string{"-hc=Custom Dialect", "movie.mkv"},
+			languages: []string{"Custom Dialect"},
+			enabled:   true,
+			path:      "movie.mkv",
+		},
+		{
+			name:      "custom attached",
+			args:      []string{"-hc=Custom", "movie.mkv"},
+			languages: []string{"Custom"},
+			enabled:   true,
+			path:      "movie.mkv",
+		},
+		{
+			name:      "bare before path",
+			args:      []string{"-hc", "Movie Name.mkv"},
+			languages: []string{},
+			enabled:   true,
+			path:      "Movie Name.mkv",
+		},
+		{
+			name:      "bare before flag",
+			args:      []string{"-hc", "--unattended", "movie.mkv"},
+			languages: []string{},
+			enabled:   true,
+			path:      "movie.mkv",
+		},
+		{
+			name:      "empty value",
+			args:      []string{"-hc", "", "movie.mkv"},
+			languages: []string{},
+			enabled:   true,
+			path:      "movie.mkv",
+		},
+		{
+			name:      "language-named source",
+			args:      []string{"-hc", "--", "Spanish"},
+			languages: []string{},
+			enabled:   true,
+			path:      "Spanish",
+		},
+		{
+			name:    "explicit false",
+			args:    []string{"-hc=false", "movie.mkv"},
+			enabled: false,
+			path:    "movie.mkv",
+		},
+		{
+			name:    "long explicit false",
+			args:    []string{"--hardcoded-subs=false", "movie.mkv"},
+			enabled: false,
+			path:    "movie.mkv",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts, visited, paths, err := parseCLIOptions(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(paths) != 1 || paths[0] != tt.path {
+				t.Fatalf("paths=%#v want %s", paths, tt.path)
+			}
+			req, err := buildCLIRequest(opts, visited, paths, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta := req.MetadataOverrides
+			if meta.HardcodedSubs == nil || *meta.HardcodedSubs != tt.enabled {
+				t.Fatalf("hardcoded=%v", meta.HardcodedSubs)
+			}
+			if tt.languages != nil && (meta.HardcodedSubtitleLanguages == nil || !slices.Equal(*meta.HardcodedSubtitleLanguages, tt.languages)) {
+				t.Fatalf("languages=%#v want %#v", meta.HardcodedSubtitleLanguages, tt.languages)
+			}
+		})
+	}
+}
+
+func TestBareHardcodedFlagRetainsMultipleSourceFolders(t *testing.T) {
+	_, _, paths, err := parseCLIOptions([]string{"-hc", "Movie One", "Movie Two"})
+	if err != nil || !slices.Equal(paths, []string{"Movie One", "Movie Two"}) {
+		t.Fatalf("paths=%v err=%v", paths, err)
+	}
+}

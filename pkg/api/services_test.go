@@ -6,6 +6,7 @@ package api
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -606,6 +607,40 @@ func TestTVDBMetadataJSONPreservesExplicitEvidenceWithoutInventingLegacyEvidence
 	}
 	if decoded.NameDisambiguation != current.NameDisambiguation {
 		t.Fatalf("disambiguation = %+v, want %+v", decoded.NameDisambiguation, current.NameDisambiguation)
+	}
+}
+
+func TestHardcodedCoverageSubjectClonesRemainIndependent(t *testing.T) {
+	source := UploadSubject{HardcodedSubtitleCoverage: []SubtitleLanguageCoverage{{Language: "English", Coverage: SubtitleCoverageForced}}}
+	rule := NewRuleSubject(source)
+	for _, coverage := range [][]SubtitleLanguageCoverage{
+		rule.HardcodedSubtitleCoverage,
+		NewDescriptionSubject(source).HardcodedSubtitleCoverage,
+		NewTrackerValidationSubject(source, "PTP").HardcodedSubtitleCoverage,
+		NewTrackerValidationSubjectFromRuleSubject(rule, "PTP").HardcodedSubtitleCoverage,
+	} {
+		if len(coverage) != 1 || coverage[0].Coverage != SubtitleCoverageForced {
+			t.Fatalf("coverage=%v", coverage)
+		}
+		coverage[0].Language = "Changed"
+		if source.HardcodedSubtitleCoverage[0].Language != "English" {
+			t.Fatal("mutated original coverage")
+		}
+	}
+}
+
+func TestManualHardcodedLabelsRetainCoverageWithoutChangingBaseFacts(t *testing.T) {
+	facts := MediaFacts{
+		HardcodedSubtitleLanguages:           []string{"English", "Spanish"},
+		HardcodedSubtitleLanguagesProvenance: FactProvenanceManual,
+		HardcodedSubtitleCoverage:            []SubtitleLanguageCoverage{{Language: "English", Coverage: SubtitleCoverageUnspecified}, {Language: "English", Coverage: SubtitleCoverageForced}},
+	}
+	labels := facts.ManualLanguages().HardcodedSubtitles
+	if !slices.Equal(labels, []string{"English", "English (Forced)", "Spanish"}) {
+		t.Fatalf("labels=%v", labels)
+	}
+	if !slices.Equal(facts.HardcodedSubtitleLanguages, []string{"English", "Spanish"}) {
+		t.Fatal("mutated base languages")
 	}
 }
 

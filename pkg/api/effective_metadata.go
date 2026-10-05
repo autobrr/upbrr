@@ -165,7 +165,27 @@ func (m MediaFacts) ManualLanguages() ManualLanguageFacts {
 		result.Subtitles = slices.Clone(m.SubtitleLanguages)
 	}
 	if m.HardcodedSubtitleLanguagesProvenance.IsManual() {
-		result.HardcodedSubtitles = slices.Clone(m.HardcodedSubtitleLanguages)
+		for _, language := range m.HardcodedSubtitleLanguages {
+			found := false
+			for _, detail := range m.HardcodedSubtitleCoverage {
+				if detail.Language != language {
+					continue
+				}
+				found = true
+				label := language
+				switch detail.Coverage {
+				case SubtitleCoverageUnspecified:
+				case SubtitleCoverageFull:
+					label += " (Full)"
+				case SubtitleCoverageForced:
+					label += " (Forced)"
+				}
+				result.HardcodedSubtitles = append(result.HardcodedSubtitles, label)
+			}
+			if !found {
+				result.HardcodedSubtitles = append(result.HardcodedSubtitles, language)
+			}
+		}
 	}
 	return result
 }

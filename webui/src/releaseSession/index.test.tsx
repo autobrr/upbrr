@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ReactNode } from "react";
-import { act, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { act, cleanup, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import type {
@@ -12,6 +13,7 @@ import type {
   DescriptionInstructions,
   DupeDecision,
   MediaCaptureInstructions,
+  Operation as WorkflowOperationStatus,
   ReleaseWorkflowCurrent,
   TrackerProjectionInstructions,
   SaveReleaseWorkflowDescriptionOverrideRequest,
@@ -20,6 +22,7 @@ import type {
 import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
 import DescriptionBuilderPage from "../pages/description_builder";
 import ScreenshotsPage from "../pages/screenshots";
+import DupeCheckPage from "../pages/dupe_check";
 import type { ReleaseSessionPorts } from "./ports";
 import { setAppRequestHandlerForTests } from "../api/client";
 import { productionReleaseSessionPorts } from "./production";
@@ -97,17 +100,19 @@ const workflowCurrent = (workflowID: string, revision: number): ReleaseWorkflowC
     lifecycle: revision > 1 ? "ready" : "waiting",
     disposition: "none",
     refs: {},
-    availableGoals: [
-      "input_ready",
-      "prepared",
-      "trackers_assessed",
-      "duplicates_decided",
-      "media_ready",
-      "descriptions_ready",
-      "upload_reviewed",
-      "dry_run",
-      "uploaded",
-    ].map((goal) => ({ goal, available: revision > 1 })),
+    availableGoals: (
+      [
+        "input_ready",
+        "prepared",
+        "trackers_assessed",
+        "duplicates_decided",
+        "media_ready",
+        "descriptions_ready",
+        "upload_reviewed",
+        "dry_run",
+        "uploaded",
+      ] as const
+    ).map((goal) => ({ goal, available: revision > 1 })),
   },
   workflow: {
     id: workflowID,
@@ -303,6 +308,17 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           next = await activePorts.prepare(
             current,
             request.intent.preparation as unknown as PrepareInput,
+            request.idempotencyKey,
+            signal,
+          );
+        }
+        break;
+      case "trackers_projected":
+        if (step === 0) {
+          next = await activePorts.project(
+            current,
+            request.intent.trackerIds || [],
+            request.intent.projectionInstructions || {},
             request.idempotencyKey,
             signal,
           );
@@ -759,7 +775,74 @@ const selectAndPrepare = async (
   await act(() => result.current.duplicates.run());
 };
 
+const preparedQuestionnaireWorkflow = (
+  workflowID: string,
+  sourcePath = "C:\\media\\Example",
+): ReleaseWorkflowCurrent => ({
+  ...workflowCurrentFromPreview(workflowCurrent(workflowID, 2), preview(sourcePath, 1)),
+  inputReadiness: {
+    selectedTrackerIds: ["AITHER"],
+  } as unknown as ReleaseWorkflowCurrent["inputReadiness"],
+});
+
+const questionnaireOperation = (
+  current: ReleaseWorkflowCurrent,
+  status: WorkflowOperationStatus["status"],
+): WorkflowOperationStatus => ({
+  id: `${current.workflow.id}-projection`,
+  workflowId: current.workflow.id,
+  revision: 1,
+  sequence: status === "running" ? 2 : 5,
+  command: "project_trackers",
+  operation: "duplicate_check",
+  status,
+  progress: status === "running" ? 0 : 100,
+  completed: status === "running" ? 0 : 1,
+  total: 1,
+  startedAt: "2026-10-05T08:00:00Z",
+  updatedAt: "2026-10-05T08:00:01Z",
+});
+
+const QuestionnaireSurface = () => {
+  const session = useReleaseSession();
+  return (
+    <DupeCheckPage
+      facet={session.duplicates}
+      sourcePath={session.identity.view.sourcePath}
+      trackerUploadItems={["AITHER", "BLU", "PTP"].map((name) => ({ name, config: {} }))}
+      trackerIconSrcByName={{}}
+      submissionExclusions={[]}
+      workflowComplete={false}
+    />
+  );
+};
+
+const questionnaireWrapper = (ports: ReleaseSessionPorts, defaultTrackers: string[] = []) =>
+  function Wrapper({ children }: Readonly<{ children: ReactNode }>) {
+    return (
+      <ReleaseSessionProvider ports={ports} defaultTrackers={defaultTrackers}>
+        <QuestionnaireSurface />
+        {children}
+      </ReleaseSessionProvider>
+    );
+  };
+
 describe("tracker workflow capabilities", () => {
+  it("opens the questionnaire surface without opening unrelated blocked stages", () => {
+    const continuation = {
+      availableGoals: [
+        { goal: "trackers_assessed", available: true },
+        { goal: "upload_reviewed", available: false },
+      ],
+      requiredActions: [{ kind: "answer_questionnaire", status: "pending", trackerId: "PTP" }],
+    } as unknown as WorkflowContinuation;
+    const access = routeAccess(continuation, false, { needsImages: true, needsDescriptions: true });
+    expect(access.duplicates.available).toBe(true);
+    expect(access.upload.available).toBe(false);
+    expect(access.screenshots.available).toBe(false);
+    expect(access.descriptions.available).toBe(false);
+  });
+
   it("opens only applicable pages and keeps tracker-scoped content failures local", () => {
     const available = (
       overrides: Readonly<Record<string, boolean>> = {},
@@ -767,12 +850,9 @@ describe("tracker workflow capabilities", () => {
       lifecycle: "ready",
       disposition: "none",
       refs: {},
-      availableGoals: [
-        "trackers_assessed",
-        "media_ready",
-        "descriptions_ready",
-        "upload_reviewed",
-      ].map((goal) => ({
+      availableGoals: (
+        ["trackers_assessed", "media_ready", "descriptions_ready", "upload_reviewed"] as const
+      ).map((goal) => ({
         goal,
         available: overrides[goal] ?? true,
         reason: overrides[goal] === false ? `Backend blocked ${goal}.` : "",
@@ -5017,18 +5097,1092 @@ describe("useReleaseSession", () => {
     expect(result.current.identity.view.release).toEqual({ SourcePath: sourcePath, Generation: 2 });
   });
 
+  describe("early questionnaire projection", () => {
+    afterEach(cleanup);
+    it("projects default tracker questions on opening Dupe Checking without preflight or duplicate calls", async () => {
+      const active = workflowPorts();
+      const prepared = preparedQuestionnaireWorkflow("early-questions");
+      const project = vi.fn(async (...args: Parameters<TestWorkflowPorts["project"]>) => {
+        const current = await active.project(...args);
+        return {
+          ...current,
+          projections: {
+            ...current.projections!,
+            projections: current.projections!.projections.map((projection) => ({
+              ...projection,
+              questionnaire: [
+                {
+                  key: "choices",
+                  label: "Choices",
+                  required: true,
+                  value: "First",
+                  options: ["First", "Second"],
+                },
+              ],
+            })),
+          },
+        };
+      });
+      const preflight = vi.fn(active.preflight);
+      const checkDuplicates = vi.fn(active.checkDuplicates);
+      const workflow = workflowPorts({
+        current: async () => prepared,
+        project,
+        preflight,
+        checkDuplicates,
+      });
+      const continued = vi.spyOn(workflow, "continue");
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(portsFor({ resumeWorkflowID: "early-questions", workflow }), [
+          "AITHER",
+        ]),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      expect(result.current.duplicates.view.questionnaires[0]?.trackerId).toBe("AITHER");
+      expect(project).toHaveBeenCalledTimes(1);
+      expect(project.mock.calls[0]?.[1]).toEqual(["AITHER"]);
+      expect(continued.mock.calls.every(([request]) => request.goal === "trackers_projected")).toBe(
+        true,
+      );
+      expect(preflight).not.toHaveBeenCalled();
+      expect(checkDuplicates).not.toHaveBeenCalled();
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(false);
+      const summary = screen.getByText(/AITHER/, { selector: "summary" });
+      expect(summary.parentElement).not.toHaveAttribute("open");
+      expect(screen.getByRole("combobox", { name: "Choices *" })).not.toBeVisible();
+      fireEvent.click(summary);
+      expect(screen.getByRole("combobox", { name: "Choices *" })).toHaveValue("First");
+      expect(project.mock.calls[0]?.[2].AITHER?.questionnaire).toEqual({});
+    });
+
+    it.each([false, true])(
+      "handles a selection round trip during a production-port projection with canonical edits=%s",
+      async (canonicalEdits) => {
+        const prepared = preparedQuestionnaireWorkflow("roundtrip-questions");
+        const projected = await workflowPorts().project(
+          prepared,
+          ["AITHER"],
+          {},
+          "seed",
+          new AbortController().signal,
+        );
+        const current: ReleaseWorkflowCurrent = {
+          ...projected,
+          projections: {
+            ...projected.projections!,
+            projections: [
+              {
+                ...projected.projections!.projections[0],
+                questionnaire: [{ key: "choice", label: "Choice", required: true }],
+              },
+            ],
+          },
+        };
+        const pending = createDeferred<ReleaseWorkflowCurrent>();
+        const requests: ContinueReleaseWorkflowRequest[] = [];
+        setAppRequestHandlerForTests(async (method, body) => {
+          if (method === "GetActiveInput")
+            return {
+              state: "active",
+              revision: 1,
+              inputId: "roundtrip-input",
+              sourceVersion: "roundtrip-source",
+              current: prepared,
+            };
+          if (method === "ContinueReleaseWorkflow") {
+            requests.push(body as ContinueReleaseWorkflowRequest);
+            return requests.length === 1 ? pending.promise : current;
+          }
+          throw new Error(`Unexpected questionnaire method: ${method}`);
+        });
+        const { result } = renderHook(useReleaseSession, {
+          wrapper: questionnaireWrapper(productionReleaseSessionPorts(), ["AITHER"]),
+        });
+        await waitFor(() => expect(requests).toHaveLength(1));
+        act(() => result.current.duplicates.chooseTrackers(["AITHER", "BLU"]));
+        if (canonicalEdits) {
+          act(() => result.current.input.changeMetadata({ Genres: ["Drama"] }));
+          act(() => result.current.input.changeMetadata({}));
+        }
+        act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+        expect(result.current.duplicates.view.questionnaires).toEqual([]);
+        await act(async () => pending.resolve(current));
+        expect(result.current.duplicates.view.questionnaireStatus).toBe(
+          canonicalEdits ? "error" : "ready",
+        );
+        expect(result.current.duplicates.view.selectedTrackers).toEqual(["AITHER"]);
+        expect(result.current.duplicates.view.questionnaires).toHaveLength(canonicalEdits ? 0 : 1);
+        expect(result.current.duplicates.view.questionnaireError).toBe(
+          canonicalEdits
+            ? "Apply Input changes and prepare the selected source before reviewing tracker questions."
+            : "",
+        );
+        expect(requests).toHaveLength(2);
+        expect(requests.map((request) => request.authority?.expectedRevision)).toEqual([
+          prepared.workflow.revision,
+          current.workflow.revision,
+        ]);
+        expect(
+          requests.every(
+            (request) =>
+              request.goal === "trackers_projected" &&
+              request.intent.trackerIds?.join(",") === "AITHER",
+          ),
+        ).toBe(true);
+        expect(result.current.duplicates.view.preflight).toBeNull();
+        expect(result.current.duplicates.view.assessment).toBeNull();
+      },
+    );
+
+    it("types a complete replacement for a rejected SPD answer without losing matching prefixes", async () => {
+      const base = preparedQuestionnaireWorkflow("typing-questions");
+      const projected = await workflowPorts().project(
+        base,
+        ["SPD"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      let current: ReleaseWorkflowCurrent = {
+        ...projected,
+        inputReadiness: { ...base.inputReadiness!, selectedTrackerIds: ["SPD"] },
+        projections: {
+          ...projected.projections!,
+          projections: [
+            {
+              ...projected.projections!.projections[0],
+              questionnaire: [{ key: "channel", label: "Channel", required: true, value: "" }],
+              questionnaireAnswers: { channel: "anim" },
+            },
+          ],
+        },
+      };
+      const pendingApply = createDeferred<ReleaseWorkflowCurrent>();
+      const applied: ContinueReleaseWorkflowRequest[] = [];
+      const completed = new Set<string>();
+      setAppRequestHandlerForTests(async (method, body) => {
+        if (method === "GetActiveInput")
+          return {
+            state: "active",
+            revision: 1,
+            inputId: "typing-input",
+            sourceVersion: "typing-source",
+            current,
+          };
+        if (method !== "ContinueReleaseWorkflow")
+          throw new Error(`Unexpected questionnaire method: ${method}`);
+        const request = body as ContinueReleaseWorkflowRequest;
+        if (request.goal === "trackers_assessed" && !completed.has(request.idempotencyKey)) {
+          completed.add(request.idempotencyKey);
+          applied.push(request);
+          current = {
+            ...current,
+            workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+            projections: {
+              ...current.projections!,
+              projections: [
+                {
+                  ...current.projections!.projections[0],
+                  questionnaireAnswers: {
+                    channel:
+                      request.intent.projectionInstructions?.SPD?.questionnaire?.channel || "",
+                  },
+                },
+              ],
+            },
+          };
+          if (applied.length === 2) return pendingApply.promise;
+        } else expect(["trackers_projected", "trackers_assessed"]).toContain(request.goal);
+        return current;
+      });
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(productionReleaseSessionPorts(), ["SPD"]),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      const user = userEvent.setup();
+      await user.click(screen.getByText(/SPD/, { selector: "summary" }));
+      const channel = screen.getByRole("textbox", { name: "Channel *" });
+      expect(channel).toHaveValue("");
+      let typed = "";
+      for (const character of "animation") {
+        await user.type(channel, character);
+        typed += character;
+        expect(channel).toHaveValue(typed);
+      }
+      await user.click(screen.getByRole("button", { name: "Apply tracker answers" }));
+      await waitFor(() => expect(applied).toHaveLength(1));
+      expect(applied[0].intent.projectionInstructions?.SPD?.questionnaire).toEqual({
+        channel: "animation",
+      });
+      // The returned required-empty field remains authoritative after accepting this submission.
+      await waitFor(() => expect(channel).toHaveValue(""));
+      expect(result.current.duplicates.view.questionnaireAnswers.SPD?.channel).toBeUndefined();
+      await user.type(channel, "animation");
+      expect(channel).toHaveValue("animation");
+      await user.click(screen.getByRole("button", { name: "Apply tracker answers" }));
+      await waitFor(() => expect(applied).toHaveLength(2));
+      expect(channel).toBeDisabled();
+      act(() => result.current.duplicates.answerQuestionnaire("SPD", "channel", "animations"));
+      await act(async () => pendingApply.resolve(current));
+      expect(channel).toHaveValue("animations");
+      expect(result.current.duplicates.view.questionnaireAnswers.SPD?.channel).toBe("animations");
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(true);
+    });
+
+    it("keeps Apply available for a dirty GPW late draft after selection projection removes its schema", async () => {
+      const base = preparedQuestionnaireWorkflow("late-recovery");
+      const projected = await workflowPorts().project(
+        base,
+        ["GPW"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      let current: ReleaseWorkflowCurrent = {
+        ...projected,
+        inputReadiness: { ...base.inputReadiness!, selectedTrackerIds: ["GPW"] },
+        projections: { ...projected.projections!, id: "late-projections", revision: 3 },
+        dryRun: {
+          workflowId: base.workflow.id,
+          projectionSet: { id: "late-projections", revision: 3 },
+          reports: [
+            {
+              trackerId: "GPW",
+              questionnaire: [
+                { key: "director_imdb", label: "Director IMDb", required: true, value: "" },
+              ],
+            },
+          ],
+        } as unknown as ReleaseWorkflowCurrent["dryRun"],
+      };
+      const requests: ContinueReleaseWorkflowRequest[] = [];
+      const completed = new Set<string>();
+      setAppRequestHandlerForTests(async (method, body) => {
+        if (method === "GetActiveInput")
+          return {
+            state: "active",
+            revision: 1,
+            inputId: "late-input",
+            sourceVersion: "late-source",
+            current,
+          };
+        if (method !== "ContinueReleaseWorkflow")
+          throw new Error(`Unexpected questionnaire method: ${method}`);
+        const request = body as ContinueReleaseWorkflowRequest;
+        requests.push(request);
+        if (!completed.has(request.idempotencyKey)) {
+          completed.add(request.idempotencyKey);
+          if (request.goal === "trackers_projected" && request.intent.trackerIds?.length === 2) {
+            current = {
+              ...(await workflowPorts().project(
+                current,
+                request.intent.trackerIds,
+                request.intent.projectionInstructions || {},
+                "selection",
+                new AbortController().signal,
+              )),
+              dryRun: undefined,
+            };
+          }
+          if (request.goal === "trackers_assessed") {
+            current = {
+              ...current,
+              workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+              projections: {
+                ...current.projections!,
+                projections: current.projections!.projections.map((projection) => ({
+                  ...projection,
+                  questionnaireAnswers:
+                    projection.trackerId === "GPW"
+                      ? {
+                          director_imdb:
+                            request.intent.projectionInstructions?.GPW?.questionnaire
+                              ?.director_imdb || "",
+                        }
+                      : undefined,
+                })),
+              },
+            };
+          }
+        }
+        return current;
+      });
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(productionReleaseSessionPorts(), ["GPW"]),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      fireEvent.click(screen.getByText(/GPW/, { selector: "summary" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Director IMDb *" }), {
+        target: { value: "nm1234567" },
+      });
+      act(() => result.current.duplicates.chooseTrackers(["GPW", "AITHER"]));
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(true);
+      expect(screen.queryByRole("textbox", { name: "Director IMDb *" })).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Apply tracker answers to refresh the review",
+      );
+      const apply = screen.getByRole("button", { name: "Apply tracker answers" });
+      expect(apply).toBeEnabled();
+      fireEvent.click(apply);
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireDirty).toBe(false));
+      expect(
+        requests.find((request) => request.goal === "trackers_assessed")?.intent
+          .projectionInstructions?.GPW?.questionnaire,
+      ).toEqual({ director_imdb: "nm1234567" });
+      expect(
+        requests.every((request) =>
+          ["trackers_projected", "trackers_assessed"].includes(request.goal),
+        ),
+      ).toBe(true);
+      expect(result.current.duplicates.view.assessment).toBeNull();
+    });
+
+    it("keeps selections editable when pure projection operation progress arrives during a checkbox interaction", async () => {
+      const prepared = preparedQuestionnaireWorkflow("pending-projection");
+      const initial = createDeferred<ReleaseWorkflowCurrent>();
+      const terminal = createDeferred<WorkflowOperationStatus>();
+      const running = { ...prepared, operation: questionnaireOperation(prepared, "running") };
+      let current = prepared;
+      const requests: ContinueReleaseWorkflowRequest[] = [];
+      const polls = vi.fn(async () => terminal.promise);
+      setAppRequestHandlerForTests(async (method, body) => {
+        if (method === "GetActiveInput")
+          return {
+            state: "active",
+            revision: 1,
+            inputId: "pending-input",
+            sourceVersion: "pending-source",
+            current: prepared,
+          };
+        if (method === "GetReleaseWorkflowOperation") return polls();
+        if (method === "GetReleaseWorkflow") return current;
+        if (method !== "ContinueReleaseWorkflow")
+          throw new Error(`Unexpected projection method: ${method}`);
+        const request = body as ContinueReleaseWorkflowRequest;
+        requests.push(request);
+        if (requests.length === 1) return initial.promise;
+        if (
+          request.intent.trackerIds?.length === 2 &&
+          current.projections?.projections.length !== 2
+        ) {
+          current = {
+            ...(await workflowPorts().project(
+              current,
+              request.intent.trackerIds,
+              request.intent.projectionInstructions || {},
+              "latest",
+              new AbortController().signal,
+            )),
+            operation: undefined,
+          };
+        }
+        return current;
+      });
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(productionReleaseSessionPorts(), ["AITHER"]),
+      });
+      await waitFor(() => expect(requests).toHaveLength(1));
+      const blu = screen.getByRole("checkbox", { name: "BLU" });
+      expect(blu).toBeEnabled();
+      fireEvent.pointerDown(blu);
+      await act(async () => initial.resolve(running));
+      expect(result.current.duplicates.view.questionnaireStatus).toBe("running");
+      expect(blu).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Run dupe check" })).toBeDisabled();
+      fireEvent.click(blu);
+      expect(result.current.duplicates.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
+      act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choice", "local draft"));
+      current = {
+        ...(await workflowPorts().project(
+          prepared,
+          ["AITHER"],
+          {},
+          "initial",
+          new AbortController().signal,
+        )),
+        operation: questionnaireOperation(prepared, "completed"),
+      };
+      await act(async () => terminal.resolve(current.operation!));
+      await waitFor(
+        () => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"),
+        { timeout: 2500 },
+      );
+      expect(result.current.duplicates.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
+      expect(
+        result.current.duplicates.view.projections?.projections.map(
+          (projection) => projection.trackerId,
+        ),
+      ).toEqual(["AITHER", "BLU"]);
+      expect(requests.every((request) => request.goal === "trackers_projected")).toBe(true);
+      expect(
+        requests[requests.length - 1]?.intent.projectionInstructions?.AITHER?.questionnaire,
+      ).toEqual({});
+      expect(result.current.duplicates.view.preflight).toBeNull();
+      expect(result.current.duplicates.view.assessment).toBeNull();
+      expect(polls).toHaveBeenCalledOnce();
+    });
+
+    it.each([0, 1])(
+      "settles a failed pure projection without restoring its old running snapshot (revision advance=%s)",
+      async (advance) => {
+        const prepared = preparedQuestionnaireWorkflow("failed-projection");
+        const failedOperation: WorkflowOperationStatus = {
+          ...questionnaireOperation(prepared, "failed"),
+          failures: [
+            {
+              trackerId: "AITHER",
+              failure: {
+                Code: "no_eligible_trackers",
+                Operation: "duplicate_check",
+                Message: "Tracker preparation is blocked.",
+                Recovery: "select_trackers",
+              },
+            },
+          ],
+        };
+        let current: ReleaseWorkflowCurrent = {
+          ...prepared,
+          workflow: { ...prepared.workflow, revision: prepared.workflow.revision + advance },
+          operation: failedOperation,
+        };
+        const requests: ContinueReleaseWorkflowRequest[] = [];
+        setAppRequestHandlerForTests(async (method, body) => {
+          if (method === "GetActiveInput")
+            return {
+              state: "active",
+              revision: 1,
+              inputId: "failed-input",
+              sourceVersion: "failed-source",
+              current: prepared,
+            };
+          if (method === "GetReleaseWorkflowOperation") return failedOperation;
+          if (method === "GetReleaseWorkflow") return current;
+          if (method !== "ContinueReleaseWorkflow")
+            throw new Error(`Unexpected projection method: ${method}`);
+          const request = body as ContinueReleaseWorkflowRequest;
+          requests.push(request);
+          if (requests.length === 1)
+            return { ...prepared, operation: questionnaireOperation(prepared, "running") };
+          if (request.intent.trackerIds?.includes("BLU") && !current.projections) {
+            current = {
+              ...(await workflowPorts().project(
+                current,
+                ["BLU"],
+                {},
+                "recovery",
+                new AbortController().signal,
+              )),
+              operation: undefined,
+            };
+          }
+          return current;
+        });
+        const { result } = renderHook(useReleaseSession, {
+          wrapper: questionnaireWrapper(productionReleaseSessionPorts(), ["AITHER"]),
+        });
+        await waitFor(
+          () => expect(result.current.duplicates.view.questionnaireStatus).toBe("error"),
+          { timeout: 2500 },
+        );
+        expect(result.current.workflow.view.current?.operation?.status).toBe("failed");
+        expect(result.current.workflow.view.current?.workflow.revision).toBe(
+          prepared.workflow.revision + advance,
+        );
+        expect(result.current.duplicates.view.status).not.toBe("running");
+        expect(screen.getByRole("button", { name: "Retry tracker questions" })).toBeEnabled();
+        expect(screen.getByRole("checkbox", { name: "BLU" })).toBeEnabled();
+        expect(result.current.duplicates.view.questionnaireError).toBe(
+          "Tracker preparation is blocked.",
+        );
+        act(() => result.current.duplicates.chooseTrackers(["BLU"]));
+        await waitFor(() =>
+          expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"),
+        );
+        expect(result.current.duplicates.view.selectedTrackers).toEqual(["BLU"]);
+        expect(requests.every((request) => request.goal === "trackers_projected")).toBe(true);
+        expect(requests[1].authority?.expectedRevision).toBe(prepared.workflow.revision + advance);
+        expect(result.current.duplicates.view.preflight).toBeNull();
+        expect(result.current.duplicates.view.assessment).toBeNull();
+      },
+    );
+
+    it.each(["duplicates_decided", "trackers_assessed"] as const)(
+      "keeps explicit %s operations exclusive while their backend operation runs",
+      async (goal) => {
+        const prepared = await workflowPorts().project(
+          preparedQuestionnaireWorkflow("explicit-operation"),
+          ["AITHER"],
+          {},
+          "seed",
+          new AbortController().signal,
+        );
+        const requests: ContinueReleaseWorkflowRequest[] = [];
+        setAppRequestHandlerForTests(async (method, body) => {
+          if (method === "GetActiveInput")
+            return {
+              state: "active",
+              revision: 1,
+              inputId: "explicit-input",
+              sourceVersion: "explicit-source",
+              current: prepared,
+            };
+          if (method !== "ContinueReleaseWorkflow")
+            throw new Error(`Unexpected explicit operation method: ${method}`);
+          const request = body as ContinueReleaseWorkflowRequest;
+          requests.push(request);
+          return request.goal === "trackers_projected"
+            ? prepared
+            : {
+                ...prepared,
+                operation: {
+                  ...questionnaireOperation(prepared, "running"),
+                  command: goal === "duplicates_decided" ? "check_duplicates" : "project_trackers",
+                },
+              };
+        });
+        const { result, unmount } = renderHook(useReleaseSession, {
+          wrapper: questionnaireWrapper(productionReleaseSessionPorts(), ["AITHER"]),
+        });
+        await waitFor(() =>
+          expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"),
+        );
+        let completion!: Promise<boolean>;
+        act(() => {
+          completion =
+            goal === "duplicates_decided"
+              ? result.current.duplicates.run()
+              : result.current.duplicates.applyQuestionnaireAnswers();
+        });
+        await waitFor(() => expect(result.current.duplicates.view.status).toBe("running"));
+        expect(screen.getByRole("checkbox", { name: "BLU" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
+        await act(async () => {
+          expect(await result.current.duplicates.refreshQuestionnaires()).toBe(false);
+          expect(await result.current.duplicates.applyQuestionnaireAnswers()).toBe(false);
+          expect(await result.current.upload.start()).toBe(false);
+        });
+        expect(requests.map((request) => request.goal)).toEqual(["trackers_projected", goal]);
+        unmount();
+        await expect(completion).resolves.toBe(false);
+      },
+    );
+
+    it("serializes rapid tracker selections and retains unapplied answers without submitting them", async () => {
+      const active = workflowPorts();
+      const prepared: ReleaseWorkflowCurrent = {
+        ...preparedQuestionnaireWorkflow("selection-questions"),
+        projectionInstructions: {
+          instructions: {
+            AITHER: {
+              questionnaire: { trailer: null, choices: "First" },
+              uploadReleaseName: "Saved.Name",
+            },
+          },
+        } as unknown as ReleaseWorkflowCurrent["projectionInstructions"],
+      };
+      const first = createDeferred<ReleaseWorkflowCurrent>();
+      const project = vi.fn(async (...args: Parameters<TestWorkflowPorts["project"]>) => {
+        const projected = await active.project(...args);
+        if (args[1].length === 1 && args[1][0] === "AITHER") return first.promise;
+        return {
+          ...projected,
+          projections: {
+            ...projected.projections!,
+            projections: projected.projections!.projections.map((projection) => ({
+              ...projection,
+              questionnaire: [{ key: "choices", label: "Choices", required: true }],
+            })),
+          },
+        };
+      });
+      const preflight = vi.fn(active.preflight);
+      const checkDuplicates = vi.fn(active.checkDuplicates);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: "selection-questions",
+            workflow: workflowPorts({
+              current: async () => prepared,
+              project,
+              preflight,
+              checkDuplicates,
+            }),
+          }),
+          ["AITHER"],
+        ),
+      });
+      await waitFor(() => expect(project).toHaveBeenCalledTimes(1));
+      act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "Second"));
+      act(() => result.current.duplicates.confirmReleaseName("AITHER", "Local.Name"));
+      act(() => result.current.duplicates.chooseTrackers(["AITHER", "BLU"]));
+      act(() => result.current.duplicates.chooseTrackers(["AITHER", "PTP"]));
+      expect(result.current.duplicates.view.questionnaires).toEqual([]);
+      expect(screen.getByRole("checkbox", { name: "PTP" })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "Run dupe check" })).toBeDisabled();
+      await act(async () => {
+        expect(await result.current.duplicates.applyQuestionnaireAnswers()).toBe(false);
+        expect(await result.current.upload.start()).toBe(false);
+      });
+      expect(project).toHaveBeenCalledTimes(1);
+      await act(async () =>
+        first.resolve(
+          await active.project(prepared, ["AITHER"], {}, "old", new AbortController().signal),
+        ),
+      );
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      expect(project.mock.calls.map((args) => args[1])).toEqual([["AITHER"], ["AITHER", "PTP"]]);
+      expect(project.mock.calls[1]?.[0].workflow.revision).toBeGreaterThan(
+        prepared.workflow.revision,
+      );
+      expect(project.mock.calls[1]?.[2].AITHER).toEqual({
+        questionnaire: { trailer: null, choices: "First" },
+        uploadReleaseName: "Saved.Name",
+      });
+      expect(result.current.duplicates.view.selectedTrackers).toEqual(["AITHER", "PTP"]);
+      expect(result.current.duplicates.view.questionnaireAnswers.AITHER?.choices).toBe("Second");
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(true);
+      expect(preflight).not.toHaveBeenCalled();
+      expect(checkDuplicates).not.toHaveBeenCalled();
+    });
+
+    it("aborts a pending question projection when the source changes and suppresses its response", async () => {
+      const active = workflowPorts();
+      const prepared = preparedQuestionnaireWorkflow("source-questions", "C:\\media\\First");
+      const first = createDeferred<ReleaseWorkflowCurrent>();
+      let signal: AbortSignal | undefined;
+      const project = vi.fn(async (...args: Parameters<TestWorkflowPorts["project"]>) => {
+        if (args[0].workflow.id === "source-questions") {
+          signal = args[4];
+          return first.promise;
+        }
+        return active.project(...args);
+      });
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: "source-questions",
+            workflow: workflowPorts({ current: async () => prepared, project }),
+          }),
+          ["AITHER"],
+        ),
+      });
+      await waitFor(() => expect(project).toHaveBeenCalledTimes(1));
+      await act(() => result.current.input.openSource("C:\\media\\Second"));
+      expect(signal?.aborted).toBe(true);
+      await act(async () =>
+        first.resolve(
+          await active.project(prepared, ["AITHER"], {}, "old", new AbortController().signal),
+        ),
+      );
+      expect(result.current.identity.view.sourcePath).toBe("C:\\media\\Second");
+      expect(
+        result.current.duplicates.view.questionnaires.flatMap(
+          (projection) => projection.questionnaire || [],
+        ),
+      ).toEqual([]);
+      expect(result.current.workflow.view.current?.workflow.id).toBe("workflow-new");
+    });
+
+    it("shows preparation-needed failures without retry loops or remote work", async () => {
+      const active = workflowPorts();
+      const prepared = preparedQuestionnaireWorkflow("missing-questions");
+      const project = vi.fn(async () => {
+        throw Object.assign(new Error("Preparation required"), {
+          failure: {
+            Code: "missing_prerequisite",
+            Operation: "duplicate_check",
+            Recovery: "complete_prerequisite",
+            Message: "Prepare the selected source before reviewing tracker questions.",
+          },
+        });
+      });
+      const preflight = vi.fn(active.preflight);
+      const checkDuplicates = vi.fn(active.checkDuplicates);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: "missing-questions",
+            workflow: workflowPorts({
+              current: async () => prepared,
+              project,
+              preflight,
+              checkDuplicates,
+            }),
+          }),
+          ["AITHER"],
+        ),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("error"));
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Prepare the selected source before reviewing tracker questions.",
+      );
+      expect(project).toHaveBeenCalledTimes(1);
+      expect(preflight).not.toHaveBeenCalled();
+      expect(checkDuplicates).not.toHaveBeenCalled();
+    });
+    it("rejects a projected questionnaire completed after canonical Input corrections change", async () => {
+      const active = workflowPorts();
+      const projected = await active.project(
+        preparedQuestionnaireWorkflow("edited-questions"),
+        ["AITHER"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const prepared: ReleaseWorkflowCurrent = {
+        ...projected,
+        projections: {
+          ...projected.projections!,
+          projections: [
+            {
+              ...projected.projections!.projections[0],
+              questionnaire: [{ key: "choice", label: "Choice", required: true }],
+            },
+          ],
+        },
+      };
+      const pending = createDeferred<ReleaseWorkflowCurrent>();
+      const project = vi.fn(async () => pending.promise);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: "edited-questions",
+            workflow: workflowPorts({ current: async () => prepared, project }),
+          }),
+          ["AITHER"],
+        ),
+      });
+      await waitFor(() => expect(project).toHaveBeenCalledTimes(1));
+      expect(result.current.duplicates.view.questionnaires[0]?.questionnaire).toHaveLength(1);
+      act(() => result.current.input.changeMetadata({ Genres: ["Drama"] }));
+      expect(result.current.duplicates.view.questionnaires).toEqual([]);
+      await act(async () =>
+        pending.resolve(
+          await active.project(prepared, ["AITHER"], {}, "old", new AbortController().signal),
+        ),
+      );
+      expect(result.current.duplicates.view.questionnaireStatus).toBe("error");
+      expect(result.current.duplicates.view.questionnaires).toEqual([]);
+      expect(result.current.input.view.intent.metadata.Genres).toEqual(["Drama"]);
+      expect(result.current.input.view.correctionDirty).toBe(true);
+      expect(project).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("blocks stale reviewed uploads until changed answers are applied", async () => {
+    const active = workflowPorts();
+    const project: TestWorkflowPorts["project"] = async (...args) => {
+      const current = await active.project(...args);
+      return {
+        ...current,
+        projections: current.projections
+          ? {
+              ...current.projections,
+              projections: current.projections.projections.map((projection) => ({
+                ...projection,
+                questionnaireAnswers: Object.fromEntries(
+                  Object.entries(args[2][projection.trackerId]?.questionnaire || {}).filter(
+                    ([, value]) => value != null,
+                  ),
+                ) as Record<string, string>,
+                questionnaire: [
+                  {
+                    key: "choices",
+                    label: "Choices",
+                    kind: "select",
+                    required: true,
+                    options: ["First", "Second", "French"],
+                    value: (
+                      args[2][projection.trackerId]?.questionnaire?.choices ?? "First"
+                    ).trim(),
+                  },
+                ],
+              })),
+            }
+          : undefined,
+      };
+    };
+    const checkDuplicates = vi.fn(active.checkDuplicates);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ project, checkDuplicates }) })),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    const evidence = result.current.duplicates.view.assessment;
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "First"));
+    expect(result.current.upload.view.questionnaireDirty).toBe(true);
+    await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+    expect(result.current.upload.view.questionnaireDirty).toBe(false);
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "Second"));
+    expect(result.current.upload.view.questionnaireDirty).toBe(true);
+    await act(async () => {
+      expect(await result.current.upload.runDryRun()).toBe(false);
+      expect(await result.current.upload.start()).toBe(false);
+    });
+    await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+    expect(result.current.upload.view.questionnaireDirty).toBe(false);
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", " French "));
+    expect(result.current.upload.view.questionnaireDirty).toBe(true);
+    await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+    expect(result.current.upload.view.questionnaireDirty).toBe(false);
+    expect(result.current.duplicates.view.assessment).toEqual(evidence);
+    expect(checkDuplicates).toHaveBeenCalledTimes(1);
+    expect(result.current.duplicates.view.questionnaires[0]?.questionnaire?.[0].value).toBe(
+      "French",
+    );
+  });
+
+  it("applies tracker questionnaire drafts without uploading or starting duplicate searches", async () => {
+    const active = workflowPorts();
+    const project = vi.fn(active.project);
+    const checkDuplicates = vi.fn(active.checkDuplicates);
+    const executeUploads = vi.fn(active.executeUploads);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({ workflow: workflowPorts({ project, checkDuplicates, executeUploads }) }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    project.mockClear();
+    checkDuplicates.mockClear();
+    executeUploads.mockClear();
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "First,Second"));
+    await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+    expect(project).toHaveBeenCalled();
+    expect(project.mock.calls[project.mock.calls.length - 1]?.[2].AITHER?.questionnaire).toEqual({
+      choices: "First,Second",
+    });
+    expect(checkDuplicates).not.toHaveBeenCalled();
+    expect(executeUploads).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "answers exact late tracker requirements on Dupe Checking with previously submitted selection=%s",
+    async (alreadySubmitted) => {
+      const active = workflowPorts();
+      const workflowID = "workflow-late-questions";
+      const prepared = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 2),
+        preview("C:\\media\\Example", 1),
+      );
+      const projected = await active.project(
+        prepared,
+        ["AITHER"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const retained: ReleaseWorkflowCurrent = {
+        ...projected,
+        projectionInstructions: {
+          instructions: { AITHER: { questionnaire: { trailer: null } } },
+        } as unknown as NonNullable<ReleaseWorkflowCurrent["projectionInstructions"]>,
+        workflow: {
+          ...projected.workflow,
+          submissionExclusions: alreadySubmitted
+            ? [
+                {
+                  trackerId: "UPLOADED",
+                  reason: "already_uploaded",
+                  confirmedAt: "2026-07-20T00:00:00Z",
+                },
+              ]
+            : [],
+        },
+        projections: {
+          ...projected.projections!,
+          id: "projections-late",
+          revision: 3,
+          projections: projected.projections!.projections.map((projection) => ({
+            ...projection,
+            questionnaireAnswers: {},
+            questionnaire: [
+              { key: "poster", label: "Poster URL", required: false, value: "" },
+              {
+                key: "trailer",
+                label: "Trailer",
+                required: false,
+                value: "https://www.youtube.com/watch?v=EXAMPLE",
+              },
+            ],
+          })),
+        },
+        dryRun: {
+          workflowId: workflowID,
+          projectionSet: { id: "projections-late", revision: 3 },
+          status: "failed",
+          reports: [
+            {
+              trackerId: "AITHER",
+              status: "failed",
+              questionnaire: [
+                { key: "poster", label: "Poster URL", required: true, value: "" },
+                {
+                  key: "trailer",
+                  label: "Trailer",
+                  required: false,
+                  value: "https://www.youtube.com/watch",
+                },
+                { key: "director", label: "Director", required: true, value: "Example Director" },
+              ],
+            },
+          ],
+        } as unknown as NonNullable<ReleaseWorkflowCurrent["dryRun"]>,
+      };
+      const project = vi.fn(async (...args: Parameters<TestWorkflowPorts["project"]>) => {
+        const current = await active.project(
+          args[0],
+          args[1].filter((tracker) => tracker !== "UPLOADED"),
+          args[2],
+          args[3],
+          args[4],
+        );
+        return {
+          ...current,
+          dryRun: undefined,
+          projections: {
+            ...current.projections!,
+            id: "projections-applied",
+            revision: 4,
+            projections: current.projections!.projections.map((projection) => ({
+              ...projection,
+              questionnaireAnswers: Object.fromEntries(
+                Object.entries(args[2].AITHER?.questionnaire || {}).filter(
+                  ([, value]) => value != null,
+                ),
+              ) as Record<string, string>,
+              questionnaire: [
+                {
+                  key: "trailer",
+                  label: "Trailer",
+                  required: false,
+                  value:
+                    args[2].AITHER?.questionnaire?.trailer ??
+                    "https://www.youtube.com/watch?v=EXAMPLE",
+                },
+                {
+                  key: "poster",
+                  label: "Poster URL",
+                  required: false,
+                  value: args[2].AITHER?.questionnaire?.poster ?? "",
+                },
+                {
+                  key: "director",
+                  label: "Director",
+                  required: false,
+                  value: args[2].AITHER?.questionnaire?.director ?? "Example Director",
+                },
+              ],
+            })),
+          },
+        };
+      });
+      const checkDuplicates = vi.fn(active.checkDuplicates);
+      const executeUploads = vi.fn(active.executeUploads);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({
+              current: async () => retained,
+              project,
+              checkDuplicates,
+              executeUploads,
+              dryRunUploads: async (current) => ({
+                ...current,
+                dryRun: {
+                  ...retained.dryRun!,
+                  projectionSet: {
+                    id: current.projections!.id,
+                    revision: current.projections!.revision,
+                  },
+                },
+              }),
+            }),
+          }),
+        ),
+      });
+      await waitFor(() =>
+        expect(result.current.workflow.view.current?.workflow.id).toBe(workflowID),
+      );
+      act(() =>
+        result.current.duplicates.chooseTrackers(
+          alreadySubmitted ? ["AITHER", "UPLOADED"] : ["AITHER"],
+        ),
+      );
+      await waitFor(() =>
+        expect(result.current.duplicates.view.questionnaires[0]?.questionnaire?.[0].required).toBe(
+          true,
+        ),
+      );
+      act(() =>
+        result.current.duplicates.answerQuestionnaire(
+          "AITHER",
+          "poster",
+          "https://example.com/poster.jpg",
+        ),
+      );
+      expect(result.current.upload.view.questionnaireDirty).toBe(true);
+      await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+      expect(project.mock.calls[project.mock.calls.length - 1]?.[2].AITHER?.questionnaire).toEqual({
+        poster: "https://example.com/poster.jpg",
+        trailer: null,
+      });
+      expect(
+        result.current.duplicates.view.questionnaires[0]?.questionnaire?.find(
+          (field) => field.key === "trailer",
+        )?.value,
+      ).toBe("https://www.youtube.com/watch?v=EXAMPLE");
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(false);
+      expect(result.current.duplicates.view.questionnaires[0]?.questionnaire?.[0].required).toBe(
+        false,
+      );
+      await act(() => result.current.upload.runDryRun());
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(false);
+      act(() =>
+        result.current.duplicates.answerQuestionnaire(
+          "AITHER",
+          "trailer",
+          "https://www.youtube.com/watch?v=OTHER",
+        ),
+      );
+      await act(() => result.current.duplicates.applyQuestionnaireAnswers());
+      await act(() => result.current.upload.runDryRun());
+      expect(result.current.duplicates.view.questionnaireDirty).toBe(false);
+      expect(checkDuplicates).not.toHaveBeenCalled();
+      expect(executeUploads).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects questionnaire apply for a changed tracker selection", async () => {
+    const active = workflowPorts();
+    const project = vi.fn(active.project);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ project }) })),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choices", "First"));
+    act(() => result.current.duplicates.chooseTrackers(["BLU"]));
+    project.mockClear();
+    await act(async () =>
+      expect(await result.current.duplicates.applyQuestionnaireAnswers()).toBe(false),
+    );
+    expect(result.current.duplicates.view.questionnaires).toEqual([]);
+    expect(project).not.toHaveBeenCalled();
+  });
+
   it("carries workflow drafts across refreshes and clears them after another input opens", async () => {
     const { result } = renderHook(useReleaseSession, { wrapper: wrapperFor(portsFor()) });
     await selectAndPrepare(result, "C:\\media\\Example");
     act(() => result.current.upload.chooseTrackers(["AITHER", "BLU"]));
     act(() => result.current.upload.changeOptions({ noSeed: true, runLogLevel: "debug" }));
-    act(() => result.current.upload.answerQuestionnaire("AITHER", "season", "1"));
+    act(() => result.current.duplicates.answerQuestionnaire("AITHER", "season", "1"));
 
     await act(() => result.current.input.prepare());
     expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
     expect(result.current.upload.view.options.noSeed).toBe(true);
     expect(result.current.upload.view.options.runLogLevel).toBe("debug");
-    expect(result.current.upload.view.questionnaireAnswers.AITHER).toEqual({ season: "1" });
+    expect(result.current.duplicates.view.questionnaireAnswers.AITHER).toEqual({ season: "1" });
 
     act(() => result.current.input.selectSource("C:\\media\\Other"));
     expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
@@ -5037,7 +6191,7 @@ describe("useReleaseSession", () => {
     expect(result.current.upload.view.selectedTrackers).toEqual([]);
     expect(result.current.upload.view.options.noSeed).toBe(false);
     expect(result.current.upload.view.options.runLogLevel).toBe("info");
-    expect(result.current.upload.view.questionnaireAnswers).toEqual({});
+    expect(result.current.duplicates.view.questionnaireAnswers).toEqual({});
   });
 
   it("keeps independent facets concurrent and suppresses stale media completion", async () => {

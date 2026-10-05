@@ -24,9 +24,16 @@ const facetFor = (
     ignoredTrackers: [],
     selectedTrackers: ["EXAMPLE"],
     releaseNameOverrides: {},
+    questionnaires: [],
+    preparationQuestionnaires: [],
+    questionnaireStatus: "ready",
+    questionnaireError: "",
+    questionnaireAnswers: {},
+    questionnaireDirty: false,
     error: "",
     ...view,
   },
+  refreshQuestionnaires: vi.fn(async () => true),
   run: vi.fn(async () => true),
   cancel: vi.fn(async () => true),
   chooseTrackers: vi.fn(),
@@ -34,6 +41,8 @@ const facetFor = (
   acknowledgeReleaseName: vi.fn(async () => true),
   acknowledgeRules: vi.fn(async () => true),
   setIgnored: vi.fn(),
+  answerQuestionnaire: vi.fn(),
+  applyQuestionnaireAnswers: vi.fn(async () => true),
   ...commands,
 });
 
@@ -50,6 +59,249 @@ const renderPage = (facet: DuplicatesFacet, trackers = ["EXAMPLE"]) =>
   );
 
 describe("DupeCheckPage", () => {
+  it("loads questions for initially selected trackers and starts their disclosures closed", () => {
+    const facet = facetFor({
+      questionnaires: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [{ key: "choice", label: "Choice", required: true }],
+        },
+      ],
+    });
+    renderPage(facet);
+    const summary = screen.getByText(/Example Tracker/, { selector: "summary" });
+    expect(summary.parentElement?.tagName).toBe("DETAILS");
+    expect(summary.parentElement).not.toHaveAttribute("open");
+    expect(summary).toHaveTextContent("Required");
+  });
+
+  it("keeps contextual preparation details separate and disclosures open across answer updates", () => {
+    const projection = {
+      trackerId: "EXAMPLE",
+      displayName: "Example Tracker",
+      questionnaire: [
+        {
+          key: "choice",
+          label: "Choice",
+          required: true,
+          options: ["First", "Second"],
+          value: "First",
+        },
+      ],
+      questionnaireAnswers: { choice: "First" },
+    };
+    const facet = facetFor({
+      questionnaires: [projection],
+      preparationQuestionnaires: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [{ key: "poster", label: "Poster", required: true, value: "" }],
+        },
+      ],
+    });
+    const rendered = renderPage(facet);
+    const questions = screen.getByRole("region", { name: "Tracker questions" });
+    const preparation = screen.getByRole("region", { name: "Tracker preparation details" });
+    expect(within(questions).queryByLabelText("Poster *")).not.toBeInTheDocument();
+    expect(within(preparation).getByLabelText("Poster *")).toBeInTheDocument();
+    const summary = within(questions).getByText(/Example Tracker/, { selector: "summary" });
+    fireEvent.click(summary);
+    const details = summary.parentElement;
+    expect(details).toHaveAttribute("open");
+    rendered.rerender(
+      <DupeCheckPage
+        facet={facetFor({
+          ...facet.view,
+          questionnaireDirty: true,
+          questionnaireAnswers: { EXAMPLE: { choice: "Second" } },
+        })}
+        sourcePath="C:\\media\\Example"
+        trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
+        trackerIconSrcByName={{}}
+        submissionExclusions={[]}
+        workflowComplete={false}
+      />,
+    );
+    expect(
+      within(questions).getByText(/Example Tracker/, { selector: "summary" }).parentElement,
+    ).toBe(details);
+    expect(details).toHaveAttribute("open");
+    expect(summary).toHaveTextContent("Unapplied changes");
+    expect(within(questions).getByRole("combobox", { name: "Choice *" })).toHaveValue("Second");
+    expect(screen.getAllByRole("button", { name: "Apply tracker answers" })).toHaveLength(1);
+  });
+
+  it("shows a fresh local draft even when it matches a rejected accepted answer", () => {
+    renderPage(
+      facetFor({
+        preparationQuestionnaires: [
+          {
+            trackerId: "EXAMPLE",
+            displayName: "Example Tracker",
+            questionnaire: [{ key: "channel", label: "Channel", required: true, value: "" }],
+            questionnaireAnswers: { channel: "rejected" },
+          },
+        ],
+        questionnaireAnswers: { EXAMPLE: { channel: "rejected" } },
+      }),
+    );
+    fireEvent.click(screen.getByText(/Example Tracker/, { selector: "summary" }));
+    expect(screen.getByRole("textbox", { name: "Channel *" })).toHaveValue("rejected");
+  });
+
+  it("renders selected tracker multiline questions and locks review while applying", () => {
+    const facet = facetFor({
+      status: "running",
+      questionnaireDirty: true,
+      questionnaires: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            {
+              key: "overview",
+              label: "Overview",
+              kind: "textarea",
+              required: true,
+              help: "Describe this release",
+            },
+            {
+              key: "choices",
+              label: "Choices",
+              kind: "multiselect",
+              required: false,
+              options: ["First"],
+              help: "Choose matching values",
+            },
+          ],
+        },
+        {
+          trackerId: "OTHER",
+          displayName: "Other Tracker",
+          questionnaire: [{ key: "other", label: "Other question", required: true }],
+        },
+      ],
+      questionnaireAnswers: { EXAMPLE: { overview: "A retained answer" } },
+    });
+    renderPage(facet);
+    fireEvent.click(screen.getByText(/Example Tracker/, { selector: "summary" }));
+    const overview = screen.getByRole("textbox", { name: /Overview/ });
+    expect(overview.tagName).toBe("TEXTAREA");
+    expect(overview).toHaveValue("A retained answer");
+    expect(overview).toHaveAccessibleName("Overview *");
+    expect(overview).toHaveAccessibleDescription("Describe this release");
+    expect(overview).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "First" })).toBeDisabled();
+    expect(screen.getByRole("group", { name: "Choices" })).toHaveAccessibleDescription(
+      "Choose matching values",
+    );
+    expect(screen.getByRole("button", { name: "Apply tracker answers" })).toBeDisabled();
+    expect(screen.queryByLabelText("Other question *")).not.toBeInTheDocument();
+    expect(screen.getByText("Describe this release")).toBeInTheDocument();
+  });
+
+  it("collects questionnaire answers from current workflow projections", () => {
+    const answerQuestionnaire = vi.fn();
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            {
+              key: "edition",
+              label: "Edition",
+              options: ["Standard", "Extended"],
+              required: true,
+              help: "Select the matching edition",
+            },
+            { key: "note", label: "Note", required: false, help: "Explain the correction" },
+          ],
+        },
+      ],
+    } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>;
+    renderPage(
+      facetFor({ projections, questionnaires: projections.projections }, { answerQuestionnaire }),
+    );
+
+    fireEvent.click(screen.getByText(/Example Tracker/, { selector: "summary" }));
+    const edition = screen.getByRole("combobox", { name: /Edition/ });
+    const note = screen.getByRole("textbox", { name: /Note/ });
+    expect(edition).toHaveAccessibleName("Edition *");
+    expect(note).toHaveAccessibleName("Note");
+    expect(edition).toHaveAccessibleDescription("Select the matching edition");
+    expect(note).toHaveAccessibleDescription("Explain the correction");
+    fireEvent.change(edition, { target: { value: "Extended" } });
+    fireEvent.change(note, { target: { value: "Synthetic note" } });
+    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "edition", "Extended");
+    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "note", "Synthetic note");
+  });
+
+  it("renders backend multiselect choices and applies them without uploading", () => {
+    const answerQuestionnaire = vi.fn();
+    const applyQuestionnaireAnswers = vi.fn(async () => true);
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            {
+              key: "choices",
+              label: "Subtitle choices",
+              kind: "multiselect",
+              required: true,
+              options: ["Full", "Forced"],
+              value: "Full",
+            },
+          ],
+        },
+      ],
+    } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>;
+    const facet = facetFor(
+      { projections, questionnaires: projections.projections },
+      { answerQuestionnaire, applyQuestionnaireAnswers },
+    );
+    renderPage(facet);
+    fireEvent.click(screen.getByText(/Example Tracker/, { selector: "summary" }));
+    expect(screen.getByRole("checkbox", { name: "Full" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Forced" }));
+    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "choices", "Full,Forced");
+    fireEvent.click(screen.getByRole("button", { name: "Apply tracker answers" }));
+    expect(applyQuestionnaireAnswers).toHaveBeenCalledOnce();
+    expect(facet.run).not.toHaveBeenCalled();
+  });
+
+  it("shows a saved questionnaire answer missing from current options", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          questionnaire: [
+            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
+          ],
+        },
+      ],
+    } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>;
+    renderPage(
+      facetFor({
+        projections,
+        questionnaires: projections.projections,
+        questionnaireAnswers: { EXAMPLE: { edition: "Legacy" } },
+      }),
+    );
+
+    fireEvent.click(screen.getByText(/Example Tracker/, { selector: "summary" }));
+    expect(screen.getByRole("combobox", { name: "Edition *" })).toHaveValue("Legacy");
+    expect(screen.getByRole("combobox", { name: "Edition *" })).not.toHaveAttribute(
+      "aria-describedby",
+    );
+    expect(screen.getByRole("option", { name: "Legacy (saved)" })).toBeInTheDocument();
+  });
+
   it.each([
     { faviconOnly: false, useFavicons: true, visibleName: true },
     { faviconOnly: true, useFavicons: true, visibleName: false },

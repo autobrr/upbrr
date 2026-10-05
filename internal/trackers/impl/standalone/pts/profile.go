@@ -12,17 +12,18 @@ import (
 // Profile returns PTS identity, preparation, dupe, auth, and artifact behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                  "PTS",
-		BaseURL:               baseURL,
-		DescriptionGroup:      "pts",
-		UploadContentMode:     trackers.UploadContentModeDescription,
-		PrepareDescription:    prepareDescription,
-		PrepareUpload:         prepareUpload,
-		ValidationPolicy:      validationPolicy(),
-		NewDuplicateAdapter:   newDuplicateAdapter,
-		AuthCapability:        authcontract.CookieCapability("PTS"),
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
-		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"https://tracker.ptskit.com"}},
+		Name:                    "PTS",
+		BaseURL:                 baseURL,
+		DescriptionGroup:        "pts",
+		UploadContentMode:       trackers.UploadContentModeDescription,
+		PrepareDescription:      prepareDescription,
+		PrepareUpload:           prepareUpload,
+		ProjectionQuestionnaire: projectionQuestionnaire,
+		ValidationPolicy:        validationPolicy(),
+		NewDuplicateAdapter:     newDuplicateAdapter,
+		AuthCapability:          authcontract.CookieCapability("PTS"),
+		UploadArtifactPolicy:    &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
+		TorrentIdentityPolicy:   &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"https://tracker.ptskit.com"}},
 	}
 }
 

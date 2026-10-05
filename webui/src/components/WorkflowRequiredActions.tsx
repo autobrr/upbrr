@@ -6,7 +6,7 @@ import type { RequiredAction, WorkflowContinuation } from "../api/generated/rele
 import type { ReleaseRoute } from "../releaseSession/types";
 
 const actionRoutes: Readonly<Record<string, ReleaseRoute>> = {
-  answer_questionnaire: "upload",
+  answer_questionnaire: "duplicates",
   confirm_rescan: "input",
   confirm_corrections: "input",
   reprepare: "input",

@@ -1043,11 +1043,24 @@ func collectCLIWorkflowQuestionnaires(
 	}
 	changed := false
 	for _, projection := range projections.Projections {
-		instruction := instructions[projection.TrackerID]
+		instruction, retained := instructions[projection.TrackerID]
+		if projection.QuestionnaireAnswers != nil {
+			instruction.Questionnaire = nil
+			for key, value := range projection.QuestionnaireAnswers {
+				if instruction.Questionnaire == nil {
+					instruction.Questionnaire = make(map[string]*string)
+				}
+				instruction.Questionnaire[key] = new(value)
+			}
+			if retained || len(instruction.Questionnaire) > 0 {
+				instructions[projection.TrackerID] = instruction
+			}
+		}
 		for _, field := range projection.Questionnaire {
-			if !field.Required || instruction.Questionnaire[field.Key] != nil {
+			if !field.Required || field.Value != "" {
 				continue
 			}
+
 			if interaction == api.InteractionModeUnattended {
 				continue
 			}
@@ -1058,7 +1071,15 @@ func collectCLIWorkflowQuestionnaires(
 			if label == "" {
 				label = field.Key
 			}
-			if len(field.Options) > 0 {
+			if field.Help != "" {
+				fmt.Fprintln(output, field.Help)
+			}
+			if field.Kind == "multiselect" {
+				for index, option := range field.Options {
+					fmt.Fprintf(output, "  %d. %s\n", index+1, option)
+				}
+				label += " (comma-separated numbers or labels)"
+			} else if len(field.Options) > 0 {
 				label += " [" + strings.Join(field.Options, "/") + "]"
 			}
 			answer, err := promptLine(reader, output, fmt.Sprintf("%s %s: ", projection.TrackerID, label))
@@ -1067,6 +1088,24 @@ func collectCLIWorkflowQuestionnaires(
 			}
 			if strings.TrimSpace(answer) == "" {
 				return false, fmt.Errorf("upbrr: tracker input %s for %s is required", field.Key, projection.TrackerID)
+			}
+			if field.Kind == "multiselect" {
+				selected := make([]string, 0)
+				for item := range strings.SplitSeq(answer, ",") {
+					item = strings.TrimSpace(item)
+					if index, err := strconv.Atoi(item); err == nil && index > 0 && index <= len(field.Options) {
+						item = field.Options[index-1]
+					}
+					if !slices.Contains(field.Options, item) {
+						return false, fmt.Errorf("upbrr: invalid option for %s", field.Key)
+					}
+					if !slices.Contains(selected, item) {
+						selected = append(selected, item)
+					}
+				}
+				answer = strings.Join(selected, ",")
+			} else if len(field.Options) > 0 && !slices.Contains(field.Options, answer) {
+				return false, fmt.Errorf("upbrr: invalid option for %s", field.Key)
 			}
 			value := answer
 			instruction.Questionnaire[field.Key] = &value

@@ -15,8 +15,9 @@ const (
 	oeSourceNotesKey      = "source_notes"
 )
 
-// inputSchema declares OE's conditional description evidence fields.
-func inputSchema(meta api.UploadSubject) *api.TrackerQuestionnaire {
+// projectionQuestionnaire declares OE's tracker-local description evidence.
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	meta := input.Meta
 	answers := oeQuestionnaireAnswers(meta)
 	fields := make([]api.TrackerQuestionnaireField, 0, 2)
 	if oeRequiresEncodingSettings(meta.VideoCodec, meta.Type, meta.HasEncodeSettings) {
@@ -45,28 +46,6 @@ func inputSchema(meta api.UploadSubject) *api.TrackerQuestionnaire {
 		return nil
 	}
 	return &api.TrackerQuestionnaire{Tracker: "OE", Fields: fields}
-}
-
-// inputReadiness reports missing OE description evidence before upload work.
-func inputReadiness(meta api.UploadSubject) []api.InputReadinessFieldOutcome {
-	schema := inputSchema(meta)
-	if schema == nil {
-		return nil
-	}
-	fields := make([]api.InputReadinessFieldOutcome, 0, len(schema.Fields))
-	for _, field := range schema.Fields {
-		outcome := api.InputReadinessFieldOutcome{
-			Key:         "tracker_input." + field.Key,
-			Status:      api.InputReadinessFieldReady,
-			Disposition: api.RuleDispositionStrict,
-		}
-		if field.Value == "" {
-			outcome.Status = api.InputReadinessFieldMissing
-			outcome.Message = field.Help
-		}
-		fields = append(fields, outcome)
-	}
-	return fields
 }
 
 func oeQuestionnaireAnswers(meta api.UploadSubject) map[string]string {

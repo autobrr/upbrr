@@ -19,6 +19,7 @@ import (
 // Its missing-IMDb metadata result is advisory and does not block upload.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ProjectionQuestionnaire: projectionQuestionnaire,
 		Name:                    "PTP",
 		BaseURL:                 ptpBaseURL,
 		DescriptionGroup:        "ptp",

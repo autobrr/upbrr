@@ -56,6 +56,7 @@ type WorkflowGoal string
 const (
 	WorkflowGoalPrepared          WorkflowGoal = "prepared"
 	WorkflowGoalInputReady        WorkflowGoal = "input_ready"
+	WorkflowGoalTrackersProjected WorkflowGoal = "trackers_projected"
 	WorkflowGoalTrackersAssessed  WorkflowGoal = "trackers_assessed"
 	WorkflowGoalDuplicatesDecided WorkflowGoal = "duplicates_decided"
 	WorkflowGoalMediaReady        WorkflowGoal = "media_ready"
@@ -129,6 +130,15 @@ type ContinueReleaseWorkflowRequest struct {
 
 // Validate verifies request identity and typed desired-state shape.
 func (r ContinueReleaseWorkflowRequest) Validate() error {
+	if r.Goal == WorkflowGoalTrackersProjected {
+		if r.Authority == nil {
+			return errors.New("tracker projection requires exact workflow authority")
+		}
+		if r.Intent.FactInstructions != nil || r.Intent.CorrectionPatch != nil || len(r.Intent.TrackerInputAnswers) > 0 ||
+			len(r.Answers) > 0 || r.TrackerApproval != nil || r.Approval != nil {
+			return errors.New("tracker projection cannot change release facts or resolve workflow actions")
+		}
+	}
 	if len(r.Intent.TrackerInputAnswers) > 0 && (r.Intent.CorrectionPatch != nil || r.Intent.FactInstructions != nil ||
 		(r.Intent.Preparation != nil && continuationPreparationHasFactCorrections(*r.Intent.Preparation))) {
 		return errors.New("trackerInputAnswers cannot be combined with release corrections")
@@ -269,6 +279,7 @@ func validWorkflowGoal(goal WorkflowGoal) bool {
 	switch goal {
 	case WorkflowGoalPrepared,
 		WorkflowGoalInputReady,
+		WorkflowGoalTrackersProjected,
 		WorkflowGoalTrackersAssessed,
 		WorkflowGoalDuplicatesDecided,
 		WorkflowGoalMediaReady,

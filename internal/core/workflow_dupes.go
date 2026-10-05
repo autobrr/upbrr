@@ -39,11 +39,11 @@ func (b workflowDupeBuilder) Build(
 	checkedAt time.Time,
 	skipRemote bool,
 ) (api.DupeAssessment, any, error) {
-	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, nil)
+	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, nil, false)
 }
 
 // BuildWithReuse rechecks changed lanes and carries forward exact, fresh sibling
-// evidence after a rule-only change, without extending its original lifetime.
+// evidence after a scoped edit, without extending its original lifetime.
 func (b workflowDupeBuilder) BuildWithReuse(
 	ctx context.Context,
 	subject api.DuplicateSubject,
@@ -53,7 +53,20 @@ func (b workflowDupeBuilder) BuildWithReuse(
 	skipRemote bool,
 	reuse releaseworkflow.DuplicateAssessmentReuse,
 ) (api.DupeAssessment, any, error) {
-	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, &reuse)
+	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, &reuse, false)
+}
+
+// RebindQuestionnaire publishes only fully compatible, fresh evidence. It never
+// invokes remote duplicate searches when any lane requires a new check.
+func (b workflowDupeBuilder) RebindQuestionnaire(
+	ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet,
+	preflight api.TrackerPreflightAssessment, checkedAt time.Time, skipRemote bool,
+	reuse releaseworkflow.DuplicateAssessmentReuse,
+) (api.DupeAssessment, any, error) {
+	if !reuse.QuestionnaireOnly {
+		return api.DupeAssessment{}, nil, nil
+	}
+	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, &reuse, true)
 }
 
 func (b workflowDupeBuilder) build(
@@ -64,6 +77,7 @@ func (b workflowDupeBuilder) build(
 	checkedAt time.Time,
 	skipRemote bool,
 	reuse *releaseworkflow.DuplicateAssessmentReuse,
+	reuseOnly bool,
 ) (api.DupeAssessment, any, error) {
 	if err := ctx.Err(); err != nil {
 		return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: %w", err)
@@ -88,11 +102,15 @@ func (b workflowDupeBuilder) build(
 	if err != nil {
 		return api.DupeAssessment{}, nil, err
 	}
-	for trackerID := range reused {
+	for trackerID, retained := range reused {
 		result, ok := preflightByTracker[trackerID]
-		if !ok || result.State != api.TrackerPreflightStateReady || !result.FreshUntil.After(checkedAt) {
+		readinessMatches := (result.State == api.TrackerPreflightStateReady) == (retained.Decision != api.DupeDecisionSkipped)
+		if !ok || !readinessMatches || !result.FreshUntil.After(checkedAt) {
 			delete(reused, trackerID)
 		}
+	}
+	if reuseOnly && (len(reused) == 0 || len(reused) != len(projections.Projections)) {
+		return api.DupeAssessment{}, nil, nil
 	}
 	eligibleProjections := projections
 	eligibleProjections.Projections = make([]api.TrackerReleaseProjection, 0, len(projections.Projections))

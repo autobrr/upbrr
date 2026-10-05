@@ -1517,6 +1517,8 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
     "settings",
     "logging",
   ];
+  const questionnaireWorkflowRoutes =
+    /\/api\/app\/(?:GetActiveInput|ContinueReleaseWorkflow|GetReleaseWorkflow)$/;
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
@@ -1590,11 +1592,14 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
                   await intercept.fulfill({ response, body: JSON.stringify(snapshot) });
                 });
               }
-              if (route === "upload") {
-                await page.route("**/api/app/GetActiveInput", async (intercept) => {
+              if (route === "duplicates") {
+                await page.route(questionnaireWorkflowRoutes, async (intercept) => {
                   const response = await intercept.fetch();
                   const snapshot = await response.json();
-                  const projection = snapshot.current?.projections?.projections?.find(
+                  const current = intercept.request().url().endsWith("/GetActiveInput")
+                    ? snapshot.current
+                    : snapshot;
+                  const projection = current?.projections?.projections?.find(
                     (item: { trackerId: string }) => item.trackerId === "HDS",
                   );
                   if (projection)
@@ -1634,13 +1639,37 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
                   await intercept.fulfill({ response, body: JSON.stringify(snapshot) });
                 });
               }
+              const questionDiscovery =
+                route === "duplicates"
+                  ? page.waitForResponse(
+                      (response) =>
+                        response.url().endsWith("/api/app/ContinueReleaseWorkflow") &&
+                        response.request().postDataJSON().goal === "trackers_projected",
+                    )
+                  : null;
               await page.goto(new URL(route, app.url).toString());
               await waitForPopulatedRoute(page, route);
               if (route === "input") {
                 await expect(page.getByTestId("input-tracker-fields")).toHaveCount(1);
               }
-              if (route === "upload") {
-                await expect(page.getByRole("combobox", { name: "Edition *" })).toBeVisible();
+              if (questionDiscovery) {
+                expect((await questionDiscovery).ok()).toBe(true);
+                await expect(
+                  page.getByRole("button", { name: "Apply tracker answers" }),
+                ).toBeEnabled();
+                const summary = page
+                  .getByRole("region", { name: "Tracker questions", exact: true })
+                  .locator("summary")
+                  .filter({ hasText: /^HDS(?: ·|$)/ });
+                const questions = summary.locator("..");
+                await expect(questions).not.toHaveAttribute("open");
+                await expect(summary).toContainText("Required");
+                await expect(questions.getByRole("combobox", { name: "Edition *" })).toBeHidden();
+                await summary.click();
+                await expect(questions.getByRole("combobox", { name: "Edition *" })).toBeVisible();
+                await expect(
+                  questions.getByRole("textbox", { name: "Note", exact: true }),
+                ).toBeVisible();
               }
               const mainText = await page.getByRole("main").innerText();
               expect(mainText).not.toContain("rate limit exceeded");
@@ -1692,7 +1721,8 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
                     : null,
               });
               await page.waitForTimeout(1500);
-              if (route === "input" || route === "upload" || route === "tracker-data")
+              if (route === "duplicates") await page.unroute(questionnaireWorkflowRoutes);
+              if (route === "input" || route === "tracker-data")
                 await page.unroute("**/api/app/GetActiveInput");
             }
           }

@@ -3386,6 +3386,12 @@
           "HardcodedSubsProvenance": {
             "$ref": "#/components/schemas/FactProvenance"
           },
+          "HardcodedSubtitleCoverage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubtitleLanguageCoverage"
+            }
+          },
           "HardcodedSubtitleLanguages": {
             "type": "array",
             "items": {
@@ -8315,6 +8321,24 @@
           "trackerId"
         ]
       },
+      "SubtitleCoverage": {
+        "type": "string"
+      },
+      "SubtitleLanguageCoverage": {
+        "type": "object",
+        "properties": {
+          "Coverage": {
+            "$ref": "#/components/schemas/SubtitleCoverage"
+          },
+          "Language": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Coverage",
+          "Language"
+        ]
+      },
       "TIKOverrides": {
         "type": "object",
         "properties": {
@@ -9495,6 +9519,12 @@
           "preparedOperationId": {
             "$ref": "#/components/schemas/PublicResourceID"
           },
+          "questionnaire": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerQuestionnaireRequirement"
+            }
+          },
           "semanticFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
@@ -10237,7 +10267,13 @@
       "TrackerQuestionnaireRequirement": {
         "type": "object",
         "properties": {
+          "help": {
+            "type": "string"
+          },
           "key": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           },
           "label": {
@@ -10251,6 +10287,9 @@
           },
           "required": {
             "type": "boolean"
+          },
+          "value": {
+            "type": "string"
           }
         },
         "required": [
@@ -10380,6 +10419,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TrackerQuestionnaireRequirement"
+            }
+          },
+          "questionnaireAnswers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
             }
           },
           "readiness": {
@@ -11410,7 +11455,19 @@
         "type": "string"
       },
       "WorkflowGoal": {
-        "type": "string"
+        "type": "string",
+        "enum": [
+          "prepared",
+          "input_ready",
+          "trackers_projected",
+          "trackers_assessed",
+          "duplicates_decided",
+          "media_ready",
+          "descriptions_ready",
+          "upload_reviewed",
+          "dry_run",
+          "uploaded"
+        ]
       },
       "WorkflowID": {
         "type": "string"

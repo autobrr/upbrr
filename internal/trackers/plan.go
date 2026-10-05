@@ -47,10 +47,11 @@ var (
 //
 //nolint:errname // Failure is the accepted domain outcome term used by the tracker-plan contract.
 type PreparationFailure struct {
-	tracker string
-	code    string
-	message string
-	cause   error
+	tracker       string
+	code          string
+	message       string
+	cause         error
+	questionnaire *api.TrackerQuestionnaire
 }
 
 // NewPreparationFailure constructs a safe tracker-local failure.
@@ -65,6 +66,14 @@ func NewPreparationFailure(tracker string, code string, message string, cause er
 		message: trimmedMessage,
 		cause:   cause,
 	}
+}
+
+// NewQuestionnairePreparationFailure preserves required tracker inputs discovered
+// during preparation without creating a submittable operation.
+func NewQuestionnairePreparationFailure(tracker, message string, questionnaire *api.TrackerQuestionnaire) *PreparationFailure {
+	failure := NewPreparationFailure(tracker, "questionnaire_required", message, nil)
+	failure.questionnaire = cloneTrackerDryRunEntry(api.TrackerDryRunEntry{Questionnaire: questionnaire}).Questionnaire
+	return failure
 }
 
 // Error returns sanitized tracker-scoped failure text.

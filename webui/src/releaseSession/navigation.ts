@@ -30,7 +30,6 @@ export const routeAccess = (
   const trackerAssessment = goal("trackers_assessed");
   const media = goal("media_ready");
   const descriptions = goal("descriptions_ready");
-  const upload = goal("upload_reviewed");
   return {
     input: { available: true, reason: "" },
     trackerData: {
@@ -65,6 +64,6 @@ export const routeAccess = (
         ? descriptions.reason
         : "Selected trackers do not use shared descriptions.",
     },
-    upload,
+    upload: goal("upload_reviewed"),
   };
 };

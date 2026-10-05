@@ -179,3 +179,31 @@ func TestUnattendedContinuationDoesNotGrantPendingRuleAnswer(t *testing.T) {
 		t.Fatalf("unattended rule answer was handled=%t: %v", handled, err)
 	}
 }
+
+func TestSubtitleQuestionnaireUnattendedSkipsOnlyItsTracker(t *testing.T) {
+	for _, mode := range []api.InteractionMode{api.InteractionModeUnattended, api.InteractionModeInteractive, api.InteractionModeUnattendedConfirm} {
+		action := api.RequiredAction{
+			Kind:      api.RequiredActionAnswerQuestionnaire,
+			TrackerID: "PTP",
+			Status:    api.RequiredActionStatusPending,
+		}
+		assessment := api.TrackerPreflightAssessment{Results: []api.TrackerPreflightResult{{
+			TrackerID:       "PTP",
+			State:           api.TrackerPreflightStateActionRequired,
+			RequiredActions: []api.RequiredAction{action},
+		}, {TrackerID: "OTHER", State: api.TrackerPreflightStateReady}}}
+		projections := []api.TrackerReleaseProjection{testProjection(t, "PTP", "Example.Movie.2026-GRP"), testProjection(t, "OTHER", "Example.Movie.2026-GRP")}
+		projections[0].RequiredActions = []api.RequiredAction{action}
+		applyPreflightInteractionPolicy(mode, &assessment, projections)
+		if !projections[1].UploadReady || assessment.Results[1].State != api.TrackerPreflightStateReady {
+			t.Fatal("unrelated tracker blocked")
+		}
+		if mode == api.InteractionModeUnattended {
+			if projections[0].UploadReady || len(projections[0].RequiredActions) != 0 || !continuationUnattendedSkipsTrackerAction(api.WorkflowIntent{Interaction: mode}, action) {
+				t.Fatal("strict unattended did not skip review lane")
+			}
+		} else if len(projections[0].RequiredActions) != 1 {
+			t.Fatal("interactive review was removed")
+		}
+	}
+}

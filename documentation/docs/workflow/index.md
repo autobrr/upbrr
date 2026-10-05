@@ -145,6 +145,24 @@ Check save path, category, tags, automatic management, staging mode, and source-
 
 Debug mode is not a non-mutating dry run. It can perform screenshots, image uploads, remote searches, tracker preparation, and later workflow effects. Add `--no-seed` when testing without client injection.
 
+## Tracker questions
+
+Answer tracker-specific questions on **Dupe Checking**, alongside release-name and duplicate review. Questions appear immediately for selected trackers, including defaults, using the current prepared facts. Loading these questions does not run duplicate searches, remote metadata enrichment, authentication, banned-group checks, or claim checks. If the current prepared facts are unavailable or insufficient for this review, upbrr asks you to prepare the source instead of fetching metadata in the background.
+
+Each tracker panel starts collapsed, with **Required** and **Unapplied changes** cues visible when applicable. Open its summary with a click, Enter, or Space to review text, multiline notes, dropdowns, or multiple choices. Collapsing a panel preserves your edits. Choose **Apply tracker answers** to refresh the tracker assessment. Applying answers does not upload or start another duplicate search. Unapplied changes block dry runs and uploads.
+
+An answer-only edit retains fresh duplicate evidence when every duplicate-relevant input still matches. Changes to the source, reviewed names, selected trackers, configuration, or rules, and expired evidence, can require a new duplicate check. Follow the stages requested after applying; retained evidence keeps its original freshness window.
+
+PTP and GPW group metadata is not requested speculatively in the normal question panels. Some new-group or channel requirements can only be confirmed during tracker preparation. When preparation reports them, late-only fields appear in a separate **Tracker preparation details** section on **Dupe Checking**. Requirements for an existing question update its normal tracker panel. Existing-group uploads do not require new-group-only details. Tracker-local source and encoding notes are answered here; canonical metadata and language corrections remain in **Input**.
+
+### Subtitle review
+
+Set regular and hardcoded subtitle languages with the editable language dropdowns in Input. The hardcoded list offers English (Full) and English (Forced); the ordinary list suggests base-language names. Both lists accept custom text. Adding or removing a hardcoded language controls hardcoded handling; there is no separate hardcoded-subtitles toggle. Auto resets the language correction and any retained legacy boolean override.
+
+PTP can require an explicit subtitle/trumpable review before its lane proceeds. Known hardcoded language corrections already provide the necessary intent and avoid another prompt. In the Web UI, open PTP under **Tracker questions** on **Dupe Checking**, and choose **Apply tracker answers** after answering. A first answer may reveal additional choices or a language field. Select every applicable subtitle choice before applying again, then run or continue the duplicate check on the same page. Accepted answers remain editable while the review applies. **English Softsubs Exist (Mislabeled)** does not correct the detected language; make language corrections separately in **Input**.
+
+Changing a reviewed answer refreshes dependent tracker work, retaining compatible duplicate evidence as described above. Complete any workflow stages requested afterward. The final payload uses the accepted answers from the exact reviewed projection.
+
 ## Final review checklist
 
 Before submission, verify:
