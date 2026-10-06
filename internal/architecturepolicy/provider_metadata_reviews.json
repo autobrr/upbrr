@@ -1296,8 +1296,8 @@
     "reason": "Adds a canonical category-family catalog for broad duplicate gathering. The catalog reads no provider metadata; existing localized naming and upload taxonomy retain their prepared-provider and manual-precedence paths."
   },
   "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
-    "sha256": "67b7400f6d66a8d55f1b84880d5ec9af04766463495bcc0c9cd66245ad253c8e",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "9a62f4184a096fe09ebf8fe33015f552dcada21d2c3156171dfa2d073b45e9bb",
+    "reason": "Manual title and manual year still win, and stale or wrong-identity evidence still no-ops."
   },
   "internal/trackers/impl/unit3d/sites/dp/profile.go:Profile": {
     "sha256": "ab4554d412271ca56cd2f46766224e46392f1cda0d78eba0900ab3348e50eabd",

@@ -56,7 +56,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v3" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v4" || policy.Structured == nil || policy.Structured.Search != nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -110,6 +110,53 @@ func TestDPStructuredReleaseNamePolicyRequiresCurrentMatchingTVDBEvidence(t *tes
 				Locale:        "US",
 			}}
 		}},
+		{"manual punctuation title", func(subject *api.UploadSubject) {
+			markDPComponent(t, subject.GeneratedName, api.NameRoleTitle, "Example: Series", true)
+			subject.ReleaseName = subject.GeneratedName.Render().Name
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2030,
+				IncludeYear:   true,
+				IncludeLocale: true,
+				Locale:        "US",
+			}}
+		}},
+		{"manual title provenance", func(subject *api.UploadSubject) {
+			markDPComponent(t, subject.GeneratedName, api.NameRoleTitle, "Example: Series", false)
+			subject.ReleaseName = subject.GeneratedName.Render().Name
+			subject.EffectiveMetadata.TitleProvenance = api.FactProvenanceManual
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2030,
+				IncludeYear:   true,
+				IncludeLocale: true,
+				Locale:        "US",
+			}}
+		}},
+		{"conflicting TVDB id", func(subject *api.UploadSubject) {
+			subject.Identity.TVDBID = 1001
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{
+				TVDBID: 1002,
+				NameDisambiguation: api.TVDBNameDisambiguation{
+					CanonicalName: "Example Series",
+					SeriesYear:    2030,
+					IncludeYear:   true,
+					IncludeLocale: true,
+					Locale:        "US",
+				},
+			}
+		}},
+		{"conflicting TMDB id", func(subject *api.UploadSubject) {
+			subject.Identity.TMDBID = 4242
+			subject.ProviderMetadata.TMDB = &api.TMDBMetadata{TMDBID: 4343, Title: "Example: Series"}
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
+				CanonicalName: "Other Series",
+				SeriesYear:    2030,
+				IncludeYear:   true,
+				IncludeLocale: true,
+				Locale:        "US",
+			}}
+		}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -121,6 +168,87 @@ func TestDPStructuredReleaseNamePolicyRequiresCurrentMatchingTVDBEvidence(t *tes
 			}
 		})
 	}
+}
+
+func TestDPStructuredReleaseNamePolicyAppliesSameSeriesQualifiers(t *testing.T) {
+	t.Parallel()
+	request := api.ReleaseNameRequest{
+		Category:   "TV",
+		Type:       "WEBDL",
+		Title:      "Example: Series",
+		Year:       2026,
+		Season:     "S01",
+		Episode:    "E02",
+		Resolution: "1080p",
+		Source:     "Web",
+		Tag:        "-GRP",
+	}
+	evidence := api.TVDBNameDisambiguation{
+		CanonicalName: "Example Series",
+		SeriesYear:    2026,
+		Locale:        "US",
+		IncludeLocale: true,
+		IncludeYear:   true,
+	}
+	want := "Example: Series US 2026 S01E02 1080p WEB-DL-GRP"
+	t.Run("punctuation canonical title", func(t *testing.T) {
+		subject := dpGeneratedSubject(t, request)
+		subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: evidence}
+		prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+			Tracker: "DP",
+			Meta:    subject,
+		}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		name, err := prepared.ReviewedUploadName()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != want || prepared.Projection.DuplicateCriteria.Name != want {
+			t.Fatalf("upload %q duplicate %q, want %q", name, prepared.Projection.DuplicateCriteria.Name, want)
+		}
+	})
+	t.Run("current TMDB title", func(t *testing.T) {
+		subject := dpGeneratedSubject(t, request)
+		subject.Identity.TMDBID = 4242
+		subject.ProviderMetadata.TMDB = &api.TMDBMetadata{TMDBID: 4242, Title: "Example Series"}
+		subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
+			CanonicalName: "Other Series",
+			SeriesYear:    evidence.SeriesYear,
+			Locale:        evidence.Locale,
+			IncludeLocale: evidence.IncludeLocale,
+			IncludeYear:   evidence.IncludeYear,
+		}}
+		if got := dpReviewedName(t, subject, nil); got != want {
+			t.Fatalf("TMDB identity name = %q, want %q", got, want)
+		}
+	})
+	t.Run("manual year", func(t *testing.T) {
+		subject := dpGeneratedSubject(t, api.ReleaseNameRequest{
+			Category:   "TV",
+			Type:       "WEBDL",
+			Title:      "Example Series",
+			Year:       2026,
+			Season:     "S01",
+			Episode:    "E02",
+			Resolution: "1080p",
+			Source:     "Web",
+			Tag:        "-GRP",
+		})
+		subject.EffectiveMetadata.Year = 2026
+		subject.EffectiveMetadata.YearProvenance = api.FactProvenanceManual
+		subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
+			CanonicalName: "Example Series",
+			SeriesYear:    2030,
+			Locale:        "US",
+			IncludeLocale: true,
+			IncludeYear:   true,
+		}}
+		if got, want := dpReviewedName(t, subject, nil), "Example Series US 2026 S01E02 1080p WEB-DL-GRP"; got != want {
+			t.Fatalf("manual year name = %q, want %q", got, want)
+		}
+	})
 }
 
 func dpGeneratedSubject(t *testing.T, request api.ReleaseNameRequest) api.UploadSubject {

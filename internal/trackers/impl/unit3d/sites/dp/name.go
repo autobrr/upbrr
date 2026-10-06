@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -15,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v3", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v4", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -39,9 +40,25 @@ func applyDPTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubje
 	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
 		return nil
 	}
-	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
+	tvdb := meta.ProviderMetadata.TVDB
+	evidence := tvdb.NameDisambiguation
 	title, ok := editor.Component(api.NameRoleTitle)
-	if !ok || !title.Present || !strings.EqualFold(strings.Join(strings.Fields(title.Value), " "), strings.Join(strings.Fields(evidence.CanonicalName), " ")) {
+	if !ok || !title.Present || title.Manual || meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return nil
+	}
+	if meta.Identity.TVDBID > 0 && tvdb.TVDBID > 0 && meta.Identity.TVDBID != tvdb.TVDBID {
+		return nil
+	}
+	titleKey := dpTitleIdentityKey(title.Value)
+	canonicalKey := dpTitleIdentityKey(evidence.CanonicalName)
+	sameSeries := titleKey != "" && canonicalKey != "" && titleKey == canonicalKey
+	if !sameSeries && titleKey != "" {
+		if tmdb := meta.ProviderMetadata.TMDB; tmdb != nil && tmdb.TMDBID > 0 && tmdb.TMDBID == meta.Identity.TMDBID {
+			tmdbKey := dpTitleIdentityKey(tmdb.Title)
+			sameSeries = tmdbKey != "" && titleKey == tmdbKey
+		}
+	}
+	if !sameSeries {
 		return nil
 	}
 	if meta.EffectiveMetadata.YearProvenance.IsManual() {
@@ -77,6 +94,17 @@ func applyDPTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubje
 		}
 	}
 	return nil
+}
+
+// dpTitleIdentityKey compares titles across punctuation and spacing differences.
+func dpTitleIdentityKey(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.TrimSpace(value) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return builder.String()
 }
 
 func audioLabel(values []string) string {
