@@ -8,44 +8,37 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/redaction"
-	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var ascIDPattern = regexp.MustCompile(`torrents-details\.php\?id=(\d+)`)
+var torrentIDPattern = regexp.MustCompile(`/torrents/(\d+)(?:[/?#]|$)`)
 
 type uploadState struct {
-	uploadURL     string
-	torrentPath   string
-	description   string
-	fields        map[string]string
-	blockedReason string
-	questionnaire *api.TrackerQuestionnaire
-	releaseName   string
+	torrentPath     string
+	description     string
+	payload         uploadPayload
+	screenshotPaths []string
+	coverURL        string
+	blockedReason   string
+	questionnaire   *api.TrackerQuestionnaire
+	releaseName     string
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
 	}
-	state, cookies, err := prepareUploadState(ctx, req, req.Intent != trackers.PreparationIntentUpload)
+	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
@@ -57,66 +50,79 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: ASC %s", state.blockedReason)
 	}
 
-	body, contentType, err := buildMultipartPayload(state.fields, state.torrentPath)
+	cookies, _, err := LoadCookies(ctx, req.Runtime.DBPath)
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: ASC load cookies: %w", err)
+	}
+	client := httpclient.New(httpclient.DefaultTimeout)
+	session, err := newSessionClient(client, cookies)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
-	artifactPath := ""
-	if announceURL != "" {
-		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "ASC")
-		if err != nil {
-			return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
-		}
+	if err := warmUploadSession(ctx, session); err != nil {
+		return trackers.PreparedOperation{}, err
 	}
+	files := []commonhttp.FileField{{FieldName: "torrent", Path: state.torrentPath}}
+	if state.coverURL != "" {
+		cover, err := downloadCover(ctx, client, state.coverURL)
+		if err != nil {
+			return trackers.PreparedOperation{}, err
+		}
+		files = append(files, cover)
+	}
+	screenshots, err := loadScreenshotFiles(state.screenshotPaths)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	remotePaths, err := uploadScreenshots(ctx, session, screenshots)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	req.Logger.Infof("trackers: ASC screenshots uploaded tracker=ASC count=%d", len(remotePaths))
+	body, contentType, err := commonhttp.BuildMultipartPayloadMulti(state.payload.multipartFields(remotePaths), files)
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: ASC build payload: %w", err)
+	}
+	artifactPath, _ := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "ASC")
+	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
-		return submitPreparedUpload(submitCtx, req, state, cookies, body, contentType, announceURL, artifactPath)
+		return submitPreparedUpload(submitCtx, req, session, state, body, contentType, announceURL, artifactPath)
 	}, nil), nil
 }
 
 func submitPreparedUpload(
 	ctx context.Context,
 	req trackers.PreparationInput,
+	client *http.Client,
 	state uploadState,
-	cookies []*http.Cookie,
 	body []byte,
 	contentType string,
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.uploadURL, bytes.NewReader(body))
+	if err := warmUploadSession(ctx, client); err != nil {
+		return api.UploadSummary{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+uploadPath, bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: ASC request build: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", contentType)
-	httpReq.Header.Set("User-Agent", userAgent)
-	for _, cookie := range cookies {
-		httpReq.AddCookie(cookie)
+	setXHRHeaders(httpReq, client)
+	result, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{Tracker: "ASC"})
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: ASC upload: %w", err)
 	}
 
-	client := httpclient.New(httpclient.DefaultTimeout)
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ASC upload request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	finalURL := ""
-	if resp.Request != nil && resp.Request.URL != nil {
-		finalURL = resp.Request.URL.String()
-	}
-	bodyBytes, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusOK, commonhttp.DefaultResponsePreviewBytes)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ASC read upload response: %w", err)
-	}
-	torrentID := parseUploadID(finalURL, string(bodyBytes))
-	if resp.StatusCode == http.StatusOK && torrentID != "" {
-		torrentURL := baseURL + "/torrents-details.php?id=" + url.QueryEscape(torrentID)
-		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "ASC", state.torrentPath, artifactPath, announceURL, sourceFlag,
-		)
-		maybeAutoApprove(ctx, client, cookies, req.TrackerConfig, torrentID, req.Logger)
-		maybeSetInternal(ctx, client, cookies, req.Runtime.Internal, torrentID, req.Logger)
+	torrentID := parseUploadID(result.FinalURL)
+	if result.Success && torrentID != "" {
+		torrentURL := baseURL + torrentPath + torrentID
+		req.Logger.Infof("trackers: ASC upload succeeded tracker=ASC torrent_id=%s", torrentID)
+		registeredPath := persistRegisteredTorrent(ctx, req, client, state.torrentPath, torrentID, artifactPath, announceURL)
+		maybeApprove(ctx, client, req, torrentID)
+		if req.Runtime.Internal {
+			req.Logger.Debugf("trackers: ASC internal flag skipped tracker=ASC reason=moderator_only")
+		}
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
@@ -128,270 +134,193 @@ func submitPreparedUpload(
 		}, nil
 	}
 
-	failurePath := ""
-	if pathValue, pathErr := resolveFailurePath(req.Meta, req.Runtime.DBPath); pathErr == nil {
-		failurePath = pathValue
-		redactedBody := []byte(redaction.RedactValue(string(responsePreview), nil))
-		_ = os.WriteFile(failurePath, redactedBody, 0o600)
+	if _, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "ASC", "upload_failure", result.Preview, ".html"); artifactErr != nil {
+		req.Logger.Warnf("trackers: ASC failure artifact write failed: %v", artifactErr)
 	}
-	errorResponse := responsePreview
-	if resp.StatusCode == http.StatusOK {
-		errorResponse = bodyBytes
+	if result.Success {
+		return api.UploadSummary{}, fmt.Errorf("trackers: ASC upload response did not identify the torrent final_url=%s", result.FinalURL)
 	}
-	if failurePath != "" {
-		return api.UploadSummary{}, fmt.Errorf(
-			"%w failure=%s",
-			commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, errorResponse),
-			failurePath,
-		)
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("ASC", result.StatusCode, result.FinalURL, result.Body)
+}
+
+// persistRegisteredTorrent stores the site's torrent, which may differ from
+// the uploaded one, and falls back to local reconstruction.
+func persistRegisteredTorrent(
+	ctx context.Context,
+	req trackers.PreparationInput,
+	client *http.Client,
+	uploadedPath string,
+	torrentID string,
+	artifactPath string,
+	announceURL string,
+) string {
+	if artifactPath == "" {
+		trackers.LogRegisteredTorrentUnavailable(req.Logger, "ASC")
+		return ""
 	}
-	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, errorResponse)
+	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+torrentPath+torrentID+"/download", nil)
+	if err == nil {
+		downloadReq.Header.Set("User-Agent", userAgent)
+		if err = trackers.DownloadRegisteredTorrent(ctx, client, downloadReq, artifactPath); err == nil {
+			return artifactPath
+		}
+	}
+	req.Logger.Debugf("trackers: ASC registered torrent download failed tracker=ASC decision=reconstruct")
+	return trackers.PersistReconstructedRegisteredTorrent(req.Logger, "ASC", uploadedPath, artifactPath, announceURL, sourceFlag)
+}
+
+func maybeApprove(ctx context.Context, client *http.Client, req trackers.PreparationInput, torrentID string) {
+	if !req.TrackerConfig.UploaderStatus {
+		req.Logger.Debugf("trackers: ASC auto approval skipped tracker=ASC reason=uploader_status_disabled")
+		return
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, baseURL+"/admin/torrents/"+url.PathEscape(torrentID)+"/approve", nil)
+	if err != nil {
+		req.Logger.Warnf("trackers: ASC auto approval failed tracker=ASC reason=request_build")
+		return
+	}
+	setXHRHeaders(httpReq, client)
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		req.Logger.Warnf("trackers: ASC auto approval failed tracker=ASC reason=request")
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+	_ = resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusForbidden:
+		req.Logger.Debugf("trackers: ASC auto approval skipped tracker=ASC reason=not_staff")
+	case resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices:
+		req.Logger.Warnf("trackers: ASC auto approval failed tracker=ASC status=%d", resp.StatusCode)
+	default:
+		req.Logger.Debugf("trackers: ASC auto approval done tracker=ASC torrent_id=%s", torrentID)
+	}
+}
+
+// downloadCover fetches the poster once during preparation so the submitted
+// payload is fully captured.
+func downloadCover(ctx context.Context, client *http.Client, coverURL string) (commonhttp.FileField, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, coverURL, nil)
+	if err != nil {
+		return commonhttp.FileField{}, fmt.Errorf("trackers: ASC cover request build: %w", err)
+	}
+	httpReq.Header.Set("User-Agent", userAgent)
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return commonhttp.FileField{}, fmt.Errorf("trackers: ASC cover download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return commonhttp.FileField{}, fmt.Errorf("trackers: ASC cover download returned status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
+	if err != nil {
+		return commonhttp.FileField{}, fmt.Errorf("trackers: ASC read cover: %w", err)
+	}
+	if len(data) > maxImageBytes {
+		return commonhttp.FileField{}, fmt.Errorf("trackers: ASC cover exceeds %d bytes", maxImageBytes)
+	}
+	contentType := http.DetectContentType(data)
+	ext, ok := map[string]string{
+		"image/jpeg": ".jpg",
+		"image/png":  ".png",
+		"image/webp": ".webp",
+	}[contentType]
+	if !ok {
+		return commonhttp.FileField{}, fmt.Errorf("trackers: ASC cover has unsupported type %s", contentType)
+	}
+	return commonhttp.FileField{
+		FieldName: "cover",
+		FileName:  "cover" + ext,
+		Content:   data,
+	}, nil
+}
+
+// resolveCoverURL picks the poster for the cover upload, capping TMDB
+// originals to a size that stays under the site's image limit.
+func resolveCoverURL(meta api.UploadSubject) string {
+	poster := strings.TrimSpace(resolvePoster(meta))
+	if poster == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(poster); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return ""
+	}
+	return strings.Replace(poster, "/t/p/original/", "/t/p/w780/", 1)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
+	files := make([]api.TrackerDryRunFile, 0, 2+len(state.screenshotPaths))
+	files = append(files,
+		api.TrackerDryRunFile{
+			Field:   "torrent",
+			Path:    state.torrentPath,
+			Present: strings.TrimSpace(state.torrentPath) != "",
+		},
+		api.TrackerDryRunFile{
+			Field:   "cover",
+			Path:    state.coverURL,
+			Present: state.coverURL != "",
+		},
+	)
+	for _, screenshot := range state.screenshotPaths {
+		files = append(files, api.TrackerDryRunFile{
+			Field:   "screenshots[]",
+			Path:    screenshot,
+			Present: true,
+		})
+	}
 	return standalone.BuildPreview(standalone.PreviewSpec{
 		Tracker:          "ASC",
 		BlockedReason:    state.blockedReason,
 		ReleaseName:      state.releaseName,
 		DescriptionGroup: "asc",
 		Description:      state.description,
-		Endpoint:         state.uploadURL,
-		Payload:          state.fields,
+		Endpoint:         baseURL + uploadPath,
+		Payload:          state.payload.previewFields(),
 		Questionnaire:    state.questionnaire,
-		Files: []api.TrackerDryRunFile{{
-			Field:   "torrent",
-			Path:    state.torrentPath,
-			Present: strings.TrimSpace(state.torrentPath) != "",
-		}},
+		Files:            files,
 	})
 }
 
-func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryRun bool) (uploadState, []*http.Cookie, error) {
-	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
+func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (uploadState, error) {
+	torrentFile, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
-		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
-
 	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-
-	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets, req.TrackerConfig.CustomLayout)
-
-	releaseName, nameErr := req.ReviewedUploadName()
-	if nameErr != nil {
-		return uploadState{}, nil, fmt.Errorf("trackers: ASC release name: %w", nameErr)
-	}
-	fields := buildPayload(req.Meta, req.TrackerConfig, assets, description, releaseName)
-	state := uploadState{
-		uploadURL:     resolveUploadURL(req.Meta),
-		torrentPath:   torrentPath,
-		description:   description,
-		fields:        fields,
-		releaseName:   releaseName,
-		questionnaire: buildQuestionnaire(req.Meta),
-	}
-	if reason := authProblem(ctx, req.Runtime.DBPath); reason != "" {
-		state.blockedReason = reason
-	} else if reason := validatePayloadFields(req.Meta, fields); reason != "" {
-		state.blockedReason = reason
-	}
-	if dryRun {
-		return state, nil, nil
-	}
-
-	cookies, _, err := LoadCookies(ctx, req.Runtime.DBPath)
+	releaseName, err := req.ReviewedUploadName()
 	if err != nil {
-		return uploadState{}, nil, fmt.Errorf("trackers: ASC load cookies: %w", err)
+		return uploadState{}, fmt.Errorf("trackers: ASC release name: %w", err)
 	}
-	return state, cookies, nil
+	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets)
+	state := uploadState{
+		torrentPath:     torrentFile,
+		description:     description,
+		payload:         buildPayload(req.Meta, req.TrackerConfig, description, releaseName, resolveMediaInfoReport(req.Meta, req.Runtime.DBPath)),
+		screenshotPaths: selectScreenshots(assets),
+		coverURL:        resolveCoverURL(req.Meta),
+		releaseName:     releaseName,
+		questionnaire:   buildQuestionnaire(req.Meta),
+	}
+	state.blockedReason = metautil.FirstNonEmptyTrimmed(
+		authProblem(ctx, req.Runtime.DBPath),
+		validatePayloadFields(req.Meta, state.payload, len(state.screenshotPaths), state.coverURL),
+	)
+	return state, nil
 }
 
-func buildPayload(
-	meta api.UploadSubject,
-	trackerCfg config.TrackerConfig,
-	assets trackers.DescriptionAssets,
-	description string,
-	releaseName string,
-) map[string]string {
-	answers := standalone.QuestionnaireAnswers(meta, "ASC")
-	fields := map[string]string{
-		"ano":        strconv.Itoa(resolveYear(meta)),
-		"audio":      resolveAudio(meta),
-		"capa":       resolvePoster(meta),
-		"codecaudio": resolveAudioCodec(meta),
-		"codecvideo": resolveVideoCodec(meta),
-		"descr":      description,
-		"extencao":   resolveContainer(meta),
-		"genre":      resolveGenres(meta, answers),
-		"imdb":       resolveIMDbIDText(meta),
-		"layout":     metautil.FirstNonEmptyTrimmed(strings.TrimSpace(trackerCfg.CustomLayout), "2"),
-		"legenda":    resolveSubtitle(meta),
-		"name":       releaseName,
-		"qualidade":  resolveQuality(meta),
-		"takeupload": "yes",
-		"tresd":      boolFlag(meta.Is3D != ""),
-		"tube":       resolveTrailer(meta),
+func parseUploadID(finalURL string) string {
+	parsed, err := url.Parse(finalURL)
+	if err != nil {
+		return ""
 	}
-	resolution := resolveResolution(meta)
-	fields["largura"] = resolution["width"]
-	fields["altura"] = resolution["height"]
-	fields["lang"] = resolveLanguage(meta)
-	count := 1
-	for _, image := range assets.Screenshots {
-		if count > 4 {
-			break
-		}
-		raw := strings.TrimSpace(image.RawURL)
-		if raw == "" {
-			continue
-		}
-		lower := strings.ToLower(raw)
-		if strings.Contains(lower, "amigos-share.club") || strings.Contains(lower, "tmdb.org") || strings.Contains(lower, "imdb.com") ||
-			strings.Contains(lower, "themoviedb.org") {
-			continue
-		}
-		fields[fmt.Sprintf("screens%d", count)] = raw
-		count++
-	}
-	if meta.Anime {
-		fields["type"] = resolveAnimeType(meta)
-		fields["idioma"] = resolveAnimeLanguage(meta)
-		fields["lang"] = resolveAnimeAudioLanguage(meta)
-	}
-	return fields
-}
-
-func resolveUploadURL(meta api.UploadSubject) string {
-	if meta.Anime {
-		return baseURL + "/enviar-anime.php"
-	}
-	if categoryOf(meta) == "TV" {
-		return baseURL + "/enviar-series.php"
-	}
-	return baseURL + "/enviar-filme.php"
-}
-
-func parseUploadID(finalURL string, body string) string {
-	if matches := ascIDPattern.FindStringSubmatch(finalURL); len(matches) == 2 {
-		return strings.TrimSpace(matches[1])
-	}
-	if matches := ascIDPattern.FindStringSubmatch(body); len(matches) == 2 {
-		return strings.TrimSpace(matches[1])
+	if matches := torrentIDPattern.FindStringSubmatch(parsed.Path); len(matches) == 2 {
+		return matches[1]
 	}
 	return ""
-}
-
-func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte, string, error) {
-	file, err := os.Open(strings.TrimSpace(torrentPath))
-	if err != nil {
-		return nil, "", fmt.Errorf("trackers: ASC open torrent file: %w", err)
-	}
-	defer file.Close()
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	for key, value := range fields {
-		if err := writer.WriteField(key, value); err != nil {
-			return nil, "", fmt.Errorf("trackers: ASC write multipart field %q: %w", key, err)
-		}
-	}
-	part, err := writer.CreateFormFile("torrent", filepath.Base(torrentPath))
-	if err != nil {
-		return nil, "", fmt.Errorf("trackers: ASC create torrent form file: %w", err)
-	}
-	if _, err := io.Copy(part, file); err != nil {
-		return nil, "", fmt.Errorf("trackers: ASC copy torrent file: %w", err)
-	}
-	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("trackers: ASC close multipart writer: %w", err)
-	}
-	return body.Bytes(), writer.FormDataContentType(), nil
-}
-
-func maybeAutoApprove(ctx context.Context, client *http.Client, cookies []*http.Cookie, cfg config.TrackerConfig, torrentID string, logger api.Logger) {
-	if client == nil {
-		logger.Warnf("trackers: ASC auto approval skipped: client is nil")
-		return
-	}
-	if !cfg.UploaderStatus {
-		logger.Debugf("trackers: ASC auto approval skipped: uploader status disabled")
-		return
-	}
-	if strings.TrimSpace(torrentID) == "" {
-		logger.Warnf("trackers: ASC auto approval skipped: empty torrentID")
-		return
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/uploader_app.php?id="+url.QueryEscape(torrentID), nil)
-	if err != nil {
-		logger.Warnf("trackers: ASC auto approval failed: %v", err)
-		return
-	}
-	req.Header.Set("User-Agent", userAgent)
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-	resp, err := client.Do(req)
-	if err != nil && logger != nil {
-		logger.Warnf("trackers: ASC auto approval failed: %v", err)
-	}
-	if resp != nil {
-		resp.Body.Close()
-	}
-}
-
-func maybeSetInternal(
-	ctx context.Context,
-	client *http.Client,
-	cookies []*http.Cookie,
-	internal bool,
-	torrentID string,
-	logger api.Logger,
-) {
-	if client == nil || !internal || strings.TrimSpace(torrentID) == "" {
-		if logger != nil {
-			logger.Debugf("trackers: ASC internal flag skipped reason=not_applicable")
-		}
-		return
-	}
-	values := url.Values{"id": {torrentID}, "internal": {"yes"}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/torrents-edit.php?action=doedit", strings.NewReader(values.Encode()))
-	if err != nil {
-		if logger != nil {
-			logger.Warnf("trackers: ASC internal flag failed: %v", err)
-		}
-		return
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", userAgent)
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		if logger != nil {
-			logger.Warnf("trackers: ASC internal flag failed: %v", err)
-		}
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		if logger != nil {
-			logger.Warnf("trackers: ASC internal flag failed: status=%d", resp.StatusCode)
-		}
-	}
-}
-
-func resolveFailurePath(meta api.UploadSubject, dbPath string) (string, error) {
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	return filepath.Join(tmpDir, "[ASC]upload_failure.html"), nil
 }

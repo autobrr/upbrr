@@ -40,6 +40,8 @@ func TestDefinitionBuildUploadDryRunBlockedWithoutCookies(t *testing.T) {
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "movie.mkv"),
 			TorrentPath: torrentPath,
+			Type:        "WEBDL",
+			Container:   "mkv",
 			Release: api.ReleaseInfo{
 				Title:      "Movie",
 				Year:       2024,
@@ -76,7 +78,7 @@ func TestDefinitionBuildUploadDryRunRejectsMissingQuestionnaireMetadata(t *testi
 	if err := os.MkdirAll(cookieDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	content := "# Netscape HTTP Cookie File\n.cliente.amigos-share.club\tTRUE\t/\tTRUE\t0\tsession\tcookievalue\n"
+	content := "# Netscape HTTP Cookie File\n.amigos-share.club\tTRUE\t/\tTRUE\t0\tsession\tcookievalue\n"
 	if err := os.WriteFile(filepath.Join(cookieDir, testCookieFileName), []byte(content), 0o600); err != nil {
 		t.Fatalf("write cookie: %v", err)
 	}
@@ -90,6 +92,8 @@ func TestDefinitionBuildUploadDryRunRejectsMissingQuestionnaireMetadata(t *testi
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "movie.mkv"),
 			TorrentPath: torrentPath,
+			Type:        "WEBDL",
+			Container:   "mkv",
 			Release: api.ReleaseInfo{
 				Title:      "Movie",
 				Year:       2024,

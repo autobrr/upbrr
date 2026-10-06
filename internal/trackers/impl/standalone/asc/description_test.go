@@ -122,7 +122,7 @@ func TestBuildTechnicalSheetHomepageURLRejectsEncodedDelimiterThroughRender(t *t
 	}
 }
 
-func TestHomepageURLFixLeavesOtherASCLinksUnchanged(t *testing.T) {
+func TestDescriptionLinksStayTextOnly(t *testing.T) {
 	t.Parallel()
 
 	meta := api.UploadSubject{
@@ -131,6 +131,7 @@ func TestHomepageURLFixLeavesOtherASCLinksUnchanged(t *testing.T) {
 			IMDBID:   7654321,
 			TMDBID:   123,
 		},
+		ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{Rating: 7.8}},
 	}
 
 	cast := buildCastSection(meta, []richCreditItem{
@@ -141,18 +142,33 @@ func TestHomepageURLFixLeavesOtherASCLinksUnchanged(t *testing.T) {
 			ProfilePath: "/profile.jpg",
 		},
 	})
-	if !strings.Contains(cast, "[url=https://www.themoviedb.org/person/42?language=pt-BR]") {
-		t.Fatalf("expected TMDB cast link to stay unchanged, got %q", cast)
+	if cast != "[url=https://www.themoviedb.org/person/42?language=pt-BR]Jane Example[/url] como Hero" {
+		t.Fatalf("unexpected cast section %q", cast)
 	}
 
-	ratings := buildRatingsBBCode(meta, []map[string]any{
-		{"Source": "Internet Movie Database", "Value": "7.8/10"},
-		{"Source": "TMDb", "Value": "8.2/10"},
-	})
-	if !strings.Contains(ratings, "[url=https://www.imdb.com/title/tt7654321]") {
-		t.Fatalf("expected IMDb rating link to stay unchanged, got %q", ratings)
+	ratings := buildRatingsBBCode(meta, &richMediaResponse{VoteAverage: 8.2})
+	want := "[url=https://www.imdb.com/title/tt7654321]IMDb[/url]: 7.8/10\n[url=https://www.themoviedb.org/movie/123]TMDb[/url]: 8.2/10"
+	if ratings != want {
+		t.Fatalf("ratings = %q, want %q", ratings, want)
 	}
-	if !strings.Contains(ratings, "[url=https://www.themoviedb.org/movie/123]") {
-		t.Fatalf("expected TMDB rating link to stay unchanged, got %q", ratings)
+	if hasForeignImages(cast + ratings) {
+		t.Fatal("expected text-only cast and ratings sections")
+	}
+}
+
+func TestStripForeignImagesKeepsSiteHostedImages(t *testing.T) {
+	t.Parallel()
+
+	input := "Notes\n[url=https://host.example/view][img]https://host.example/a.png[/img][/url]\n" +
+		"[img=300]https://img.example/b.png[/img]\n[img]https://amigos-share.club/storage/torrent-images/x.webp[/img]"
+	got := stripForeignImages(input)
+	if strings.Contains(got, "example") {
+		t.Fatalf("foreign images survived: %q", got)
+	}
+	if !strings.Contains(got, "https://amigos-share.club/storage/torrent-images/x.webp") {
+		t.Fatalf("site-hosted image was removed: %q", got)
+	}
+	if !hasForeignImages(input) || hasForeignImages(got) {
+		t.Fatalf("hasForeignImages misclassified input=%t output=%t", hasForeignImages(input), hasForeignImages(got))
 	}
 }
