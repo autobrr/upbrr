@@ -63,6 +63,12 @@ If no browse policy exists, the first authenticated Web UI setup can establish i
 
 Existing browse roots remain unchanged when application config is imported.
 
+## Review imported torrent clients
+
+A qBittorrent entry with a URL is retained even when its username or password is empty. This supports servers that allow local authentication bypass; it does not change the server's authentication settings. See [Torrent Clients settings](../web-ui/settings/torrent-clients.md).
+
+Remove unused URL-only example entries before importing, or remove them in Settings afterward. They are now valid clients rather than incomplete templates. Retaining extra clients can change implicit selection: search can include all configured qBittorrent clients, and ordinary injection chooses the only configured client only when exactly one exists. URL-only tracker results may fall back to configured URL-capable clients that allow fallback. Set explicit **Searching clients** and **Injected clients** to the intended qBittorrent entries under [Client Handling](../web-ui/settings/client-handling.md) and review tracker overrides before uploading.
+
 ## Validate the migration
 
 Check metadata credentials, trackers, image hosts, torrent clients, screenshot settings, and post-upload behavior. Then run one workflow with `--debug --no-seed`, or select **Skip client injection** before the Web UI **Dry Run**, before submitting anything.

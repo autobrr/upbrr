@@ -232,7 +232,7 @@ func TestQbitSpecificFieldsWinOverLegacyAliases(t *testing.T) {
 	}
 }
 
-func TestValidateQbitMissingCredentials(t *testing.T) {
+func TestValidateQbitMissingHost(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -245,16 +245,6 @@ func TestValidateQbitMissingCredentials(t *testing.T) {
 			Username: "u",
 			Password: "p",
 		}, "url"},
-		{"missing user", TorrentClientConfig{
-			Type:     "qbit",
-			URL:      "http://x",
-			Password: "p",
-		}, "username"},
-		{"missing pass", TorrentClientConfig{
-			Type:     "qbit",
-			URL:      "http://x",
-			Username: "u",
-		}, "password"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
