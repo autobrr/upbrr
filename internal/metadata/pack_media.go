@@ -28,7 +28,8 @@ func requiresPackMediaEvidence(meta preparationstate.State) bool {
 }
 
 // collectPackMediaEvidence probes each selected non-disc pack file sequentially.
-// Failed or incomplete probes remain unresolved; cancellation stops collection.
+// Primary probe failures stop preparation; other incomplete reports remain unresolved.
+// Cancellation stops collection.
 // Namespaced artifacts prevent one episode, changed source, or changed file
 // from reusing another report. Unchanged files reuse the existing exporter cache.
 func (s *Service) collectPackMediaEvidence(ctx context.Context, meta *preparationstate.State) error {
@@ -54,6 +55,9 @@ func (s *Service) collectPackMediaEvidence(ctx context.Context, meta *preparatio
 		}
 		info, err := os.Stat(file)
 		if err != nil {
+			if fact.Primary {
+				return fmt.Errorf("metadata: primary pack media file: %w", err)
+			}
 			logger.Warnf("metadata: pack media file unavailable; evidence remains unresolved")
 			continue
 		}
@@ -79,6 +83,9 @@ func (s *Service) collectPackMediaEvidence(ctx context.Context, meta *preparatio
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return fmt.Errorf("metadata: pack media: %w", err)
 			}
+			if fact.Primary {
+				return fmt.Errorf("metadata: mediainfo: %w", err)
+			}
 			logger.Warnf("metadata: pack media probe failed; evidence remains unresolved")
 			continue
 		}
@@ -87,6 +94,9 @@ func (s *Service) collectPackMediaEvidence(ctx context.Context, meta *preparatio
 		}
 		doc, err := loadMediaInfoDoc(result.JSONPath)
 		if err != nil {
+			if fact.Primary {
+				return fmt.Errorf("metadata: primary pack media report: %w", err)
+			}
 			logger.Warnf("metadata: pack media report unreadable; evidence remains unresolved")
 			continue
 		}

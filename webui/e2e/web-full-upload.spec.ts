@@ -2029,6 +2029,8 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
     for (const tracker of ["HDS", "PTP"]) {
       await page.getByRole("checkbox", { name: tracker }).check();
     }
+    // Changing trackers can prepare a new generation; review its language evidence.
+    await applyTrackerAnswers(page);
     const questions = page
       .getByRole("region", { name: "Tracker questions", exact: true })
       .locator("details")
@@ -2038,9 +2040,22 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
     await questions
       .getByRole("combobox", { name: "PTP forced English dialogue coverage *", exact: true })
       .selectOption("not_required");
-    await applyTrackerAnswers(page);
+    const applied = await applyTrackerAnswers(page);
+    expect(
+      applied.projections?.projections.find((projection) => projection.trackerId === "PTP"),
+    ).toMatchObject({ readiness: "ready", dupeReady: true });
     const checked = await runDuplicateCheck(page, "blocked");
     expect(checked.dupes?.results.map((result) => result.trackerId).sort()).toEqual(["HDS", "PTP"]);
+    expect(checked.dupes?.results.find((result) => result.trackerId === "PTP")).toMatchObject({
+      status: "blocked",
+      decision: "pending",
+      matches: [
+        {
+          name: "Example.Show.S01E01.1080p.WEB-DL.DV-GRP",
+          relation: "manual_review",
+        },
+      ],
+    });
 
     await expect(page.getByText("Example.Release.2026.1080p.SDR-GRP")).toHaveCount(0);
     await expect(page.getByText("Example.Release.2026.1080p.HDR10-GRP")).toBeVisible();

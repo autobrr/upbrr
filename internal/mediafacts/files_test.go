@@ -100,3 +100,26 @@ func TestResolveFilesCannotRepairUninspectedTracksWithAggregateCorrections(t *te
 		t.Fatalf("uninspected track was made complete: %+v", got.Files[0])
 	}
 }
+
+func TestResolveFilesNormalizesPrimaryTransportStreamContainer(t *testing.T) {
+	media := api.MediaFacts{Container: "m2ts", MediaFileFacts: api.MediaFileFacts{ExpectedFileCount: 2, Files: []api.MediaFileFact{
+		{
+FileName: "episode1.m2ts",
+ Primary: true,
+ Container: "ts",
+ VideoTrackCount: 1,
+},
+		{
+FileName: "episode2.m2ts",
+ Container: "ts",
+ VideoTrackCount: 1,
+},
+	}}}
+	got := ResolveFiles(media, "1080p")
+	if got.Files[0].Container != "ts" || got.Files[1].Container != "ts" {
+		t.Fatalf("same transport-stream format differs: %+v", got.Files)
+	}
+	if media.Container != "m2ts" {
+		t.Fatal("pack comparison normalization changed canonical naming container")
+	}
+}

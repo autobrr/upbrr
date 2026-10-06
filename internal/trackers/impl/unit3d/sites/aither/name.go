@@ -205,9 +205,12 @@ func firstAitherPresentRole(present []api.ReleaseNameRole, candidates ...api.Rel
 func aitherLanguage(meta api.UploadSubject) string {
 	languages := meta.LanguageFacts.ProgrammeLanguages
 	if trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+		if unit3d.IsDiscType(meta.DiscType) {
+			return ""
+		}
 		languages = meta.AudioLanguages
 	}
-	if unit3d.IsDiscType(meta.DiscType) || unit3d.HasEnglishLanguage(languages) {
+	if unit3d.HasEnglishLanguage(languages) {
 		return ""
 	}
 	for _, value := range languages {

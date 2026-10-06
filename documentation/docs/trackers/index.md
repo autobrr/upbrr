@@ -66,6 +66,8 @@ Seedpool pack/episode comparisons show a specific warning when matching technica
 
 LST's missing-English-subtitle exception requires a successful complete title-wide search. Zero other torrents allows a labelled trumpable acknowledgement. Any other torrent blocks that exception, including other resolutions or formats. A failed or incomplete search cannot establish an empty title. Changed or expired search evidence requires reassessment.
 
+Luminarr also reviews original-track order, grouped dub order and track metadata recommendations. Non-exempt personal releases require those recommendations to be satisfied; an exemption never waives mandatory original audio, complete English subtitles or known track-language assignments.
+
 Some requirements need source facts that media inspection cannot establish. Tracker questions can ask about retained source mixes, retail subtitles, regional dialects or foreign-dialogue coverage. Answer for the current release; changing relevant facts or the prepared generation requires review again. These answers establish the specific fact being asked about and do not waive an independent strict rule.
 
 Complete DVD, Blu-ray and UHD Blu-ray uploads retain their existing behavior and are excluded from these language assessments. Remuxes are non-disc uploads and remain subject to the rules. upbrr does not remove or remux tracks automatically.
@@ -74,7 +76,7 @@ Complete DVD, Blu-ray and UHD Blu-ray uploads retain their existing behavior and
 
 Selecting SP for a non-disc TV pack requests MediaInfo for every selected episode file, including remuxes. The first preparation performs one sequential probe per file, so analysis cost grows with the number of episodes. Unchanged source and file evidence can reuse cached reports. Single episodes, full discs, and preparations without this demand keep their existing analysis behavior.
 
-Per-file language evidence distinguishes known absent tracks from unknown languages. Failed or incomplete probes remain unresolved. MediaInfo cannot establish source provenance, and filename source tokens do not prove pack source consistency; measured language, codec, resolution and bit-depth evidence do not resolve that separate question. Correcting the primary episode does not silently rewrite the other episodes' evidence.
+Per-file language evidence distinguishes known absent tracks from unknown languages. A failed primary-file probe stops preparation. Failed non-primary probes and incomplete reports remain unresolved. MediaInfo cannot establish source provenance, and filename source tokens do not prove pack source consistency; measured language, codec, resolution and bit-depth evidence do not resolve that separate question. Correcting the primary episode does not silently rewrite the other episodes' evidence.
 
 Answer SP’s source-consistency question for the current files. Where differences reflect genuine source variation, confirm that variation and explain it in the requested field. Keep the explanation in the final SP description. This exception does not resolve missing evidence or waive unrelated strict findings.
 
@@ -88,7 +90,7 @@ PTP can ask you to review subtitle and trumpable tags when neither English subti
 
 upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. BHD factual tags are independent: original foreign programme audio plus English can set both `DualAudio` and `EnglishDub`, while the automatic name uses only the applicable exclusive marker. An additional prohibited dub still blocks the upload.
 
-OTW uses programme-audio languages, not subtitle languages, for its `Dual Audio`, `Dubbed` and `MULTI` elements. YUS uses `Multi-Audio` for two or more known programme languages. DP and YUS technical audio naming follows the default audio track. Incomplete facts cannot establish a dub-only presentation. Manual naming controls remain presentation choices and do not grant upload eligibility.
+OTW uses programme-audio languages, not subtitle languages, for its `Dual Audio`, `Dubbed` and `MULTI` elements. YUS uses `Multi-Audio` for two or more known programme languages. DP and YUS technical audio naming follows the default audio track. Automatic naming requires one inspected default track with a technical label; missing or ambiguous default evidence remains unresolved rather than silently retaining another track’s codec. Explicit manual naming choices remain presentation controls. Incomplete facts cannot establish a dub-only presentation. Manual naming controls remain presentation choices and do not grant upload eligibility.
 
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or the rendered TV season/episode segment. Missing or unknown resolution stays absent. Complete manual names and tracker policies that use exact source names or separate display titles retain their existing behavior.
 

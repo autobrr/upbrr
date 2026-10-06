@@ -1014,6 +1014,8 @@ export type MediaTrackFacts = Readonly<{
   ResourceID: string;
   Role: AudioTrackRole;
   SampleRate: number;
+  StreamOrder: number;
+  StreamOrderKnown: boolean;
   Title: string;
 }>;
 

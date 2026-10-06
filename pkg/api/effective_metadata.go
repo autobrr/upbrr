@@ -117,12 +117,16 @@ const (
 // MediaTrackFacts describes only an inspected stream. An opaque resource ID and
 // exact manifest bind ordinal identities when native IDs are unavailable.
 type MediaTrackFacts struct {
-	ID                    string
-	Kind                  MediaTrackKind
-	ResourceID            string
-	ManifestFingerprint   string
-	NativeID              string
-	Ordinal               int
+	ID                  string
+	Kind                MediaTrackKind
+	ResourceID          string
+	ManifestFingerprint string
+	NativeID            string
+	Ordinal             int
+	// StreamOrder is the measured container order, not the per-kind Ordinal or NativeID.
+	// StreamOrderKnown is false when MediaInfo has no unambiguous nonnegative order.
+	StreamOrder           int
+	StreamOrderKnown      bool
 	Title                 string
 	Codec                 string
 	AudioLabel            string

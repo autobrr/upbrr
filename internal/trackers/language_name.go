@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
 
@@ -50,28 +51,46 @@ func ApplyEnglishAudioNameDefaults(editor *NameEditor, meta api.UploadSubject) e
 	return nil
 }
 
-// ApplyDefaultAudioName uses an inspected default programme track's technical
-// label for sites whose naming contract explicitly follows that track.
+// ApplyDefaultAudioName uses the unique inspected default audio track.
+// Automatic naming remains unresolved without that evidence; manual components
+// and full-disc names retain their existing presentation authority.
 func ApplyDefaultAudioName(editor *NameEditor, meta api.UploadSubject) error {
 	if IsFullDiscUpload(meta.DiscType, meta.Type) {
+		return nil
+	}
+	if audio, ok := editor.Component(api.NameRoleAudio); ok && audio.Manual {
+		return nil
+	}
+	if meta.LanguageFacts.AudioAbsent {
+		if err := editor.Omit(api.NameRoleAudio); err != nil {
+			return fmt.Errorf("omit absent audio: %w", err)
+		}
 		return nil
 	}
 	var selected *api.MediaTrackFacts
 	for i := range meta.LanguageFacts.Tracks {
 		track := &meta.LanguageFacts.Tracks[i]
-		if track.Kind != api.MediaTrackAudio || !track.Default || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
+		if track.Kind != api.MediaTrackAudio || !track.Default {
 			continue
 		}
 		if selected != nil {
-			return nil
+			return &NameRuleError{
+				Rule:   "default_audio",
+				Role:   api.NameRoleAudio,
+				Reason: "Unresolved default audio naming: multiple inspected audio tracks are marked default",
+			}
 		}
 		selected = track
 	}
-	if selected == nil || selected.AudioLabel == "" {
-		return nil
+	if selected == nil || strings.TrimSpace(selected.Codec) == "" || strings.EqualFold(selected.Codec, "Unknown") || selected.AudioLabel == "" {
+		return &NameRuleError{
+			Rule:   "default_audio",
+			Role:   api.NameRoleAudio,
+			Reason: "Unresolved default audio naming: an inspected default audio track and technical label are required",
+		}
 	}
 	if err := editor.Set(api.NameRoleAudio, selected.AudioLabel); err != nil {
-		return fmt.Errorf("set default programme audio label: %w", err)
+		return fmt.Errorf("set default audio label: %w", err)
 	}
 	return nil
 }

@@ -292,7 +292,12 @@ func TestPackMediaIncompleteReportsPreserveUnknowns(t *testing.T) {
 		{name: "invalid json", report: `not json`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			analyzer := &packAnalyzer{inspect: func(context.Context, string) (string, error) { return test.report, nil }}
+			analyzer := &packAnalyzer{inspect: func(_ context.Context, target string) (string, error) {
+				if strings.Contains(filepath.Base(target), "E01") {
+					return packMediaReport, nil
+				}
+				return test.report, nil
+			}}
 			service, request := packCollectionFixture(t, analyzer)
 			meta, err := service.collectSourceEvidence(t.Context(), request)
 			if err != nil {
@@ -468,5 +473,47 @@ func TestPackMediaMissingBitDepthStaysUnresolvedWithRetainedSourceAnswer(t *test
 		return failure.Rule == "sp_pack_uniformity" && failure.Disposition == api.RuleDispositionStrict && strings.Contains(failure.Reason, "bit depth")
 	}) {
 		t.Fatalf("unmeasured bit depth accepted source answer: %+v", failures)
+	}
+}
+
+func TestPackPrimaryProbeFailureStopsPreparation(t *testing.T) {
+	failure := errors.New("synthetic primary probe failure")
+	analyzer := &packAnalyzer{inspect: func(_ context.Context, target string) (string, error) {
+		if strings.Contains(filepath.Base(target), "E01") {
+			return "", failure
+		}
+		return packMediaReport, nil
+	}}
+	service, request := packCollectionFixture(t, analyzer)
+	_, err := service.collectSourceEvidence(t.Context(), request)
+	if !errors.Is(err, failure) || len(analyzer.targets) != 1 {
+		t.Fatalf("primary failure err=%v probes=%v", err, analyzer.targets)
+	}
+}
+
+func TestPackPrimaryStatFailureStopsPreparation(t *testing.T) {
+	analyzer := &packAnalyzer{}
+	service, request := packCollectionFixture(t, analyzer)
+	meta, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(meta.VideoPath); err != nil {
+		t.Fatal(err)
+	}
+	err = service.collectPackMediaEvidence(t.Context(), &meta)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("primary stat failure did not stop preparation: %v", err)
+	}
+}
+
+func TestPackPrimaryMalformedReportStopsPreparation(t *testing.T) {
+	analyzer := &packAnalyzer{inspect: func(context.Context, string) (string, error) { return "not json", nil }}
+	service, request := packCollectionFixture(t, analyzer)
+	if _, err := service.collectSourceEvidence(t.Context(), request); err == nil {
+		t.Fatal("malformed primary report did not stop preparation")
+	}
+	if len(analyzer.targets) != 1 {
+		t.Fatalf("continued after malformed primary report: %v", analyzer.targets)
 	}
 }

@@ -4,13 +4,151 @@
 package metadata
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestMediaTrackFactsMeasuredStreamOrder(t *testing.T) {
+	t.Parallel()
+	doc := mediaInfoDoc{}
+	doc.Media.Track = []map[string]any{
+		{
+			"@type":       "Audio",
+			"StreamOrder": "3",
+			"Language":    "eng",
+			"Title":       "Dub",
+		},
+		{
+			"@type":       "Text",
+			"StreamOrder": "2",
+			"Language":    "eng",
+		},
+		{
+			"@type":       "Audio",
+			"StreamOrder": "1",
+			"Language":    "jpn",
+			"Title":       "Main",
+		},
+	}
+	tracks, _, _, _, err := mediaTrackFacts(preparationstate.State{}, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []int{3, 2, 1} {
+		if !tracks[i].StreamOrderKnown || tracks[i].StreamOrder != want {
+			t.Fatalf("track %d measured order = %+v, want %d", i, tracks[i], want)
+		}
+	}
+	if tracks[0].Ordinal != 1 || tracks[1].Ordinal != 1 || tracks[2].Ordinal != 2 {
+		t.Fatalf("per-kind identity ordinals changed: %+v", tracks)
+	}
+}
+
+func TestMediaTrackFactsStreamOrderEvidence(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value any
+		want  int
+		known bool
+	}{
+		{
+			name:  "zero",
+			value: "0",
+			known: true,
+		},
+		{
+			name:  "integer",
+			value: 3,
+			want:  3,
+			known: true,
+		},
+		{
+			name:  "JSON number",
+			value: float64(4),
+			want:  4,
+			known: true,
+		},
+		{
+			name:  "number token",
+			value: json.Number("5"),
+			want:  5,
+			known: true,
+		},
+		{
+			name:  "trimmed",
+			value: " 6 ",
+			want:  6,
+			known: true,
+		},
+		{name: "missing"},
+		{name: "empty", value: ""},
+		{name: "negative", value: "-1"},
+		{name: "fraction", value: "1.5"},
+		{name: "fractional number", value: float64(1.5)},
+		{name: "multiple streams", value: "1 / 2"},
+		{name: "compound stream", value: "0-1"},
+		{name: "labelled value", value: "1 (0x1)"},
+		{name: "overflow", value: "99999999999999999999999999999999"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			doc := mediaInfoDoc{}
+			track := map[string]any{
+				"@type":    "Audio",
+				"ID":       "1",
+				"UniqueID": "2",
+			}
+			if test.value != nil {
+				track["StreamOrder"] = test.value
+			}
+			doc.Media.Track = []map[string]any{track}
+			tracks, _, _, _, err := mediaTrackFacts(preparationstate.State{}, doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tracks[0].StreamOrderKnown != test.known || tracks[0].StreamOrder != test.want {
+				t.Fatalf("measured order = %+v, want %d known=%t", tracks[0], test.want, test.known)
+			}
+		})
+	}
+}
+
+func TestMediaTrackFactsDuplicateStreamOrderIsUnknown(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"Audio", "Text", "Video"} {
+		t.Run(kind, func(t *testing.T) {
+			doc := mediaInfoDoc{}
+			doc.Media.Track = []map[string]any{
+				{
+					"@type":       "Audio",
+					"StreamOrder": "1",
+					"ID":          "2",
+				},
+				{
+					"@type":       kind,
+					"StreamOrder": "1",
+					"ID":          "3",
+				},
+			}
+			tracks, _, _, _, err := mediaTrackFacts(preparationstate.State{}, doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, track := range tracks {
+				if track.StreamOrderKnown {
+					t.Fatalf("duplicate container order trusted: %+v", tracks)
+				}
+			}
+		})
+	}
+}
 
 func TestMediaTrackFactsExcludesCommentaryFromAudioAggregate(t *testing.T) {
 	t.Parallel()
@@ -288,5 +426,51 @@ func TestUnlabelledSecondaryTrackRoleRemainsUnresolved(t *testing.T) {
 	}
 	if tracks[0].Role != api.AudioRoleProgramme || tracks[1].Role != "" || tracks[2].Role != api.AudioRoleProgramme {
 		t.Fatalf("track roles=%#v", tracks)
+	}
+}
+
+func TestDefaultAudioNamingRejectsMissingInspectedCodec(t *testing.T) {
+	for _, channels := range []string{"", "2"} {
+		t.Run(channels, func(t *testing.T) {
+			doc := mediaInfoDoc{}
+			doc.Media.Track = []map[string]any{{
+"@type": "Audio",
+ "Default": "Yes",
+ "Title": "Main",
+ "Language": "eng",
+ "Channels": channels,
+}}
+			facts, _, _, _, err := mediaTrackFacts(preparationstate.State{SourcePath: "source", VideoPath: "source"}, doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(facts) != 1 || facts[0].Codec != "" || facts[0].AudioLabel == "" {
+				t.Fatalf("unexpected producer evidence: %+v", facts)
+			}
+			name := BuildReleaseName(api.ReleaseNameRequest{
+Category: "MOVIE",
+ Type: "WEBDL",
+ Source: "WEB",
+ Resolution: "1080p",
+ VideoEncode: "H.265",
+ Tag: "-GRP",
+ Title: "Example",
+ Year: 2026,
+ Audio: "AAC 2.0",
+}, api.NopLogger{})
+			subject := api.UploadSubject{
+ReleaseName: name.Name,
+ GeneratedName: name.GeneratedName,
+ LanguageFacts: api.LanguageFacts{Tracks: facts},
+}
+			binding := trackers.StructuredReleaseNamePolicy("test/default-audio/v1", trackers.StructuredNamePolicy{Defaults: func(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+				return trackers.ApplyDefaultAudioName(editor, meta)
+			}})
+			_, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "DP", Meta: subject}, binding)
+			var rule *trackers.NameRuleError
+			if failure == nil || !errors.As(failure, &rule) {
+				t.Fatalf("missing codec was accepted for default naming: %+v %v cause=%v", facts, failure, failure.Unwrap())
+			}
+		})
 	}
 }

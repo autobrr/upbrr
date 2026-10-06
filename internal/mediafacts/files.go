@@ -25,6 +25,9 @@ func ResolveFiles(media api.MediaFacts, resolution string) api.MediaFileFacts {
 			continue
 		}
 		file.Container, file.Source, file.Resolution = media.Container, media.Source, resolution
+		if strings.EqualFold(file.Container, "m2ts") {
+			file.Container = "ts"
+		}
 		file.VideoCodec, file.VideoEncode, file.BitDepth = media.VideoCodec, media.VideoEncode, media.BitDepth
 		file.AudioLanguages = slices.Clone(media.AudioLanguages)
 		file.SubtitleLanguages = slices.Clone(media.SubtitleLanguages)

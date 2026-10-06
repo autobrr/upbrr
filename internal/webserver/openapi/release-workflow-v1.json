@@ -3879,6 +3879,12 @@
           "SampleRate": {
             "type": "integer"
           },
+          "StreamOrder": {
+            "type": "integer"
+          },
+          "StreamOrderKnown": {
+            "type": "boolean"
+          },
           "Title": {
             "type": "string"
           }
@@ -3903,6 +3909,8 @@
           "ResourceID",
           "Role",
           "SampleRate",
+          "StreamOrder",
+          "StreamOrderKnown",
           "Title"
         ]
       },

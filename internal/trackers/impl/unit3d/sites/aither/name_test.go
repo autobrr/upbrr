@@ -23,6 +23,8 @@ func TestAitherFullDiscLanguageMarkerPreservesAggregateFacts(t *testing.T) {
 		{"canonical disc keeps legacy English omission", "DISC", "", []string{"English"}, []string{"Japanese"}, ""},
 		{"labelled disc keeps legacy omission", "DISC", "BDMV", []string{"Japanese"}, []string{"Japanese"}, ""},
 		{"remux uses finalized programme facts", "REMUX", "", []string{"English"}, []string{"Japanese"}, "JAPANESE"},
+		{"disc-sourced remux uses programme facts", "REMUX", "BDMV", []string{"English"}, []string{"Japanese"}, "JAPANESE"},
+		{"disc-sourced silent remux keeps marker", "REMUX", "DVD", nil, []string{"ZXX"}, "ZXX"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			subject := api.UploadSubject{

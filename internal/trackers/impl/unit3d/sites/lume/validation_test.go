@@ -5,10 +5,10 @@ package lume
 
 import (
 	"context"
-	"github.com/autobrr/upbrr/internal/mediafacts"
 	"strconv"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -171,18 +171,22 @@ func lumeTestLanguageFacts(original string, programme, subtitles []string) api.L
 	}
 	for index, language := range programme {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID:        "audio-" + strconv.Itoa(index),
-			Kind:      api.MediaTrackAudio,
-			Role:      api.AudioRoleProgramme,
-			Languages: []string{language},
-			Codec:     "AC-3",
-			Default:   index == 0,
+			ID:               "audio-" + strconv.Itoa(index),
+			StreamOrder:      index,
+			StreamOrderKnown: true,
+			Kind:             api.MediaTrackAudio,
+			Role:             api.AudioRoleProgramme,
+			Title:            language + " main audio",
+			Languages:        []string{language},
+			Codec:            "AC-3",
+			Default:          index == 0,
 		})
 	}
 	for index, language := range subtitles {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
 			ID:        "subtitle-" + strconv.Itoa(index),
 			Kind:      api.MediaTrackSubtitle,
+			Title:     language + " subtitles",
 			Languages: []string{language},
 			Default:   index == 0,
 		})

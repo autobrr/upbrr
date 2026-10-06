@@ -26,10 +26,14 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 	tracks := make([]api.MediaTrackFacts, 0)
 	ordinals := map[api.MediaTrackKind]int{}
 	nativeCounts := make(map[string]int)
+	streamOrderCounts := make(map[int]int)
 	_, _, audioTracks := splitMediaInfoTracks(doc)
 	primaryAudioIndex := selectPrimaryAudioTrackIndex(audioTracks)
 	primaryAudioTrackID := ""
 	for _, track := range doc.Media.Track {
+		if order, known := mediaTrackStreamOrder(track); known {
+			streamOrderCounts[order]++
+		}
 		if kind, ok := mediaTrackKind(track); ok {
 			nativeCounts[string(kind)+":"+trackString(track, "StreamOrder", "ID", "UniqueID")]++
 		}
@@ -63,6 +67,8 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			single.Media.Track = []map[string]any{track}
 			trackAudioLabel, _, _ = audioFromMedia(preparationstate.State{}, single, nil)
 		}
+		streamOrder, streamOrderKnown := mediaTrackStreamOrder(track)
+		streamOrderKnown = streamOrderKnown && streamOrderCounts[streamOrder] == 1
 		facts := api.MediaTrackFacts{
 			ID:                  opaqueMediaTrackID(resourceID, kind, trackKey),
 			Kind:                kind,
@@ -70,6 +76,8 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			ManifestFingerprint: manifest,
 			NativeID:            nativeID,
 			Ordinal:             ordinal,
+			StreamOrder:         streamOrder,
+			StreamOrderKnown:    streamOrderKnown,
 			Title:               strings.TrimSpace(title),
 			Codec:               strings.TrimSpace(normalizeAudioFormat(track)),
 			AudioLabel:          trackAudioLabel,
@@ -94,6 +102,16 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		}
 	}
 	return tracks, primaryAudioTrackID, aggregateTrackLanguages(tracks, api.MediaTrackAudio), aggregateTrackLanguages(tracks, api.MediaTrackSubtitle), nil
+}
+
+// mediaTrackStreamOrder rejects partial numbers and compound stream identifiers;
+// native IDs and document positions do not establish container order.
+func mediaTrackStreamOrder(track map[string]any) (int, bool) {
+	order, err := strconv.Atoi(trackString(track, "StreamOrder"))
+	if err != nil || order < 0 {
+		return 0, false
+	}
+	return order, true
 }
 
 func mediaTrackPositiveInt(track map[string]any, keys ...string) int {

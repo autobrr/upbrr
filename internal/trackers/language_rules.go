@@ -97,7 +97,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	if needsOriginal && !originalKnown {
 		add("original_evidence", "original language evidence needs review", LanguageUnresolved)
 	}
-	hasEnglish := slices.Contains(facts.ProgrammeLanguages, "English")
+	hasEnglish := facts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(facts.ProgrammeLanguages, "English")
 	englishSubs := slices.Contains(facts.SubtitleLanguages, "English")
 	needsProgramme := policy.OriginalAudio != "" || policy.ExtraDubs != "" || policy.OriginalFirst != "" || policy.OriginalDefault != "" ||
 		(policy.EnglishSubtitles == "foreign_without_dub" || policy.EnglishSubtitles == "without_english") && !englishSubs && !hasEnglish

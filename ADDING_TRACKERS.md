@@ -1133,7 +1133,11 @@ exports with source/file-bound cache identities; it does not probe unrelated tra
 episodes, or full discs. `MediaFileFacts` persists the measured evidence, with independently
 complete audio/subtitle channels (including inspected absence). Missing source provenance stays
 unknown: filenames and MediaInfo do not establish that provenance. Validation must preserve
-partial evidence and cannot infer pack-wide facts from a primary-file correction.
+partial evidence and cannot infer pack-wide facts from a primary-file correction. Primary-file
+probe failures retain normal preparation failure semantics; only non-primary failures may remain
+partial pack evidence. Track ordering must use explicit measured container stream order, never
+MediaInfo document order, per-kind ordinals, or opaque native IDs. Unknown order remains evidence
+to resolve rather than a guessed violation.
 
 ### 7. Add optional capabilities
 

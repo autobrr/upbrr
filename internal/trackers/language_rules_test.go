@@ -28,6 +28,9 @@ func languageSubject(original string, audio ...string) api.TrackerValidationSubj
 			ID:        fmt.Sprintf("audio_%d", i),
 			Kind:      api.MediaTrackAudio,
 			Role:      api.AudioRoleProgramme,
+			Title:     language + " main audio",
+			StreamOrder: i + 1,
+			StreamOrderKnown: true,
 			Languages: []string{language},
 			Default:   i == 0,
 			Codec:     "FLAC",
@@ -35,6 +38,9 @@ func languageSubject(original string, audio ...string) api.TrackerValidationSubj
 	}
 	media.Tracks = append(media.Tracks, api.MediaTrackFacts{
 		Kind:      api.MediaTrackSubtitle,
+		Title:     "English subtitles",
+		StreamOrder: len(audio) + 1,
+		StreamOrderKnown: true,
 		Languages: []string{"English"},
 		Default:   true,
 	})
@@ -152,23 +158,28 @@ func TestCanonicalDiscTypeAndRemuxBoundary(t *testing.T) {
 }
 
 func TestLanguageQuestionKeyInvalidatesChangedEvidence(t *testing.T) {
- subject := api.TrackerValidationSubject{
-Tracker: "ULCX",
- SourcePath: "synthetic.mkv",
- Identity: api.ExternalIdentity{Generation: 1},
- LanguageFacts: api.LanguageFacts{ProgrammeLanguages: []string{"Japanese"}},
-}
- original := trackers.LanguageQuestionKey(subject, "retail")
- if trackers.LanguageQuestionKey(subject, "retail") != original { t.Fatal("unchanged evidence changed question") }
- for _, mutate := range []func(*api.TrackerValidationSubject){
- func(s *api.TrackerValidationSubject) { s.Tracker = "LST" },
- func(s *api.TrackerValidationSubject) { s.SourcePath = "other.mkv" },
- func(s *api.TrackerValidationSubject) { s.Identity.Generation++ },
- func(s *api.TrackerValidationSubject) { s.LanguageFacts.ProgrammeLanguages = []string{"English"} },
- func(s *api.TrackerValidationSubject) { s.PersonalRelease = true },
- func(s *api.TrackerValidationSubject) { s.Anime = true },
- } {
- changed := subject; mutate(&changed)
- if trackers.LanguageQuestionKey(changed, "retail") == original { t.Fatalf("changed evidence retained question: %+v", changed) }
- }
+	subject := api.TrackerValidationSubject{
+		Tracker:       "ULCX",
+		SourcePath:    "synthetic.mkv",
+		Identity:      api.ExternalIdentity{Generation: 1},
+		LanguageFacts: api.LanguageFacts{ProgrammeLanguages: []string{"Japanese"}},
+	}
+	original := trackers.LanguageQuestionKey(subject, "retail")
+	if trackers.LanguageQuestionKey(subject, "retail") != original {
+		t.Fatal("unchanged evidence changed question")
+	}
+	for _, mutate := range []func(*api.TrackerValidationSubject){
+		func(s *api.TrackerValidationSubject) { s.Tracker = "LST" },
+		func(s *api.TrackerValidationSubject) { s.SourcePath = "other.mkv" },
+		func(s *api.TrackerValidationSubject) { s.Identity.Generation++ },
+		func(s *api.TrackerValidationSubject) { s.LanguageFacts.ProgrammeLanguages = []string{"English"} },
+		func(s *api.TrackerValidationSubject) { s.PersonalRelease = true },
+		func(s *api.TrackerValidationSubject) { s.Anime = true },
+	} {
+		changed := subject
+		mutate(&changed)
+		if trackers.LanguageQuestionKey(changed, "retail") == original {
+			t.Fatalf("changed evidence retained question: %+v", changed)
+		}
+	}
 }

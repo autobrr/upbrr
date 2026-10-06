@@ -7,6 +7,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -165,56 +166,56 @@ func TestNBLFinalizedLanguageAccessibility(t *testing.T) {
 		wantStatus                      api.MetadataEvidenceStatus
 	}{
 		{
-name: "foreign audio with English captions",
- audio: []string{"Japanese"},
- subtitles: []string{"English"},
-},
+			name:      "foreign audio with English captions",
+			audio:     []string{"Japanese"},
+			subtitles: []string{"English"},
+		},
 		{name: "English audio without original metadata", audio: []string{"English"}},
 		{name: "English captions without programme metadata", subtitles: []string{"English"}},
 		{
-name: "complete missing accessibility",
- audio: []string{"Japanese"},
- programmeStatus: api.MetadataEvidenceStatusComplete,
- subtitleStatus: api.MetadataEvidenceStatusComplete,
- wantStatus: api.MetadataEvidenceStatusComplete,
-},
+			name:            "complete missing accessibility",
+			audio:           []string{"Japanese"},
+			programmeStatus: api.MetadataEvidenceStatusComplete,
+			subtitleStatus:  api.MetadataEvidenceStatusComplete,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
 		{
-name: "unknown programme evidence",
- subtitleStatus: api.MetadataEvidenceStatusComplete,
- wantStatus: api.MetadataEvidenceStatusPartial,
-},
+			name:           "unknown programme evidence",
+			subtitleStatus: api.MetadataEvidenceStatusComplete,
+			wantStatus:     api.MetadataEvidenceStatusPartial,
+		},
 		{
-name: "unknown subtitle evidence",
- audio: []string{"Japanese"},
- programmeStatus: api.MetadataEvidenceStatusComplete,
- wantStatus: api.MetadataEvidenceStatusPartial,
-},
+			name:            "unknown subtitle evidence",
+			audio:           []string{"Japanese"},
+			programmeStatus: api.MetadataEvidenceStatusComplete,
+			wantStatus:      api.MetadataEvidenceStatusPartial,
+		},
 		{
-name: "full disc excluded",
- discType: "BDMV",
- uploadType: "DISC",
-},
+			name:       "full disc excluded",
+			discType:   "BDMV",
+			uploadType: "DISC",
+		},
 		{name: "canonical full disc excluded", uploadType: "DISC"},
 		{
-name: "disc sourced remux assessed",
- discType: "BDMV",
- uploadType: "REMUX",
- audio: []string{"Japanese"},
- programmeStatus: api.MetadataEvidenceStatusComplete,
- subtitleStatus: api.MetadataEvidenceStatusComplete,
- wantStatus: api.MetadataEvidenceStatusComplete,
-},
+			name:            "disc sourced remux assessed",
+			discType:        "BDMV",
+			uploadType:      "REMUX",
+			audio:           []string{"Japanese"},
+			programmeStatus: api.MetadataEvidenceStatusComplete,
+			subtitleStatus:  api.MetadataEvidenceStatusComplete,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			subject := nblPassingSubject()
 			subject.Tracker = "NBL"
 			subject.DiscType, subject.Type = tt.discType, tt.uploadType
 			subject.LanguageFacts = api.LanguageFacts{
-ProgrammeLanguages: tt.audio,
- SubtitleLanguages: tt.subtitles,
- ProgrammeStatus: tt.programmeStatus,
- SubtitleStatus: tt.subtitleStatus,
-}
+				ProgrammeLanguages: tt.audio,
+				SubtitleLanguages:  tt.subtitles,
+				ProgrammeStatus:    tt.programmeStatus,
+				SubtitleStatus:     tt.subtitleStatus,
+			}
 			failures, err := validationPolicy().Check(context.Background(), subject, api.NopLogger{})
 			if err != nil {
 				t.Fatal(err)
@@ -227,5 +228,50 @@ ProgrammeLanguages: tt.audio,
 				assertNBLFailure(t, failures, "language_subtitles", api.RuleDispositionStrict, tt.wantStatus)
 			}
 		})
+	}
+}
+
+func TestNBLContradictoryEnglishCorrectionDoesNotEstablishAccessibility(t *testing.T) {
+	t.Parallel()
+	media := api.MediaFacts{
+		AudioLanguages:           []string{"English"},
+		AudioLanguagesProvenance: api.FactProvenanceManual,
+		TrackCoverageComplete:    true,
+		Tracks: []api.MediaTrackFacts{
+			{
+ID: "programme",
+ Kind: api.MediaTrackAudio,
+ Role: api.AudioRoleProgramme,
+ Languages: []string{"Japanese"},
+},
+			{
+ID: "commentary",
+ Kind: api.MediaTrackAudio,
+ Role: api.AudioRoleCommentary,
+ Languages: []string{"English"},
+},
+		},
+	}
+	subject := nblPassingSubject()
+	subject.Tracker = "NBL"
+	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+	if subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
+		t.Fatal("regression fixture did not preserve contradiction")
+	}
+	failures, err := validationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNBLFailure(t, failures, "language_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	subject.LanguageFacts.SubtitleLanguages = []string{"English"}
+	failures, err = validationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil || len(failures) != 0 {
+		t.Fatalf("independent English captions did not establish accessibility: %v %+v", err, failures)
+	}
+	subject.LanguageFacts.SubtitleLanguages = nil
+	subject.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
+	failures, err = validationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil || len(failures) != 0 {
+		t.Fatalf("known English programme with unrelated partial evidence blocked: %v %+v", err, failures)
 	}
 }

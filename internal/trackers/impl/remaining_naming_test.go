@@ -44,6 +44,13 @@ func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *
 				Type:                  "DVDRIP",
 				Source:                "DVD",
 				Audio:                 "DTS 2.0",
+				LanguageFacts: api.LanguageFacts{Tracks: []api.MediaTrackFacts{{
+Kind: api.MediaTrackAudio,
+ Role: api.AudioRoleProgramme,
+ Default: true,
+ Codec: "DTS",
+ AudioLabel: "DTS 2.0",
+}}},
 				VideoEncode:           "x264",
 				Tag:                   "-GRP",
 				Identity: api.ExternalIdentity{
