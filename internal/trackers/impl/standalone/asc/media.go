@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -102,4 +103,21 @@ func readTextFileNoErr(path string) string {
 
 func parseDimensionStr(val any) string {
 	return metautil.ParseDimensionStr(val)
+}
+
+// resolveMediaInfoReport returns the MediaInfo text the site requires for
+// video uploads, preferring the prepared MediaInfo report over disc fallbacks.
+func resolveMediaInfoReport(meta api.UploadSubject, dbPath string) string {
+	if report := strings.TrimSpace(readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath))); report != "" {
+		return report
+	}
+	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	case "DVD":
+		return strings.TrimSpace(trackers.ReadDVDVOBMediaInfo(meta))
+	case "BDMV":
+		report, _ := trackers.ReadBDInfo(dbPath, meta)
+		return strings.TrimSpace(report)
+	default:
+		return ""
+	}
 }

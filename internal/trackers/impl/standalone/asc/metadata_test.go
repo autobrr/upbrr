@@ -62,13 +62,13 @@ func TestResolveResolutionUsesResolvedFactOnly(t *testing.T) {
 func TestResolveContainerUsesResolvedFactOnly(t *testing.T) {
 	t.Parallel()
 
-	if got := resolveContainer(api.UploadSubject{Container: "mkv", VideoPath: "example.mp4"}); got != "6" {
+	if got := resolveContainerID(api.UploadSubject{Container: "mkv", VideoPath: "example.mp4"}); got != "92" {
 		t.Fatalf("resolved container = %q", got)
 	}
-	if got := resolveContainer(api.UploadSubject{VideoPath: "example.mkv", SourcePath: "example.mp4"}); got != "" {
+	if got := resolveContainerID(api.UploadSubject{VideoPath: "example.mkv", SourcePath: "example.mp4"}); got != "" {
 		t.Fatalf("path-only container = %q", got)
 	}
-	if got := resolveContainer(api.UploadSubject{DiscType: "BDMV"}); got != "5" {
+	if got := resolveContainerID(api.UploadSubject{DiscType: "BDMV"}); got != "91" {
 		t.Fatalf("disc container = %q", got)
 	}
 }
@@ -150,11 +150,11 @@ func TestResolveLanguageAcceptsManualCanonicalDisplayName(t *testing.T) {
 	t.Parallel()
 
 	meta := api.UploadSubject{EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: "French", OriginalLanguageProvenance: api.FactProvenanceManual}}
-	if got := resolveLanguage(meta); got != "2" {
+	if got := resolveLanguageID(meta); got != "2" {
 		t.Fatalf("manual French language ID = %q", got)
 	}
 	meta.EffectiveMetadata.OriginalLanguage = "fr"
-	if got := resolveLanguage(meta); got != "2" {
+	if got := resolveLanguageID(meta); got != "2" {
 		t.Fatalf("manual ISO French language ID = %q", got)
 	}
 }

@@ -4,6 +4,7 @@
 package asc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,28 +12,23 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/providerid"
-	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-type layoutData struct {
-	Images  map[string]string
-	Ratings []map[string]any
-}
 
 type richCreditItem struct {
 	ID          int    `json:"id"`
@@ -211,7 +207,9 @@ func fetchRichEpisode(ctx context.Context, client *tmdb.Client, tmdbID, season, 
 	return ep, nil
 }
 
-func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets, layoutID string) string {
+// buildDescription composes text-only BBCode. ASC rejects images hosted
+// elsewhere, and the site renders cover and screenshots from their own fields.
+func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets) string {
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
@@ -219,164 +217,32 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	if assets.Override && strings.TrimSpace(assets.Description) != "" {
 		return strings.TrimSpace(assets.Description)
 	}
-	layout, _ := fetchLayout(ctx, cfg.MainSettings.DBPath, meta, layoutID)
-	parts := []string{"[center]"}
+	rich := fetchRichDetails(ctx, meta, cfg)
+	answers := standalone.QuestionnaireAnswers(meta, "ASC")
 
-	for idx := 1; idx <= 3; idx++ {
-		if image := layout.Images[fmt.Sprintf("BARRINHA_CUSTOM_T_%d", idx)]; image != "" {
-			parts = append(parts, formatImage(image))
-		}
-	}
-	if image := layout.Images["BARRINHA_APRESENTA"]; image != "" {
-		parts = append(parts, formatImage(image))
-	}
-	parts = append(parts, "[size=3]"+resolveUploadTitle(meta)+"[/size]")
-
-	appendSection := func(key string, content string) {
+	parts := []string{"[center]", "[size=20][b]" + resolveUploadTitle(meta) + "[/b][/size]"}
+	appendSection := func(heading string, content string) {
 		if strings.TrimSpace(content) == "" {
 			return
 		}
-		if image := layout.Images[key]; image != "" {
-			parts = append(parts, formatImage(image))
-		}
-		parts = append(parts, content)
+		parts = append(parts, "[b]"+heading+"[/b]\n"+strings.TrimSpace(content))
 	}
 
-	apiKey := strings.TrimSpace(cfg.MainSettings.TMDBAPI)
-	tmdbID := meta.Identity.TMDBID
-
-	// TMDB Sub-queries
-	var richMedia *richMediaResponse
-	var richCast []richCreditItem
-	var richSeasons []richSeasonItem
-	var richEpisode *richEpisodeDetails
-
-	if apiKey != "" && tmdbID > 0 {
-		tmdbClient := tmdb.NewClient(nil, nil, apiKey)
-		dbPath := cfg.MainSettings.DBPath
-
-		if media, err := fetchRichMedia(ctx, tmdbClient, tmdbID, categoryOf(meta), tmdbCachePath(dbPath, tmdbID, "main")); err == nil {
-			richMedia = &media
-		}
-		if castList, err := fetchRichCredits(ctx, tmdbClient, tmdbID, categoryOf(meta), tmdbCachePath(dbPath, tmdbID, "credits")); err == nil {
-			richCast = castList
-		}
-		if categoryOf(meta) == "TV" {
-			if seasons, err := fetchRichSeasons(ctx, tmdbClient, tmdbID, tmdbCachePath(dbPath, tmdbID, "pt_seasons")); err == nil {
-				richSeasons = seasons
-			}
-			if meta.SeasonInt > 0 && meta.EpisodeInt > 0 {
-				suffix := fmt.Sprintf("ep_%d_%d", meta.SeasonInt, meta.EpisodeInt)
-				if ep, err := fetchRichEpisode(ctx, tmdbClient, tmdbID, meta.SeasonInt, meta.EpisodeInt, tmdbCachePath(dbPath, tmdbID, suffix)); err == nil {
-					richEpisode = &ep
-				}
-			}
-		}
+	appendSection("Sinopse", resolveOverview(meta, answers))
+	if categoryOf(meta) == "TV" && rich.episode != nil && rich.episode.Name != "" && rich.episode.Overview != "" {
+		appendSection("Episódio: "+rich.episode.Name, rich.episode.Overview)
 	}
-
-	// 1. Poster
-	if poster := resolvePoster(meta); poster != "" {
-		poster = strings.ReplaceAll(poster, "/t/p/original/", "/t/p/w500/")
-		appendSection("BARRINHA_CAPA", formatImage(poster))
+	appendSection("Ficha técnica", buildTechnicalSheet(meta, rich.media))
+	appendSection("Produtoras", buildProductionCompanies(meta))
+	appendSection("Elenco", buildCastSection(meta, rich.cast))
+	if categoryOf(meta) == "TV" {
+		appendSection("Temporadas", buildSeasonsSection(rich.seasons))
 	}
+	appendSection("Avaliações", buildRatingsBBCode(meta, rich.media))
+	parts = append(parts, "[/center]")
 
-	// 2. Overview
-	appendSection("BARRINHA_SINOPSE", resolveOverview(meta, standalone.QuestionnaireAnswers(meta, "ASC")))
-
-	// 3. Episode Specific Section
-	if categoryOf(meta) == "TV" && richEpisode != nil {
-		if richEpisode.Name != "" && richEpisode.Overview != "" {
-			parts = append(parts, fmt.Sprintf("[size=4][b]Episódio:[/b] %s[/size]", richEpisode.Name))
-			if strings.TrimSpace(richEpisode.StillPath) != "" {
-				stillURL := "https://image.tmdb.org/t/p/w300" + strings.TrimSpace(richEpisode.StillPath)
-				parts = append(parts, formatImage(stillURL))
-			}
-			parts = append(parts, richEpisode.Overview)
-		}
-	}
-
-	// 4. Technical Sheet
-	appendSection("BARRINHA_FICHA_TECNICA", buildTechnicalSheet(meta, richMedia))
-
-	// 5. Production Companies
-	if prodComp := buildProductionCompanies(meta); prodComp != "" {
-		parts = append(parts, prodComp)
-	}
-
-	// 6. Cast
-	appendSection("BARRINHA_ELENCO", buildCastSection(meta, richCast))
-
-	// 7. Seasons Section (TV Packs / TV Seasons list)
-	if categoryOf(meta) == "TV" && len(richSeasons) > 0 {
-		var seasonsContent []string
-		for _, s := range richSeasons {
-			seasonName := strings.TrimSpace(s.Name)
-			if seasonName == "" {
-				seasonName = fmt.Sprintf("Temporada %d", s.SeasonNumber)
-			}
-			posterTemp := ""
-			if strings.TrimSpace(s.PosterPath) != "" {
-				posterTemp = formatImage("https://image.tmdb.org/t/p/w185" + strings.TrimSpace(s.PosterPath))
-			}
-			overviewTemp := ""
-			if strings.TrimSpace(s.Overview) != "" {
-				overviewTemp = "\n\nSinopse:\n" + strings.TrimSpace(s.Overview)
-			}
-			var innerContentParts []string
-			if s.AirDate != "" {
-				innerContentParts = append(innerContentParts, "Data: "+formatDate(s.AirDate))
-			}
-			if s.EpisodeCount != nil {
-				innerContentParts = append(innerContentParts, fmt.Sprintf("Episódios: %d", *s.EpisodeCount))
-			}
-			if posterTemp != "" {
-				innerContentParts = append(innerContentParts, posterTemp)
-			}
-			if overviewTemp != "" {
-				innerContentParts = append(innerContentParts, overviewTemp)
-			}
-			innerContent := strings.Join(innerContentParts, "\n")
-			seasonsContent = append(seasonsContent, fmt.Sprintf("\n[spoiler=%s]%s[/spoiler]\n", seasonName, innerContent))
-		}
-		appendSection("BARRINHA_EPISODIOS", strings.Join(seasonsContent, ""))
-	}
-
-	// 8. Ratings Section
-	var ratingsList []map[string]any
-	ratingsList = append(ratingsList, layout.Ratings...)
-	hasIMDbRating := false
-	hasTMDbRating := false
-	for _, r := range ratingsList {
-		source, _ := r["Source"].(string)
-		if source == "Internet Movie Database" {
-			hasIMDbRating = true
-		}
-		if source == "TMDb" {
-			hasTMDbRating = true
-		}
-	}
-	if !hasIMDbRating && meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Rating > 0 {
-		ratingsList = append(ratingsList, map[string]any{
-			"Source": "Internet Movie Database",
-			"Value":  fmt.Sprintf("%.1f/10", meta.ProviderMetadata.IMDB.Rating),
-		})
-	}
-	if !hasTMDbRating && richMedia != nil && richMedia.VoteAverage > 0 {
-		ratingsList = append(ratingsList, map[string]any{
-			"Source": "TMDb",
-			"Value":  fmt.Sprintf("%.1f/10", richMedia.VoteAverage),
-		})
-	}
-
-	criticsKey := "BARRINHA_CRITICAS" //nolint:misspell
-	if categoryOf(meta) == "MOVIE" && layout.Images["BARRINHA_INFORMACOES"] != "" {
-		criticsKey = "BARRINHA_INFORMACOES"
-	}
-	appendSection(criticsKey, buildRatingsBBCode(meta, ratingsList))
-
-	// 9. MediaInfo/BDInfo
 	if media := buildMediaInfo(meta, cfg.MainSettings.DBPath); media != "" {
-		parts = append(parts, "[spoiler=Informações do Arquivo]\n[left][font=Courier New]"+media+"[/font][/left][/spoiler]")
+		parts = append(parts, "[spoiler=Informações do Arquivo][code]"+strings.TrimSpace(media)+"[/code][/spoiler]")
 	}
 	if notes := sanitizeDescriptionNotes(assets.Description); notes != "" {
 		parts = append(parts, notes)
@@ -384,121 +250,47 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	if customHeader := strings.TrimSpace(cfg.Description.CustomDescriptionHeader); customHeader != "" {
 		parts = append(parts, customHeader)
 	}
-
-	for idx := 1; idx <= 3; idx++ {
-		if image := layout.Images[fmt.Sprintf("BARRINHA_CUSTOM_B_%d", idx)]; image != "" {
-			parts = append(parts, formatImage(image))
-		}
-	}
-	parts = append(parts, "[/center]")
 	parts = append(parts, "[center][url=https://github.com/autobrr/upbrr]Upload realizado via upbrr[/url][/center]")
 	return strings.TrimSpace(strings.Join(filterEmpty(parts), "\n\n"))
 }
 
-func fetchLayout(ctx context.Context, dbPath string, meta api.UploadSubject, layoutID string) (layoutData, error) {
-	cached, err := readLayoutCache(dbPath, layoutID)
-	if err == nil {
-		return cached, nil
-	}
-	cookies, _, err := LoadCookies(ctx, dbPath)
-	if err != nil {
-		return layoutData{}, err
-	}
-	form := url.Values{
-		"imdb":   {metautil.FirstNonEmptyTrimmed(resolveIMDbIDText(meta), "tt0013442")},
-		"layout": {metautil.FirstNonEmptyTrimmed(strings.TrimSpace(layoutID), "2")},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/search.php", strings.NewReader(form.Encode()))
-	if err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC create layout request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", userAgent)
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
-	if err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC fetch layout: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return layoutData{}, fmt.Errorf("layout fetch status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC read layout response: %w", err)
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout response: %s", redaction.RedactValue(err.Error(), nil))
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(payload["ASC"], &raw); err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout data: %s", redaction.RedactValue(err.Error(), nil))
-	}
-	layout := normalizeLayout(raw)
-	_ = writeLayoutCache(dbPath, layoutID, payload["ASC"])
-	return layout, nil
+type richDetails struct {
+	media   *richMediaResponse
+	cast    []richCreditItem
+	seasons []richSeasonItem
+	episode *richEpisodeDetails
 }
 
-func normalizeLayout(raw map[string]any) layoutData {
-	layout := layoutData{Images: make(map[string]string)}
-	for key, value := range raw {
-		if strings.HasPrefix(key, "BARRINHA_") {
-			text := strings.TrimSpace(fmt.Sprint(value))
-			if text != "" && text != "<nil>" {
-				layout.Images[key] = text
-			}
+// fetchRichDetails loads optional localized TMDB extras; each lookup failure
+// only omits its section.
+func fetchRichDetails(ctx context.Context, meta api.UploadSubject, cfg config.Config) richDetails {
+	var rich richDetails
+	apiKey := strings.TrimSpace(cfg.MainSettings.TMDBAPI)
+	tmdbID := meta.Identity.TMDBID
+	if apiKey == "" || tmdbID <= 0 {
+		return rich
+	}
+	client := tmdb.NewClient(nil, nil, apiKey)
+	dbPath := cfg.MainSettings.DBPath
+	if media, err := fetchRichMedia(ctx, client, tmdbID, categoryOf(meta), tmdbCachePath(dbPath, tmdbID, "main")); err == nil {
+		rich.media = &media
+	}
+	if cast, err := fetchRichCredits(ctx, client, tmdbID, categoryOf(meta), tmdbCachePath(dbPath, tmdbID, "credits")); err == nil {
+		rich.cast = cast
+	}
+	if categoryOf(meta) != "TV" {
+		return rich
+	}
+	if seasons, err := fetchRichSeasons(ctx, client, tmdbID, tmdbCachePath(dbPath, tmdbID, "pt_seasons")); err == nil {
+		rich.seasons = seasons
+	}
+	if meta.SeasonInt > 0 && meta.EpisodeInt > 0 {
+		suffix := fmt.Sprintf("ep_%d_%d", meta.SeasonInt, meta.EpisodeInt)
+		if ep, err := fetchRichEpisode(ctx, client, tmdbID, meta.SeasonInt, meta.EpisodeInt, tmdbCachePath(dbPath, tmdbID, suffix)); err == nil {
+			rich.episode = &ep
 		}
 	}
-	if ratingsVal, ok := raw["Ratings"]; ok {
-		if ratingsSlice, ok := ratingsVal.([]any); ok {
-			for _, r := range ratingsSlice {
-				if rMap, ok := r.(map[string]any); ok {
-					layout.Ratings = append(layout.Ratings, rMap)
-				}
-			}
-		}
-	}
-	return layout
-}
-
-func readLayoutCache(dbPath string, layoutID string) (layoutData, error) {
-	payload, err := os.ReadFile(layoutCachePath(dbPath, layoutID))
-	if err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC read layout cache: %w", err)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(payload, &raw); err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout cache: %w", err)
-	}
-	return normalizeLayout(raw), nil
-}
-
-func writeLayoutCache(dbPath string, layoutID string, payload []byte) error {
-	path := layoutCachePath(dbPath, layoutID)
-	if path == "" {
-		return errors.New("missing layout cache path")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("trackers: ASC create layout cache dir: %w", err)
-	}
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
-		return fmt.Errorf("trackers: ASC write layout cache: %w", err)
-	}
-	return nil
-}
-
-func layoutCachePath(dbPath string, layoutID string) string {
-	if strings.TrimSpace(dbPath) == "" {
-		return ""
-	}
-	cacheRoot, err := db.Subdir(dbPath, "cache")
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(cacheRoot, "asc_layout_"+metautil.FirstNonEmptyTrimmed(strings.TrimSpace(layoutID), "2")+".json")
+	return rich
 }
 
 func buildTechnicalSheet(meta api.UploadSubject, richMedia *richMediaResponse) string {
@@ -578,102 +370,78 @@ func hasEscapedBBCodeURLAttributeUnsafeChar(parsed *url.URL) bool {
 }
 
 func buildProductionCompanies(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB == nil || len(meta.ProviderMetadata.TMDB.ProductionCompanies) == 0 {
+	if meta.ProviderMetadata.TMDB == nil {
 		return ""
 	}
-	var parts []string
-	parts = append(parts, "[size=4][b]Produtoras[/b][/size]")
-	for _, comp := range meta.ProviderMetadata.TMDB.ProductionCompanies {
-		if strings.TrimSpace(comp.Name) == "" {
-			continue
-		}
-		logo := ""
-		if logoPath := strings.TrimSpace(comp.LogoPath); logoPath != "" {
-			logo = formatImage("https://image.tmdb.org/t/p/w45" + logoPath)
-		}
-		if logo != "" {
-			parts = append(parts, fmt.Sprintf("%s[size=2] - [b]%s[/b][/size]", logo, comp.Name))
-		} else {
-			parts = append(parts, fmt.Sprintf("[size=2][b]%s[/b][/size]", comp.Name))
+	names := make([]string, 0, len(meta.ProviderMetadata.TMDB.ProductionCompanies))
+	for _, company := range meta.ProviderMetadata.TMDB.ProductionCompanies {
+		if name := strings.TrimSpace(company.Name); name != "" {
+			names = append(names, name)
 		}
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(names, ", ")
 }
 
 func buildCastSection(meta api.UploadSubject, richCast []richCreditItem) string {
 	if len(richCast) == 0 {
 		names := resolveCast(meta)
-		if len(names) == 0 {
-			return ""
-		}
-		limit := min(len(names), 10)
-		parts := make([]string, 0, limit)
-		for idx := range limit {
-			parts = append(parts, "[size=2][b]"+names[idx]+"[/b][/size]")
-		}
-		return strings.Join(parts, "\n")
+		return strings.Join(names[:min(len(names), 10)], "\n")
 	}
-
-	limit := min(len(richCast), 10)
-	var parts []string
-	for _, person := range richCast[:limit] {
-		profileURL := "https://i.imgur.com/eCCCtFA.png"
-		if strings.TrimSpace(person.ProfilePath) != "" {
-			profileURL = "https://image.tmdb.org/t/p/w45" + strings.TrimSpace(person.ProfilePath)
+	parts := make([]string, 0, min(len(richCast), 10))
+	for _, person := range richCast[:min(len(richCast), 10)] {
+		name := strings.TrimSpace(person.Name)
+		if name == "" {
+			continue
 		}
-		tmdbURL := fmt.Sprintf("https://www.themoviedb.org/person/%d?language=pt-BR", person.ID)
-		imgTag := formatImage(profileURL)
-
-		charName := strings.TrimSpace(person.Character)
-		characterInfo := fmt.Sprintf("(%s)", person.Name)
-		if charName != "" {
-			characterInfo = fmt.Sprintf("(%s) como %s", person.Name, charName)
+		line := fmt.Sprintf("[url=https://www.themoviedb.org/person/%d?language=pt-BR]%s[/url]", person.ID, name)
+		if character := strings.TrimSpace(person.Character); character != "" {
+			line += " como " + character
 		}
-
-		parts = append(parts, fmt.Sprintf("[url=%s]%s[/url]\n[size=2][b]%s[/b][/size]\n", tmdbURL, imgTag, characterInfo))
+		parts = append(parts, line)
 	}
-	return strings.Join(parts, "")
+	return strings.Join(parts, "\n")
 }
 
-func buildRatingsBBCode(meta api.UploadSubject, ratingsList []map[string]any) string {
-	if len(ratingsList) == 0 {
-		return ""
+func buildSeasonsSection(seasons []richSeasonItem) string {
+	out := make([]string, 0, len(seasons))
+	for _, season := range seasons {
+		name := strings.TrimSpace(season.Name)
+		if name == "" {
+			name = fmt.Sprintf("Temporada %d", season.SeasonNumber)
+		}
+		var lines []string
+		if season.AirDate != "" {
+			lines = append(lines, "Data: "+formatDate(season.AirDate))
+		}
+		if season.EpisodeCount != nil {
+			lines = append(lines, fmt.Sprintf("Episódios: %d", *season.EpisodeCount))
+		}
+		if overview := strings.TrimSpace(season.Overview); overview != "" {
+			lines = append(lines, "Sinopse: "+overview)
+		}
+		out = append(out, fmt.Sprintf("[spoiler=%s]%s[/spoiler]", name, strings.Join(lines, "\n")))
 	}
-	ratingsMap := map[string]string{
-		"Internet Movie Database": "[img]https://i.postimg.cc/Pr8Gv4RQ/IMDB.png[/img]",
-		"Rotten Tomatoes":         "[img]https://i.postimg.cc/rppL76qC/rotten.png[/img]",
-		"Metacritic":              "[img]https://i.postimg.cc/SKkH5pNg/Metacritic45x45.png[/img]",
-		"TMDb":                    "[img]https://i.postimg.cc/T13yyzyY/tmdb.png[/img]",
-	}
+	return strings.Join(out, "\n")
+}
+
+func buildRatingsBBCode(meta api.UploadSubject, richMedia *richMediaResponse) string {
 	var parts []string
-	for _, rating := range ratingsList {
-		source, _ := rating["Source"].(string)
-		valueRaw := rating["Value"]
-		if source == "" || valueRaw == nil {
-			continue
+	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Rating > 0 {
+		imdbURL := strings.TrimSpace(meta.ProviderMetadata.IMDB.IMDbURL)
+		if imdbURL == "" && meta.Identity.IMDBID > 0 {
+			imdbURL = providerid.IMDb(meta.Identity.IMDBID).URL()
 		}
-		value := strings.TrimSpace(fmt.Sprint(valueRaw))
-		imgTag, ok := ratingsMap[source]
-		if !ok {
-			continue
+		label := "IMDb"
+		if imdbURL != "" {
+			label = fmt.Sprintf("[url=%s]IMDb[/url]", imdbURL)
 		}
-		switch source {
-		case "Internet Movie Database":
-			imdbURL := ""
-			if meta.ProviderMetadata.IMDB != nil {
-				imdbURL = meta.ProviderMetadata.IMDB.IMDbURL
-			}
-			if imdbURL == "" && meta.Identity.IMDBID > 0 {
-				imdbURL = providerid.IMDb(meta.Identity.IMDBID).URL()
-			}
-			parts = append(parts, fmt.Sprintf("\n[url=%s]%s[/url]\n[b]%s[/b]\n", imdbURL, imgTag, value))
-		case "TMDb":
-			category := strings.ToLower(categoryOf(meta))
-			tmdbID := meta.Identity.TMDBID
-			parts = append(parts, fmt.Sprintf("[url=https://www.themoviedb.org/%s/%d]%s[/url]\n[b]%s[/b]\n", category, tmdbID, imgTag, value))
-		default:
-			parts = append(parts, fmt.Sprintf("%s\n[b]%s[/b]\n", imgTag, value))
-		}
+		parts = append(parts, fmt.Sprintf("%s: %.1f/10", label, meta.ProviderMetadata.IMDB.Rating))
+	}
+	if richMedia != nil && richMedia.VoteAverage > 0 && meta.Identity.TMDBID > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"[url=https://www.themoviedb.org/%s/%d]TMDb[/url]: %.1f/10",
+			strings.ToLower(categoryOf(meta)), meta.Identity.TMDBID, richMedia.VoteAverage,
+		))
 	}
 	return strings.Join(parts, "\n")
 }
@@ -712,14 +480,44 @@ func sanitizeDescriptionNotes(value string) string {
 		"[h2]", "[u][b]", "[/h2]", "[/b][/u]",
 		"[h3]", "[u][b]", "[/h3]", "[/b][/u]",
 	)
-	return strings.TrimSpace(replacer.Replace(value))
+	return strings.TrimSpace(stripForeignImages(replacer.Replace(value)))
 }
 
-func formatImage(value string) string {
-	if strings.TrimSpace(value) == "" {
+var (
+	descriptionImagePattern = regexp.MustCompile(`(?is)\[img(?:=[^\]]*)?\]\s*(.*?)\s*\[/img\]`)
+	emptyURLWrapperPattern  = regexp.MustCompile(`(?is)\[url=[^\]]*\]\s*\[/url\]`)
+)
+
+// stripForeignImages removes image tags ASC would reject, along with link
+// wrappers left empty by the removal.
+func stripForeignImages(value string) string {
+	stripped := descriptionImagePattern.ReplaceAllStringFunc(value, func(tag string) string {
+		match := descriptionImagePattern.FindStringSubmatch(tag)
+		if len(match) == 2 && isSiteHostedImage(match[1]) {
+			return tag
+		}
 		return ""
+	})
+	return emptyURLWrapperPattern.ReplaceAllString(stripped, "")
+}
+
+// hasForeignImages reports whether BBCode embeds images ASC would reject.
+func hasForeignImages(value string) bool {
+	for _, match := range descriptionImagePattern.FindAllStringSubmatch(value, -1) {
+		if !isSiteHostedImage(match[1]) {
+			return true
+		}
 	}
-	return "[img]" + strings.TrimSpace(value) + "[/img]"
+	return false
+}
+
+func isSiteHostedImage(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == cookieDomain || strings.HasSuffix(host, "."+cookieDomain)
 }
 
 func filterEmpty(values []string) []string {
@@ -744,9 +542,80 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets, req.TrackerConfig.CustomLayout)
+	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets)
 	return trackers.DescriptionResult{
 		Group:       "asc",
 		Description: strings.TrimSpace(description),
 	}, nil
+}
+
+// uploadScreenshots stores each screenshot on the site and returns the server
+// paths the upload form references. The site rate-limits with HTTP 429.
+func uploadScreenshots(ctx context.Context, client *http.Client, files []commonhttp.FileField) ([]string, error) {
+	paths := make([]string, 0, len(files))
+	for idx, file := range files {
+		path, err := uploadScreenshot(ctx, client, file)
+		if err != nil {
+			return nil, fmt.Errorf("trackers: ASC screenshot %d: %w", idx+1, err)
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+func uploadScreenshot(ctx context.Context, client *http.Client, file commonhttp.FileField) (string, error) {
+	body, contentType, err := commonhttp.BuildMultipartPayloadMulti(nil, []commonhttp.FileField{file})
+	if err != nil {
+		return "", fmt.Errorf("build screenshot payload: %w", err)
+	}
+	for attempt := 1; ; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+screenshotUploadPath, bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("build screenshot request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", contentType)
+		setXHRHeaders(httpReq, client)
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return "", fmt.Errorf("screenshot request: %w", err)
+		}
+		payload, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return "", fmt.Errorf("read screenshot response: %w", readErr)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxScreenshotAttempts {
+			if err := waitRetryAfter(ctx, resp.Header.Get("Retry-After")); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return "", commonhttp.UploadHTTPError("ASC", resp.StatusCode, payload)
+		}
+		var stored struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(payload, &stored); err != nil || strings.TrimSpace(stored.Path) == "" {
+			return "", errors.New("screenshot response did not include a path")
+		}
+		return strings.TrimSpace(stored.Path), nil
+	}
+}
+
+// waitRetryAfter honors a Retry-After delay in seconds, capped to keep
+// preparation bounded.
+func waitRetryAfter(ctx context.Context, header string) error {
+	seconds, err := strconv.Atoi(strings.TrimSpace(header))
+	if err != nil || seconds <= 0 {
+		seconds = defaultRetryAfterSeconds
+	}
+	timer := time.NewTimer(time.Duration(min(seconds, maxRetryAfterSeconds)) * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("screenshot retry canceled: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
 }
