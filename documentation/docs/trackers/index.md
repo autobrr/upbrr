@@ -86,11 +86,21 @@ On **Dupe Checking**, open **Tracker questions** for a selected tracker, review 
 
 PTP can ask you to review subtitle and trumpable tags when neither English subtitles nor a first English audio track are established, or hardcoded languages are unknown. Known hardcoded-language corrections, including **English (Full)** and **English (Forced)**, supply that evidence directly. Review every applicable choice; contradictory English and no-English claims block PTP. Choosing **English Softsubs Exist (Mislabeled)** does not correct a media track’s language. Use [Input language corrections](../workflow/index.md#subtitle-review) for that, or follow the [CLI subtitle-review guide](../cli/index.md#ptp-subtitle-review).
 
+Source questions distinguish facts that media inspection cannot prove from permission to upload:
+
+- BHD asks whether tracks or chapters were added to an existing release. Confirmed additions require staff approval; choosing an answer never supplies that approval.
+- HHD can use its subtitle manager for English coverage. Its source-retention recommendations become mandatory for personal releases. Compatibility questions distinguish original mix associations, duplicated cores and untouched WEB HLS audio; an HLS answer cannot replace required TrueHD AC-3 audio.
+- BTN checks best-original remux audio and available source-disc extras. A missing member of a differing Blu-ray/broadcast soundtrack pair produces a separately acknowledged trumpable finding.
+- LST reviews justified mixes, compatibility provenance and subtitle presentation separately. External subtitles remain partial satisfaction; established hardcoded coverage is not mislabeled as an external file. Conditional trumpability still needs its own acknowledgement.
+- AITHER’s single multilingual-track naming uses a source-confirmed even split or predominant language, rather than guessing from the first language label. ULCX’s non-personal original-audio and alternate-mix recommendations remain guidance.
+
+Answer only after checking the relevant source. Unknown mandatory facts remain unresolved. Correct an unknown **Source** on Input where requested; changing source, type, tracks or prepared generation requires source answers to be reviewed again. A source answer cannot waive an independent prohibited or staff-only finding. Existing debug-mode policy bypasses also leave eligibility-only questions optional; evidence needed to construct names, payloads or required descriptions remains necessary.
+
 ## Names and payloads
 
 upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. BHD factual tags are independent: original foreign programme audio plus English can set both `DualAudio` and `EnglishDub`, while the automatic name uses only the applicable exclusive marker. An additional prohibited dub still blocks the upload.
 
-OTW uses programme-audio languages, not subtitle languages, for its `Dual Audio`, `Dubbed` and `MULTI` elements. YUS uses `Multi-Audio` for two or more known programme languages. DP and YUS technical audio naming follows the default audio track. Automatic naming requires one inspected default track with a technical label; missing or ambiguous default evidence remains unresolved rather than silently retaining another track’s codec. Explicit manual naming choices remain presentation controls. Incomplete facts cannot establish a dub-only presentation. Manual naming controls remain presentation choices and do not grant upload eligibility.
+OTW uses programme-audio languages, not subtitle languages, for its `Dual Audio`, `Dubbed` and `MULTI` elements. YUS uses `Multi-Audio` for two or more known programme languages. DP and YUS technical audio naming follows the default audio track. Automatic naming requires one inspected default track with a technical label; missing or ambiguous default evidence remains unresolved rather than silently retaining another track’s codec. Incomplete facts cannot establish a dub-only presentation. Manual naming controls remain presentation choices and do not grant upload eligibility.
 
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or the rendered TV season/episode segment. Missing or unknown resolution stays absent. Complete manual names and tracker policies that use exact source names or separate display titles retain their existing behavior.
 

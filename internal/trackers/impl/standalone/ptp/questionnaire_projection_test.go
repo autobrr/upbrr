@@ -6,6 +6,7 @@ package ptp
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,40 @@ func TestProjectionQuestionnaireContainsOnlySubtitleReview(t *testing.T) {
 		schema := New().ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
 		if schema == nil || len(schema.Fields) != 2 || schema.Fields[0].Key != "trumpable_review" || schema.Fields[1].Key != "no_english_subtitles" {
 			t.Fatalf("projection leaked group fields: %#v", schema)
+		}
+	}
+}
+
+func TestDebugQuestionnairesPreservePayloadRequirements(t *testing.T) {
+	subject := ptpLanguageSubject("Japanese", "Japanese", "English", "German")
+	meta := api.UploadSubject{
+Type: subject.Type,
+ LanguageFacts: subject.LanguageFacts,
+ AudioLanguages: []string{"Japanese"},
+}
+	schemas := []*api.TrackerQuestionnaire{
+		buildQuestionnaire(meta, "", api.WorkflowExecutionModeDebug),
+		New().TrackerAnswerSchema(trackers.PreparationInput{Meta: meta, ExecutionMode: api.WorkflowExecutionModeDebug}),
+		projectionQuestionnaire(trackers.PreparationInput{Meta: meta, ExecutionMode: api.WorkflowExecutionModeDebug}),
+	}
+	for _, schema := range schemas {
+		payload, language := false, false
+		for _, field := range schema.Fields {
+			if field.Key == "trumpable_review" {
+				payload = true
+				if !field.Required {
+					t.Fatal("debug waived subtitle payload review")
+				}
+			}
+			if strings.HasPrefix(field.Key, "programme_track_purpose_") || strings.HasPrefix(field.Key, "forced_english_dialogue_") {
+				language = true
+				if field.Required {
+					t.Fatalf("debug re-blocked eligibility through %s", field.Key)
+				}
+			}
+		}
+		if !payload || !language {
+			t.Fatalf("fixture missing payload/language evidence: %+v", schema)
 		}
 	}
 }

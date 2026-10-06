@@ -5,6 +5,7 @@ package aither
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -16,7 +17,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v4", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v5", trackers.StructuredNamePolicy{
 		Defaults: applyAitherNameDefaults,
 	})
 }
@@ -213,8 +214,16 @@ func aitherLanguage(meta api.UploadSubject) string {
 	if unit3d.HasEnglishLanguage(languages) {
 		return ""
 	}
+	if !trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+		if track, ok := multilingualProgrammeTrack(meta.LanguageFacts); ok {
+			return multilingualMarker(api.NewTrackerValidationSubject(meta, "AITHER"), track)
+		}
+	}
 	for _, value := range languages {
 		if language := aitherLanguageComponent(value); language != "" {
+			if language == "MULTIPLE LANGUAGES" && !trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+				return ""
+			}
 			return language
 		}
 	}
@@ -244,4 +253,28 @@ func isDVDSource(source string) bool {
 	default:
 		return false
 	}
+}
+
+func multilingualProgrammeTrack(facts api.LanguageFacts) (api.MediaTrackFacts, bool) {
+	var programme []api.MediaTrackFacts
+	for _, track := range facts.Tracks {
+		if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) {
+			programme = append(programme, track)
+		}
+	}
+	if len(programme) != 1 || len(programme[0].Languages) < 2 || slices.Contains(facts.ProgrammeLanguages, "English") {
+		return api.MediaTrackFacts{}, false
+	}
+	return programme[0], true
+}
+
+func multilingualMarker(subject api.TrackerValidationSubject, track api.MediaTrackFacts) string {
+	answer := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "multilingual_balance_"+track.ID)]
+	if answer == "evenly_split" {
+		return "MULTIPLE LANGUAGES"
+	}
+	if language, ok := strings.CutPrefix(answer, "predominant:"); ok && slices.Contains(track.Languages, language) {
+		return aitherLanguageComponent(language)
+	}
+	return ""
 }

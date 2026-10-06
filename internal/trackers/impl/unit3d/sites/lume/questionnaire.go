@@ -46,7 +46,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Kind:     "select",
 			Options:  options,
 			Value:    subject.QuestionnaireAnswers[key],
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Help:     "Select an established TRaSH tier (Anime tier for anime), an older release already uploaded elsewhere, or none. Language-specific tiers do not qualify. This never waives mandatory original audio, correct track languages or complete English subtitles; other exceptions require staff permission.",
 		},
 	}
@@ -58,7 +58,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Kind:     "select",
 			Options:  []string{"appropriate", "inappropriate", "unresolved"},
 			Value:    subject.QuestionnaireAnswers[key],
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Help:     "Are the audio and subtitle flags, default status and descriptive titles appropriate for their actual content? This confirms suitability that inspected metadata cannot establish. It cannot override measured omissions or contradictions, mandatory language rules, or grant staff permission.",
 		})
 		facts := subject.LanguageFacts
@@ -71,7 +71,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 				Kind:     "select",
 				Options:  []string{"ordered", "out_of_order", "unresolved"},
 				Value:    subject.QuestionnaireAnswers[key],
-				Required: true,
+				Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 				Help:     "Container order could not be measured. Confirm that original audio tracks come first and normal dubs are together, English first and remaining languages alphabetically ordered. This resolves only missing order evidence, never measured violations, other language requirements or staff permission.",
 			})
 		}

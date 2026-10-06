@@ -241,6 +241,8 @@ ID: "audio-1",
 			languageSubject := api.TrackerValidationSubject{
 Tracker: "PTP",
  SourcePath: sourcePath,
+ Source: "BluRay",
+ Type: "ENCODE",
  LanguageFacts: languageFacts,
 }
 			answers[trackers.LanguageQuestionKey(languageSubject, "english_subtitle_manager")] = new("available")

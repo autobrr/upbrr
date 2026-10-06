@@ -1139,6 +1139,14 @@ partial pack evidence. Track ordering must use explicit measured container strea
 MediaInfo document order, per-kind ordinals, or opaque native IDs. Unknown order remains evidence
 to resolve rather than a guessed violation.
 
+Source-dependent language questions must bind their answers to the tracker, prepared generation,
+finalized track evidence, source, release type, and disc type. Use `LanguageQuestionKey` for that
+shared contract; include additional evidence separately when it is not part of `LanguageFacts`,
+such as finalized hardcoded-subtitle coverage. Treat unknown applicability as unknown rather than
+as evidence that a mandatory rule does not apply. Recognize the tracker’s supported source forms
+without importing another tracker’s source whitelist. Source attestations establish only the fact
+asked about, never staff permission or automatic replacement qualification.
+
 ### 7. Add optional capabilities
 
 Declare static capabilities directly in `standalone.Profile`:

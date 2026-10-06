@@ -177,6 +177,7 @@ func TestHHDLanguageRequirementsRemainIndependent(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			subject := hhdValidationSubject()
 			subject.LanguageFacts = hhdTestLanguageFacts("Japanese", test.audio, test.subtitles)
+			hhdAnswer(&subject, "english_subtitle_manager", "missing")
 			failures := languageAssessment(subject)
 			if test.want == "" {
 				if len(failures) != 0 {

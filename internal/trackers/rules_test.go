@@ -67,7 +67,12 @@ func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta a
 	if err != nil {
 		panic(err)
 	}
-	failures, err := trackers.EvaluateRulesWithRegistry(ctx, registry, tracker, meta, nil)
+	var failures []api.RuleFailure
+	if tracker == "BHD" {
+		failures, err = trackers.EvaluateTrackerValidationWithRegistry(ctx, registry, tracker, newBHDReleaseForTest(meta), nil)
+	} else {
+		failures, err = trackers.EvaluateRulesWithRegistry(ctx, registry, tracker, meta, nil)
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -81,7 +86,7 @@ func evaluateBHDRulesWithRegistryForTest(ctx context.Context, meta api.RuleSubje
 	if err != nil {
 		panic(err)
 	}
-	failures, err := trackers.EvaluateRulesWithRegistry(ctx, registry, "BHD", meta, nil)
+	failures, err := trackers.EvaluateTrackerValidationWithRegistry(ctx, registry, "BHD", newBHDReleaseForTest(meta), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -256,24 +261,24 @@ func TestPTPConstructibilityPolicyDocumentsTaxonomyFallbacks(t *testing.T) {
 	subject := api.TrackerValidationSubject{
 		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 		LanguageFacts: api.LanguageFacts{
-			OriginalLanguages: []string{"English"},
- OriginalLanguagesKnown: true,
- ProgrammeLanguages: []string{"English"},
- ProgrammeStatus: api.MetadataEvidenceStatusComplete,
-			SubtitleLanguages: []string{"English"},
- SubtitleStatus: api.MetadataEvidenceStatusComplete,
- PrimaryAudioTrackID: "primary",
+			OriginalLanguages:      []string{"English"},
+			OriginalLanguagesKnown: true,
+			ProgrammeLanguages:     []string{"English"},
+			ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+			SubtitleLanguages:      []string{"English"},
+			SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+			PrimaryAudioTrackID:    "primary",
 			Tracks: []api.MediaTrackFacts{{
-ID: "primary",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
- Languages: []string{"English"},
- Default: true,
-}, {
-Kind: api.MediaTrackSubtitle,
- Languages: []string{"English"},
- Forced: true,
-}},
+				ID:        "primary",
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"English"},
+				Default:   true,
+			}, {
+				Kind:      api.MediaTrackSubtitle,
+				Languages: []string{"English"},
+				Forced:    true,
+			}},
 		},
 	}
 	if failures := validationPolicyFailuresForTest(t, "PTP", subject); len(failures) != 0 {
@@ -955,11 +960,11 @@ func TestEvaluateRulesNBLMissingLanguageIsUnresolved(t *testing.T) {
 
 func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 	meta := withFinalizedLanguageFactsForTest(api.RuleSubject{
-Identity: api.ExternalIdentity{Category: "tv"},
- AudioLanguages: []string{"Japanese"},
- SubtitleLanguages: []string{"English"},
- ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}},
-})
+		Identity:          api.ExternalIdentity{Category: "tv"},
+		AudioLanguages:    []string{"Japanese"},
+		SubtitleLanguages: []string{"English"},
+		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}},
+	})
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
 	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
 		t.Fatalf("expected no blocking failures, got %#v", failures)
@@ -970,10 +975,10 @@ func TestEvaluateRulesNBLExcludesFullDiscsButIncludesRemuxes(t *testing.T) {
 	t.Parallel()
 	for _, disc := range []string{"BDMV", "DVD"} {
 		meta := api.RuleSubject{
-Identity: api.ExternalIdentity{Category: "tv"},
- DiscType: disc,
- Type: "DISC",
-}
+			Identity: api.ExternalIdentity{Category: "tv"},
+			DiscType: disc,
+			Type:     "DISC",
+		}
 		if failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta); len(nonAdvisoryFailures(failures)) != 0 {
 			t.Fatalf("%s full disc received language block: %#v", disc, failures)
 		}
@@ -1515,6 +1520,13 @@ func TestRuleEvaluationCancellationReturnsError(t *testing.T) {
 	}
 }
 
+// newBHDReleaseForTest supplies source history for unrelated rule fixtures.
+func newBHDReleaseForTest(meta api.RuleSubject) api.TrackerValidationSubject {
+	subject := api.NewTrackerValidationSubjectFromRuleSubject(meta, "BHD")
+	subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "existing_release"): "unchanged_or_new"}
+	return subject
+}
+
 // withFinalizedLanguageFactsForTest supplies the prepared projection omitted by
 // legacy tests focused on unrelated constructibility predicates.
 func withFinalizedLanguageFactsForTest(meta api.RuleSubject) api.RuleSubject {
@@ -1547,6 +1559,7 @@ func withFinalizedLanguageFactsForTest(meta api.RuleSubject) api.RuleSubject {
 			ID:        "programme",
 			Kind:      api.MediaTrackAudio,
 			Role:      api.AudioRoleProgramme,
+			Codec:     "FLAC",
 			Languages: []string{language},
 			Default:   i == 0,
 		})

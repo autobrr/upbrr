@@ -26,7 +26,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Kind:     "select",
 			Options:  []string{"yes", "no"},
 			Value:    meta.TrackerQuestionnaireAnswers["RF"][key],
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Help:     help,
 		})
 	}

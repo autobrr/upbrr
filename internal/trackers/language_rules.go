@@ -255,21 +255,27 @@ func LanguageRuleFailure(subject api.TrackerValidationSubject, key, reason strin
 		disposition,
 		status,
 	)
+	if outcome == LanguageTrumpable {
+		failure.EvidenceFingerprint = api.WorkflowFingerprint(fmt.Sprintf("%x", sha256.Sum256([]byte(LanguageQuestionKey(subject, key)))))
+	}
 	failure.DebugBypass = true
 	return failure
 }
 
 // LanguageQuestionKey binds a language attestation to its tracker and exact
-// prepared evidence, so retained answers cannot authorize changed tracks.
+// prepared evidence, so retained answers cannot authorize changed tracks or sources.
 func LanguageQuestionKey(subject api.TrackerValidationSubject, key string) string {
 	evidence := fmt.Sprintf(
-		"%q|%q|%d|%#v|%t|%t",
+		"%q|%q|%d|%#v|%t|%t|%q|%q|%q",
 		subject.Tracker,
 		subject.SourcePath,
 		subject.Identity.Generation,
 		subject.LanguageFacts,
 		subject.PersonalRelease,
 		subject.Anime,
+		subject.Source,
+		subject.Type,
+		subject.DiscType,
 	)
 	return fmt.Sprintf("%s_%x", key, sha256.Sum256([]byte(evidence)))
 }

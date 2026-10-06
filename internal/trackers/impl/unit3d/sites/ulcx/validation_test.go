@@ -66,7 +66,7 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v6/languages-v1" {
+	if policy.ID != "unit3d-ulcx-policy-v7/languages-v1" {
 		t.Fatalf("validation policy = %q, want upload rules policy v6", policy.ID)
 	}
 	tests := []struct {
@@ -530,8 +530,10 @@ func TestULCXPersonalOriginalAndSubtitleDefaults(t *testing.T) {
 	t.Parallel()
 	subject := ulcxValidationSubject()
 	subject.LanguageFacts = ulcxTestLanguageFacts("Japanese", []string{"English"}, nil)
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("non-personal English-dub exception blocked: %+v", failures)
+	for _, failure := range languageAssessment(subject) {
+		if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+			t.Fatalf("non-personal English-dub exception blocked: %+v", failure)
+		}
 	}
 	subject.PersonalRelease = true
 	requireULCXValidationFailure(t, languageAssessment(subject), "language_original", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)

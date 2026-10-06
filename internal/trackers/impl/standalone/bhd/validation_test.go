@@ -66,6 +66,7 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&subject)
 			}
+			bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
 			failures, err := validationPolicy().Check(context.Background(), subject, nil)
 			if err != nil {
 				t.Fatalf("validate BHD subject: %v", err)
@@ -167,6 +168,7 @@ func TestBHDLanguageRoleAndDiscBoundaries(t *testing.T) {
 	t.Parallel()
 	subject := bhdValidationSubject()
 	subject.LanguageFacts = bhdTestLanguageFacts("Japanese", []string{"Japanese", "English"}, nil)
+	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
 	if failures := languageAssessment(subject); len(failures) != 0 {
 		t.Fatalf("permitted original and English programme audio blocked: %+v", failures)
 	}

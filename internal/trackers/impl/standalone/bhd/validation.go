@@ -14,7 +14,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{
-		ID:    "standalone-bhd-constructibility-v2",
+		ID:    "standalone-bhd-constructibility-v3",
 		Check: checkRequirements,
 	}, languageAssessment)
 }

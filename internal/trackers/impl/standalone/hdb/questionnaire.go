@@ -23,7 +23,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Key:      trackers.LanguageQuestionKey(subject, "source_audio"),
 			Label:    "HDB remux source audio",
 			Kind:     "select",
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Options:  []string{"best_original_retained", "source_mix_pair_retained", "incomplete", "unresolved"},
 			Help:     "Confirm the best available original-language soundtrack is retained. Select source_mix_pair_retained when the source has both an original mono/stereo mix and surround upmix and both are retained; the original mix must be default. Select best_original_retained only when that source-pair requirement does not apply. Select incomplete for a known omission, or unresolved if the source cannot be established.",
 		})
@@ -33,7 +33,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Key:      trackers.LanguageQuestionKey(subject, "foreign_dialogue_subtitles"),
 			Label:    "HDB foreign-dialogue subtitles",
 			Kind:     "select",
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Options:  []string{"not_required", "included", "missing", "unresolved"},
 			Help:     "Does foreign dialogue require forced subtitles? Select not_required only when no such subtitle requirement applies, included when the required dialogue is covered by an included forced/default track, missing for a known omission, or unresolved when this cannot be established. These answers do not waive another language rule.",
 		})

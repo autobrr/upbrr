@@ -34,7 +34,7 @@ func (d *Definition) ProjectionQuestionnaire(input trackers.PreparationInput) *a
 			Kind:     "select",
 			Options:  []string{"yes", "no"},
 			Value:    value,
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Help: "Are all listed programme languages regional dialects of the original " + strings.Join(
 				subject.LanguageFacts.OriginalLanguages,
 				", ",

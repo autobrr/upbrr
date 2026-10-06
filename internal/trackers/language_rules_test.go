@@ -5,6 +5,8 @@ package trackers_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -25,24 +27,24 @@ func languageSubject(original string, audio ...string) api.TrackerValidationSubj
 	}
 	for i, language := range audio {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID:        fmt.Sprintf("audio_%d", i),
-			Kind:      api.MediaTrackAudio,
-			Role:      api.AudioRoleProgramme,
-			Title:     language + " main audio",
-			StreamOrder: i + 1,
+			ID:               fmt.Sprintf("audio_%d", i),
+			Kind:             api.MediaTrackAudio,
+			Role:             api.AudioRoleProgramme,
+			Title:            language + " main audio",
+			StreamOrder:      i + 1,
 			StreamOrderKnown: true,
-			Languages: []string{language},
-			Default:   i == 0,
-			Codec:     "FLAC",
+			Languages:        []string{language},
+			Default:          i == 0,
+			Codec:            "FLAC",
 		})
 	}
 	media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-		Kind:      api.MediaTrackSubtitle,
-		Title:     "English subtitles",
-		StreamOrder: len(audio) + 1,
+		Kind:             api.MediaTrackSubtitle,
+		Title:            "English subtitles",
+		StreamOrder:      len(audio) + 1,
 		StreamOrderKnown: true,
-		Languages: []string{"English"},
-		Default:   true,
+		Languages:        []string{"English"},
+		Default:          true,
 	})
 	if len(audio) > 0 {
 		media.PrimaryAudioTrackID = "audio_0"
@@ -81,10 +83,15 @@ func TestTrackerProgrammeDubMatrix(t *testing.T) {
 		{"LUME", "Japanese", []string{"Japanese", "English", "German"}, ""},
 	} {
 		t.Run(tt.tracker+"/"+tt.original+"/"+strings.Join(tt.audio, "+"), func(t *testing.T) {
-			failures := languageFailures(t, tt.tracker, languageSubject(tt.original, tt.audio...))
+			subject := languageSubject(tt.original, tt.audio...)
+			if tt.tracker == "BHD" {
+				subject.Tracker = "BHD"
+				subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "existing_release"): "unchanged_or_new"}
+			}
+			failures := languageFailures(t, tt.tracker, subject)
 			if tt.want == "" {
-				if len(failures) != 0 {
-					t.Fatalf("unexpected findings: %#v", failures)
+				if len(nonAdvisoryFailures(failures)) != 0 {
+					t.Fatalf("unexpected blocking findings: %#v", failures)
 				}
 				return
 			}
@@ -171,6 +178,9 @@ func TestLanguageQuestionKeyInvalidatesChangedEvidence(t *testing.T) {
 	for _, mutate := range []func(*api.TrackerValidationSubject){
 		func(s *api.TrackerValidationSubject) { s.Tracker = "LST" },
 		func(s *api.TrackerValidationSubject) { s.SourcePath = "other.mkv" },
+		func(s *api.TrackerValidationSubject) { s.Source = "BluRay" },
+		func(s *api.TrackerValidationSubject) { s.Type = "REMUX" },
+		func(s *api.TrackerValidationSubject) { s.DiscType = "BDMV" },
 		func(s *api.TrackerValidationSubject) { s.Identity.Generation++ },
 		func(s *api.TrackerValidationSubject) { s.LanguageFacts.ProgrammeLanguages = []string{"English"} },
 		func(s *api.TrackerValidationSubject) { s.PersonalRelease = true },
@@ -180,6 +190,39 @@ func TestLanguageQuestionKeyInvalidatesChangedEvidence(t *testing.T) {
 		mutate(&changed)
 		if trackers.LanguageQuestionKey(changed, "retail") == original {
 			t.Fatalf("changed evidence retained question: %+v", changed)
+		}
+	}
+}
+
+func TestLanguageWaiverBindsPreparedEvidence(t *testing.T) {
+	subject := languageSubject("Japanese", "Japanese", "English")
+	subject.Tracker, subject.SourcePath, subject.Source = "PTP", "synthetic.mkv", "BluRay"
+	subject.Identity.Generation = 1
+	failure := trackers.LanguageRuleFailure(subject, "example", "same reported defect", trackers.LanguageTrumpable)
+	if decoded, err := hex.DecodeString(string(failure.EvidenceFingerprint)); err != nil || len(decoded) != sha256.Size {
+		t.Fatalf("invalid workflow fingerprint: %q", failure.EvidenceFingerprint)
+	}
+	fingerprint, err := trackers.WaivableRuleFailureFingerprint("PTP", []api.RuleFailure{failure})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := &api.TrackerReleaseProjection{WaivableRuleFingerprint: fingerprint, RuleAuthorizationFingerprint: fingerprint}
+	if blocking, err := trackers.FirstBlockingRuleFailure("PTP", []api.RuleFailure{failure}, api.WorkflowExecutionModeNormal, projection); err != nil || blocking != nil {
+		t.Fatalf("exact evidence rejected: %+v %v", blocking, err)
+	}
+	for _, change := range []func(*api.TrackerValidationSubject){
+		func(s *api.TrackerValidationSubject) { s.Identity.Generation++ },
+		func(s *api.TrackerValidationSubject) { s.LanguageFacts.Tracks[0].StreamOrder++ },
+		func(s *api.TrackerValidationSubject) { s.LanguageFacts.PrimaryAudioTrackID = "audio_1" },
+		func(s *api.TrackerValidationSubject) { s.Source = "WEB-DL" },
+		func(s *api.TrackerValidationSubject) { s.Tracker = "LST" },
+	} {
+		changed := subject
+		changed.LanguageFacts = subject.LanguageFacts.Clone()
+		change(&changed)
+		current := trackers.LanguageRuleFailure(changed, "example", "same reported defect", trackers.LanguageTrumpable)
+		if blocking, err := trackers.FirstBlockingRuleFailure("PTP", []api.RuleFailure{current}, api.WorkflowExecutionModeNormal, projection); err != nil || blocking == nil {
+			t.Fatalf("changed evidence reused acknowledgement: %+v %v", blocking, err)
 		}
 	}
 }

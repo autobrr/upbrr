@@ -5,7 +5,6 @@ package hhd
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -21,13 +20,9 @@ func Rules() *trackers.RuleSet {
 
 func languagePolicy() trackers.LanguagePolicy {
 	return trackers.LanguagePolicy{
-		OriginalPrimary:       true,
-		OriginalAudio:         trackers.LanguageProhibited,
-		ExtraDubs:             trackers.LanguageProhibited,
-		EnglishSubtitles:      "foreign",
-		MissingSubtitles:      trackers.LanguageProhibited,
-		CompatibilityRequired: true,
-		CompatibilityCodecs:   []string{"DD", "AC-3"},
+		OriginalPrimary: true,
+		OriginalAudio:   trackers.LanguageProhibited,
+		ExtraDubs:       trackers.LanguageProhibited,
 	}
 }
 
@@ -46,26 +41,6 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			!slices.Contains(facts.OriginalLanguages, "English") {
 			englishDubs++
 		}
-		if strings.Contains(strings.ToLower(track.Codec), "truehd") {
-			matches := 0
-			for _, compat := range facts.Tracks {
-				if compat.Kind == api.MediaTrackAudio && compat.Role == api.AudioRoleCompatibility &&
-					slices.ContainsFunc(compat.Languages, func(language string) bool { return slices.Contains(track.Languages, language) }) {
-					matches++
-				}
-			}
-			if matches > 1 {
-				failures = append(
-					failures,
-					trackers.LanguageRuleFailure(
-						subject,
-						"compatibility_count",
-						"at most one compatibility track is permitted per mix; the supplied same-language compatibility set needs mix association",
-						trackers.LanguageUnresolved,
-					),
-				)
-			}
-		}
 	}
 	if englishDubs > 1 {
 		failures = append(
@@ -78,5 +53,6 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			),
 		)
 	}
-	return failures
+	failures = append(failures, sourceLanguageFailures(subject)...)
+	return append(failures, compatibilityFailures(subject)...)
 }

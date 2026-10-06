@@ -131,7 +131,7 @@ func TestPTPLanguageReviewFactsAndGenerationInvalidateAnswers(t *testing.T) {
 	} {
 		changed := subject
 		change(&changed)
-		fields := languageReviewFields(changed)
+		fields := languageReviewFields(changed, api.WorkflowExecutionModeNormal)
 		if len(fields) == 0 || slices.ContainsFunc(fields, func(field api.TrackerQuestionnaireField) bool { return field.Value != "" }) {
 			t.Fatalf("changed evidence reused answers: %#v", fields)
 		}
@@ -146,7 +146,7 @@ func TestPTPLanguageReviewFactsAndGenerationInvalidateAnswers(t *testing.T) {
 		if failures := languageFailures(discSubject); len(failures) != 0 {
 			t.Fatalf("full disc assessed: %#v", failures)
 		}
-		if fields := languageReviewFields(discSubject); len(fields) != 0 {
+		if fields := languageReviewFields(discSubject, api.WorkflowExecutionModeNormal); len(fields) != 0 {
 			t.Fatalf("full disc acquired questions: %#v", fields)
 		}
 	}

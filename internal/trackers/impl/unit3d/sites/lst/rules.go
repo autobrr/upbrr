@@ -22,20 +22,13 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		recommendation = trackers.LanguageProhibited
 	}
 	conditional := trackers.LanguageUnresolved
-	switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "trumpable_audio_eligibility")] {
-	case "yes":
+	if subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "trumpable_audio_eligibility")] == "yes" {
 		conditional = trackers.LanguageTrumpable
-	case "no":
-		conditional = trackers.LanguageProhibited
 	}
 	policy := trackers.LanguagePolicy{
-		ExtraDubs:                    conditional,
-		OriginalFirst:                recommendation,
-		OriginalDefault:              recommendation,
-		SubtitleDefault:              recommendation,
-		CompatibilityRequired:        true,
-		EmbeddedCompatibilityAllowed: true,
-		CompatibilityCodecs:          []string{"DD", "AC-3", "DD+", "E-AC-3", "DD+ Atmos"},
+		OriginalFirst:   recommendation,
+		OriginalDefault: recommendation,
+		SubtitleDefault: recommendation,
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
@@ -43,33 +36,23 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	}
 	facts := subject.LanguageFacts
 	defaults := 0
-	counts := map[string]int{}
 	for _, track := range facts.Tracks {
 		if track.Kind != api.MediaTrackAudio {
 			continue
-		}
-		if track.Role == api.AudioRoleDescription {
-			add("track_justification", "audio description requires specific justification; a novelty label alone does not qualify", trackers.LanguageUnresolved)
 		}
 		if track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix {
 			if track.Default {
 				defaults++
 			}
 		}
-		if track.Role == api.AudioRoleProgramme {
-			for _, language := range track.Languages {
-				counts[language]++
-			}
-		}
 	}
 	if defaults == 0 || (!subject.Anime && defaults != 1) {
 		add("default_audio", "exactly one primary audio track must be default; anime may have multiple defaults", trackers.LanguageProhibited)
 	}
-	for language, count := range counts {
-		if count > 1 {
-			add("redundant_programme", "redundant programme tracks in "+language, conditional)
-		}
+	for _, defect := range audioDefects(subject) {
+		add(defect.key, defect.reason, conditional)
 	}
+	failures = append(failures, sourceLanguageFailures(subject)...)
 	foreign := facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX")
 	if foreign && !slices.Contains(facts.ProgrammeLanguages, "English") && !slices.Contains(facts.SubtitleLanguages, "English") {
 		evidence := subject.TitleSearchEvidence

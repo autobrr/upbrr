@@ -65,5 +65,149 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.OriginalLanguages, "English") && !facts.HasOriginalAudio() {
 		add("original_pack", "a foreign non-anime release lacking original audio can be replaced by an original-audio pack", trackers.LanguageTrumpable)
 	}
+	return append(failures, sourceLanguageFailures(subject)...)
+}
+
+// sourceLanguageFailures keeps source comparisons separate from measured
+// language facts. These findings do not establish remote replacement eligibility.
+func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	var failures []api.RuleFailure
+	add := func(key, reason string, outcome trackers.LanguageOutcome) {
+		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
+	}
+	// Unknown recommendation evidence does not turn should-guidance into a
+	// mandatory source requirement.
+	addUnresolvedGuidance := func(key, reason string) {
+		failure := trackers.LanguageRuleFailure(subject, key, reason, trackers.LanguageAdvisory)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
+	}
+	if !sourceKindKnown(subject) {
+		add(
+			"source_kind",
+			"correct Source in Input to establish source-disc extras and Blu-ray/broadcast soundtrack applicability",
+			trackers.LanguageUnresolved,
+		)
+	}
+	remux := strings.EqualFold(subject.Type, "REMUX")
+	if remux {
+		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "source_audio")] {
+		case "best_original_retained":
+		case "incomplete":
+			add("source_audio", "remuxes must retain the best available original-language primary audio", trackers.LanguageProhibited)
+		default:
+			add("source_audio", "source comparison must establish the best available original-language primary audio is retained", trackers.LanguageUnresolved)
+		}
+	}
+	if discSourceVideo(subject) {
+		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "source_extras")] {
+		case "retained_or_unavailable":
+		case "incomplete":
+			add("source_extras", "available source-disc commentary, isolated scores and chapters must be included", trackers.LanguageProhibited)
+		default:
+			add("source_extras", "source-disc commentary, isolated-score and chapter availability/inclusion needs review", trackers.LanguageUnresolved)
+		}
+	}
+	if bluRaySourceVideo(subject) {
+		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "broadcast_soundtrack")] {
+		case "same_or_both_retained":
+		case "missing":
+			add(
+				"broadcast_soundtrack",
+				"a different Blu-ray and original broadcast soundtrack should both be retained; one is missing",
+				trackers.LanguageTrumpable,
+			)
+		default:
+			add(
+				"broadcast_soundtrack",
+				"compare the Blu-ray and original broadcast soundtracks and establish whether both are retained when different",
+				trackers.LanguageUnresolved,
+			)
+		}
+	}
+	if needsRetailEnglishDubReview(subject) {
+		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "retail_english_dub")] {
+		case "unavailable":
+		case "available_missing":
+			add("retail_english_dub", "foreign animation should include an English dub when available from retail sources", trackers.LanguageAdvisory)
+		default:
+			addUnresolvedGuidance("retail_english_dub", "retail English-dub availability is unresolved; foreign animation should include it when available")
+		}
+	}
+	if remux && foreignOriginal(subject.LanguageFacts) {
+		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "retail_english_subtitles")] {
+		case "unavailable":
+		case "retail_included":
+			if slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English") {
+				break
+			}
+			add("retail_english_subtitles", "retail English subtitle inclusion is not established in the finalized subtitle facts", trackers.LanguageAdvisory)
+		case "available_missing":
+			add(
+				"retail_english_subtitles",
+				"retail English subtitles can improve a foreign remux; replacement eligibility still requires a source/slot comparison",
+				trackers.LanguageAdvisory,
+			)
+		default:
+			addUnresolvedGuidance(
+				"retail_english_subtitles",
+				"retail English subtitle availability and inclusion are unresolved; they can improve a foreign remux",
+			)
+		}
+	}
 	return failures
+}
+
+func bluRaySourceVideo(subject api.TrackerValidationSubject) bool {
+	source := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(subject.Source), "-", ""))
+	switch source {
+	case "BLURAY", "BLU RAY", "BLURAY 3D", "BD", "BDMV", "BDRIP", "BRRIP":
+		return true
+	default:
+		discType := strings.NewReplacer(" ", "", "-", "", "_", "").Replace(strings.ToUpper(strings.TrimSpace(subject.DiscType)))
+		return discType == "BDMV" || discType == "BLURAY"
+	}
+}
+
+func discSourceVideo(subject api.TrackerValidationSubject) bool {
+	return discSourceKindKnown(subject) || strings.EqualFold(subject.Type, "REMUX") || strings.EqualFold(subject.Type, "DVDRIP")
+}
+
+func discSourceKindKnown(subject api.TrackerValidationSubject) bool {
+	if bluRaySourceVideo(subject) || trackers.IsDiscType(subject.DiscType) {
+		return true
+	}
+	switch strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(subject.Source), "-", "")) {
+	case "DVD", "PAL DVD", "NTSC DVD", "HDDVD", "HD DVD", "DVD5", "DVD9":
+		return true
+	default:
+		return false
+	}
+}
+
+// sourceKindKnown distinguishes unknown provenance from known non-disc video.
+// A remux without its disc kind still needs review for Blu-ray soundtrack rules.
+func sourceKindKnown(subject api.TrackerValidationSubject) bool {
+	if discSourceKindKnown(subject) {
+		return true
+	}
+	switch strings.ToUpper(strings.TrimSpace(subject.Source)) {
+	case "WEB", "WEB-DL", "WEBDL", "WEBRIP", "HDTV", "UHDTV", "PDTV", "DSR", "TVRIP", "VHSRIP":
+		return true
+	case "":
+		return strings.EqualFold(subject.Type, "WEBDL") || strings.EqualFold(subject.Type, "WEBRIP") ||
+			strings.EqualFold(subject.Type, "HDTV") || strings.EqualFold(subject.Type, "DVDRIP")
+	default:
+		return false
+	}
+}
+
+func foreignOriginal(facts api.LanguageFacts) bool {
+	return facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX")
+}
+
+func needsRetailEnglishDubReview(subject api.TrackerValidationSubject) bool {
+	animated := subject.Anime || slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
+	return animated && foreignOriginal(subject.LanguageFacts) && subject.LanguageFacts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
+		!slices.Contains(subject.LanguageFacts.ProgrammeLanguages, "English")
 }

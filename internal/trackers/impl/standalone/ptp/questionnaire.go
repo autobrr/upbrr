@@ -15,7 +15,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildQuestionnaire(meta api.UploadSubject, groupID string) *api.TrackerQuestionnaire {
+func buildQuestionnaire(meta api.UploadSubject, groupID string, mode api.WorkflowExecutionMode) *api.TrackerQuestionnaire {
 	answers := standalone.QuestionnaireAnswers(meta, "PTP")
 	fields := make([]api.TrackerQuestionnaireField, 0, 7)
 	if strings.TrimSpace(groupID) == "" {
@@ -62,7 +62,7 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string) *api.TrackerQues
 		})
 	}
 	fields = append(fields, subtitleReviewFields(meta, answers)...)
-	fields = append(fields, languageReviewFields(api.NewTrackerValidationSubject(meta, "PTP"))...)
+	fields = append(fields, languageReviewFields(api.NewTrackerValidationSubject(meta, "PTP"), mode)...)
 	if len(fields) == 0 {
 		return nil
 	}
@@ -86,13 +86,13 @@ func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuesti
 	fields := append(subtitleReviewFields(input.Meta, standalone.QuestionnaireAnswers(input.Meta, "PTP")), legacySubtitleField(input.Meta))
 	return &api.TrackerQuestionnaire{
 		Tracker: "PTP",
-		Fields:  append(fields, languageReviewFields(api.NewTrackerValidationSubject(input.Meta, "PTP"))...),
+		Fields:  append(fields, languageReviewFields(api.NewTrackerValidationSubject(input.Meta, "PTP"), input.ExecutionMode)...),
 	}
 }
 
 // languageReviewFields records missing evidence independently of legacy payload
 // choices. Acknowledgement of a trumpable finding remains a separate decision.
-func languageReviewFields(subject api.TrackerValidationSubject) []api.TrackerQuestionnaireField {
+func languageReviewFields(subject api.TrackerValidationSubject, mode api.WorkflowExecutionMode) []api.TrackerQuestionnaireField {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) || ptpNoProgrammeDialogue(subject.LanguageFacts) {
 		return nil
 	}
@@ -102,7 +102,7 @@ func languageReviewFields(subject api.TrackerValidationSubject) []api.TrackerQue
 			Key:      trackers.LanguageQuestionKey(subject, "programme_track_purpose"),
 			Label:    "PTP additional programme audio",
 			Kind:     "select",
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug,
 			Options:  []string{"distinct_content", "redundant", "unresolved"},
 			Help: "Programme tracks: " + ptpProgrammeTrackDetails(
 				subject.LanguageFacts,
@@ -118,7 +118,7 @@ func languageReviewFields(subject api.TrackerValidationSubject) []api.TrackerQue
 			),
 			Label:    "PTP English subtitles for primary " + primary + " audio",
 			Kind:     "select",
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug,
 			Options:  []string{"available", "missing", "unresolved"},
 			Help:     "Are English subtitles for this release available in PTP's subtitle manager? Missing local and manager subtitles create a Trumpable release defect; unknown availability remains unresolved. This does not change subtitle payload selections.",
 		})
@@ -131,7 +131,7 @@ func languageReviewFields(subject api.TrackerValidationSubject) []api.TrackerQue
 			),
 			Label:    "PTP forced English dialogue coverage",
 			Kind:     "select",
-			Required: true,
+			Required: api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug,
 			Options:  []string{"not_required", "available_in_manager", "missing", "unresolved"},
 			Help:     "Does foreign dialogue require forced English subtitles? Select not_required only when that requirement does not apply, available_in_manager when the required coverage is available there, missing when it is absent locally and from the manager, or unresolved. A known omission needs a separate Trumpable release acknowledgement.",
 		})
@@ -148,7 +148,7 @@ func languageReviewFields(subject api.TrackerValidationSubject) []api.TrackerQue
 // TrackerAnswerSchema retains CLI staging for group fields without publishing
 // speculative new-group requirements or making them canonical Input gates.
 func (d *Definition) TrackerAnswerSchema(input trackers.PreparationInput) *api.TrackerQuestionnaire {
-	questionnaire := buildQuestionnaire(input.Meta, "")
+	questionnaire := buildQuestionnaire(input.Meta, "", input.ExecutionMode)
 	questionnaire.Fields = append(questionnaire.Fields, legacySubtitleField(input.Meta))
 	for index := range questionnaire.Fields {
 		field := &questionnaire.Fields[index]
