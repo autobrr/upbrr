@@ -45,9 +45,11 @@ Review the generated file, then import it:
 
 ## Migrate tracker cookies
 
-Copy legacy `.txt` or `.json` cookie files into a `cookies` directory beside the active `db.sqlite`, then restart upbrr. Successfully migrated legacy files are removed.
+Follow the [cookie export and import walkthrough](../web-ui/settings/tracker-auth.md#export-and-import-cookies) to export a current browser session and choose Web UI or cookie-folder import. Web UI import uploads the file contents directly, without a server-side copy or restart.
 
-Verify tracker authentication from **Settings** before preparing a live upload.
+For folder migration, place Netscape `<tracker-id>.txt` files or supported cookie-map `<tracker-id>.json` files directly in `cookies` beside the active `db.sqlite`, then restart upbrr. The walkthrough covers tracker IDs, active state paths, Docker mounts, and accepted JSON formats. Source-file cleanup runs only after at least one cookie is stored encrypted and the whole batch has no parse or storage failures. If any file fails, all source files remain, including files whose cookies were stored.
+
+[Verify tracker authentication](../web-ui/settings/tracker-auth.md#verify-authentication) before preparing a live upload; successful import alone does not prove the session is valid.
 
 ## Restore Web UI browse access
 
