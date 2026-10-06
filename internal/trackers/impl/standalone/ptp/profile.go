@@ -26,6 +26,7 @@ func Profile() standalone.Profile {
 		UploadContentMode:       trackers.UploadContentModeDescription,
 		SourceOnlyImageReusable: sourceOnlyImageReusable,
 		PrepareDescription:      prepareDescription,
+		EditionFeatures:         editionFeatures,
 		ReleaseNamePolicy: trackers.WithMovieYearProvider(
 			trackers.CanonicalReleaseNamePolicy(),
 			api.IdentityProviderIMDB,

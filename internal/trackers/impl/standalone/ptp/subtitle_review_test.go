@@ -203,10 +203,11 @@ func TestPTPProjectionCapturesReviewedPayloadChoices(t *testing.T) {
 		var err error
 		payload, err = buildUploadFields(prepared.Meta, "description", "123", prepared.Meta.TrackerQuestionnaireAnswers["PTP"], "")
 		return trackers.NewPreparedOperation(api.TrackerDryRunEntry{
-			Tracker:     "PTP",
-			Status:      "ready",
-			ReleaseName: reviewed.UploadReleaseName,
-			Payload:     payload,
+			Tracker:         "PTP",
+			Status:          "ready",
+			ReleaseName:     reviewed.UploadReleaseName,
+			EditionFeatures: editionFeatures(prepared.Meta),
+			Payload:         payload,
 		}, nil, nil), err
 	})
 	if failure != nil {

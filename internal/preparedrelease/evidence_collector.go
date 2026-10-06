@@ -277,6 +277,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			VideoEncode:                          meta.VideoEncode,
 			HasEncodeSettings:                    meta.HasEncodeSettings,
 			BitDepth:                             meta.BitDepth,
+			ReleaseFeatures:                      append([]api.ReleaseFeature(nil), meta.ReleaseFeatures...),
 			EditionSet:                           meta.EditionSet,
 			Cut:                                  meta.Cut,
 			Presentation:                         meta.Presentation,

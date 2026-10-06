@@ -78,6 +78,9 @@ func extractBDInfoLanguages(info *discparse.BDInfo) ([]string, []string) {
 	}
 	audio := make([]string, 0, len(info.Audio))
 	for _, track := range info.Audio {
+		if isBDInfoCommentary(track) {
+			continue
+		}
 		audio = append(audio, normalizeLanguage(track.Language))
 	}
 	subs := make([]string, 0, len(info.Subtitles))

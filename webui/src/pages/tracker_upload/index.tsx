@@ -286,6 +286,7 @@ export default function TrackerUploadPage({ facet }: Props) {
               projection?.uploadReleaseName || report?.uploadReleaseName || "Unavailable";
             const canonicalName = projection?.canonicalReleaseName || "";
             const releaseNameNotices = releaseNameOverrideNotices(projection);
+            const editionFeatures = projection?.editionFeatures ?? report?.editionFeatures;
             return (
               <div
                 className="grid gap-2 rounded border border-border bg-muted p-3 text-foreground"
@@ -330,6 +331,28 @@ export default function TrackerUploadPage({ facet }: Props) {
                 <p className={`${pageStyle.value} break-all`}>
                   <span className="font-semibold">Tracker upload:</span> {uploadName}
                 </p>
+                {editionFeatures?.length ? (
+                  <section aria-label={`${trackerLabel} edition/features`} className="grid gap-2">
+                    <h3 className="font-semibold">Edition / features</h3>
+                    <ul className="grid gap-1 text-sm">
+                      {editionFeatures.map((feature) => (
+                        <li
+                          className="rounded border border-border bg-card p-2"
+                          key={`${feature.category}:${feature.label}`}
+                        >
+                          <span className="font-semibold">{feature.label}</span>
+                          {" · "}
+                          {feature.selected ? "Selected" : "Not selected"}
+                          {" · "}
+                          {feature.category}
+                          {feature.evidence ? (
+                            <p className="text-muted-foreground break-words">{feature.evidence}</p>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
                 {releaseNameNotices.length ? (
                   <div
                     aria-label={`Tracker naming notices for ${trackerId}`}

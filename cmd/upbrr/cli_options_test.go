@@ -1797,3 +1797,14 @@ func TestBareHardcodedFlagRetainsMultipleSourceFolders(t *testing.T) {
 		t.Fatalf("paths=%v err=%v", paths, err)
 	}
 }
+
+func TestPrintMetadataPreviewAlwaysShowsEffectiveCommentary(t *testing.T) {
+	t.Parallel()
+	for _, commentary := range []bool{true, false} {
+		var output strings.Builder
+		printMetadataPreview(&output, api.MetadataPreview{Display: api.PreparedReleaseDisplay{Commentary: commentary}}, false)
+		if !strings.Contains(output.String(), "Commentary: "+strconv.FormatBool(commentary)+"\n") {
+			t.Fatalf("metadata preview omitted effective commentary: %q", output.String())
+		}
+	}
+}

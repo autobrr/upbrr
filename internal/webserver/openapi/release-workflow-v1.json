@@ -3422,6 +3422,12 @@
           "Region": {
             "type": "string"
           },
+          "ReleaseFeatures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseFeature"
+            }
+          },
           "Repack": {
             "type": "string"
           },
@@ -3632,6 +3638,9 @@
       "MediaTrackFacts": {
         "type": "object",
         "properties": {
+          "BitrateBitsPerSecond": {
+            "type": "integer"
+          },
           "ChannelLayout": {
             "type": "string"
           },
@@ -3652,6 +3661,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "DiscID": {
+            "type": "string"
+          },
+          "Hidden": {
+            "type": "boolean"
           },
           "ID": {
             "type": "string"
@@ -3677,6 +3692,9 @@
           "Ordinal": {
             "type": "integer"
           },
+          "PlaylistID": {
+            "type": "string"
+          },
           "ResourceID": {
             "type": "string"
           },
@@ -3688,12 +3706,15 @@
           }
         },
         "required": [
+          "BitrateBitsPerSecond",
           "ChannelLayout",
           "Channels",
           "Codec",
           "Commentary",
           "Default",
           "DetectedLanguages",
+          "DiscID",
+          "Hidden",
           "ID",
           "Kind",
           "LanguageProvenance",
@@ -3701,6 +3722,7 @@
           "ManifestFingerprint",
           "NativeID",
           "Ordinal",
+          "PlaylistID",
           "ResourceID",
           "SampleRate",
           "Title"
@@ -4563,6 +4585,9 @@
       "PreparedReleaseDisplay": {
         "type": "object",
         "properties": {
+          "Commentary": {
+            "type": "boolean"
+          },
           "MediaInfoHTML": {
             "type": "string"
           },
@@ -5085,6 +5110,9 @@
           "SourceLookup",
           "TrackerIDs"
         ]
+      },
+      "ReleaseFeature": {
+        "type": "string"
       },
       "ReleaseNameComponent": {
         "type": "object",
@@ -9495,6 +9523,12 @@
           "displayName": {
             "type": "string"
           },
+          "editionFeatures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerEditionFeature"
+            }
+          },
           "endpoint": {
             "type": "string"
           },
@@ -9773,6 +9807,28 @@
         "required": [
           "hdr",
           "pack"
+        ]
+      },
+      "TrackerEditionFeature": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "selected": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "category",
+          "label",
+          "selected"
         ]
       },
       "TrackerID": {
@@ -10372,6 +10428,12 @@
           },
           "duplicateTargetFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "editionFeatures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerEditionFeature"
+            }
           },
           "episodeTitleMode": {
             "$ref": "#/components/schemas/EpisodeTitleMode"

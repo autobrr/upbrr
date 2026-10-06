@@ -57,6 +57,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 	release := metautil.ParseReleaseTokens(base)
 	other := append([]string{}, release.Other...)
 	other = append(other, parsedReleaseMarkers(base)...)
+	other = append(other, parsedReleaseFeatures(release)...)
 	typeValue := parsedReleaseType(base, release.Source, release.Other, release.Codec)
 	sourceValue := parsedReleaseSource(base, release.Source, typeValue)
 	groupValue := parsedReleaseGroup(base, release.Group, release.Site)

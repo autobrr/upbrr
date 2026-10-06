@@ -21,6 +21,10 @@ const facet = (overrides: Partial<AudioAnalysisFacet["view"]> = {}): AudioAnalys
       {
         ID: "audio-main",
         Kind: "audio",
+        DiscID: "",
+        PlaylistID: "",
+        BitrateBitsPerSecond: 0,
+        Hidden: false,
         ResourceID: "resource-one",
         ManifestFingerprint: "a".repeat(64),
         NativeID: "1",
@@ -39,6 +43,10 @@ const facet = (overrides: Partial<AudioAnalysisFacet["view"]> = {}): AudioAnalys
       {
         ID: "audio-commentary",
         Kind: "audio",
+        DiscID: "",
+        PlaylistID: "",
+        BitrateBitsPerSecond: 0,
+        Hidden: false,
         ResourceID: "resource-one",
         ManifestFingerprint: "a".repeat(64),
         NativeID: "2",

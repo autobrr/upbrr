@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -22,12 +23,22 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		return nil, "", nil, nil, err
 	}
 	resourceID := mediaTrackResourceID(meta)
-	tracks := make([]api.MediaTrackFacts, 0)
+	tracks, err := bdInfoAudioTrackFacts(meta)
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+	bdInfoAudio := len(tracks) > 0
 	ordinals := map[api.MediaTrackKind]int{}
 	nativeCounts := make(map[string]int)
 	_, _, audioTracks := splitMediaInfoTracks(doc)
 	primaryAudioIndex := selectPrimaryAudioTrackIndex(audioTracks)
 	primaryAudioTrackID := ""
+	for _, track := range tracks {
+		if !track.Commentary {
+			primaryAudioTrackID = track.ID
+			break
+		}
+	}
 	for _, track := range doc.Media.Track {
 		if kind, ok := mediaTrackKind(track); ok {
 			nativeCounts[string(kind)+":"+trackString(track, "StreamOrder", "ID", "UniqueID")]++
@@ -36,6 +47,9 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 	for _, track := range doc.Media.Track {
 		kind, ok := mediaTrackKind(track)
 		if !ok {
+			continue
+		}
+		if kind == api.MediaTrackAudio && bdInfoAudio {
 			continue
 		}
 		ordinals[kind]++
@@ -74,6 +88,66 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		}
 	}
 	return tracks, primaryAudioTrackID, aggregateTrackLanguages(tracks, api.MediaTrackAudio), aggregateTrackLanguages(tracks, api.MediaTrackSubtitle), nil
+}
+
+// bdInfoAudioTrackFacts keeps every reported stream distinct within its disc and
+// playlist. A hidden marker is evidence only; it never establishes commentary.
+func bdInfoAudioTrackFacts(meta preparationstate.State) ([]api.MediaTrackFacts, error) {
+	if !strings.EqualFold(meta.DiscType, "BDMV") {
+		return nil, nil
+	}
+	var tracks []api.MediaTrackFacts
+	for discIndex, disc := range meta.Discs {
+		discID := disc.ID
+		if discID == "" {
+			discID = strconv.Itoa(discIndex)
+		}
+		for reportIndex, report := range disc.Reports {
+			info := discparse.ParseBDInfoSummary(report.Summary, "", "")
+			if len(info.Audio) == 0 {
+				continue
+			}
+			playlistID := report.Playlist.ID
+			if playlistID == "" {
+				playlistID = strconv.Itoa(reportIndex)
+			}
+			resourceID := "media_" + shortMediaTrackHash(strings.Join([]string{meta.SourcePath, discID, playlistID}, "\x00"))
+			manifest, err := api.CanonicalWorkflowFingerprint(struct {
+				SourceFingerprint string
+				ResourceID        string
+				Playlist          api.PlaylistInfo
+				Audio             []discparse.BDAudio
+			}{meta.SourceFingerprint, resourceID, report.Playlist, info.Audio})
+			if err != nil {
+				return nil, fmt.Errorf("metadata: fingerprint BDInfo audio manifest: %w", err)
+			}
+			for index, audio := range info.Audio {
+				languages := languageutil.NormalizeLanguageList([]string{languageutil.NormalizeLanguageLabel(audio.Language)})
+				tracks = append(tracks, api.MediaTrackFacts{
+					ID:                   opaqueMediaTrackID(resourceID, api.MediaTrackAudio, string(manifest)+":"+strconv.Itoa(index+1)),
+					Kind:                 api.MediaTrackAudio,
+					ResourceID:           resourceID,
+					DiscID:               discID,
+					PlaylistID:           playlistID,
+					ManifestFingerprint:  string(manifest),
+					Ordinal:              index + 1,
+					Codec:                normalizeAudioFormat(map[string]any{"Format": audio.Codec}),
+					DetectedLanguages:    append([]string(nil), languages...),
+					Languages:            languages,
+					LanguageProvenance:   api.FactProvenanceAutomatic,
+					Commentary:           isBDInfoCommentary(audio),
+					BitrateBitsPerSecond: audio.BitrateBitsPerSecond,
+					Hidden:               audio.Hidden,
+				})
+			}
+		}
+	}
+	return tracks, nil
+}
+
+func isBDInfoCommentary(track discparse.BDAudio) bool {
+	return track.BitrateBitsPerSecond > 0 && track.BitrateBitsPerSecond < 258_000 &&
+		languageutil.NormalizeLanguageLabel(track.Language) != ""
 }
 
 func mediaTrackPositiveInt(track map[string]any, keys ...string) int {

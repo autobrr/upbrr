@@ -1043,9 +1043,21 @@
     "sha256": "3fe13eba64328115e1a0dc1783749c648454cb6f7bdd9688bf6641fd48a2cd87",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
+  "internal/trackers/impl/standalone/ptp/profile.go:Profile": {
+    "sha256": "f8fac95f16a03db719de8f148f28f3bb2c2db020fe764f333a8778f0ebbcd13b",
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced."
+  },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
     "sha256": "e62b2547dbb023be8c4bfa8e89aa03e908ef2e830218d56eb631c1d8d0cfd205",
     "reason": "New-group controls now display nonempty questionnaire title/year/poster/tags/trailer/description overrides before the same defaults used by payload construction. PreferredTitle/PreferredYear and manual genres still govern provider fallbacks; existing-group and subtitle behavior are preserved."
+  },
+  "internal/trackers/impl/standalone/ptp/taxonomy.go:editionFeatures": {
+    "sha256": "ef51a421e89b5f808369de1872adff03e447e7be77aa0822fe32878ce6a63757",
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced."
+  },
+  "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveRemasterTitle": {
+    "sha256": "eea41458a8a6f6093701274e5b014c9bdcb2bb2af7dd03e620e24b48d92f32ca",
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced."
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveTags": {
     "sha256": "fecad8f9407d55cdbed88f221a1c28133159eea0bb7b9da7416d4a06c6c68042",
@@ -1058,6 +1070,10 @@
   "internal/trackers/impl/standalone/ptp/upload.go:buildUploadFields": {
     "sha256": "cfbaa57633d908124b719b6db045a6c5e7bf8a58970b379d4bc001c24f2279ac",
     "reason": "New-group uploads now reject empty effective tags, matching the required questionnaire field. Nonempty explicit tags still precede resolveTags; manual genres including manual-empty retain authority over existing provider defaults. The existing-group early return and title/year/poster/trailer/description precedence are unchanged."
+  },
+  "internal/trackers/impl/standalone/ptp/upload.go:buildUploadPreview": {
+    "sha256": "529fc165a5f125ccb2154a762a22b4f1830a41320c58dc8ef83f5d62b64ed3eb",
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
     "sha256": "1d4e2479e064e2e86bd7b816cff1f511410f7866280d144236da0069afcb0e1a",

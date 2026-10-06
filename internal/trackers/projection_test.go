@@ -751,3 +751,62 @@ func TestProjectionQuestionnaireRemainsActionableWithStrictFailure(t *testing.T)
 		t.Fatalf("questionnaire waived strict failure: %+v", projection)
 	}
 }
+
+func TestPreparedProjectionPreservesAndValidatesEditionFeatures(t *testing.T) {
+	t.Parallel()
+	catalogue := []api.TrackerEditionFeature{
+		{
+			Label:    "With Commentary",
+			Category: "Feature",
+			Selected: true,
+			Evidence: "Effective commentary",
+		},
+		{Label: "Remastered", Category: "Edition"},
+	}
+	input := PreparationInput{Tracker: "EXAMPLE", Meta: api.UploadSubject{ReleaseName: "Example.Release.2026-GRP"}}
+	preview := api.TrackerDryRunEntry{
+		Status:          "ready",
+		EditionFeatures: catalogue,
+		Payload:         map[string]string{"remaster_title": "With Commentary"},
+	}
+	projection, err := projectDryRunEntry(input, preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(projection.EditionFeatures, catalogue) || preview.Payload["remaster_title"] != "With Commentary" {
+		t.Fatal("projection did not preserve review options separately from wire payload")
+	}
+	input.Projection = &projection
+	if err := validatePreparedProjection(input, preview); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []string{"selected", "label", "category", "evidence", "missing"} {
+		t.Run(change, func(t *testing.T) {
+			changed := preview
+			changed.EditionFeatures = slices.Clone(catalogue)
+			switch change {
+			case "selected":
+				changed.EditionFeatures[0].Selected = false
+			case "label":
+				changed.EditionFeatures[0].Label = "Other"
+			case "category":
+				changed.EditionFeatures[0].Category = "Edition"
+			case "evidence":
+				changed.EditionFeatures[0].Evidence = "Changed evidence"
+			case "missing":
+				changed.EditionFeatures = nil
+			}
+			if err := validatePreparedProjection(input, changed); err == nil {
+				t.Fatal("accepted review catalogue drift")
+			}
+		})
+	}
+	preview.EditionFeatures[0].Selected = false
+	if !projection.EditionFeatures[0].Selected {
+		t.Fatal("projection aliases preview catalogue")
+	}
+	input.Projection.EditionFeatures = nil
+	if err := validatePreparedProjection(input, preview); err != nil {
+		t.Fatalf("legacy projection without catalogue failed: %v", err)
+	}
+}
