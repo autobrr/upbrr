@@ -85,6 +85,8 @@ Trackers with a confirmed upload of the same verified submitted content are excl
 | `--unattended_confirm`     | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                     |
 | `--no-seed`                | Disables torrent-client injection.                                                                                                      |
 
+Interactive tracker questions with exactly `yes`/`no` choices also accept `y`/`n`, regardless of letter case. Other choices still require their listed values. Strict `--unattended` remains prompt-free.
+
 :::danger Destructive maintenance
 
 `--cleanup` deletes all stored release content from the active database. `--delete-tmp` deletes stored database content for each supplied input before processing it. Back up state and verify the active config/database before using either option.
