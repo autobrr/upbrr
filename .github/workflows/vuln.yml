@@ -73,7 +73,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          export OSV_SCANNER="$(go env GOPATH)/bin/osv-scanner"
+          OSV_SCANNER="$(go env GOPATH)/bin/osv-scanner"
+          export OSV_SCANNER
           python scripts/vulnerability/monitor.py
 
   report_failure:
