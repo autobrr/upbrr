@@ -13,7 +13,7 @@ Use **Settings → Trackers** to enable supported tracker entries and configure 
 2. Open its card and enter the required activation credential, such as an API key, passkey, announce URL, or account credentials.
 3. Configure only the upload options you understand.
 4. Select **Save**.
-5. If the tracker uses managed cookies or login, continue under [Tracker Auth](./tracker-auth.md).
+5. If the tracker uses managed cookies or login, continue under [Tracker Auth](./tracker-auth.md). For browser cookies, follow the [Firefox export and import walkthrough](./tracker-auth.md#export-and-import-cookies).
 
 Adding an empty card does not make an unusable tracker ready. upbrr determines configured state from tracker-owned activation fields supplied by the backend catalog.
 

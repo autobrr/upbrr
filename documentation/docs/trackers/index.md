@@ -15,7 +15,7 @@ THR support, including its tracker-owned image host, has been removed because th
 2. Open the tracker section.
 3. Enter only the requested credentials and options.
 4. Save settings.
-5. Import cookies, sign in, or test authentication when those actions are available.
+5. [Export and import browser cookies](../web-ui/settings/tracker-auth.md#export-and-import-cookies), sign in, or test authentication when those actions are available.
 6. Add the tracker to default selection only after it reports ready.
 
 Auth requirements vary. A tracker can require an API key, passkey, cookie session, username/password login, 2FA, or a supported combination. upbrr stores managed tracker cookies encrypted in SQLite.

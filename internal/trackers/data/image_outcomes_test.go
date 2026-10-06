@@ -142,7 +142,10 @@ func TestPrepareDescriptionImagesPreservesResolutionFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}}
+	// Transport dials can outlive requests, so they must not read the resolver restored by cleanup.
+	transport := &http.Transport{DialContext: (&net.Dialer{Resolver: originalResolver}).DialContext}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: rewriteHostTransport{base: base, rt: transport}}
 	images, err := PrepareDescriptionImages(t.Context(), client, "TEST", api.NopLogger{}, []bbcode.Image{
 		{RawURL: "https://93.184.216.34/valid.png"},
 		{RawURL: "https://i.ibb.co/example/thumb.png", WebURL: "https://ibb.co/example"},

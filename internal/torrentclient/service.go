@@ -344,20 +344,21 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 	return nil
 }
 
-func (s *Service) injectQbit(ctx context.Context, name string, client config.TorrentClientConfig, meta api.ClientSubject, torrent api.TorrentResult) error {
+func (s *Service) injectQbit(
+	ctx context.Context,
+	name string,
+	client config.TorrentClientConfig,
+	meta api.ClientSubject,
+	torrent api.TorrentResult,
+) (err error) {
+	defer func() { err = safeClientError(err, client.QbitHost()) }()
 	logger := logging.FromContext(ctx, s.logger)
 	host := strings.TrimSpace(client.QbitHost())
 	if host == "" {
 		return fmt.Errorf("clients: %s qbit host is required", name)
 	}
 	username := strings.TrimSpace(client.QbitUsername())
-	if username == "" && !client.UsesQuiProxy() {
-		return fmt.Errorf("clients: %s qbit username is required", name)
-	}
 	password := strings.TrimSpace(client.QbitPassword())
-	if password == "" && !client.UsesQuiProxy() {
-		return fmt.Errorf("clients: %s qbit password is required", name)
-	}
 
 	select {
 	case <-ctx.Done():
@@ -430,8 +431,8 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	defer cancel()
 
 	logger.Debugf(
-		"clients: connecting to qbit %s timeout=%s retries=%d",
-		redaction.RedactValue(host, nil),
+		"clients: connecting to qbit client=%s timeout=%s retries=%d",
+		name,
 		qbitInjectHTTPTimeout,
 		qbitInjectHTTPRetryAttempts,
 	)

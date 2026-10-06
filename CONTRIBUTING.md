@@ -94,6 +94,26 @@ pnpm --dir documentation run check
 
 Production documentation is built from the exact release tag and published only by the release workflow. Never commit `documentation/build/`.
 
+### Temporary dependency exceptions
+
+The scheduled vulnerability workflow retains Stylelint and all CSS checks. The WebUI-only
+exception for GHSA-vfj7-8cjw-p6xm expires on 1 November 2026 at 00:00 UTC. It records
+[temporary risk acceptance](https://github.com/autobrr/upbrr/issues/585), not remediation.
+All other advisories remain scanned. Expiry restores failure and is never extended automatically.
+
+While the exception remains, the workflow checks OSV and npm for a confirmed published
+stable fix and checks every resolved braces version in the WebUI lockfile. Lookup failures
+fail monitoring explicitly. A bot-created follow-up is deduplicated across open and closed
+issues, including later fixed-version or cleanup-only observations. Update every affected
+copy, verify a scan without exceptions passes, and remove the exception. An already-clean
+lockfile produces a cleanup-only follow-up after that unignored scan passes.
+
+Run the monitor's offline regression tests with Python 3.12 and PyYAML 6.0.3:
+
+```sh
+python -m unittest discover -s scripts/vulnerability -v
+```
+
 ## Git hooks (Lefthook)
 
 All contributors should install the git hooks once. They run Prettier, ESLint, golangci-lint formatting, the log-policy checker, the path-portability checker, and the repo's commit-message validator locally so issues surface before CI sees them.

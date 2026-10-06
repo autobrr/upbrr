@@ -198,7 +198,6 @@ config = {
         },
         'qbittorrent_searching': {
             'torrent_client': 'qbit',
-            'qbit_url': 'http://localhost:8080',
         },
         'watch': {
             'torrent_client': 'watch',
@@ -254,7 +253,6 @@ func TestConvertTorrentClientsPreservesReferencedIncompleteClients(t *testing.T)
 				TorrentClients: map[string]any{
 					"selected": map[string]any{
 						"torrent_client": "qbit",
-						"qbit_url":       "http://localhost:8080",
 					},
 					"unused": map[string]any{"torrent_client": "watch"},
 				},
@@ -270,7 +268,7 @@ func TestConvertTorrentClientsPreservesReferencedIncompleteClients(t *testing.T)
 			if _, ok := cfg.TorrentClients["unused"]; ok {
 				t.Fatal("unreferenced incomplete client was imported")
 			}
-			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "torrent_clients.selected.username or qbit_user is required") {
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "torrent_clients.selected.url or qbit_url is required") {
 				t.Fatalf("expected missing client configuration error, got %v", err)
 			}
 		})
