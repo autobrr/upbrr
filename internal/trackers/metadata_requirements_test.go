@@ -797,3 +797,49 @@ func TestOnlyNBLDeclaresTVmazeIdentityRequirement(t *testing.T) {
 func containsMetadataField(fields []MetadataField, want MetadataField) bool {
 	return slices.Contains(fields, want)
 }
+
+func TestPackMediaMetadataRequirementUsesCanonicalDiscBoundary(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		subject api.RuleSubject
+		want    bool
+	}{
+		{name: "single episode", want: true},
+		{
+			name:    "canonical full disc without layout label",
+			subject: api.RuleSubject{TVPack: true, Type: "DISC"},
+			want:    true,
+		},
+		{
+			name:    "physical full disc",
+			subject: api.RuleSubject{TVPack: true, DiscType: "BDMV"},
+			want:    true,
+		},
+		{name: "disc sourced remux still needs reports", subject: api.RuleSubject{
+			TVPack:   true,
+			DiscType: "BDMV",
+			Type:     "REMUX",
+		}},
+		{name: "non-disc remux still needs reports", subject: api.RuleSubject{TVPack: true, Type: "REMUX"}},
+		{
+			name: "disc sourced remux with reports",
+			subject: api.RuleSubject{
+				TVPack:         true,
+				DiscType:       "BDMV",
+				Type:           "REMUX",
+				MediaFileFacts: api.MediaFileFacts{ExpectedFileCount: 1, Files: []api.MediaFileFact{{VideoTrackCount: 1}}},
+			},
+			want: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := MetadataFieldPresent(MetadataFieldNonDiscTVPackMedia, test.subject); got != test.want {
+				t.Fatalf("pack report presence=%t, want %t", got, test.want)
+			}
+		})
+	}
+	if field := metadataCorrectionField(MetadataFieldNonDiscTVPackMedia); field != nil {
+		t.Fatalf("local all-file report demand mapped to ordinary correction %s", *field)
+	}
+}

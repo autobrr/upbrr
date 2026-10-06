@@ -1126,6 +1126,15 @@ incomplete answer retains only a private reuse baseline, with no current duplica
 authority. Rebinding never extends duplicate freshness. Canonical prepared-release contract versions do not change for
 tracker-only questionnaire semantics; version the tracker projector instead.
 
+Non-disc TV-pack media collection is opt-in through a TV-scoped
+`MetadataFieldNonDiscTVPackMedia` requirement. The selected, tracker-ID-free demand union
+participates in prepared-generation compatibility. Collection uses sequential per-file MediaInfo
+exports with source/file-bound cache identities; it does not probe unrelated trackers, single
+episodes, or full discs. `MediaFileFacts` persists the measured evidence, with independently
+complete audio/subtitle channels (including inspected absence). Missing source provenance stays
+unknown: filenames and MediaInfo do not establish that provenance. Validation must preserve
+partial evidence and cannot infer pack-wide facts from a primary-file correction.
+
 ### 7. Add optional capabilities
 
 Declare static capabilities directly in `standalone.Profile`:

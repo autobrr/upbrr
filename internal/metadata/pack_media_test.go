@@ -1,0 +1,472 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package metadata
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sp"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+const packMediaReport = `{"media":{"track":[{"@type":"General","Format":"Matroska","UniqueID":"123"},{"@type":"Video","Format":"AVC","Width":"1920","Height":"1080","BitDepth":"8"},{"@type":"Audio","Format":"AC-3","Language":"ja","Default":"Yes"}]}}`
+
+type packAnalyzer struct {
+	targets []string
+	inspect func(context.Context, string) (string, error)
+}
+
+func (a *packAnalyzer) Analyze(ctx context.Context, target string) (string, []byte, error) {
+	a.targets = append(a.targets, target)
+	report := packMediaReport
+	if a.inspect != nil {
+		var err error
+		report, err = a.inspect(ctx, target)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	return "General\nComplete name : " + target, []byte(report), nil
+}
+
+func packCollectionFixture(t *testing.T, analyzer *packAnalyzer) (*Service, preparationstate.Request) {
+	t.Helper()
+	base := t.TempDir()
+	source := filepath.Join(base, "Example.Show.S01.1080p.WEB-DL-GRP")
+	if err := os.MkdirAll(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for episode := 1; episode <= 2; episode++ {
+		path := filepath.Join(source, fmt.Sprintf("Example.Show.S01E%02d.1080p.WEB-DL-GRP.mkv", episode))
+		if err := os.WriteFile(path, []byte("synthetic video"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := testCollectionRequest(t, api.Request{SourcePath: source})
+	request.SourceFingerprint = "source-a"
+	request.Input.MetadataRequirements = api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{{
+		Scope:       api.MetadataRequirementScopeTV,
+		AnyOf:       []api.MetadataRequirementField{api.MetadataRequirementNonDiscTVPackMedia},
+		Disposition: api.RuleDispositionAdvisory,
+	}}}
+	service := NewService(&stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithSceneDetector(stubSceneDetector{}), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}))
+	return service, request
+}
+
+func TestPackMediaDemandOptsInExactlyOncePerFile(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		demand bool
+		single bool
+		want   int
+	}{
+		{
+			name:   "selected pack",
+			demand: true,
+			want:   2,
+		},
+		{name: "unselected pack", want: 1},
+		{
+			name:   "selected single episode",
+			demand: true,
+			single: true,
+			want:   1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			analyzer := &packAnalyzer{}
+			service, request := packCollectionFixture(t, analyzer)
+			if !test.demand {
+				request.Input.MetadataRequirements = api.MetadataRequirementSet{}
+			}
+			if test.single {
+				source := filepath.Join(request.Input.SourcePath, "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv")
+				demand := request.Input.MetadataRequirements
+				request = testCollectionRequest(t, api.Request{SourcePath: source})
+				request.Input.MetadataRequirements = demand
+			}
+			meta, err := service.collectSourceEvidence(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(analyzer.targets) != test.want {
+				t.Fatalf("probes=%v, want %d", analyzer.targets, test.want)
+			}
+			if test.demand && !test.single {
+				if meta.MediaFileFacts.LanguageStatus != api.MetadataEvidenceStatusComplete || meta.MediaFileFacts.TechnicalStatus != api.MetadataEvidenceStatusPartial || len(meta.MediaFileFacts.Files) != 2 {
+					t.Fatalf("facts=%+v", meta.MediaFileFacts)
+				}
+				if meta.MediaInfoJSONPath == "" || !meta.MediaFileFacts.Files[0].Primary || meta.MediaFileFacts.Files[1].Primary {
+					t.Fatalf("primary evidence=%+v", meta)
+				}
+				for _, file := range meta.MediaFileFacts.Files {
+					if file.SubtitleStatus != api.MetadataEvidenceStatusComplete || len(file.SubtitleLanguages) != 0 || !slices.Equal(file.AudioLanguages, []string{"Japanese"}) {
+						t.Fatalf("file=%+v", file)
+					}
+				}
+			} else if len(meta.MediaFileFacts.Files) != 0 {
+				t.Fatalf("unexpected per-file evidence=%+v", meta.MediaFileFacts)
+			}
+		})
+	}
+}
+
+func TestPackMediaDemandExemptsDiscsButIncludesRemuxes(t *testing.T) {
+	for _, disc := range []string{"BDMV", "DVD", "HDDVD"} {
+		meta := preparationstate.State{
+			TVPack:               true,
+			DiscType:             disc,
+			MetadataRequirements: api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{{AnyOf: []api.MetadataRequirementField{api.MetadataRequirementNonDiscTVPackMedia}}}},
+		}
+		if requiresPackMediaEvidence(meta) {
+			t.Fatalf("full disc %s selected", disc)
+		}
+	}
+	analyzer := &packAnalyzer{}
+	service, request := packCollectionFixture(t, analyzer)
+	source := strings.Replace(request.Input.SourcePath, "WEB-DL", "BluRay.REMUX", 1)
+	if err := os.Rename(request.Input.SourcePath, source); err != nil {
+		t.Fatal(err)
+	}
+	demand := request.Input.MetadataRequirements
+	request = testCollectionRequest(t, api.Request{SourcePath: source})
+	request.Input.MetadataRequirements = demand
+	if _, err := service.collectSourceEvidence(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 2 {
+		t.Fatalf("remux probes=%v", analyzer.targets)
+	}
+}
+
+func TestPackMediaCacheBindsFileAndSourceIdentity(t *testing.T) {
+	analyzer := &packAnalyzer{}
+	service, request := packCollectionFixture(t, analyzer)
+	first, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.collectSourceEvidence(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 2 {
+		t.Fatalf("unchanged files reprobed: %v", analyzer.targets)
+	}
+	file := first.FileList[1]
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chtimes(file, info.ModTime().Add(time.Second), info.ModTime().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.collectSourceEvidence(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 3 || analyzer.targets[2] != file {
+		t.Fatalf("mtime cache isolation=%v", analyzer.targets)
+	}
+	if err = os.WriteFile(file, []byte("changed size"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.collectSourceEvidence(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 4 {
+		t.Fatalf("size cache identity=%v", analyzer.targets)
+	}
+	request.SourceFingerprint = "source-b"
+	changed, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 6 || changed.MediaInfoJSONPath == first.MediaInfoJSONPath {
+		t.Fatalf("source cache identity=%v", analyzer.targets)
+	}
+	source := filepath.Join(t.TempDir(), filepath.Base(request.Input.SourcePath))
+	if err = os.MkdirAll(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, old := range first.FileList {
+		if err = os.WriteFile(filepath.Join(source, filepath.Base(old)), []byte("synthetic video"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	demand := request.Input.MetadataRequirements
+	request = testCollectionRequest(t, api.Request{SourcePath: source})
+	request.Input.MetadataRequirements = demand
+	if _, err = service.collectSourceEvidence(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 8 {
+		t.Fatalf("same-basename source reused another pack: %v", analyzer.targets)
+	}
+}
+
+func TestPackMediaFailuresRemainUnresolvedAndRetry(t *testing.T) {
+	analyzer := &packAnalyzer{inspect: func(_ context.Context, target string) (string, error) {
+		if strings.Contains(filepath.Base(target), "E02") {
+			return "", errors.New("probe failed")
+		}
+		return packMediaReport, nil
+	}}
+	service, request := packCollectionFixture(t, analyzer)
+	first, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.MediaFileFacts.Status != api.MetadataEvidenceStatusPartial || len(first.MediaFileFacts.Files) != 2 || first.MediaFileFacts.Files[1].AudioStatus == api.MetadataEvidenceStatusComplete {
+		t.Fatalf("failed evidence=%+v", first.MediaFileFacts)
+	}
+	analyzer.inspect = nil
+	retried, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 3 || retried.MediaFileFacts.LanguageStatus != api.MetadataEvidenceStatusComplete {
+		t.Fatalf("retry probes=%v facts=%+v", analyzer.targets, retried.MediaFileFacts)
+	}
+}
+
+func TestPackMediaCancellationStopsFurtherProbes(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	analyzer := &packAnalyzer{inspect: func(context.Context, string) (string, error) { cancel(); return "", context.Canceled }}
+	service, request := packCollectionFixture(t, analyzer)
+	_, err := service.collectSourceEvidence(ctx, request)
+	if !errors.Is(err, context.Canceled) || len(analyzer.targets) != 1 {
+		t.Fatalf("cancellation err=%v probes=%v", err, analyzer.targets)
+	}
+}
+
+func TestPackMediaIncompleteReportsPreserveUnknowns(t *testing.T) {
+	for _, test := range []struct {
+		name, report    string
+		audio, subtitle api.MetadataEvidenceStatus
+	}{
+		{
+			name:     "missing audio language",
+			report:   strings.Replace(packMediaReport, `"Language":"ja",`, "", 1),
+			audio:    api.MetadataEvidenceStatusPartial,
+			subtitle: api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name:     "unknown audio language",
+			report:   strings.Replace(packMediaReport, `"Language":"ja"`, `"Language":"und"`, 1),
+			audio:    api.MetadataEvidenceStatusPartial,
+			subtitle: api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name:     "missing subtitle language",
+			report:   strings.Replace(packMediaReport, `}]}}`, `},{"@type":"Text"}]}}`, 1),
+			audio:    api.MetadataEvidenceStatusComplete,
+			subtitle: api.MetadataEvidenceStatusPartial,
+		},
+		{
+			name:     "omitted audio track",
+			report:   strings.Replace(packMediaReport, `"UniqueID":"123"`, `"UniqueID":"123","AudioCount":"2"`, 1),
+			audio:    api.MetadataEvidenceStatusUnavailable,
+			subtitle: api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name:     "omitted subtitle track",
+			report:   strings.Replace(packMediaReport, `"UniqueID":"123"`, `"UniqueID":"123","TextCount":"1"`, 1),
+			audio:    api.MetadataEvidenceStatusComplete,
+			subtitle: api.MetadataEvidenceStatusUnavailable,
+		},
+		{name: "missing video", report: `{"media":{"track":[{"@type":"General","Format":"Matroska"}]}}`},
+		{name: "invalid json", report: `not json`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			analyzer := &packAnalyzer{inspect: func(context.Context, string) (string, error) { return test.report, nil }}
+			service, request := packCollectionFixture(t, analyzer)
+			meta, err := service.collectSourceEvidence(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.MediaFileFacts.Status != api.MetadataEvidenceStatusPartial {
+				t.Fatalf("partial evidence=%+v", meta.MediaFileFacts)
+			}
+			if file := meta.MediaFileFacts.Files[1]; file.AudioStatus != test.audio || file.SubtitleStatus != test.subtitle {
+				t.Fatalf("file=%+v", file)
+			}
+		})
+	}
+	fact := packMediaFileFact("Example.Show.S01E02.2160i.BluRay.x265-GRP.mkv", false, mustParseMediaInfoDoc(packMediaReport))
+	if fact.Source != "" || fact.Resolution != "1080p" || fact.VideoCodec != "AVC" || fact.VideoEncode != "" {
+		t.Fatalf("filename replaced measured evidence=%+v", fact)
+	}
+}
+
+func TestPackMediaProducerFeedsSPSourceConsistencyReview(t *testing.T) {
+	analyzer := &packAnalyzer{}
+	service, request := packCollectionFixture(t, analyzer)
+	meta, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.MediaFileFacts.Status != api.MetadataEvidenceStatusPartial || meta.MediaFileFacts.LanguageStatus != api.MetadataEvidenceStatusComplete {
+		t.Fatalf("producer completeness=%+v", meta.MediaFileFacts)
+	}
+	subject := api.UploadSubject{
+		SourcePath:     meta.SourcePath,
+		VideoPath:      meta.VideoPath,
+		FileList:       meta.FileList,
+		TVPack:         true,
+		Type:           "WEBDL",
+		MediaFileFacts: meta.MediaFileFacts,
+	}
+	profile := sp.Profile()
+	questionnaire := profile.Site.ProjectionQuestionnaire(trackers.PreparationInput{Meta: subject})
+	if questionnaire == nil || len(questionnaire.Fields) != 1 || !strings.HasPrefix(questionnaire.Fields[0].Key, "pack_source_consistency_") {
+		t.Fatalf("source review=%+v", questionnaire)
+	}
+	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"SP": {questionnaire.Fields[0].Key: "consistent"}}
+	validation := api.NewTrackerValidationSubject(subject, "SP")
+	failures, err := profile.ValidationPolicy.Check(t.Context(), validation, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, failure := range failures {
+		if failure.Rule == "sp_pack_uniformity" {
+			t.Fatalf("uniform collected files rejected: %+v", failure)
+		}
+	}
+	if len(analyzer.targets) != 2 {
+		t.Fatalf("projection reprobed files: %v", analyzer.targets)
+	}
+	validation.MediaFileFacts.Files[1].SubtitleStatus = api.MetadataEvidenceStatusPartial
+	failures, err = profile.ValidationPolicy.Check(t.Context(), validation, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(failures, func(failure api.RuleFailure) bool {
+		return failure.Rule == "sp_pack_uniformity" && failure.Disposition == api.RuleDispositionStrict
+	}) {
+		t.Fatalf("unknown subtitle evidence passed: %+v", failures)
+	}
+}
+
+func TestPackMediaDemandDoesNotAddFullDiscExports(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "Example.Show.S01.PAL.DVD-GRP")
+	root := filepath.Join(source, "VIDEO_TS")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "VTS_01_1.VOB"), []byte("synthetic disc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, selected := range []bool{false, true} {
+		exporter := &packExportRecorder{}
+		request := testCollectionRequest(t, api.Request{SourcePath: source})
+		if selected {
+			request.Input.MetadataRequirements = api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{{Scope: api.MetadataRequirementScopeTV, AnyOf: []api.MetadataRequirementField{api.MetadataRequirementNonDiscTVPackMedia}}}}
+		}
+		service := NewService(&stubRepo{}, WithMediaInfoExporter(exporter), WithSceneDetector(stubSceneDetector{}), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}))
+		meta, err := service.collectSourceEvidence(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !meta.TVPack || meta.DiscType != "DVD" || len(exporter.requests) != 1 || exporter.requests[0].DiscType != "DVD" || len(meta.MediaFileFacts.Files) != 0 {
+			t.Fatalf("selected=%t disc=%s pack=%t exports=%+v facts=%+v", selected, meta.DiscType, meta.TVPack, exporter.requests, meta.MediaFileFacts)
+		}
+	}
+}
+
+type packExportRecorder struct{ requests []mediainfo.Request }
+
+func (e *packExportRecorder) Export(_ context.Context, request mediainfo.Request) (mediainfo.Result, error) {
+	e.requests = append(e.requests, request)
+	return mediainfo.Result{}, nil
+}
+
+func TestPackMediaDemandCannotReuseLegacyPrimaryOnlyArtifacts(t *testing.T) {
+	analyzer := &packAnalyzer{}
+	service, request := packCollectionFixture(t, analyzer)
+	demand := request.Input.MetadataRequirements
+	request.Input.MetadataRequirements = api.MetadataRequirementSet{}
+	legacy, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 1 {
+		t.Fatalf("legacy probes=%v", analyzer.targets)
+	}
+	request.Input.MetadataRequirements = demand
+	pack, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 3 || pack.MediaInfoJSONPath == legacy.MediaInfoJSONPath || len(pack.MediaFileFacts.Files) != 2 {
+		t.Fatalf("demand reused primary-only evidence: probes=%v pack=%+v", analyzer.targets, pack.MediaFileFacts)
+	}
+	if _, err = service.collectSourceEvidence(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(analyzer.targets) != 3 {
+		t.Fatalf("unchanged pack reprobed=%v", analyzer.targets)
+	}
+}
+
+func TestPackMediaMissingBitDepthStaysUnresolvedWithRetainedSourceAnswer(t *testing.T) {
+	analyzer := &packAnalyzer{}
+	service, request := packCollectionFixture(t, analyzer)
+	complete, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := api.UploadSubject{
+		SourcePath:     complete.SourcePath,
+		VideoPath:      complete.VideoPath,
+		FileList:       complete.FileList,
+		TVPack:         true,
+		Type:           "WEBDL",
+		MediaFileFacts: complete.MediaFileFacts,
+	}
+	profile := sp.Profile()
+	question := profile.Site.ProjectionQuestionnaire(trackers.PreparationInput{Meta: subject})
+	if question == nil || len(question.Fields) != 1 {
+		t.Fatalf("initial source question=%+v", question)
+	}
+	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"SP": {question.Fields[0].Key: "consistent"}}
+	analyzer.inspect = func(context.Context, string) (string, error) {
+		return strings.Replace(packMediaReport, `,"BitDepth":"8"`, "", 1), nil
+	}
+	request.SourceFingerprint = "missing-bit-depth"
+	missing, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject.MediaFileFacts = missing.MediaFileFacts
+	for _, file := range subject.MediaFileFacts.Files {
+		if file.BitDepth != "0" {
+			t.Fatalf("missing measured bit depth=%q", file.BitDepth)
+		}
+	}
+	if question := profile.Site.ProjectionQuestionnaire(trackers.PreparationInput{Meta: subject}); question != nil {
+		t.Fatalf("unmeasured technical evidence offered waiver questions: %+v", question)
+	}
+	failures, err := profile.ValidationPolicy.Check(t.Context(), api.NewTrackerValidationSubject(subject, "SP"), api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(failures, func(failure api.RuleFailure) bool {
+		return failure.Rule == "sp_pack_uniformity" && failure.Disposition == api.RuleDispositionStrict && strings.Contains(failure.Reason, "bit depth")
+	}) {
+		t.Fatalf("unmeasured bit depth accepted source answer: %+v", failures)
+	}
+}

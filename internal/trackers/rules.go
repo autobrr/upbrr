@@ -274,6 +274,7 @@ func RuleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSub
 		sceneNFOPath = "ready"
 	}
 	return api.RuleSubject{
+		MediaFileFacts:             subject.MediaFileFacts.Clone(),
 		TitleSearchEvidence:        subject.TitleSearchEvidence,
 		LanguageFacts:              subject.LanguageFacts.Clone(),
 		EffectiveMetadata:          subject.EffectiveMetadata,

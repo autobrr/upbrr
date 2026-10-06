@@ -2029,7 +2029,18 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
     for (const tracker of ["HDS", "PTP"]) {
       await page.getByRole("checkbox", { name: tracker }).check();
     }
-    await runDuplicateCheck(page, "blocked");
+    const questions = page
+      .getByRole("region", { name: "Tracker questions", exact: true })
+      .locator("details")
+      .filter({ has: page.locator("summary").filter({ hasText: /^PTP(?: ·|$)/ }) });
+    await questions.locator("summary").click();
+    // This synthetic programme has no foreign dialogue needing forced subtitles.
+    await questions
+      .getByRole("combobox", { name: "PTP forced English dialogue coverage *", exact: true })
+      .selectOption("not_required");
+    await applyTrackerAnswers(page);
+    const checked = await runDuplicateCheck(page, "blocked");
+    expect(checked.dupes?.results.map((result) => result.trackerId).sort()).toEqual(["HDS", "PTP"]);
 
     await expect(page.getByText("Example.Release.2026.1080p.SDR-GRP")).toHaveCount(0);
     await expect(page.getByText("Example.Release.2026.1080p.HDR10-GRP")).toBeVisible();

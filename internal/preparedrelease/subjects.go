@@ -38,6 +38,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
 	subject := api.UploadSubject{
+		MediaFileFacts:              release.Media.MediaFileFacts.Clone(),
 		SourceIdentity:              release.SourceIdentity,
 		LanguageFacts:               release.Media.LanguageFacts.Clone(),
 		EffectiveMetadata:           release.MetadataFacts(),

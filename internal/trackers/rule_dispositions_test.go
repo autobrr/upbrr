@@ -180,10 +180,14 @@ func TestProductionMetadataTargetMatrix(t *testing.T) {
 		},
 		{
 			tracker: "SP",
-			requirements: []trackers.MetadataRequirement{{
-				Scope: trackers.MetadataScopeAny,
-				AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly},
-			}},
+			requirements: []trackers.MetadataRequirement{
+				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly}},
+				{
+					Scope:       trackers.MetadataScopeTV,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldNonDiscTVPackMedia},
+					Disposition: api.RuleDispositionAdvisory,
+				},
+			},
 		},
 	}
 	for _, test := range tests {
@@ -203,6 +207,9 @@ func TestProductionMetadataTargetMatrix(t *testing.T) {
 				got := policy.Requirements[index]
 				if got.Scope != want.Scope || !slices.Equal(got.AnyOf, want.AnyOf) {
 					t.Fatalf("requirement %d = %#v, want %#v", index, got, want)
+				}
+				if want.Disposition != "" && got.Disposition != want.Disposition {
+					t.Fatalf("requirement %d disposition = %s, want %s", index, got.Disposition, want.Disposition)
 				}
 			}
 		})
@@ -242,7 +249,8 @@ func containsMetadataIdentityField(fields []trackers.MetadataField) bool {
 			trackers.MetadataFieldSubtitleLanguages,
 			trackers.MetadataFieldHardcodedSubs,
 			trackers.MetadataFieldHardcodedSubtitleLanguages,
-			trackers.MetadataFieldTMDBLocalizedPTBR:
+			trackers.MetadataFieldTMDBLocalizedPTBR,
+			trackers.MetadataFieldNonDiscTVPackMedia:
 			continue
 		}
 	}

@@ -15,6 +15,7 @@ import (
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:             "SP",
+		DescriptionGroup: "sp",
 		BaseURL:          "https://seedpool.org",
 		Rules:            Rules(),
 		ValidationPolicy: ValidationPolicy(),
@@ -28,14 +29,20 @@ func Profile() unit3d.Profile {
 			}),
 		),
 		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v4",
+			BuildName:               buildName,
+			BuildNameVersion:        "v4",
+			ProjectionQuestionnaire: packQuestionnaire,
+			FinalizeDescription:     finalizeDescription,
 		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			Requirements: []trackers.MetadataRequirement{{
 				Scope:       trackers.MetadataScopeAny,
 				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly},
 				Disposition: api.RuleDispositionStrict,
+			}, {
+				Scope:       trackers.MetadataScopeTV,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldNonDiscTVPackMedia},
+				Disposition: api.RuleDispositionAdvisory,
 			}},
 		},
 		DupePolicy: &trackers.DupePolicy{

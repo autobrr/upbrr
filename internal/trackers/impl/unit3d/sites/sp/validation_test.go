@@ -127,7 +127,7 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestSPValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v4" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v5" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -181,6 +181,11 @@ func spPassingSubject() api.TrackerValidationSubject {
 func spUniformFile(fileName string) api.MediaFileFact {
 	return api.MediaFileFact{
 		FileName:          fileName,
+		VideoTrackCount:   1,
+		Container:         "mkv",
+		BitDepth:          "8",
+		AudioStatus:       api.MetadataEvidenceStatusComplete,
+		SubtitleStatus:    api.MetadataEvidenceStatusComplete,
 		Source:            "WEB",
 		Resolution:        "1080p",
 		VideoCodec:        "AVC",
@@ -204,4 +209,61 @@ func requireSPValidationFailure(
 		}
 	}
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
+}
+
+func TestSPPackLanguageEvidenceBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		change  func(*api.TrackerValidationSubject)
+		blocked bool
+	}{
+		{"known mismatch is strict", func(subject *api.TrackerValidationSubject) {
+			subject.MediaFileFacts.Files[1].AudioLanguages = []string{"Japanese"}
+		}, true},
+		{"inspected absent subtitles agree", func(subject *api.TrackerValidationSubject) {
+			for index := range subject.MediaFileFacts.Files {
+				subject.MediaFileFacts.Files[index].SubtitleLanguages = nil
+			}
+		}, false},
+		{"unknown language is unresolved", func(subject *api.TrackerValidationSubject) {
+			subject.MediaFileFacts.Files[1].AudioStatus = api.MetadataEvidenceStatusPartial
+			subject.MediaFileFacts.Files[1].AudioLanguages = nil
+		}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := spPassingSubject()
+			for index := range subject.MediaFileFacts.Files {
+				subject.MediaFileFacts.Files[index].AudioStatus = api.MetadataEvidenceStatusComplete
+				subject.MediaFileFacts.Files[index].SubtitleStatus = api.MetadataEvidenceStatusComplete
+			}
+			test.change(&subject)
+			failures, err := ValidationPolicy().Check(context.Background(), subject, api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !test.blocked {
+				if len(failures) != 0 {
+					t.Fatalf("inspected absence became missing evidence: %#v", failures)
+				}
+				return
+			}
+			for _, failure := range failures {
+				if failure.Rule == "sp_pack_uniformity" && failure.Disposition == api.RuleDispositionStrict {
+					return
+				}
+			}
+			t.Fatalf("pack evidence was not strictly assessed: %#v", failures)
+		})
+	}
+}
+
+func TestSPFullDiscPackUniformityRetainsBaseline(t *testing.T) {
+	subject := spPassingSubject()
+	subject.Type, subject.DiscType = "DISC", "BDMV"
+	subject.MediaFileFacts.Files[1].AudioLanguages = []string{"Japanese"}
+	failures, err := ValidationPolicy().Check(t.Context(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSPValidationFailure(t, failures, "sp_pack_uniformity", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 }

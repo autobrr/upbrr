@@ -14,6 +14,10 @@ import (
 // MetadataRequirementField identifies one tracker-declared metadata fact.
 type MetadataRequirementField string
 
+// MetadataRequirementNonDiscTVPackMedia requests all-file evidence only for
+// non-disc TV packs. It does not expand collection for other sources.
+const MetadataRequirementNonDiscTVPackMedia MetadataRequirementField = "non_disc_tv_pack_media"
+
 // CorrectionConfirmation explains which retained facts need confirmation after
 // source identity changes. Revision binds the correction patch to this record.
 type CorrectionConfirmation struct {

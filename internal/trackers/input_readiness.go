@@ -213,7 +213,7 @@ func metadataCorrectionField(field MetadataField) *api.CorrectionField {
 		MetadataFieldTMDBTitle, MetadataFieldIMDBTitle, MetadataFieldTVDBTitle, MetadataFieldTVDBYear,
 		MetadataFieldTVDBDisambiguation, MetadataFieldTMDBOriginCountries, MetadataFieldTMDBUnavailable,
 		MetadataFieldIMDBUnavailable, MetadataFieldTVDBUnavailable, MetadataFieldPoster, MetadataFieldYear,
-		MetadataFieldTMDBLocalizedPTBR:
+		MetadataFieldTMDBLocalizedPTBR, MetadataFieldNonDiscTVPackMedia:
 		return nil
 	default:
 		return nil

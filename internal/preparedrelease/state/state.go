@@ -229,6 +229,7 @@ type State struct {
 	Identity                             api.ExternalIdentity
 	ExternalIdentityCandidates           []api.ExternalIdentityCandidate
 	ProviderMetadata                     api.SourceScopedMetadata
+	MediaFileFacts                       api.MediaFileFacts
 	AudioLanguages                       []string
 	SubtitleLanguages                    []string
 	TrackAudioLanguages                  []string

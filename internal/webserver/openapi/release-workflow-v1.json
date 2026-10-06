@@ -3483,6 +3483,9 @@
           "LanguageFacts": {
             "$ref": "#/components/schemas/LanguageFacts"
           },
+          "MediaFileFacts": {
+            "$ref": "#/components/schemas/MediaFileFacts"
+          },
           "MediaInfoUniqueID": {
             "type": "string"
           },
@@ -3588,6 +3591,7 @@
           "HardcodedSubtitleLanguagesProvenance",
           "HasEncodeSettings",
           "LanguageFacts",
+          "MediaFileFacts",
           "MediaInfoUniqueID",
           "OriginalLanguage",
           "OriginalLanguageProvenance",
@@ -3611,6 +3615,105 @@
           "VideoCodec",
           "VideoEncode",
           "WebDV"
+        ]
+      },
+      "MediaFileFact": {
+        "type": "object",
+        "properties": {
+          "AudioLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "AudioStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "BitDepth": {
+            "type": "string"
+          },
+          "Container": {
+            "type": "string"
+          },
+          "FileName": {
+            "type": "string"
+          },
+          "Primary": {
+            "type": "boolean"
+          },
+          "Resolution": {
+            "type": "string"
+          },
+          "Source": {
+            "type": "string"
+          },
+          "SubtitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "SubtitleStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "VideoCodec": {
+            "type": "string"
+          },
+          "VideoEncode": {
+            "type": "string"
+          },
+          "VideoTrackCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "AudioLanguages",
+          "AudioStatus",
+          "BitDepth",
+          "Container",
+          "FileName",
+          "Primary",
+          "Resolution",
+          "Source",
+          "SubtitleLanguages",
+          "SubtitleStatus",
+          "VideoCodec",
+          "VideoEncode",
+          "VideoTrackCount"
+        ]
+      },
+      "MediaFileFacts": {
+        "type": "object",
+        "properties": {
+          "ExpectedFileCount": {
+            "type": "integer"
+          },
+          "Files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaFileFact"
+            }
+          },
+          "LanguageStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "OriginalLanguage": {
+            "type": "string"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "TechnicalStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "ExpectedFileCount",
+          "Files",
+          "LanguageStatus",
+          "OriginalLanguage",
+          "Status",
+          "TechnicalStatus"
         ]
       },
       "MediaPlan": {

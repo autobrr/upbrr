@@ -917,6 +917,7 @@ export type MediaFacts = Readonly<{
   HardcodedSubtitleLanguagesProvenance: FactProvenance;
   HasEncodeSettings: boolean;
   LanguageFacts: LanguageFacts;
+  MediaFileFacts: MediaFileFacts;
   MediaInfoUniqueID: string;
   OriginalLanguage: string;
   OriginalLanguageProvenance: FactProvenance;
@@ -940,6 +941,31 @@ export type MediaFacts = Readonly<{
   VideoCodec: string;
   VideoEncode: string;
   WebDV: boolean;
+}>;
+
+export type MediaFileFact = Readonly<{
+  AudioLanguages: readonly string[];
+  AudioStatus: MetadataEvidenceStatus;
+  BitDepth: string;
+  Container: string;
+  FileName: string;
+  Primary: boolean;
+  Resolution: string;
+  Source: string;
+  SubtitleLanguages: readonly string[];
+  SubtitleStatus: MetadataEvidenceStatus;
+  VideoCodec: string;
+  VideoEncode: string;
+  VideoTrackCount: number;
+}>;
+
+export type MediaFileFacts = Readonly<{
+  ExpectedFileCount: number;
+  Files: readonly MediaFileFact[];
+  LanguageStatus: MetadataEvidenceStatus;
+  OriginalLanguage: string;
+  Status: MetadataEvidenceStatus;
+  TechnicalStatus: MetadataEvidenceStatus;
 }>;
 
 export type MediaPlan = Readonly<{

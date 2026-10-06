@@ -245,6 +245,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			DateMatched:       meta.TMDBDateMatch,
 		},
 		Media: api.MediaFacts{
+			MediaFileFacts:                       meta.MediaFileFacts.Clone(),
 			AudioAbsent:                          meta.AudioAbsent,
 			AudioLanguages:                       append([]string(nil), meta.AudioLanguages...),
 			SubtitleLanguages:                    append([]string(nil), meta.SubtitleLanguages...),
@@ -303,6 +304,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		Resources:   collectedResources(meta),
 	}
 	facts.Media.LanguageFacts = mediafacts.ResolveLanguages(facts.Media)
+	facts.Media.MediaFileFacts = mediafacts.ResolveFiles(facts.Media, facts.Naming.Resolution)
 	return facts
 }
 

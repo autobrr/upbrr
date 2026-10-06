@@ -200,6 +200,7 @@ type SubtitleLanguageCoverage struct {
 
 // MediaFacts contains finalized reusable media characteristics.
 type MediaFacts struct {
+	MediaFileFacts                       MediaFileFacts
 	AudioAbsent                          bool
 	LanguageFacts                        LanguageFacts
 	AudioLanguages                       []string

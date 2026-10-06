@@ -62,13 +62,21 @@ BHD, AITHER, HHD, ULCX, LST, LUME, HDBits, BTN, PTP, AvistaZ, CinemaZ, NBL and R
 
 A **Trumpable release** acknowledgement accepts that a compliant replacement may supersede the upload. It applies only to the affected tracker and prepared generation. It cannot clear an independent strict finding, grant staff permission, or prove that a remote site tag was applied. Missing or conflicting eligibility evidence must be resolved before a normal upload proceeds.
 
-Seedpool pack/episode comparisons show a specific warning when matching technical content and audio languages cannot be established. The normal duplicate-risk approval can acknowledge that uncertainty for the affected tracker and prepared generation. It does not claim matching languages or trump qualification, and cannot clear an independent exact-duplicate or in-client block. Changed comparison evidence requires renewed review.
+Seedpool pack/episode comparisons show a specific warning when matching technical content and audio languages cannot be established. The normal duplicate-risk approval can acknowledge that uncertainty for the affected tracker and prepared generation. It does not claim matching languages or trump qualification, and cannot clear an independent exact-duplicate or in-client block. Changed comparison evidence requires renewed review. In debug runs, SP language-only and incomplete pack assessments remain visible without blocking preparation; established technical inconsistencies still block. Debug preview plans cannot submit uploads.
 
 LST's missing-English-subtitle exception requires a successful complete title-wide search. Zero other torrents allows a labelled trumpable acknowledgement. Any other torrent blocks that exception, including other resolutions or formats. A failed or incomplete search cannot establish an empty title. Changed or expired search evidence requires reassessment.
 
 Some requirements need source facts that media inspection cannot establish. Tracker questions can ask about retained source mixes, retail subtitles, regional dialects or foreign-dialogue coverage. Answer for the current release; changing relevant facts or the prepared generation requires review again. These answers establish the specific fact being asked about and do not waive an independent strict rule.
 
 Complete DVD, Blu-ray and UHD Blu-ray uploads retain their existing behavior and are excluded from these language assessments. Remuxes are non-disc uploads and remain subject to the rules. upbrr does not remove or remux tracks automatically.
+
+### SP TV-pack analysis
+
+Selecting SP for a non-disc TV pack requests MediaInfo for every selected episode file, including remuxes. The first preparation performs one sequential probe per file, so analysis cost grows with the number of episodes. Unchanged source and file evidence can reuse cached reports. Single episodes, full discs, and preparations without this demand keep their existing analysis behavior.
+
+Per-file language evidence distinguishes known absent tracks from unknown languages. Failed or incomplete probes remain unresolved. MediaInfo cannot establish source provenance, and filename source tokens do not prove pack source consistency; measured language, codec, resolution and bit-depth evidence do not resolve that separate question. Correcting the primary episode does not silently rewrite the other episodes' evidence.
+
+Answer SP’s source-consistency question for the current files. Where differences reflect genuine source variation, confirm that variation and explain it in the requested field. Keep the explanation in the final SP description. This exception does not resolve missing evidence or waive unrelated strict findings.
 
 ## Tracker questions
 

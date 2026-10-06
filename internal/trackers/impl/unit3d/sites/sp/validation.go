@@ -18,7 +18,7 @@ import (
 // and resolution checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-sp-policy-v4",
+		ID:    "unit3d-sp-policy-v5",
 		Check: checkRequirements,
 	}
 }
@@ -60,20 +60,24 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 				Season:   subject.SeasonInt,
 			},
 		)...)
-		failures = append(failures, trackers.ValidatePerFileUniformity(
-			subject.MediaFileFacts,
-			trackers.PerFileUniformityPolicy{
-				Evidence: spEvidencePolicy("sp_pack_uniformity"),
-				Fields: []trackers.MediaUniformityField{
-					trackers.MediaUniformityFieldSource,
-					trackers.MediaUniformityFieldResolution,
-					trackers.MediaUniformityFieldVideoCodec,
-					trackers.MediaUniformityFieldVideoEncode,
-					trackers.MediaUniformityFieldAudioLanguages,
-					trackers.MediaUniformityFieldSubtitleLanguages,
+		if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
+			failures = append(failures, trackers.ValidatePerFileUniformity(
+				subject.MediaFileFacts,
+				trackers.PerFileUniformityPolicy{
+					Evidence: spEvidencePolicy("sp_pack_uniformity"),
+					Fields: []trackers.MediaUniformityField{
+						trackers.MediaUniformityFieldSource,
+						trackers.MediaUniformityFieldResolution,
+						trackers.MediaUniformityFieldVideoCodec,
+						trackers.MediaUniformityFieldVideoEncode,
+						trackers.MediaUniformityFieldAudioLanguages,
+						trackers.MediaUniformityFieldSubtitleLanguages,
+					},
 				},
-			},
-		)...)
+			)...)
+		} else {
+			failures = append(failures, packUniformityFailures(subject)...)
+		}
 	}
 	failures = append(failures, spSoftwareFailures(subject)...)
 	failures = append(failures, spAdultContentFailures(subject)...)
