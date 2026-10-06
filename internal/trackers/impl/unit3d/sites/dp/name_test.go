@@ -4,6 +4,7 @@
 package dp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/metadata"
@@ -37,6 +38,12 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		IncludeYear:   true,
 	}}
 	subject.AudioLanguages = []string{"English", "Japanese", "French"}
+	subject.LanguageFacts = api.LanguageFacts{
+OriginalLanguages: []string{"English"},
+ OriginalLanguagesKnown: true,
+ ProgrammeLanguages: subject.AudioLanguages,
+ ProgrammeStatus: api.MetadataEvidenceStatusComplete,
+}
 	if got, want := dpReviewedName(t, subject, nil), "Dual-Audio Series AKA Example Original US 2026 S01E02 Example Episode 1080p WEB-DL MULTi DD+ 5.1 H.265-GRP"; got != want {
 		t.Fatalf("DP name = %q, want %q", got, want)
 	}
@@ -56,7 +63,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v3" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v4" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -176,4 +183,135 @@ func markDPComponent(t *testing.T, document *api.ReleaseNameDocument, role api.R
 		}
 	}
 	t.Fatalf("generated document missing %s", role)
+}
+
+func TestDPApprovedAudioCompositionRows(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, original string
+		languages      []string
+		want           string
+		established    bool
+	}{
+		{
+name: "original only",
+ original: "Japanese",
+ languages: []string{"Japanese"},
+ established: true,
+},
+		{
+name: "original and English",
+ original: "Japanese",
+ languages: []string{"Japanese", "English"},
+ want: "Dual-Audio",
+ established: true,
+},
+		{
+name: "English dub only",
+ original: "Japanese",
+ languages: []string{"English"},
+ want: "Dubbed",
+ established: true,
+},
+		{
+name: "Nordic dub only",
+ original: "Japanese",
+ languages: []string{"Swedish"},
+ want: "Swedish Dubbed",
+ established: true,
+},
+		{
+name: "three including original",
+ original: "Japanese",
+ languages: []string{"Japanese", "English", "German"},
+ want: "MULTi",
+ established: true,
+},
+		{
+name: "English original plus another",
+ original: "English",
+ languages: []string{"English", "Japanese"},
+ want: "Japanese MULTi",
+ established: true,
+},
+		{
+name: "unspecified two-language row stays deferred",
+ original: "Japanese",
+ languages: []string{"Japanese", "German"},
+},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := api.UploadSubject{LanguageFacts: api.LanguageFacts{
+OriginalLanguages: []string{test.original},
+ OriginalLanguagesKnown: true,
+ ProgrammeLanguages: test.languages,
+ ProgrammeStatus: api.MetadataEvidenceStatusComplete,
+}}
+			label, established := audioLabelForFacts(subject)
+			if label != test.want || established != test.established {
+				t.Fatalf("got %q/%v, want %q/%v", label, established, test.want, test.established)
+			}
+			subject.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
+			if label, established := audioLabelForFacts(subject); label != "" || !established {
+				t.Fatalf("partial facts created label or legacy fallback: %q/%v", label, established)
+			}
+			subject.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusContradictory
+			if label, _ := audioLabelForFacts(subject); label != "" {
+				t.Fatalf("contradictory facts created %q", label)
+			}
+		})
+	}
+}
+
+func TestDPDiscRemuxAndDefaultAudioBoundaries(t *testing.T) {
+	t.Parallel()
+	base := dpGeneratedSubject(t, api.ReleaseNameRequest{
+Category: "MOVIE",
+ Type: "WEBDL",
+ Source: "WEB",
+ Resolution: "1080p",
+ VideoEncode: "H.265",
+ Tag: "-GRP",
+ Title: "Example",
+ Year: 2026,
+ Audio: "Dual-Audio AAC 2.0",
+})
+	base.AudioLanguages = []string{"Japanese", "English", "German"}
+	base.LanguageFacts = api.LanguageFacts{
+OriginalLanguages: []string{"Japanese"},
+ OriginalLanguagesKnown: true,
+ ProgrammeLanguages: []string{"Japanese", "English"},
+ ProgrammeStatus: api.MetadataEvidenceStatusComplete,
+ Tracks: []api.MediaTrackFacts{{
+Kind: api.MediaTrackAudio,
+ Role: api.AudioRoleProgramme,
+ Default: true,
+ AudioLabel: "DD+ 5.1",
+}},
+}
+	base.Type = "DISC"
+	if got := dpReviewedName(t, base, nil); !strings.Contains(got, "MULTi AAC 2.0") {
+		t.Fatalf("canonical full-disc baseline changed: %q", got)
+	}
+	base.Type = "REMUX"
+	base.DiscType = "BDMV"
+	if got := dpReviewedName(t, base, nil); !strings.Contains(got, "Dual-Audio DD+ 5.1") {
+		t.Fatalf("disc-sourced remux ignored finalized audio: %q", got)
+	}
+	base.Type = "DISC"
+	if got := dpReviewedName(t, base, nil); !strings.Contains(got, "Dual-Audio AAC 2.0") {
+		t.Fatalf("known full-disc baseline changed: %q", got)
+	}
+}
+
+func TestDPEnglishOriginalRowRequiresEnglishProgrammeAudio(t *testing.T) {
+	subject := api.UploadSubject{LanguageFacts: api.LanguageFacts{
+OriginalLanguagesKnown: true,
+ OriginalLanguages: []string{"English", "French"},
+ ProgrammeLanguages: []string{"French", "German"},
+ ProgrammeStatus: api.MetadataEvidenceStatusComplete,
+}}
+	if label, established := audioLabelForFacts(subject); established || label != "" {
+		t.Fatalf("absent English programme audio selected English-original row: %q/%v", label, established)
+	}
 }

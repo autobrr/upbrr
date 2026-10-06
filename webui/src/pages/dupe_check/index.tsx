@@ -213,6 +213,13 @@ function CandidateList({ matches }: Readonly<{ matches: readonly DupeMatchProjec
             {facts.length ? (
               <span className="text-muted-foreground text-xs">{facts.join(" · ")}</span>
             ) : null}
+            {uniqueMessages((match.reasons || []).map((reason) => reason.message)).map(
+              (message) => (
+                <p key={message} className="w-full text-xs">
+                  {message}
+                </p>
+              ),
+            )}
           </div>
         );
       })}

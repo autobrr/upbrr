@@ -92,7 +92,7 @@ func TestNBLDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
 func TestNBLValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v3" {
+	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v4/languages-v1" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -153,4 +153,79 @@ func assertNBLFailure(
 		}
 	}
 	t.Fatalf("missing rule %q: %+v", rule, failures)
+}
+
+func TestNBLFinalizedLanguageAccessibility(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name                            string
+		audio, subtitles                []string
+		programmeStatus, subtitleStatus api.MetadataEvidenceStatus
+		discType, uploadType            string
+		wantStatus                      api.MetadataEvidenceStatus
+	}{
+		{
+name: "foreign audio with English captions",
+ audio: []string{"Japanese"},
+ subtitles: []string{"English"},
+},
+		{name: "English audio without original metadata", audio: []string{"English"}},
+		{name: "English captions without programme metadata", subtitles: []string{"English"}},
+		{
+name: "complete missing accessibility",
+ audio: []string{"Japanese"},
+ programmeStatus: api.MetadataEvidenceStatusComplete,
+ subtitleStatus: api.MetadataEvidenceStatusComplete,
+ wantStatus: api.MetadataEvidenceStatusComplete,
+},
+		{
+name: "unknown programme evidence",
+ subtitleStatus: api.MetadataEvidenceStatusComplete,
+ wantStatus: api.MetadataEvidenceStatusPartial,
+},
+		{
+name: "unknown subtitle evidence",
+ audio: []string{"Japanese"},
+ programmeStatus: api.MetadataEvidenceStatusComplete,
+ wantStatus: api.MetadataEvidenceStatusPartial,
+},
+		{
+name: "full disc excluded",
+ discType: "BDMV",
+ uploadType: "DISC",
+},
+		{name: "canonical full disc excluded", uploadType: "DISC"},
+		{
+name: "disc sourced remux assessed",
+ discType: "BDMV",
+ uploadType: "REMUX",
+ audio: []string{"Japanese"},
+ programmeStatus: api.MetadataEvidenceStatusComplete,
+ subtitleStatus: api.MetadataEvidenceStatusComplete,
+ wantStatus: api.MetadataEvidenceStatusComplete,
+},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			subject := nblPassingSubject()
+			subject.Tracker = "NBL"
+			subject.DiscType, subject.Type = tt.discType, tt.uploadType
+			subject.LanguageFacts = api.LanguageFacts{
+ProgrammeLanguages: tt.audio,
+ SubtitleLanguages: tt.subtitles,
+ ProgrammeStatus: tt.programmeStatus,
+ SubtitleStatus: tt.subtitleStatus,
+}
+			failures, err := validationPolicy().Check(context.Background(), subject, api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantStatus == "" {
+				if len(failures) != 0 {
+					t.Fatalf("unexpected failures: %+v", failures)
+				}
+			} else {
+				assertNBLFailure(t, failures, "language_subtitles", api.RuleDispositionStrict, tt.wantStatus)
+			}
+		})
+	}
 }

@@ -666,6 +666,11 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 			if len(reasons) > 0 {
 				fmt.Fprintf(output, "     Reasons: %s\n", strings.Join(reasons, ","))
 			}
+			for _, reason := range match.Reasons {
+				if message := strings.TrimSpace(logging.SanitizeMessage(reason.Message)); message != "" {
+					fmt.Fprintf(output, "     %s\n", message)
+				}
+			}
 		} else if reason := strings.TrimSpace(match.Reason); reason != "" {
 			fmt.Fprintf(output, "     Reason: %s\n", reason)
 		}

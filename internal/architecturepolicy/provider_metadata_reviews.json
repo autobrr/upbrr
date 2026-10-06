@@ -72,12 +72,12 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "sha256": "299c3150097c5bcf9ea3e348c39ed06150d7958a7b69e5414f4a681d8571b3b7",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "b67520847adc298750ff92d920896be6ecbaccbcabf1507024669c089e97bf24",
+    "reason": "Bumps AZ/CZ language-policy versions and retains the reviewed evaluateRules binding; existing provider country routing and manual year precedence are unchanged. AZ/CZ conflicting-provider original-language correction and clear tests cover the added assessment."
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
-    "sha256": "47ab67a2bb55666c7f3fb92566ac8273ababebb480a564cf9fadb396d9998517",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "b3f8ddd22282bd2640f32914533aa324eaef90fd49c34ad681d76ca463b4fd3a",
+    "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative."
   },
   "internal/trackers/impl/azfamily/rules.go:isOlderThan50Years": {
     "sha256": "0daec183cbed58f9e82a4446a212d9671522ada0a4c1022d730ddb66f9480d12",
@@ -680,8 +680,12 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/standalone/btn/profile.go:Profile": {
-    "sha256": "e8b25e5b8241564572499762ddc0bce4deac9ec6a6af7d3cebdaa0bc62b3d09c",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "0e189171965d8c9d9829c69fe557a9698721b33b82956837f18bfb7c06f5dd68",
+    "reason": "Wires the pure language assessment and primary-audio country questionnaire. Existing manual-aware name, title, tag and full-disc original-language selectors remain unchanged; payload regressions verify that corrected primary programme facts override conflicting provider language."
+  },
+  "internal/trackers/impl/standalone/btn/taxonomy.go:btnLanguagePayload": {
+    "sha256": "c167e166843a683aa3c0717c800e0950df4e6552f013a0af1a551debe13f8463",
+    "reason": "Non-disc Foreign and country values come only from finalized primary programme evidence and its facts-bound country answer. Full discs retain resolveBTNOriginalLanguage manual precedence and existing provider country selection; conflicting provider, changed-primary and full-disc regression cases verify both paths."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:resolveBTNOriginalLanguage": {
     "sha256": "4d6cd8ad9ee5a527ecc361c4391f40e1594938ee0f45a9c7ad42b7a314f32c26",
@@ -700,8 +704,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/upload.go:buildBTNUploadPayload": {
-    "sha256": "2a36bc29f8a5ded48ffbb3636edea7c2a20d2ae33ee3f9ce102368719b9f93f0",
-    "reason": "Upload origin uses prepared scene and group facts; provider-value helpers and their manual metadata precedence are unchanged."
+    "sha256": "526c7c06c17f736e1caaf44088472cee85fa1137ddfc4156754f4fd871c5c0b4",
+    "reason": "Delegates only Foreign and country selection to the reviewed finalized-primary-language helper. ReviewedUploadName remains authoritative and existing taxonomy, manual tags and provider-backed optional metadata retain their precedence; the primary-language payload regression covers conflicting TVDB language and country."
   },
   "internal/trackers/impl/standalone/btn/upload.go:buildUploadDryRunAt": {
     "sha256": "86ec3a1e2cde80be5c2a7a3acf0a5d1190bd0eaf70a8839995cc9148df4f2fdd",
@@ -858,6 +862,14 @@
   "internal/trackers/impl/standalone/hdb/name.go:resolveReleaseNames": {
     "sha256": "a897f6e2ad17a7624e0cc6d8a5acaf46a2bdb3d544c4f2d534837b4671b09eb2",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/profile.go:Profile": {
+    "sha256": "83fcef0b8ec216b95c6cb7c887d61e7e3924fefa84b3dcb772856ed31f832de3",
+    "reason": "Composes the language assessment and its pure questionnaire without replacing existing naming, taxonomy or validation paths. Manual original-title validation and finalized manual genre-language tests cover the reviewed provider-value consumers."
+  },
+  "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
+    "sha256": "0455bec3b636ed316a988de0175e958d5cf0f3e11cae59d2990eecf34d1eedd6",
+    "reason": "Uses finalized LanguageFacts, Anime and EffectiveMetadata.Genres rather than raw provider language or genre fallbacks. Manual Drama blocks the animated-English-dub exception and a manual genre clear stays unresolved despite provider Animation; explicit subtitle/source answers remain independently facts-bound."
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "sha256": "6558c26929d8d473bf8ee0dbd790810b33f40a4b111d97bed9cde555cb2a0740",
@@ -1044,8 +1056,8 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
-    "sha256": "e62b2547dbb023be8c4bfa8e89aa03e908ef2e830218d56eb631c1d8d0cfd205",
-    "reason": "New-group controls now display nonempty questionnaire title/year/poster/tags/trailer/description overrides before the same defaults used by payload construction. PreferredTitle/PreferredYear and manual genres still govern provider fallbacks; existing-group and subtitle behavior are preserved."
+    "sha256": "617c5c2d2a2be33d0154f56d84cd31f2ebf60007e03649d779a488d93e698ad8",
+    "reason": "Appends facts-bound language review fields while preserving explicit group answers before existing manual-aware title/year and tag defaults. resolveGroupTitleYear manual correction/clear tests and language review correction/generation tests cover the two independent paths; legacy subtitle choices remain separate."
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveTags": {
     "sha256": "fecad8f9407d55cdbed88f221a1c28133159eea0bb7b9da7416d4a06c6c68042",
@@ -1068,8 +1080,8 @@
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "sha256": "884e38000ceb020dd4997b63469b5cf7990751201c9e66e4a6c66ae013d50789",
-    "reason": "Adds strict validation of the tracker-local no-English answer against finalized subtitle evidence. Canonical movie/taxonomy/container checks and their existing manual/provider resolution paths are unchanged; no provider evidence is replaced by questionnaire claims."
+    "sha256": "a659009ca2bb213caffc96522ecbb10da0e13c5e80bc67d318e9f52eb8f9fbbe",
+    "reason": "Adds the finalized-subject language assessment after unchanged taxonomy and legacy subtitle validation. UploadSubjectForValidation retains corrected metadata; primary-programme subtitle tests, explicit clears and independent strict-container tests verify that language review cannot restore provider values or waive unrelated requirements."
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "sha256": "ec1109c066bcccc24b157edbfd5d0cc7e08e41e0093e4db75bcbeaf20bac3555",
@@ -1372,24 +1384,24 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
-    "sha256": "9350af249a22773ec863fb67bd366709b6469354880a9638a065d1e5fbb0716e",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "1a7435669f41d062a994a911c86fae6282d462f251000d1e9eeb426e5a3f3873",
+    "reason": "Updates the OTW naming version for finalized programme-language markers only. Current source/generation provider title selection and explicit manual title/year precedence remain unchanged and are covered by the existing naming and validation regressions."
   },
   "internal/trackers/impl/unit3d/sites/otw/rules.go:ValidationPolicy": {
-    "sha256": "75286396d04120d75d7be43d9e5642f9390597b7ac989ee2c393f2af7b1c1082",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "369cb9fdab4e059b04ea4e41fd69b51abeaefc6ff035617915545efa79c1bf50",
+    "reason": "Updates the versioned checkRequirements binding for advisory English accessibility. Existing manual-aware genre, adult-content, naming and fallback-provider assessments remain unchanged; no new direct provider read is added."
   },
   "internal/trackers/impl/unit3d/sites/otw/validation.go:checkRequirements": {
-    "sha256": "7c43a670f93d48fdc576c565c8598d2fc8286ae213f81b57646ed923f3530946",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "1e71eedb5b89a0bcd3057c9e9b040e5f2bceec1315d8f3cd7f81117d4fb5f14e",
+    "reason": "Adds non-disc English accessibility guidance from finalized LanguageFacts only. Existing genre and naming validation still use the same manual-aware resolved subject, with explicit title/year corrections and clears covered by OTW validation tests."
   },
   "internal/trackers/impl/unit3d/sites/otw/validation.go:otwNamingFailures": {
     "sha256": "475eea37592d81862bb2d64e218cf1d0c5eb060000f19f38d72d7212f01d3559",
     "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
   },
   "internal/trackers/impl/unit3d/sites/otw/validation.go:otwUploadSubject": {
-    "sha256": "6cc1e0b4f20edb631ababa8a127b69a9fc1a3c08505aefd1d297af69c6d2edc2",
-    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+    "sha256": "e56a7872028fd33e28b8aab83f17253d54caf0d3da3cf411a89c3d2be9248458",
+    "reason": "Clones finalized LanguageFacts into the naming-validation subject while preserving EffectiveMetadata values and provenance beside the existing provider snapshot. Manual title/year corrections and clears remain authoritative in the mapping callers; no provider fallback is added."
   },
   "internal/trackers/impl/unit3d/sites/r4e/profile.go:Profile": {
     "sha256": "f2abe36ed4a59b0d194cd76bd52d7fbe460f273a18b61ce0921f680f5bc04ac7",

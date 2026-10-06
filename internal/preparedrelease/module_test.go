@@ -1964,3 +1964,38 @@ func TestPrepareRecomputesOldVideoEncodeAfterRestart(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveUploadSubjectRetainsOperationLocalStaffTokens(t *testing.T) {
+	t.Parallel()
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	module := newTestModule(t, newMemoryStore(), newClientEvidenceTestCollector(clientEvidenceTestSnapshot("client-hash")))
+	prepared, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := map[string]api.StaffUploadToken{"AITHER": api.NewStaffUploadToken("synthetic-staff-token")}
+	input := api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}, StaffUploadTokens: tokens}
+	subject, err := module.ResolveUploadSubject(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparation := trackers.PreparationInput{Tracker: "AITHER", Meta: subject}
+	if preparation.StaffUploadToken().Secret() != "synthetic-staff-token" {
+		t.Fatal("operation-local token was dropped")
+	}
+	delete(tokens, "AITHER")
+	if preparation.StaffUploadToken().Secret() != "synthetic-staff-token" {
+		t.Fatal("returned token map aliases input")
+	}
+	preparation.Tracker = "BHD"
+	if preparation.StaffUploadToken().Secret() != "" {
+		t.Fatal("token leaked to another tracker")
+	}
+	subject, err = module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: input.Release})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subject.StaffUploadTokens) != 0 {
+		t.Fatal("operation-local token persisted into another resolution")
+	}
+}

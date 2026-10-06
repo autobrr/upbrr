@@ -9,12 +9,9 @@ import "github.com/autobrr/upbrr/internal/trackers"
 func rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		RequireTVOnly: true,
-		Language: &trackers.LanguageRule{
-			Languages:      []string{"english", "en", "eng"},
-			RequireAudio:   true,
-			RequireSubs:    true,
-			AllowOriginal:  true,
-			ApplyIfNonBDMV: true,
-		},
 	}
+}
+
+func languagePolicy() trackers.LanguagePolicy {
+	return trackers.LanguagePolicy{EnglishSubtitles: "without_english", MissingSubtitles: trackers.LanguageProhibited}
 }

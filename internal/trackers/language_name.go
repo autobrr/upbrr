@@ -6,6 +6,8 @@ package trackers
 import (
 	"fmt"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -72,4 +74,20 @@ func ApplyDefaultAudioName(editor *NameEditor, meta api.UploadSubject) error {
 		return fmt.Errorf("set default programme audio label: %w", err)
 	}
 	return nil
+}
+
+// KnownProgrammeLanguageCount counts established distinct programme languages,
+// without turning unknown language labels into additional audio options.
+func KnownProgrammeLanguageCount(facts api.LanguageFacts) int {
+	if facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory {
+		return 0
+	}
+	languages := make(map[string]struct{}, len(facts.ProgrammeLanguages))
+	for _, language := range facts.ProgrammeLanguages {
+		code := languageutil.NormalizeLanguageCode(language)
+		if code != "" && code != "und" && code != "mul" {
+			languages[code] = struct{}{}
+		}
+	}
+	return len(languages)
 }

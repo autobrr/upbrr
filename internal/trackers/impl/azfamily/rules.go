@@ -6,6 +6,7 @@ package azfamily
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ import (
 func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	version := "constructibility-v2"
 	if d.site.Name == "AZ" || d.site.Name == "CZ" {
-		version = "policy-v3"
+		version = "policy-v4"
 	}
 	return trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,
@@ -87,6 +88,7 @@ func (d *Definition) evaluateRules(ctx context.Context, meta api.TrackerValidati
 	if d.site.Name == "AZ" || d.site.Name == "CZ" {
 		failures = append(failures, validateAZEvidence(d.site, meta)...)
 	}
+	failures = append(failures, evaluateAZLanguageRules(d.site, meta)...)
 	return failures, nil
 }
 
@@ -617,4 +619,118 @@ func czAllowedCountries() map[string]struct{} {
 		"TR",
 		"YE",
 	)
+}
+
+func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationSubject) []api.RuleFailure {
+	if (site.Name != "AZ" && site.Name != "CZ") || trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
+		return nil
+	}
+	policy := trackers.LanguagePolicy{
+		CompatibilityRequired:        strings.EqualFold(subject.Type, "REMUX"),
+		EmbeddedCompatibilityAllowed: true,
+		CompatibilityCodecs:          []string{"DD", "AC-3"},
+	}
+	if site.Name == "CZ" {
+		policy.OriginalAudio = trackers.LanguageProhibited
+		policy.OriginalDefault = trackers.LanguageProhibited
+		policy.ExtraDubs = trackers.LanguageProhibited
+	} else {
+		policy.DisallowedRoles = []api.AudioTrackRole{api.AudioRoleVoiceOver}
+	}
+	failures := trackers.EvaluateLanguagePolicy(subject, policy)
+	facts := subject.LanguageFacts
+	if site.Name == "AZ" {
+		if !facts.OriginalLanguagesKnown {
+			failures = append(
+				failures,
+				trackers.LanguageRuleFailure(subject, "original_evidence", "original-language evidence needs review", trackers.LanguageUnresolved),
+			)
+		}
+		if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
+			failures = append(
+				failures,
+				trackers.LanguageRuleFailure(
+					subject,
+					"evidence",
+					"programme language, track role or inspected coverage needs review",
+					trackers.LanguageUnresolved,
+				),
+			)
+		}
+		if dialects := azDialectLanguages(subject); len(dialects) > 0 {
+			outcome := trackers.LanguageUnresolved
+			switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "regional_dialect")] {
+			case "yes":
+				outcome = ""
+			case "no":
+				outcome = trackers.LanguageProhibited
+			}
+			if outcome != "" {
+				failures = append(
+					failures,
+					trackers.LanguageRuleFailure(
+						subject,
+						"regional_dialect",
+						"regional-dialect exception for "+strings.Join(dialects, ", ")+" must be established against the original language",
+						outcome,
+					),
+				)
+			}
+		} else if facts.OriginalLanguagesKnown && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
+			!facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
+			failures = append(
+				failures,
+				trackers.LanguageRuleFailure(
+					subject,
+					"original_or_english",
+					"original-language or an established English-dub or regional-dialect exception is required",
+					trackers.LanguageProhibited,
+				),
+			)
+		}
+	}
+	if site.Name == "CZ" && strings.EqualFold(subject.Type, "REMUX") {
+		originalCount := 0
+		for _, track := range facts.Tracks {
+			if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) &&
+				slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) }) {
+				originalCount++
+			}
+		}
+		if originalCount > 1 {
+			failures = append(
+				failures,
+				trackers.LanguageRuleFailure(
+					subject,
+					"additional_original",
+					"additional original-language remux tracks require prior staff approval",
+					trackers.LanguageStaffException,
+				),
+			)
+		}
+	}
+
+	if site.Name == "AZ" && strings.EqualFold(subject.Type, "REMUX") {
+		seen := map[string]bool{}
+		for _, track := range facts.Tracks {
+			if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
+				continue
+			}
+			for _, language := range track.Languages {
+				if seen[language] {
+					failures = append(
+						failures,
+						trackers.LanguageRuleFailure(
+							subject,
+							"duplicate_language",
+							"remuxes permit one programme track per language",
+							trackers.LanguageProhibited,
+						),
+					)
+				}
+				seen[language] = true
+			}
+		}
+	}
+	return failures
 }

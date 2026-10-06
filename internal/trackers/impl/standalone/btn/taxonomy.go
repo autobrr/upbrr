@@ -7,9 +7,49 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// btnPrimaryProgrammeLanguage resolves the inspected primary track, not the
+// title's original language or the first aggregate language.
+func btnPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
+	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || facts.PrimaryAudioTrackID == "" {
+		return ""
+	}
+	for _, track := range facts.Tracks {
+		if track.ID != facts.PrimaryAudioTrackID || track.Kind != api.MediaTrackAudio ||
+			(track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) || len(track.Languages) != 1 {
+			continue
+		}
+		code := languageutil.NormalizeLanguageCode(track.Languages[0])
+		if code == "" || code == "und" || code == "mul" {
+			return ""
+		}
+		return languageutil.NormalizeLanguageLabel(track.Languages[0])
+	}
+	return ""
+}
+
+func btnPrimaryCountryID(subject api.TrackerValidationSubject) string {
+	key := trackers.LanguageQuestionKey(subject, "primary_audio_country")
+	return btnCountryMap[normalizeBTNCountryAlias(subject.QuestionnaireAnswers[key])]
+}
+
+// btnLanguagePayload preserves full-disc behavior and uses reviewed primary
+// programme evidence for the non-disc Foreign flag and country selection.
+func btnLanguagePayload(meta api.UploadSubject) (bool, string) {
+	if trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+		language := resolveBTNOriginalLanguage(meta)
+		return language != "" && !isBTNEnglishLanguage(language), resolveCountryID(meta)
+	}
+	language := btnPrimaryProgrammeLanguage(meta.LanguageFacts)
+	if language == "" || isBTNEnglishLanguage(language) {
+		return false, ""
+	}
+	return true, btnPrimaryCountryID(api.NewTrackerValidationSubject(meta, "BTN"))
+}
 
 var (
 	btnInputPattern       = regexp.MustCompile(`(?is)<input[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["'][^>]*>`)

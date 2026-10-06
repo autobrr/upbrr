@@ -39,8 +39,9 @@ func Profile() unit3d.Profile {
 			}},
 		},
 		DupePolicy: &trackers.DupePolicy{
-			ID:         "sp/duplicate/v2",
-			EvidenceID: "sp-upload-organization-guides",
+			ID:                            "sp/duplicate/v3",
+			EvidenceID:                    "sp-upload-organization-guides",
+			PackContainmentRequiresReview: true,
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,
 			},

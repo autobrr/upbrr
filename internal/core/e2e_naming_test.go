@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/preparedrelease"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -148,6 +150,17 @@ func TestE2ENamingRegistryAppliesConfiguredOpaqueNameMode(t *testing.T) {
 			if err != nil || !enabled {
 				t.Fatalf("build fixture generated name = %#v, enabled=%t, err=%v", generated, enabled, err)
 			}
+			collector, err := preparedrelease.NewEvidenceCollector(e2eMetadataService{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts, err := collector.Collect(t.Context(), preparationstate.Request{
+				Input:    api.PrepareInput{SourcePath: "e2e-fixture"},
+				Manifest: api.SourceManifest{SourcePath: "e2e-fixture"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			fingerprint, err := api.CanonicalWorkflowFingerprint("e2e naming fixture")
 			if err != nil {
 				t.Fatalf("fixture fingerprint: %v", err)
@@ -160,6 +173,7 @@ func TestE2ENamingRegistryAppliesConfiguredOpaqueNameMode(t *testing.T) {
 					SourcePath:    "e2e-fixture",
 					ReleaseName:   generated.Name,
 					GeneratedName: generated.GeneratedName,
+					LanguageFacts: facts.Media.LanguageFacts,
 					Release: api.ReleaseInfo{
 						Category: "TV",
 						Season:   1,

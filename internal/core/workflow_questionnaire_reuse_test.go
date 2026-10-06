@@ -83,6 +83,21 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 		}
 		fences.records[identity.Digest+"|"+site] = api.SubmissionFenceRecord{Status: api.WorkflowEffectStatusSucceeded, ConfirmedAt: new(time.Now().UTC())}
 	}
+	languageFacts := api.LanguageFacts{
+		OriginalLanguages: []string{"French"},
+ OriginalLanguagesKnown: true,
+		ProgrammeLanguages: []string{"French"},
+ ProgrammeStatus: api.MetadataEvidenceStatusComplete,
+		SubtitleStatus: api.MetadataEvidenceStatusComplete,
+ PrimaryAudioTrackID: "audio-1",
+		Tracks: []api.MediaTrackFacts{{
+ID: "audio-1",
+ Kind: api.MediaTrackAudio,
+ Role: api.AudioRoleProgramme,
+ Languages: []string{"French"},
+ Default: true,
+}},
+	}
 	preparations := 0
 	preparer := releaseworkflow.ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
@@ -124,6 +139,7 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 				Type:                        "ENCODE",
 				VideoCodec:                  "H.264",
 				AudioLanguages:              []string{"French"},
+				LanguageFacts:               languageFacts.Clone(),
 				TrackerQuestionnaireAnswers: input.QuestionnaireAnswers,
 			}, nil
 		},
@@ -222,6 +238,13 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 		answers := map[string]*string{answerKey: new(review)}
 		if trackerID == "PTP" {
 			answers["subtitle_tags"] = tags
+			languageSubject := api.TrackerValidationSubject{
+Tracker: "PTP",
+ SourcePath: sourcePath,
+ LanguageFacts: languageFacts,
+}
+			answers[trackers.LanguageQuestionKey(languageSubject, "english_subtitle_manager")] = new("available")
+			answers[trackers.LanguageQuestionKey(languageSubject, "forced_english_dialogue")] = new("not_required")
 		}
 		intent.ProjectionInstructions = map[api.TrackerID]api.TrackerProjectionInstructions{trackerID: {Questionnaire: answers}}
 		if submittedTracker != "" {

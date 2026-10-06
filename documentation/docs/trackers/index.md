@@ -58,11 +58,15 @@ The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--un
 
 ### Language eligibility
 
-BHD, AITHER, HHD, ULCX, LST and LUME assess finalized language facts for non-disc uploads. Review the affected tracker's **Prohibited**, **Staff approval required**, **Trumpable release**, or **Unresolved** assessment. The details identify the original language, programme languages and relevant defect. Commentary, compatibility and other identified secondary tracks are assessed separately from programme dubs. Correct language evidence on Input; a naming override does not change factual API tags or upload eligibility.
+BHD, AITHER, HHD, ULCX, LST, LUME, HDBits, BTN, PTP, AvistaZ, CinemaZ, NBL and RF assess their applicable finalized language facts for non-disc uploads. OTW records its English-accessibility recommendation without imposing a general dub ban. Review the affected tracker's **Prohibited**, **Staff approval required**, **Trumpable release**, or **Unresolved** assessment. The details identify the original language, programme languages and relevant defect. Commentary, compatibility and other identified secondary tracks are assessed separately from programme dubs. Correct language evidence on Input; a naming override does not change factual API tags or upload eligibility.
 
-A **Trumpable release** acknowledgement accepts that a compliant replacement may supersede the upload. It applies only to the affected tracker and prepared generation. It cannot clear an independent strict finding, grant staff permission, or prove that a remote site tag was applied. Missing or conflicting evidence must be resolved before a normal upload proceeds.
+A **Trumpable release** acknowledgement accepts that a compliant replacement may supersede the upload. It applies only to the affected tracker and prepared generation. It cannot clear an independent strict finding, grant staff permission, or prove that a remote site tag was applied. Missing or conflicting eligibility evidence must be resolved before a normal upload proceeds.
+
+Seedpool pack/episode comparisons show a specific warning when matching technical content and audio languages cannot be established. The normal duplicate-risk approval can acknowledge that uncertainty for the affected tracker and prepared generation. It does not claim matching languages or trump qualification, and cannot clear an independent exact-duplicate or in-client block. Changed comparison evidence requires renewed review.
 
 LST's missing-English-subtitle exception requires a successful complete title-wide search. Zero other torrents allows a labelled trumpable acknowledgement. Any other torrent blocks that exception, including other resolutions or formats. A failed or incomplete search cannot establish an empty title. Changed or expired search evidence requires reassessment.
+
+Some requirements need source facts that media inspection cannot establish. Tracker questions can ask about retained source mixes, retail subtitles, regional dialects or foreign-dialogue coverage. Answer for the current release; changing relevant facts or the prepared generation requires review again. These answers establish the specific fact being asked about and do not waive an independent strict rule.
 
 Complete DVD, Blu-ray and UHD Blu-ray uploads retain their existing behavior and are excluded from these language assessments. Remuxes are non-disc uploads and remain subject to the rules. upbrr does not remove or remux tracks automatically.
 
@@ -75,6 +79,8 @@ PTP can ask you to review subtitle and trumpable tags when neither English subti
 ## Names and payloads
 
 upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. BHD factual tags are independent: original foreign programme audio plus English can set both `DualAudio` and `EnglishDub`, while the automatic name uses only the applicable exclusive marker. An additional prohibited dub still blocks the upload.
+
+OTW uses programme-audio languages, not subtitle languages, for its `Dual Audio`, `Dubbed` and `MULTI` elements. YUS uses `Multi-Audio` for two or more known programme languages. DP and YUS technical audio naming follows the default audio track. Incomplete facts cannot establish a dub-only presentation. Manual naming controls remain presentation choices and do not grant upload eligibility.
 
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or the rendered TV season/episode segment. Missing or unknown resolution stays absent. Complete manual names and tracker policies that use exact source names or separate display titles retain their existing behavior.
 

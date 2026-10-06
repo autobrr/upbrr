@@ -100,10 +100,6 @@ func validateAZEvidence(site siteDefinition, subject api.TrackerValidationSubjec
 			subject.MediaFileFacts,
 			azMediaConstraintPolicy(site, subject),
 		)...)
-		failures = append(failures, trackers.ValidateLanguageCombination(
-			subject.MediaFileFacts,
-			azLanguagePolicy(site),
-		)...)
 	}
 	failures = append(failures, trackers.ValidateRequiredAssets(
 		subject.AssetFacts,
@@ -138,19 +134,6 @@ func azMediaConstraintPolicy(site siteDefinition, subject api.TrackerValidationS
 		AllowedContainers:  containers,
 		AllowedVideoCodecs: codecs,
 	}
-}
-
-func azLanguagePolicy(site siteDefinition) trackers.LanguageCombinationPolicy {
-	policy := trackers.LanguageCombinationPolicy{
-		Evidence: azEvidencePolicy("azfamily_language", api.RuleDispositionStrict),
-	}
-	if site.Name == "AZ" {
-		policy.RequireOriginalOrEnglishAudio = true
-	} else {
-		policy.RequireOriginalAudio = true
-	}
-	policy.RequireEnglishSubtitleWithoutAudio = true
-	return policy
 }
 
 func azAssetRequirements(site siteDefinition, subject api.TrackerValidationSubject) []trackers.AssetRequirement {

@@ -65,8 +65,8 @@ func TestAZFamilyValidationPolicyVersions(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"AZ":  "azfamily-az-policy-v3",
-		"CZ":  "azfamily-cz-policy-v3",
+		"AZ":  "azfamily-az-policy-v4",
+		"CZ":  "azfamily-cz-policy-v4",
 		"PHD": "azfamily-phd-constructibility-v2",
 	}
 	for site, expected := range tests {
@@ -152,7 +152,8 @@ func azPassingSubject(site string) api.TrackerValidationSubject {
 		originalLanguage = "fr"
 	}
 	return api.TrackerValidationSubject{
-		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		LanguageFacts: azTestLanguageFacts(originalLanguage, originalLanguage),
+		Identity:      api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 		Release: api.ReleaseInfo{
 			Resolution: "1080p",
 			Type:       "webdl",

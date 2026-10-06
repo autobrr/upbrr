@@ -120,6 +120,13 @@ func collectCandidateFindings(
 			Priority:   priority,
 		})
 	}
+	// A review-only containment finding must never suppress a proved distinct
+	// variant, including lower-priority general or tracker coexistence findings.
+	if policy.PackContainmentRequiresReview && slices.ContainsFunc(findings, func(finding RuleFinding) bool {
+		return finding.Status == RuleFindingMatched && finding.Relation == api.DupeRelationCoexists
+	}) {
+		findings = slices.DeleteFunc(findings, func(finding RuleFinding) bool { return finding.ReasonCode == "pack_audio_languages_unverified" })
+	}
 	findings = append(findings, sameSlotFallbackFinding())
 	return findings
 }
@@ -255,6 +262,15 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 	// title-fallback search.
 	if workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup {
 		if finding, ok := collectPackContainmentFinding(target.Content, candidate.Content); ok {
+			if policy.PackContainmentRequiresReview && target.MediaClass != mediaClassFullDisc && candidate.MediaClass != mediaClassFullDisc {
+				finding.RuleID = policy.ID + "/pack_comparison_review"
+				finding.EvidenceID = policy.EvidenceID
+				finding.Source = "tracker"
+				finding.Status = RuleFindingIndeterminate
+				finding.Relation = api.DupeRelationManualReview
+				finding.ReasonCode = "pack_audio_languages_unverified"
+				finding.Manual = true
+			}
 			findings = append(findings, finding)
 		}
 	}

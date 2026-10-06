@@ -66,6 +66,14 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 			subject.ProvenanceFacts.Status,
 		))
 	}
+	if !otwLanguageFullDisc(meta) && !slices.Contains(subject.LanguageFacts.ProgrammeLanguages, "English") &&
+		!slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English") {
+		failures = append(
+			failures,
+			trackers.LanguageRuleFailure(subject, "english_accessibility", "try to include English audio or subtitles", trackers.LanguageAdvisory),
+		)
+	}
+
 	return failures, nil
 }
 
@@ -159,6 +167,7 @@ func otwUploadSubject(subject api.TrackerValidationSubject) api.UploadSubject {
 		Tag:               subject.Tag,
 		Identity:          subject.Identity,
 		ProviderMetadata:  subject.ProviderMetadata,
+		LanguageFacts:     subject.LanguageFacts.Clone(),
 		EffectiveMetadata: subject.EffectiveMetadata,
 		SeasonInt:         subject.SeasonInt,
 		EpisodeInt:        subject.EpisodeInt,

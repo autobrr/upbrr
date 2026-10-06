@@ -15,8 +15,9 @@ func Profile() unit3d.Profile {
 		ValidationPolicy:  ValidationPolicy(),
 		ReleaseNamePolicy: trackers.StructuredReleaseNamePolicy("unit3d/rf/v3", trackers.StructuredNamePolicy{}),
 		Site: unit3d.SiteProfile{
-			ResolveTypeID:       typeID,
-			ResolveResolutionID: resolutionID,
+			ProjectionQuestionnaire: languageQuestionnaire,
+			ResolveTypeID:           typeID,
+			ResolveResolutionID:     resolutionID,
 		},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "rf/duplicate/v3",

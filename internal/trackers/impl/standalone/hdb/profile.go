@@ -18,15 +18,16 @@ import (
 // Profile returns HDB identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		UsesMenuImages:     true,
-		Name:               "HDB",
-		BaseURL:            hdbBaseURL,
-		DescriptionGroup:   "hdb",
-		UploadContentMode:  trackers.UploadContentModeDescription,
-		ReleaseNamePolicy:  releaseNamePolicy(),
-		Rules:              &trackers.RuleSet{MinResolution: "720p"},
-		ValidationPolicy:   validationPolicy(),
-		PrepareDescription: prepareDescription,
+		UsesMenuImages:          true,
+		Name:                    "HDB",
+		BaseURL:                 hdbBaseURL,
+		DescriptionGroup:        "hdb",
+		UploadContentMode:       trackers.UploadContentModeDescription,
+		ReleaseNamePolicy:       releaseNamePolicy(),
+		Rules:                   &trackers.RuleSet{MinResolution: "720p"},
+		ValidationPolicy:        trackers.WithLanguageAssessment(validationPolicy(), languageAssessment),
+		ProjectionQuestionnaire: languageQuestionnaire,
+		PrepareDescription:      prepareDescription,
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, hdbBaseURL, nil)
 		},

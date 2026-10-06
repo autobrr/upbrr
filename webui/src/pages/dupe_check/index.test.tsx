@@ -59,6 +59,54 @@ const renderPage = (facet: DuplicatesFacet, trackers = ["EXAMPLE"]) =>
   );
 
 describe("DupeCheckPage", () => {
+  it("shows the backend pack warning beside its risk acknowledgement", () => {
+    const warning =
+      "Audio-language matching is unverified. You may acknowledge this warning and continue the upload; this does not establish matching content or trump eligibility.";
+    const setIgnored = vi.fn();
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: ["SP"],
+          status: "ready",
+          assessment: {
+            results: [
+              {
+                trackerId: "SP",
+                decision: "pending",
+                status: "blocked",
+                search: { complete: true, pages: 1, candidateCount: 1 },
+                matches: [
+                  {
+                    id: "episode",
+                    name: "Example.Show.S01E02.1080p.WEB-DL-GRP",
+                    relation: "manual_review",
+                    reasons: [{ code: "pack_audio_languages_unverified", message: warning }],
+                    pack: false,
+                    internal: false,
+                    trumpable: false,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [{ trackerId: "SP", displayName: "SP", readiness: "ready" }],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+          preflight: { results: [{ trackerId: "SP", state: "ready" }] } as unknown as NonNullable<
+            DuplicatesFacet["view"]["preflight"]
+          >,
+        },
+        { setIgnored },
+      ),
+      ["SP"],
+    );
+    expect(screen.getByText(warning)).toBeInTheDocument();
+    expect(screen.getByText("manual review")).toBeInTheDocument();
+    expect(screen.queryByText("proposed trumps")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Acknowledge dupe risk for SP" }));
+    expect(setIgnored).toHaveBeenCalledWith("SP", true);
+  });
+
   it("loads questions for initially selected trackers and starts their disclosures closed", () => {
     const facet = facetFor({
       questionnaires: [

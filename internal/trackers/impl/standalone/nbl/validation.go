@@ -12,10 +12,10 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{
-		ID:    "standalone-nbl-policy-v3",
+	return trackers.WithLanguagePolicy(trackers.ValidationPolicyBinding{
+		ID:    "standalone-nbl-policy-v4",
 		Check: checkEvidenceRules,
-	}
+	}, languagePolicy())
 }
 
 func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -56,15 +56,7 @@ func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubjec
 			}},
 		},
 	)...)
-	if !trackers.IsDiscType(subject.DiscType) {
-		failures = append(failures, trackers.ValidateLanguageCombination(
-			subject.MediaFileFacts,
-			trackers.LanguageCombinationPolicy{
-				Evidence:                           nblEvidencePolicy("nbl_language"),
-				RequireEnglishSubtitleWithoutAudio: true,
-			},
-		)...)
-	}
+
 	return failures, nil
 }
 

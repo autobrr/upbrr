@@ -523,6 +523,11 @@ type DupePolicy struct {
 	// still require action. Enabling this requires EvidenceID.
 	// The zero value preserves standard duplicate comparison.
 	ExactMatchOnly bool `json:",omitempty"`
+	// PackContainmentRequiresReview withholds non-disc pack/episode preference
+	// when the tracker requires comparison evidence the adapter cannot establish.
+	// Exact identity, full discs and proven coexistence retain their outcomes.
+	// Enabling this requires EvidenceID.
+	PackContainmentRequiresReview bool `json:",omitempty"`
 	// TargetReleaseOrigin derives tracker-native origin from the proposed release.
 	// ID versions this pure resolver; it is excluded from serialized fingerprints.
 	TargetReleaseOrigin func(api.UploadSubject, bool) string `json:"-"`

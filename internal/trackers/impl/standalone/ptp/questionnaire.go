@@ -62,6 +62,7 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string) *api.TrackerQues
 		})
 	}
 	fields = append(fields, subtitleReviewFields(meta, answers)...)
+	fields = append(fields, languageReviewFields(api.NewTrackerValidationSubject(meta, "PTP"))...)
 	if len(fields) == 0 {
 		return nil
 	}
@@ -79,13 +80,69 @@ var subtitleReviewOptions = []string{
 	"Hardcoded Subs (Non-English)",
 }
 
-// projectionQuestionnaire exposes only the applicable subtitle review controls.
+// projectionQuestionnaire exposes applicable subtitle choices and language evidence.
 // New-group requirements are discovered during remote upload preparation.
 func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	fields := append(subtitleReviewFields(input.Meta, standalone.QuestionnaireAnswers(input.Meta, "PTP")), legacySubtitleField(input.Meta))
 	return &api.TrackerQuestionnaire{
 		Tracker: "PTP",
-		Fields:  append(subtitleReviewFields(input.Meta, standalone.QuestionnaireAnswers(input.Meta, "PTP")), legacySubtitleField(input.Meta)),
+		Fields:  append(fields, languageReviewFields(api.NewTrackerValidationSubject(input.Meta, "PTP"))...),
 	}
+}
+
+// languageReviewFields records missing evidence independently of legacy payload
+// choices. Acknowledgement of a trumpable finding remains a separate decision.
+func languageReviewFields(subject api.TrackerValidationSubject) []api.TrackerQuestionnaireField {
+	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) || ptpNoProgrammeDialogue(subject.LanguageFacts) {
+		return nil
+	}
+	var fields []api.TrackerQuestionnaireField
+	if ptpNeedsTrackPurposeReview(subject.LanguageFacts) {
+		fields = append(fields, api.TrackerQuestionnaireField{
+			Key:      trackers.LanguageQuestionKey(subject, "programme_track_purpose"),
+			Label:    "PTP additional programme audio",
+			Kind:     "select",
+			Required: true,
+			Options:  []string{"distinct_content", "redundant", "unresolved"},
+			Help: "Programme tracks: " + ptpProgrammeTrackDetails(
+				subject.LanguageFacts,
+			) + ". Do the additional tracks preserve distinct necessary mixes/content, or are they duplicate mixes/superfluous dubs replaceable without losing required content? Counts and codec differences do not establish that purpose. Redundant audio requires a separate Trumpable release acknowledgement.",
+		})
+	}
+	primary := ptpPrimaryProgrammeLanguage(subject.LanguageFacts)
+	if primary != "" && primary != "English" && primary != "ZXX" && !slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English") {
+		fields = append(fields, api.TrackerQuestionnaireField{
+			Key: trackers.LanguageQuestionKey(
+				subject,
+				"english_subtitle_manager",
+			),
+			Label:    "PTP English subtitles for primary " + primary + " audio",
+			Kind:     "select",
+			Required: true,
+			Options:  []string{"available", "missing", "unresolved"},
+			Help:     "Are English subtitles for this release available in PTP's subtitle manager? Missing local and manager subtitles create a Trumpable release defect; unknown availability remains unresolved. This does not change subtitle payload selections.",
+		})
+	}
+	if subject.LanguageFacts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !ptpHasForcedEnglish(subject) {
+		fields = append(fields, api.TrackerQuestionnaireField{
+			Key: trackers.LanguageQuestionKey(
+				subject,
+				"forced_english_dialogue",
+			),
+			Label:    "PTP forced English dialogue coverage",
+			Kind:     "select",
+			Required: true,
+			Options:  []string{"not_required", "available_in_manager", "missing", "unresolved"},
+			Help:     "Does foreign dialogue require forced English subtitles? Select not_required only when that requirement does not apply, available_in_manager when the required coverage is available there, missing when it is absent locally and from the manager, or unresolved. A known omission needs a separate Trumpable release acknowledgement.",
+		})
+	}
+	for i := range fields {
+		value := subject.QuestionnaireAnswers[fields[i].Key]
+		if slices.Contains(fields[i].Options, value) {
+			fields[i].Value = value
+		}
+	}
+	return fields
 }
 
 // TrackerAnswerSchema retains CLI staging for group fields without publishing

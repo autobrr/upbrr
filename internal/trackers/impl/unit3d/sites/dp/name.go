@@ -5,6 +5,7 @@ package dp
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v3", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v4", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -24,12 +25,50 @@ func applyDPNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ 
 	if err := applyDPTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
+	if trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+		return applyDPLegacyAudioLabel(editor, meta)
+	}
+	label, established := audioLabelForFacts(meta)
+	if !established {
+		if err := applyDPLegacyAudioLabel(editor, meta); err != nil {
+			return err
+		}
+		if err := trackers.ApplyDefaultAudioName(editor, meta); err != nil {
+			return fmt.Errorf("apply DP default audio: %w", err)
+		}
+		return nil
+	}
+
+	for _, role := range []api.ReleaseNameRole{api.NameRoleDualAudio, api.NameRoleDubbed} {
+		if err := editor.Omit(role); err != nil {
+			return fmt.Errorf("omit DP audio-language marker: %w", err)
+		}
+	}
+	if label != "" {
+		role := api.NameRoleDualAudio
+		if strings.HasSuffix(label, "Dubbed") {
+			role = api.NameRoleDubbed
+		}
+		if err := editor.InsertBefore(role, label, api.NameRoleAudio); err != nil {
+			return fmt.Errorf("set DP audio label: %w", err)
+		}
+	}
+	if err := trackers.ApplyDefaultAudioName(editor, meta); err != nil {
+		return fmt.Errorf("apply DP default audio: %w", err)
+	}
+
+	return nil
+}
+
+// applyDPLegacyAudioLabel preserves full-disc behavior and matrix rows whose
+// exact replacement remains outside the approved examples in issue 606.
+func applyDPLegacyAudioLabel(editor *trackers.NameEditor, meta api.UploadSubject) error {
 	if unit3d.IsDiscType(meta.DiscType) {
 		return nil
 	}
 	if label := audioLabel(meta.AudioLanguages); label != "" {
 		if err := editor.Set(api.NameRoleDualAudio, label); err != nil {
-			return fmt.Errorf("set DP audio label: %w", err)
+			return fmt.Errorf("preserve DP audio label: %w", err)
 		}
 	}
 	return nil
@@ -99,4 +138,46 @@ func audioLabel(values []string) string {
 	default:
 		return "MULTi"
 	}
+}
+
+// audioLabelForFacts implements the established original/English/Nordic cases.
+// Remaining matrix combinations retain the existing policy pending issue 636.
+func audioLabelForFacts(meta api.UploadSubject) (string, bool) {
+	facts := meta.LanguageFacts
+	languages := facts.ProgrammeLanguages
+	if !facts.OriginalLanguagesKnown || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete ||
+		trackers.KnownProgrammeLanguageCount(facts) != len(languages) ||
+		len(languages) == 0 {
+		return "", true
+	}
+	original := facts.HasOriginalAudio()
+	english := slices.Contains(languages, "English")
+	if len(languages) == 1 && original {
+		return "", true
+	}
+	if len(languages) >= 3 && original {
+		return "MULTi", true
+	}
+	if facts.HasEnglishDub() && original {
+		return "Dual-Audio", true
+	}
+	if len(languages) == 1 && facts.HasEnglishDub() {
+		return "Dubbed", true
+	}
+	nordic := []string{"Danish", "Finnish", "Icelandic", "Norwegian", "Swedish"}
+	if len(languages) == 1 && !original && !english && !slices.Contains(facts.OriginalLanguages, "English") &&
+		!slices.ContainsFunc(
+			facts.OriginalLanguages,
+			func(language string) bool { return slices.Contains(nordic, language) },
+		) && slices.Contains(nordic, languages[0]) {
+		return languages[0] + " Dubbed", true
+	}
+	if len(languages) == 2 && original && english && slices.Contains(facts.OriginalLanguages, "English") {
+		for _, language := range languages {
+			if language != "English" {
+				return language + " MULTi", true
+			}
+		}
+	}
+	return "", false
 }
