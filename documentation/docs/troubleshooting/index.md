@@ -109,7 +109,7 @@ Check tracker eligibility after the change. A tracker that requires the missing 
 
 Stored cookies do not prove a valid remote session. See [Cookie troubleshooting](../web-ui/settings/tracker-auth.md#cookie-troubleshooting) for wrong Firefox containers, expired sessions, rejected formats, missing folder imports, and tracker-side failures. For **Storage unavailable**, follow [Storage recovery](../web-ui/settings/tracker-auth.md#storage-recovery); do not delete the database or auth key material.
 
-Upload preflight does not silently log in or mutate auth state. Fix auth on the dedicated Settings surface.
+Upload preflight can validate sessions and perform tracker-supported automatic login or refresh, including storing a refreshed RTF API session. If authentication remains blocked or requires manual 2FA, resolve it under **Settings → Tracker Auth** before retrying preparation.
 
 ## No screenshots or image links
 
