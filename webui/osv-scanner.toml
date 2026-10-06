@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2026-11-01T00:00:00Z
+reason = "Temporary maintainer-approved acceptance for Stylelint's transitive braces tooling dependency, used with fixed lint patterns. The shipped UI contains compiled assets, not this Node tooling. This is not remediation; retain CSS checks, monitor upstream, and reassess at expiry. https://github.com/autobrr/upbrr/issues/585"
