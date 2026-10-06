@@ -20,6 +20,8 @@ type DuplicateCheckInput struct {
 
 // UploadSubjectInput contains workflow upload choices for one exact prepared generation.
 type UploadSubjectInput struct {
+	// StaffUploadTokens are backend-only, tracker-scoped credentials; their presence grants no exception.
+	StaffUploadTokens     map[string]StaffUploadToken `json:"-"`
 	Release               ReleaseRef
 	Trackers              []string
 	IgnoreDupesFor        []string

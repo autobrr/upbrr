@@ -5,6 +5,8 @@ package lume
 
 import (
 	"context"
+	"github.com/autobrr/upbrr/internal/mediafacts"
+	"strconv"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -97,9 +99,11 @@ func TestRulesRequireEncodeSettings(t *testing.T) {
 
 func lumeValidationSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
-		Type:      "WEBDL",
-		Container: "mkv",
-		Release:   api.ReleaseInfo{Resolution: "1080p"},
+		Tracker:       "LUME",
+		LanguageFacts: lumeTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+		Type:          "WEBDL",
+		Container:     "mkv",
+		Release:       api.ReleaseInfo{Resolution: "1080p"},
 		PackageFacts: api.PackageFacts{
 			Status:         api.MetadataEvidenceStatusComplete,
 			KnownFileCount: 1,
@@ -124,17 +128,17 @@ func lumeValidationSubject() api.TrackerValidationSubject {
 			}},
 		},
 		AssetFacts: api.AssetFacts{
-			Status:            api.MetadataEvidenceStatusComplete,
-			MediaInfoText:     api.AssetEvidence{
-Status: api.MetadataEvidenceStatusComplete,
- Ready: true,
- Count: 1,
-},
+			Status: api.MetadataEvidenceStatusComplete,
+			MediaInfoText: api.AssetEvidence{
+				Status: api.MetadataEvidenceStatusComplete,
+				Ready:  true,
+				Count:  1,
+			},
 			HostedScreenshots: api.AssetEvidence{
-Status: api.MetadataEvidenceStatusComplete,
- Ready: true,
- Count: 3,
-},
+				Status: api.MetadataEvidenceStatusComplete,
+				Ready:  true,
+				Count:  3,
+			},
 		},
 		AvailabilityFacts: api.AvailabilityFacts{Status: api.MetadataEvidenceStatusUnavailable},
 	}
@@ -154,4 +158,51 @@ func requireLUMEValidationFailure(
 		}
 	}
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
+}
+
+// lumeTestLanguageFacts models inspected, identified programme streams and full
+// embedded subtitles so unrelated fixtures satisfy the current facts contract.
+func lumeTestLanguageFacts(original string, programme, subtitles []string) api.LanguageFacts {
+	media := api.MediaFacts{
+		OriginalLanguage:      original,
+		SubtitleLanguages:     subtitles,
+		TrackCoverageComplete: true,
+		PrimaryAudioTrackID:   "audio-0",
+	}
+	for index, language := range programme {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			ID:        "audio-" + strconv.Itoa(index),
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Languages: []string{language},
+			Codec:     "AC-3",
+			Default:   index == 0,
+		})
+	}
+	for index, language := range subtitles {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			ID:        "subtitle-" + strconv.Itoa(index),
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{language},
+			Default:   index == 0,
+		})
+	}
+	return mediafacts.ResolveLanguages(media)
+}
+
+func TestLumeFullEnglishSubtitleAndPermittedDubBoundaries(t *testing.T) {
+	t.Parallel()
+	subject := lumeValidationSubject()
+	subject.LanguageFacts = lumeTestLanguageFacts("Japanese", []string{"Japanese", "English", "German"}, []string{"English (Full)"})
+	if failures := languageAssessment(subject); len(failures) != 0 {
+		t.Fatalf("permitted extra dubs/full subtitle correction blocked: %+v", failures)
+	}
+	subject.LanguageFacts = lumeTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English (Forced)"})
+	requireLUMEValidationFailure(t, languageAssessment(subject), "language_subtitle_coverage", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	subject.LanguageFacts = lumeTestLanguageFacts("English", []string{"English"}, nil)
+	requireLUMEValidationFailure(t, languageAssessment(subject), "language_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	subject.Type = "DISC"
+	if failures := languageAssessment(subject); len(failures) != 0 {
+		t.Fatalf("full-disc subtitles changed: %+v", failures)
+	}
 }

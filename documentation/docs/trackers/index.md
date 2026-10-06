@@ -40,7 +40,7 @@ Tracker adapters normalize duplicate results into a common review surface. A tra
 - a not-run result with a reason, such as missing auth or metadata;
 - an attempted search failure.
 
-Warnings that permit an override can block a live upload while allowing debug preparation. Strict validation failures block every mode. Subjective or incomplete tracker rules remain manual decisions.
+Warnings that permit an override can block a live upload while allowing debug preparation. Strict constructibility failures block every mode. Non-submitting debug execution preserves the explicit language-eligibility bypass and displays the bypassed assessment. Subjective or incomplete tracker rules remain visible for review.
 
 Unit3D duplicate searches cover the complete movie or TV category family, including site-specific categories such as anime or season packs. They do not filter by upload type, resolution, or individual episode number; the evaluator compares the returned release variants and overlapping content. A TV season may still narrow the search, except where the site needs a broader query, as described for [ACM](#acm-diagnostics).
 
@@ -52,9 +52,19 @@ Tracker settings can restrict duplicate competition by incoming release group. W
 
 Some tracker warnings permit an explicit override. On **Dupe Check**, read the warnings on the affected tracker's card. Turn on **Acknowledge tracker warnings** only after deciding that the release is appropriate for that tracker. The warning details remain visible while acknowledged.
 
-Approval applies only to that tracker and its current warning set. After the initial duplicate check, changing its warning toggle rechecks only that tracker when eligible. Other trackers keep their fresh, unchanged duplicate evidence and decisions. Turning the toggle off withdraws approval and skips that tracker's search until it is eligible again. Changed inputs, configuration, or expired evidence still require fresh checks. Changed warnings or a new prepared generation require renewed approval. Strict failures remain blocked and cannot be overridden, including in debug mode.
+Approval applies only to that tracker and its current warning set. After the initial duplicate check, changing its warning toggle rechecks only that tracker when eligible. Other trackers keep their fresh, unchanged duplicate evidence and decisions. Turning the toggle off withdraws approval and skips that tracker's search until it is eligible again. Changed inputs, configuration, or expired evidence still require fresh checks. Changed warnings or a new prepared generation require renewed approval. Strict failures cannot be waived for a live upload. Debug may bypass the explicitly identified language-eligibility assessments, but never authorizes tracker submission.
 
-The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override.
+The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override and explicitly marked language-eligibility assessments; bypass details remain visible.
+
+### Language eligibility
+
+BHD, AITHER, HHD, ULCX, LST and LUME assess finalized language facts for non-disc uploads. Review the affected tracker's **Prohibited**, **Staff approval required**, **Trumpable release**, or **Unresolved** assessment. The details identify the original language, programme languages and relevant defect. Commentary, compatibility and other identified secondary tracks are assessed separately from programme dubs. Correct language evidence on Input; a naming override does not change factual API tags or upload eligibility.
+
+A **Trumpable release** acknowledgement accepts that a compliant replacement may supersede the upload. It applies only to the affected tracker and prepared generation. It cannot clear an independent strict finding, grant staff permission, or prove that a remote site tag was applied. Missing or conflicting evidence must be resolved before a normal upload proceeds.
+
+LST's missing-English-subtitle exception requires a successful complete title-wide search. Zero other torrents allows a labelled trumpable acknowledgement. Any other torrent blocks that exception, including other resolutions or formats. A failed or incomplete search cannot establish an empty title. Changed or expired search evidence requires reassessment.
+
+Complete DVD, Blu-ray and UHD Blu-ray uploads retain their existing behavior and are excluded from these language assessments. Remuxes are non-disc uploads and remain subject to the rules. upbrr does not remove or remux tracks automatically.
 
 ## Tracker questions
 
@@ -64,7 +74,7 @@ PTP can ask you to review subtitle and trumpable tags when neither English subti
 
 ## Names and payloads
 
-upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time.
+upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. BHD factual tags are independent: original foreign programme audio plus English can set both `DualAudio` and `EnglishDub`, while the automatic name uses only the applicable exclusive marker. An additional prohibited dub still blocks the upload.
 
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or the rendered TV season/episode segment. Missing or unknown resolution stays absent. Complete manual names and tracker policies that use exact source names or separate display titles retain their existing behavior.
 

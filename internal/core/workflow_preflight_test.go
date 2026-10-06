@@ -38,9 +38,8 @@ func (f workflowPreflightImagesFake) ReusableTrackerImageLinks(context.Context, 
 	return f.links, nil
 }
 
-type workflowAudioPolicyDefinition struct {
+type workflowClaimPolicyDefinition struct {
 	name       string
-	policy     trackerspkg.AudioPolicy
 	banned     []string
 	claimCalls *int
 	claimErr   error
@@ -102,31 +101,26 @@ func (d workflowImageHostPolicyDefinition) ImageHostPolicy() *trackerspkg.ImageH
 	return &policy
 }
 
-func (d workflowAudioPolicyDefinition) Name() string { return d.name }
+func (d workflowClaimPolicyDefinition) Name() string { return d.name }
 
-func (d workflowAudioPolicyDefinition) DefaultBaseURL() string { return "https://alpha.invalid" }
+func (d workflowClaimPolicyDefinition) DefaultBaseURL() string { return "https://alpha.invalid" }
 
-func (d workflowAudioPolicyDefinition) UploadContentMode() trackerspkg.UploadContentMode {
+func (d workflowClaimPolicyDefinition) UploadContentMode() trackerspkg.UploadContentMode {
 	return trackerspkg.UploadContentModeDescription
 }
 
-func (d workflowAudioPolicyDefinition) Prepare(
+func (d workflowClaimPolicyDefinition) Prepare(
 	context.Context,
 	trackerspkg.PreparationInput,
 ) (trackerspkg.TrackerPlan, *trackerspkg.PreparationFailure) {
 	return trackerspkg.TrackerPlan{}, nil
 }
 
-func (d workflowAudioPolicyDefinition) AudioPolicy() *trackerspkg.AudioPolicy {
-	policy := d.policy
-	return &policy
-}
-
-func (d workflowAudioPolicyDefinition) BannedGroups() []string {
+func (d workflowClaimPolicyDefinition) BannedGroups() []string {
 	return append([]string(nil), d.banned...)
 }
 
-func (d workflowAudioPolicyDefinition) NewClaimChecker(config.Config, api.Logger) trackerspkg.ClaimChecker {
+func (d workflowClaimPolicyDefinition) NewClaimChecker(config.Config, api.Logger) trackerspkg.ClaimChecker {
 	return workflowClaimChecker{calls: d.claimCalls, err: d.claimErr}
 }
 
@@ -554,53 +548,61 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
-	t.Run("audio bloat policy", func(t *testing.T) {
+	t.Run("structured language decisions remain tracker scoped", func(t *testing.T) {
 		policyRegistry := trackerspkg.NewRegistry()
-		if err := policyRegistry.Register(workflowAudioPolicyDefinition{
-			name: "ALPHA",
-			policy: trackerspkg.AudioPolicy{
-				BlockEnglishOriginalWithForeign: true,
-			},
+		if err := policyRegistry.RegisterDescriptor(trackerspkg.Descriptor{
+			Name:       "ALPHA",
+			Definition: workflowImageHostPolicyDefinition{name: "ALPHA"},
+			Validation: trackerspkg.WithLanguagePolicy(trackerspkg.NoExtraValidationPolicy("language-test-v1"), trackerspkg.LanguagePolicy{ExtraDubs: trackerspkg.LanguageProhibited}),
 		}); err != nil {
-			t.Fatalf("register audio policy: %v", err)
+			t.Fatal(err)
 		}
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: policyRegistry}
-		assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{
-			AudioLanguages: []string{"English", "French"},
-			ProviderMetadata: api.SourceScopedMetadata{
-				TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
+		subject := api.UploadSubject{
+			LanguageFacts: api.LanguageFacts{
+				OriginalLanguages:  []string{"Japanese"},
+				ProgrammeLanguages: []string{"Japanese", "English", "French"},
+				ProgrammeStatus:    api.MetadataEvidenceStatusComplete,
+				AudioStatus:        api.MetadataEvidenceStatusComplete,
+				SubtitleStatus:     api.MetadataEvidenceStatusComplete,
 			},
-		}, catalog, runtime, projections, now)
-		if err != nil {
-			t.Fatalf("build audio policy preflight: %v", err)
+			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "en"}},
 		}
-		if assessment.Results[0].State != api.TrackerPreflightStateFailed || finalized[0].UploadReady {
-			t.Fatalf("audio policy preflight = %#v/%#v", assessment.Results[0], finalized[0])
-		}
-		if len(assessment.Results[0].Failures) != 1 || !strings.Contains(assessment.Results[0].Failures[0].Failure.Message, "French") {
-			t.Fatalf("audio policy failure = %#v", assessment.Results[0].Failures)
-		}
-
-		assessment, finalized, err = builder.Build(context.Background(), api.UploadSubject{
-			DiscType:       "DVD",
-			AudioLanguages: []string{"English", "French"},
-			ProviderMetadata: api.SourceScopedMetadata{
-				TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
-			},
-		}, catalog, runtime, projections, now)
-		if err != nil {
-			t.Fatalf("build disc audio policy preflight: %v", err)
-		}
-		if assessment.Results[0].State != api.TrackerPreflightStateReady || !finalized[0].UploadReady {
-			t.Fatalf("disc audio policy preflight = %#v/%#v", assessment.Results[0], finalized[0])
+		for _, disc := range []string{"", "DVD"} {
+			subject.DiscType = disc
+			checked := projections
+			checked.Projections = slices.Clone(projections.Projections)
+			failures, err := trackerspkg.EvaluateTrackerValidationWithRegistry(t.Context(), policyRegistry, "ALPHA", api.NewTrackerValidationSubject(subject, "ALPHA"), api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := trackerspkg.ApplyProjectionRuleFailures(&checked.Projections[0], failures, api.WorkflowExecutionModeNormal, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			assessment, finalized, err := builder.Build(t.Context(), subject, catalog, runtime, checked, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantReady := disc != ""
+			if finalized[0].UploadReady != wantReady || (assessment.Results[0].State == api.TrackerPreflightStateReady) != wantReady {
+				t.Fatalf("structured language preflight disc=%q: %+v / %+v", disc, assessment.Results[0], finalized[0])
+			}
+			if !finalized[1].UploadReady || assessment.Results[1].State != api.TrackerPreflightStateReady {
+				t.Fatal("language block affected undeclared sibling")
+			}
+			if !wantReady && !slices.ContainsFunc(finalized[0].PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+				return decision.Code == "language_extra_dub" && decision.Disposition == api.RuleDispositionStrict && decision.Blocking && strings.Contains(decision.Message, "Original: Japanese") && strings.Contains(decision.Message, "French")
+			}) {
+				t.Fatalf("lost canonical language review: %+v", finalized[0])
+			}
 		}
 	})
 
-	t.Run("audio bloat warnings are aggregated", func(t *testing.T) {
+	t.Run("undeclared trackers do not inherit universal audio warnings", func(t *testing.T) {
 		policyRegistry := trackerspkg.NewRegistry()
-		for _, trackerName := range []string{"ALPHA", "BETA"} {
-			if err := policyRegistry.Register(workflowAudioPolicyDefinition{name: trackerName}); err != nil {
-				t.Fatalf("register %s audio policy: %v", trackerName, err)
+		for _, name := range []string{"ALPHA", "BETA"} {
+			if err := policyRegistry.Register(workflowImageHostPolicyDefinition{name: name}); err != nil {
+				t.Fatal(err)
 			}
 		}
 		logger := &recordingMediaLogger{}
@@ -609,23 +611,26 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			registry: policyRegistry,
 			logger:   logger,
 		}
-		assessment, _, err := builder.Build(context.Background(), api.UploadSubject{
+		assessment, finalized, err := builder.Build(t.Context(), api.UploadSubject{
 			AudioLanguages: []string{"Japanese", "French"},
-			ProviderMetadata: api.SourceScopedMetadata{
-				TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+			LanguageFacts: api.LanguageFacts{
+				OriginalLanguages:  []string{"Japanese"},
+				ProgrammeLanguages: []string{"Japanese", "French"},
+				ProgrammeStatus:    api.MetadataEvidenceStatusComplete,
+				AudioStatus:        api.MetadataEvidenceStatusComplete,
 			},
+			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}},
 		}, catalog, runtime, projections, now)
 		if err != nil {
-			t.Fatalf("build warning audio policy preflight: %v", err)
+			t.Fatal(err)
 		}
-		if assessment.Results[0].State != api.TrackerPreflightStateReady || assessment.Results[1].State != api.TrackerPreflightStateReady {
-			t.Fatalf("warning policy blocked trackers: %#v", assessment.Results)
+		for index, result := range assessment.Results {
+			if result.State != api.TrackerPreflightStateReady || !finalized[index].UploadReady || len(finalized[index].PolicyDecisions) != 0 {
+				t.Fatalf("invented language policy: %+v", finalized[index])
+			}
 		}
-		if logger.countLevelContaining(
-			"WARN",
-			"trackers=ALPHA,BETA languages=French decision=advisory blocking=false",
-		) != 1 {
-			t.Fatalf("audio warning logs = %#v", logger.entries)
+		if logger.countLevelContaining("WARN", "audio bloat") != 0 {
+			t.Fatalf("legacy universal warning remains: %#v", logger.entries)
 		}
 	})
 
@@ -708,13 +713,20 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 	t.Run("debug bypasses runtime policy calls and records decisions", func(t *testing.T) {
 		policyRegistry := trackerspkg.NewRegistry()
 		claimCalls := 0
-		if err := policyRegistry.Register(workflowAudioPolicyDefinition{
-			name:       "ALPHA",
-			banned:     []string{"GRP"},
-			claimCalls: &claimCalls,
-			policy: trackerspkg.AudioPolicy{
-				BlockEnglishOriginalWithForeign: true,
+		if err := policyRegistry.RegisterDescriptor(trackerspkg.Descriptor{
+			Name:         "ALPHA",
+			BannedGroups: []string{"GRP"},
+			Definition: workflowClaimPolicyDefinition{
+				name:       "ALPHA",
+				banned:     []string{"GRP"},
+				claimCalls: &claimCalls,
 			},
+			ClaimFactory: workflowClaimPolicyDefinition{
+				name:       "ALPHA",
+				banned:     []string{"GRP"},
+				claimCalls: &claimCalls,
+			},
+			Validation: trackerspkg.WithLanguagePolicy(trackerspkg.NoExtraValidationPolicy("debug-language-v1"), trackerspkg.LanguagePolicy{ExtraDubs: trackerspkg.LanguageProhibited}),
 		}); err != nil {
 			t.Fatalf("register debug policies: %v", err)
 		}
@@ -724,18 +736,27 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		debugCatalog.Trackers[0].Capabilities.Claims = true
 		debugProjections := projections
 		debugProjections.ExecutionMode = api.WorkflowExecutionModeDebug
+		debugProjections.Projections = slices.Clone(projections.Projections)
+		debugSubject := api.UploadSubject{Tag: "-GRP", LanguageFacts: api.LanguageFacts{
+			OriginalLanguages:  []string{"English"},
+			ProgrammeLanguages: []string{"English", "French"},
+			ProgrammeStatus:    api.MetadataEvidenceStatusComplete,
+			AudioStatus:        api.MetadataEvidenceStatusComplete,
+			SubtitleStatus:     api.MetadataEvidenceStatusComplete,
+		}}
+		languageFailures, err := trackerspkg.EvaluateTrackerValidationWithRegistry(t.Context(), policyRegistry, "ALPHA", api.NewTrackerValidationSubject(debugSubject, "ALPHA"), api.NopLogger{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := trackerspkg.ApplyProjectionRuleFailures(&debugProjections.Projections[0], languageFailures, api.WorkflowExecutionModeDebug, "", nil); err != nil {
+			t.Fatal(err)
+		}
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: policyRegistry}
 		progress := make([]api.WorkflowProgressUpdate, 0, 1)
 		ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
 			progress = append(progress, update)
 		})
-		assessment, finalized, err := builder.Build(ctx, api.UploadSubject{
-			Tag:            "-GRP",
-			AudioLanguages: []string{"English", "French"},
-			ProviderMetadata: api.SourceScopedMetadata{
-				TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
-			},
-		}, debugCatalog, runtime, debugProjections, now)
+		assessment, finalized, err := builder.Build(ctx, debugSubject, debugCatalog, runtime, debugProjections, now)
 		if err != nil {
 			t.Fatalf("build debug policy preflight: %v", err)
 		}
@@ -746,7 +767,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			!finalized[0].DupeReady {
 			t.Fatalf("debug preflight = %#v/%#v", assessment, finalized[0])
 		}
-		for _, code := range []string{"banned_group", "claim_policy", "audio_policy"} {
+		for _, code := range []string{"banned_group", "claim_policy", "language_extra_dub"} {
 			if !slices.ContainsFunc(finalized[0].PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
 				return decision.Code == code && decision.Decision == "bypassed" && !decision.Blocking
 			}) {
@@ -755,7 +776,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		if !slices.ContainsFunc(progress, func(update api.WorkflowProgressUpdate) bool {
 			return update.ItemID == "ALPHA" && update.Status == api.StageStatusCompleted &&
-				strings.Contains(update.Message, "policy_code=banned_group decision=bypassed")
+				strings.Contains(update.Message, "policy_code=language_extra_dub decision=bypassed")
 		}) {
 			t.Fatalf("debug preflight progress = %#v", progress)
 		}
@@ -763,7 +784,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 
 	t.Run("claim cancellation terminates preflight", func(t *testing.T) {
 		policyRegistry := trackerspkg.NewRegistry()
-		if err := policyRegistry.Register(workflowAudioPolicyDefinition{name: "ALPHA", claimErr: context.Canceled}); err != nil {
+		if err := policyRegistry.Register(workflowClaimPolicyDefinition{name: "ALPHA", claimErr: context.Canceled}); err != nil {
 			t.Fatalf("register claim policy: %v", err)
 		}
 		claimCatalog := catalog

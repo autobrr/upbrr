@@ -66,6 +66,9 @@ func (e *AuthResolutionError) Unwrap() error {
 // PreparationInput supplies one immutable, operation-scoped tracker preparation snapshot.
 // The tracker module resolves this input before invoking an adapter.
 type PreparationInput struct {
+	// validationRegistry binds service-created preparation to the same complete
+	// rule set used by its reviewed projection. Direct callers retain site validation.
+	validationRegistry *Registry
 	// Intent selects the maximum preparation depth for this invocation.
 	Intent PreparationIntent
 	// ExecutionMode controls projection-time policy waivers. Empty means normal.
@@ -928,4 +931,22 @@ type Descriptor struct {
 	MetadataLocale string
 	// DescriptionGroup is the optional tracker-specific description override group.
 	DescriptionGroup string
+}
+
+// StaffUploadToken returns only this tracker's optional backend credential.
+// This is the extension point for a future tracker-specific staff authorization
+// exchange. Presence alone never changes a rule result or bypasses a block.
+func (input PreparationInput) StaffUploadToken() api.StaffUploadToken {
+	var selected api.StaffUploadToken
+	found := false
+	for tracker, token := range input.Meta.StaffUploadTokens {
+		if !strings.EqualFold(strings.TrimSpace(tracker), strings.TrimSpace(input.Tracker)) {
+			continue
+		}
+		if found {
+			return api.StaffUploadToken{}
+		}
+		selected, found = token, true
+	}
+	return selected
 }

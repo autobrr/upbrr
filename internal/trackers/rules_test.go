@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -58,6 +60,9 @@ func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta a
 		meta.ProviderMetadata.TVmaze.Name = "Example Series"
 	}
 	meta = withConstructibleTrackerFactsForTest(meta)
+	if slices.Contains([]string{"BHD", "AITHER", "HHD", "ULCX", "LST", "LUME"}, tracker) {
+		meta = withFinalizedLanguageFactsForTest(meta)
+	}
 	registry, err := impl.NewRegistry()
 	if err != nil {
 		panic(err)
@@ -71,6 +76,7 @@ func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta a
 
 func evaluateBHDRulesWithRegistryForTest(ctx context.Context, meta api.RuleSubject) []api.RuleFailure {
 	meta = withConstructibleTrackerFactsForTest(meta)
+	meta = withFinalizedLanguageFactsForTest(meta)
 	registry, err := impl.NewRegistry()
 	if err != nil {
 		panic(err)
@@ -1107,15 +1113,9 @@ func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
 		},
 	}
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "AITHER", meta)
-	if len(failures) == 0 {
-		t.Fatalf("expected language failure")
-	}
-	if failures[0].Rule != "language_rule" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
-	}
-	if failures[0].Disposition != api.RuleDispositionWaivable {
-		t.Fatalf("language disposition = %q, want waivable", failures[0].Disposition)
+	failures := nonAdvisoryFailures(evaluateNonMetadataRulesForTest(context.Background(), "AITHER", meta))
+	if len(failures) != 1 || failures[0].Rule != "language_subtitles" || failures[0].Disposition != api.RuleDispositionStrict || !strings.HasPrefix(failures[0].Reason, "Staff approval required") {
+		t.Fatalf("expected strict staff-exception subtitle finding, got %#v", failures)
 	}
 }
 
@@ -1493,4 +1493,51 @@ func TestRuleEvaluationCancellationReturnsError(t *testing.T) {
 	if err == nil || len(failures) != 0 {
 		t.Fatalf("canceled evaluation failures=%#v err=%v", failures, err)
 	}
+}
+
+// withFinalizedLanguageFactsForTest supplies the prepared projection omitted by
+// legacy tests focused on unrelated constructibility predicates.
+func withFinalizedLanguageFactsForTest(meta api.RuleSubject) api.RuleSubject {
+	if meta.LanguageFacts.AudioStatus != "" {
+		return meta
+	}
+	original := meta.EffectiveMetadata.OriginalLanguage
+	if original == "" && !meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		original = "English"
+		if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.OriginalLanguage != "" {
+			original = meta.ProviderMetadata.TMDB.OriginalLanguage
+		}
+	}
+	audio := meta.AudioLanguages
+	subtitles := meta.SubtitleLanguages
+	if audio == nil {
+		audio = []string{"English"}
+	}
+	if subtitles == nil {
+		subtitles = []string{"English"}
+	}
+	media := api.MediaFacts{
+		OriginalLanguage:      original,
+		TrackCoverageComplete: true,
+		SubtitleLanguages:     subtitles,
+		PrimaryAudioTrackID:   "programme",
+	}
+	for i, language := range languageutil.NormalizeLanguageList(audio) {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			ID:        "programme",
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Languages: []string{language},
+			Default:   i == 0,
+		})
+	}
+	for _, language := range languageutil.NormalizeLanguageList(subtitles) {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{language},
+			Default:   true,
+		})
+	}
+	meta.LanguageFacts = mediafacts.ResolveLanguages(media)
+	return meta
 }

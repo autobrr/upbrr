@@ -18,6 +18,9 @@ func namePolicy() trackers.ReleaseNamePolicyBinding {
 }
 
 func applyHHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
+		return fmt.Errorf("apply HHD language markers: %w", err)
+	}
 	if err := applyHHDTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
@@ -85,6 +88,5 @@ func insertHHDDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubjec
 }
 
 func isHHDFullDisc(meta api.UploadSubject) bool {
-	nameType := strings.TrimSpace(meta.Type)
-	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
+	return trackers.IsFullDiscUpload(meta.DiscType, meta.Type)
 }

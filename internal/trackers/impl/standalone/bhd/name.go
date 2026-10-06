@@ -19,6 +19,9 @@ var bhdAudioChannelPattern = regexp.MustCompile(`^(.+?)(\d+(?:\.\d+){1,2})$`)
 // applyBHDNameDefaults projects BHD's title, media, and group conventions onto
 // a generated document. It never interprets an already-rendered release name.
 func applyBHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
+		return fmt.Errorf("apply BHD language markers: %w", err)
+	}
 	if isBHDTV(meta) {
 		if err := applyBHDTVTitleDefaults(editor, meta); err != nil {
 			return err
@@ -282,13 +285,5 @@ func bhdReleaseGroup(meta api.UploadSubject) string {
 }
 
 func isBHDFullDisc(meta api.UploadSubject) bool {
-	if strings.EqualFold(strings.TrimSpace(meta.Type), "DISC") {
-		return true
-	}
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
-	case "BDMV", "DVD", "HDDVD", "HD-DVD":
-		return true
-	default:
-		return false
-	}
+	return trackers.IsFullDiscUpload(meta.DiscType, meta.Type)
 }

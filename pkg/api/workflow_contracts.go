@@ -270,6 +270,8 @@ type TrackerPolicyDecision struct {
 
 // TrackerReleaseProjection is one exact tracker-local interpretation of a release.
 type TrackerReleaseProjection struct {
+	// TitleSearchEvidence retains tracker-scoped, generation-bound rule evidence.
+	TitleSearchEvidence *TrackerTitleSearchEvidence `json:"titleSearchEvidence,omitempty"`
 	// QuestionnaireAnswers owns exact tracker-scoped answers after projection instructions.
 	// An empty object clears prior answers; nil identifies a legacy projection without this authority.
 	QuestionnaireAnswers map[string]string        `json:"questionnaireAnswers,omitzero"`

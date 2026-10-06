@@ -159,6 +159,10 @@ An answer-only edit retains fresh duplicate evidence when every duplicate-releva
 
 PTP and GPW group metadata is not requested speculatively in the normal question panels. Some new-group or channel requirements can only be confirmed during tracker preparation. When preparation reports them, late-only fields appear in a separate **Tracker preparation details** section on **Dupe Checking**. Requirements for an existing question update its normal tracker panel. Existing-group uploads do not require new-group-only details. Tracker-local source and encoding notes are answered here; canonical metadata and language corrections remain in **Input**.
 
+### Language assessments
+
+Review [tracker language eligibility](../trackers/index.md#language-eligibility) before duplicate checking. CLI and WebUI use the same backend findings. A strict staff-exception or prohibited result cannot be acknowledged away; a **Trumpable release** requires an explicit tracker-specific acknowledgement of the replacement consequence. Unattended mode never supplies it automatically. Full-disc uploads are excluded from these assessments, while remuxes are included.
+
 ### Subtitle review
 
 Set regular and hardcoded subtitle languages with the editable language dropdowns in Input. The hardcoded list offers English (Full) and English (Forced); the ordinary list suggests base-language names. Both lists accept custom text. Adding or removing a hardcoded language controls hardcoded handling; there is no separate hardcoded-subtitles toggle. Auto resets the language correction and any retained legacy boolean override.

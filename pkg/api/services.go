@@ -331,6 +331,9 @@ func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allo
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
 type UploadSubject struct {
+	StaffUploadTokens          map[string]StaffUploadToken `json:"-"`
+	TrackerTitleSearchEvidence map[string]TrackerTitleSearchEvidence
+	LanguageFacts              LanguageFacts
 	// SourceIdentity is private verified source evidence used to derive exact
 	// submission and media reuse identities. It must not enter transport JSON.
 	SourceIdentity SourceContentIdentity `json:"-"`
@@ -490,6 +493,8 @@ func NewImageHostingSubject(subject UploadSubject) ImageHostingSubject {
 // RuleSubject contains only stable facts used by generic and tracker-specific
 // eligibility rules.
 type RuleSubject struct {
+	TitleSearchEvidence        TrackerTitleSearchEvidence
+	LanguageFacts              LanguageFacts
 	EffectiveMetadata          EffectiveMetadata
 	ManualLanguages            ManualLanguageFacts
 	HardcodedSubs              bool
@@ -645,6 +650,8 @@ type ProvenanceFacts struct {
 // tracker answers, and prepared-resource readiness used by side-effect-free
 // pre-duplicate validation.
 type TrackerValidationSubject struct {
+	TitleSearchEvidence        TrackerTitleSearchEvidence
+	LanguageFacts              LanguageFacts
 	Tracker                    string
 	EffectiveMetadata          EffectiveMetadata
 	ManualLanguages            ManualLanguageFacts
@@ -763,7 +770,9 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 	availabilityFacts := deriveValidationAvailabilityFacts(subject.ProviderMetadata)
 	provenanceFacts := deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata)
 	return TrackerValidationSubject{
+		TitleSearchEvidence:         subject.TrackerTitleSearchEvidence[tracker],
 		Tracker:                     tracker,
+		LanguageFacts:               subject.LanguageFacts.Clone(),
 		EffectiveMetadata:           cloneTrackerValidationValue(subject.EffectiveMetadata),
 		ManualLanguages:             cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:               subject.HardcodedSubs,
@@ -1419,7 +1428,9 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
 	mediaFacts := deriveValidationRuleMediaFileFacts(subject, packageFacts.MediaFileCount)
 	return TrackerValidationSubject{
+		TitleSearchEvidence:        subject.TitleSearchEvidence,
 		Tracker:                    strings.ToUpper(strings.TrimSpace(tracker)),
+		LanguageFacts:              subject.LanguageFacts.Clone(),
 		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),
 		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:              subject.HardcodedSubs,
@@ -1472,6 +1483,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 func NewRuleSubject(subject UploadSubject) RuleSubject {
 	dvdVOBMediaInfoReady := preparedDVDVOBMediaInfoAssetEvidence(subject).Ready
 	return RuleSubject{
+		LanguageFacts:              subject.LanguageFacts.Clone(),
 		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),
 		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:              subject.HardcodedSubs,
@@ -1723,9 +1735,13 @@ const (
 
 // RuleFailure describes one stable tracker-rule result.
 type RuleFailure struct {
-	Rule        string
-	Reason      string
-	Disposition RuleDisposition
+	// DebugBypass retains an explicit tracker eligibility bypass for non-submitting debug execution.
+	DebugBypass bool `json:"debugBypass,omitempty"`
+	// EvidenceFingerprint invalidates acknowledgement when supporting evidence changes.
+	EvidenceFingerprint WorkflowFingerprint `json:"evidenceFingerprint,omitempty"`
+	Rule                string
+	Reason              string
+	Disposition         RuleDisposition
 	// EvidenceStatus describes the completeness of the facts supporting this
 	// result; an empty value denotes a legacy result.
 	EvidenceStatus MetadataEvidenceStatus `json:"evidenceStatus,omitempty"`

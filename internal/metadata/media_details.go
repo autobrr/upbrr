@@ -28,7 +28,6 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -121,6 +120,8 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if err != nil {
 		return preparationstate.State{}, err
 	}
+	_, _, inspectedAudio := splitMediaInfoTracks(miDoc)
+	meta.AudioAbsent = len(miDoc.Media.Track) > 0 && len(inspectedAudio) == 0
 	meta.TrackCoverageComplete = len(meta.Discs) <= 1 && len(meta.FileList) <= 1 && len(meta.SelectedBDMVPlaylists) <= 1
 	meta.AudioLanguages = append([]string(nil), meta.TrackAudioLanguages...)
 	meta.SubtitleLanguages = append([]string(nil), meta.TrackSubtitleLanguages...)
@@ -981,123 +982,6 @@ func manualAudioLanguages(meta preparationstate.State) bool {
 		slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool {
 			return track.Kind == api.MediaTrackAudio && !track.Commentary && track.LanguageProvenance.IsManual()
 		})
-}
-
-func resolveAudioBloatPolicyWithRegistry(
-	meta preparationstate.State,
-	candidateTrackers []string,
-	registry *trackers.Registry,
-) (map[string][]string, map[string][]string) {
-	if trackers.IsDiscType(meta.DiscType) {
-		return nil, nil
-	}
-	original := canonicalAudioLanguage(originalAudioLanguage(meta))
-	if original == "" || original == "unknown" {
-		return nil, nil
-	}
-
-	languages := make([]string, 0, len(meta.AudioLanguages))
-	seenLanguages := make(map[string]struct{}, len(meta.AudioLanguages))
-	hasEnglish := false
-	hasOther := false
-	for _, value := range meta.AudioLanguages {
-		canonical := canonicalAudioLanguage(value)
-		if canonical == "" || canonical == "unknown" {
-			continue
-		}
-		if _, ok := seenLanguages[canonical]; ok {
-			continue
-		}
-		seenLanguages[canonical] = struct{}{}
-		languages = append(languages, canonical)
-		if canonical == "english" {
-			hasEnglish = true
-		}
-		if canonical != "english" && canonical != original {
-			hasOther = true
-		}
-	}
-	if len(languages) == 0 || !hasOther {
-		return nil, nil
-	}
-
-	resolvedTrackers := uniqueUpperTrackers(candidateTrackers)
-	if len(resolvedTrackers) == 0 {
-		return nil, nil
-	}
-
-	trackerPolicies := make(map[string]trackers.AudioPolicy, len(resolvedTrackers))
-	for _, tracker := range resolvedTrackers {
-		if policy, ok := registry.LookupAudioPolicy(tracker); ok {
-			trackerPolicies[tracker] = policy
-		}
-	}
-	isEnglishOriginalWithNonEnglish := original == "english" && hasEnglish && hasOther
-
-	blocked := make(map[string][]string)
-	warned := make(map[string][]string)
-	for _, language := range languages {
-		if language == "english" || language == original {
-			continue
-		}
-		for _, tracker := range resolvedTrackers {
-			policy := trackerPolicies[tracker]
-			if policy.AllowBloat {
-				continue
-			}
-			if containsCanonicalLanguage(policy.AllowedLanguages, language) {
-				continue
-			}
-			if isEnglishOriginalWithNonEnglish && policy.BlockEnglishOriginalWithForeign {
-				blocked[tracker] = appendUniqueString(blocked[tracker], languageutil.NormalizeLanguageLabel(language))
-				continue
-			}
-			warned[tracker] = appendUniqueString(warned[tracker], languageutil.NormalizeLanguageLabel(language))
-		}
-	}
-	if len(blocked) == 0 {
-		blocked = nil
-	}
-	if len(warned) == 0 {
-		warned = nil
-	}
-	return blocked, warned
-}
-
-// EvaluateAudioBloatPolicy returns tracker-scoped disallowed and warning-only
-// extra audio languages for an exact workflow upload subject.
-func EvaluateAudioBloatPolicy(
-	subject api.UploadSubject,
-	candidateTrackers []string,
-	registry *trackers.Registry,
-) (map[string][]string, map[string][]string) {
-	return resolveAudioBloatPolicyWithRegistry(preparationstate.State{
-		DiscType:         subject.DiscType,
-		AudioLanguages:   append([]string(nil), subject.AudioLanguages...),
-		ProviderMetadata: subject.ProviderMetadata,
-	}, candidateTrackers, registry)
-}
-
-func appendUniqueString(values []string, value string) []string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return values
-	}
-	for _, existing := range values {
-		if strings.EqualFold(strings.TrimSpace(existing), trimmed) {
-			return values
-		}
-	}
-	return append(values, trimmed)
-}
-
-func containsCanonicalLanguage(values []string, target string) bool {
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
-			return true
-		}
-	}
-	return false
 }
 
 // selectPrimaryAudioTrack returns the track used to derive the release audio

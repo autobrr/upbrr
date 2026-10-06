@@ -273,6 +273,11 @@ function WorkflowDupeAssessmentView({
         const ruleAcknowledgement = !strictBlocked
           ? ruleAcknowledgementAction(projection)
           : undefined;
+        const bypassedPolicyNotices = uniqueMessages(
+          (projection?.policyDecisions || [])
+            .filter((decision) => !decision.blocking && decision.decision === "bypassed")
+            .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
+        );
         const canonicalName = projection?.canonicalReleaseName?.trim() || "";
         const uploadName =
           result?.uploadReleaseName?.trim() || projection?.uploadReleaseName?.trim() || "";
@@ -329,6 +334,17 @@ function WorkflowDupeAssessmentView({
                   <p className={pageStyle.error} key={message}>
                     {message}
                   </p>
+                ))}
+              </div>
+            ) : null}
+
+            {bypassedPolicyNotices.length ? (
+              <div
+                aria-label={`${trackerID} debug policy decisions`}
+                className="grid gap-1 text-sm text-muted-foreground"
+              >
+                {bypassedPolicyNotices.map((message) => (
+                  <p key={message}>Debug mode bypassed this rule: {message}</p>
                 ))}
               </div>
             ) : null}

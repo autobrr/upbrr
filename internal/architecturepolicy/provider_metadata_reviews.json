@@ -1220,8 +1220,8 @@
     "reason": "Questionnaire reads the centrally resolved projection display name. Payload still requires ReviewedUploadName and uses unchanged description/category/keyword resolvers; explicit name overrides and manual title/year precedence remain upstream of provider defaults."
   },
   "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
-    "sha256": "fb1b8cfec611043b6a093daab69461ae67bdb8dee55b152728c9903b13bea503",
-    "reason": "Canonical hardcoded-subtitle coverage is cloned alongside finalized language facts; provider and manual-precedence behavior is unchanged. The mapping and its callers were reviewed together."
+    "sha256": "43f3ca0d43d286cdc8f8d065b0c163e3db5d6d4c1e3d91241cd6b8d20a7491e4",
+    "reason": "Clones finalized exact-generation language facts into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced."
   },
   "internal/trackers/impl/unit3d/additional_rules.go:Anime": {
     "sha256": "b0963b0520f2ab2c7ddf838ff6db4a01c086322786a58aecf9c6409243c0468f",
@@ -1348,8 +1348,8 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/lume/profile.go:Profile": {
-    "sha256": "1e7ccde91e0205d7bc1d049fcfbe36b662cc588749c4e69b8ec25a0a448fd290",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "7fb7b23bd52952e4a17724e47a965f21727df6af337bc7b3019c2d720fec0713",
+    "reason": "Composes the site-owned language assessment using exact prepared facts. Existing provider-aware taxonomy, region and naming callbacks retain their precedence; the composition adds no direct provider read or fallback."
   },
   "internal/trackers/impl/unit3d/sites/oe/validation.go:ValidationPolicy": {
     "sha256": "6858c0102e9fa53640435261f360b0254dd290e3928b7ff5ecb99999070698e0",
@@ -1468,12 +1468,12 @@
     "reason": "Blu-ray region validation consumes finalized Region after manual release-name corrections and uses the same effective site resolver as payload preparation. Existing source-bound provider/animation checks and manual precedence are unchanged."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:validationPolicy": {
-    "sha256": "3f6cedfc1a6a43a50891a7b8088339730d7170dcdaa9a7b539ffecfedfe11a5d",
-    "reason": "Blu-ray region validation consumes finalized Region after manual release-name corrections and uses the same effective site resolver as payload preparation. Existing source-bound provider/animation checks and manual precedence are unchanged."
+    "sha256": "fc0aa635cca107090c5b6cf666d7e80e74632cbf6648fd823d8f8001f3adb01b",
+    "reason": "Composes the site-owned language assessment using exact prepared facts. Existing provider-aware taxonomy, region and naming callbacks retain their precedence; the composition adds no direct provider read or fallback."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:checkRules": {
-    "sha256": "d1222f78cf1dc29ba78da3c21a077241badb20299f1424666562b5bcb1cb1708",
-    "reason": "Blu-ray region validation consumes finalized Region after manual release-name corrections and uses the same effective site resolver as payload preparation. Existing source-bound provider/animation checks and manual precedence are unchanged."
+    "sha256": "a7e142c2b75f4ad8fdd12212054410c83904539d2e3e8c2363eaf466aa8ffaea",
+    "reason": "Language eligibility now consumes exact prepared LanguageFacts through the site-owned assessment; the removed legacy provider-derived language predicate cannot overwrite corrected original or track languages. Region, category, encode and source policy still consume the same manual-aware resolved values."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ulcxEncodeFailures": {
     "sha256": "b0ca152d8cd761b869f7cb87f07b19e8a70b244414942791117825ebacf43de9",
@@ -1508,7 +1508,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
-    "sha256": "a7d388152bc08362a50da034dbcb1d5d3b95965a806b01198e63fcaf7f33cf00",
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together."
+    "sha256": "ec18c6cefd71057373831866ff74b2d183a810410101be2286693ad6bc4f3c11",
+    "reason": "Clones finalized exact-generation language facts into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced."
   }
 }

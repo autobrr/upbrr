@@ -13,6 +13,31 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestAitherFullDiscLanguageMarkerPreservesAggregateFacts(t *testing.T) {
+	for _, test := range []struct {
+		name, releaseType, discType string
+		aggregate, programme        []string
+		want                        string
+	}{
+		{"canonical disc keeps legacy marker", "DISC", "", []string{"Japanese"}, []string{"English"}, "JAPANESE"},
+		{"canonical disc keeps legacy English omission", "DISC", "", []string{"English"}, []string{"Japanese"}, ""},
+		{"labelled disc keeps legacy omission", "DISC", "BDMV", []string{"Japanese"}, []string{"Japanese"}, ""},
+		{"remux uses finalized programme facts", "REMUX", "", []string{"English"}, []string{"Japanese"}, "JAPANESE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := api.UploadSubject{
+				Type:           test.releaseType,
+				DiscType:       test.discType,
+				AudioLanguages: test.aggregate,
+				LanguageFacts:  aitherTestLanguageFacts("Japanese", test.programme, nil),
+			}
+			if got := aitherLanguage(subject); got != test.want {
+				t.Fatalf("language marker = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAitherStructuredReleaseNamePolicy(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -55,7 +80,8 @@ func TestAitherStructuredReleaseNamePolicy(t *testing.T) {
 			want: "Example Release 2026 480p DVDRip DD 1.0 x264-GRP",
 		},
 		{
-			name: "DVD rip keeps video encode after dual audio marker",
+			name:      "DVD rip keeps video encode after dual audio marker",
+			languages: []string{"Japanese", "English"},
 			request: api.ReleaseNameRequest{
 				Category:    "MOVIE",
 				Type:        "DVDRIP",
@@ -365,7 +391,13 @@ func aitherGeneratedSubject(t *testing.T, request api.ReleaseNameRequest, langua
 		t.Fatal("BuildReleaseName did not produce a structured document")
 	}
 	category, _ := api.NormalizeCanonicalCategory(request.Category)
+	original := "English"
+	if len(languages) > 0 {
+		original = languages[0]
+	}
+
 	return api.UploadSubject{
+		LanguageFacts:    aitherTestLanguageFacts(original, languages, []string{"English"}),
 		ReleaseName:      generated.Name,
 		ReleaseNameNoTag: generated.NameNoTag,
 		GeneratedName:    generated.GeneratedName,

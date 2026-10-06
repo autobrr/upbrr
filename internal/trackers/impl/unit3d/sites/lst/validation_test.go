@@ -5,6 +5,9 @@ package lst
 
 import (
 	"context"
+	"github.com/autobrr/upbrr/internal/mediafacts"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -95,8 +98,10 @@ func TestRulesRequireEncodeSettings(t *testing.T) {
 
 func lstValidationSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
-		Type:      "WEBDL",
-		Container: "mkv",
+		Tracker:       "LST",
+		LanguageFacts: lstTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+		Type:          "WEBDL",
+		Container:     "mkv",
 		PackageFacts: api.PackageFacts{
 			Status:         api.MetadataEvidenceStatusComplete,
 			KnownFileCount: 1,
@@ -156,5 +161,69 @@ func TestLSTValidationChecksCanonicalCut(t *testing.T) {
 				t.Fatalf("cut %q failures = %#v", test.cut, failures)
 			}
 		})
+	}
+}
+
+// lstTestLanguageFacts models inspected, identified programme streams and full
+// embedded subtitles so unrelated fixtures satisfy the current facts contract.
+func lstTestLanguageFacts(original string, programme, subtitles []string) api.LanguageFacts {
+	media := api.MediaFacts{
+		OriginalLanguage:      original,
+		SubtitleLanguages:     subtitles,
+		TrackCoverageComplete: true,
+		PrimaryAudioTrackID:   "audio-0",
+	}
+	for index, language := range programme {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			ID:        "audio-" + strconv.Itoa(index),
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Languages: []string{language},
+			Codec:     "AC-3",
+			Default:   index == 0,
+		})
+	}
+	for index, language := range subtitles {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			ID:        "subtitle-" + strconv.Itoa(index),
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{language},
+			Default:   index == 0,
+		})
+	}
+	return mediafacts.ResolveLanguages(media)
+}
+
+func TestLSTLanguageDefaultAndTitleEvidenceBoundaries(t *testing.T) {
+	t.Parallel()
+	subject := lstValidationSubject()
+	subject.LanguageFacts = lstTestLanguageFacts("Japanese", []string{"Japanese"}, nil)
+	subject.Identity = api.ExternalIdentity{
+		SourcePath: filepath.Join(t.TempDir(), "Example.mkv"),
+		Generation: 1,
+		TMDBID:     123,
+		Category:   api.CanonicalCategoryMovie,
+	}
+	title, err := api.TitleSearchIdentityFingerprint(subject.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject.TitleSearchEvidence = api.TrackerTitleSearchEvidence{
+		Status:            api.MetadataEvidenceStatusComplete,
+		TitleFingerprint:  title,
+		ResultFingerprint: "zero-title",
+	}
+	failures := languageAssessment(subject)
+	requireLSTValidationFailure(t, failures, "language_subtitles_search", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
+	subject.Anime = true
+	subject.LanguageFacts.Tracks[0].Default = false
+	requireLSTValidationFailure(t, languageAssessment(subject), "language_default_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	subject.TitleSearchEvidence.Status = api.MetadataEvidenceStatusPartial
+	subject.TitleSearchEvidence.TorrentCount = 1
+	subject.TitleSearchEvidence.ResultFingerprint = "positive-partial"
+	requireLSTValidationFailure(t, languageAssessment(subject), "language_subtitles_search", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	subject.Type = "DISC"
+	if failures := languageAssessment(subject); len(failures) != 0 {
+		t.Fatalf("full disc acquired subtitle/default gates: %+v", failures)
 	}
 }

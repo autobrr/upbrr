@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -50,6 +51,18 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		}
 		title := trackString(track, "Title", "Title_String", "Title_String2", "Title_String3")
 		detected := languageutil.NormalizeLanguageList([]string{trackString(track, "Language", "Language_String", "Language_String2", "Language_String3")})
+
+		role := mediafacts.AudioRole(title)
+		if kind == api.MediaTrackAudio && role == "" &&
+			(len(audioTracks) == 1 || mediaTrackDefault(track) || strings.EqualFold(trackString(track, "ServiceKind", "ServiceKind/String"), "Complete Main") || strings.EqualFold(trackString(track, "ServiceKind"), "CM")) {
+			role = api.AudioRoleProgramme
+		}
+		trackAudioLabel := ""
+		if kind == api.MediaTrackAudio {
+			var single mediaInfoDoc
+			single.Media.Track = []map[string]any{track}
+			trackAudioLabel, _, _ = audioFromMedia(preparationstate.State{}, single, nil)
+		}
 		facts := api.MediaTrackFacts{
 			ID:                  opaqueMediaTrackID(resourceID, kind, trackKey),
 			Kind:                kind,
@@ -59,6 +72,7 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			Ordinal:             ordinal,
 			Title:               strings.TrimSpace(title),
 			Codec:               strings.TrimSpace(normalizeAudioFormat(track)),
+			AudioLabel:          trackAudioLabel,
 			ChannelLayout:       trackString(track, "ChannelLayout", "ChannelLayout_Original", "ChannelPositions", "ChannelPositions_Original"),
 			Channels:            mediaTrackPositiveInt(track, "Channels_Original", "Channels", "Channel_s_", "Channel_s__Original"),
 			SampleRate:          mediaTrackPositiveInt(track, "SamplingRate", "SamplingRate_String"),
@@ -66,7 +80,13 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			Languages:           append([]string(nil), detected...),
 			LanguageProvenance:  api.FactProvenanceAutomatic,
 			Default:             mediaTrackDefault(track),
-			Commentary:          isCommentaryOrCompatibilityAudioValue(title),
+			Forced:              mediaTrackYes(track, "Forced", "Forced/String"),
+			Role:                role,
+			EmbeddedCompatibility: strings.Contains(
+				strings.ToUpper(trackString(track, "Format_AdditionalFeatures", "Format_AdditionalFeatures_String")),
+				"AC-3",
+			),
+			Commentary: isCommentaryOrCompatibilityAudioValue(title),
 		}
 		tracks = append(tracks, facts)
 		if kind == api.MediaTrackAudio && ordinal-1 == primaryAudioIndex {
@@ -97,7 +117,11 @@ func mediaTrackKind(track map[string]any) (api.MediaTrackKind, bool) {
 }
 
 func mediaTrackDefault(track map[string]any) bool {
-	value := strings.ToLower(trackString(track, "Default", "Default/String"))
+	return mediaTrackYes(track, "Default", "Default/String")
+}
+
+func mediaTrackYes(track map[string]any, keys ...string) bool {
+	value := strings.ToLower(trackString(track, keys...))
 	return value == "yes" || value == "true" || value == "1"
 }
 

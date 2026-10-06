@@ -11,12 +11,15 @@ import (
 // Profile returns LST's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:             "LST",
-		BaseURL:          "https://lst.gg",
-		Rules:            Rules(),
-		ValidationPolicy: validationPolicy(),
+		Name:              "LST",
+		BaseURL:           "https://lst.gg",
+		Rules:             Rules(),
+		ValidationPolicy:  trackers.WithLanguageAssessment(validationPolicy(), languageAssessment),
+		TitleSearchPolicy: titleSearchPolicy(),
 		Site: unit3d.SiteProfile{
-			ApplyAdditionalPayload: additionalPayload,
+			ProjectionQuestionnaire: languageQuestionnaire,
+			ApplyAdditionalPayload:  additionalPayload,
+			AdjustTitleSearchParams: titleSearchParams,
 		},
 		DupePolicy: duplicatePolicy(),
 		BannedPolicy: &trackers.BannedGroupPolicy{

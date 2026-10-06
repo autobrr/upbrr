@@ -22,6 +22,9 @@ func namePolicy() trackers.ReleaseNamePolicyBinding {
 }
 
 func applyAitherNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
+		return fmt.Errorf("apply AITHER language markers: %w", err)
+	}
 	if err := applyAitherTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
@@ -197,13 +200,17 @@ func firstAitherPresentRole(present []api.ReleaseNameRole, candidates ...api.Rel
 	return ""
 }
 
-// aitherLanguage returns the first AITHER language marker for a non-disc release
-// without English audio.
+// aitherLanguage returns AITHER's non-English marker, preserving the legacy
+// aggregate-language behavior for full-disc uploads.
 func aitherLanguage(meta api.UploadSubject) string {
-	if unit3d.IsDiscType(meta.DiscType) || unit3d.HasEnglishLanguage(meta.AudioLanguages) {
+	languages := meta.LanguageFacts.ProgrammeLanguages
+	if trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+		languages = meta.AudioLanguages
+	}
+	if unit3d.IsDiscType(meta.DiscType) || unit3d.HasEnglishLanguage(languages) {
 		return ""
 	}
-	for _, value := range meta.AudioLanguages {
+	for _, value := range languages {
 		if language := aitherLanguageComponent(value); language != "" {
 			return language
 		}

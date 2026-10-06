@@ -197,6 +197,13 @@ type Adapter interface {
 	Search(context.Context, api.DuplicateSubject) AdapterResult
 }
 
+// TitleSearchAdapter gathers all variants of a provider work for preflight
+// eligibility. It must not inherit season, episode or technical slot filters.
+type TitleSearchAdapter interface {
+	// SearchTitle returns whole-work enumeration without release-variant narrowing.
+	SearchTitle(context.Context, api.DuplicateSubject) AdapterResult
+}
+
 // AdapterFunc adapts a function to Adapter.
 type AdapterFunc func(context.Context, api.DuplicateSubject) AdapterResult
 

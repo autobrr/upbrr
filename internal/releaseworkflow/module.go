@@ -4614,6 +4614,19 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve tracker projection subject: %w", err)
 	}
+	// Acknowledgement reprojects the same generation; preserve only server-owned
+	// title evidence. A new source generation must acquire its own evidence.
+	if retainedRef := state.Workflow.TrackerProjections; retainedRef != nil {
+		retained := state.Projections[retainedRef.ID]
+		if retained.ReleaseRef == (api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}) {
+			subject.TrackerTitleSearchEvidence = make(map[string]api.TrackerTitleSearchEvidence)
+			for _, projection := range retained.Projections {
+				if evidence := projection.TitleSearchEvidence; evidence != nil && evidence.Current(subject.Identity) && evidence.FreshUntil.After(now) {
+					subject.TrackerTitleSearchEvidence[string(projection.TrackerID)] = *evidence
+				}
+			}
+		}
+	}
 	if m.submissionHistory != nil {
 		remaining, exclusions, filterErr := m.submissionHistory.FilterConfirmedSubmissions(ctx, subject, command.TrackerIDs)
 		if filterErr != nil {

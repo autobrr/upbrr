@@ -71,11 +71,6 @@ func checkRequirements(ctx context.Context, meta api.TrackerValidationSubject, _
 			MinVideoTrackCount: 1,
 			MaxVideoTrackCount: 1,
 		})...)
-		failures = append(failures, trackers.ValidateLanguageCombination(meta.MediaFileFacts, trackers.LanguageCombinationPolicy{
-			Evidence:               lumeEvidencePolicy("lume_language"),
-			RequireOriginalAudio:   true,
-			RequireEnglishSubtitle: true,
-		})...)
 		failures = append(failures, lumeResolutionFailures(meta)...)
 	}
 	failures = append(failures, lumeRequiredAssetFailures(meta)...)

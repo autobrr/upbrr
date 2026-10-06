@@ -680,13 +680,30 @@ Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;
 - `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug mode bypasses it automatically;
-- `strict` blocks in every execution mode.
+- `strict` blocks normal uploads and cannot be acknowledged. An explicitly marked `RuleFailure.DebugBypass` may preserve a tracker eligibility bypass in debug mode; unrelated strict constructibility checks still block.
 
 The workflow emits one tracker-scoped override for the exact current warning set. WebUI places it
 on that tracker's duplicate-review card as a reversible acknowledgement toggle; interactive CLI
 prompts for it. A changed warning set or prepared generation invalidates that authority and requires
 new approval. Revocation clears dependent checks and preparation through the shared workflow.
-Strict failures cannot be overridden.
+Strict failures cannot be overridden for a normal upload.
+
+A tracker that requires remote title-existence evidence can opt into `TitleSearchPolicyProvider`.
+For Unit3D sites, bind a versioned `TitleSearchPolicy` and a site-local `AdjustTitleSearchParams`
+callback in `dupe.go`. The dedicated `TitleSearchAdapter.SearchTitle` lookup must preserve provider
+identity and the complete category family while removing season, episode, resolution, and format
+narrowing. Ordinary duplicate searches, including full-disc searches, retain their existing scope.
+The pure requirement predicate must exclude full discs when the rule does not apply to them.
+
+Preflight performs the lookup before language-rule readiness gates and passes detached
+`TrackerTitleSearchEvidence` into pure validation. Only a completed, authoritatively bound lookup
+can prove zero torrents; failed, incomplete, or unbound searches remain unresolved. Count every
+same-work row before duplicate-slot filtering. Evidence and any acknowledgement are bound to the
+prepared generation, title identity, tracker configuration, and versioned search policy. The workflow
+retains that evidence for later validation, reuses fresh complete empty searches for duplicate
+checking, and never extends their original freshness. Version the title-search policy when its
+query contract changes. Do not put network work in `ValidationPolicy.Check`, expose private
+tracker rows in review results, or represent a local acknowledgement as a remote tracker tag.
 
 Every constructibility predicate whose result depends on a required mapping or resource, including
 a missing resolution, category, type, questionnaire answer, or prepared media fact, must be

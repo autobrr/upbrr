@@ -919,6 +919,159 @@ describe("DupeCheckPage", () => {
     expect(acknowledgeRules).not.toHaveBeenCalled();
   });
 
+  it("labels LST's empty-title exception as trumpable and acknowledges only that tracker", () => {
+    const acknowledgeRules = vi.fn(async () => true);
+    const prompt =
+      "Trumpable release — missing English subtitles (LST). Original: Japanese; programme audio: Japanese. A compliant replacement may supersede this upload. Acknowledge these tracker warnings?";
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: ["LST", "BHD"],
+          projections: {
+            projections: [
+              {
+                trackerId: "LST",
+                displayName: "LST",
+                readiness: "blocked",
+                waivableRuleFingerprint: "empty-title-current-generation",
+                policyDecisions: [
+                  { code: "language_subtitles_search", disposition: "waivable", blocking: true },
+                ],
+                requiredActions: [
+                  {
+                    id: "authorize-lst-current-generation",
+                    trackerId: "LST",
+                    kind: "authorize_rules",
+                    status: "pending",
+                    prompt,
+                  },
+                ],
+              },
+              { trackerId: "BHD", displayName: "BHD", readiness: "ready" },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { acknowledgeRules },
+      ),
+      ["LST", "BHD"],
+    );
+    expect(screen.getByText(prompt)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Acknowledge warnings for BHD" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Acknowledge warnings for LST" }));
+    expect(acknowledgeRules).toHaveBeenCalledExactlyOnceWith("LST", true);
+  });
+
+  it.each([
+    ["BHD", "Prohibited — non-original, non-English programme dub"],
+    ["AITHER", "Staff approval required — programme-audio exception"],
+    ["LST", "Unresolved — complete title-wide search is required"],
+  ])("keeps %s language blocks separate from warning acknowledgement", (tracker, label) => {
+    const acknowledgeRules = vi.fn(async () => true);
+    const reason = `${label} (${tracker}). Original: Japanese; programme audio: Japanese, English, German.`;
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: [tracker],
+          projections: {
+            projections: [
+              {
+                trackerId: tracker,
+                displayName: tracker,
+                readiness: "ineligible",
+                // Even an independently acknowledged warning cannot remove this block.
+                waivableRuleFingerprint: "acknowledged-warning",
+                ruleAuthorizationFingerprint: "acknowledged-warning",
+                policyDecisions: [
+                  {
+                    code: "language_extra_dub",
+                    decision: "ineligible",
+                    disposition: "strict",
+                    blocking: true,
+                    message: reason,
+                  },
+                  {
+                    code: "language_subtitles",
+                    decision: "authorized",
+                    disposition: "waivable",
+                    blocking: false,
+                  },
+                ],
+                requiredActions: [],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { acknowledgeRules },
+      ),
+      [tracker],
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: `Acknowledge warnings for ${tracker}` }),
+    ).not.toBeInTheDocument();
+    expect(acknowledgeRules).not.toHaveBeenCalled();
+  });
+
+  it("does not invent a language acknowledgement for exempt full-disc backend results", () => {
+    renderPage(
+      facetFor({
+        selectedTrackers: ["LST"],
+        projections: {
+          projections: [
+            { trackerId: "LST", readiness: "ready", policyDecisions: [], requiredActions: [] },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      }),
+      ["LST"],
+    );
+    expect(
+      screen.queryByRole("switch", { name: "Acknowledge warnings for LST" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Blocked")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Trumpable release|Staff approval required|missing English subtitles/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows backend debug-bypassed language decisions without a waiver or strict block", () => {
+    const message =
+      "Prohibited — non-original, non-English programme dub: German (BHD). Original: Japanese; programme audio: Japanese, English, German.";
+    renderPage(
+      facetFor({
+        selectedTrackers: ["BHD"],
+        projections: {
+          projections: [
+            {
+              trackerId: "BHD",
+              readiness: "ready",
+              policyDecisions: [
+                {
+                  code: "language_extra_dub",
+                  decision: "bypassed",
+                  disposition: "strict",
+                  blocking: false,
+                  message,
+                },
+              ],
+              requiredActions: [],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      }),
+      ["BHD"],
+    );
+    expect(screen.getByLabelText("BHD debug policy decisions")).toHaveTextContent(
+      `Debug mode bypassed this rule: ${message}`,
+    );
+    expect(
+      screen.queryByRole("switch", { name: "Acknowledge warnings for BHD" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Blocked")).not.toBeInTheDocument();
+  });
+
   it("renders auth failure as retryable blocked lane evidence without an action card", () => {
     const authFailure = {
       failure: {

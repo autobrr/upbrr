@@ -259,3 +259,34 @@ func TestUntaggedMediaInfoTracksPreserveBDInfoLanguages(t *testing.T) {
 		t.Fatalf("BDInfo fallback lost: audio=%v subtitles=%v", meta.AudioLanguages, meta.SubtitleLanguages)
 	}
 }
+
+func TestUnlabelledSecondaryTrackRoleRemainsUnresolved(t *testing.T) {
+	var doc mediaInfoDoc
+	doc.Media.Track = []map[string]any{
+		{
+			"@type":    "Audio",
+			"ID":       "1",
+			"Language": "ja",
+			"Default":  "Yes",
+		},
+		{
+			"@type":    "Audio",
+			"ID":       "2",
+			"Language": "en",
+			"Title":    "Unclassified supplementary recording",
+		},
+		{
+			"@type":    "Audio",
+			"ID":       "3",
+			"Language": "de",
+			"Title":    "German Dub",
+		},
+	}
+	tracks, _, _, _, err := mediaTrackFacts(preparationstate.State{}, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tracks[0].Role != api.AudioRoleProgramme || tracks[1].Role != "" || tracks[2].Role != api.AudioRoleProgramme {
+		t.Fatalf("track roles=%#v", tracks)
+	}
+}

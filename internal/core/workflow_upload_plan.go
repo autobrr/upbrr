@@ -294,6 +294,17 @@ func (b workflowUploadPlanBuilder) Build(
 	if err != nil {
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: resolve subject: %w", err)
 	}
+	subject.TrackerTitleSearchEvidence = make(map[string]api.TrackerTitleSearchEvidence)
+	for _, projection := range eligible {
+		if evidence := projection.TitleSearchEvidence; evidence != nil && evidence.Current(subject.Identity) &&
+			evidence.ConfigFingerprint == projection.ConfigFingerprint &&
+			evidence.FreshUntil.After(now) {
+			subject.TrackerTitleSearchEvidence[string(projection.TrackerID)] = *evidence
+			if evidence.FreshUntil.Before(plan.ExpiresAt) {
+				plan.ExpiresAt = evidence.FreshUntil
+			}
+		}
+	}
 	subject.ExactMedia = exactMedia
 	subject.ImageHostOverrides.FailedHosts = slices.Concat(subject.ImageHostOverrides.FailedHosts, media.FailedHosts)
 	skipImageUpload := true

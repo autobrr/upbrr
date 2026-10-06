@@ -968,6 +968,10 @@ export type TrackerPreview = {
 
 /** Upload rule failure attached to a tracker before dupe checking or upload. */
 export type RuleFailure = {
+  /** Backend-owned opt-in for non-submitting debug eligibility checks. */
+  debugBypass?: boolean;
+  /** Opaque identity of the evidence bound to this warning. */
+  evidenceFingerprint?: string;
   Rule: string;
   Reason: string;
   /** Empty legacy values are waivable; unknown non-empty values fail closed. */

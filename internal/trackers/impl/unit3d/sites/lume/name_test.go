@@ -1,12 +1,51 @@
 package lume
 
 import (
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 	"testing"
 )
+
+func TestLumeMultiNameRequiresConsistentProgrammeFacts(t *testing.T) {
+	media := api.MediaFacts{
+		OriginalLanguage:         "Japanese",
+		TrackCoverageComplete:    true,
+		AudioLanguages:           []string{"Japanese", "German"},
+		AudioLanguagesProvenance: api.FactProvenanceManual,
+		Tracks: []api.MediaTrackFacts{{
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Languages: []string{"Japanese"},
+		}},
+	}
+	subject := lumeSubject(t, api.ReleaseNameRequest{
+		Category: "MOVIE",
+		Type:     "WEBDL",
+		Title:    "Example",
+		Year:     2026,
+		Audio:    "DD 2.0",
+		Tag:      "-GRP",
+	})
+	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+	if subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
+		t.Fatal("fixture must retain the aggregate/track contradiction")
+	}
+	if got, want := lumeName(t, subject, nil), "Example 2026 WEB-DL DD 2.0-GRP"; got != want {
+		t.Fatalf("contradictory programme name = %q, want %q", got, want)
+	}
+	media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+		Kind:      api.MediaTrackAudio,
+		Role:      api.AudioRoleProgramme,
+		Languages: []string{"German"},
+	})
+	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+	if got, want := lumeName(t, subject, nil), "Example 2026 WEB-DL Multi DD 2.0-GRP"; got != want {
+		t.Fatalf("consistent programme name = %q, want %q", got, want)
+	}
+}
 
 func TestLumeStructuredName(t *testing.T) {
 	s := lumeSubject(t, api.ReleaseNameRequest{

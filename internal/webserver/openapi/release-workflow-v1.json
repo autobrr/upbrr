@@ -796,6 +796,9 @@
       "AudioAnalysisVariant": {
         "type": "string"
       },
+      "AudioTrackRole": {
+        "type": "string"
+      },
       "BlurayDiscSpec": {
         "type": "object",
         "properties": {
@@ -3043,6 +3046,76 @@
           "workflowId"
         ]
       },
+      "LanguageFacts": {
+        "type": "object",
+        "properties": {
+          "AudioAbsent": {
+            "type": "boolean"
+          },
+          "AudioStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "FullSubtitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "OriginalLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "OriginalLanguagesKnown": {
+            "type": "boolean"
+          },
+          "PrimaryAudioTrackID": {
+            "type": "string"
+          },
+          "ProgrammeLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ProgrammeStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "SubtitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "SubtitleStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "TrackCoverageComplete": {
+            "type": "boolean"
+          },
+          "Tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaTrackFacts"
+            }
+          }
+        },
+        "required": [
+          "AudioAbsent",
+          "AudioStatus",
+          "FullSubtitleLanguages",
+          "OriginalLanguages",
+          "OriginalLanguagesKnown",
+          "PrimaryAudioTrackID",
+          "ProgrammeLanguages",
+          "ProgrammeStatus",
+          "SubtitleLanguages",
+          "SubtitleStatus",
+          "TrackCoverageComplete",
+          "Tracks"
+        ]
+      },
       "MediaArtifact": {
         "type": "object",
         "properties": {
@@ -3338,6 +3411,9 @@
           "Audio": {
             "type": "string"
           },
+          "AudioAbsent": {
+            "type": "boolean"
+          },
           "AudioLanguages": {
             "type": "array",
             "items": {
@@ -3403,6 +3479,9 @@
           },
           "HasEncodeSettings": {
             "type": "boolean"
+          },
+          "LanguageFacts": {
+            "$ref": "#/components/schemas/LanguageFacts"
           },
           "MediaInfoUniqueID": {
             "type": "string"
@@ -3489,6 +3568,7 @@
         "required": [
           "Anime",
           "Audio",
+          "AudioAbsent",
           "AudioLanguages",
           "AudioLanguagesProvenance",
           "BitDepth",
@@ -3507,6 +3587,7 @@
           "HardcodedSubtitleLanguages",
           "HardcodedSubtitleLanguagesProvenance",
           "HasEncodeSettings",
+          "LanguageFacts",
           "MediaInfoUniqueID",
           "OriginalLanguage",
           "OriginalLanguageProvenance",
@@ -3632,6 +3713,9 @@
       "MediaTrackFacts": {
         "type": "object",
         "properties": {
+          "AudioLabel": {
+            "type": "string"
+          },
           "ChannelLayout": {
             "type": "string"
           },
@@ -3652,6 +3736,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "EmbeddedCompatibility": {
+            "type": "boolean"
+          },
+          "Forced": {
+            "type": "boolean"
           },
           "ID": {
             "type": "string"
@@ -3680,6 +3770,9 @@
           "ResourceID": {
             "type": "string"
           },
+          "Role": {
+            "$ref": "#/components/schemas/AudioTrackRole"
+          },
           "SampleRate": {
             "type": "integer"
           },
@@ -3688,12 +3781,15 @@
           }
         },
         "required": [
+          "AudioLabel",
           "ChannelLayout",
           "Channels",
           "Codec",
           "Commentary",
           "Default",
           "DetectedLanguages",
+          "EmbeddedCompatibility",
+          "Forced",
           "ID",
           "Kind",
           "LanguageProvenance",
@@ -3702,6 +3798,7 @@
           "NativeID",
           "Ordinal",
           "ResourceID",
+          "Role",
           "SampleRate",
           "Title"
         ]
@@ -10442,6 +10539,16 @@
           "taxonomy": {
             "$ref": "#/components/schemas/TrackerTaxonomy"
           },
+          "titleSearchEvidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerTitleSearchEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "trackerId": {
             "$ref": "#/components/schemas/TrackerID"
           },
@@ -10795,6 +10902,45 @@
         "required": [
           "id",
           "label"
+        ]
+      },
+      "TrackerTitleSearchEvidence": {
+        "type": "object",
+        "properties": {
+          "checkedAt": {
+            "type": "string"
+          },
+          "configFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "freshUntil": {
+            "type": "string"
+          },
+          "policyId": {
+            "type": "string"
+          },
+          "resultFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "titleFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "torrentCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checkedAt",
+          "configFingerprint",
+          "freshUntil",
+          "policyId",
+          "resultFingerprint",
+          "status",
+          "titleFingerprint",
+          "torrentCount"
         ]
       },
       "UniqueIDStatus": {

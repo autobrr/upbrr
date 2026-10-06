@@ -117,22 +117,26 @@ const (
 // MediaTrackFacts describes only an inspected stream. An opaque resource ID and
 // exact manifest bind ordinal identities when native IDs are unavailable.
 type MediaTrackFacts struct {
-	ID                  string
-	Kind                MediaTrackKind
-	ResourceID          string
-	ManifestFingerprint string
-	NativeID            string
-	Ordinal             int
-	Title               string
-	Codec               string
-	ChannelLayout       string
-	Channels            int
-	SampleRate          int
-	DetectedLanguages   []string
-	Languages           []string
-	LanguageProvenance  FactProvenance
-	Default             bool
-	Commentary          bool
+	ID                    string
+	Kind                  MediaTrackKind
+	ResourceID            string
+	ManifestFingerprint   string
+	NativeID              string
+	Ordinal               int
+	Title                 string
+	Codec                 string
+	AudioLabel            string
+	ChannelLayout         string
+	Channels              int
+	SampleRate            int
+	DetectedLanguages     []string
+	Languages             []string
+	LanguageProvenance    FactProvenance
+	Default               bool
+	Forced                bool
+	Role                  AudioTrackRole
+	EmbeddedCompatibility bool
+	Commentary            bool
 }
 
 // ManualLanguageFacts contains the resolved manual lists used in generated descriptions.

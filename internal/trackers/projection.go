@@ -469,6 +469,15 @@ func (r *Registry) ProjectRelease(
 	}
 	if failure == nil {
 		validationSubject := api.NewTrackerValidationSubject(input.Meta, input.Tracker)
+		if provider, ok := descriptor.Definition.(TitleSearchPolicyProvider); ok {
+			policy := provider.TitleSearchPolicy()
+			evidence := validationSubject.TitleSearchEvidence
+			if evidence.Current(input.Meta.Identity) && evidence.ConfigFingerprint == configFingerprint && evidence.PolicyID == policy.ID {
+				projection.TitleSearchEvidence = &evidence
+			} else {
+				validationSubject.TitleSearchEvidence = api.TrackerTitleSearchEvidence{}
+			}
+		}
 		projection.PreparedResourceFingerprint = api.WorkflowFingerprint(validationSubject.PreparedResourceFingerprint)
 		ruleFailures, ruleErr := EvaluateTrackerValidationWithRegistry(
 			ctx,
@@ -477,17 +486,7 @@ func (r *Registry) ProjectRelease(
 			validationSubject,
 			input.Logger,
 		)
-		if provider, ok := descriptor.Definition.(InputReadinessProvider); ok {
-			for _, outcome := range provider.InputReadiness(input.Meta) {
-				if outcome.Status == api.InputReadinessFieldMissing || outcome.Status == api.InputReadinessFieldInvalid {
-					ruleFailures = append(ruleFailures, api.RuleFailure{
-						Rule:        "input." + outcome.Key,
-						Reason:      outcome.Message,
-						Disposition: outcome.Disposition,
-					})
-				}
-			}
-		}
+		ruleFailures = append(ruleFailures, inputReadinessRuleFailures(input.Meta, descriptor.Definition)...)
 		if ruleErr != nil {
 			failure = NewPreparationFailure(input.Tracker, "rules", "tracker projection policy evaluation failed", ruleErr)
 			projection.Readiness = api.ReadinessStatusBlocked
@@ -704,6 +703,8 @@ func ApplyProjectionRuleFailures(
 		blocking := RuleFailureBlocksExecution(failure, executionMode, authorized)
 		decision := string(disposition)
 		switch {
+		case disposition == api.RuleDispositionStrict && !blocking:
+			decision = "bypassed"
 		case disposition == api.RuleDispositionStrict:
 			hasStrict = true
 			decision = "ineligible"
