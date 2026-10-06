@@ -93,11 +93,21 @@ func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuesti
 // languageReviewFields records missing evidence independently of legacy payload
 // choices. Acknowledgement of a trumpable finding remains a separate decision.
 func languageReviewFields(subject api.TrackerValidationSubject, mode api.WorkflowExecutionMode) []api.TrackerQuestionnaireField {
-	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) || ptpNoProgrammeDialogue(subject.LanguageFacts) {
+	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
 		return nil
 	}
 	var fields []api.TrackerQuestionnaireField
-	if ptpNeedsTrackPurposeReview(subject.LanguageFacts) {
+	if strings.EqualFold(strings.TrimSpace(subject.Type), "REMUX") && ptpRemuxNeedsOrderReview(subject.LanguageFacts) {
+		fields = append(fields, api.TrackerQuestionnaireField{
+			Key:      trackers.LanguageQuestionKey(subject, "remux_track_order"),
+			Label:    "PTP remux track order",
+			Kind:     "select",
+			Required: api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug,
+			Options:  []string{"main_first", "out_of_order", "unresolved"},
+			Help:     "Inspect the container track order. Does the inspected main programme audio precede every secondary audio track and all subtitles? Choose main_first only when verified for this prepared release. The default flag is assessed separately. MediaInfo document order and per-kind track numbers do not establish container order; this answer cannot clear a default-flag finding or programme-track limits.",
+		})
+	}
+	if !ptpNoProgrammeDialogue(subject.LanguageFacts) && ptpNeedsTrackPurposeReview(subject.LanguageFacts) {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:      trackers.LanguageQuestionKey(subject, "programme_track_purpose"),
 			Label:    "PTP additional programme audio",
@@ -123,7 +133,8 @@ func languageReviewFields(subject api.TrackerValidationSubject, mode api.Workflo
 			Help:     "Are English subtitles for this release available in PTP's subtitle manager? Missing local and manager subtitles create a Trumpable release defect; unknown availability remains unresolved. This does not change subtitle payload selections.",
 		})
 	}
-	if subject.LanguageFacts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !ptpHasForcedEnglish(subject) {
+	if !ptpNoProgrammeDialogue(subject.LanguageFacts) && subject.LanguageFacts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
+		!ptpHasForcedEnglish(subject) {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key: trackers.LanguageQuestionKey(
 				subject,

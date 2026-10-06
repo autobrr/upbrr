@@ -194,6 +194,14 @@ type ReleaseNamePolicyProvider interface {
 	ReleaseNamePolicy() ReleaseNamePolicyBinding
 }
 
+// EditionFeatureResolver derives a complete, ordered review catalogue without I/O or mutation.
+type EditionFeatureResolver func(api.UploadSubject) []api.TrackerEditionFeature
+
+// EditionFeatureProvider declares optional tracker-owned edition and feature review.
+type EditionFeatureProvider interface {
+	EditionFeatureResolver() EditionFeatureResolver
+}
+
 // FamilyProvider declares a tracker's protocol family.
 type FamilyProvider interface {
 	// TrackerFamily returns the tracker's protocol family.
@@ -890,6 +898,8 @@ type Descriptor struct {
 	Definition Definition
 	// ReleaseNamePolicy owns the tracker-local upload and duplicate-search names.
 	ReleaseNamePolicy ReleaseNamePolicyBinding
+	// EditionFeatures derives safe review options from finalized release facts.
+	EditionFeatures EditionFeatureResolver
 	// UploadContentMode identifies the shared content object consumed before preparation.
 	UploadContentMode UploadContentMode
 	// WorkflowMedia contains explicit tracker-owned media minimums.

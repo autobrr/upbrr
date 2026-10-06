@@ -157,6 +157,7 @@ type TrackerDryRunReport struct {
 	ClientInjection     ClientInjectionOutcome            `json:"clientInjection"`
 	Warnings            []string                          `json:"warnings,omitempty"`
 	Failures            []WorkflowFailure                 `json:"failures,omitempty"`
+	EditionFeatures     []TrackerEditionFeature           `json:"editionFeatures,omitempty"`
 }
 
 // UploadDryRunResult retains one report per applicable tracker.

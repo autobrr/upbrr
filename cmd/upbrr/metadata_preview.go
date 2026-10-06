@@ -22,6 +22,7 @@ func printMetadataPreview(output io.Writer, preview api.MetadataPreview, debug b
 	}
 	fmt.Fprintf(output, "Source: %s\n", formatPathLabel(preview.SourcePath))
 	fmt.Fprintf(output, "Upload name: %s\n", preview.ReleaseName)
+	fmt.Fprintf(output, "Commentary: %t\n", preview.Display.Commentary)
 	if external := primaryMetadataPreview(preview); external != nil {
 		printMetadataDatabaseInfo(output, *external)
 	}

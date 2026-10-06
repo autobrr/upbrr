@@ -7553,6 +7553,7 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 			UploadReleaseName:   tracker.UploadReleaseName,
 			Status:              status,
 			Endpoint:            tracker.Endpoint,
+			EditionFeatures:     slices.Clone(tracker.EditionFeatures),
 			Fields:              append([]api.UploadPlanField(nil), tracker.Fields...),
 			Files:               append([]api.UploadPlanFile(nil), tracker.Files...),
 			PreparedOperationID: tracker.PreparedOperationID,

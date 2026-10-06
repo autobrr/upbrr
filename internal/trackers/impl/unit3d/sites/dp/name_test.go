@@ -4,6 +4,8 @@
 package dp
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,7 +66,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v4" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v6" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -108,7 +110,7 @@ func TestDPStructuredReleaseNamePolicyRequiresCurrentMatchingTVDBEvidence(t *tes
 			}}
 		}},
 		{"manual title", func(subject *api.UploadSubject) {
-			markDPComponent(t, subject.GeneratedName, api.NameRoleTitle, "Manual Series", true)
+			markDPComponent(t, subject.GeneratedName, api.NameRoleTitle, "Manual Series")
 			subject.ReleaseName = subject.GeneratedName.Render().Name
 			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
 				CanonicalName: "Example Series",
@@ -141,11 +143,11 @@ func dpGeneratedSubject(t *testing.T, request api.ReleaseNameRequest) api.Upload
 	facts := api.LanguageFacts{AudioAbsent: audio.Value == ""}
 	if audio.Value != "" {
 		facts.Tracks = []api.MediaTrackFacts{{
-			Kind:    api.MediaTrackAudio,
-			Role:    api.AudioRoleProgramme,
-			Default: true,
-			Codec:   strings.Fields(audio.Value)[0],
- AudioLabel: audio.Value,
+			Kind:       api.MediaTrackAudio,
+			Role:       api.AudioRoleProgramme,
+			Default:    true,
+			Codec:      strings.Fields(audio.Value)[0],
+			AudioLabel: audio.Value,
 		}}
 	}
 	return api.UploadSubject{
@@ -181,17 +183,17 @@ func dpReviewedName(t *testing.T, subject api.UploadSubject, requested *string) 
 }
 
 func markDPManual(t *testing.T, document *api.ReleaseNameDocument, role api.ReleaseNameRole) {
-	markDPComponent(t, document, role, "", true)
+	markDPComponent(t, document, role, "")
 }
 
-func markDPComponent(t *testing.T, document *api.ReleaseNameDocument, role api.ReleaseNameRole, value string, manual bool) {
+func markDPComponent(t *testing.T, document *api.ReleaseNameDocument, role api.ReleaseNameRole, value string) {
 	t.Helper()
 	for index := range document.Components {
 		if document.Components[index].Role == role {
 			if value != "" {
 				document.Components[index].Value = value
 			}
-			document.Components[index].Manual = manual
+			document.Components[index].Manual = true
 			return
 		}
 	}
@@ -204,53 +206,83 @@ func TestDPApprovedAudioCompositionRows(t *testing.T) {
 		name, original string
 		languages      []string
 		want           string
-		established    bool
 	}{
 		{
-			name:        "original only",
-			original:    "Japanese",
-			languages:   []string{"Japanese"},
-			established: true,
+			name:      "original only",
+			original:  "Japanese",
+			languages: []string{"Japanese"},
 		},
 		{
-			name:        "original and English",
-			original:    "Japanese",
-			languages:   []string{"Japanese", "English"},
-			want:        "Dual-Audio",
-			established: true,
+			name:      "original and English",
+			original:  "Japanese",
+			languages: []string{"Japanese", "English"},
+			want:      "Dual-Audio",
 		},
 		{
-			name:        "English dub only",
-			original:    "Japanese",
-			languages:   []string{"English"},
-			want:        "Dubbed",
-			established: true,
+			name:      "Nordic original and English keep dual precedence",
+			original:  "Swedish",
+			languages: []string{"Swedish", "English"},
+			want:      "Dual-Audio",
 		},
 		{
-			name:        "Nordic dub only",
-			original:    "Japanese",
-			languages:   []string{"Swedish"},
-			want:        "Swedish Dubbed",
-			established: true,
+			name:      "foreign original plus two non-English languages",
+			original:  "Japanese",
+			languages: []string{"Japanese", "German", "Finnish"},
+			want:      "MULTi",
 		},
 		{
-			name:        "three including original",
-			original:    "Japanese",
-			languages:   []string{"Japanese", "English", "German"},
-			want:        "MULTi",
-			established: true,
+			name:      "English original plus two languages",
+			original:  "English",
+			languages: []string{"English", "German", "French"},
+			want:      "MULTi",
 		},
 		{
-			name:        "English original plus another",
-			original:    "English",
-			languages:   []string{"English", "Japanese"},
-			want:        "Japanese MULTi",
-			established: true,
+			name:      "English dub only",
+			original:  "Japanese",
+			languages: []string{"English"},
+			want:      "Dubbed",
 		},
 		{
-			name:      "unspecified two-language row stays deferred",
+			name:      "Nordic dub only",
+			original:  "Japanese",
+			languages: []string{"Swedish"},
+			want:      "Swedish Dubbed",
+		},
+		{
+			name:      "three including original",
+			original:  "Japanese",
+			languages: []string{"Japanese", "English", "German"},
+			want:      "MULTi",
+		},
+		{
+			name:      "English original plus another",
+			original:  "English",
+			languages: []string{"English", "Japanese"},
+			want:      "Japanese MULTi",
+		},
+		{
+			name:      "foreign original plus another",
 			original:  "Japanese",
 			languages: []string{"Japanese", "German"},
+			want:      "German MULTi",
+		},
+		{
+			name:      "Nordic original plus another Nordic language",
+			original:  "Swedish",
+			languages: []string{"Swedish", "Finnish"},
+			want:      "Finnish MULTi",
+		},
+		{
+			name:      "English dub plus another",
+			original:  "Japanese",
+			languages: []string{"English", "German"},
+			want:      "German MULTi",
+		},
+		{
+			name:      "Nordic dub plus another",
+			original:  "Japanese",
+			languages: []string{"Swedish", "German"},
+			want:      "German MULTi",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -260,16 +292,19 @@ func TestDPApprovedAudioCompositionRows(t *testing.T) {
 				ProgrammeLanguages:     test.languages,
 				ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
 			}}
-			label, established := audioLabelForFacts(subject)
-			if label != test.want || established != test.established {
-				t.Fatalf("got %q/%v, want %q/%v", label, established, test.want, test.established)
+			for _, languages := range [][]string{test.languages, reversedDPLanguages(test.languages)} {
+				subject.LanguageFacts.ProgrammeLanguages = languages
+				label, established, err := audioLabelForFacts(subject)
+				if err != nil || label != test.want || !established {
+					t.Fatalf("languages %v: got %q/%v (error %v), want %q/true", languages, label, established, err, test.want)
+				}
 			}
 			subject.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
-			if label, established := audioLabelForFacts(subject); label != "" || !established {
+			if label, established, err := audioLabelForFacts(subject); err != nil || label != "" || !established {
 				t.Fatalf("partial facts created label or legacy fallback: %q/%v", label, established)
 			}
 			subject.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusContradictory
-			if label, _ := audioLabelForFacts(subject); label != "" {
+			if label, _, err := audioLabelForFacts(subject); err != nil || label != "" {
 				t.Fatalf("contradictory facts created %q", label)
 			}
 		})
@@ -296,11 +331,11 @@ func TestDPDiscRemuxAndDefaultAudioBoundaries(t *testing.T) {
 		ProgrammeLanguages:     []string{"Japanese", "English"},
 		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
 		Tracks: []api.MediaTrackFacts{{
-			Kind:    api.MediaTrackAudio,
-			Role:    api.AudioRoleProgramme,
-			Default: true,
-			Codec:   "DD+",
- AudioLabel: "DD+ 5.1",
+			Kind:       api.MediaTrackAudio,
+			Role:       api.AudioRoleProgramme,
+			Default:    true,
+			Codec:      "DD+",
+			AudioLabel: "DD+ 5.1",
 		}},
 	}
 	base.Type = "DISC"
@@ -325,7 +360,218 @@ func TestDPEnglishOriginalRowRequiresEnglishProgrammeAudio(t *testing.T) {
 		ProgrammeLanguages:     []string{"French", "German"},
 		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
 	}}
-	if label, established := audioLabelForFacts(subject); established || label != "" {
+	if label, established, err := audioLabelForFacts(subject); err != nil || established || label != "" {
 		t.Fatalf("absent English programme audio selected English-original row: %q/%v", label, established)
 	}
+}
+
+func reversedDPLanguages(languages []string) []string {
+	reversed := slices.Clone(languages)
+	slices.Reverse(reversed)
+	return reversed
+}
+
+func TestDPLanguageMultiNameIgnoresPrimaryAndDefaultLanguage(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, original string
+		languages      []string
+		want           string
+	}{
+		{"original plus other", "Japanese", []string{"Japanese", "German"}, "German MULTi"},
+		{"Nordic original plus other", "Swedish", []string{"Swedish", "Finnish"}, "Finnish MULTi"},
+		{"English plus other", "Japanese", []string{"English", "German"}, "German MULTi"},
+		{"Nordic plus other", "Japanese", []string{"Swedish", "German"}, "German MULTi"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, languages := range [][]string{test.languages, reversedDPLanguages(test.languages)} {
+				for primary := range 2 {
+					for defaultTrack := range 2 {
+						subject := dpGeneratedSubject(t, api.ReleaseNameRequest{
+							Category:    "MOVIE",
+							Type:        "WEBDL",
+							Title:       "Example",
+							Year:        2026,
+							Resolution:  "1080p",
+							Source:      "WEB",
+							Audio:       "Dual-Audio AAC 2.0",
+							VideoEncode: "H.265",
+							Tag:         "-GRP",
+						})
+						subject.AudioLanguages = []string{"Japanese", "English", "German"}
+						subject.LanguageFacts = api.LanguageFacts{
+							OriginalLanguages:      []string{test.original},
+							OriginalLanguagesKnown: true,
+							ProgrammeLanguages:     languages,
+							ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+							PrimaryAudioTrackID:    languages[primary],
+							Tracks: []api.MediaTrackFacts{
+								{
+									ID:         languages[0],
+									Kind:       api.MediaTrackAudio,
+									Role:       api.AudioRoleProgramme,
+									Languages:  languages[:1],
+									Default:    defaultTrack == 0,
+									Codec:      "AAC",
+									AudioLabel: "AAC 2.0",
+								},
+								{
+									ID:         languages[1],
+									Kind:       api.MediaTrackAudio,
+									Role:       api.AudioRoleProgramme,
+									Languages:  languages[1:],
+									Default:    defaultTrack == 1,
+									Codec:      "DD+",
+									AudioLabel: "DD+ 5.1",
+								},
+								{
+									ID:        "commentary",
+									Kind:      api.MediaTrackAudio,
+									Role:      api.AudioRoleCommentary,
+									Languages: []string{"English"},
+								},
+							},
+						}
+						want := "Example 2026 1080p WEB-DL " + test.want + " " + subject.LanguageFacts.Tracks[defaultTrack].AudioLabel + " H.265-GRP"
+						if got := dpReviewedName(t, subject, nil); got != want {
+							t.Fatalf("languages %v, primary %d, default %d: got %q, want %q", languages, primary, defaultTrack, got, want)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDPTwoNordicDubsUsePrimaryProgrammeLanguage(t *testing.T) {
+	t.Parallel()
+	for _, primary := range []string{"Swedish", "Finnish"} {
+		for _, reverseLanguages := range []bool{false, true} {
+			for _, reverseTracks := range []bool{false, true} {
+				for defaultTrack := range 2 {
+					subject := dpNordicDubSubject(t)
+					subject.LanguageFacts.PrimaryAudioTrackID = primary
+					subject.LanguageFacts.Tracks[0].Default = defaultTrack == 0
+					subject.LanguageFacts.Tracks[1].Default = defaultTrack == 1
+					audio := subject.LanguageFacts.Tracks[defaultTrack].AudioLabel
+					if reverseLanguages {
+						slices.Reverse(subject.LanguageFacts.ProgrammeLanguages)
+					}
+					if reverseTracks {
+						slices.Reverse(subject.LanguageFacts.Tracks)
+					}
+					want := "Example 2026 1080p WEB-DL " + primary + " MULTi " + audio + " H.265-GRP"
+					if got := dpReviewedName(t, subject, nil); got != want {
+						t.Fatalf("primary %s, default %d, reverse languages %t, reverse tracks %t: got %q, want %q", primary, defaultTrack, reverseLanguages, reverseTracks, got, want)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestDPTwoNordicDubsRequireUnambiguousPrimaryTrack(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		mutate func(*api.LanguageFacts)
+	}{
+		{"missing primary", func(f *api.LanguageFacts) { f.PrimaryAudioTrackID = "" }},
+		{"unknown primary", func(f *api.LanguageFacts) { f.PrimaryAudioTrackID = "absent" }},
+		{"duplicate primary ID", func(f *api.LanguageFacts) { f.Tracks[1].ID = f.Tracks[0].ID }},
+		{"non-audio primary", func(f *api.LanguageFacts) { f.Tracks[0].Kind = api.MediaTrackSubtitle }},
+		{"commentary primary", func(f *api.LanguageFacts) { f.Tracks[0].Role = api.AudioRoleCommentary }},
+		{"unresolved role", func(f *api.LanguageFacts) { f.Tracks[0].Role = "" }},
+		{"missing language", func(f *api.LanguageFacts) { f.Tracks[0].Languages = nil }},
+		{"ambiguous language", func(f *api.LanguageFacts) { f.Tracks[0].Languages = []string{"Swedish", "Finnish"} }},
+		{"conflicting language", func(f *api.LanguageFacts) { f.Tracks[0].Languages = []string{"German"} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := dpNordicDubSubject(t)
+			test.mutate(&subject.LanguageFacts)
+			_, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+				Tracker: "DP", Meta: subject,
+			}, namePolicy())
+			var namingFailure *trackers.NameRuleError
+			if !errors.As(failure, &namingFailure) || namingFailure.Rule != "primary_audio_language" {
+				t.Fatalf("missing unresolved primary naming failure: %#v", failure)
+			}
+		})
+	}
+}
+
+func TestDPTwoNordicDubsInvalidateStaleReviewedName(t *testing.T) {
+	t.Parallel()
+	input, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+		Tracker: "DP", Meta: dpNordicDubSubject(t),
+	}, namePolicy())
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	input.Meta.LanguageFacts.PrimaryAudioTrackID = "Finnish"
+	if _, failure = trackers.PrepareInputWithReleaseNamePolicy(input, namePolicy()); failure == nil {
+		t.Fatal("changed primary track reused the stale reviewed name")
+	}
+}
+
+func TestDPTwoNordicDubsPreserveManualAndFullDiscNames(t *testing.T) {
+	t.Parallel()
+	subject := dpNordicDubSubject(t)
+	manual := "Manual DP Name-GRP"
+	if got := dpReviewedName(t, subject, &manual); got != manual {
+		t.Fatalf("manual name changed to %q", got)
+	}
+	subject.LanguageFacts.PrimaryAudioTrackID = ""
+	markDPManual(t, subject.GeneratedName, api.NameRoleDualAudio)
+	if got := dpReviewedName(t, subject, nil); !strings.Contains(got, "Dual-Audio AAC 2.0") {
+		t.Fatalf("manual language element changed: %q", got)
+	}
+	subject = dpNordicDubSubject(t)
+	subject.LanguageFacts.PrimaryAudioTrackID = ""
+	subject.Type, subject.DiscType = "DISC", "BDMV"
+	if got := dpReviewedName(t, subject, nil); got != subject.ReleaseName {
+		t.Fatalf("full-disc naming changed: %q, want %q", got, subject.ReleaseName)
+	}
+}
+
+func dpNordicDubSubject(t *testing.T) api.UploadSubject {
+	t.Helper()
+	subject := dpGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:    "MOVIE",
+		Type:        "WEBDL",
+		Title:       "Example",
+		Year:        2026,
+		Resolution:  "1080p",
+		Source:      "WEB",
+		Audio:       "Dual-Audio AAC 2.0",
+		VideoEncode: "H.265",
+		Tag:         "-GRP",
+	})
+	subject.LanguageFacts = api.LanguageFacts{
+		OriginalLanguages:      []string{"Japanese"},
+		OriginalLanguagesKnown: true,
+		ProgrammeLanguages:     []string{"Swedish", "Finnish"},
+		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+		PrimaryAudioTrackID:    "Swedish",
+		Tracks: []api.MediaTrackFacts{
+			{
+				ID:         "Swedish",
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"Swedish"},
+				Default:    true,
+				Codec:      "AAC",
+				AudioLabel: "AAC 2.0",
+			},
+			{
+				ID:         "Finnish",
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"Finnish"},
+				Codec:      "DD+",
+				AudioLabel: "DD+ 5.1",
+			},
+		},
+	}
+	return subject
 }

@@ -223,6 +223,17 @@ export type MediaFacts = {
   VideoEncode: string;
   HasEncodeSettings: boolean;
   BitDepth: string;
+  ReleaseFeatures?: Array<
+    | "two_disc_set"
+    | "4k_restoration"
+    | "4k_remaster"
+    | "extras"
+    | "2d_3d_edition"
+    | "3d_anaglyph"
+    | "3d_full_sbs"
+    | "3d_half_ou"
+    | "3d_half_sbs"
+  >;
   EditionSet: string;
   Cut: string;
   Presentation: string;
@@ -238,6 +249,10 @@ export type MediaFacts = {
 
 export type MediaTrackFacts = {
   ID: string;
+  DiscID?: string;
+  PlaylistID?: string;
+  BitrateBitsPerSecond?: number;
+  Hidden?: boolean;
   Kind: "audio" | "subtitle" | string;
   ResourceID: string;
   ManifestFingerprint: string;
@@ -883,6 +898,7 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  Commentary?: boolean;
   ReleaseName: string;
   Providers: ProviderDisplay[];
   TrackerData?: TrackerPreview[];

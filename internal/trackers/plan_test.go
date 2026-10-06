@@ -49,9 +49,10 @@ func (r *trackerEffectReporterStub) Complete(
 func TestTrackerPlanIsImmutableSingleUseAndExactOnceRelease(t *testing.T) {
 	t.Parallel()
 	preview := api.TrackerDryRunEntry{
-		Tracker: "AITHER",
-		Status:  "ready",
-		Payload: map[string]string{"name": "Example.Release.2026.1080p-GRP"},
+		Tracker:         "AITHER",
+		Status:          "ready",
+		Payload:         map[string]string{"name": "Example.Release.2026.1080p-GRP"},
+		EditionFeatures: []api.TrackerEditionFeature{{Label: "With Commentary", Selected: true}},
 		Files: []api.TrackerDryRunFile{{
 			Field:   "torrent",
 			Path:    "example.torrent",
@@ -72,17 +73,19 @@ func TestTrackerPlanIsImmutableSingleUseAndExactOnceRelease(t *testing.T) {
 		return nil
 	})
 
+	preview.EditionFeatures[0].Selected = false
 	preview.Payload["name"] = "mutated"
 	preview.Files[0].Path = "mutated"
 	preview.RequiredActions[0].Options[0].Label = "mutated"
 	first := plan.DryRun()
-	if first.Payload["name"] != "Example.Release.2026.1080p-GRP" || first.Files[0].Path != "example.torrent" ||
+	if !first.EditionFeatures[0].Selected || first.Payload["name"] != "Example.Release.2026.1080p-GRP" || first.Files[0].Path != "example.torrent" ||
 		first.RequiredActions[0].Options[0].Label != "Try alternative" {
 		t.Fatalf("plan retained caller mutation: %#v", first)
 	}
+	first.EditionFeatures[0].Selected = false
 	first.Payload["name"] = "mutated again"
 	first.RequiredActions[0].Options[0].Label = "mutated again"
-	if plan.DryRun().Payload["name"] != "Example.Release.2026.1080p-GRP" ||
+	if !plan.DryRun().EditionFeatures[0].Selected || plan.DryRun().Payload["name"] != "Example.Release.2026.1080p-GRP" ||
 		plan.DryRun().RequiredActions[0].Options[0].Label != "Try alternative" {
 		t.Fatal("dry-run accessor exposes mutable plan state")
 	}

@@ -17,28 +17,29 @@ import (
 
 func ptpLanguageSubject(original string, programme ...string) api.TrackerValidationSubject {
 	media := api.MediaFacts{
-OriginalLanguage: original,
- TrackCoverageComplete: true,
- PrimaryAudioTrackID: "audio-0",
-}
+		OriginalLanguage:      original,
+		TrackCoverageComplete: true,
+		PrimaryAudioTrackID:   "audio-0",
+	}
 	for i, language := range programme {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID: "audio-" + strconv.Itoa(i),
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
-			Languages: []string{language},
- Default: i == 0,
+			ID:           "audio-" + strconv.Itoa(i),
+			Kind:         api.MediaTrackAudio,
+			Role:         api.AudioRoleProgramme,
+			Languages:    []string{language},
+			Default:      i == 0,
+			DefaultKnown: true,
 		})
 	}
 	return api.TrackerValidationSubject{
-		Tracker: "PTP",
- SourcePath: "ptp-language",
- Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, Generation: 1},
-		Type: "ENCODE",
- Source: "BluRay",
- Container: "mkv",
- VideoCodec: "H.264",
- Release: api.ReleaseInfo{Resolution: "1080p"},
+		Tracker:       "PTP",
+		SourcePath:    "ptp-language",
+		Identity:      api.ExternalIdentity{Category: api.CanonicalCategoryMovie, Generation: 1},
+		Type:          "ENCODE",
+		Source:        "BluRay",
+		Container:     "mkv",
+		VideoCodec:    "H.264",
+		Release:       api.ReleaseInfo{Resolution: "1080p"},
 		LanguageFacts: mediafacts.ResolveLanguages(media),
 	}
 }
@@ -169,17 +170,17 @@ func TestPTPSubtitleCompletenessAndForcedEvidence(t *testing.T) {
 		t.Fatalf("known manager alternatives required irrelevant local completeness: %#v", failures)
 	}
 	media := api.MediaFacts{
-		OriginalLanguage: "English",
- TrackCoverageComplete: true,
- PrimaryAudioTrackID: "main",
- SubtitleLanguages: []string{"English (Forced)"},
+		OriginalLanguage:      "English",
+		TrackCoverageComplete: true,
+		PrimaryAudioTrackID:   "main",
+		SubtitleLanguages:     []string{"English (Forced)"},
 		Tracks: []api.MediaTrackFacts{
 			{
-ID: "main",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
- Languages: []string{"English"},
-},
+				ID:        "main",
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"English"},
+			},
 			{Kind: api.MediaTrackSubtitle, Languages: []string{"English (Forced)"}},
 		},
 	}
@@ -207,10 +208,10 @@ func TestPTPNoAudioIsNotADub(t *testing.T) {
 	subject := ptpLanguageSubject("Japanese")
 	for _, facts := range []api.LanguageFacts{
 		mediafacts.ResolveLanguages(api.MediaFacts{
-OriginalLanguage: "Japanese",
- AudioAbsent: true,
- TrackCoverageComplete: true,
-}),
+			OriginalLanguage:      "Japanese",
+			AudioAbsent:           true,
+			TrackCoverageComplete: true,
+		}),
 		ptpLanguageSubject("ZXX", "ZXX").LanguageFacts,
 	} {
 		subject.LanguageFacts = facts
@@ -239,10 +240,10 @@ func TestPTPRepeatedProgrammeAudioNeedsSourceEvidence(t *testing.T) {
 	for _, role := range []api.AudioTrackRole{api.AudioRoleCommentary, api.AudioRoleCompatibility, api.AudioRoleIsolatedScore} {
 		secondary := ptpLanguageSubject("English", "English")
 		secondary.LanguageFacts.Tracks = append(secondary.LanguageFacts.Tracks, api.MediaTrackFacts{
-Kind: api.MediaTrackAudio,
- Role: role,
- Languages: []string{"English"},
-})
+			Kind:      api.MediaTrackAudio,
+			Role:      role,
+			Languages: []string{"English"},
+		})
 		ptpLanguageAnswer(&secondary, "forced_english_dialogue", "not_required")
 		if failures := languageFailures(secondary); len(failures) != 0 {
 			t.Fatalf("secondary %s treated as duplicate programme: %#v", role, failures)

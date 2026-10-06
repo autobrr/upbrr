@@ -245,6 +245,7 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 				Status:          "ready",
 				RequiredActions: append([]api.RequiredAction(nil), f.actions[projection.TrackerID]...),
 				Questionnaire:   f.questionnaires[projection.TrackerID],
+				EditionFeatures: slices.Clone(projection.EditionFeatures),
 				Files: []api.TrackerDryRunFile{{
 					Field:   "file_input",
 					Path:    filepath.Join("preview", "must-not-drive-injection.torrent"),
@@ -842,9 +843,14 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 				TrackerID:         "ALPHA",
 				DisplayName:       "Alpha",
 				UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
-				Artifacts:         api.TrackerArtifactRequirements{Description: true},
-				Readiness:         api.ReadinessStatusReady,
-				UploadReady:       true,
+				EditionFeatures: []api.TrackerEditionFeature{{
+					Label:    "With Commentary",
+					Category: "Feature",
+					Selected: true,
+				}, {Label: "Remastered", Category: "Edition"}},
+				Artifacts:   api.TrackerArtifactRequirements{Description: true},
+				Readiness:   api.ReadinessStatusReady,
+				UploadReady: true,
 			},
 			{
 				TrackerID:         "BETA",
@@ -991,6 +997,9 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 	defer func() { _ = execution.Release() }()
 	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 3 {
 		t.Fatalf("upload plan = %#v", plan)
+	}
+	if !slices.Equal(plan.Trackers[0].EditionFeatures, projections.Projections[0].EditionFeatures) {
+		t.Fatal("upload plan lost the prepared edition/features catalogue")
 	}
 	if plan.ProjectionSet.ID != projections.ID || plan.Dupes.ID != dupes.ID || plan.Media == nil || plan.Media.ID != media.ID ||
 		plan.Descriptions == nil || plan.Descriptions.ID != descriptions.ID {

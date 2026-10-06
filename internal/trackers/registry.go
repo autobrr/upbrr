@@ -103,6 +103,9 @@ func (r *Registry) Register(def Definition) error {
 		} else {
 			descriptor.ReleaseNamePolicy = defaultReleaseNamePolicy(descriptor.Family)
 		}
+		if provider, ok := def.(EditionFeatureProvider); ok {
+			descriptor.EditionFeatures = provider.EditionFeatureResolver()
+		}
 		if provider, ok := def.(LocalizedMetadataProvider); ok {
 			descriptor.MetadataLocale = strings.TrimSpace(provider.LocalizedMetadataLocale())
 		}

@@ -198,6 +198,21 @@ type SubtitleLanguageCoverage struct {
 	Coverage SubtitleCoverage
 }
 
+// ReleaseFeature identifies a prepared annotation that does not establish a cut or edition.
+type ReleaseFeature string
+
+const (
+	ReleaseFeatureTwoDiscSet    ReleaseFeature = "two_disc_set"
+	ReleaseFeature4KRestoration ReleaseFeature = "4k_restoration"
+	ReleaseFeature4KRemaster    ReleaseFeature = "4k_remaster"
+	ReleaseFeatureExtras        ReleaseFeature = "extras"
+	ReleaseFeature2D3DEdition   ReleaseFeature = "2d_3d_edition"
+	ReleaseFeature3DAnaglyph    ReleaseFeature = "3d_anaglyph"
+	ReleaseFeature3DFullSBS     ReleaseFeature = "3d_full_sbs"
+	ReleaseFeature3DHalfOU      ReleaseFeature = "3d_half_ou"
+	ReleaseFeature3DHalfSBS     ReleaseFeature = "3d_half_sbs"
+)
+
 // MediaFacts contains finalized reusable media characteristics.
 type MediaFacts struct {
 	MediaFileFacts                       MediaFileFacts
@@ -236,6 +251,8 @@ type MediaFacts struct {
 	VideoEncode                          string
 	HasEncodeSettings                    bool
 	BitDepth                             string
+	// ReleaseFeatures are source-backed annotations, separate from naming components.
+	ReleaseFeatures []ReleaseFeature `json:",omitempty"`
 	// Cut, Edition, and Presentation are independently addressable naming facts.
 	EditionSet        string
 	Cut               string

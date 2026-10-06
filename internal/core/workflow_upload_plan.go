@@ -444,6 +444,7 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.TorrentArtifactID = torrentArtifactID
 			tracker.TorrentFingerprint = torrentFingerprint
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
+			tracker.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
 			if identityErr != nil || torrentArtifactID == "" {
 				markWorkflowUploadTrackerMissingExactTorrent(&tracker, projection.TrackerID)
 				break
@@ -582,6 +583,7 @@ func workflowUploadTrackerSemanticFingerprint(
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Projection          api.TrackerReleaseProjection
 		Endpoint            string
+		EditionFeatures     []api.TrackerEditionFeature `json:",omitempty"`
 		Fields              []api.UploadPlanField
 		Files               []api.UploadPlanFile
 		Eligible            bool
@@ -595,6 +597,7 @@ func workflowUploadTrackerSemanticFingerprint(
 	}{
 		projection,
 		tracker.Endpoint,
+		tracker.EditionFeatures,
 		tracker.Fields,
 		tracker.Files,
 		tracker.Eligible,
@@ -1010,6 +1013,7 @@ func (e *workflowUploadExecution) ResolveAction(
 	if preparation.Failure != nil {
 		updated.Endpoint = ""
 		updated.Fields = nil
+		updated.EditionFeatures = nil
 		updated.Files = nil
 		updated.Eligible = false
 		updated.PreparedOperationID = ""
@@ -1040,6 +1044,7 @@ func (e *workflowUploadExecution) ResolveAction(
 		}
 	} else {
 		updated.Endpoint, updated.Fields, updated.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
+		updated.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
 		updated.PreparedOperationID, updated.TorrentArtifactID, updated.TorrentFingerprint, err = workflowTrackerArtifactIdentity(
 			trackerID,
 			preparation.TorrentPath,

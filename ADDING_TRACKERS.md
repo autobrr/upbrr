@@ -885,6 +885,15 @@ internal/trackers/impl/standalone/example/
   dupe_test.go
 ```
 
+For tracker-owned edition/feature review, `standalone.Profile.EditionFeatures` may bind a pure
+resolver over `api.UploadSubject`. Return the full typed catalogue with effective selections and
+evidence, and use that same mapping for payload construction and `TrackerDryRunEntry.EditionFeatures`.
+The shared projection binds the catalogue to review fingerprints and rejects changed selections
+or evidence during final preparation. Inspection fields are separate from tracker wire payloads.
+Canonical `ReleaseFeatures` annotations are distinct from Cut, Edition, Presentation, and
+EditionSet. Consume those prepared feature values directly; do not recover them from rendered
+names or promote them into edition identity just to expose tracker tags.
+
 Keep all endpoint, payload, protocol auth, parser, rule, validation, and policy behavior in this
 package.
 Create only files backed by real behavior. Shared helpers belong in a neutral package only when at

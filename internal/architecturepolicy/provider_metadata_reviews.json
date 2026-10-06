@@ -1083,9 +1083,21 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "3fe13eba64328115e1a0dc1783749c648454cb6f7bdd9688bf6641fd48a2cd87"
   },
+  "internal/trackers/impl/standalone/ptp/profile.go:Profile": {
+    "sha256": "f8fac95f16a03db719de8f148f28f3bb2c2db020fe764f333a8778f0ebbcd13b",
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced."
+  },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
     "reason": "Issue 606 debug questionnaire review: execution mode changes only eligibility-field requirements; existing finalized provider values, current-source checks and manual title/year/genre precedence are unchanged.",
     "sha256": "43a65951fa063a10ab7b19b0a2c023cf8fb349e054bb5e48cf7b19b1b61e45af"
+  },
+  "internal/trackers/impl/standalone/ptp/taxonomy.go:editionFeatures": {
+    "sha256": "ef51a421e89b5f808369de1872adff03e447e7be77aa0822fe32878ce6a63757",
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced."
+  },
+  "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveRemasterTitle": {
+    "sha256": "eea41458a8a6f6093701274e5b014c9bdcb2bb2af7dd03e620e24b48d92f32ca",
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced."
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveTags": {
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged.",
@@ -1099,6 +1111,10 @@
     "reason": "New-group uploads now reject empty effective tags, matching the required questionnaire field. Nonempty explicit tags still precede resolveTags; manual genres including manual-empty retain authority over existing provider defaults. The existing-group early return and title/year/poster/trailer/description precedence are unchanged.",
     "sha256": "cfbaa57633d908124b719b6db045a6c5e7bf8a58970b379d4bc001c24f2279ac"
   },
+  "internal/trackers/impl/standalone/ptp/upload.go:buildUploadPreview": {
+    "sha256": "3feecd88e7432f5814fa5916b9facc5bdd587e4a95d61b3a4863e67ff22acf3e",
+    "reason": "Merged PTP edition/feature review with issue 606 mode-aware questionnaire: both consume the exact prepared generation. Explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. Execution mode changes only eligibility-question requirements; finalized provider facts, title/year/genre precedence and reviewed names are unchanged."
+  },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
     "reason": "Issue 606 debug questionnaire review: execution mode changes only eligibility-field requirements; existing finalized provider values, current-source checks and manual title/year/genre precedence are unchanged.",
     "sha256": "cb79a06cd12d5adf93b13bfc4982de4abad8e54bdf1818bd1e8bd51e6d024a1d"
@@ -1108,8 +1124,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Adds the finalized-subject language assessment after unchanged taxonomy and legacy subtitle validation. UploadSubjectForValidation retains corrected metadata; primary-programme subtitle tests, explicit clears and independent strict-container tests verify that language review cannot restore provider values or waive unrelated requirements.",
-    "sha256": "a659009ca2bb213caffc96522ecbb10da0e13c5e80bc67d318e9f52eb8f9fbbe"
+    "reason": "Issue 606 PTP completion review: only the validation policy version changes in this provider consumer; existing finalized subject projection and manual/provider precedence are unchanged.",
+    "sha256": "993e99a4dacaa75ad5d951a7c27199b09d2ecbc8d444114a4a872a9903f170a3"
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1340,8 +1356,8 @@
     "sha256": "67b7400f6d66a8d55f1b84880d5ec9af04766463495bcc0c9cd66245ad253c8e"
   },
   "internal/trackers/impl/unit3d/sites/dp/profile.go:Profile": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "ab4554d412271ca56cd2f46766224e46392f1cda0d78eba0900ab3348e50eabd"
+    "reason": "Issue 606 DP completion review: the profile binds local language validation and an evidence-bound naming questionnaire; both consume finalized language facts and preserve existing current-source TVDB/manual naming precedence.",
+    "sha256": "ed63fc3c7c82281269349920b84b9b0b2de1ab161be977578d373f901cebbcb6"
   },
   "internal/trackers/impl/unit3d/sites/dvl/rules.go:ValidationPolicy": {
     "reason": "Binds checkContent, which preserves manual genres through ValidationRuleSubject and RuleGenres; TMDB keywords remain current-source policy evidence.",

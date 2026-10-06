@@ -52,6 +52,15 @@ type PreparationPreview struct {
 	ContentFailures []TrackerContentFailure
 }
 
+// TrackerEditionFeature is a tracker-owned review option derived from prepared facts.
+// Evidence is a safe, human-readable explanation; these options are not editable inputs.
+type TrackerEditionFeature struct {
+	Label    string `json:"label"`
+	Category string `json:"category"`
+	Selected bool   `json:"selected"`
+	Evidence string `json:"evidence,omitempty"`
+}
+
 type TrackerDryRunEntry struct {
 	Tracker string
 	Status  string
@@ -73,6 +82,7 @@ type TrackerDryRunEntry struct {
 	DescriptionGroup        string
 	Description             string
 	Endpoint                string
+	EditionFeatures         []TrackerEditionFeature
 	Payload                 map[string]string
 	Files                   []TrackerDryRunFile
 	// DebugSections carries optional staged diagnostics for trackers whose dry-run

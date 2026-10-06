@@ -5451,3 +5451,26 @@ func TestUploadDryRunReportsPreserveLateQuestionnaireAndRecoveryAction(t *testin
 		t.Fatalf("late questionnaire recovery action=%+v error=%v", actions, err)
 	}
 }
+
+func TestUploadDryRunReportsPreserveEditionFeatures(t *testing.T) {
+	t.Parallel()
+	features := []api.TrackerEditionFeature{{
+		Label:    "With Commentary",
+		Category: "Feature",
+		Selected: true,
+		Evidence: "Effective commentary",
+	}, {Label: "Remastered", Category: "Edition"}}
+	reports := uploadDryRunReports([]api.UploadPlanTracker{{
+		TrackerID:       "EXAMPLE",
+		Status:          api.StageStatusReady,
+		EditionFeatures: features,
+		Fields:          []api.UploadPlanField{{Key: "remaster_title", Value: "With Commentary"}},
+	}})
+	if len(reports) != 1 || !slices.Equal(reports[0].EditionFeatures, features) || reports[0].Fields[0].Value != "With Commentary" {
+		t.Fatal("dry-run report lost review catalogue or wire payload")
+	}
+	reports[0].EditionFeatures[0].Selected = false
+	if !features[0].Selected {
+		t.Fatal("dry-run report aliases retained review catalogue")
+	}
+}

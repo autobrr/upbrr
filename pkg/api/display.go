@@ -6,6 +6,8 @@ package api
 // PreparedReleaseDisplay is the canonical presentation projection for one
 // exact prepared generation.
 type PreparedReleaseDisplay struct {
+	// Commentary is the effective prepared value after explicit corrections.
+	Commentary    bool `json:",omitempty"`
 	ReleaseName   string
 	Providers     []ProviderDisplay
 	TrackerData   []TrackerPreview

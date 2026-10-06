@@ -7,8 +7,6 @@ description: Configure tracker credentials, authentication, default selection, d
 
 upbrr's tracker catalog is built from registered tracker implementations. The Web UI renders each tracker's supported settings and capabilities from that catalog.
 
-THR support, including its tracker-owned image host, has been removed because the site changed its underlying codebase. On upgrade or config import, THR settings, default/preferred selections, and obsolete Pronfo credentials are discarded before secret decryption. Historical upload records and unrelated settings are preserved. Startup writes repaired database configuration atomically; if that write fails, the original configuration remains available for retry. A replacement integration is not included.
-
 ## Configure a tracker
 
 1. Open **Settings**.
@@ -42,8 +40,6 @@ Tracker adapters normalize duplicate results into a common review surface. A tra
 
 Warnings that permit an override can block a live upload while allowing debug preparation. Strict constructibility failures block every mode. Non-submitting debug execution preserves the explicit language-eligibility bypass and displays the bypassed assessment. Subjective or incomplete tracker rules remain visible for review.
 
-Unit3D duplicate searches cover the complete movie or TV category family, including site-specific categories such as anime or season packs. They do not filter by upload type, resolution, or individual episode number; the evaluator compares the returned release variants and overlapping content. A TV season may still narrow the search, except where the site needs a broader query, as described for [ACM](#acm-diagnostics).
-
 Tracker settings can restrict duplicate competition by incoming release group. When a tag matches that tracker's **Duplicate bypass groups** or **Internal groups**, confirmed candidates from other groups coexist and are omitted from slot-capacity decisions. Exact duplicates, same-group candidates, conflicting evidence, and unknown groups keep their normal duplicate result. See [tracker group policy lists](../web-ui/settings/trackers.md#group-policy-lists).
 
 `--skip-dupe-check` and similar bypasses remove safeguards. Use them only when you have manually completed the equivalent tracker checks.
@@ -56,69 +52,52 @@ Approval applies only to that tracker and its current warning set. After the ini
 
 The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override and explicitly marked language-eligibility assessments; bypass details remain visible.
 
-### Language eligibility
+### Blocking reasons and warnings
 
-BHD, AITHER, HHD, ULCX, LST, LUME, HDBits, BTN, PTP, AvistaZ, CinemaZ, NBL and RF assess their applicable finalized language facts for non-disc uploads. OTW records its English-accessibility recommendation without imposing a general dub ban. Review the affected tracker's **Prohibited**, **Staff approval required**, **Trumpable release**, or **Unresolved** assessment. The details identify the original language, programme languages and relevant defect. Commentary, compatibility and other identified secondary tracks are assessed separately from programme dubs. Correct language evidence on Input; a naming override does not change factual API tags or upload eligibility.
+Review the assessment displayed for each selected tracker:
 
-A **Trumpable release** acknowledgement accepts that a compliant replacement may supersede the upload. It applies only to the affected tracker and prepared generation. It cannot clear an independent strict finding, grant staff permission, or prove that a remote site tag was applied. Missing or conflicting eligibility evidence must be resolved before a normal upload proceeds.
+- **Prohibited**: a rule prevents the release from proceeding in a normal upload.
+- **Staff approval required**: the release needs permission from the tracker's staff; answering a question or acknowledging a warning does not grant that permission.
+- **Trumpable release**: a compliant replacement may supersede the upload. Proceed only when the displayed finding permits an explicit acknowledgement.
+- **Unresolved**: required evidence is missing or conflicting. Correct the facts or answer the requested questions before continuing.
 
-Seedpool pack/episode comparisons show a specific warning when matching technical content and audio languages cannot be established. The normal duplicate-risk approval can acknowledge that uncertainty for the affected tracker and prepared generation. It does not claim matching languages or trump qualification, and cannot clear an independent exact-duplicate or in-client block. Changed comparison evidence requires renewed review. In debug runs, SP language-only and incomplete pack assessments remain visible without blocking preparation; established technical inconsistencies still block. Debug preview plans cannot submit uploads.
+Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
 
-LST's missing-English-subtitle exception requires a successful complete title-wide search. Zero other torrents allows a labelled trumpable acknowledgement. Any other torrent blocks that exception, including other resolutions or formats. A failed or incomplete search cannot establish an empty title. Changed or expired search evidence requires reassessment.
+Correct language and other factual evidence on **Input**. Naming overrides and warning acknowledgements do not change media facts. An acknowledgement applies only to its tracker and current prepared generation; it cannot clear an independent strict finding. Changed evidence requires renewed review. upbrr does not remove or remux tracks automatically.
 
-Luminarr also reviews original-track order, grouped dub order and track metadata recommendations. Non-exempt personal releases require those recommendations to be satisfied; an exemption never waives mandatory original audio, complete English subtitles or known track-language assignments.
+### Media analysis
 
-Some requirements need source facts that media inspection cannot establish. Tracker questions can ask about retained source mixes, retail subtitles, regional dialects or foreign-dialogue coverage. Answer for the current release; changing relevant facts or the prepared generation requires review again. These answers establish the specific fact being asked about and do not waive an independent strict rule.
-
-Complete DVD, Blu-ray and UHD Blu-ray uploads retain their existing behavior and are excluded from these language assessments. Remuxes are non-disc uploads and remain subject to the rules. upbrr does not remove or remux tracks automatically.
-
-### SP TV-pack analysis
-
-Selecting SP for a non-disc TV pack requests MediaInfo for every selected episode file, including remuxes. The first preparation performs one sequential probe per file, so analysis cost grows with the number of episodes. Unchanged source and file evidence can reuse cached reports. Single episodes, full discs, and preparations without this demand keep their existing analysis behavior.
-
-Per-file language evidence distinguishes known absent tracks from unknown languages. A failed primary-file probe stops preparation. Failed non-primary probes and incomplete reports remain unresolved. MediaInfo cannot establish source provenance, and filename source tokens do not prove pack source consistency; measured language, codec, resolution and bit-depth evidence do not resolve that separate question. Correcting the primary episode does not silently rewrite the other episodes' evidence.
-
-Answer SP’s source-consistency question for the current files. Where differences reflect genuine source variation, confirm that variation and explain it in the requested field. Keep the explanation in the final SP description. This exception does not resolve missing evidence or waive unrelated strict findings.
+Preparation may inspect every selected media file when the current requirements need per-file evidence. The first analysis can therefore take longer for larger inputs; unchanged evidence can reuse cached reports. Media inspection cannot establish every source fact. Answer source questions only after checking the release, and resolve missing or conflicting evidence before proceeding.
 
 ## Tracker questions
 
 On **Dupe Checking**, open **Tracker questions** for a selected tracker, review any required fields, and choose **Apply tracker answers**. Loading the questions uses existing prepared facts without contacting the tracker. Applying answers refreshes the assessment; it does not upload or start another duplicate search. Unanswered required fields block only their tracker, and unapplied edits must be applied before dry runs or uploads. See [the questionnaire workflow](../workflow/index.md#tracker-questions) for retained duplicate evidence and questions discovered during preparation.
 
-PTP can ask you to review subtitle and trumpable tags when neither English subtitles nor a first English audio track are established, or hardcoded languages are unknown. Known hardcoded-language corrections, including **English (Full)** and **English (Forced)**, supply that evidence directly. Review every applicable choice; contradictory English and no-English claims block PTP. Choosing **English Softsubs Exist (Mislabeled)** does not correct a media track’s language. Use [Input language corrections](../workflow/index.md#subtitle-review) for that, or follow the [CLI subtitle-review guide](../cli/index.md#ptp-subtitle-review).
-
-Source questions distinguish facts that media inspection cannot prove from permission to upload:
-
-- BHD asks whether tracks or chapters were added to an existing release. Confirmed additions require staff approval; choosing an answer never supplies that approval.
-- HHD can use its subtitle manager for English coverage. Its source-retention recommendations become mandatory for personal releases. Compatibility questions distinguish original mix associations, duplicated cores and untouched WEB HLS audio; an HLS answer cannot replace required TrueHD AC-3 audio.
-- BTN checks best-original remux audio and available source-disc extras. A missing member of a differing Blu-ray/broadcast soundtrack pair produces a separately acknowledged trumpable finding.
-- LST reviews justified mixes, compatibility provenance and subtitle presentation separately. External subtitles remain partial satisfaction; established hardcoded coverage is not mislabeled as an external file. Conditional trumpability still needs its own acknowledgement.
-- AITHER’s single multilingual-track naming uses a source-confirmed even split or predominant language, rather than guessing from the first language label. ULCX’s non-personal original-audio and alternate-mix recommendations remain guidance.
-
 Answer only after checking the relevant source. Unknown mandatory facts remain unresolved. Correct an unknown **Source** on Input where requested; changing source, type, tracks or prepared generation requires source answers to be reviewed again. A source answer cannot waive an independent prohibited or staff-only finding. Existing debug-mode policy bypasses also leave eligibility-only questions optional; evidence needed to construct names, payloads or required descriptions remains necessary.
 
 ## Names and payloads
 
-upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. BHD factual tags are independent: original foreign programme audio plus English can set both `DualAudio` and `EnglishDub`, while the automatic name uses only the applicable exclusive marker. An additional prohibited dub still blocks the upload.
+upbrr resolves upload and search names before duplicate checking. Review the projected name for every selected tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. Manual naming controls are presentation choices and do not grant upload eligibility or replace required factual evidence.
 
-OTW uses programme-audio languages, not subtitle languages, for its `Dual Audio`, `Dubbed` and `MULTI` elements. YUS uses `Multi-Audio` for two or more known programme languages. DP and YUS technical audio naming follows the default audio track. Automatic naming requires one inspected default track with a technical label; missing or ambiguous default evidence remains unresolved rather than silently retaining another track’s codec. Incomplete facts cannot establish a dub-only presentation. Manual naming controls remain presentation choices and do not grant upload eligibility.
+Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or TV season/episode segment. Missing or unknown resolution stays absent, and complete manual names remain unchanged.
 
-Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or the rendered TV season/episode segment. Missing or unknown resolution stays absent. Complete manual names and tracker policies that use exact source names or separate display titles retain their existing behavior.
+Categories, source/type mappings, descriptions, media selection, questionnaires and authentication requirements can vary. Review the displayed requirements and consult the tracker's current rules. A successful local preparation does not prove that a remote upload will be accepted.
 
-Tracker-specific categories, source/type mappings, descriptions, media selection, questionnaires, and auth flows remain owned by the tracker adapter. A successful mapping does not prove the upload complies with every current site rule.
+### Editions and commentary
+
+A solitary Theatrical cut or edition is ignored. Compound editions retain their constituent cuts and multi-edition marker. Presentation and technical-feature annotations do not establish another edition. Actual additional editions and multi-cut sets remain intact; opaque manual Edition compounds retain their existing wording.
+
+Review detected labels and inspected tracks before approval. Missing track languages cannot be borrowed from another report without a reliable identity match; correct missing languages explicitly when needed. Consult the tracker's current rules when interpreting any eligibility finding.
+
+To override commentary detection, set **Commentary** to **Yes** or **No** and refresh metadata, or use `--commentary=true` / `--commentary=false` (`--mc` is an alias). Explicit No survives re-preparation and removes `With Commentary`. No extra commentary prompt is introduced, including in unattended mode. Older prepared generations must be refreshed to use the new evidence and classification.
 
 ### Disc region and distributor IDs
 
-For Unit3D disc uploads, upbrr translates known country codes and publisher names to the standard UNIT3D numeric IDs. Matching is case-insensitive; explicit positive numeric IDs remain usable for site-specific entries. Tracker taxonomy implementations can add or override names without changing the shared defaults. Disc playback zones such as A/B/C are not country codes.
+Region and distributor fields accept supported suggestions or explicit numeric IDs where applicable. Disc playback zones such as A/B/C are not country codes. If a required value cannot be resolved, correct it on **Input** and refresh metadata before retrying. Check the destination's current requirements rather than guessing an ID.
 
-Unknown optional values are omitted with a debug diagnostic rather than assigned a guessed ID. ACM and SHRI retain their stricter validation, and SHRI still requires a valid region for DVD and HD DVD uploads. ULCX requires a resolvable country region for Blu-ray discs (including UHD); a missing or unsupported region strictly blocks upload, even in debug mode or with rule authorization. Set the Region correction to a recognized country code or a positive tracker region ID, then refresh metadata before retrying. Playback zones A/B/C do not satisfy this country field.
+### Diagnostics
 
-Site-specific catalogs and live upload acceptance still need verification when a site changes its list.
-
-### ACM diagnostics
-
-ACM duplicate searches gather the full TMDB work within the movie or TV category. They do not narrow by release name, season, type, or resolution; the duplicate evaluator compares the returned content scopes and variants. This preserves work matching on ACM's legacy API.
-
-For an ACM report, enable `--log-level trace` for the affected run. Search diagnostics include the work query and pagination decisions. Payload diagnostics include numeric classification IDs and evidence byte counts, without copying descriptions or MediaInfo into these messages. Review all logs before sharing and remove credentials, private URLs, and identifying release details. A successful local preparation does not confirm that ACM accepted an upload.
+For a tracker defect, follow [troubleshooting guidance](../troubleshooting/index.md) and collect only the relevant sanitized excerpt. upbrr is intended to redact credentials automatically, but inspect every log and remove any remaining credentials, cookies, tokens, private URLs and unrelated personal information before sharing.
 
 ## Image hosts and clients
 

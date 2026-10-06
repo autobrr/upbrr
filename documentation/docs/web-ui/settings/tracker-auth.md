@@ -70,7 +70,7 @@ Use this route when you can access upbrr's application-state directory, includin
 
 1. Find the directory containing the **active database** (normally `db.sqlite`). In the Web UI, open [Logging](../logging.md) and read **Log path**, even if **File enabled** is off. The path ends in `logs/upbrr.log` beneath the active state directory: `/config/upbrr/logs/upbrr.log` means the state directory is `/config/upbrr`. See [State location](../../configuration/index.md#state-location) for default and legacy paths. Check the account/environment that starts upbrr, including its service or container; your shell's home directory or an old config path may differ.
 2. Create or open its `cookies` subdirectory. Put the export directly inside it, not inside another subdirectory.
-3. Rename the Netscape file to **`<tracker-id>.txt`**, replacing `<tracker-id>` with the configured tracker's ID, such as `BTN` in **Settings → Trackers**, not its full site name or your Firefox container name. For example, `cookies.BrowserContainer.txt` becomes `BTN.txt` for BTN.
+3. Rename the Netscape file to **`<tracker-id>.txt`**, replacing `<tracker-id>` with the configured tracker's ID shown in **Settings → Trackers**, not its full site name or your Firefox container name.
 4. Allow the upbrr process to read the file and write its state directory, including removing migrated source files. Keep access restricted to the account running upbrr.
 5. Restart upbrr, then [verify authentication](#verify-authentication).
 
@@ -117,7 +117,7 @@ Inspect the file locally without sharing its values. Check the actual [format](#
 
 ### Folder import is not detected
 
-Check the active database directory, exact tracker-ID filename, lowercase `.txt` extension, and top-level `cookies` placement. Enable filename extensions in your file manager to catch names such as `BTN.txt.txt`. Verify process read/write permissions, the Docker host-to-container volume mapping, and that the intended instance restarted. If files remain, review migration/cleanup messages; if they disappear, check the stored count. See [Storage recovery](#storage-recovery) if encryption could not initialize.
+Check the active database directory, exact tracker-ID filename, lowercase `.txt` extension, and top-level `cookies` placement. Enable filename extensions in your file manager to catch names such as `<tracker-id>.txt.txt`. Verify process read/write permissions, the Docker host-to-container volume mapping, and that the intended instance restarted. If files remain, review migration/cleanup messages; if they disappear, check the stored count. See [Storage recovery](#storage-recovery) if encryption could not initialize.
 
 ### Import Cookies is missing
 
@@ -127,7 +127,7 @@ Save the tracker entry and wait for activation, then return to **Tracker Auth**.
 
 Distinguish local parsing/storage errors from a tracker rejecting the session, presenting another browser challenge, or returning a network/service error. Refresh the browser session and re-export first for session rejection. A challenge completed in Firefox does not guarantee upbrr's requests will be accepted.
 
-Cookies do not replace other required credentials. For example, **BTN also requires an API key for torrent resolution**; imported cookies or login credentials cover upload authentication. Follow the tracker card's requirements and returned remediation message rather than removing required fields.
+Cookies do not replace other required credentials. Follow the tracker card's requirements and returned remediation message rather than removing required fields.
 
 For a report, include the upbrr version/build, installation type, tracker ID, import route, status/count, and shortest sanitized error or log excerpt around the failed action. Check both the auth message and **Logging** yourself before sharing; remove cookie values, credentials, private URLs, and account details. Never include the export, database, key material, or raw tracker responses. See [Safe issue reports](../../troubleshooting/index.md#safe-issue-reports).
 

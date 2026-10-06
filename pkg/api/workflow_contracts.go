@@ -279,6 +279,7 @@ type TrackerReleaseProjection struct {
 	DisplayName          string                   `json:"displayName"`
 	CanonicalReleaseName string                   `json:"canonicalReleaseName"`
 	UploadReleaseName    string                   `json:"uploadReleaseName"`
+	EditionFeatures      []TrackerEditionFeature  `json:"editionFeatures,omitempty"`
 	AdditionalNames      []TrackerReleaseName     `json:"additionalNames,omitempty"`
 	Taxonomy             TrackerTaxonomy          `json:"taxonomy"`
 	ProviderIDs          []TrackerProviderID      `json:"providerIds,omitempty"`
@@ -677,6 +678,7 @@ type UploadPlanTracker struct {
 	TorrentFingerprint     WorkflowFingerprint               `json:"torrentFingerprint,omitempty"`
 	ClientFailureCode      OperationFailureCode              `json:"clientFailureCode,omitempty"`
 	SemanticFingerprint    WorkflowFingerprint               `json:"semanticFingerprint"`
+	EditionFeatures        []TrackerEditionFeature           `json:"editionFeatures,omitempty"`
 }
 
 // UploadPlan is a safe projection of exact retained private prepared operations.
