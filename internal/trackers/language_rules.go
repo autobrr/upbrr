@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -47,10 +48,7 @@ type LanguagePolicy struct {
 // IsFullDiscUpload distinguishes complete disc uploads from remuxes, including
 // canonical DISC subjects whose source-specific disc label is unavailable.
 func IsFullDiscUpload(discType, releaseType string) bool {
-	if strings.EqualFold(strings.TrimSpace(releaseType), "REMUX") {
-		return false
-	}
-	return IsDiscType(discType) || strings.EqualFold(strings.TrimSpace(releaseType), "DISC")
+	return mediafacts.IsFullDisc(discType, releaseType)
 }
 
 // WithLanguageAssessment composes a site's pure language assessment with its

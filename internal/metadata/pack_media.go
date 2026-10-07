@@ -23,8 +23,15 @@ import (
 )
 
 func requiresPackMediaEvidence(meta preparationstate.State) bool {
-	return meta.TVPack && strings.TrimSpace(meta.DiscType) == "" &&
-		requiresMetadataField(meta.MetadataRequirements, api.CanonicalCategoryTV, api.MetadataRequirementNonDiscTVPackMedia)
+	if !meta.TVPack || !requiresMetadataField(meta.MetadataRequirements, api.CanonicalCategoryTV, api.MetadataRequirementNonDiscTVPackMedia) {
+		return false
+	}
+	// Collection precedes media derivation; explicit type corrections still win.
+	_, releaseType := sourceAndType(meta, mediaInfoDoc{})
+	if meta.ReleaseNameOverrides.Type != nil {
+		releaseType = strings.TrimSpace(*meta.ReleaseNameOverrides.Type)
+	}
+	return !mediafacts.IsFullDisc(meta.DiscType, releaseType)
 }
 
 // collectPackMediaEvidence probes each selected non-disc pack file sequentially.

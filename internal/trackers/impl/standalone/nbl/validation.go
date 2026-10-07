@@ -13,7 +13,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.WithLanguagePolicy(trackers.ValidationPolicyBinding{
-		ID:    "standalone-nbl-policy-v4",
+		ID:    "standalone-nbl-policy-v5",
 		Check: checkEvidenceRules,
 	}, languagePolicy())
 }
@@ -57,7 +57,7 @@ func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubjec
 		},
 	)...)
 
-	return failures, nil
+	return append(failures, fullDiscLanguageFailures(subject)...), nil
 }
 
 func nblEvidencePolicy(rule string) trackers.EvidencePredicatePolicy {

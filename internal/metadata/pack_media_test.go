@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -126,15 +127,44 @@ func TestPackMediaDemandOptsInExactlyOncePerFile(t *testing.T) {
 }
 
 func TestPackMediaDemandExemptsDiscsButIncludesRemuxes(t *testing.T) {
-	for _, disc := range []string{"BDMV", "DVD", "HDDVD"} {
-		meta := preparationstate.State{
-			TVPack:               true,
-			DiscType:             disc,
-			MetadataRequirements: api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{{AnyOf: []api.MetadataRequirementField{api.MetadataRequirementNonDiscTVPackMedia}}}},
-		}
-		if requiresPackMediaEvidence(meta) {
-			t.Fatalf("full disc %s selected", disc)
-		}
+	for _, test := range []struct {
+		name, disc, releaseType string
+		want                    bool
+	}{
+		{name: "full Blu-ray", disc: "BDMV"},
+		{name: "full DVD", disc: "DVD"},
+		{name: "full HD DVD", disc: "HDDVD"},
+		{name: "canonical full disc", releaseType: "DISC"},
+		{
+			name:        "Blu-ray remux",
+			disc:        "BDMV",
+			releaseType: "REMUX",
+			want:        true,
+		},
+		{
+			name:        "DVD remux",
+			disc:        "DVD",
+			releaseType: "REMUX",
+			want:        true,
+		},
+		{
+			name:        "HD DVD remux",
+			disc:        "HDDVD",
+			releaseType: "REMUX",
+			want:        true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := preparationstate.State{
+				TVPack:               true,
+				DiscType:             test.disc,
+				Release:              api.ReleaseInfo{Type: test.releaseType},
+				MetadataRequirements: api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{{AnyOf: []api.MetadataRequirementField{api.MetadataRequirementNonDiscTVPackMedia}}}},
+			}
+			if got := requiresPackMediaEvidence(meta); got != test.want {
+				t.Fatalf("pack evidence demand=%t, want %t", got, test.want)
+			}
+		})
 	}
 	analyzer := &packAnalyzer{}
 	service, request := packCollectionFixture(t, analyzer)
@@ -150,6 +180,139 @@ func TestPackMediaDemandExemptsDiscsButIncludesRemuxes(t *testing.T) {
 	}
 	if len(analyzer.targets) != 2 {
 		t.Fatalf("remux probes=%v", analyzer.targets)
+	}
+}
+
+func TestPackMediaDemandHonorsTypeOverrides(t *testing.T) {
+	for _, test := range []struct {
+		name, tagType string
+		manualType    *string
+		want          int
+	}{
+		{
+			name:    "tag full disc",
+			tagType: "DISC",
+			want:    1,
+		},
+		{
+			name:       "manual full disc",
+			manualType: new("DISC"),
+			want:       1,
+		},
+		{
+			name:       "manual remux overrides tag disc",
+			tagType:    "DISC",
+			manualType: new("REMUX"),
+			want:       2,
+		},
+		{
+			name:       "manual disc overrides tag remux",
+			tagType:    "REMUX",
+			manualType: new("DISC"),
+			want:       1,
+		},
+		{
+			name:       "explicit empty overrides tag disc",
+			tagType:    "DISC",
+			manualType: new(""),
+			want:       2,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			analyzer := &packAnalyzer{}
+			service, request := packCollectionFixture(t, analyzer)
+			request.Input.Instructions.ReleaseName.Type = test.manualType
+			if test.tagType != "" {
+				service.tagsPath = filepath.Join(t.TempDir(), "tags.json")
+				if err := os.WriteFile(service.tagsPath, []byte(fmt.Sprintf(`{"GRP":{"type":%q}}`, test.tagType)), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			meta, err := service.collectSourceEvidence(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(analyzer.targets) != test.want || (len(meta.MediaFileFacts.Files) == 2) != (test.want == 2) {
+				t.Fatalf("probes=%v facts=%+v, want %d probes", analyzer.targets, meta.MediaFileFacts, test.want)
+			}
+		})
+	}
+}
+
+func TestPackMediaTagOverridesPreserveCacheIdentity(t *testing.T) {
+	for _, selected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("selected=%t", selected), func(t *testing.T) {
+			analyzer := &packAnalyzer{}
+			service, request := packCollectionFixture(t, analyzer)
+			if !selected {
+				request.Input.MetadataRequirements = api.MetadataRequirementSet{}
+			}
+			first, err := service.collectSourceEvidence(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			probes := len(analyzer.targets)
+			service.tagsPath = filepath.Join(t.TempDir(), "tags.json")
+			if err := os.WriteFile(service.tagsPath, []byte(`{"GRP":{"type":"REMUX","source":"BluRay"}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			tagged, err := service.collectSourceEvidence(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tagged.Release.Type != "REMUX" || tagged.Release.Source != "BluRay" || len(analyzer.targets) != probes ||
+				tagged.MediaInfoJSONPath != first.MediaInfoJSONPath || tagged.MediaInfoTextPath != first.MediaInfoTextPath {
+				t.Fatalf("tag override changed cache identity: probes=%v first=%q tagged=%q", analyzer.targets, first.MediaInfoJSONPath, tagged.MediaInfoJSONPath)
+			}
+		})
+	}
+}
+
+func TestPackMediaDemandCollectsDiscSourcedRemux(t *testing.T) {
+	originalDiscover, originalParse := discoverBDMVPlaylists, parseBDMVPlaylist
+	t.Cleanup(func() { discoverBDMVPlaylists, parseBDMVPlaylist = originalDiscover, originalParse })
+	discoverBDMVPlaylists = func(context.Context, string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{{File: "00001.MPLS", Duration: 5400}}, nil
+	}
+	parseBDMVPlaylist = func(string) (float64, []filesystem.PlaylistItem, error) {
+		return 5400, []filesystem.PlaylistItem{{File: "00001.m2ts", Size: 100}, {File: "00002.m2ts", Size: 100}}, nil
+	}
+	for _, selected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("selected=%t", selected), func(t *testing.T) {
+			analyzer := &packAnalyzer{}
+			service, request := packCollectionFixture(t, analyzer)
+			source := strings.Replace(request.Input.SourcePath, "WEB-DL", "BluRay.REMUX", 1)
+			stream := filepath.Join(source, "BDMV", "STREAM")
+			if err := os.MkdirAll(stream, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(source, "BDMV", "PLAYLIST"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"00001.m2ts", "00002.m2ts"} {
+				if err := os.WriteFile(filepath.Join(stream, name), []byte("synthetic stream"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			demand := request.Input.MetadataRequirements
+			request = testCollectionRequest(t, api.Request{SourcePath: source})
+			request.Input.Instructions.Playlist = api.PlaylistInstruction{Set: true, Selected: []string{"00001.MPLS"}}
+			wantProbes, wantFiles := 1, 0
+			if selected {
+				request.Input.MetadataRequirements = demand
+				wantProbes, wantFiles = 3, 2
+			}
+			meta, err := service.collectSourceEvidence(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.Type != "" || meta.Release.Type != "REMUX" || meta.DiscType != "BDMV" || !meta.TVPack || len(meta.FileList) != 2 {
+				t.Fatalf("collection boundary type=%q release=%q disc=%q pack=%t", meta.Type, meta.Release.Type, meta.DiscType, meta.TVPack)
+			}
+			if len(analyzer.targets) != wantProbes || len(meta.MediaFileFacts.Files) != wantFiles {
+				t.Fatalf("probes=%v facts=%+v, want %d probes and %d files", analyzer.targets, meta.MediaFileFacts, wantProbes, wantFiles)
+			}
+		})
 	}
 }
 

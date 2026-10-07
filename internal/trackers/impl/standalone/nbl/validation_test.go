@@ -93,7 +93,7 @@ func TestNBLDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
 func TestNBLValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v4/languages-v1" {
+	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v5/languages-v1" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -195,7 +195,6 @@ func TestNBLFinalizedLanguageAccessibility(t *testing.T) {
 			discType:   "BDMV",
 			uploadType: "DISC",
 		},
-		{name: "canonical full disc excluded", uploadType: "DISC"},
 		{
 			name:            "disc sourced remux assessed",
 			discType:        "BDMV",

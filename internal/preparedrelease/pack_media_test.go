@@ -82,7 +82,9 @@ func TestPreparedPackMediaSurvivesPersistenceAndExactProjection(t *testing.T) {
 		t.Fatalf("demand failed to invalidate generation=%d calls=%d", demanded.Release.Generation, collector.base.callCount())
 	}
 	old := demanded.Release
-	old.Compatibility.ContractVersion = "prepared-release-v29"
+	old.Compatibility.ContractVersion = "prepared-release-v32"
+	old.Naming.Type = "REMUX"
+	old.Media.MediaFileFacts = api.MediaFileFacts{}
 	store.mu.Lock()
 	store.current[canonicalSourceKey(path)] = old
 	store.mu.Unlock()
@@ -90,7 +92,7 @@ func TestPreparedPackMediaSurvivesPersistenceAndExactProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if upgraded.Release.Generation != old.Generation+1 || collector.base.callCount() != 3 {
+	if upgraded.Release.Generation != old.Generation+1 || collector.base.callCount() != 3 || len(upgraded.Release.Media.MediaFileFacts.Files) != 1 {
 		t.Fatalf("contract failed to invalidate generation=%d calls=%d", upgraded.Release.Generation, collector.base.callCount())
 	}
 }

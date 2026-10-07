@@ -971,21 +971,185 @@ func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesNBLExcludesFullDiscsButIncludesRemuxes(t *testing.T) {
+func TestEvaluateRulesNBLPreservesFullDiscLanguages(t *testing.T) {
 	t.Parallel()
-	for _, disc := range []string{"BDMV", "DVD"} {
+	for _, test := range []struct {
+		name             string
+		disc             string
+		audio, subtitles []string
+		original         string
+		wantReason       string
+	}{
+		{name: "BDMV missing data is exempt", disc: "BDMV"},
+		{
+			name:  "BDMV foreign data is exempt",
+			disc:  " bdmv ",
+			audio: []string{"Japanese"},
+		},
+		{
+			name:       "DVD missing data",
+			disc:       "DVD",
+			wantReason: "missing disc language data",
+		},
+		{
+			name:       "DVD blank data",
+			disc:       " dvd ",
+			audio:      []string{" "},
+			subtitles:  []string{""},
+			wantReason: "missing disc language data",
+		},
+		{
+			name:  "DVD English audio",
+			disc:  "DVD",
+			audio: []string{"English", "Japanese"},
+		},
+		{
+			name:      "DVD English subtitles",
+			disc:      "DVD",
+			audio:     []string{"Japanese"},
+			subtitles: []string{" eNg "},
+		},
+		{
+			name:       "DVD foreign only",
+			disc:       "DVD",
+			audio:      []string{"Japanese"},
+			subtitles:  []string{"German"},
+			wantReason: "disc requires audio or subtitles in english, en, eng",
+		},
+		{
+			name:       "HDDVD missing data",
+			disc:       "HDDVD",
+			wantReason: "missing disc language data",
+		},
+		{
+			name:  "HDDVD English audio",
+			disc:  "HDDVD",
+			audio: []string{"EN"},
+		},
+		{
+			name:      "HDDVD English subtitles",
+			disc:      "HD-DVD",
+			audio:     []string{"Japanese"},
+			subtitles: []string{"English"},
+		},
+		{
+			name:       "HDDVD alias foreign only",
+			disc:       "HD DVD",
+			audio:      []string{"Japanese"},
+			wantReason: "disc requires audio or subtitles in english, en, eng",
+		},
+		{
+			name:       "Blu-ray alias preserves old check",
+			disc:       "Blu-Ray",
+			audio:      []string{"Japanese"},
+			wantReason: "disc requires audio or subtitles in english, en, eng",
+		},
+		{name: "canonical disc missing label", wantReason: "missing language data"},
+		{
+			name:       "canonical disc unknown label",
+			disc:       "unknown",
+			wantReason: "missing language data",
+		},
+		{name: "canonical disc English audio", audio: []string{"English"}},
+		{
+			name:      "canonical disc English subtitles",
+			disc:      "unknown",
+			audio:     []string{"Japanese"},
+			subtitles: []string{"English"},
+		},
+		{
+			name:       "canonical disc original needs subtitles",
+			audio:      []string{"Japanese"},
+			original:   "ja",
+			wantReason: "requires subtitles in english, en, eng with original audio",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			meta := api.RuleSubject{
+				Identity:          api.ExternalIdentity{Category: "tv"},
+				DiscType:          test.disc,
+				Type:              "DISC",
+				AudioLanguages:    test.audio,
+				SubtitleLanguages: test.subtitles,
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: test.original}},
+				LanguageFacts:     api.LanguageFacts{ProgrammeStatus: api.MetadataEvidenceStatusPartial},
+			}
+			failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
+			blocking := nonAdvisoryFailures(failures)
+			if test.wantReason == "" {
+				if len(blocking) != 0 {
+					t.Fatalf("unexpected full-disc failures: %+v", failures)
+				}
+				return
+			}
+			if len(blocking) != 1 || blocking[0] != trackers.NewRuleFailure("language_rule", test.wantReason, api.RuleDispositionWaivable) {
+				t.Fatalf("full-disc failures = %+v, want original waivable reason %q", failures, test.wantReason)
+			}
+		})
+	}
+}
+
+func TestEvaluateRulesNBLIncludesDiscSourcedRemuxes(t *testing.T) {
+	t.Parallel()
+	for _, disc := range []string{"BDMV", "DVD", "HDDVD"} {
 		meta := api.RuleSubject{
-			Identity: api.ExternalIdentity{Category: "tv"},
-			DiscType: disc,
-			Type:     "DISC",
+			Identity:       api.ExternalIdentity{Category: "tv"},
+			DiscType:       disc,
+			Type:           "REMUX",
+			AudioLanguages: []string{"English"},
 		}
-		if failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta); len(nonAdvisoryFailures(failures)) != 0 {
-			t.Fatalf("%s full disc received language block: %#v", disc, failures)
+		failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
+		blocking := nonAdvisoryFailures(failures)
+		if len(blocking) != 2 || !hasRuleFailure(blocking, "language_evidence") || !hasRuleFailure(blocking, "language_subtitles") {
+			t.Fatalf("%s sourced remux escaped finalized assessment: %+v", disc, failures)
 		}
-		meta.Type = "REMUX"
-		if failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta); !hasRuleFailure(failures, "language_evidence") || !hasRuleFailure(failures, "language_subtitles") {
-			t.Fatalf("%s sourced remux escaped assessment: %#v", disc, failures)
+		for _, failure := range blocking {
+			if failure.Disposition != api.RuleDispositionStrict {
+				t.Fatalf("remux language failure became waivable: %+v", failure)
+			}
 		}
+	}
+}
+
+func TestNBLFullDiscLanguagePreservesWaiverAndDebug(t *testing.T) {
+	t.Parallel()
+	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", api.RuleSubject{
+		Identity: api.ExternalIdentity{Category: "tv"},
+		DiscType: "DVD",
+		Type:     "DISC",
+	})
+	fingerprint, err := trackers.WaivableRuleFailureFingerprint("NBL", failures)
+	if err != nil || fingerprint == "" {
+		t.Fatalf("missing legacy waiver fingerprint: %q %v", fingerprint, err)
+	}
+	for _, test := range []struct {
+		name       string
+		mode       api.WorkflowExecutionMode
+		projection *api.TrackerReleaseProjection
+		wantBlock  bool
+	}{
+		{
+			name:      "normal requires waiver",
+			mode:      api.WorkflowExecutionModeNormal,
+			wantBlock: true,
+		},
+		{name: "debug bypasses waiver", mode: api.WorkflowExecutionModeDebug},
+		{
+			name: "ordinary waiver permits upload",
+			mode: api.WorkflowExecutionModeNormal,
+			projection: &api.TrackerReleaseProjection{
+				WaivableRuleFingerprint:      fingerprint,
+				RuleAuthorizationFingerprint: fingerprint,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			failure, err := trackers.FirstBlockingRuleFailure("NBL", failures, test.mode, test.projection)
+			if err != nil || (failure != nil) != test.wantBlock {
+				t.Fatalf("blocking failure = %+v %v, want block %v", failure, err, test.wantBlock)
+			}
+		})
 	}
 }
 
