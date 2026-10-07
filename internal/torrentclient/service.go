@@ -38,6 +38,9 @@ type Service struct {
 	logger          api.Logger
 	trackerPatterns map[string]trackerPattern
 	trackerPriority []string
+	// renamingTrackers holds lower-cased trackers whose upload torrent renames
+	// content, so their torrents need link staging to find the data.
+	renamingTrackers map[string]struct{}
 }
 
 // qbit injection HTTP uses a short, single-attempt client so a dead WebUI or
@@ -104,6 +107,12 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 		logger:          logger,
 		trackerPatterns: buildTrackerIDPatterns(registry),
 		trackerPriority: registry.Priority(),
+	}
+	service.renamingTrackers = make(map[string]struct{})
+	for _, tracker := range registry.Names() {
+		if _, ok := registry.LookupContentRenamer(tracker); ok {
+			service.renamingTrackers[strings.ToLower(strings.TrimSpace(tracker))] = struct{}{}
+		}
 	}
 	if len(liveTest) > 0 {
 		service.liveTest = liveTest[0]
@@ -395,6 +404,9 @@ func (s *Service) injectQbit(
 			staging.SavePath,
 		)
 	} else {
+		if err := s.requireLinkStagingForRenamedContent(ctx, name, client, meta, torrent); err != nil {
+			return err
+		}
 		// Without link staging, save beside the prepared source unless a
 		// local_path/remote_path pair maps that location to the client host.
 		savePath, mapped, err := qbitSavePathForSource(meta, client.LocalPath, client.RemotePath)

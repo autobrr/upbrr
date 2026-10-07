@@ -45,6 +45,7 @@ type Profile struct {
 	BannedGroupPolicy       *trackers.BannedGroupPolicy
 	MetadataPolicy          *trackers.TrackerMetadataPolicy
 	UploadArtifactPolicy    *trackers.UploadArtifactPolicy
+	ContentRenamer          trackers.ContentRenamer
 	DupePolicy              *trackers.DupePolicy
 	AudioPolicy             *trackers.AudioPolicy
 	ImageHostPolicy         *trackers.ImageHostPolicy

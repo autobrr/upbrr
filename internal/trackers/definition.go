@@ -509,6 +509,19 @@ type UploadArtifactPolicy struct {
 	RequireAnnounce bool
 }
 
+// ContentRenamer maps one torrent path component (the root name or a file or
+// folder name) to the name a tracker requires, given the exact upload subject.
+// It must return name unchanged when no rename applies and must be pure.
+type ContentRenamer func(meta api.UploadSubject, name string) string
+
+// ContentRenamerProvider declares tracker-owned content naming for the
+// tracker's own upload torrent artifact. Piece hashes are unaffected, and the
+// shared base torrent used by other trackers keeps its original names.
+type ContentRenamerProvider interface {
+	// ContentRenamer returns the tracker's content renamer.
+	ContentRenamer() ContentRenamer
+}
+
 // UploadArtifactPolicyProvider declares tracker-owned personalization policy.
 type UploadArtifactPolicyProvider interface {
 	// UploadArtifactPolicy returns tracker torrent personalization settings.
@@ -922,6 +935,8 @@ type Descriptor struct {
 	Metadata *TrackerMetadataPolicy
 	// UploadArtifact contains optional torrent personalization settings.
 	UploadArtifact *UploadArtifactPolicy
+	// ContentRenamer optionally renames torrent content for this tracker.
+	ContentRenamer ContentRenamer
 	// DupePolicy contains optional duplicate comparison settings.
 	DupePolicy *DupePolicy
 	// AudioPolicy contains optional audio-language restrictions.

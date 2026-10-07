@@ -140,3 +140,106 @@ func TestResolveDisplayTitlePreservesAutomaticAlternatesAndManualOriginalTitle(t
 		t.Fatalf("manual-empty original display = %q", got)
 	}
 }
+
+func TestComplianceFileName(t *testing.T) {
+	t.Parallel()
+
+	ddp := api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}
+	tests := []struct {
+		name string
+		meta api.UploadSubject
+		in   string
+		want string
+	}{
+		{
+			name: "inserts missing audio before the video codec",
+			meta: ddp,
+			in:   "Example.Show.S01E05.NORDiC.1080p.DSNP.WEB-DL.H.264-GRP.mkv",
+			want: "Example.Show.S01E05.NORDiC.1080p.DSNP.WEB-DL.DDP5.1.H.264-GRP.mkv",
+		},
+		{
+			name: "single token codec",
+			meta: api.UploadSubject{Audio: "AAC 2.0", Channels: "2.0"},
+			in:   "Example.Show.S01E05.1080p.WEB-DL.x264-GRP.mkv",
+			want: "Example.Show.S01E05.1080p.WEB-DL.AAC2.0.x264-GRP.mkv",
+		},
+		{
+			name: "dts-hd ma",
+			meta: api.UploadSubject{Audio: "DTS-HD MA 5.1", Channels: "5.1"},
+			in:   "Example.Movie.2020.1080p.BluRay.x264-GRP.mkv",
+			want: "Example.Movie.2020.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP.mkv",
+		},
+		{
+			name: "atmos carriers",
+			meta: api.UploadSubject{Audio: "TrueHD 7.1 Atmos", Channels: "7.1"},
+			in:   "Example.Movie.2020.2160p.BluRay.HEVC-GRP.mkv",
+			want: "Example.Movie.2020.2160p.BluRay.TrueHD.Atmos.7.1.HEVC-GRP.mkv",
+		},
+		{
+			name: "folder name without extension",
+			meta: ddp,
+			in:   "Example.Show.S01.1080p.WEB-DL.H.264-GRP",
+			want: "Example.Show.S01.1080p.WEB-DL.DDP5.1.H.264-GRP",
+		},
+		{
+			name: "already has audio",
+			meta: ddp,
+			in:   "Example.Show.S01E05.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
+			want: "Example.Show.S01E05.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
+		},
+		{
+			name: "remux with audio after the codec",
+			meta: api.UploadSubject{Audio: "DTS-HD MA 5.1", Channels: "5.1"},
+			in:   "Example.Movie.2020.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
+			want: "Example.Movie.2020.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
+		},
+		{
+			name: "title containing an audio-like word is not mistaken for audio",
+			meta: ddp,
+			in:   "Flac.Attack.2020.1080p.WEB-DL.H.264-GRP.mkv",
+			want: "Flac.Attack.2020.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
+		},
+		{
+			name: "no video codec token",
+			meta: ddp,
+			in:   "Example.Movie.2020.1080p.WEB-DL-GRP.mkv",
+			want: "Example.Movie.2020.1080p.WEB-DL-GRP.mkv",
+		},
+		{
+			name: "no resolution token",
+			meta: ddp,
+			in:   "Example.Movie.2020.WEB-DL.H.264-GRP.mkv",
+			want: "Example.Movie.2020.WEB-DL.H.264-GRP.mkv",
+		},
+		{
+			name: "unknown audio facts",
+			meta: api.UploadSubject{},
+			in:   "Example.Movie.2020.1080p.WEB-DL.H.264-GRP.mkv",
+			want: "Example.Movie.2020.1080p.WEB-DL.H.264-GRP.mkv",
+		},
+		{
+			name: "channels taken from the audio string when absent",
+			meta: api.UploadSubject{Audio: "Dual-Audio DD 5.1"},
+			in:   "Example.Movie.2020.1080p.WEB-DL.H.264-GRP.mkv",
+			want: "Example.Movie.2020.1080p.WEB-DL.DD5.1.H.264-GRP.mkv",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := complianceFileName(tt.meta, tt.in); got != tt.want {
+				t.Fatalf("complianceFileName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAudioFileNameTokenIsStableForDDPAtmos(t *testing.T) {
+	t.Parallel()
+	if got := audioFileNameToken(api.UploadSubject{Audio: "DD+ 5.1 Atmos", Channels: "5.1"}); got != "DDP5.1.Atmos" {
+		t.Fatalf("token = %q", got)
+	}
+	if got := audioFileNameToken(api.UploadSubject{Audio: "DD+ Unknown", Channels: "Unknown"}); got != "" {
+		t.Fatalf("token with unknown channels = %q", got)
+	}
+}

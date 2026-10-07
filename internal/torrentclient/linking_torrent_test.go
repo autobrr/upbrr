@@ -372,3 +372,138 @@ func TestPrepareLinkStagingRejectsURLOnlyWhenFallbackDisabled(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareLinkStagingHardlinksRenamedTrackerTorrent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.Show.S01E05.1080p.WEB-DL.H.264-GRP.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	torrentPath := filepath.Join(root, "renamed.torrent")
+	writeQbitTestTorrent(t, torrentPath, "Example.Show.S01E05.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv", map[string]string{"source": source}, false)
+	linkRoot := filepath.Join(root, "links")
+
+	service := NewService(config.Config{}, nil)
+	staging, err := service.prepareLinkStaging(context.Background(), "qbit", config.TorrentClientConfig{
+		Linking:      "hardlink",
+		LinkedFolder: config.StringList{linkRoot},
+	}, api.ClientSubject{SourcePath: source, FileList: []string{source}}, api.TorrentResult{Path: torrentPath, Tracker: "ASC"})
+	if err != nil {
+		t.Fatalf("prepare link staging: %v", err)
+	}
+	if !staging.Linked {
+		t.Fatal("expected linked staging")
+	}
+	linked := filepath.Join(linkRoot, "ASC", "Example.Show.S01E05.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv")
+	linkedInfo, err := os.Stat(linked)
+	if err != nil {
+		t.Fatalf("renamed hardlink missing: %v", err)
+	}
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		t.Fatalf("stat source: %v", err)
+	}
+	if !os.SameFile(linkedInfo, sourceInfo) {
+		t.Fatal("renamed file must be a hardlink to the untouched source")
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Fatalf("source must remain: %v", err)
+	}
+}
+
+func TestRequireLinkStagingForRenamedContent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.Show.S01E05.1080p.WEB-DL.H.264-GRP.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	renamed := filepath.Join(root, "renamed.torrent")
+	writeQbitTestTorrent(t, renamed, "Example.Show.S01E05.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv", map[string]string{"source": source}, false)
+	same := filepath.Join(root, "same.torrent")
+	writeQbitTestTorrent(t, same, filepath.Base(source), map[string]string{"source": source}, false)
+	meta := api.ClientSubject{SourcePath: source, FileList: []string{source}}
+
+	service := NewService(config.Config{}, nil)
+	service.renamingTrackers = map[string]struct{}{"asc": {}}
+
+	if err := service.requireLinkStagingForRenamedContent(context.Background(), "qbit", config.TorrentClientConfig{}, meta, api.TorrentResult{Path: renamed, Tracker: "ASC"}); err == nil ||
+		!strings.Contains(err.Error(), "link staging is not active") {
+		t.Fatalf("expected link staging requirement error, got %v", err)
+	}
+	if err := service.requireLinkStagingForRenamedContent(context.Background(), "qbit", config.TorrentClientConfig{}, meta, api.TorrentResult{Path: same, Tracker: "ASC"}); err != nil {
+		t.Fatalf("unchanged names must not require staging: %v", err)
+	}
+	if err := service.requireLinkStagingForRenamedContent(context.Background(), "qbit", config.TorrentClientConfig{}, meta, api.TorrentResult{Path: renamed, Tracker: "OTHER"}); err != nil {
+		t.Fatalf("trackers without a rename policy must be unaffected: %v", err)
+	}
+}
+
+// crossDeviceLinkRoot returns a writable directory on a different filesystem
+// than source, or skips when no such location exists on this host.
+func crossDeviceLinkRoot(t *testing.T, source string) string {
+	t.Helper()
+	other, err := os.MkdirTemp("/dev/shm", "upbrr-link-*") //nolint:usetesting // t.TempDir cannot target a second filesystem
+	if err != nil {
+		t.Skipf("no secondary filesystem available: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(other) })
+	probe := filepath.Join(other, "probe")
+	if err := os.Link(source, probe); err == nil {
+		t.Skip("source and /dev/shm share a filesystem")
+	}
+	return other
+}
+
+func TestPrepareLinkStagingCrossFilesystemHardlinkDoesNotCopy(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.Show.S01E05.1080p.WEB-DL.H.264-GRP.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	renamedName := "Example.Show.S01E05.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv"
+	torrentPath := filepath.Join(root, "renamed.torrent")
+	writeQbitTestTorrent(t, torrentPath, renamedName, map[string]string{"source": source}, false)
+	linkRoot := crossDeviceLinkRoot(t, source)
+	meta := api.ClientSubject{SourcePath: source, FileList: []string{source}}
+	torrent := api.TorrentResult{Path: torrentPath, Tracker: "ASC"}
+
+	service := NewService(config.Config{}, nil)
+	service.renamingTrackers = map[string]struct{}{"asc": {}}
+
+	// Fallback disabled: staging fails outright and leaves nothing behind.
+	_, err := service.prepareLinkStaging(context.Background(), "qbit", config.TorrentClientConfig{
+		Linking:       "hardlink",
+		LinkedFolder:  config.StringList{linkRoot},
+		AllowFallback: new(false),
+	}, meta, torrent)
+	if err == nil || !strings.Contains(err.Error(), "hardlink") {
+		t.Fatalf("expected hardlink failure across filesystems, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(linkRoot, "ASC", renamedName)); !os.IsNotExist(statErr) {
+		t.Fatalf("no copy or partial link may remain, stat err=%v", statErr)
+	}
+
+	// Fallback allowed: staging reports unlinked, and the renamed torrent is then
+	// rejected rather than injected against files that do not exist.
+	staging, err := service.prepareLinkStaging(context.Background(), "qbit", config.TorrentClientConfig{
+		Linking:       "hardlink",
+		LinkedFolder:  config.StringList{linkRoot},
+		AllowFallback: new(true),
+	}, meta, torrent)
+	if err != nil {
+		t.Fatalf("prepare link staging with fallback: %v", err)
+	}
+	if staging.Linked {
+		t.Fatal("cross-filesystem hardlink must not report linked staging")
+	}
+	if err := service.requireLinkStagingForRenamedContent(context.Background(), "qbit", config.TorrentClientConfig{}, meta, torrent); err == nil ||
+		!strings.Contains(err.Error(), "link staging is not active") {
+		t.Fatalf("expected renamed torrent to be rejected after fallback, got %v", err)
+	}
+}

@@ -147,6 +147,9 @@ func (r *Registry) Register(def Definition) error {
 		if provider, ok := def.(UploadArtifactPolicyProvider); ok {
 			descriptor.UploadArtifact = provider.UploadArtifactPolicy()
 		}
+		if provider, ok := def.(ContentRenamerProvider); ok {
+			descriptor.ContentRenamer = provider.ContentRenamer()
+		}
 		if provider, ok := def.(DupePolicyProvider); ok {
 			descriptor.DupePolicy = provider.DupePolicy()
 		}
@@ -434,6 +437,12 @@ func (r *Registry) LookupUploadArtifactPolicy(tracker string) (UploadArtifactPol
 		return UploadArtifactPolicy{}, false
 	}
 	return *descriptor.UploadArtifact, true
+}
+
+// LookupContentRenamer returns the tracker-owned torrent content renamer.
+func (r *Registry) LookupContentRenamer(tracker string) (ContentRenamer, bool) {
+	descriptor, ok := r.LookupDescriptor(tracker)
+	return descriptor.ContentRenamer, ok && descriptor.ContentRenamer != nil
 }
 
 // LookupMetadataPolicy returns tracker-owned metadata requirements.
