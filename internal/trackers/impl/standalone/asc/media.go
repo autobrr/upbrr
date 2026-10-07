@@ -96,28 +96,25 @@ func readTextFile(path string) (string, error) {
 	return strings.ReplaceAll(string(payload), "\r", ""), nil
 }
 
-func readTextFileNoErr(path string) string {
-	value, _ := readTextFile(path)
-	return value
-}
-
 func parseDimensionStr(val any) string {
 	return metautil.ParseDimensionStr(val)
 }
 
 // resolveMediaInfoReport returns the MediaInfo text the site requires for
-// video uploads, preferring the prepared MediaInfo report over disc fallbacks.
-func resolveMediaInfoReport(meta api.UploadSubject, dbPath string) string {
-	if report := strings.TrimSpace(readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath))); report != "" {
-		return report
+// video uploads: the prepared MediaInfo report when present, otherwise the
+// disc evidence (BDInfo or DVD VOB MediaInfo). A report that exists but cannot
+// be read is returned as an error when no fallback text is available.
+func resolveMediaInfoReport(meta api.UploadSubject, dbPath string) (string, error) {
+	var readErr error
+	if reportPath := strings.TrimSpace(meta.MediaInfoTextPath); reportPath != "" {
+		report, err := readTextFile(reportPath)
+		if report = strings.TrimSpace(report); err == nil && report != "" {
+			return report, nil
+		}
+		readErr = err
 	}
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
-	case "DVD":
-		return strings.TrimSpace(trackers.ReadDVDVOBMediaInfo(meta))
-	case "BDMV":
-		report, _ := trackers.ReadBDInfo(dbPath, meta)
-		return strings.TrimSpace(report)
-	default:
-		return ""
+	if fallback := strings.TrimSpace(trackers.ReadBDinfoOrMediaInfo(dbPath, meta)); fallback != "" {
+		return fallback, nil
 	}
+	return "", readErr
 }

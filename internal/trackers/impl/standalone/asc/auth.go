@@ -14,9 +14,16 @@ import (
 	"strings"
 
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/httpclient"
 )
 
 var errSessionExpired = errors.New("ASC session expired or cookies invalid")
+
+// missingCookiesReason is the blocking reason when no ASC cookies are stored.
+const missingCookiesReason = "missing valid ASC cookies"
+
+// siteURL is the cookie-jar scope for the ASC session.
+var siteURL = &url.URL{Scheme: "https", Host: cookieDomain}
 
 // LoadCookies loads ASC cookies from shared storage for the ASC web domain.
 // The legacy source-label return value is always empty. Callers must pass a
@@ -29,32 +36,36 @@ func LoadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, string, er
 	return loaded, "", nil
 }
 
-func authProblem(ctx context.Context, dbPath string) string {
+// loadSessionCookies returns the stored ASC cookies. A tracker with no stored
+// cookies yields none rather than an error, so callers report it as missing
+// credentials; storage or decryption failures are returned as errors.
+func loadSessionCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
 	cookies, _, err := LoadCookies(ctx, dbPath)
-	if err == nil && len(cookies) > 0 {
-		return ""
+	if errors.Is(err, cookiepkg.ErrTrackerCookiesNotFound) {
+		return nil, nil
 	}
-	return "missing valid ASC cookies"
+	return cookies, err
 }
 
-// newSessionClient wraps base with a cookie jar seeded from stored cookies so
+// newSessionClient copies base with a cookie jar seeded from stored cookies so
 // Laravel's rotating session and XSRF cookies follow redirects and later requests.
 func newSessionClient(base *http.Client, cookies []*http.Cookie) (*http.Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: ASC cookie jar: %w", err)
 	}
-	site, err := url.Parse(baseURL)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: ASC base url: %w", err)
-	}
-	jar.SetCookies(site, cookies)
-	client := &http.Client{Jar: jar}
-	if base != nil {
-		client.Transport = base.Transport
-		client.Timeout = base.Timeout
-	}
+	jar.SetCookies(siteURL, cookies)
+	client := httpclient.CloneWithTimeout(base, httpclient.UploadTimeout)
+	client.Jar = jar
 	return client, nil
+}
+
+// withoutRedirects copies a session client so a write's own redirect response
+// is returned instead of followed; Go would otherwise replay POST/PATCH as GET.
+func withoutRedirects(client *http.Client) *http.Client {
+	clone := *client
+	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &clone
 }
 
 // xsrfToken returns the decoded Laravel XSRF cookie expected in X-XSRF-TOKEN.
@@ -62,11 +73,7 @@ func xsrfToken(client *http.Client) string {
 	if client == nil || client.Jar == nil {
 		return ""
 	}
-	site, err := url.Parse(baseURL)
-	if err != nil {
-		return ""
-	}
-	for _, cookie := range client.Jar.Cookies(site) {
+	for _, cookie := range client.Jar.Cookies(siteURL) {
 		if cookie.Name != "XSRF-TOKEN" {
 			continue
 		}

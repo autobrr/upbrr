@@ -10,7 +10,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Category IDs from the upload page `categories` prop. Anime requires a leaf.
+// Category IDs from the upload page `categories` prop. Anime uploads must use
+// a leaf category (59/61); duplicate search queries the parent animeParentCategory.
 const (
 	categoryMovie       = "4"
 	categorySeries      = "3"
@@ -80,7 +81,10 @@ func resolveQualityID(meta api.UploadSubject) string {
 	}
 }
 
+// resolveDiscQualityID classifies full discs by size against nominal disc
+// capacities, which are decimal: DVD5 4.7 GB, BD25/50/66/100 25/50/66/100 GB.
 func resolveDiscQualityID(meta api.UploadSubject) string {
+	const gigabyte = 1_000_000_000
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "DVD":
 		if meta.SourceSize > 4_700_000_000 {
@@ -91,11 +95,11 @@ func resolveDiscQualityID(meta api.UploadSubject) string {
 		return "52"
 	}
 	switch size := meta.SourceSize; {
-	case size > 66<<30:
+	case size > 66*gigabyte:
 		return "78"
-	case size > 50<<30:
+	case size > 50*gigabyte:
 		return "77"
-	case size > 25<<30:
+	case size > 25*gigabyte:
 		return "76"
 	default:
 		return "75"
@@ -276,87 +280,96 @@ func resolveLanguageID(meta api.UploadSubject) string {
 	}, "11")
 }
 
-var genreIDs = map[string][]string{
-	"action":            {"205"},
-	"adventure":         {"206"},
-	"fantasy":           {"234"},
-	"war":               {"210"},
-	"animação":          {"225"},
-	"aventura":          {"206"},
-	"ação":              {"205"},
-	"biografia":         {"226"},
-	"comédia":           {"227"},
-	"crime":             {"228"},
-	"curta-metragem":    {"229"},
-	"documentário":      {"230"},
-	"drama":             {"231"},
-	"esporte":           {"232"},
-	"esportes":          {"219"}, //nolint:misspell // Portuguese genre name.
-	"família":           {"233"},
-	"fantasia":          {"234"},
-	"faroeste":          {"235"},
-	"western":           {"235"},
-	"ficção científica": {"236"},
-	"sci-fi":            {"236"},
-	"filme de tv":       {"237"},
-	"cinema tv":         {"237"},
-	"game show":         {"238"},
-	"guerra":            {"210"},
-	"história":          {"239"},
-	"humor":             {"214"},
-	"infantil":          {"240"},
-	"kids":              {"240"},
-	"infantis":          {"213"}, //nolint:misspell // Portuguese genre name.
-	"mistério":          {"241"},
-	"musical":           {"220"},
-	"música":            {"242"},
-	"novela":            {"243"},
-	"soap":              {"243"},
-	"programa de tv":    {"244"},
-	"reality show":      {"245"},
-	"reality":           {"245"},
-	"romance":           {"246"},
-	"seriados":          {"247"},
-	"suspense":          {"248"},
-	"talk show":         {"249"},
-	"talk":              {"249"},
-	"terror":            {"250"},
-	"thriller":          {"251"},
-	"tokusatsu":         {"252"},
+// genreIDs maps lowercase Portuguese genre names to ASC genre option IDs, as
+// the upload profile lists them. ASC keeps near-duplicate sport and children's
+// options with separate IDs; each is mapped as listed.
+// `talk` covers the TMDB TV genre the shared translator does not.
+var genreIDs = map[string]string{
+	"animação":          "225",
+	"aventura":          "206",
+	"ação":              "205",
+	"biografia":         "226",
+	"comédia":           "227",
+	"crime":             "228",
+	"curta-metragem":    "229",
+	"documentário":      "230",
+	"drama":             "231",
+	"esporte":           "232",
+	"esportes":          "219", //nolint:misspell // Portuguese genre name.
+	"família":           "233",
+	"fantasia":          "234",
+	"faroeste":          "235",
+	"ficção científica": "236",
+	"filme de tv":       "237",
+	"cinema tv":         "237",
+	"telefilme":         "237",
+	"game show":         "238",
+	"guerra":            "210",
+	"história":          "239",
+	"humor":             "214",
+	"infantil":          "240",
+	"infantis":          "213", //nolint:misspell // Portuguese genre name.
+	"mistério":          "241",
+	"musical":           "220",
+	"música":            "242",
+	"novela":            "243",
+	"programa de tv":    "244",
+	"reality show":      "245",
+	"romance":           "246",
+	"seriados":          "247",
+	"suspense":          "248",
+	"talk show":         "249",
+	"talk":              "249",
+	"terror":            "250",
+	"thriller":          "251",
+	"tokusatsu":         "252",
 }
 
-// resolveGenreIDs maps comma-separated Portuguese genre names to site genre
-// IDs. Compound provider genres ("Ação e Aventura", and TMDB TV genres such as
-// "Sci-Fi & Fantasy" that stay English in pt-BR) map through their parts;
-// unknown genres are dropped.
+// resolveGenreIDs maps comma-separated genre names to ASC genre IDs. Names
+// missing from genreIDs go through the shared English-to-Portuguese genre
+// translator, which covers TMDB TV genres that pt-BR leaves in English.
+// Compound genres ("Ação e Aventura", "Sci-Fi & Fantasy") map through their
+// parts; unknown genres are dropped.
 func resolveGenreIDs(genres string) []string {
 	var out []string
 	seen := make(map[string]struct{})
-	add := func(ids []string) {
-		for _, id := range ids {
-			if _, ok := seen[id]; ok {
-				continue
-			}
+	add := func(name string) bool {
+		id, ok := lookupGenreID(name)
+		if !ok {
+			return false
+		}
+		if _, dup := seen[id]; !dup {
 			seen[id] = struct{}{}
 			out = append(out, id)
 		}
+		return true
 	}
 	for raw := range strings.SplitSeq(genres, ",") {
 		key := strings.ToLower(strings.TrimSpace(raw))
-		if key == "" {
+		if key == "" || add(key) {
 			continue
 		}
-		if ids, ok := genreIDs[key]; ok {
-			add(ids)
+		translated := strings.ToLower(metautil.TranslateGenreToPortugueseStrict(key))
+		if translated != "" && add(translated) {
 			continue
 		}
-		for _, part := range strings.FieldsFunc(strings.ReplaceAll(key, " e ", "&"), func(r rune) bool { return r == '&' }) {
-			if ids, ok := genreIDs[strings.TrimSpace(part)]; ok {
-				add(ids)
-			}
+		compound := metautil.FirstNonEmptyTrimmed(translated, key)
+		for part := range strings.SplitSeq(strings.ReplaceAll(compound, " e ", "&"), "&") {
+			add(strings.TrimSpace(part))
 		}
 	}
 	return out
+}
+
+func lookupGenreID(name string) (string, bool) {
+	if id, ok := genreIDs[name]; ok {
+		return id, true
+	}
+	if translated := strings.ToLower(metautil.TranslateGenreToPortugueseStrict(name)); translated != "" {
+		id, ok := genreIDs[translated]
+		return id, ok
+	}
+	return "", false
 }
 
 func categoryOf(meta api.UploadSubject) string {

@@ -23,11 +23,16 @@ import (
 
 const screenshotJPEGQuality = 90
 
-// uploadPayload holds the `POST /torrents` form fields. Attribute IDs are
-// repeated `attribute_ids[]` values; everything else is single-valued.
+// uploadPayload holds the `POST /torrents` form fields. attributeIDs are sent
+// as repeated `attribute_ids[]` values and screenshot paths as repeated
+// `screenshot_paths[]`; other fields are single-valued. qualityID, containerID
+// and genreIDs repeat their attribute_ids entries so validation can check the
+// payload that will actually be sent.
 type uploadPayload struct {
 	fields       map[string]string
 	attributeIDs []string
+	qualityID    string
+	containerID  string
 	genreIDs     []string
 }
 
@@ -57,12 +62,14 @@ func buildPayload(
 		"mediainfo":   mediaInfo,
 	}}
 	payload.genreIDs = resolveGenreIDs(resolveGenres(meta, answers))
+	payload.qualityID = resolveQualityID(meta)
+	payload.containerID = resolveContainerID(meta)
 	attributes := make([]string, 0, 6+len(payload.genreIDs))
 	attributes = append(attributes,
 		resolveLanguageID(meta),
-		resolveQualityID(meta),
+		payload.qualityID,
 		audioID,
-		resolveContainerID(meta),
+		payload.containerID,
 		resolveVideoCodecID(meta),
 		resolveAudioCodecID(meta),
 	)
@@ -87,7 +94,8 @@ func (p uploadPayload) multipartFields(screenshotPaths []string) map[string][]st
 	return out
 }
 
-// previewFields flattens the payload for dry-run display.
+// previewFields flattens the payload for dry-run display. The description is
+// shown in its own preview section and the MediaInfo report is omitted for size.
 func (p uploadPayload) previewFields() map[string]string {
 	out := make(map[string]string, len(p.fields)+1)
 	for key, value := range p.fields {
@@ -100,8 +108,8 @@ func (p uploadPayload) previewFields() map[string]string {
 	return out
 }
 
-// selectScreenshots returns up to maxScreenshots local final screenshots in
-// formats the site accepts.
+// selectScreenshots returns the local paths of up to maxScreenshots non-menu
+// screenshots with extensions the site accepts.
 func selectScreenshots(assets trackers.DescriptionAssets) []string {
 	paths := make([]string, 0, maxScreenshots)
 	for _, image := range assets.Screenshots {
@@ -117,9 +125,9 @@ func selectScreenshots(assets trackers.DescriptionAssets) []string {
 	return paths
 }
 
-// loadScreenshotFiles reads screenshots into memory as `/torrents/screenshots`
-// image fields, re-encoding oversized PNG captures as JPEG so they fit the
-// site's per-image limit.
+// loadScreenshotFiles reads screenshots as `/torrents/screenshots` "image"
+// fields. Files over maxImageBytes are re-encoded as JPEG (PNG or JPEG input
+// only) and rejected if still too large.
 func loadScreenshotFiles(paths []string) ([]commonhttp.FileField, error) {
 	files := make([]commonhttp.FileField, 0, len(paths))
 	for idx, path := range paths {

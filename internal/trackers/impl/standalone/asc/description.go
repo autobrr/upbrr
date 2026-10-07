@@ -4,28 +4,22 @@
 package asc
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/providerid"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -69,27 +63,9 @@ func tmdbCachePath(dbPath string, tmdbID int, suffix string) string {
 	return filepath.Join(cacheRoot, fmt.Sprintf("tmdb_localized_%d_%s.json", tmdbID, suffix))
 }
 
-func fetchRichMedia(ctx context.Context, client *tmdb.Client, tmdbID int, category string, cachePath string) (richMediaResponse, error) {
-	data, err := client.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
-		TMDBID:    tmdbID,
-		Category:  strings.ToLower(category),
-		DataType:  "main",
-		CachePath: cachePath,
-	})
-	if err != nil {
-		return richMediaResponse{}, fmt.Errorf("fetch rich media: %w", err)
-	}
-	var resp richMediaResponse
-	if vote, ok := data["vote_average"].(float64); ok {
-		resp.VoteAverage = vote
-	}
-	if homepage, ok := data["homepage"].(string); ok {
-		resp.Homepage = homepage
-	}
-	return resp, nil
-}
-
-func fetchRichCredits(ctx context.Context, client *tmdb.Client, tmdbID int, category string, cachePath string) ([]richCreditItem, error) {
+// fetchRichMain loads the localized TMDB main resource with credits in one
+// request and returns the rating/homepage extras and the cast list.
+func fetchRichMain(ctx context.Context, client *tmdb.Client, tmdbID int, category string, cachePath string) (richMediaResponse, []richCreditItem, error) {
 	data, err := client.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
 		TMDBID:           tmdbID,
 		Category:         strings.ToLower(category),
@@ -98,17 +74,21 @@ func fetchRichCredits(ctx context.Context, client *tmdb.Client, tmdbID int, cate
 		CachePath:        cachePath,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("fetch rich credits: %w", err)
+		return richMediaResponse{}, nil, fmt.Errorf("fetch rich main: %w", err)
+	}
+	var media richMediaResponse
+	if vote, ok := data["vote_average"].(float64); ok {
+		media.VoteAverage = vote
+	}
+	if homepage, ok := data["homepage"].(string); ok {
+		media.Homepage = homepage
 	}
 	credits, ok := data["credits"].(map[string]any)
 	if !ok {
 		credits = data
 	}
-	castRaw, ok := credits["cast"].([]any)
-	if !ok {
-		return nil, errors.New("no cast found")
-	}
-	var cast []richCreditItem
+	castRaw, _ := credits["cast"].([]any)
+	cast := make([]richCreditItem, 0, len(castRaw))
 	for _, item := range castRaw {
 		m, ok := item.(map[string]any)
 		if !ok {
@@ -129,7 +109,7 @@ func fetchRichCredits(ctx context.Context, client *tmdb.Client, tmdbID int, cate
 		}
 		cast = append(cast, credit)
 	}
-	return cast, nil
+	return media, cast, nil
 }
 
 func fetchRichSeasons(ctx context.Context, client *tmdb.Client, tmdbID int, cachePath string) ([]richSeasonItem, error) {
@@ -207,9 +187,18 @@ func fetchRichEpisode(ctx context.Context, client *tmdb.Client, tmdbID, season, 
 	return ep, nil
 }
 
-// buildDescription composes text-only BBCode. ASC rejects images hosted
-// elsewhere, and the site renders cover and screenshots from their own fields.
-func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets) string {
+// buildDescription composes the ASC BBCode description without images: ASC
+// rejects images hosted elsewhere and renders cover, screenshots and MediaInfo
+// from their own form fields. Final and override descriptions, and the custom
+// header, pass through verbatim; validatePayloadFields blocks any that embed
+// images hosted outside ASC.
+func buildDescription(
+	ctx context.Context,
+	meta api.UploadSubject,
+	cfg config.Config,
+	assets trackers.DescriptionAssets,
+	logger api.Logger,
+) string {
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
@@ -217,7 +206,7 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	if assets.Override && strings.TrimSpace(assets.Description) != "" {
 		return strings.TrimSpace(assets.Description)
 	}
-	rich := fetchRichDetails(ctx, meta, cfg)
+	rich := fetchRichDetails(ctx, meta, cfg, logger)
 	answers := standalone.QuestionnaireAnswers(meta, "ASC")
 
 	parts := []string{"[center]", "[size=20][b]" + resolveUploadTitle(meta) + "[/b][/size]"}
@@ -241,9 +230,6 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	appendSection("Avaliações", buildRatingsBBCode(meta, rich.media))
 	parts = append(parts, "[/center]")
 
-	if media := buildMediaInfo(meta, cfg.MainSettings.DBPath); media != "" {
-		parts = append(parts, "[spoiler=Informações do Arquivo][code]"+strings.TrimSpace(media)+"[/code][/spoiler]")
-	}
 	if notes := sanitizeDescriptionNotes(assets.Description); notes != "" {
 		parts = append(parts, notes)
 	}
@@ -262,8 +248,8 @@ type richDetails struct {
 }
 
 // fetchRichDetails loads optional localized TMDB extras; each lookup failure
-// only omits its section.
-func fetchRichDetails(ctx context.Context, meta api.UploadSubject, cfg config.Config) richDetails {
+// only omits its section and is logged at debug level.
+func fetchRichDetails(ctx context.Context, meta api.UploadSubject, cfg config.Config, logger api.Logger) richDetails {
 	var rich richDetails
 	apiKey := strings.TrimSpace(cfg.MainSettings.TMDBAPI)
 	tmdbID := meta.Identity.TMDBID
@@ -272,22 +258,29 @@ func fetchRichDetails(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	}
 	client := tmdb.NewClient(nil, nil, apiKey)
 	dbPath := cfg.MainSettings.DBPath
-	if media, err := fetchRichMedia(ctx, client, tmdbID, categoryOf(meta), tmdbCachePath(dbPath, tmdbID, "main")); err == nil {
-		rich.media = &media
+	omit := func(section string, err error) {
+		logger.Debugf("trackers: ASC tmdb extra omitted tracker=ASC section=%s err=%s", section, redaction.RedactValue(err.Error(), nil))
 	}
-	if cast, err := fetchRichCredits(ctx, client, tmdbID, categoryOf(meta), tmdbCachePath(dbPath, tmdbID, "credits")); err == nil {
+	if media, cast, err := fetchRichMain(ctx, client, tmdbID, categoryOf(meta), tmdbCachePath(dbPath, tmdbID, "credits")); err == nil {
+		rich.media = &media
 		rich.cast = cast
+	} else {
+		omit("main", err)
 	}
 	if categoryOf(meta) != "TV" {
 		return rich
 	}
 	if seasons, err := fetchRichSeasons(ctx, client, tmdbID, tmdbCachePath(dbPath, tmdbID, "pt_seasons")); err == nil {
 		rich.seasons = seasons
+	} else {
+		omit("seasons", err)
 	}
 	if meta.SeasonInt > 0 && meta.EpisodeInt > 0 {
 		suffix := fmt.Sprintf("ep_%d_%d", meta.SeasonInt, meta.EpisodeInt)
 		if ep, err := fetchRichEpisode(ctx, client, tmdbID, meta.SeasonInt, meta.EpisodeInt, tmdbCachePath(dbPath, tmdbID, suffix)); err == nil {
 			rich.episode = &ep
+		} else {
+			omit("episode", err)
 		}
 	}
 	return rich
@@ -457,18 +450,6 @@ func formatDate(dateStr string) string {
 	return dateStr
 }
 
-func buildMediaInfo(meta api.UploadSubject, dbPath string) string {
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
-	case "BDMV":
-		text, _ := trackers.ReadBDInfo(dbPath, meta)
-		return text
-	case "DVD":
-		return metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
-	default:
-		return readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath))
-	}
-}
-
 func sanitizeDescriptionNotes(value string) string {
 	replacer := strings.NewReplacer(
 		"[user]", "", "[/user]", "",
@@ -488,8 +469,8 @@ var (
 	emptyURLWrapperPattern  = regexp.MustCompile(`(?is)\[url=[^\]]*\]\s*\[/url\]`)
 )
 
-// stripForeignImages removes image tags ASC would reject, along with link
-// wrappers left empty by the removal.
+// stripForeignImages removes image tags ASC would reject, then drops any empty
+// [url=…][/url] wrappers.
 func stripForeignImages(value string) string {
 	stripped := descriptionImagePattern.ReplaceAllStringFunc(value, func(tag string) string {
 		match := descriptionImagePattern.FindStringSubmatch(tag)
@@ -540,82 +521,12 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 
 	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
+		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets)
+	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets, req.Logger)
 	return trackers.DescriptionResult{
 		Group:       "asc",
 		Description: strings.TrimSpace(description),
 	}, nil
-}
-
-// uploadScreenshots stores each screenshot on the site and returns the server
-// paths the upload form references. The site rate-limits with HTTP 429.
-func uploadScreenshots(ctx context.Context, client *http.Client, files []commonhttp.FileField) ([]string, error) {
-	paths := make([]string, 0, len(files))
-	for idx, file := range files {
-		path, err := uploadScreenshot(ctx, client, file)
-		if err != nil {
-			return nil, fmt.Errorf("trackers: ASC screenshot %d: %w", idx+1, err)
-		}
-		paths = append(paths, path)
-	}
-	return paths, nil
-}
-
-func uploadScreenshot(ctx context.Context, client *http.Client, file commonhttp.FileField) (string, error) {
-	body, contentType, err := commonhttp.BuildMultipartPayloadMulti(nil, []commonhttp.FileField{file})
-	if err != nil {
-		return "", fmt.Errorf("build screenshot payload: %w", err)
-	}
-	for attempt := 1; ; attempt++ {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+screenshotUploadPath, bytes.NewReader(body))
-		if err != nil {
-			return "", fmt.Errorf("build screenshot request: %w", err)
-		}
-		httpReq.Header.Set("Content-Type", contentType)
-		setXHRHeaders(httpReq, client)
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			return "", fmt.Errorf("screenshot request: %w", err)
-		}
-		payload, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
-		_ = resp.Body.Close()
-		if readErr != nil {
-			return "", fmt.Errorf("read screenshot response: %w", readErr)
-		}
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxScreenshotAttempts {
-			if err := waitRetryAfter(ctx, resp.Header.Get("Retry-After")); err != nil {
-				return "", err
-			}
-			continue
-		}
-		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			return "", commonhttp.UploadHTTPError("ASC", resp.StatusCode, payload)
-		}
-		var stored struct {
-			Path string `json:"path"`
-		}
-		if err := json.Unmarshal(payload, &stored); err != nil || strings.TrimSpace(stored.Path) == "" {
-			return "", errors.New("screenshot response did not include a path")
-		}
-		return strings.TrimSpace(stored.Path), nil
-	}
-}
-
-// waitRetryAfter honors a Retry-After delay in seconds, capped to keep
-// preparation bounded.
-func waitRetryAfter(ctx context.Context, header string) error {
-	seconds, err := strconv.Atoi(strings.TrimSpace(header))
-	if err != nil || seconds <= 0 {
-		seconds = defaultRetryAfterSeconds
-	}
-	timer := time.NewTimer(time.Duration(min(seconds, maxRetryAfterSeconds)) * time.Second)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("screenshot retry canceled: %w", ctx.Err())
-	case <-timer.C:
-		return nil
-	}
 }

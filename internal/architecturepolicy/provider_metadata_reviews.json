@@ -233,7 +233,7 @@
   },
   "internal/trackers/impl/standalone/asc/description.go:buildDescription": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
-    "sha256": "0c6fbc6651e1dd32c62c528f5453499a9987d7271e3394ea9bc57ae5d1aae202"
+    "sha256": "2f6d0a5236ebc18050ecc319b58951f4e0752b8ab3069fabd36291db998005f2"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildProductionCompanies": {
     "reason": "ASC Laravel migration: provider-only descriptive or identity evidence rendered as text; no manually-correctable field selector observed.",
@@ -249,7 +249,7 @@
   },
   "internal/trackers/impl/standalone/asc/description.go:prepareDescription": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
-    "sha256": "73d2681762aee9aa1c8d97ae2d3996e63c464a73a92c0c5042b633a30b20bc5b"
+    "sha256": "1007b29f9770bec2e1f99c7599db91453a9d2911c63b300a736bbc913ecfe939"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:buildASCSearchURL": {
     "reason": "ASC Laravel migration: provider-ID query priority unchanged; anime title fallback uses manual-aware resolveASCTitle and never the local source path.",
@@ -257,7 +257,7 @@
   },
   "internal/trackers/impl/standalone/asc/dupe.go:dupeSearcher.Search": {
     "reason": "ASC Laravel migration: provider-ID query priority unchanged; anime title fallback uses manual-aware resolveASCTitle and never the local source path.",
-    "sha256": "e5189c355c8c91d37b7887f7e341e22b5102cef974581217b9875b9b4091934f"
+    "sha256": "80692968bb005ca5ce0e4203be336f919abd3d937b96c773ba35f73ecc6c97fe"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
     "reason": "Finalized/manual title precedence remains intact; missing titles never fall back to the local source path.",
@@ -321,15 +321,15 @@
   },
   "internal/trackers/impl/standalone/asc/upload.go:prepareUpload": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
-    "sha256": "729a794cf9f0eb9476fb4830c6f4281298135396df60e3969ed91ba634547aa8"
+    "sha256": "81deac976d0a28d22a3bd2a14d93227ef267c676a338a5bae71c64c6e42d5045"
   },
   "internal/trackers/impl/standalone/asc/upload.go:prepareUploadState": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
-    "sha256": "ee4db302d6a944de5bb3d36e6e4cbabf4d63f242a9064e83cd2ee2c3da56e83c"
+    "sha256": "cdec0883ca0669fc9409a677ea6a943ab75c5707d2ff56c7596cb34cce5e9677"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validatePayloadFields": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
-    "sha256": "23eb1e4d0eb40d356aa7698b6d3f9674669a902aa75481a5bd1d0381f8684f2d"
+    "sha256": "0bd67b69f178b4b03dfa993093cc34fa8d001df5b92c8d4c336023fbbe23d72f"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validationPolicy": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
@@ -1561,7 +1561,7 @@
   },
   "internal/trackers/impl/standalone/asc/payload.go:buildPayload": {
     "reason": "ASC Laravel migration: site attribute IDs derive from manual-aware resolvers (resolveOriginalLanguage, resolveYear, resolveGenres); automatic provider precedence is unchanged.",
-    "sha256": "d3f5f70e412be99ceb5df0888fb0327e2dbc43bd63c161d12ced4158a4a77bf3"
+    "sha256": "d6fd850513f00bf1704cb7e117dde57157adfe370857841042ea335e73d7d6d1"
   },
   "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAudioID": {
     "reason": "ASC Laravel migration: site attribute IDs derive from manual-aware resolvers (resolveOriginalLanguage, resolveYear, resolveGenres); automatic provider precedence is unchanged.",
@@ -1571,7 +1571,7 @@
     "reason": "ASC Laravel migration: site attribute IDs derive from manual-aware resolvers (resolveOriginalLanguage, resolveYear, resolveGenres); automatic provider precedence is unchanged.",
     "sha256": "c88734bd95d09c0e051789f21d61f05dd13baab520af13e756f00f342c163915"
   },
-  "internal/trackers/impl/standalone/asc/upload.go:resolveCoverURL": {
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveCoverURL": {
     "reason": "ASC Laravel migration: cover URL comes from reviewed provider-only resolvePoster; only the TMDB image size is capped.",
     "sha256": "6d8f3762c117f3dc015f6327837c39a662c145936aa7c319b630d3ca8646b474"
   }
