@@ -251,6 +251,53 @@ func TestLumeMeasuredMetadataAndPersonalReview(t *testing.T) {
 	}
 }
 
+func TestLumeMissingTrackTitlesAreSummarized(t *testing.T) {
+	t.Parallel()
+	for _, outcome := range []trackers.LanguageOutcome{trackers.LanguageAdvisory, trackers.LanguageProhibited} {
+		t.Run(string(outcome), func(t *testing.T) {
+			subject := lumeLanguageSubject(nil)
+			subject.LanguageFacts.Tracks = []api.MediaTrackFacts{
+				{ID: "audio-internal", Kind: api.MediaTrackAudio},
+				{
+					ID:    "subtitle-internal",
+					Kind:  api.MediaTrackSubtitle,
+					Title: "  ",
+				},
+				{
+					ID:    "named",
+					Kind:  api.MediaTrackAudio,
+					Title: "Main audio",
+				},
+			}
+			failures := trackMetadataFailures(subject, outcome)
+			count := 0
+			for _, failure := range failures {
+				if failure.Rule != "language_track_titles" {
+					continue
+				}
+				count++
+				if !strings.Contains(failure.Reason, "tracks missing a descriptive title") || strings.Contains(failure.Reason, "internal") {
+					t.Fatalf("track title summary exposes internal details: %s", failure.Reason)
+				}
+				if blocks := trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false); blocks != (outcome == trackers.LanguageProhibited) {
+					t.Fatalf("title summary changed required disposition: %+v", failure)
+				}
+			}
+			if count != 1 {
+				t.Fatalf("got %d title findings, want one", count)
+			}
+			for i := range subject.LanguageFacts.Tracks {
+				subject.LanguageFacts.Tracks[i].Title = "Descriptive title"
+			}
+			for _, failure := range trackMetadataFailures(subject, outcome) {
+				if failure.Rule == "language_track_titles" {
+					t.Fatalf("named tracks acquired a title warning: %+v", failure)
+				}
+			}
+		})
+	}
+}
+
 func TestLumeSilentDiscAndMandatoryBoundaries(t *testing.T) {
 	t.Parallel()
 	subject := lumeLanguageSubject(nil)

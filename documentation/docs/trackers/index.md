@@ -60,7 +60,7 @@ Review the assessment displayed for each selected tracker:
 - **Staff approval required**: the release needs permission from the tracker's staff; answering a question or acknowledging a warning does not grant that permission.
 - **Trumpable release**: a compliant replacement may supersede the upload. Proceed only when the displayed finding permits an explicit acknowledgement.
 - **Unresolved**: required evidence is missing or conflicting. Correct the facts or answer the requested questions before continuing.
-- **Warning**: non-blocking guidance. It requires no answer or acknowledgement and does not establish that unknown source details are correct.
+- **Guidance**: non-blocking advice in a panel that starts collapsed on **Dupe Check**. Expand it to read the warnings. It requires no answer or acknowledgement and does not establish that unknown source details are correct.
 
 Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
 

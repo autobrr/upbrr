@@ -210,16 +210,14 @@ func compareDubLanguages(left, right string) int {
 func trackMetadataFailures(subject api.TrackerValidationSubject, outcome trackers.LanguageOutcome) []api.RuleFailure {
 	var failures []api.RuleFailure
 	hasTracks := false
+	missingTitle := false
 	for _, track := range subject.LanguageFacts.Tracks {
 		if track.Kind != api.MediaTrackAudio && track.Kind != api.MediaTrackSubtitle {
 			continue
 		}
 		hasTracks = true
 		if strings.TrimSpace(track.Title) == "" {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(subject, "track_titles", "a descriptive title should be assigned to track "+track.ID, outcome),
-			)
+			missingTitle = true
 		}
 		flagMismatch := false
 		if track.Kind == api.MediaTrackSubtitle {
@@ -239,6 +237,9 @@ func trackMetadataFailures(subject api.TrackerValidationSubject, outcome tracker
 				),
 			)
 		}
+	}
+	if missingTitle {
+		failures = append(failures, trackers.LanguageRuleFailure(subject, "track_titles", "tracks missing a descriptive title", outcome))
 	}
 	if !hasTracks || outcome == trackers.LanguageAdvisory {
 		return failures

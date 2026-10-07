@@ -285,12 +285,13 @@ function WorkflowDupeAssessmentView({
             .filter((decision) => !decision.blocking && decision.decision === "bypassed")
             .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
         );
-        const advisoryNotices = uniqueMessages(
+        const guidanceNotices = uniqueMessages(
           (projection?.policyDecisions || [])
             .filter(
               (decision) =>
                 !decision.blocking &&
                 decision.disposition === "advisory" &&
+                decision.code.startsWith("language_") &&
                 decision.decision !== "bypassed",
             )
             .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
@@ -366,15 +367,20 @@ function WorkflowDupeAssessmentView({
               </div>
             ) : null}
 
-            {advisoryNotices.length ? (
-              <div
-                aria-label={`${trackerID} advisory warnings`}
-                className="grid gap-1 text-sm text-muted-foreground"
+            {guidanceNotices.length ? (
+              <details
+                aria-label={`${trackerID} guidance warnings`}
+                className="rounded border border-border p-2 text-sm text-muted-foreground"
               >
-                {advisoryNotices.map((message) => (
-                  <p key={message}>Warning: {message}</p>
-                ))}
-              </div>
+                <summary className="cursor-pointer font-semibold focus-visible:outline focus-visible:outline-ring">
+                  Guidance ({guidanceNotices.length})
+                </summary>
+                <div className="mt-2 grid gap-1">
+                  {guidanceNotices.map((message) => (
+                    <p key={message}>Warning: {message}</p>
+                  ))}
+                </div>
+              </details>
             ) : null}
 
             {ruleAcknowledgement ? (
