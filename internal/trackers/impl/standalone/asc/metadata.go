@@ -5,6 +5,7 @@ package asc
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
@@ -35,6 +36,20 @@ func resolvePoster(meta api.UploadSubject) string {
 	default:
 		return ""
 	}
+}
+
+// resolveCoverURL picks the poster for the cover upload, downsizing TMDB
+// originals to w780 to stay under maxImageBytes (enforced by downloadCover).
+// Posters that are not absolute http(s) URLs yield "".
+func resolveCoverURL(meta api.UploadSubject) string {
+	poster := strings.TrimSpace(resolvePoster(meta))
+	if poster == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(poster); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return ""
+	}
+	return strings.Replace(poster, "/t/p/original/", "/t/p/w780/", 1)
 }
 
 func resolveOverview(meta api.UploadSubject, answers map[string]string) string {

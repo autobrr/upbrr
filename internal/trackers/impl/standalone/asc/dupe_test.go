@@ -11,7 +11,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -112,25 +116,7 @@ func TestASCSearchParsesPagesAndDetails(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	target, err := url.Parse(server.URL)
-	if err != nil {
-		t.Fatalf("parse url: %v", err)
-	}
-
-	tmp := t.TempDir()
-	cookieDir := filepath.Join(tmp, "cookies")
-	if err := os.MkdirAll(cookieDir, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	cookie := "# Netscape HTTP Cookie File\n.amigos-share.club\tTRUE\t/\tTRUE\t0\tamigos-share-club-session\tvalid\n"
-	if err := os.WriteFile(filepath.Join(cookieDir, testCookieFileName), []byte(cookie), 0o600); err != nil {
-		t.Fatalf("write cookie: %v", err)
-	}
-	searcher := dupeSearcher{
-		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
-		http:   &http.Client{Transport: rewriteTransport{target: target}},
-		logger: api.NopLogger{},
-	}
+	searcher := newTestSearcher(t, server)
 	result := searcher.Search(t.Context(), api.DuplicateSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV, IMDBID: 1234567}})
 	if result.Disposition() != dupe.DispositionResolved {
 		t.Fatalf("disposition = %v cause=%v", result.Disposition(), result.Cause())
@@ -152,8 +138,139 @@ func TestASCSearchParsesPagesAndDetails(t *testing.T) {
 	if len(queries) != 2 || queries[0].Get("q") != "tt1234567" || queries[0].Get("category") != categorySeries {
 		t.Fatalf("search queries = %v", queries)
 	}
-	if !result.SearchEvidence().Complete || result.SearchEvidence().Pages != 2 {
-		t.Fatalf("search evidence = %+v", result.SearchEvidence())
+	evidence := result.SearchEvidence()
+	if !evidence.Complete || evidence.Pages != 2 {
+		t.Fatalf("search evidence = %+v", evidence)
+	}
+	if !slices.ContainsFunc(evidence.Warnings, func(w string) bool { return strings.Contains(w, "unavailable for 1 of 2") }) {
+		t.Fatalf("expected a detail-failure warning, got %v", evidence.Warnings)
+	}
+}
+
+// newTestSearcher returns a dupe searcher whose requests reach server and
+// whose cookie store holds a valid ASC session.
+func newTestSearcher(t *testing.T, server *httptest.Server) dupeSearcher {
+	t.Helper()
+
+	target, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+	tmp := t.TempDir()
+	cookieDir := filepath.Join(tmp, "cookies")
+	if err := os.MkdirAll(cookieDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cookie := "# Netscape HTTP Cookie File\n.amigos-share.club\tTRUE\t/\tTRUE\t0\tamigos-share-club-session\tvalid\n"
+	if err := os.WriteFile(filepath.Join(cookieDir, testCookieFileName), []byte(cookie), 0o600); err != nil {
+		t.Fatalf("write cookie: %v", err)
+	}
+	return dupeSearcher{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		http:   &http.Client{Transport: rewriteTransport{target: target}},
+		logger: api.NopLogger{},
+	}
+}
+
+var movieDupeSubject = api.DuplicateSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 1234567}}
+
+func TestASCSearchFailsWithoutPaginator(t *testing.T) {
+	t.Parallel()
+
+	for name, props := range map[string]any{
+		"missing torrents prop": map[string]any{"flash": "x"},
+		"zero paginator":        map[string]any{"torrents": map[string]any{"data": []any{}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(inertiaHTML(t, props)))
+			}))
+			t.Cleanup(server.Close)
+			result := newTestSearcher(t, server).Search(t.Context(), movieDupeSubject)
+			if result.Disposition() != dupe.DispositionFailed || result.Code() != string(dupe.FailureResponseParse) {
+				t.Fatalf("outcome = %v/%s, want parse failure", result.Disposition(), result.Code())
+			}
+		})
+	}
+}
+
+func TestASCSearchStopsAtPageCap(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/torrents" {
+			_, _ = w.Write([]byte(inertiaHTML(t, map[string]any{"files": []any{}})))
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		requests.Add(1)
+		_, _ = w.Write([]byte(inertiaHTML(t, map[string]any{"torrents": map[string]any{
+			"current_page": max(page, 1),
+			"last_page":    99,
+			"data":         []any{},
+		}})))
+	}))
+	t.Cleanup(server.Close)
+	result := newTestSearcher(t, server).Search(t.Context(), movieDupeSubject)
+	evidence := result.SearchEvidence()
+	if requests.Load() != maxDupeSearchPages || evidence.Complete || evidence.Pages != maxDupeSearchPages {
+		t.Fatalf("requests=%d evidence=%+v", requests.Load(), evidence)
+	}
+	if !slices.ContainsFunc(evidence.Warnings, func(w string) bool { return strings.Contains(w, "stopped after 5 pages") }) {
+		t.Fatalf("warnings = %v", evidence.Warnings)
+	}
+}
+
+func TestASCSearchFailsOnExpiredSession(t *testing.T) {
+	t.Parallel()
+
+	for name, detailOnly := range map[string]bool{"search page": false, "detail page": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/login":
+					_, _ = w.Write([]byte("<html>login</html>"))
+				case r.URL.Path == "/torrents" && detailOnly:
+					_, _ = w.Write([]byte(inertiaHTML(t, map[string]any{"torrents": map[string]any{
+						"current_page": 1,
+						"last_page":    1,
+						"data":         []map[string]any{{"id": 7, "name": "Example"}},
+					}})))
+				default:
+					http.Redirect(w, r, "/login", http.StatusFound)
+				}
+			}))
+			t.Cleanup(server.Close)
+			result := newTestSearcher(t, server).Search(t.Context(), movieDupeSubject)
+			if result.Disposition() != dupe.DispositionFailed || !strings.Contains(result.SafeMessage(), "session expired") {
+				t.Fatalf("outcome = %v %q, want expired-session failure", result.Disposition(), result.SafeMessage())
+			}
+		})
+	}
+}
+
+func TestReleaseNameFromFiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		files []string
+		want  string
+	}{
+		{"single file", []string{"Example.2026.1080p.WEB-DL-GRP.mkv"}, "Example.2026.1080p.WEB-DL-GRP.mkv"},
+		{"season pack skips sample", []string{"Sample/example-sample.mkv", "Example.S01E01.1080p-GRP.mkv"}, "Example.S01E01.1080p-GRP.mkv"},
+		{"nfo before video", []string{"Example.nfo", "Example.2026.1080p-GRP.mkv"}, "Example.2026.1080p-GRP.mkv"},
+		{"bluray disc", []string{"BDMV/index.bdmv", "BDMV/STREAM/00000.m2ts"}, ""},
+		{"dvd disc", []string{"VIDEO_TS/VTS_01_1.VOB", "VIDEO_TS/VIDEO_TS.IFO"}, ""},
+		{"no video", []string{"cover.jpg", "notes.txt"}, ""},
+	}
+	for _, tc := range tests {
+		if got := releaseNameFromFiles(tc.files); got != tc.want {
+			t.Errorf("%s: releaseNameFromFiles = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

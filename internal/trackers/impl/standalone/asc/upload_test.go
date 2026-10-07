@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
@@ -26,7 +28,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const testXSRFToken = "token=value"
+const (
+	testXSRFToken    = "token=value"
+	testAnnounceURL  = "https://tracker.example/announce/passkey"
+	testTorrentRoute = "/torrents/321"
+)
+
+func init() {
+	// Keep Retry-After waits short; the retry logic itself is unchanged.
+	retryAfterUnit = time.Millisecond
+}
 
 type rewriteTransport struct{ target *url.URL }
 
@@ -42,90 +53,140 @@ func (t rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// fakeSite imitates the ASC Laravel endpoints the upload uses. Zero values
+// give the happy path; each field switches on one failure mode.
 type fakeSite struct {
-	uploadStatus int
-	approved     atomic.Bool
-	uploads      atomic.Int32
-	screenshots  atomic.Int32
-	throttled    atomic.Bool
+	noXSRF           bool
+	throttleOnce     bool
+	alwaysThrottle   bool
+	screenshotStatus int
+	screenshotNoPath bool
+	uploadStatus     int
+	uploadRedirect   string
+	downloadFails    bool
+
+	approveCalls      atomic.Int32
+	approveWithToken  atomic.Bool
+	uploads           atomic.Int32
+	screenshotCalls   atomic.Int32
+	screenshotsStored atomic.Int32
+	throttled         atomic.Bool
 }
 
 func (s *fakeSite) handler(t *testing.T, registered []byte) http.Handler {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /torrents/screenshots", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Xsrf-Token") != testXSRFToken {
-			w.WriteHeader(http.StatusTeapot)
-			return
-		}
-		if s.throttled.CompareAndSwap(false, true) {
-			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		if _, _, err := r.FormFile("image"); err != nil {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			return
-		}
-		n := s.screenshots.Add(1)
-		_, _ = fmt.Fprintf(w, `{"path":"screenshots/%d.webp","url":"/storage/screenshots/%d.webp"}`, n, n)
-	})
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("login")) })
 	mux.HandleFunc("GET /torrents/upload", func(w http.ResponseWriter, r *http.Request) {
 		if cookie, err := r.Cookie("amigos-share-club-session"); err != nil || cookie.Value != "valid" {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name:  "XSRF-TOKEN",
-			Value: url.QueryEscape(testXSRFToken),
-			Path:  "/",
-		})
+		if !s.noXSRF {
+			http.SetCookie(w, &http.Cookie{
+				Name:  "XSRF-TOKEN",
+				Value: url.QueryEscape(testXSRFToken),
+				Path:  "/",
+			})
+		}
 		_, _ = w.Write([]byte("<html></html>"))
+	})
+	mux.HandleFunc("POST /torrents/screenshots", func(w http.ResponseWriter, r *http.Request) {
+		s.screenshotCalls.Add(1)
+		if r.Header.Get("X-Xsrf-Token") != testXSRFToken {
+			t.Errorf("screenshot request missing XSRF token")
+			w.WriteHeader(http.StatusTeapot)
+			return
+		}
+		if s.alwaysThrottle || (s.throttleOnce && s.throttled.CompareAndSwap(false, true)) {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		if s.screenshotStatus != 0 {
+			w.WriteHeader(s.screenshotStatus)
+			_, _ = w.Write([]byte(`{"message":"bad image"}`))
+			return
+		}
+		if _, _, err := r.FormFile("image"); err != nil {
+			t.Errorf("screenshot request missing image field: %v", err)
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			return
+		}
+		if s.screenshotNoPath {
+			_, _ = w.Write([]byte(`{"url":"/storage/x.webp"}`))
+			return
+		}
+		n := s.screenshotsStored.Add(1)
+		_, _ = fmt.Fprintf(w, `{"path":"screenshots/%d.webp","url":"/storage/screenshots/%d.webp"}`, n, n)
 	})
 	mux.HandleFunc("POST /torrents", func(w http.ResponseWriter, r *http.Request) {
 		s.uploads.Add(1)
 		if r.Header.Get("X-Xsrf-Token") != testXSRFToken || r.Header.Get("Accept") != "application/json" {
+			t.Errorf("upload request missing XSRF/XHR headers")
 			w.WriteHeader(http.StatusTeapot)
 			return
 		}
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			t.Errorf("parse upload form: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if s.uploadStatus == http.StatusUnprocessableEntity {
+		switch {
+		case s.uploadStatus == http.StatusUnprocessableEntity:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(`{"message":"Informe o ano de lançamento.","errors":{"year":["Informe o ano de lançamento."]}}`))
 			return
-		}
-		form := r.MultipartForm
-		valid := form.Value["category_id"][0] == categoryMovie &&
-			slices.Contains(form.Value["attribute_ids[]"], "59") &&
-			len(form.File["torrent"]) == 1 && len(form.File["cover"]) == 1 && len(form.File["screenshots[]"]) == 0 &&
-			slices.Equal(form.Value["screenshot_paths[]"], []string{"screenshots/1.webp", "screenshots/2.webp"})
-		if !valid {
-			w.WriteHeader(http.StatusBadRequest)
+		case s.uploadRedirect != "":
+			http.Redirect(w, r, s.uploadRedirect, http.StatusFound)
 			return
 		}
-		http.Redirect(w, r, "/torrents/321", http.StatusFound)
+		form := r.MultipartForm
+		if got := form.Value["category_id"]; len(got) != 1 || got[0] != categoryMovie {
+			t.Errorf("category_id = %v", got)
+		}
+		if !slices.Contains(form.Value["attribute_ids[]"], "59") {
+			t.Errorf("attribute_ids[] = %v", form.Value["attribute_ids[]"])
+		}
+		if len(form.File["torrent"]) != 1 || len(form.File["cover"]) != 1 {
+			t.Errorf("files torrent=%d cover=%d", len(form.File["torrent"]), len(form.File["cover"]))
+		}
+		if !slices.Equal(form.Value["screenshot_paths[]"], []string{"screenshots/1.webp", "screenshots/2.webp"}) {
+			t.Errorf("screenshot_paths[] = %v", form.Value["screenshot_paths[]"])
+		}
+		http.Redirect(w, r, testTorrentRoute, http.StatusFound)
 	})
-	mux.HandleFunc("GET /torrents/321", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html></html>")) })
-	mux.HandleFunc("GET /torrents/321/download", func(w http.ResponseWriter, _ *http.Request) {
+	// The new torrent page is restricted while pending; success must not depend on it.
+	mux.HandleFunc("GET "+testTorrentRoute, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	mux.HandleFunc("GET "+testTorrentRoute+"/download", func(w http.ResponseWriter, _ *http.Request) {
+		if s.downloadFails {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/x-bittorrent")
 		_, _ = w.Write(registered)
 	})
 	mux.HandleFunc("PATCH /admin/torrents/321/approve", func(w http.ResponseWriter, r *http.Request) {
-		s.approved.Store(r.Header.Get("X-Xsrf-Token") == testXSRFToken)
+		s.approveCalls.Add(1)
+		s.approveWithToken.Store(r.Header.Get("X-Xsrf-Token") == testXSRFToken)
 		w.WriteHeader(http.StatusForbidden)
 	})
 	return mux
 }
 
-func testSubmit(t *testing.T, site *fakeSite, sessionValue string) (api.UploadSummary, string, error) {
+type submitResult struct {
+	summary      api.UploadSummary
+	artifactPath string
+	dbPath       string
+	err          error
+}
+
+func testSubmit(t *testing.T, site *fakeSite, sessionValue string, trackerCfg config.TrackerConfig) submitResult {
 	t.Helper()
 
-	registered := testTorrentPayload(t)
+	uploaded := testTorrentPayload(t, "https://tracker.example/announce")
+	registered := testTorrentPayload(t, testAnnounceURL)
 	server := httptest.NewServer(site.handler(t, registered))
 	t.Cleanup(server.Close)
 	target, err := url.Parse(server.URL)
@@ -141,97 +202,199 @@ func testSubmit(t *testing.T, site *fakeSite, sessionValue string) (api.UploadSu
 
 	tmp := t.TempDir()
 	torrentFile := filepath.Join(tmp, "upload.torrent")
-	if err := os.WriteFile(torrentFile, registered, 0o600); err != nil {
+	if err := os.WriteFile(torrentFile, uploaded, 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
-	if err := warmUploadSession(t.Context(), client); err != nil {
-		return api.UploadSummary{}, "", err
-	}
-	remotePaths, err := uploadScreenshots(t.Context(), client, []commonhttp.FileField{
-		{
-			FieldName: "image",
-			FileName:  "a.png",
-			Content:   []byte("a"),
-		},
-		{
-			FieldName: "image",
-			FileName:  "b.png",
-			Content:   []byte("b"),
-		},
-	})
-	if err != nil {
-		t.Fatalf("upload screenshots: %v", err)
-	}
 	payload := uploadPayload{fields: map[string]string{"category_id": categoryMovie}, attributeIDs: []string{"1", "59"}}
-	body, contentType, err := commonhttp.BuildMultipartPayloadMulti(
-		payload.multipartFields(remotePaths),
-		[]commonhttp.FileField{
-			{FieldName: "torrent", Path: torrentFile},
+	submission := preparedSubmission{
+		fields: payload.multipartFields(nil),
+		files: []commonhttp.FileField{
+			{
+				FieldName: "torrent",
+				FileName:  "upload.torrent",
+				Content:   uploaded,
+			},
 			{
 				FieldName: "cover",
 				FileName:  "cover.jpg",
 				Content:   []byte("cover"),
 			},
 		},
-	)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
+		images: []commonhttp.FileField{
+			{
+				FieldName: "image",
+				FileName:  "a.png",
+				Content:   []byte("a"),
+			},
+			{
+				FieldName: "image",
+				FileName:  "b.png",
+				Content:   []byte("b"),
+			},
+		},
+		torrentPath:  torrentFile,
+		artifactPath: filepath.Join(tmp, "registered", "ASC.torrent"),
+		announceURL:  testAnnounceURL,
 	}
-	artifactPath := filepath.Join(tmp, "registered", "ASC.torrent")
+	dbPath := filepath.Join(tmp, "ua.db")
 	req := trackers.PreparationInput{
 		Tracker:       "ASC",
 		Meta:          api.UploadSubject{SourcePath: filepath.Join(tmp, "Example.Movie.2026.mkv")},
-		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
-		TrackerConfig: config.TrackerConfig{UploaderStatus: true},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		TrackerConfig: trackerCfg,
 		Logger:        api.NopLogger{},
 	}
-	summary, err := submitPreparedUpload(t.Context(), req, client, uploadState{torrentPath: torrentFile}, body, contentType, "", artifactPath)
-	return summary, artifactPath, err
+	summary, err := submitPreparedUpload(t.Context(), req, client, submission)
+	return submitResult{
+		summary:      summary,
+		artifactPath: submission.artifactPath,
+		dbPath:       dbPath,
+		err:          err,
+	}
 }
 
 func TestSubmitPreparedUploadSucceeds(t *testing.T) {
 	t.Parallel()
 
-	site := &fakeSite{}
-	summary, artifactPath, err := testSubmit(t, site, "valid")
-	if err != nil {
-		t.Fatalf("submit: %v", err)
+	site := &fakeSite{throttleOnce: true}
+	result := testSubmit(t, site, "valid", config.TrackerConfig{UploaderStatus: true})
+	if result.err != nil {
+		t.Fatalf("submit: %v", result.err)
 	}
-	if len(summary.UploadedTorrents) != 1 {
-		t.Fatalf("summary = %+v", summary)
+	if len(result.summary.UploadedTorrents) != 1 {
+		t.Fatalf("summary = %+v", result.summary)
 	}
-	uploaded := summary.UploadedTorrents[0]
-	if uploaded.TorrentID != "321" || uploaded.TorrentURL != baseURL+"/torrents/321" || uploaded.TorrentPath != artifactPath {
+	uploaded := result.summary.UploadedTorrents[0]
+	if uploaded.TorrentID != "321" || uploaded.TorrentURL != baseURL+testTorrentRoute || uploaded.TorrentPath != result.artifactPath {
 		t.Fatalf("uploaded torrent = %+v", uploaded)
 	}
-	stored, err := os.ReadFile(artifactPath)
-	if err != nil || !bytes.Equal(stored, testTorrentPayload(t)) {
+	stored, err := os.ReadFile(result.artifactPath)
+	if err != nil || !bytes.Equal(stored, testTorrentPayload(t, testAnnounceURL)) {
 		t.Fatalf("registered torrent was not the site download: %v", err)
 	}
-	if !site.approved.Load() {
-		t.Fatal("expected approval attempt with XSRF token")
+	if site.screenshotCalls.Load() != 3 || site.screenshotsStored.Load() != 2 {
+		t.Fatalf("screenshot calls=%d stored=%d, want one 429 retry", site.screenshotCalls.Load(), site.screenshotsStored.Load())
+	}
+	if site.approveCalls.Load() != 1 || !site.approveWithToken.Load() {
+		t.Fatal("expected one approval attempt with XSRF token")
+	}
+}
+
+func TestSubmitPreparedUploadSkipsApprovalWhenUploaderStatusDisabled(t *testing.T) {
+	t.Parallel()
+
+	site := &fakeSite{}
+	if result := testSubmit(t, site, "valid", config.TrackerConfig{}); result.err != nil {
+		t.Fatalf("submit: %v", result.err)
+	}
+	if site.approveCalls.Load() != 0 {
+		t.Fatal("approval must not be attempted without uploader_status")
+	}
+}
+
+func TestSubmitPreparedUploadFallsBackToReconstructedTorrent(t *testing.T) {
+	t.Parallel()
+
+	result := testSubmit(t, &fakeSite{downloadFails: true}, "valid", config.TrackerConfig{})
+	if result.err != nil {
+		t.Fatalf("submit: %v", result.err)
+	}
+	if got := result.summary.UploadedTorrents[0].TorrentPath; got != result.artifactPath {
+		t.Fatalf("torrent path = %q, want reconstructed %q", got, result.artifactPath)
+	}
+	reconstructed, err := metainfo.LoadFromFile(result.artifactPath)
+	if err != nil {
+		t.Fatalf("load reconstructed torrent: %v", err)
+	}
+	if reconstructed.Announce != testAnnounceURL {
+		t.Fatal("reconstructed torrent does not carry the configured announce URL")
 	}
 }
 
 func TestSubmitPreparedUploadReportsValidationErrors(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := testSubmit(t, &fakeSite{uploadStatus: http.StatusUnprocessableEntity}, "valid")
-	if err == nil || !strings.Contains(err.Error(), "Informe o ano") {
-		t.Fatalf("expected validation error detail, got %v", err)
+	result := testSubmit(t, &fakeSite{uploadStatus: http.StatusUnprocessableEntity}, "valid", config.TrackerConfig{})
+	if result.err == nil || !strings.Contains(result.err.Error(), "Informe o ano") {
+		t.Fatalf("expected validation error detail, got %v", result.err)
+	}
+}
+
+func TestSubmitPreparedUploadRejectsRedirectWithoutTorrent(t *testing.T) {
+	t.Parallel()
+
+	result := testSubmit(t, &fakeSite{uploadRedirect: uploadPagePath}, "valid", config.TrackerConfig{})
+	if result.err == nil || !strings.Contains(result.err.Error(), "rejected") || result.summary.Uploaded != 0 {
+		t.Fatalf("expected rejected upload, got summary=%+v err=%v", result.summary, result.err)
+	}
+	if !failureArtifactWritten(t, filepath.Dir(result.dbPath)) {
+		t.Fatal("expected an upload failure artifact")
 	}
 }
 
 func TestSubmitPreparedUploadDetectsExpiredSession(t *testing.T) {
 	t.Parallel()
 
-	site := &fakeSite{}
-	_, _, err := testSubmit(t, site, "stale")
-	if !errors.Is(err, errSessionExpired) {
-		t.Fatalf("expected expired session, got %v", err)
+	t.Run("before writes", func(t *testing.T) {
+		t.Parallel()
+		site := &fakeSite{}
+		result := testSubmit(t, site, "stale", config.TrackerConfig{})
+		if !errors.Is(result.err, errSessionExpired) {
+			t.Fatalf("expected expired session, got %v", result.err)
+		}
+		if site.uploads.Load() != 0 || site.screenshotCalls.Load() != 0 {
+			t.Fatal("nothing may be posted with an expired session")
+		}
+	})
+	t.Run("upload redirected to login", func(t *testing.T) {
+		t.Parallel()
+		result := testSubmit(t, &fakeSite{uploadRedirect: "/login"}, "valid", config.TrackerConfig{})
+		if !errors.Is(result.err, errSessionExpired) {
+			t.Fatalf("expected expired session, got %v", result.err)
+		}
+	})
+}
+
+func TestSubmitPreparedUploadRequiresXSRFToken(t *testing.T) {
+	t.Parallel()
+
+	site := &fakeSite{noXSRF: true}
+	result := testSubmit(t, site, "valid", config.TrackerConfig{})
+	if result.err == nil || !strings.Contains(result.err.Error(), "XSRF") {
+		t.Fatalf("expected missing XSRF error, got %v", result.err)
 	}
-	if site.uploads.Load() != 0 {
-		t.Fatal("upload must not be posted with an expired session")
+	if site.uploads.Load() != 0 || site.screenshotCalls.Load() != 0 {
+		t.Fatal("nothing may be posted without an XSRF token")
+	}
+}
+
+func TestSubmitPreparedUploadScreenshotFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		site      *fakeSite
+		wantErr   string
+		wantCalls int32
+	}{
+		{"rate limit exhausted", &fakeSite{alwaysThrottle: true}, "rate limited after 5 attempts", maxScreenshotAttempts},
+		{"missing path", &fakeSite{screenshotNoPath: true}, "did not include a path", 1},
+		{"rejected image is not retried", &fakeSite{screenshotStatus: http.StatusUnprocessableEntity}, "status=422", 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := testSubmit(t, tc.site, "valid", config.TrackerConfig{})
+			if result.err == nil || !strings.Contains(result.err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", result.err, tc.wantErr)
+			}
+			if got := tc.site.screenshotCalls.Load(); got != tc.wantCalls {
+				t.Fatalf("screenshot calls = %d, want %d", got, tc.wantCalls)
+			}
+			if tc.site.uploads.Load() != 0 {
+				t.Fatal("the upload must not be posted after a screenshot failure")
+			}
+		})
 	}
 }
 
@@ -239,20 +402,100 @@ func TestParseUploadID(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"https://amigos-share.club/torrents/321":        "321",
-		"https://amigos-share.club/torrents/321?tab=1":  "321",
-		"https://amigos-share.club/torrents/upload":     "",
-		"https://amigos-share.club/torrents/321/edit":   "321",
-		"https://amigos-share.club/admin/torrents/pend": "",
+		"https://amigos-share.club/torrents/321":         "321",
+		"/torrents/321":                                  "321",
+		"https://amigos-share.club/torrents/321?tab=1":   "321",
+		"https://amigos-share.club/torrents/upload":      "",
+		"https://amigos-share.club/torrents/321/edit":    "321",
+		"https://amigos-share.club/admin/torrents/5/fix": "",
 	}
-	for finalURL, want := range tests {
-		if got := parseUploadID(finalURL); got != want {
-			t.Errorf("parseUploadID(%q) = %q, want %q", finalURL, got, want)
+	for location, want := range tests {
+		if got := parseUploadID(location); got != want {
+			t.Errorf("parseUploadID(%q) = %q, want %q", location, got, want)
 		}
 	}
 }
 
-func testTorrentPayload(t *testing.T) []byte {
+func TestRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]time.Duration{
+		"3":   3 * retryAfterUnit,
+		"":    defaultRetryAfterSeconds * retryAfterUnit,
+		"0":   defaultRetryAfterSeconds * retryAfterUnit,
+		"999": maxRetryAfterSeconds * retryAfterUnit,
+	}
+	for header, want := range tests {
+		if got := retryAfter(header); got != want {
+			t.Errorf("retryAfter(%q) = %s, want %s", header, got, want)
+		}
+	}
+	future := time.Now().Add(20 * time.Second).UTC().Format(http.TimeFormat)
+	if got := retryAfter(future); got < 15*retryAfterUnit || got > 20*retryAfterUnit {
+		t.Errorf("retryAfter(http-date) = %s", got)
+	}
+}
+
+func TestDownloadCover(t *testing.T) {
+	t.Parallel()
+
+	pngHeader := []byte("\x89PNG\r\n\x1a\n0000")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/poster.png":
+			_, _ = w.Write(pngHeader)
+		case "/error.html":
+			_, _ = w.Write([]byte("<html>cdn error</html>"))
+		case "/huge.png":
+			_, _ = w.Write(append(pngHeader, make([]byte, maxImageBytes)...))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	cover, err := downloadCover(t.Context(), server.Client(), server.URL+"/poster.png")
+	if err != nil || cover.FileName != "cover.png" || cover.FieldName != "cover" {
+		t.Fatalf("cover = %+v err=%v", cover, err)
+	}
+	for _, path := range []string{"/error.html", "/huge.png", "/missing.png"} {
+		if _, err := downloadCover(t.Context(), server.Client(), server.URL+path); err == nil {
+			t.Errorf("downloadCover(%s) succeeded, want error", path)
+		}
+	}
+}
+
+func TestResolveCoverURL(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"https://image.tmdb.org/t/p/original/poster.jpg": "https://image.tmdb.org/t/p/w780/poster.jpg",
+		"https://img.example/poster.jpg":                 "https://img.example/poster.jpg",
+		"ftp://img.example/poster.jpg":                   "",
+		"/relative/poster.jpg":                           "",
+	}
+	for poster, want := range tests {
+		meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Poster: poster}}}
+		if got := resolveCoverURL(meta); got != want {
+			t.Errorf("resolveCoverURL(%q) = %q, want %q", poster, got, want)
+		}
+	}
+}
+
+func failureArtifactWritten(t *testing.T, root string) bool {
+	t.Helper()
+
+	found := false
+	_ = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() && strings.Contains(entry.Name(), "upload_failure") {
+			found = true
+		}
+		return nil
+	})
+	return found
+}
+
+func testTorrentPayload(t *testing.T, announce string) []byte {
 	t.Helper()
 
 	private := true
@@ -268,7 +511,7 @@ func testTorrentPayload(t *testing.T) []byte {
 		t.Fatalf("marshal info: %v", err)
 	}
 	var payload bytes.Buffer
-	torrentMeta := metainfo.MetaInfo{Announce: "https://tracker.example/announce", InfoBytes: infoBytes}
+	torrentMeta := metainfo.MetaInfo{Announce: announce, InfoBytes: infoBytes}
 	if err := torrentMeta.Write(&payload); err != nil {
 		t.Fatalf("encode torrent: %v", err)
 	}

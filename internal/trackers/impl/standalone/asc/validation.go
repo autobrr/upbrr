@@ -56,9 +56,9 @@ func validatePayloadFields(meta api.UploadSubject, payload uploadPayload, screen
 		return "missing IMDb ID"
 	case strings.TrimSpace(fields["year"]) == "":
 		return "missing year"
-	case resolveQualityID(meta) == "":
+	case payload.qualityID == "":
 		return "release type has no ASC quality"
-	case resolveContainerID(meta) == "":
+	case payload.containerID == "":
 		return "missing container"
 	case strings.TrimSpace(resolveOverview(meta, standalone.QuestionnaireAnswers(meta, "ASC"))) == "":
 		return "missing overview"

@@ -11,17 +11,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path" //nolint:depguard // Torrent file paths are slash-separated tracker data, not local filesystem paths.
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -53,19 +56,29 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 }
 
 type searchPage struct {
-	Torrents struct {
-		CurrentPage int            `json:"current_page"`
-		LastPage    int            `json:"last_page"`
-		Data        []searchResult `json:"data"`
-	} `json:"torrents"`
+	Torrents *searchPaginator `json:"torrents"`
+}
+
+type searchPaginator struct {
+	CurrentPage int            `json:"current_page"`
+	LastPage    int            `json:"last_page"`
+	Data        []searchResult `json:"data"`
+}
+
+// paginator returns the search results, rejecting pages without a usable
+// paginator so a renamed or missing prop never reads as an empty, complete search.
+func (p searchPage) paginator() (*searchPaginator, error) {
+	if p.Torrents == nil || p.Torrents.CurrentPage < 1 || p.Torrents.LastPage < 1 {
+		return nil, parseError{cause: errors.New("search results paginator missing")}
+	}
+	return p.Torrents, nil
 }
 
 type searchResult struct {
-	ID         int    `json:"id"`
-	Name       string `json:"name"`
-	Size       int64  `json:"size"`
-	CategoryID int    `json:"categoryId"`
-	Internal   bool   `json:"internal"`
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Internal bool   `json:"internal"`
 }
 
 type detailFile struct {
@@ -77,8 +90,8 @@ type detailPage struct {
 	FilesTotal int         `json:"filesTotal"`
 }
 
-// detailFiles accepts the paginated `{data: [...]}` file list as well as the
-// earlier plain array.
+// detailFiles accepts both a plain array and a paginated `{data: [...]}` file
+// list. Only the first page is read; detailPage.FilesTotal carries the full count.
 type detailFiles []detailFile
 
 func (f *detailFiles) UnmarshalJSON(raw []byte) error {
@@ -109,9 +122,12 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	if meta.Anime && resolveASCTitle(meta) == "" {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for ASC anime dupe search", nil)
 	}
-	cookies, _, err := LoadCookies(ctx, h.cfg.MainSettings.DBPath)
-	if err != nil || len(cookies) == 0 {
-		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid ASC cookies", nil)
+	cookies, err := loadSessionCookies(ctx, h.cfg.MainSettings.DBPath)
+	if err != nil {
+		return dupe.Failed(dupe.FailureInternal, "ASC cookie load failed", err)
+	}
+	if len(cookies) == 0 {
+		return dupe.NotRun(dupe.NotRunMissingCredentials, missingCookiesReason, nil)
 	}
 
 	var results []searchResult
@@ -122,18 +138,25 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		if err := h.fetchPageProps(ctx, buildASCSearchURL(meta, page), cookies, &parsed); err != nil {
 			return dupeFailure(err)
 		}
+		paginator, err := parsed.paginator()
+		if err != nil {
+			return dupeFailure(err)
+		}
 		pages++
-		results = append(results, parsed.Torrents.Data...)
-		if parsed.Torrents.CurrentPage >= parsed.Torrents.LastPage {
+		results = append(results, paginator.Data...)
+		if paginator.CurrentPage >= paginator.LastPage {
 			complete = true
 			break
 		}
 	}
 	h.logger.Tracef("trackers: ASC dupe search tracker=ASC pages=%d count=%d complete=%t", pages, len(results), complete)
 
-	entries := h.buildEntries(ctx, results, cookies)
+	entries, detailFailures, detailErr := h.buildEntries(ctx, results, cookies)
 	if err := ctx.Err(); err != nil {
 		return dupe.Failed(dupe.FailureRequest, "ASC search canceled", err)
+	}
+	if errors.Is(detailErr, errSessionExpired) {
+		return dupeFailure(detailErr)
 	}
 	workScope := dupe.WorkScopeProviderID
 	if meta.Anime {
@@ -142,6 +165,13 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	var warnings []string
 	if !complete {
 		warnings = append(warnings, fmt.Sprintf("ASC search stopped after %d pages", pages))
+	}
+	if detailFailures > 0 {
+		h.logger.Warnf(
+			"trackers: ASC dupe file details unavailable tracker=ASC failed=%d total=%d err=%s",
+			detailFailures, len(results), redaction.RedactValue(detailErr.Error(), nil),
+		)
+		warnings = append(warnings, fmt.Sprintf("ASC file details unavailable for %d of %d results", detailFailures, len(results)))
 	}
 	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
 		Complete:  complete,
@@ -153,10 +183,13 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 }
 
 // buildEntries enriches search results with torrent file names from detail
-// pages. A failed detail lookup keeps the entry under its display name.
-func (h dupeSearcher) buildEntries(ctx context.Context, results []searchResult, cookies []*http.Cookie) []api.DupeEntry {
+// pages. A failed detail lookup keeps the entry under its display name; the
+// failure count and first error are returned so callers can surface them.
+func (h dupeSearcher) buildEntries(ctx context.Context, results []searchResult, cookies []*http.Cookie) ([]api.DupeEntry, int, error) {
 	entries := make([]api.DupeEntry, len(results))
 	var wg sync.WaitGroup
+	var failures atomic.Int32
+	var firstErr atomic.Value
 	sem := make(chan struct{}, dupeDetailWorkers)
 	for idx, result := range results {
 		entries[idx] = baseDupeEntry(result)
@@ -169,15 +202,23 @@ func (h dupeSearcher) buildEntries(ctx context.Context, results []searchResult, 
 			defer func() { <-sem }()
 			var detail detailPage
 			if err := h.fetchPageProps(ctx, baseURL+torrentPath+strconv.Itoa(result.ID), cookies, &detail); err != nil {
-				h.logger.Debugf("trackers: ASC dupe detail failed tracker=ASC torrent_id=%d", result.ID)
+				failures.Add(1)
+				firstErr.CompareAndSwap(nil, detailError{err})
 				return
 			}
 			applyDetail(&entries[idx], detail)
 		})
 	}
 	wg.Wait()
-	return entries
+	var err error
+	if stored, ok := firstErr.Load().(detailError); ok {
+		err = stored.err
+	}
+	return entries, int(failures.Load()), err
 }
+
+// detailError gives atomic.Value one concrete type for every stored error.
+type detailError struct{ err error }
 
 func baseDupeEntry(result searchResult) api.DupeEntry {
 	id := strconv.Itoa(result.ID)
@@ -201,8 +242,9 @@ func baseDupeEntry(result searchResult) api.DupeEntry {
 	return entry
 }
 
-// applyDetail names the entry after its first file, which carries the release
-// naming that ASC display titles omit.
+// applyDetail records the torrent's file list and, when the files carry it,
+// replaces the display name with release naming that ASC display titles omit.
+// Season and pack facts stay those parsed from the display-name suffix.
 func applyDetail(entry *api.DupeEntry, detail detailPage) {
 	files := make([]string, 0, len(detail.Files))
 	for _, file := range detail.Files {
@@ -215,8 +257,44 @@ func applyDetail(entry *api.DupeEntry, detail detailPage) {
 	}
 	entry.Files = files
 	entry.FileCount = max(detail.FilesTotal, len(files))
-	//pathpolicy:allow ASC torrent file paths are slash-separated tracker data, never local filesystem paths.
-	entry.Name = path.Base(files[0])
+	if name := releaseNameFromFiles(files); name != "" {
+		entry.Name = name
+	}
+}
+
+func isDiscStructureDir(segment string) bool {
+	return strings.EqualFold(segment, "BDMV") || strings.EqualFold(segment, "VIDEO_TS")
+}
+
+var videoFileExtensions = []string{".mkv", ".mp4", ".avi", ".m4v", ".ts", ".wmv", ".mov"}
+
+// releaseNameFromFiles picks a release-like name from torrent file paths, which
+// ASC lists without the torrent's root folder: the single file of a one-file
+// torrent, otherwise the first non-sample video file. Disc structures
+// (BDMV/VIDEO_TS) have no release-like file name, so they yield "".
+func releaseNameFromFiles(files []string) string {
+	for _, file := range files {
+		segments := strings.FieldsFunc(file, func(r rune) bool { return r == '/' || r == '\\' })
+		if slices.ContainsFunc(segments[:max(len(segments)-1, 0)], isDiscStructureDir) {
+			return ""
+		}
+	}
+	if len(files) == 1 {
+		return pathutil.Base(files[0])
+	}
+	for _, file := range files {
+		name := pathutil.Base(file)
+		lower := strings.ToLower(name)
+		if strings.Contains(lower, "sample") {
+			continue
+		}
+		for _, ext := range videoFileExtensions {
+			if strings.HasSuffix(lower, ext) {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func (h dupeSearcher) fetchPageProps(ctx context.Context, target string, cookies []*http.Cookie, out any) error {
@@ -225,9 +303,7 @@ func (h dupeSearcher) fetchPageProps(ctx context.Context, target string, cookies
 		return fmt.Errorf("build ASC request: %w", err)
 	}
 	req.Header.Set("User-Agent", userAgent)
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
+	commonhttp.ApplyCookies(req, cookies)
 	resp, err := h.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("ASC request: %w", err)

@@ -225,6 +225,32 @@ func TestResolveGenreIDs(t *testing.T) {
 	if got := resolveGenreIDs("Desconhecido"); len(got) != 0 {
 		t.Fatalf("unknown genre mapped to %v", got)
 	}
+	// English provider genres resolve through the shared translator, while
+	// Thriller keeps its own ASC option instead of the translator's Suspense.
+	if got := resolveGenreIDs("Action, War & Politics, Kids, Thriller, Talk"); !slices.Equal(got, []string{"205", "210", "240", "251", "249"}) {
+		t.Fatalf("translated genres = %v", got)
+	}
+}
+
+func TestResolveDiscQualityIDUsesDecimalCapacities(t *testing.T) {
+	t.Parallel()
+
+	tests := map[int64]string{
+		24_000_000_000:  "75",
+		26_000_000_000:  "76",
+		51_000_000_000:  "77",
+		67_000_000_000:  "78",
+		100_000_000_000: "78",
+	}
+	for size, want := range tests {
+		if got := resolveQualityID(api.UploadSubject{
+			Type:       "DISC",
+			DiscType:   "BDMV",
+			SourceSize: size,
+		}); got != want {
+			t.Errorf("BDMV %d bytes = %q, want %q", size, got, want)
+		}
+	}
 }
 
 func TestResolveContainerID(t *testing.T) {
