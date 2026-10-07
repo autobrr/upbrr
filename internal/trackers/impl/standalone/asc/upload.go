@@ -52,9 +52,7 @@ type preparedSubmission struct {
 	fields       map[string][]string
 	files        []commonhttp.FileField
 	images       []commonhttp.FileField
-	torrentPath  string
 	artifactPath string
-	announceURL  string
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
@@ -127,9 +125,7 @@ func captureSubmission(
 		fields:       state.payload.multipartFields(nil),
 		files:        files,
 		images:       images,
-		torrentPath:  state.torrentPath,
 		artifactPath: artifactPath,
-		announceURL:  strings.TrimSpace(req.TrackerConfig.AnnounceURL),
 	}, nil
 }
 
@@ -320,8 +316,9 @@ func sleepContext(ctx context.Context, wait time.Duration) error {
 }
 
 // persistRegisteredTorrent stores the torrent ASC serves for the new upload.
-// The site only rewrites non-private torrents, and upbrr uploads a private one,
-// so local reconstruction is the fallback when the download fails.
+// ASC rewrites the info dictionary (it sets its own source), so the site's
+// copy is the only correct registered torrent: when the download fails there
+// is no local reconstruction, and the upload is reported without one.
 func persistRegisteredTorrent(
 	ctx context.Context,
 	req trackers.PreparationInput,
@@ -337,12 +334,11 @@ func persistRegisteredTorrent(
 		}
 	}
 	req.Logger.Warnf(
-		"trackers: ASC registered torrent download failed tracker=ASC torrent_id=%s decision=reconstruct err=%s",
+		"trackers: ASC registered torrent download failed tracker=ASC torrent_id=%s decision=skip_injection err=%s",
 		torrentID, commonhttp.RedactErrorDetail(err.Error()),
 	)
-	return trackers.PersistReconstructedRegisteredTorrent(
-		req.Logger, "ASC", submission.torrentPath, submission.artifactPath, submission.announceURL, sourceFlag,
-	)
+	trackers.LogRegisteredTorrentUnavailable(req.Logger, "ASC")
+	return ""
 }
 
 // maybeApprove self-approves the new torrent through the staff moderation

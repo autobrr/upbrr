@@ -312,8 +312,8 @@
     "sha256": "3262a761092f75ef76cb9d4761052f368b4ad6abd2e6f194b19bb61e3c74cb69"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Adds the pure questionnaire binding only. Explicit requested upload names still precede resolved titles; existing manual title/original-title precedence, localized provider fallbacks, and anime search behavior are unchanged.",
-    "sha256": "17b969ecdee139d2632c2a5d8e6a7283605adbea77550c561656c7ad9e3820a7"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
+    "sha256": "c0dfec07b0242091570d0aff7b87f80db7a85d7a047dd075afaf4a3eedae9e33"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
