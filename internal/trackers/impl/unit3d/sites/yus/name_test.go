@@ -72,7 +72,7 @@ func TestYUSStructuredName(t *testing.T) {
 }
 func TestYUSPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/yus/v6" || p.Structured == nil {
+	if p.ID != "unit3d/yus/v7" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }
@@ -150,11 +150,12 @@ func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 	facts := api.LanguageFacts{AudioAbsent: audio.Value == ""}
 	if audio.Value != "" {
 		facts.Tracks = []api.MediaTrackFacts{{
-			Kind:    api.MediaTrackAudio,
-			Role:    api.AudioRoleProgramme,
-			Default: true,
-			Codec:   strings.Fields(audio.Value)[0],
- AudioLabel: audio.Value,
+			Kind:         api.MediaTrackAudio,
+			Role:         api.AudioRoleProgramme,
+			Default:      true,
+			DefaultKnown: true,
+			Codec:        strings.Fields(audio.Value)[0],
+			AudioLabel:   audio.Value,
 		}}
 	}
 	return api.UploadSubject{
@@ -473,11 +474,12 @@ func TestYUSProgrammeLanguageAndDefaultAudioNaming(t *testing.T) {
 				ProgrammeLanguages: test.languages,
 				ProgrammeStatus:    test.status,
 				Tracks: []api.MediaTrackFacts{{
-					Kind:    api.MediaTrackAudio,
-					Role:    api.AudioRoleProgramme,
-					Default: true,
-					Codec:   "DD+",
- AudioLabel: "DD+ 5.1",
+					Kind:         api.MediaTrackAudio,
+					Role:         api.AudioRoleProgramme,
+					Default:      true,
+					DefaultKnown: true,
+					Codec:        "DD+",
+					AudioLabel:   "DD+ 5.1",
 				}},
 			}
 			got := yusName(t, s, nil)

@@ -88,6 +88,19 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 			failures = append(failures, LanguageRuleFailure(subject, key, reason, outcome))
 		}
 	}
+	addUnknown := func(key, reason string, outcome LanguageOutcome) {
+		if outcome == "" {
+			return
+		}
+		if outcome == LanguageAdvisory {
+			reason = "Unresolved: " + reason
+		} else {
+			outcome = LanguageUnresolved
+		}
+		failure := LanguageRuleFailure(subject, key, reason, outcome)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
+	}
 	needsOriginal := policy.OriginalAudio != "" || policy.ExtraDubs != "" || policy.OriginalFirst != "" || policy.OriginalDefault != "" ||
 		policy.EnglishSubtitles == "foreign" || policy.EnglishSubtitles == "foreign_without_dub" || policy.EnglishSubtitles == "spoken"
 	originalKnown := len(facts.OriginalLanguages) > 0 && !slices.ContainsFunc(facts.OriginalLanguages, func(value string) bool {
@@ -135,7 +148,6 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 		}
 		add("subtitles", "missing English subtitles", outcome)
 	}
-	first := true
 	for _, track := range facts.Tracks {
 		if track.Kind != api.MediaTrackAudio {
 			continue
@@ -184,27 +196,82 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 				add("compatibility_format", "unsupported compatibility audio format", LanguageProhibited)
 			}
 		}
-		if track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix {
-			continue
-		}
-		original := slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) })
-		if first {
-			if !original {
-				add("original_order", "original programme audio should come first", policy.OriginalFirst)
+	}
+	if policy.OriginalFirst != "" && originalKnown && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete {
+		// The first programme track must be original; later original mixes may follow dubs.
+		var originals, others []api.MediaTrackFacts
+		orders := make(map[int]int)
+		for _, track := range facts.Tracks {
+			if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
+				continue
 			}
-			first = false
+			if track.StreamOrderKnown && track.StreamOrder >= 0 {
+				orders[track.StreamOrder]++
+			}
+			if slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) }) {
+				originals = append(originals, track)
+			} else {
+				others = append(others, track)
+			}
+		}
+		firstOrder := func(tracks []api.MediaTrackFacts) (int, bool) {
+			first, known := -1, true
+			for _, track := range tracks {
+				if !track.StreamOrderKnown || track.StreamOrder < 0 || orders[track.StreamOrder] != 1 {
+					known = false
+					continue
+				}
+				if first < 0 || track.StreamOrder < first {
+					first = track.StreamOrder
+				}
+			}
+			return first, known
+		}
+		originalFirst, originalsKnown := firstOrder(originals)
+		otherFirst, othersKnown := firstOrder(others)
+		switch {
+		case len(others) == 0:
+		case len(originals) == 0 || originalsKnown && otherFirst >= 0 && otherFirst < originalFirst:
+			add("original_order", "original programme audio should come first", policy.OriginalFirst)
+		case othersKnown && originalFirst >= 0 && originalFirst < otherFirst:
+		default:
+			addUnknown("original_order", "programme stream order must establish original audio first", policy.OriginalFirst)
 		}
 	}
-	if policy.OriginalDefault != "" && !slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
-		return track.Kind == api.MediaTrackAudio && track.Default && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) &&
-			slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) })
-	}) {
-		add("original_default", "an original programme track should be default", policy.OriginalDefault)
+	if policy.OriginalDefault != "" {
+		knownDefault, unknownDefault := false, !originalKnown || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete
+		for _, track := range facts.Tracks {
+			if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) ||
+				!slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) }) {
+				continue
+			}
+			knownDefault = knownDefault || track.DefaultKnown && track.Default
+			unknownDefault = unknownDefault || !track.DefaultKnown
+		}
+		if !knownDefault {
+			if unknownDefault {
+				addUnknown("original_default", "an original programme track's default status needs review", policy.OriginalDefault)
+			} else {
+				add("original_default", "an original programme track should be default", policy.OriginalDefault)
+			}
+		}
 	}
-	if foreign && englishSubs && policy.SubtitleDefault != "" && !slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
-		return track.Kind == api.MediaTrackSubtitle && track.Default && slices.Contains(subtitleLanguages(track.Languages), "English")
-	}) {
-		add("subtitle_default", "an English subtitle track should be default for foreign content", policy.SubtitleDefault)
+	if foreign && englishSubs && policy.SubtitleDefault != "" {
+		knownDefault, unknownDefault := false, facts.SubtitleStatus != api.MetadataEvidenceStatusComplete
+		for _, track := range facts.Tracks {
+			if track.Kind != api.MediaTrackSubtitle || !slices.Contains(subtitleLanguages(track.Languages), "English") {
+				continue
+			}
+			knownDefault = knownDefault || track.DefaultKnown && track.Default
+			unknownDefault = unknownDefault || !track.DefaultKnown
+		}
+		if !knownDefault {
+			if unknownDefault {
+				addUnknown("subtitle_default", "English subtitle default status needs review", policy.SubtitleDefault)
+			} else {
+				add("subtitle_default", "an English subtitle track should be default for foreign content", policy.SubtitleDefault)
+			}
+		}
 	}
 	return failures
 }

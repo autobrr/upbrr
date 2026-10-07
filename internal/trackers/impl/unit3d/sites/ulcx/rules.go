@@ -20,12 +20,10 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		return nil
 	}
 	policy := trackers.LanguagePolicy{
-		ExtraDubs:               trackers.LanguageProhibited,
-		EnglishSubtitles:        "foreign_without_dub",
-		MissingSubtitles:        trackers.LanguageProhibited,
-		CompatibilityRequired:   true,
-		CompatibilityOnlyTrueHD: true,
-		SubtitleDefault:         trackers.LanguageAdvisory,
+		ExtraDubs:        trackers.LanguageProhibited,
+		EnglishSubtitles: "foreign_without_dub",
+		MissingSubtitles: trackers.LanguageProhibited,
+		SubtitleDefault:  trackers.LanguageAdvisory,
 	}
 	if subject.PersonalRelease {
 		policy.OriginalAudio = trackers.LanguageProhibited
@@ -74,11 +72,20 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			if track.Kind != api.MediaTrackSubtitle {
 				continue
 			}
-			if !foreign && track.Default {
-				failures = append(
-					failures,
-					trackers.LanguageRuleFailure(subject, "subtitle_default", "subtitles should not be default on non-foreign content", policy.SubtitleDefault),
-				)
+			if !foreign && (track.Default || !track.DefaultKnown) {
+				outcome := policy.SubtitleDefault
+				reason := "subtitles should not be default on non-foreign content: " + track.ID
+				if !track.DefaultKnown {
+					reason = "default status of subtitle track " + track.ID + " is unresolved; subtitles should not be default on non-foreign content"
+					if subject.PersonalRelease {
+						outcome = trackers.LanguageUnresolved
+					}
+				}
+				failure := trackers.LanguageRuleFailure(subject, "subtitle_default", reason, outcome)
+				if !track.DefaultKnown {
+					failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+				}
+				failures = append(failures, failure)
 			}
 			for _, value := range track.Languages {
 				language, coverage := languageutil.SubtitleLanguageParts(value)
@@ -100,5 +107,5 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		}
 	}
 
-	return failures
+	return append(failures, compatibilityFailures(subject)...)
 }

@@ -13,10 +13,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// ValidationPolicy returns OTW's waivable genre, adult-content,
-// reality-content, and release-group restrictions.
+// ValidationPolicy returns OTW's content restrictions, package checks and
+// metadata requirements, including unresolved audio naming evidence.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v4", Check: checkRequirements}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v5", Check: checkRequirements}
 }
 
 func checkGenres(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {

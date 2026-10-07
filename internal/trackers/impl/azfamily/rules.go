@@ -19,8 +19,11 @@ import (
 // policy binding.
 func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	version := "constructibility-v2"
-	if d.site.Name == "AZ" || d.site.Name == "CZ" {
+	if d.site.Name == "AZ" {
 		version = "policy-v4"
+	}
+	if d.site.Name == "CZ" {
+		version = "policy-v5"
 	}
 	return trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,

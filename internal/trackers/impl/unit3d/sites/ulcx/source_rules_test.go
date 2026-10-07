@@ -4,6 +4,7 @@
 package ulcx
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -72,4 +73,70 @@ func TestULCXAlternateMixReviewNeverPermitsExtraDub(t *testing.T) {
 	requireULCXSourceFailure(t, languageAssessment(subject), "language_alternate_mix", api.RuleDispositionAdvisory)
 	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "alternate_mix_audio-2")] = "duplicate"
 	requireULCXSourceFailure(t, languageAssessment(subject), "language_alternate_mix", api.RuleDispositionAdvisory)
+}
+
+func TestULCXNonForeignSubtitleDefaultEvidence(t *testing.T) {
+	for _, personal := range []bool{false, true} {
+		for _, test := range []struct {
+			name                   string
+			first, second          api.MediaTrackFacts
+			wantKnown, wantUnknown bool
+		}{
+			{"known non-defaults", api.MediaTrackFacts{DefaultKnown: true}, api.MediaTrackFacts{DefaultKnown: true}, false, false},
+			{"unknown false flag", api.MediaTrackFacts{}, api.MediaTrackFacts{DefaultKnown: true}, false, true},
+			{"unknown true flag", api.MediaTrackFacts{Default: true}, api.MediaTrackFacts{DefaultKnown: true}, false, true},
+			{"known default and unknown", api.MediaTrackFacts{Default: true, DefaultKnown: true}, api.MediaTrackFacts{}, true, true},
+			{"known default and non-default", api.MediaTrackFacts{Default: true, DefaultKnown: true}, api.MediaTrackFacts{DefaultKnown: true}, true, false},
+		} {
+			t.Run(fmt.Sprintf("%s/personal=%t", test.name, personal), func(t *testing.T) {
+				subject := api.TrackerValidationSubject{
+Tracker: "ULCX",
+ PersonalRelease: personal,
+ Type: "WEBDL",
+ LanguageFacts: ulcxTestLanguageFacts("English", []string{"English"}, nil),
+}
+				for i, track := range []api.MediaTrackFacts{test.first, test.second} {
+					track.ID, track.Kind, track.Languages = fmt.Sprintf("subtitle-%d", i), api.MediaTrackSubtitle, []string{"English"}
+					subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
+				}
+				failures := languageAssessment(subject)
+				disposition := api.RuleDispositionAdvisory
+				if personal {
+					disposition = api.RuleDispositionStrict
+				}
+				if test.wantKnown {
+					requireULCXValidationFailure(t, failures, "language_subtitle_default", disposition, api.MetadataEvidenceStatusComplete)
+				}
+				if test.wantUnknown {
+					requireULCXValidationFailure(t, failures, "language_subtitle_default", disposition, api.MetadataEvidenceStatusPartial)
+				}
+				wantCount := 0
+				if test.wantKnown {
+					wantCount++
+				}
+				if test.wantUnknown {
+					wantCount++
+				}
+				if len(failures) != wantCount {
+					t.Fatalf("default evidence produced wrong findings: %+v", failures)
+				}
+				for _, failure := range failures {
+					if !failure.DebugBypass {
+						t.Fatalf("lost language-only debug bypass: %+v", failure)
+					}
+					if personal && failure.EvidenceStatus == api.MetadataEvidenceStatusPartial && !strings.Contains(failure.Reason, "Unresolved") {
+						t.Fatalf("unknown default became known prohibited: %+v", failure)
+					}
+				}
+				subject.Type, subject.DiscType = "DISC", "BDMV"
+				if got := languageAssessment(subject); len(got) != 0 {
+					t.Fatalf("full disc gained default review: %+v", got)
+				}
+				subject.Type = "REMUX"
+				if got := languageAssessment(subject); len(got) != wantCount {
+					t.Fatalf("disc-sourced remux escaped default assessment: %+v", got)
+				}
+			})
+		}
+	}
 }

@@ -35,19 +35,23 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
 	}
 	facts := subject.LanguageFacts
-	defaults := 0
+	defaults, unknownDefaults := 0, 0
 	for _, track := range facts.Tracks {
 		if track.Kind != api.MediaTrackAudio {
 			continue
 		}
 		if track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix {
-			if track.Default {
+			if !track.DefaultKnown {
+				unknownDefaults++
+			} else if track.Default {
 				defaults++
 			}
 		}
 	}
-	if defaults == 0 || (!subject.Anime && defaults != 1) {
+	if !subject.Anime && defaults > 1 || defaults == 0 && unknownDefaults == 0 {
 		add("default_audio", "exactly one primary audio track must be default; anime may have multiple defaults", trackers.LanguageProhibited)
+	} else if unknownDefaults > 0 && (!subject.Anime || defaults == 0) {
+		add("default_audio", "primary audio default flags must establish the required default count", trackers.LanguageUnresolved)
 	}
 	for _, defect := range audioDefects(subject) {
 		add(defect.key, defect.reason, conditional)

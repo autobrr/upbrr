@@ -17,17 +17,18 @@ import (
 
 func azTestLanguageFacts(original string, audio ...string) api.LanguageFacts {
 	media := api.MediaFacts{
-OriginalLanguage: original,
- TrackCoverageComplete: true,
- PrimaryAudioTrackID: "audio-0",
-}
+		OriginalLanguage:      original,
+		TrackCoverageComplete: true,
+		PrimaryAudioTrackID:   "audio-0",
+	}
 	for i, language := range audio {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID: "audio-" + strconv.Itoa(i),
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
-			Languages: []string{languageutil.NormalizeLanguageLabel(language)},
- Default: i == 0,
+			ID:           "audio-" + strconv.Itoa(i),
+			Kind:         api.MediaTrackAudio,
+			Role:         api.AudioRoleProgramme,
+			Languages:    []string{languageutil.NormalizeLanguageLabel(language)},
+			Default:      i == 0,
+			DefaultKnown: true,
 		})
 	}
 	return mediafacts.ResolveLanguages(media)
@@ -35,10 +36,10 @@ OriginalLanguage: original,
 
 func TestAZRegionalDialectEvidenceAndIndependentRules(t *testing.T) {
 	meta := api.UploadSubject{
-Type: "WEBDL",
- Identity: api.ExternalIdentity{SourcePath: "az-language", Generation: 1},
- LanguageFacts: azTestLanguageFacts("Chinese", "Cantonese"),
-}
+		Type:          "WEBDL",
+		Identity:      api.ExternalIdentity{SourcePath: "az-language", Generation: 1},
+		LanguageFacts: azTestLanguageFacts("Chinese", "Cantonese"),
+	}
 	question := New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
 	if question == nil || len(question.Fields) != 1 {
 		t.Fatal("regional dialect exception was not reviewable")
@@ -69,10 +70,10 @@ Type: "WEBDL",
 		}
 	}
 	meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
-Kind: api.MediaTrackAudio,
- Role: api.AudioRoleVoiceOver,
- Languages: []string{"Chinese"},
-})
+		Kind:      api.MediaTrackAudio,
+		Role:      api.AudioRoleVoiceOver,
+		Languages: []string{"Chinese"},
+	})
 	question = New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
 	meta.TrackerQuestionnaireAnswers["AZ"][question.Fields[0].Key] = "yes"
 	failures := evaluateAZLanguageRules(siteFor("AZ"), api.NewTrackerValidationSubject(meta, "AZ"))
@@ -93,11 +94,11 @@ Kind: api.MediaTrackAudio,
 func TestAZCZRemuxAndManualClearBoundaries(t *testing.T) {
 	for _, site := range []string{"AZ", "CZ"} {
 		subject := api.TrackerValidationSubject{
-			Tracker: site,
- Type: "REMUX",
- DiscType: "BDMV",
- LanguageFacts: azTestLanguageFacts("Japanese", "Japanese", "English"),
-			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "German"}},
+			Tracker:           site,
+			Type:              "REMUX",
+			DiscType:          "BDMV",
+			LanguageFacts:     azTestLanguageFacts("Japanese", "Japanese", "English"),
+			ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "German"}},
 			EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: "Japanese", OriginalLanguageProvenance: api.FactProvenanceManual},
 		}
 		if failures := evaluateAZLanguageRules(siteFor(site), subject); len(failures) != 0 {
@@ -105,10 +106,10 @@ func TestAZCZRemuxAndManualClearBoundaries(t *testing.T) {
 		}
 		for _, clearOriginal := range []bool{true, false} {
 			media := api.MediaFacts{
-OriginalLanguage: "Japanese",
- TrackCoverageComplete: true,
- Tracks: subject.LanguageFacts.Tracks,
-}
+				OriginalLanguage:      "Japanese",
+				TrackCoverageComplete: true,
+				Tracks:                subject.LanguageFacts.Tracks,
+			}
 			if clearOriginal {
 				media.OriginalLanguage = ""
 				media.OriginalLanguageProvenance = api.FactProvenanceManualEmpty
@@ -140,10 +141,10 @@ OriginalLanguage: "Japanese",
 		}
 	}
 	subject := api.TrackerValidationSubject{
-Tracker: "AZ",
- Type: "REMUX",
- LanguageFacts: azTestLanguageFacts("Japanese", "Japanese", "German", "French"),
-}
+		Tracker:       "AZ",
+		Type:          "REMUX",
+		LanguageFacts: azTestLanguageFacts("Japanese", "Japanese", "German", "French"),
+	}
 	if failures := evaluateAZLanguageRules(siteFor("AZ"), subject); len(failures) != 0 {
 		t.Fatalf("per-language remux dub allowance lost: %#v", failures)
 	}
@@ -177,17 +178,17 @@ func TestAZRemuxUnknownLanguageEvidenceIsBlocking(t *testing.T) {
 	for _, facts := range []api.LanguageFacts{
 		{},
 		{
-OriginalLanguages: []string{"Japanese"},
- OriginalLanguagesKnown: true,
- ProgrammeStatus: api.MetadataEvidenceStatusPartial,
-},
+			OriginalLanguages:      []string{"Japanese"},
+			OriginalLanguagesKnown: true,
+			ProgrammeStatus:        api.MetadataEvidenceStatusPartial,
+		},
 	} {
 		subject := api.TrackerValidationSubject{
-Tracker: "AZ",
- Type: "REMUX",
- DiscType: "BDMV",
- LanguageFacts: facts,
-}
+			Tracker:       "AZ",
+			Type:          "REMUX",
+			DiscType:      "BDMV",
+			LanguageFacts: facts,
+		}
 		failures := evaluateAZLanguageRules(siteFor("AZ"), subject)
 		if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 			return f.Disposition == api.RuleDispositionStrict && f.EvidenceStatus == api.MetadataEvidenceStatusPartial

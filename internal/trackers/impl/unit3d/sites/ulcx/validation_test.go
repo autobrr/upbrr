@@ -66,7 +66,7 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v7/languages-v1" {
+	if policy.ID != "unit3d-ulcx-policy-v8/languages-v1" {
 		t.Fatalf("validation policy = %q, want upload rules policy v6", policy.ID)
 	}
 	tests := []struct {
@@ -497,7 +497,8 @@ func requireULCXValidationFailure(
 }
 
 // ulcxTestLanguageFacts models inspected, identified programme streams and full
-// embedded subtitles so unrelated fixtures satisfy the current facts contract.
+// embedded subtitles with explicit inspected defaults so unrelated fixtures
+// satisfy the current facts contract.
 func ulcxTestLanguageFacts(original string, programme, subtitles []string) api.LanguageFacts {
 	media := api.MediaFacts{
 		OriginalLanguage:      original,
@@ -517,10 +518,11 @@ func ulcxTestLanguageFacts(original string, programme, subtitles []string) api.L
 	}
 	for index, language := range subtitles {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID:        "subtitle-" + strconv.Itoa(index),
-			Kind:      api.MediaTrackSubtitle,
-			Languages: []string{language},
-			Default:   index == 0 && original != "English" && original != "ZXX",
+			ID:           "subtitle-" + strconv.Itoa(index),
+			Kind:         api.MediaTrackSubtitle,
+			Languages:    []string{language},
+			Default:      index == 0 && original != "English" && original != "ZXX",
+			DefaultKnown: true,
 		})
 	}
 	return mediafacts.ResolveLanguages(media)

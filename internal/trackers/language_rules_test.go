@@ -35,6 +35,7 @@ func languageSubject(original string, audio ...string) api.TrackerValidationSubj
 			StreamOrderKnown: true,
 			Languages:        []string{language},
 			Default:          i == 0,
+			DefaultKnown:     true,
 			Codec:            "FLAC",
 		})
 	}
@@ -45,6 +46,7 @@ func languageSubject(original string, audio ...string) api.TrackerValidationSubj
 		StreamOrderKnown: true,
 		Languages:        []string{"English"},
 		Default:          true,
+		DefaultKnown:     true,
 	})
 	if len(audio) > 0 {
 		media.PrimaryAudioTrackID = "audio_0"

@@ -128,10 +128,19 @@ Interactive tracker questions with exactly `yes`/`no` choices also accept `y`/`n
 
 ## Tracker selection and IDs
 
-| Option                     | Aliases                    | Purpose                          |
-| -------------------------- | -------------------------- | -------------------------------- |
-| `--trackers <list>`        | `-trackers`, `-tk`         | Use comma-separated trackers.    |
-| `--trackers-remove <list>` | `-trackers-remove`, `-rtk` | Remove comma-separated trackers. |
+| Option                     | Aliases                    | Purpose                             |
+| -------------------------- | -------------------------- | ----------------------------------- |
+| `--trackers <list>`        | `-trackers`, `-tk`         | Use comma-separated trackers.       |
+| `--trackers-remove <list>` | `-trackers-remove`, `-rtk` | Remove comma-separated trackers.    |
+| `--ptp <id-or-url>`        | `-ptp`                     | Supply a PTP torrent ID or URL.     |
+| `--blu <id-or-url>`        | `-blu`                     | Supply a BLU torrent ID or URL.     |
+| `--aither <id-or-url>`     | `-aither`                  | Supply an Aither torrent ID or URL. |
+| `--lst <id-or-url>`        | `-lst`                     | Supply an LST torrent ID or URL.    |
+| `--oe <id-or-url>`         | `-oe`                      | Supply an OE torrent ID or URL.     |
+| `--hdb <id-or-url>`        | `-hdb`                     | Supply an HDB torrent ID or URL.    |
+| `--btn <id-or-url>`        | `-btn`                     | Supply a BTN torrent ID or URL.     |
+| `--bhd <id-or-url>`        | `-bhd`                     | Supply a BHD torrent ID or URL.     |
+| `--ulcx <id-or-url>`       | `-ulcx`                    | Supply a ULCX torrent ID or URL.    |
 
 Omitting `--trackers` uses the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Tracker ID flags supply lookup identities and do not select upload destinations.
 
@@ -144,7 +153,7 @@ Metadata review always prints the effective `Commentary: true` or `Commentary: f
 ### Review Input without advancing the workflow
 
 ```powershell
-.\upbrr.exe --input-only --skip_auto_torrent "E:\Media\Example.Release.2026.1080p-GRP.mkv"
+.\upbrr.exe --input-only --skip_auto_torrent --trackers BLU,PTP "E:\Media\Example.Release.2026.1080p-GRP.mkv"
 ```
 
 This loads release facts and evaluates selected tracker input requirements. It stops before tracker assessment, duplicate searches, screenshots, descriptions, torrent preparation, or uploads. Metadata provider requests and media inspection can still run. `--skip_auto_torrent` also disables torrent-client discovery.
@@ -287,6 +296,8 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 `--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omit the option to leave **Personal Release** on **Auto**, where each tracker's configured personal-release groups can supply the default.
 
 Duplicate options do not bypass authoritative client blocks or the workflow's explicit tracker-approval requirement. Strict `--unattended` still cannot answer that approval prompt. `--anime` and `--not-anime` cannot be combined, even with explicit false values.
+
+TIK `--disctype` accepts `BD100`, `BD66`, `BD50`, `BD25`, `NTSC DVD9`, `NTSC DVD5`, `PAL DVD9`, `PAL DVD5`, `CUSTOM`, or `3D`. Quote values containing spaces.
 
 ## Screenshots, images, and descriptions
 

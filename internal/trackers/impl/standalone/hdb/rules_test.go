@@ -14,22 +14,23 @@ import (
 
 func hdbLanguageSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
-		Tracker: "HDB",
- Type: "REMUX",
- SourcePath: "hdb-language",
- Identity: api.ExternalIdentity{Generation: 1},
+		Tracker:    "HDB",
+		Type:       "REMUX",
+		SourcePath: "hdb-language",
+		Identity:   api.ExternalIdentity{Generation: 1},
 		LanguageFacts: mediafacts.ResolveLanguages(api.MediaFacts{
-			OriginalLanguage: "English",
- TrackCoverageComplete: true,
- PrimaryAudioTrackID: "main",
+			OriginalLanguage:      "English",
+			TrackCoverageComplete: true,
+			PrimaryAudioTrackID:   "main",
 			Tracks: []api.MediaTrackFacts{{
-ID: "main",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
- Languages: []string{"English"},
- Channels: 2,
- Default: true,
-}},
+				ID:           "main",
+				Kind:         api.MediaTrackAudio,
+				Role:         api.AudioRoleProgramme,
+				Languages:    []string{"English"},
+				Channels:     2,
+				Default:      true,
+				DefaultKnown: true,
+			}},
 		}),
 	}
 }
@@ -84,12 +85,12 @@ func TestHDBReviewedMixPairChecksRetainedTracksAndDefault(t *testing.T) {
 			subject.LanguageFacts.Tracks[0].Default = test.defaultOriginal
 			if test.surround {
 				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-ID: "mix",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleAlternateMix,
- Languages: []string{"English"},
- Channels: 6,
-})
+					ID:        "mix",
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleAlternateMix,
+					Languages: []string{"English"},
+					Channels:  6,
+				})
 			}
 			hdbLanguageAnswer(&subject, "source_audio", "source_mix_pair_retained")
 			hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
@@ -129,11 +130,12 @@ func TestHDBForeignDialogueRequiresReviewedForcedDefaultSubtitles(t *testing.T) 
 			subject.Type = "WEBDL"
 			subject.LanguageFacts.SubtitleLanguages = []string{"English"}
 			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-Kind: api.MediaTrackSubtitle,
- Languages: []string{"English"},
- Forced: test.forced,
- Default: test.defaultSub,
-})
+				Kind:         api.MediaTrackSubtitle,
+				Languages:    []string{"English"},
+				Forced:       test.forced,
+				Default:      test.defaultSub,
+				DefaultKnown: true,
+			})
 			hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", test.answer)
 			failures := languageAssessment(subject)
 			if test.want == "" {
@@ -153,10 +155,10 @@ func TestHDBLanguageReviewCannotWaiveIndependentStrictRules(t *testing.T) {
 	subject.LanguageFacts.OriginalLanguages = []string{"Japanese"}
 	subject.EffectiveMetadata.Genres = []string{"Drama"}
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-Kind: api.MediaTrackAudio,
- Role: api.AudioRoleDescription,
- Languages: []string{"English"},
-})
+		Kind:      api.MediaTrackAudio,
+		Role:      api.AudioRoleDescription,
+		Languages: []string{"English"},
+	})
 	hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
 	failures := languageAssessment(subject)
 	for _, rule := range []string{"language_english_dub", "language_track_role"} {
@@ -190,10 +192,10 @@ func TestHDBEnglishDubUsesFinalizedManualGenres(t *testing.T) {
 			subject.LanguageFacts.OriginalLanguages = []string{"Japanese"}
 			subject.ProviderMetadata = api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "English", Genres: "Animation"}}
 			subject.EffectiveMetadata = api.EffectiveMetadata{
-				OriginalLanguage: "Japanese",
- OriginalLanguageProvenance: api.FactProvenanceManual,
-				Genres: test.genres,
- GenresProvenance: test.provenance,
+				OriginalLanguage:           "Japanese",
+				OriginalLanguageProvenance: api.FactProvenanceManual,
+				Genres:                     test.genres,
+				GenresProvenance:           test.provenance,
 			}
 			hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
 			failures := languageAssessment(subject)
@@ -211,12 +213,12 @@ func TestHDBEnglishDubUsesFinalizedManualGenres(t *testing.T) {
 func TestHDBReviewInvalidationAndDiscBoundaries(t *testing.T) {
 	subject := hdbLanguageSubject()
 	meta := api.UploadSubject{
-SourcePath: subject.SourcePath,
- Type: "REMUX",
- DiscType: "BDMV",
- Identity: subject.Identity,
- LanguageFacts: subject.LanguageFacts,
-}
+		SourcePath:    subject.SourcePath,
+		Type:          "REMUX",
+		DiscType:      "BDMV",
+		Identity:      subject.Identity,
+		LanguageFacts: subject.LanguageFacts,
+	}
 	question := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
 	if question == nil || len(question.Fields) != 2 {
 		t.Fatalf("disc-sourced remux question scope: %#v", question)
@@ -259,23 +261,25 @@ SourcePath: subject.SourcePath,
 
 func TestHDBSubtitleEvidenceAndClearPreservation(t *testing.T) {
 	media := api.MediaFacts{
-		OriginalLanguage: "English",
- TrackCoverageComplete: true,
- PrimaryAudioTrackID: "main",
- SubtitleLanguages: []string{"English (Forced)"},
+		OriginalLanguage:      "English",
+		TrackCoverageComplete: true,
+		PrimaryAudioTrackID:   "main",
+		SubtitleLanguages:     []string{"English (Forced)"},
 		Tracks: []api.MediaTrackFacts{
 			{
-ID: "main",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
- Languages: []string{"English"},
- Default: true,
-},
+				ID:           "main",
+				Kind:         api.MediaTrackAudio,
+				Role:         api.AudioRoleProgramme,
+				Languages:    []string{"English"},
+				Default:      true,
+				DefaultKnown: true,
+			},
 			{
-Kind: api.MediaTrackSubtitle,
- Languages: []string{"English (Forced)"},
- Default: true,
-},
+				Kind:         api.MediaTrackSubtitle,
+				Languages:    []string{"English (Forced)"},
+				Default:      true,
+				DefaultKnown: true,
+			},
 		},
 	}
 	subject := hdbLanguageSubject()
@@ -287,7 +291,7 @@ Kind: api.MediaTrackSubtitle,
 	}
 	media.SubtitleLanguages, media.SubtitleLanguagesProvenance = nil, api.FactProvenanceManualEmpty
 	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
-	if hasForcedDefaultSubtitle(subject.LanguageFacts) {
+	if found, _ := forcedDefaultSubtitleEvidence(subject.LanguageFacts); found {
 		t.Fatal("manual subtitle clear resurrected stale track language")
 	}
 	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)

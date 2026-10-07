@@ -297,13 +297,14 @@ func dpEligibilitySubject(languages ...string) api.UploadSubject {
 	}
 	for index, language := range languages {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID:         "audio-" + strconv.Itoa(index),
-			Kind:       api.MediaTrackAudio,
-			Role:       api.AudioRoleProgramme,
-			Languages:  []string{language},
-			Codec:      "AC-3",
-			AudioLabel: "DD 5.1",
-			Default:    index == 0,
+			ID:           "audio-" + strconv.Itoa(index),
+			Kind:         api.MediaTrackAudio,
+			Role:         api.AudioRoleProgramme,
+			Languages:    []string{language},
+			Codec:        "AC-3",
+			AudioLabel:   "DD 5.1",
+			Default:      index == 0,
+			DefaultKnown: true,
 		})
 	}
 	return api.UploadSubject{

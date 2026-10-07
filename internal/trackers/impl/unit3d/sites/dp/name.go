@@ -16,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v6", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v7", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }

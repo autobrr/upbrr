@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "Bumps AZ/CZ language-policy versions and retains the reviewed evaluateRules binding; existing provider country routing and manual year precedence are unchanged. AZ/CZ conflicting-provider original-language correction and clear tests cover the added assessment.",
-    "sha256": "b67520847adc298750ff92d920896be6ecbaccbcabf1507024669c089e97bf24"
+    "reason": "CinemaZ default-evidence policy version advances after reviewing the shared finalized-facts predicate. AvistaZ and PHD versions and all provider/manual correction precedence remain unchanged; no provider lookup or fallback is introduced.",
+    "sha256": "13204f0c6a492047bda012ba2aa714d8a3893c4f6a8c13c6d5888b72d7390b88"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
@@ -896,8 +896,8 @@
     "sha256": "83fcef0b8ec216b95c6cb7c887d61e7e3924fefa84b3dcb772856ed31f832de3"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "reason": "Uses finalized LanguageFacts, Anime and EffectiveMetadata.Genres rather than raw provider language or genre fallbacks. Manual Drama blocks the animated-English-dub exception and a manual genre clear stays unresolved despite provider Animation; explicit subtitle/source answers remain independently facts-bound.",
-    "sha256": "0455bec3b636ed316a988de0175e958d5cf0f3e11cae59d2990eecf34d1eedd6"
+    "sha256": "6aed66ff7fac02be9637758a2886f5defe6b0f874c0037cf28948fedabaeab2a",
+    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -936,8 +936,8 @@
     "sha256": "81567f861b320e76b0817ee0f08fbce8ae0e0cdb1a5515305d9ab43f9e58ffb7"
   },
   "internal/trackers/impl/standalone/hdb/validation.go:validationPolicy": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "864c809c0ccb27fb461e1cc595fa90f0bbe5a2262f265cfbcd772876a1963c16"
+    "sha256": "9eb9cf51c5624e9421ad207ee5232d0ad75a1e7892bd546ae6ff30c8ddd32fc8",
+    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1432,12 +1432,12 @@
     "sha256": "1a7435669f41d062a994a911c86fae6282d462f251000d1e9eeb426e5a3f3873"
   },
   "internal/trackers/impl/unit3d/sites/otw/rules.go:ValidationPolicy": {
-    "reason": "Updates the versioned checkRequirements binding for advisory English accessibility. Existing manual-aware genre, adult-content, naming and fallback-provider assessments remain unchanged; no new direct provider read is added.",
-    "sha256": "369cb9fdab4e059b04ea4e41fd69b51abeaefc6ff035617915545efa79c1bf50"
+    "sha256": "c4455eb5269938836b82b4f2f1d00dcf90540e472d823ba67cfc7641685c5fe7",
+    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
   },
   "internal/trackers/impl/unit3d/sites/otw/validation.go:checkRequirements": {
-    "reason": "Adds non-disc English accessibility guidance from finalized LanguageFacts only. Existing genre and naming validation still use the same manual-aware resolved subject, with explicit title/year corrections and clears covered by OTW validation tests.",
-    "sha256": "1e71eedb5b89a0bcd3057c9e9b040e5f2bceec1315d8f3cd7f81117d4fb5f14e"
+    "sha256": "05a4f2deaefd5e1bafae03f0cabceb6a1265be4a9fd041f8735d24286730908d",
+    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
   },
   "internal/trackers/impl/unit3d/sites/otw/validation.go:otwNamingFailures": {
     "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence.",
@@ -1532,8 +1532,8 @@
     "sha256": "b0ca152d8cd761b869f7cb87f07b19e8a70b244414942791117825ebacf43de9"
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:validationPolicy": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "190eec7a9ac953dcc415fb5e590ca808c562979cb32bfde25d9b302c99581943"
+    "sha256": "7fb61d264cf7264edf1e49a6b668e8c854a9edbea2086f9c20c3d1f4b4c46868",
+    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1544,8 +1544,8 @@
     "sha256": "280086d2412e28ae814734e5593072cdfb937ac57ee6e0baecb7c6ade728b299"
   },
   "internal/trackers/impl/unit3d/sites/yus/profile.go:Profile": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "8bb8366fcb1940842e763aa76e04e9d38ec940c1b06dc32718773bbe4470909a"
+    "sha256": "3b8d96596da690d0a596bf3cb3bb5833815a2b20f4316e3538fa57dd4c96d09f",
+    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
   },
   "internal/trackers/impl/unit3d/taxonomy.go:resolveKeywords": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

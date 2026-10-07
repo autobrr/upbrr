@@ -11,17 +11,30 @@ Use **Settings → Image Hosting** to define global image-upload candidates. **H
 
 Choose up to six hosts in preferred order. The Web UI reveals credential fields only for selected hosts.
 
-Choose from the hosts advertised in the running application and provide only their requested credentials. Available choices can depend on the selected destination.
+| Host         | Required setting         |
+| ------------ | ------------------------ |
+| ImgBB        | API key                  |
+| ImgBox       | None                     |
+| Pixhost      | None                     |
+| Lensdump     | API key                  |
+| PTScreens    | API key                  |
+| OnlyImage    | API key                  |
+| Dalexni      | API key                  |
+| Zipline      | Base URL and API key     |
+| PassTheImage | API key                  |
+| Seedpool CDN | API key                  |
+| ShareX       | Endpoint URL and API key |
+| UTPPM        | API key                  |
 
 Tracker-specific host choices still apply after warning acknowledgement and when existing images are reused. Cached images on another host do not replace the configured choice.
 
 When an allowed host fails, upbrr can try the next eligible configured host. A host rejected by the target tracker's policy is skipped regardless of its global position.
 
-Imported tracker images still follow the destination's host policy. upbrr resolves supported thumbnail and proxy URLs to full-size sources where possible. Links tied to the source tracker require an eligible image host; this also applies to images inside imported comparison blocks. If a required image cannot be downloaded or rehosted, preparation reports the failure instead of treating the source URL as a valid destination upload.
+Imported tracker images still follow the destination's host policy. upbrr resolves supported thumbnail and proxy URLs to full-size sources where possible. Links tied to the source tracker, including PTP-hosted images when uploading elsewhere, require an eligible image host; this also applies to images inside imported comparison blocks. If a required image cannot be downloaded or rehosted, preparation reports the failure instead of treating the source URL as a valid destination upload.
 
 ## Additional hosts
 
-Some integrations are available only when advertised by a configured tracker. They are not general global fallback slots.
+**Lostimg**, **ReelFliX**, and **Samaritano** are conditional, tracker-owned integrations. Enable one and enter its API key only when the corresponding tracker advertises support. They are not general global fallback slots; Samaritano is available only for SAM.
 
 ## Verify the change
 

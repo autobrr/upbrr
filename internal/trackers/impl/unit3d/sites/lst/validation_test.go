@@ -175,20 +175,26 @@ func lstTestLanguageFacts(original string, programme, subtitles []string) api.La
 	}
 	for index, language := range programme {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID:        "audio-" + strconv.Itoa(index),
-			Kind:      api.MediaTrackAudio,
-			Role:      api.AudioRoleProgramme,
-			Languages: []string{language},
-			Codec:     "AC-3",
-			Default:   index == 0,
+			ID:               "audio-" + strconv.Itoa(index),
+			Kind:             api.MediaTrackAudio,
+			Role:             api.AudioRoleProgramme,
+			Languages:        []string{language},
+			Codec:            "AC-3",
+			Default:          index == 0,
+			DefaultKnown:     true,
+			StreamOrder:      index + 1,
+			StreamOrderKnown: true,
 		})
 	}
 	for index, language := range subtitles {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID:        "subtitle-" + strconv.Itoa(index),
-			Kind:      api.MediaTrackSubtitle,
-			Languages: []string{language},
-			Default:   index == 0,
+			ID:               "subtitle-" + strconv.Itoa(index),
+			Kind:             api.MediaTrackSubtitle,
+			Languages:        []string{language},
+			Default:          index == 0,
+			DefaultKnown:     true,
+			StreamOrder:      index + 1,
+			StreamOrderKnown: true,
 		})
 	}
 	return mediafacts.ResolveLanguages(media)

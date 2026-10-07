@@ -70,7 +70,17 @@ func ApplyDefaultAudioName(editor *NameEditor, meta api.UploadSubject) error {
 	var selected *api.MediaTrackFacts
 	for i := range meta.LanguageFacts.Tracks {
 		track := &meta.LanguageFacts.Tracks[i]
-		if track.Kind != api.MediaTrackAudio || !track.Default {
+		if track.Kind != api.MediaTrackAudio {
+			continue
+		}
+		if !track.DefaultKnown {
+			return &NameRuleError{
+				Rule:   "default_audio",
+				Role:   api.NameRoleAudio,
+				Reason: "Unresolved default audio naming: every inspected audio default flag must be known",
+			}
+		}
+		if !track.Default {
 			continue
 		}
 		if selected != nil {

@@ -66,7 +66,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v6" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v7" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -143,11 +143,12 @@ func dpGeneratedSubject(t *testing.T, request api.ReleaseNameRequest) api.Upload
 	facts := api.LanguageFacts{AudioAbsent: audio.Value == ""}
 	if audio.Value != "" {
 		facts.Tracks = []api.MediaTrackFacts{{
-			Kind:       api.MediaTrackAudio,
-			Role:       api.AudioRoleProgramme,
-			Default:    true,
-			Codec:      strings.Fields(audio.Value)[0],
-			AudioLabel: audio.Value,
+			Kind:         api.MediaTrackAudio,
+			Role:         api.AudioRoleProgramme,
+			Default:      true,
+			DefaultKnown: true,
+			Codec:        strings.Fields(audio.Value)[0],
+			AudioLabel:   audio.Value,
 		}}
 	}
 	return api.UploadSubject{
@@ -331,11 +332,12 @@ func TestDPDiscRemuxAndDefaultAudioBoundaries(t *testing.T) {
 		ProgrammeLanguages:     []string{"Japanese", "English"},
 		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
 		Tracks: []api.MediaTrackFacts{{
-			Kind:       api.MediaTrackAudio,
-			Role:       api.AudioRoleProgramme,
-			Default:    true,
-			Codec:      "DD+",
-			AudioLabel: "DD+ 5.1",
+			Kind:         api.MediaTrackAudio,
+			Role:         api.AudioRoleProgramme,
+			Default:      true,
+			DefaultKnown: true,
+			Codec:        "DD+",
+			AudioLabel:   "DD+ 5.1",
 		}},
 	}
 	base.Type = "DISC"
@@ -407,28 +409,31 @@ func TestDPLanguageMultiNameIgnoresPrimaryAndDefaultLanguage(t *testing.T) {
 							PrimaryAudioTrackID:    languages[primary],
 							Tracks: []api.MediaTrackFacts{
 								{
-									ID:         languages[0],
-									Kind:       api.MediaTrackAudio,
-									Role:       api.AudioRoleProgramme,
-									Languages:  languages[:1],
-									Default:    defaultTrack == 0,
-									Codec:      "AAC",
-									AudioLabel: "AAC 2.0",
+									ID:           languages[0],
+									Kind:         api.MediaTrackAudio,
+									Role:         api.AudioRoleProgramme,
+									Languages:    languages[:1],
+									Default:      defaultTrack == 0,
+									DefaultKnown: true,
+									Codec:        "AAC",
+									AudioLabel:   "AAC 2.0",
 								},
 								{
-									ID:         languages[1],
-									Kind:       api.MediaTrackAudio,
-									Role:       api.AudioRoleProgramme,
-									Languages:  languages[1:],
-									Default:    defaultTrack == 1,
-									Codec:      "DD+",
-									AudioLabel: "DD+ 5.1",
+									ID:           languages[1],
+									Kind:         api.MediaTrackAudio,
+									Role:         api.AudioRoleProgramme,
+									Languages:    languages[1:],
+									Default:      defaultTrack == 1,
+									DefaultKnown: true,
+									Codec:        "DD+",
+									AudioLabel:   "DD+ 5.1",
 								},
 								{
-									ID:        "commentary",
-									Kind:      api.MediaTrackAudio,
-									Role:      api.AudioRoleCommentary,
-									Languages: []string{"English"},
+									ID:           "commentary",
+									DefaultKnown: true,
+									Kind:         api.MediaTrackAudio,
+									Role:         api.AudioRoleCommentary,
+									Languages:    []string{"English"},
 								},
 							},
 						}
@@ -555,21 +560,23 @@ func dpNordicDubSubject(t *testing.T) api.UploadSubject {
 		PrimaryAudioTrackID:    "Swedish",
 		Tracks: []api.MediaTrackFacts{
 			{
-				ID:         "Swedish",
-				Kind:       api.MediaTrackAudio,
-				Role:       api.AudioRoleProgramme,
-				Languages:  []string{"Swedish"},
-				Default:    true,
-				Codec:      "AAC",
-				AudioLabel: "AAC 2.0",
+				ID:           "Swedish",
+				Kind:         api.MediaTrackAudio,
+				Role:         api.AudioRoleProgramme,
+				Languages:    []string{"Swedish"},
+				Default:      true,
+				DefaultKnown: true,
+				Codec:        "AAC",
+				AudioLabel:   "AAC 2.0",
 			},
 			{
-				ID:         "Finnish",
-				Kind:       api.MediaTrackAudio,
-				Role:       api.AudioRoleProgramme,
-				Languages:  []string{"Finnish"},
-				Codec:      "DD+",
-				AudioLabel: "DD+ 5.1",
+				ID:           "Finnish",
+				DefaultKnown: true,
+				Kind:         api.MediaTrackAudio,
+				Role:         api.AudioRoleProgramme,
+				Languages:    []string{"Finnish"},
+				Codec:        "DD+",
+				AudioLabel:   "DD+ 5.1",
 			},
 		},
 	}
