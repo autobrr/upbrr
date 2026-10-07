@@ -145,6 +145,17 @@ func TestUnit3DCategorySearchIncludesUploadAndRelatedCategories(t *testing.T) {
 		t.Run(test.tracker+"/"+test.name, func(t *testing.T) {
 			t.Parallel()
 			meta := unit3DCategoryScopeSubject(t, test.category)
+			if test.tracker == "SAM" {
+				// Synthetic Prepare subjects only derive Partial language status. SAM's
+				// fail-closed language policy requires original-language evidence; use
+				// Portuguese so non-pt Complete-status rules are out of scope here.
+				if meta.ProviderMetadata.TMDB == nil {
+					meta.ProviderMetadata.TMDB = &api.TMDBMetadata{}
+				}
+				if strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) == "" {
+					meta.ProviderMetadata.TMDB.OriginalLanguage = "pt"
+				}
+			}
 			if test.modify != nil {
 				test.modify(&meta)
 			}

@@ -1251,13 +1251,17 @@
     "sha256": "06c8b24de8ea7e88995ba0b339cc1fb998eb44a5516294b181e06b927b7962cd",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
+  "internal/trackers/impl/unit3d/name.go:ApplyLocalizedNameDefaults": {
+    "sha256": "82e109766652173612b4b32ff803a01088c0f7f2a26a9729266d197dc815959e",
+    "reason": "Shared localized defaults retain the established prepared-source and generated-name manual/component precedence."
+  },
   "internal/trackers/impl/unit3d/name.go:applyLocalizedAlternateTitle": {
     "sha256": "c00ccda59006f108b3c5567502f054bfc4614083f93864b64ca3cc6f01cee3f3",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/name.go:applyLocalizedNameDefaults": {
-    "sha256": "cfa1dbff84cec212b964eb4513cbe68f5514e9da2cab28531f5090fe994cdf37",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "277fd9ba235439b5a11efc248831bed7684d5c36fc6aad85419b582b206a7ce7",
+    "reason": "Delegates unchanged localized precedence to the reviewed exported default helper."
   },
   "internal/trackers/impl/unit3d/name.go:resolveOriginalLanguage": {
     "sha256": "c0f484c64ee813d3882d35287040be5bab3a93127022f3c401d505d216766f95",
@@ -1444,8 +1448,24 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/unit3d/sites/sam/profile.go:Profile": {
-    "sha256": "fbcdb07300b49bc8c08e977214e76f40c4d606d16ab056fefb8ffc295d678284",
-    "reason": "Adds a canonical category-family catalog covering TV and anime together without provider reads. Existing localized naming and finalized anime upload classification preserve prepared-provider and manual-precedence paths."
+    "sha256": "f3497932bd1d0546e156d99e7467b5f1081d9cccfba023b3c47c69d968e32bac",
+    "reason": "Adds a canonical category-family catalog covering TV and anime together without provider reads. Existing localized naming and finalized anime upload classification preserve prepared-provider and manual-precedence paths. SAM also wires reviewed validation and duplicate policy without selecting manually-correctable metadata."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:ValidationPolicy": {
+    "sha256": "1b31efbdaf25f254b3e2ab81037d9b3c466936cf382805874d0d15a6ea35a634",
+    "reason": "Returns the reviewed SAM validation callback without selecting provider metadata."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:checkRequirements": {
+    "sha256": "8566d52e8967ed6bac47f5fb7fa2a08c520ea92238c6c7e487c9cbf524b6b667",
+    "reason": "Delegates content and language checks; provider status is guarded by current source-scoped metadata."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:samContentStructureFailures": {
+    "sha256": "9e5102f41937783cbc24f3c6e70e0f7f173f2495f2f66685ffe5261d8f0bc445",
+    "reason": "Season-pack eligibility uses only current provider series status; package structure remains local media evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:samSeriesStatus": {
+    "sha256": "856e7d3960cd2159d75f95937e28226bc5f995346b8a53321c800deecc71d1a7",
+    "reason": "Uses current provider TVDB or TVmaze status as provider-only eligibility evidence and fails closed when unavailable."
   },
   "internal/trackers/impl/unit3d/sites/tik/profile.go:Profile": {
     "sha256": "7cbef29d671d39dff93cdd6a7439d7203334c5a448623a0e3c4ade0363016af6",
