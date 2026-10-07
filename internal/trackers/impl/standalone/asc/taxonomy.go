@@ -4,6 +4,7 @@
 package asc
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -182,41 +183,155 @@ func resolveVideoCodecID(meta api.UploadSubject) string {
 	}
 }
 
+// audioCodec identifies the primary audio format family shared by the codec
+// attribute and the audio token the site requires in file names.
+type audioCodec int
+
+const (
+	audioCodecUnknown audioCodec = iota
+	audioCodecDTSX
+	audioCodecDTSHDMA
+	audioCodecDTSHD
+	audioCodecTrueHD
+	audioCodecDDPlus
+	audioCodecDD
+	audioCodecDTS
+	audioCodecFLAC
+	audioCodecLPCM
+	audioCodecPCM
+	audioCodecAAC
+	audioCodecOpus
+	audioCodecMP3
+	audioCodecVorbis
+)
+
+// classifyAudioCodec maps the composite primary audio string. Order matters:
+// more specific families must precede the substrings they contain.
+func classifyAudioCodec(audio string) audioCodec {
+	audio = strings.ToUpper(strings.TrimSpace(audio))
+	switch {
+	case strings.Contains(audio, "DTS:X"), strings.Contains(audio, "DTS-X"):
+		return audioCodecDTSX
+	case strings.Contains(audio, "DTS-HD MA"), strings.Contains(audio, "DTS-HD-MA"):
+		return audioCodecDTSHDMA
+	case strings.Contains(audio, "DTS-HD"):
+		return audioCodecDTSHD
+	case strings.Contains(audio, "TRUEHD"):
+		return audioCodecTrueHD
+	case strings.Contains(audio, "DD+"), strings.Contains(audio, "DDP"), strings.Contains(audio, "E-AC-3"), strings.Contains(audio, "EAC3"):
+		return audioCodecDDPlus
+	case strings.Contains(audio, "DD"), strings.Contains(audio, "AC3"), strings.Contains(audio, "AC-3"):
+		return audioCodecDD
+	case strings.Contains(audio, "DTS"):
+		return audioCodecDTS
+	case strings.Contains(audio, "FLAC"):
+		return audioCodecFLAC
+	case strings.Contains(audio, "LPCM"):
+		return audioCodecLPCM
+	case strings.Contains(audio, "PCM"):
+		return audioCodecPCM
+	case strings.Contains(audio, "AAC"):
+		return audioCodecAAC
+	case strings.Contains(audio, "OPUS"):
+		return audioCodecOpus
+	case strings.Contains(audio, "MP3"), strings.Contains(audio, "MPEG"):
+		return audioCodecMP3
+	case strings.Contains(audio, "VORBIS"):
+		return audioCodecVorbis
+	default:
+		return audioCodecUnknown
+	}
+}
+
 // resolveAudioCodecID maps the primary audio format. The site has no Atmos
 // option, so Atmos resolves through its TrueHD or E-AC-3 carrier.
 func resolveAudioCodecID(meta api.UploadSubject) string {
-	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
-	switch {
-	case strings.Contains(audio, "DTS:X"), strings.Contains(audio, "DTS-X"):
+	switch classifyAudioCodec(meta.Audio) {
+	case audioCodecDTSX:
 		return "160"
-	case strings.Contains(audio, "DTS-HD MA"), strings.Contains(audio, "DTS-HD-MA"):
+	case audioCodecDTSHDMA:
 		return "159"
-	case strings.Contains(audio, "DTS-HD"):
+	case audioCodecDTSHD:
 		return "158"
-	case strings.Contains(audio, "TRUEHD"):
+	case audioCodecTrueHD:
 		return "164"
-	case strings.Contains(audio, "DD+"), strings.Contains(audio, "DDP"), strings.Contains(audio, "E-AC-3"), strings.Contains(audio, "EAC3"):
+	case audioCodecDDPlus:
 		return "161"
-	case strings.Contains(audio, "DD"), strings.Contains(audio, "AC3"), strings.Contains(audio, "AC-3"):
+	case audioCodecDD:
 		return "150"
-	case strings.Contains(audio, "DTS"):
+	case audioCodecDTS:
 		return "149"
-	case strings.Contains(audio, "FLAC"):
+	case audioCodecFLAC:
 		return "148"
-	case strings.Contains(audio, "LPCM"):
+	case audioCodecLPCM:
 		return "156"
-	case strings.Contains(audio, "PCM"):
+	case audioCodecPCM:
 		return "163"
-	case strings.Contains(audio, "AAC"):
+	case audioCodecAAC:
 		return "151"
-	case strings.Contains(audio, "OPUS"):
+	case audioCodecOpus:
 		return "162"
-	case strings.Contains(audio, "MP3"), strings.Contains(audio, "MPEG"):
+	case audioCodecMP3:
 		return "152"
-	case strings.Contains(audio, "VORBIS"):
+	case audioCodecVorbis:
 		return "165"
+	case audioCodecUnknown:
+		return "155"
 	default:
 		return "155"
+	}
+}
+
+var audioChannelsPattern = regexp.MustCompile(`\b\d\.\d\b`)
+
+// audioFileNameToken renders the primary audio as the dotted file-name token
+// the site requires (DDP5.1, AAC2.0, DTS-HD.MA.5.1, TrueHD.Atmos.7.1). It
+// returns "" when the codec family or channel layout is unknown or the site
+// has no naming convention for it, so callers never invent a token.
+func audioFileNameToken(meta api.UploadSubject) string {
+	channels := strings.TrimSpace(meta.Channels)
+	if !audioChannelsPattern.MatchString(channels) || len(channels) != 3 {
+		channels = audioChannelsPattern.FindString(meta.Audio)
+	}
+	if channels == "" {
+		return ""
+	}
+	atmos := strings.Contains(strings.ToUpper(meta.Audio), "ATMOS")
+	switch classifyAudioCodec(meta.Audio) {
+	case audioCodecDTSX:
+		return "DTS-X." + channels
+	case audioCodecDTSHDMA:
+		return "DTS-HD.MA." + channels
+	case audioCodecDTSHD:
+		return "DTS-HD." + channels
+	case audioCodecTrueHD:
+		if atmos {
+			return "TrueHD.Atmos." + channels
+		}
+		return "TrueHD." + channels
+	case audioCodecDDPlus:
+		if atmos {
+			return "DDP" + channels + ".Atmos"
+		}
+		return "DDP" + channels
+	case audioCodecDD:
+		return "DD" + channels
+	case audioCodecDTS:
+		return "DTS" + channels
+	case audioCodecFLAC:
+		return "FLAC" + channels
+	case audioCodecLPCM:
+		return "LPCM." + channels
+	case audioCodecPCM:
+		return "PCM." + channels
+	case audioCodecAAC:
+		return "AAC" + channels
+	case audioCodecOpus:
+		return "OPUS" + channels
+	case audioCodecMP3, audioCodecVorbis, audioCodecUnknown:
+		return ""
+	default:
+		return ""
 	}
 }
 

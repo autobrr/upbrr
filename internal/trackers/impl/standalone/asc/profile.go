@@ -48,6 +48,7 @@ func Profile() standalone.Profile {
 		}),
 		NewDuplicateAdapter:   newDuplicateAdapter,
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
+		ContentRenamer:        complianceFileName,
 		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"amigos-share.club"}},
 		AuthCapability:        authcontract.CookieCapability("ASC"),

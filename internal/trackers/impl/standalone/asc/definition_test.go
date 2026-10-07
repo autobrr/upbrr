@@ -126,3 +126,16 @@ func TestBuildQuestionnaireForMissingMetadata(t *testing.T) {
 		t.Fatalf("expected 2 questionnaire fields, got %d", got)
 	}
 }
+
+func TestProfileDeclaresContentRenamer(t *testing.T) {
+	t.Parallel()
+
+	renamer := New().ContentRenamer()
+	if renamer == nil {
+		t.Fatal("ASC must declare a content renamer")
+	}
+	got := renamer(api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}, "Example.Show.S13E05.NORDiC.1080p.DSNP.WEB-DL.H.264-GRP.mkv")
+	if want := "Example.Show.S13E05.NORDiC.1080p.DSNP.WEB-DL.DDP5.1.H.264-GRP.mkv"; got != want {
+		t.Fatalf("renamer = %q, want %q", got, want)
+	}
+}

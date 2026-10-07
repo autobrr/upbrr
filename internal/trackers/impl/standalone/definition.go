@@ -186,6 +186,9 @@ func (d *Definition) UploadArtifactPolicy() *trackers.UploadArtifactPolicy {
 	return cloneValue(d.profile.UploadArtifactPolicy)
 }
 
+// ContentRenamer returns optional tracker-owned torrent content naming.
+func (d *Definition) ContentRenamer() trackers.ContentRenamer { return d.profile.ContentRenamer }
+
 // DupePolicy returns tracker-specific duplicate comparison settings.
 func (d *Definition) DupePolicy() *trackers.DupePolicy { return cloneValue(d.profile.DupePolicy) }
 

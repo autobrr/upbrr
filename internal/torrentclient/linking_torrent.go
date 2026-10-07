@@ -16,6 +16,9 @@ import (
 
 	"github.com/autobrr/go-torrent/metainfo"
 
+	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -399,4 +402,68 @@ func rollbackTorrentLinkPlan(trackerDir string, created []string, planErr error)
 		return planErr
 	}
 	return fmt.Errorf("rollback failed: %w", errors.Join(append([]error{planErr}, rollbackErrs...)...))
+}
+
+// requireLinkStagingForRenamedContent rejects an unlinked add when the tracker
+// renames content and the torrent's names no longer match the source on disk:
+// the client would be told to seed files that do not exist. Trackers without a
+// rename policy and layouts that cannot be inspected are left to the existing
+// original-path behavior.
+func (s *Service) requireLinkStagingForRenamedContent(
+	ctx context.Context,
+	clientName string,
+	client config.TorrentClientConfig,
+	meta api.ClientSubject,
+	torrent api.TorrentResult,
+) error {
+	tracker := strings.ToLower(strings.TrimSpace(torrent.Tracker))
+	if _, ok := s.renamingTrackers[tracker]; !ok || strings.TrimSpace(torrent.Path) == "" {
+		return nil
+	}
+	differs, err := torrentLayoutDiffersFromSource(ctx, torrent.Path, meta)
+	if err != nil {
+		logging.FromContext(ctx, s.logger).Debugf("clients: renamed-content layout check skipped client=%s tracker=%s reason=%s", clientName, tracker, err)
+		return nil
+	}
+	if !differs {
+		return nil
+	}
+	logging.FromContext(
+		ctx,
+		s.logger,
+	).Warnf(
+		"clients: renamed tracker torrent needs link staging client=%s tracker=%s linking=%q decision=abort",
+		clientName,
+		tracker,
+		client.LinkingMode(),
+	)
+	return fmt.Errorf(
+		"clients: %s: tracker %s requires renamed files but link staging is not active; set linking to hardlink, symlink, or reflink with a linked_folder for this client: %w",
+		clientName,
+		strings.ToUpper(tracker),
+		internalerrors.ErrInvalidInput,
+	)
+}
+
+// torrentLayoutDiffersFromSource reports whether the torrent root or any file
+// path differs from the prepared source, i.e. the client would not find the data
+// at the original location.
+func torrentLayoutDiffersFromSource(ctx context.Context, torrentPath string, meta api.ClientSubject) (bool, error) {
+	plan, err := buildTorrentLinkPlan(ctx, torrentPath, meta)
+	if err != nil {
+		return false, err
+	}
+	source, err := sourcePathForQbitSavePath(meta)
+	if err != nil {
+		return false, err
+	}
+	if plan.root != filepath.Base(source) {
+		return true, nil
+	}
+	for _, file := range plan.files {
+		if file.match != "path_size" {
+			return true, nil
+		}
+	}
+	return false, nil
 }

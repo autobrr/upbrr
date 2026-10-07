@@ -5,6 +5,7 @@ package asc
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -78,4 +79,62 @@ func seasonEpisodeText(meta api.UploadSubject) string {
 		return fmt.Sprintf("S%02d", meta.SeasonInt)
 	}
 	return ""
+}
+
+var (
+	fileNameResolutionPattern = regexp.MustCompile(`(?i)[._ ](?:2160|1440|1080|720|576|540|480)[pi](?:[._ -]|$)`)
+	fileNameVideoPattern      = regexp.MustCompile(`(?i)([._ ])(?:H[._ ]?26[45]|x26[45]|HEVC|AVC|AV1|VP9|XviD|DivX|VC-1|MPEG-?2)(?:[._ -]|$)`)
+	fileNameAudioPattern      = regexp.MustCompile(
+		`(?i)(?:^|[._ -])(?:DDP?\+?|AAC|AC3|E-?AC-?3|DTS(?:-HD|-X|-ES)?|TrueHD|FLAC|L?PCM|OPUS|MP3|Atmos)(?:\d(?:\.\d)?)?(?:[._ -]|$)`,
+	)
+)
+
+// fileNameExtensions lists the container extensions stripped before the file
+// name is analysed; folder names never carry one.
+var fileNameExtensions = map[string]struct{}{
+	".mkv":  {},
+	".mp4":  {},
+	".m4v":  {},
+	".avi":  {},
+	".ts":   {},
+	".m2ts": {},
+	".mpg":  {},
+	".mpeg": {},
+	".wmv":  {},
+	".mov":  {},
+}
+
+// complianceFileName returns the name the site requires for a release file or
+// folder: the primary audio token placed between the source and the video
+// codec (`…1080p.DSNP.WEB-DL.DDP5.1.H.264-GRP`). The original name is returned
+// unchanged when it already carries an audio token, when no audio token can be
+// derived from the finalized media facts, or when no resolution or video codec
+// token anchors a safe insertion point. It never reorders or drops existing tokens.
+func complianceFileName(meta api.UploadSubject, name string) string {
+	token := audioFileNameToken(meta)
+	if token == "" {
+		return name
+	}
+	stem, ext := name, ""
+	if dot := strings.LastIndex(name, "."); dot > 0 {
+		if _, ok := fileNameExtensions[strings.ToLower(name[dot:])]; ok {
+			stem, ext = name[:dot], name[dot:]
+		}
+	}
+	resolution := fileNameResolutionPattern.FindStringIndex(stem)
+	if resolution == nil {
+		return name
+	}
+	tail := stem[resolution[0]:]
+	if fileNameAudioPattern.MatchString(tail) {
+		return name
+	}
+	video := fileNameVideoPattern.FindStringSubmatchIndex(tail)
+	if video == nil {
+		return name
+	}
+	// Group 1 is the separator preceding the codec; insert right after it.
+	insertAt := resolution[0] + video[3]
+	separator := stem[resolution[0]+video[2] : insertAt]
+	return stem[:insertAt] + token + separator + stem[insertAt:] + ext
 }
