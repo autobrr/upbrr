@@ -13,8 +13,11 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 var errSessionExpired = errors.New("ASC session expired or cookies invalid")
@@ -129,4 +132,50 @@ func setXHRHeaders(httpReq *http.Request, client *http.Client) {
 	httpReq.Header.Set("X-Xsrf-Token", xsrfToken(client))
 	httpReq.Header.Set("Origin", baseURL)
 	httpReq.Header.Set("Referer", baseURL+uploadPagePath)
+}
+
+// resolveAuthSession validates the imported ASC cookies by loading the upload
+// page. It never attempts a login: ASC auth is cookie import only.
+func resolveAuthSession(ctx context.Context, _ config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
+	cookies, err := loadSessionCookies(ctx, dbPath)
+	if err != nil {
+		return err
+	}
+	if len(cookies) == 0 {
+		return &trackers.AuthResolutionError{
+			Reason:       "cookies missing",
+			PublicDetail: "Import ASC cookies for amigos-share.club.",
+			AuthRequired: true,
+			Err:          cookiepkg.ErrTrackerCookiesNotFound,
+		}
+	}
+	client, err := newSessionClient(httpclient.New(httpclient.DefaultTimeout), cookies)
+	if err != nil {
+		return err
+	}
+	return validateSession(ctx, client)
+}
+
+// validateSession classifies a session check. An expired session needs fresh
+// cookies but is not reported as confirmed-invalid, so stored cookies are
+// never deleted on a single login redirect.
+func validateSession(ctx context.Context, client *http.Client) error {
+	err := warmUploadSession(ctx, client)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errSessionExpired):
+		return &trackers.AuthResolutionError{
+			Reason:       "session expired",
+			PublicDetail: "ASC session expired; import fresh cookies for amigos-share.club.",
+			AuthRequired: true,
+			Err:          err,
+		}
+	default:
+		return &trackers.AuthResolutionError{
+			Reason:    "remote validation unavailable",
+			Transient: true,
+			Err:       err,
+		}
+	}
 }

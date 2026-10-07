@@ -28,6 +28,12 @@ func Profile() standalone.Profile {
 			Scope:       trackers.MetadataScopeAny,
 			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldGenres},
 			Disposition: api.RuleDispositionStrict,
+		}, {
+			// Requests the pt-BR TMDB localization (title, synopsis, genres) the
+			// description and payload prefer; advisory so its absence never blocks.
+			Scope:       trackers.MetadataScopeAny,
+			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBLocalizedPTBR},
+			Disposition: api.RuleDispositionAdvisory,
 		}}},
 		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/asc/v2", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			uploadName := resolveUploadTitle(input.Subject)
@@ -45,6 +51,7 @@ func Profile() standalone.Profile {
 		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"amigos-share.club"}},
 		AuthCapability:        authcontract.CookieCapability("ASC"),
+		AuthResolver:          resolveAuthSession,
 	}
 }
 

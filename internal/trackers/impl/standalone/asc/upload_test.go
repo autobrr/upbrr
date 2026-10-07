@@ -232,9 +232,7 @@ func testSubmit(t *testing.T, site *fakeSite, sessionValue string, trackerCfg co
 				Content:   []byte("b"),
 			},
 		},
-		torrentPath:  torrentFile,
 		artifactPath: filepath.Join(tmp, "registered", "ASC.torrent"),
-		announceURL:  testAnnounceURL,
 	}
 	dbPath := filepath.Join(tmp, "ua.db")
 	req := trackers.PreparationInput{
@@ -292,22 +290,21 @@ func TestSubmitPreparedUploadSkipsApprovalWhenUploaderStatusDisabled(t *testing.
 	}
 }
 
-func TestSubmitPreparedUploadFallsBackToReconstructedTorrent(t *testing.T) {
+func TestSubmitPreparedUploadWithoutSiteTorrentSkipsInjection(t *testing.T) {
 	t.Parallel()
 
 	result := testSubmit(t, &fakeSite{downloadFails: true}, "valid", config.TrackerConfig{})
 	if result.err != nil {
-		t.Fatalf("submit: %v", result.err)
+		t.Fatalf("a failed torrent download must not fail the upload: %v", result.err)
 	}
-	if got := result.summary.UploadedTorrents[0].TorrentPath; got != result.artifactPath {
-		t.Fatalf("torrent path = %q, want reconstructed %q", got, result.artifactPath)
+	if result.summary.Uploaded != 1 || result.summary.UploadedTorrents[0].TorrentID != "321" {
+		t.Fatalf("summary = %+v", result.summary)
 	}
-	reconstructed, err := metainfo.LoadFromFile(result.artifactPath)
-	if err != nil {
-		t.Fatalf("load reconstructed torrent: %v", err)
+	if got := result.summary.UploadedTorrents[0].TorrentPath; got != "" {
+		t.Fatalf("torrent path = %q, want none (ASC rewrites torrents, no local reconstruction)", got)
 	}
-	if reconstructed.Announce != testAnnounceURL {
-		t.Fatal("reconstructed torrent does not carry the configured announce URL")
+	if _, err := os.Stat(result.artifactPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("no registered torrent may be written, stat err = %v", err)
 	}
 }
 
@@ -516,4 +513,92 @@ func testTorrentPayload(t *testing.T, announce string) []byte {
 		t.Fatalf("encode torrent: %v", err)
 	}
 	return payload.Bytes()
+}
+
+func TestValidateSession(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		session       string
+		status        int
+		wantNil       bool
+		wantAuth      bool
+		wantTransient bool
+	}{
+		{
+			name:    "valid session",
+			session: "valid",
+			wantNil: true,
+		},
+		{
+			name:     "expired session needs cookies",
+			session:  "stale",
+			wantAuth: true,
+		},
+		{
+			name:          "site error is transient",
+			session:       "valid",
+			status:        http.StatusBadGateway,
+			wantTransient: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/login":
+					_, _ = w.Write([]byte("login"))
+				case tc.status != 0:
+					w.WriteHeader(tc.status)
+				default:
+					if cookie, err := r.Cookie("amigos-share-club-session"); err != nil || cookie.Value != "valid" {
+						http.Redirect(w, r, "/login", http.StatusFound)
+						return
+					}
+					http.SetCookie(w, &http.Cookie{
+						Name:  "XSRF-TOKEN",
+						Value: "token",
+						Path:  "/",
+					})
+				}
+			}))
+			t.Cleanup(server.Close)
+			target, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatalf("parse url: %v", err)
+			}
+			client, err := newSessionClient(&http.Client{Transport: rewriteTransport{target: target}}, []*http.Cookie{
+				{Name: "amigos-share-club-session", Value: tc.session},
+			})
+			if err != nil {
+				t.Fatalf("session client: %v", err)
+			}
+			err = validateSession(t.Context(), client)
+			if tc.wantNil {
+				if err != nil {
+					t.Fatalf("validateSession = %v, want nil", err)
+				}
+				return
+			}
+			resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
+			if !ok {
+				t.Fatalf("validateSession = %v, want AuthResolutionError", err)
+			}
+			if resolution.AuthRequired != tc.wantAuth || resolution.Transient != tc.wantTransient || resolution.ConfirmedInvalid {
+				t.Fatalf("resolution = %+v", resolution)
+			}
+		})
+	}
+}
+
+func TestResolveAuthSessionWithoutCookiesRequiresAuth(t *testing.T) {
+	t.Parallel()
+
+	err := resolveAuthSession(t.Context(), config.TrackerConfig{}, filepath.Join(t.TempDir(), "ua.db"), api.TrackerAuthLoginRequest{})
+	resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
+	if !ok || !resolution.AuthRequired || resolution.ConfirmedInvalid {
+		t.Fatalf("resolveAuthSession without cookies = %v", err)
+	}
 }
