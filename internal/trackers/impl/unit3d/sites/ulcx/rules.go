@@ -37,34 +37,31 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			"original audio should accompany the English dub", trackers.LanguageAdvisory))
 	}
 	for _, track := range subject.LanguageFacts.Tracks {
-		if track.Kind == api.MediaTrackAudio && track.Role == api.AudioRoleAlternateMix {
-			answer := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "alternate_mix_"+track.ID)]
-			if answer != "unique" {
-				reason := "source review should establish meaningful uniqueness of alternate mix " + track.ID + "; a track title alone does not establish it"
-				if answer == "duplicate" {
-					reason = "alternate mix " + track.ID + " duplicates an existing mix; meaningfully unique mixes are welcomed"
-				}
-				failure := trackers.LanguageRuleFailure(subject, "alternate_mix", reason, trackers.LanguageAdvisory)
-				if answer != "duplicate" {
-					failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
-				}
-				failures = append(failures, failure)
-			}
+		if track.Kind != api.MediaTrackAudio {
+			continue
 		}
-		if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleCommentary || track.Role == api.AudioRoleIsolatedScore) {
-			outcome := trackers.LanguageUnresolved
-			switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "language_secondary_retail")] {
-			case "yes":
-				continue
-			case "no":
-				outcome = trackers.LanguageProhibited
-			}
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(subject, "secondary_source", "retail provenance of secondary track "+track.ID+" is required", outcome),
-			)
+		var key, reason string
+		switch track.Role {
+		case api.AudioRoleAlternateMix:
+			key, reason = "alternate_mix", "alternate mix "+track.ID+" should be meaningfully unique; source uniqueness has not been verified"
+		case api.AudioRoleCommentary, api.AudioRoleIsolatedScore:
+			key, reason = "secondary_source", "secondary track "+track.ID+" must come from a retail source; source provenance has not been verified"
+		case api.AudioRoleProgramme,
+			api.AudioRoleCompatibility,
+			api.AudioRoleHistorical,
+			api.AudioRoleInterview,
+			api.AudioRoleNovelty,
+			api.AudioRoleDescription,
+			api.AudioRoleVoiceOver:
+			continue
+		default:
+			continue
 		}
+		failure := trackers.LanguageRuleFailure(subject, key, reason, trackers.LanguageAdvisory)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
+
 	facts := subject.LanguageFacts
 	if facts.OriginalLanguagesKnown {
 		foreign := !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX")

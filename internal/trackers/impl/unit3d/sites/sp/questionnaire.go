@@ -13,14 +13,12 @@ import (
 )
 
 const (
-	packSourceKey      = "pack_source_consistency"
 	packVariationKey   = "pack_genuine_source_variation"
 	packExplanationKey = "pack_source_variation_explanation"
 )
 
 // packQuestionKey extends the prepared language binding to every assessed file
-// and package member. The variation decision also binds the source answer that
-// establishes which differences need explaining; it never binds itself.
+// and package member; answers never stand in for unmeasured source history.
 func packQuestionKey(subject api.TrackerValidationSubject, key string) string {
 	evidence := fmt.Sprintf(
 		"%s|%#v|%#v|%s|%s|%t",
@@ -31,10 +29,6 @@ func packQuestionKey(subject api.TrackerValidationSubject, key string) string {
 		subject.DiscType,
 		subject.TVPack,
 	)
-	if key != packSourceKey {
-		sourceKey := fmt.Sprintf("%s_%x", packSourceKey, sha256.Sum256([]byte(evidence)))
-		evidence += "|" + subject.QuestionnaireAnswers[sourceKey]
-	}
 	return fmt.Sprintf("%s_%x", key, sha256.Sum256([]byte(evidence)))
 }
 
@@ -44,7 +38,7 @@ func packQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnair
 		return nil
 	}
 	evidence := assessPackEvidence(subject)
-	if len(evidence.missing) > 0 ||
+	if len(evidence.missing) > 0 || len(evidence.differences) == 0 ||
 		(api.NormalizeWorkflowExecutionMode(input.ExecutionMode) == api.WorkflowExecutionModeDebug && !evidence.technicalDifference) {
 		return nil
 	}
@@ -61,54 +55,30 @@ func packQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnair
 			Value:    subject.QuestionnaireAnswers[key],
 		}
 	}
-	if evidence.sourceUnknown {
+	fields = append(
+		fields,
+		field(
+			packVariationKey,
+			"SP genuine source variation",
+			"Current differing evidence: "+strings.Join(
+				evidence.differences,
+				"; ",
+			)+". Do these differences reflect genuine source variation, rather than inconsistent preparation?",
+			"select",
+			[]string{"yes", "no", "unknown"},
+		),
+	)
+	if subject.QuestionnaireAnswers[packQuestionKey(subject, packVariationKey)] == "yes" {
 		fields = append(
 			fields,
 			field(
-				packSourceKey,
-				"SP pack source consistency",
-				"Do the current episode files share the source and encoding characteristics that inspected reports cannot establish? Check the actual sources and encoding history; filenames and missing labels are not proof. This answer does not replace measured facts or excuse measured differences. Choose different when these characteristics vary, or unknown when they cannot be established.",
-				"select",
-				[]string{"consistent", "different", "unknown"},
+				packExplanationKey,
+				"SP source variation explanation",
+				"Explain which episodes differ and why those differences come from their sources. This explanation is included in the SP description and must remain there.",
+				"textarea",
+				nil,
 			),
 		)
-		switch subject.QuestionnaireAnswers[packQuestionKey(subject, packSourceKey)] {
-		case "different":
-			evidence.differences = append(evidence.differences, "unmeasured source or encoding characteristics differ, as confirmed for these files")
-		case "consistent":
-		default:
-			return &api.TrackerQuestionnaire{Tracker: "SP", Fields: fields}
-		}
-	}
-	if len(evidence.differences) > 0 {
-		fields = append(
-			fields,
-			field(
-				packVariationKey,
-				"SP genuine source variation",
-				"Current differing evidence: "+strings.Join(
-					evidence.differences,
-					"; ",
-				)+". Do these differences reflect genuine source variation, rather than inconsistent preparation?",
-				"select",
-				[]string{"yes", "no", "unknown"},
-			),
-		)
-		if subject.QuestionnaireAnswers[packQuestionKey(subject, packVariationKey)] == "yes" {
-			fields = append(
-				fields,
-				field(
-					packExplanationKey,
-					"SP source variation explanation",
-					"Explain which episodes differ and why those differences come from their sources. This explanation is included in the SP description and must remain there.",
-					"textarea",
-					nil,
-				),
-			)
-		}
-	}
-	if len(fields) == 0 {
-		return nil
 	}
 	return &api.TrackerQuestionnaire{Tracker: "SP", Fields: fields}
 }

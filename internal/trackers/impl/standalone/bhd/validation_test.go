@@ -66,15 +66,15 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&subject)
 			}
-			bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
 			failures, err := validationPolicy().Check(context.Background(), subject, nil)
 			if err != nil {
 				t.Fatalf("validate BHD subject: %v", err)
 			}
 			if test.wantRule == "" {
-				if len(failures) != 0 {
+				if len(failures) != 1 {
 					t.Fatalf("unexpected failures: %#v", failures)
 				}
+				requireBHDValidationFailure(t, failures, "language_existing_release", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 				return
 			}
 			requireBHDValidationFailure(t, failures, test.wantRule, test.wantDisposition, test.wantStatus)
@@ -168,10 +168,7 @@ func TestBHDLanguageRoleAndDiscBoundaries(t *testing.T) {
 	t.Parallel()
 	subject := bhdValidationSubject()
 	subject.LanguageFacts = bhdTestLanguageFacts("Japanese", []string{"Japanese", "English"}, nil)
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("permitted original and English programme audio blocked: %+v", failures)
-	}
+	requireBHDSourceWarnings(t, subject, "language_existing_release")
 	subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
 		ID:        "wrong-core",

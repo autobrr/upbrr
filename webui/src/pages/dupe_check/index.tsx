@@ -285,6 +285,16 @@ function WorkflowDupeAssessmentView({
             .filter((decision) => !decision.blocking && decision.decision === "bypassed")
             .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
         );
+        const advisoryNotices = uniqueMessages(
+          (projection?.policyDecisions || [])
+            .filter(
+              (decision) =>
+                !decision.blocking &&
+                decision.disposition === "advisory" &&
+                decision.decision !== "bypassed",
+            )
+            .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
+        );
         const canonicalName = projection?.canonicalReleaseName?.trim() || "";
         const uploadName =
           result?.uploadReleaseName?.trim() || projection?.uploadReleaseName?.trim() || "";
@@ -352,6 +362,17 @@ function WorkflowDupeAssessmentView({
               >
                 {bypassedPolicyNotices.map((message) => (
                   <p key={message}>Debug mode bypassed this rule: {message}</p>
+                ))}
+              </div>
+            ) : null}
+
+            {advisoryNotices.length ? (
+              <div
+                aria-label={`${trackerID} advisory warnings`}
+                className="grid gap-1 text-sm text-muted-foreground"
+              >
+                {advisoryNotices.map((message) => (
+                  <p key={message}>Warning: {message}</p>
                 ))}
               </div>
             ) : null}
@@ -619,9 +640,19 @@ export default function DupeCheckPage({
                   <details className="rounded border border-border p-3" key={projection.trackerId}>
                     <summary className="cursor-pointer font-semibold focus-visible:outline focus-visible:outline-ring">
                       {projection.displayName}
-                      {projection.questionnaire?.some((field) => field.required)
-                        ? " · Required"
-                        : ""}
+                      {projection.questionnaire?.some(
+                        (field) =>
+                          field.required &&
+                          !(
+                            view.questionnaireAnswers[projection.trackerId]?.[field.key] ??
+                            field.value ??
+                            ""
+                          ).trim(),
+                      )
+                        ? " · Required answers missing"
+                        : projection.questionnaire?.some((field) => field.required)
+                          ? " · Required fields filled"
+                          : " · Optional controls"}
                       {projection.questionnaire?.some((field) => {
                         const draft = view.questionnaireAnswers[projection.trackerId]?.[field.key];
                         return (

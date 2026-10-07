@@ -380,16 +380,16 @@
     "sha256": "49bb64aec7a7e86d23aa5c739ba8ffaf3c08a9e18cbef5798042f336c1dbd7a9"
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "a41efbf955f9bb150f7e1f913f689adf2dd9d2144096be4246b27e72fe531a27"
+    "sha256": "67540bbe262b8fd19278f0aa8e6183ac76dc6974dc2d89083c12455017e49fcc",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "ca3fb0a402dae723957b23990230896c66ddbdca0264e643eab2a5377d23de87"
+    "sha256": "b1d2b31864cc4eebdb98a66022464106db026c60f8f2471dba3460b7219d17c4",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/bhd/validation.go:validationPolicy": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "5e3fd2cb84f4f0b6e77719c6c7b29c1580777ee9c8c617fcaed4ed41fb117220"
+    "sha256": "aef6a6c8a1b0a3994172098539dc3868a63cd999c013ed3f686a61bc7bbd068f",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -692,8 +692,8 @@
     "sha256": "0e189171965d8c9d9829c69fe557a9698721b33b82956837f18bfb7c06f5dd68"
   },
   "internal/trackers/impl/standalone/btn/questionnaire.go:languageQuestionnaire": {
-    "reason": "Issue 606 debug questionnaire review: execution mode changes only eligibility-field requirements; existing finalized provider values, current-source checks and manual title/year/genre precedence are unchanged.",
-    "sha256": "5698ef9aaf1202bff4b75153964cc6b2f72c9af2e49a6bee1979190e987fa076"
+    "sha256": "ea178b10ba4e9a2e02c628db3beabc5dc88f6b610f6661c922702d8f6a9e1168",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -708,8 +708,8 @@
     "sha256": "0d5cc2df81eef7c436e3bebbedebad5782d6d08b5cf45711c72f35403f08b99a"
   },
   "internal/trackers/impl/standalone/btn/rules.go:sourceLanguageFailures": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "c0782d2fec4ff4b0b06497b03f6ea04ac3fad2ec8768af99bde5db52775c86ef"
+    "sha256": "13ddaeeb9db132a0c4622b70f93f98515e63944a606fd5f9a831f43d771c21a9",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnLanguagePayload": {
     "reason": "Non-disc Foreign and country values come only from finalized primary programme evidence and its facts-bound country answer. Full discs retain resolveBTNOriginalLanguage manual precedence and existing provider country selection; conflicting provider, changed-primary and full-disc regression cases verify both paths.",
@@ -764,8 +764,8 @@
     "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e"
   },
   "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "028faac2e9b3a7e4f4b7d3d15d399f950fbc5a350e658caa83455a86c75ce791"
+    "sha256": "9354d4d846b712aec50d9b9da75d04476dbbe4259ae7e45676cf02dd5089bcd0",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
     "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request.",
@@ -828,8 +828,8 @@
     "sha256": "8bd3b09516d5a9c951334e330d4c8be7214c384e78c76e7e3dd72f565329b869"
   },
   "internal/trackers/impl/standalone/gpw/questionnaire.go:buildQuestionnaire": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "6a2ce8a1eddfda7505af88955d298cfdc46f1fa4992a96958de4bb6ea41cdae2"
+    "sha256": "79c22141472eb9036f87b2ee9b22ab7bbf124edfe6284bbb7671185760b61c1c",
+    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged."
   },
   "internal/trackers/impl/standalone/gpw/taxonomy.go:resolveMovieType": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -840,8 +840,8 @@
     "sha256": "749756ab3bf9f523ea45560dec99f22eed2f2aeb9855955f765f9bb5983e154a"
   },
   "internal/trackers/impl/standalone/gpw/upload.go:buildFields": {
-    "reason": "New-group poster payload now matches the existing questionnaire: a nonempty explicit poster_url precedes resolvePoster, preserving TMDB-presence then IMDb-cover fallback. Director answer/default precedence and all other manual/provider selectors are unchanged; existing-group uploads still omit new-group fields.",
-    "sha256": "533849b83ca160e65ee95ba3c2e70ce49e2144e914870f05a7e2c73beb9120db"
+    "sha256": "042e57ae1a6b980f4b550662ca1482ce5c47410941a01959f30c92df14abbfcb",
+    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged."
   },
   "internal/trackers/impl/standalone/gpw/upload.go:prepareUploadState": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -892,12 +892,12 @@
     "sha256": "a897f6e2ad17a7624e0cc6d8a5acaf46a2bdb3d544c4f2d534837b4671b09eb2"
   },
   "internal/trackers/impl/standalone/hdb/profile.go:Profile": {
-    "reason": "Composes the language assessment and its pure questionnaire without replacing existing naming, taxonomy or validation paths. Manual original-title validation and finalized manual genre-language tests cover the reviewed provider-value consumers.",
-    "sha256": "83fcef0b8ec216b95c6cb7c887d61e7e3924fefa84b3dcb772856ed31f832de3"
+    "sha256": "f12e2fe2d186d5e8c57909b25204131b0da1291ba1460ced2db4eec3e2c32566",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "sha256": "6aed66ff7fac02be9637758a2886f5defe6b0f874c0037cf28948fedabaeab2a",
-    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
+    "sha256": "f89a8a54c33774642c63192eeb0ad2d9fe5224c35e7449d6eb298a69cb21d63d",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -936,8 +936,8 @@
     "sha256": "81567f861b320e76b0817ee0f08fbce8ae0e0cdb1a5515305d9ab43f9e58ffb7"
   },
   "internal/trackers/impl/standalone/hdb/validation.go:validationPolicy": {
-    "sha256": "9eb9cf51c5624e9421ad207ee5232d0ad75a1e7892bd546ae6ff30c8ddd32fc8",
-    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
+    "sha256": "30bfe8201f7af660fe671e4551d8778ac0759eed66f23a880a20be7a942c8cf8",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1124,8 +1124,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Issue 606 PTP completion review: only the validation policy version changes in this provider consumer; existing finalized subject projection and manual/provider precedence are unchanged.",
-    "sha256": "993e99a4dacaa75ad5d951a7c27199b09d2ecbc8d444114a4a872a9903f170a3"
+    "sha256": "480186e81400179249751d070c3adec8c201a55d49316eea30f1bdc5c36ae2a4",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1408,12 +1408,12 @@
     "sha256": "7fb7b23bd52952e4a17724e47a965f21727df6af337bc7b3019c2d720fec0713"
   },
   "internal/trackers/impl/unit3d/sites/oe/validation.go:ValidationPolicy": {
-    "reason": "Binds combined OE upload-guide and description validation over finalized facts; no provider-derived default replaces manually corrected naming or media facts.",
-    "sha256": "6858c0102e9fa53640435261f360b0254dd290e3928b7ff5ecb99999070698e0"
+    "sha256": "bd196b7a9987a04648aa8a6446f83fc223c5e335f598f03710f2d41ffce6544d",
+    "reason": "OE applicability review: season acknowledgement now additionally requires canonical TV category. Existing finalized source/codec/package evidence and explicit overrides remain authoritative."
   },
   "internal/trackers/impl/unit3d/sites/oe/validation.go:checkRules": {
-    "reason": "Uses finalized media and package facts through the shared rule subject, then checks description evidence without replacing manual facts with provider values. Provider keywords do not classify content.",
-    "sha256": "c25d8a1678bb3dc2fbc6791f60bc204250e0b1b5740aa7d53144744ddc988365"
+    "sha256": "1d2e6c4777073ecc7d623f65cffda22c444db8a48442dd84a1282d2e5664d3e0",
+    "reason": "OE applicability review: season acknowledgement now additionally requires canonical TV category. Existing finalized source/codec/package evidence and explicit overrides remain authoritative."
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
     "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence.",
@@ -1532,8 +1532,8 @@
     "sha256": "b0ca152d8cd761b869f7cb87f07b19e8a70b244414942791117825ebacf43de9"
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:validationPolicy": {
-    "sha256": "7fb61d264cf7264edf1e49a6b668e8c854a9edbea2086f9c20c3d1f4b4c46868",
-    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
+    "sha256": "0c733414ce5cd03abed804fafd33967909f197981c8c7b3b7d091653adbc0fe2",
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1566,5 +1566,9 @@
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
     "reason": "Clones finalized exact-generation language facts into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced.",
     "sha256": "ec18c6cefd71057373831866ff74b2d183a810410101be2286693ad6bc4f3c11"
+  },
+  "internal/trackers/impl/standalone/gpw/questionnaire.go:resolveDirectorFields": {
+    "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1",
+    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged."
   }
 }

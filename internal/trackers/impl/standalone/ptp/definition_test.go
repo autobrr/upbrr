@@ -54,25 +54,11 @@ func (d *Definition) submit(ctx context.Context, input trackers.PreparationInput
 	return uploadAt(ctx, input, d.baseURL)
 }
 
-// ptpReviewedLanguageFixture supplies inspected programme facts and completed
-// source review for tests exercising independent payload and transport behavior.
+// ptpReviewedLanguageFixture supplies inspected programme facts for tests
+// exercising independent payload and transport behavior.
 func ptpReviewedLanguageFixture(meta api.UploadSubject, language string) api.UploadSubject {
 	meta.LanguageFacts = ptpLanguageSubject(language, language).LanguageFacts
 	meta.AudioLanguages = []string{language}
-	subject := api.NewTrackerValidationSubject(meta, "PTP")
-	answers := maps.Clone(subject.QuestionnaireAnswers)
-	if answers == nil {
-		answers = make(map[string]string)
-	}
-	answers[trackers.LanguageQuestionKey(subject, "forced_english_dialogue")] = "not_required"
-	if language != "English" {
-		answers[trackers.LanguageQuestionKey(subject, "english_subtitle_manager")] = "available"
-	}
-	meta.TrackerQuestionnaireAnswers = maps.Clone(meta.TrackerQuestionnaireAnswers)
-	if meta.TrackerQuestionnaireAnswers == nil {
-		meta.TrackerQuestionnaireAnswers = make(map[string]map[string]string)
-	}
-	meta.TrackerQuestionnaireAnswers["PTP"] = answers
 	return meta
 }
 
@@ -1135,7 +1121,7 @@ func TestNewGroupMissingOnlyTagsReturnsQuestionnaireFailure(t *testing.T) {
 	if !ok || !strings.Contains(failure.Message(), "missing tags") {
 		t.Fatalf("missing tags did not return recoverable questionnaire failure: %v", err)
 	}
-	input.Meta.TrackerQuestionnaireAnswers["PTP"]["tags"] = "drama"
+	input.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"PTP": {"tags": "drama"}}
 	if _, err := New().prepareDryRun(t.Context(), input); err != nil {
 		t.Fatalf("answered tags still failed: %v", err)
 	}

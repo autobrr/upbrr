@@ -1148,13 +1148,18 @@ partial pack evidence. Track ordering must use explicit measured container strea
 MediaInfo document order, per-kind ordinals, or opaque native IDs. Unknown order remains evidence
 to resolve rather than a guessed violation.
 
-Source-dependent language questions must bind their answers to the tracker, prepared generation,
-finalized track evidence, source, release type, and disc type. Use `LanguageQuestionKey` for that
-shared contract; include additional evidence separately when it is not part of `LanguageFacts`,
-such as finalized hardcoded-subtitle coverage. Treat unknown applicability as unknown rather than
-as evidence that a mandatory rule does not apply. Recognize the tracker’s supported source forms
-without importing another tracker’s source whitelist. Source attestations establish only the fact
-asked about, never staff permission or automatic replacement qualification.
+Source-history, retention, provenance, quality and hypothetical subtitle concerns are passive
+advisories, not questionnaires or unresolved answer gates. Keep unknown facts unknown; warnings
+must not assert source compliance or grant staff permission, replacement qualification, or an
+exception to independent measured constraints. Use inspected languages, titles, default/forced
+flags and container order before asking for genuinely missing upload input.
+
+Retained factual choices and tracker acknowledgements must bind to the tracker, prepared
+generation, finalized track evidence, source, release type and disc type. Use `LanguageQuestionKey`
+for that shared contract; include additional evidence separately when it is not part of
+`LanguageFacts`. An acknowledgement accepts the current waivable finding, not a claim about
+uninspected source material. Recognize supported source forms without importing another site's
+source whitelist.
 
 ### 7. Add optional capabilities
 

@@ -122,12 +122,21 @@ func packUniformityFailures(subject api.TrackerValidationSubject) []api.RuleFail
 		return nil
 	}
 	evidence := assessPackEvidence(subject)
+	var failures []api.RuleFailure
+	if evidence.sourceUnknown {
+		failures = append(failures, trackers.NewEvidenceRuleFailure(
+			"sp_pack_source_history",
+			"SP requires consistent pack sources and encoding characteristics unless differences are genuine source variation and explained in the description. Source and encoding history could not be established from the inspected reports; check the actual sources, since filenames and missing labels are not proof.",
+			api.RuleDispositionAdvisory,
+			api.MetadataEvidenceStatusPartial,
+		))
+	}
 	fail := func(reason string, status api.MetadataEvidenceStatus) []api.RuleFailure {
 		failure := trackers.NewEvidenceRuleFailure("sp_pack_uniformity", reason, api.RuleDispositionStrict, status)
 		// Debug keeps the former language/advisory path testable, while any
 		// observed technical mismatch retains its independent strict block.
 		failure.DebugBypass = !evidence.technicalDifference
-		return []api.RuleFailure{failure}
+		return append(failures, failure)
 	}
 	if len(evidence.missing) > 0 {
 		return fail(
@@ -135,23 +144,8 @@ func packUniformityFailures(subject api.TrackerValidationSubject) []api.RuleFail
 			api.MetadataEvidenceStatusPartial,
 		)
 	}
-	if evidence.sourceUnknown {
-		switch subject.QuestionnaireAnswers[packQuestionKey(subject, packSourceKey)] {
-		case "consistent":
-			if slices.ContainsFunc(evidence.differences, func(value string) bool { return strings.HasPrefix(value, "source:") }) {
-				return fail("The source-consistency answer contradicts the known per-file sources", api.MetadataEvidenceStatusContradictory)
-			}
-		case "different":
-			evidence.differences = append(evidence.differences, "unmeasured source or encoding characteristics differ, as confirmed for these files")
-		default:
-			return fail(
-				"SP pack source consistency is unresolved; establish whether the current files share unmeasured source and encoding characteristics",
-				api.MetadataEvidenceStatusPartial,
-			)
-		}
-	}
 	if len(evidence.differences) == 0 {
-		return nil
+		return failures
 	}
 	switch subject.QuestionnaireAnswers[packQuestionKey(subject, packVariationKey)] {
 	case "yes":
@@ -174,5 +168,5 @@ func packUniformityFailures(subject api.TrackerValidationSubject) []api.RuleFail
 		!strings.Contains(strings.Join(strings.Fields(subject.DescriptionOverride), " "), strings.Join(strings.Fields(explanation), " ")) {
 		return fail("The final SP description must retain the supplied explanation of genuine source variation", api.MetadataEvidenceStatusComplete)
 	}
-	return nil
+	return failures
 }

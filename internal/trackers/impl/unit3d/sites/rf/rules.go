@@ -51,24 +51,14 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	}
 	englishOriginal := slices.Contains(facts.OriginalLanguages, "English")
 	if !englishOriginal && !slices.Contains(facts.SubtitleLanguages, "English") {
-		outcome := trackers.LanguageUnresolved
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "english_subtitles_expected")] {
-		case "yes":
-			outcome = trackers.LanguageTrumpable
-		case "no":
-			outcome = ""
-		}
-		if outcome != "" {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"retail_subtitles",
-					"English subtitles normally supplied or expected from the retail source are missing",
-					outcome,
-				),
-			)
-		}
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"retail_subtitles",
+			"English subtitles are absent; if normally supplied or expected from the retail source, their absence makes the release trumpable",
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	predominantlyEnglish := englishOriginal && len(facts.OriginalLanguages) == 1
 	if rfNeedsPredominanceEvidence(subject) {

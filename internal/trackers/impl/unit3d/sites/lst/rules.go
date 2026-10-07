@@ -21,10 +21,6 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	if subject.PersonalRelease {
 		recommendation = trackers.LanguageProhibited
 	}
-	conditional := trackers.LanguageUnresolved
-	if subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "trumpable_audio_eligibility")] == "yes" {
-		conditional = trackers.LanguageTrumpable
-	}
 	policy := trackers.LanguagePolicy{
 		OriginalFirst:   recommendation,
 		OriginalDefault: recommendation,
@@ -54,7 +50,12 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		add("default_audio", "primary audio default flags must establish the required default count", trackers.LanguageUnresolved)
 	}
 	for _, defect := range audioDefects(subject) {
-		add(defect.key, defect.reason, conditional)
+		add(
+			defect.key,
+			defect.reason+"; trumpability requires an avoidable drawback and a replacement without losing important material; those conditions have not been verified",
+			trackers.LanguageAdvisory,
+		)
+		failures[len(failures)-1].EvidenceStatus = api.MetadataEvidenceStatusPartial
 	}
 	failures = append(failures, sourceLanguageFailures(subject)...)
 	foreign := facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX")

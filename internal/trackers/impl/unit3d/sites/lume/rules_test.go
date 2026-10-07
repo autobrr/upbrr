@@ -236,21 +236,19 @@ func TestLumeMeasuredMetadataAndPersonalReview(t *testing.T) {
 	}
 	subject := lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("Japanese", api.AudioRoleProgramme)})
 	subject.PersonalRelease = true
-	setLumeAnswer(&subject, "language_personal_exemption", "none")
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_metadata", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	setLumeAnswer(&subject, "language_track_metadata", "inappropriate")
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_metadata", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
-	setLumeAnswer(&subject, "language_track_metadata", "appropriate")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("reviewed metadata: %+v", failures)
+	for _, exemption := range []string{"", "none", "language_tier"} {
+		setLumeAnswer(&subject, "language_personal_exemption", exemption)
+		for _, answer := range []string{"", "inappropriate", "appropriate"} {
+			setLumeAnswer(&subject, "language_track_metadata", answer)
+			failures := languageAssessment(subject)
+			requireLUMEValidationFailure(t, failures, "language_track_metadata", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+			for _, failure := range failures {
+				if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+					t.Fatalf("generic metadata reassurance blocked: %+v", failures)
+				}
+			}
+		}
 	}
-	setLumeAnswer(&subject, "language_personal_exemption", "language_tier")
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_metadata", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	setLumeAnswer(&subject, "language_track_metadata", "appropriate")
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_metadata", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	setLumeAnswer(&subject, "language_personal_exemption", "none")
-	subject.LanguageFacts.Tracks[0].Default = false
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_metadata", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 }
 
 func TestLumeSilentDiscAndMandatoryBoundaries(t *testing.T) {
@@ -329,7 +327,7 @@ func setLumeAnswer(subject *api.TrackerValidationSubject, key, value string) {
 		subject.QuestionnaireAnswers = map[string]string{}
 	}
 	if key == "language_track_metadata" {
-		subject.QuestionnaireAnswers[trackMetadataQuestionKey(*subject)] = value
+		subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(*subject, "language_track_metadata_"+subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(*subject, "language_personal_exemption")])] = value
 		return
 	}
 	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(*subject, key)] = value
@@ -339,33 +337,20 @@ func TestLumeQuestionnaireRecommendationScope(t *testing.T) {
 	t.Parallel()
 	subject := lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("Japanese", api.AudioRoleProgramme)})
 	meta := api.UploadSubject{LanguageFacts: subject.LanguageFacts, Type: "WEBDL"}
-	if q := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); q != nil {
-		t.Fatalf("ordinary release required review: %+v", q)
+	for _, personal := range []bool{false, true} {
+		meta.PersonalRelease = personal
+		if q := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); q != nil {
+			t.Fatalf("compliant metadata required review: %+v", q)
+		}
 	}
-	meta.PersonalRelease = true
-	q := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if q == nil {
-		t.Fatal("personal metadata review missing")
-	}
-	if !slices.ContainsFunc(q.Fields, func(field api.TrackerQuestionnaireField) bool {
-		return strings.HasPrefix(field.Key, "language_personal_exemption_")
-	}) {
-		t.Fatalf("missing exemption: %+v", q)
-	}
-	subject = api.NewTrackerValidationSubject(meta, "LUME")
-	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"LUME": {trackers.LanguageQuestionKey(subject, "language_personal_exemption"): "none"}}
-	q = languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if q == nil || !slices.ContainsFunc(q.Fields, func(field api.TrackerQuestionnaireField) bool {
-		return strings.HasPrefix(field.Key, "language_track_metadata_") && field.Required
-	}) {
-		t.Fatalf("missing required metadata review: %+v", q)
-	}
-	meta.TrackerQuestionnaireAnswers["LUME"][trackers.LanguageQuestionKey(subject, "language_personal_exemption")] = "trash_tier"
-	q = languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if q != nil && slices.ContainsFunc(q.Fields, func(field api.TrackerQuestionnaireField) bool {
-		return strings.HasPrefix(field.Key, "language_track_metadata_")
-	}) {
-		t.Fatalf("exempt release required metadata review: %+v", q)
+	meta.LanguageFacts.Tracks[0].Title = ""
+	for _, exemption := range []string{"", "none", "trash_tier"} {
+		subject = api.NewTrackerValidationSubject(meta, "LUME")
+		meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"LUME": {trackers.LanguageQuestionKey(subject, "language_personal_exemption"): exemption}}
+		q := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
+		if q == nil || len(q.Fields) != 1 || !strings.HasPrefix(q.Fields[0].Key, "language_personal_exemption_") || !q.Fields[0].Required {
+			t.Fatalf("measured omission lost its exemption choice or gained reassurance fields: %+v", q)
+		}
 	}
 	meta.Type = "DISC"
 	if q := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); q != nil {
@@ -399,10 +384,10 @@ func TestLumeMultilingualOriginalAndDubOrder(t *testing.T) {
 	spanish := lumeAudio("Spanish", api.AudioRoleProgramme)
 	spanish.StreamOrder, spanish.StreamOrderKnown = len(subject.LanguageFacts.Tracks), true
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, spanish)
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_dub_order_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
+	requireLUMEValidationFailure(t, languageAssessment(subject), "language_dub_order_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.PersonalRelease = true
 	setLumeAnswer(&subject, "language_personal_exemption", "none")
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_dub_order_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	requireLUMEValidationFailure(t, languageAssessment(subject), "language_dub_order_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 }
 
 func TestLumePersonalExemptionsPreserveMandatoryLanguages(t *testing.T) {
@@ -442,15 +427,15 @@ func TestLumeUsesMeasuredContainerOrder(t *testing.T) {
 	}{
 		{name: "compliant container with reversed document order", languages: []string{"Japanese", "English", "German"}},
 		{
-name: "original after dub",
- languages: []string{"English", "Japanese"},
- want: "language_original_order",
-},
+			name:      "original after dub",
+			languages: []string{"English", "Japanese"},
+			want:      "language_original_order",
+		},
 		{
-name: "English dub after German",
- languages: []string{"Japanese", "German", "English"},
- want: "language_dub_order",
-},
+			name:      "English dub after German",
+			languages: []string{"Japanese", "German", "English"},
+			want:      "language_dub_order",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			audio := make([]api.MediaTrackFacts, 0, len(test.languages))
@@ -492,9 +477,6 @@ func TestLumeUnknownContainerOrderPreservesRecommendationLevel(t *testing.T) {
 				setLumeAnswer(&subject, "language_personal_exemption", exemption)
 				setLumeAnswer(&subject, "language_track_metadata", "appropriate")
 				want := api.RuleDispositionAdvisory
-				if exemption == "" || exemption == "none" {
-					want = api.RuleDispositionStrict
-				}
 				failures := languageAssessment(subject)
 				requireLUMEValidationFailure(t, failures, "language_track_order_evidence", want, api.MetadataEvidenceStatusPartial)
 				for _, failure := range failures {
@@ -513,43 +495,22 @@ func TestLumeUnknownContainerOrderPreservesRecommendationLevel(t *testing.T) {
 	}
 }
 
-func TestLumeOrderAttestationIsBoundedToMissingEvidence(t *testing.T) {
+func TestLumeUnknownOrderIsWarnOnly(t *testing.T) {
 	t.Parallel()
 	subject := lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("Japanese", api.AudioRoleProgramme), lumeAudio("English", api.AudioRoleProgramme)})
 	subject.PersonalRelease = true
 	subject.LanguageFacts.Tracks[1].StreamOrderKnown = false
 	setLumeAnswer(&subject, "language_personal_exemption", "none")
-	setLumeAnswer(&subject, "language_track_metadata", "appropriate")
-	key := trackOrderQuestionKey(subject)
 	for _, answer := range []string{"", "unresolved", "out_of_order", "ordered"} {
-		subject.QuestionnaireAnswers[key] = answer
+		subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "language_track_order_none")] = answer
 		failures := languageAssessment(subject)
-		switch answer {
-		case "ordered":
-			if len(failures) != 0 {
-				t.Fatalf("bounded order evidence not accepted: %+v", failures)
+		requireLUMEValidationFailure(t, failures, "language_track_order_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+		for _, failure := range failures {
+			if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+				t.Fatalf("unmeasured order required an answer or acknowledgement: %+v", failures)
 			}
-		case "out_of_order":
-			requireLUMEValidationFailure(t, failures, "language_track_order", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
-		default:
-			requireLUMEValidationFailure(t, failures, "language_track_order_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 		}
 	}
-	// A change in measured order invalidates the exact-evidence answer even when
-	// the other track remains unmeasured.
-	subject.LanguageFacts.Tracks[0].StreamOrder++
-	setLumeAnswer(&subject, "language_personal_exemption", "none")
-	setLumeAnswer(&subject, "language_track_metadata", "appropriate")
-	if key == trackOrderQuestionKey(subject) {
-		t.Fatal("order answer survived changed stream evidence")
-	}
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_order_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	subject.QuestionnaireAnswers[trackOrderQuestionKey(subject)] = "ordered"
-	subject.LanguageFacts.Tracks[0].Title = ""
-	setLumeAnswer(&subject, "language_personal_exemption", "none")
-	setLumeAnswer(&subject, "language_track_metadata", "appropriate")
-	subject.QuestionnaireAnswers[trackOrderQuestionKey(subject)] = "ordered"
-	requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_titles", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 }
 
 func TestLumeOrderAttestationCannotOverrideMeasuredViolations(t *testing.T) {
@@ -562,84 +523,25 @@ func TestLumeOrderAttestationCannotOverrideMeasuredViolations(t *testing.T) {
 		subject.PersonalRelease = true
 		setLumeAnswer(&subject, "language_personal_exemption", "none")
 		setLumeAnswer(&subject, "language_track_metadata", "appropriate")
-		subject.QuestionnaireAnswers[trackOrderQuestionKey(subject)] = "ordered"
+		subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "language_track_order_none")] = "ordered"
 		requireLUMEValidationFailure(t, languageAssessment(subject), "language_original_order", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	}
 }
 
-func TestLumeOrderQuestionRequiresPersonalMissingEvidence(t *testing.T) {
+func TestLumeUnknownOrderNeverRequiresQuestionnaire(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct {
-		name, exemption               string
-		personal, missing, disc, want bool
-	}{
-		{name: "ordinary missing", missing: true},
-		{
-name: "unresolved personal exemption",
- personal: true,
- missing: true,
-},
-		{
-name: "personal measured",
- personal: true,
- exemption: "none",
-},
-		{
-name: "personal missing",
- personal: true,
- missing: true,
- exemption: "none",
- want: true,
-},
-		{
-name: "personal exempt",
- personal: true,
- missing: true,
- exemption: "trash_tier",
-},
-		{
-name: "older release exempt",
- personal: true,
- missing: true,
- exemption: "previously_uploaded",
-},
-		{
-name: "full disc",
- personal: true,
- missing: true,
- exemption: "none",
- disc: true,
-},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			subject := lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("Japanese", api.AudioRoleProgramme), lumeAudio("English", api.AudioRoleProgramme)})
-			subject.LanguageFacts.Tracks[1].StreamOrderKnown = !test.missing
-			meta := api.UploadSubject{
-LanguageFacts: subject.LanguageFacts,
- Type: "WEBDL",
- PersonalRelease: test.personal,
-}
-			if test.disc {
-				meta.Type = "DISC"
-			}
-			subject = api.NewTrackerValidationSubject(meta, "LUME")
-			meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"LUME": {trackers.LanguageQuestionKey(subject, "language_personal_exemption"): test.exemption}}
-			q := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-			found := false
-			if q != nil {
-				for _, field := range q.Fields {
-					if !strings.HasPrefix(field.Key, "language_track_order_") {
-						continue
-					}
-					found = true
-					if !field.Required || !slices.Equal(field.Options, []string{"ordered", "out_of_order", "unresolved"}) {
-						t.Fatalf("incorrect bounded order question: %+v", field)
-					}
-				}
-			}
-			if found != test.want {
-				t.Fatalf("order question = %t, want %t: %+v", found, test.want, q)
-			}
-		})
+	for _, exemption := range []string{"", "none", "trash_tier", "previously_uploaded"} {
+		subject := lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("Japanese", api.AudioRoleProgramme), lumeAudio("English", api.AudioRoleProgramme)})
+		subject.LanguageFacts.Tracks[1].StreamOrderKnown = false
+		meta := api.UploadSubject{
+			LanguageFacts:   subject.LanguageFacts,
+			Type:            "WEBDL",
+			PersonalRelease: true,
+		}
+		subject = api.NewTrackerValidationSubject(meta, "LUME")
+		meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"LUME": {trackers.LanguageQuestionKey(subject, "language_personal_exemption"): exemption}}
+		if q := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); q != nil {
+			t.Fatalf("unknown order alone required a questionnaire: %+v", q)
+		}
 	}
 }

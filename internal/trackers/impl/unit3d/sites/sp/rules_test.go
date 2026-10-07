@@ -58,7 +58,9 @@ func answerPackQuestion(meta *api.UploadSubject, key, answer string) {
 
 func requirePackBlocked(t *testing.T, meta api.UploadSubject, status api.MetadataEvidenceStatus) {
 	t.Helper()
-	failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP"))
+	failures := slices.DeleteFunc(packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")), func(failure api.RuleFailure) bool {
+		return failure.Disposition == api.RuleDispositionAdvisory
+	})
 	if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionStrict || failures[0].EvidenceStatus != status {
 		t.Fatalf("pack must stay blocked with status %s: %#v", status, failures)
 	}
@@ -67,19 +69,23 @@ func requirePackBlocked(t *testing.T, meta api.UploadSubject, status api.Metadat
 	}
 }
 
-func TestSPMeasuredPackNeedsOnlySourceAttestation(t *testing.T) {
-	meta := collectedPackSubject()
-	requirePackBlocked(t, meta, api.MetadataEvidenceStatusPartial)
-	questionnaire := packQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if questionnaire == nil || len(questionnaire.Fields) != 1 || !strings.Contains(questionnaire.Fields[0].Help, "filenames") {
-		t.Fatalf("missing bounded source evidence question: %#v", questionnaire)
-	}
-	answerPackQuestion(&meta, packSourceKey, "consistent")
-	if failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")); len(failures) != 0 {
-		t.Fatalf("known empty subtitles or unknown provenance made measured pack incomplete: %#v", failures)
-	}
-	if meta.MediaFileFacts.Status != api.MetadataEvidenceStatusPartial || meta.MediaFileFacts.Files[1].Source != "" {
-		t.Fatal("source attestation fabricated per-file facts")
+func TestSPUnknownPackSourceIsWarnOnly(t *testing.T) {
+	for _, answer := range []string{"", "unknown", "consistent", "different"} {
+		meta := collectedPackSubject()
+		answerPackQuestion(&meta, "pack_source_consistency", answer)
+		failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP"))
+		if len(failures) != 1 || failures[0].Rule != "sp_pack_source_history" || failures[0].Disposition != api.RuleDispositionAdvisory || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+			t.Fatalf("source history must remain a passive unknown with answer %q: %#v", answer, failures)
+		}
+		if trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) {
+			t.Fatal("unknown source history required acknowledgement")
+		}
+		if questionnaire := packQuestionnaire(trackers.PreparationInput{Meta: meta}); questionnaire != nil {
+			t.Fatalf("unknown source history required an answer: %#v", questionnaire)
+		}
+		if meta.MediaFileFacts.Status != api.MetadataEvidenceStatusPartial || meta.MediaFileFacts.Files[1].Source != "" {
+			t.Fatal("source history warning fabricated per-file facts")
+		}
 	}
 }
 
@@ -102,19 +108,17 @@ func TestSPSourceVariationRequiresCurrentExplanation(t *testing.T) {
 				meta.MediaFileFacts.Files[1].BitDepth = "10"
 			case "video tracks":
 				meta.MediaFileFacts.Files[1].VideoTrackCount = 2
+			case "source":
+				meta.MediaFileFacts.Files[0].Source = "WEB"
+				meta.MediaFileFacts.Files[1].Source = "Blu-ray"
 			}
-			sourceAnswer := "consistent"
-			if change == "source" {
-				sourceAnswer = "different"
-			}
-			answerPackQuestion(&meta, packSourceKey, sourceAnswer)
 			requirePackBlocked(t, meta, api.MetadataEvidenceStatusPartial)
 			answerPackQuestion(&meta, packVariationKey, "no")
 			requirePackBlocked(t, meta, api.MetadataEvidenceStatusComplete)
 			answerPackQuestion(&meta, packVariationKey, "yes")
 			requirePackBlocked(t, meta, api.MetadataEvidenceStatusPartial)
 			answerPackQuestion(&meta, packExplanationKey, "Episode 2 retains the characteristics of its different original source.")
-			if failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")); len(failures) != 0 {
+			if failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")); slices.ContainsFunc(failures, func(failure api.RuleFailure) bool { return failure.Disposition != api.RuleDispositionAdvisory }) {
 				t.Fatal(failures)
 			}
 		})
@@ -145,7 +149,6 @@ func TestSPVariationCannotExplainAwayUnknownEvidence(t *testing.T) {
 		t.Run(change.name, func(t *testing.T) {
 			meta := collectedPackSubject()
 			change.mutate(&meta)
-			answerPackQuestion(&meta, packSourceKey, "different")
 			answerPackQuestion(&meta, packVariationKey, "yes")
 			answerPackQuestion(&meta, packExplanationKey, "The sources differ.")
 			requirePackBlocked(t, meta, api.MetadataEvidenceStatusPartial)
@@ -161,14 +164,13 @@ func TestSPChangedPackEvidenceInvalidatesException(t *testing.T) {
 		{"second file language", func(meta *api.UploadSubject) { meta.MediaFileFacts.Files[1].AudioLanguages = []string{"French"} }},
 		{"second file technical facts", func(meta *api.UploadSubject) { meta.MediaFileFacts.Files[1].Resolution = "720p" }},
 		{"package membership", func(meta *api.UploadSubject) { meta.FileList = append(meta.FileList, "Example.Show.S01E03.mkv") }},
-		{"source attestation", func(meta *api.UploadSubject) { answerPackQuestion(meta, packSourceKey, "different") }},
+		{"measured source", func(meta *api.UploadSubject) { meta.MediaFileFacts.Files[1].Source = "WEB" }},
 		{"generation", func(meta *api.UploadSubject) { meta.Identity.Generation++ }},
 		{"manual language clear", func(meta *api.UploadSubject) { meta.LanguageFacts.AudioStatus = api.MetadataEvidenceStatusUnavailable }},
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			meta := collectedPackSubject()
 			meta.MediaFileFacts.Files[1].AudioLanguages = []string{"German"}
-			answerPackQuestion(&meta, packSourceKey, "consistent")
 			answerPackQuestion(&meta, packVariationKey, "yes")
 			answerPackQuestion(&meta, packExplanationKey, "Episode 2 has a different source language.")
 			change.mutate(&meta)
@@ -180,6 +182,7 @@ func TestSPChangedPackEvidenceInvalidatesException(t *testing.T) {
 func TestSPPackPolicyPreservesDiscAndIndependentFailures(t *testing.T) {
 	meta := collectedPackSubject()
 	meta.DiscType, meta.Type = "BDMV", "REMUX"
+	meta.MediaFileFacts.Files[1].Resolution = "720p"
 	requirePackBlocked(t, meta, api.MetadataEvidenceStatusPartial)
 	meta.Type = "DISC"
 	if failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")); len(failures) != 0 || packQuestionnaire(trackers.PreparationInput{Meta: meta}) != nil {
@@ -201,26 +204,21 @@ func TestSPPackPolicyPreservesDiscAndIndependentFailures(t *testing.T) {
 	}
 }
 
-func TestSPQuestionnaireScopesVariationToEstablishedSourceAnswer(t *testing.T) {
+func TestSPQuestionnaireScopesVariationToMeasuredDifferences(t *testing.T) {
 	meta := collectedPackSubject()
 	meta.MediaFileFacts.Files[1].AudioLanguages = []string{"German"}
 	questionnaire := packQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if questionnaire == nil || len(questionnaire.Fields) != 1 {
-		t.Fatalf("variation asked before its source scope was established: %#v", questionnaire)
-	}
-	answerPackQuestion(&meta, packSourceKey, "consistent")
-	questionnaire = packQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if len(questionnaire.Fields) != 2 || !strings.Contains(questionnaire.Fields[1].Help, "German") || !strings.Contains(questionnaire.Fields[1].Help, meta.FileList[1]) {
+	if questionnaire == nil || len(questionnaire.Fields) != 1 || !strings.Contains(questionnaire.Fields[0].Help, "German") || !strings.Contains(questionnaire.Fields[0].Help, meta.FileList[1]) {
 		t.Fatalf("variation question omitted actual differing evidence: %#v", questionnaire)
 	}
 	answerPackQuestion(&meta, packVariationKey, "yes")
 	questionnaire = packQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if len(questionnaire.Fields) != 3 || questionnaire.Fields[2].Kind != "textarea" {
+	if len(questionnaire.Fields) != 2 || questionnaire.Fields[1].Kind != "textarea" {
 		t.Fatalf("missing factual explanation field: %#v", questionnaire)
 	}
-	answerPackQuestion(&meta, packSourceKey, "different")
+	meta.MediaFileFacts.Files[1].AudioLanguages = []string{"French"}
 	questionnaire = packQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if len(questionnaire.Fields) != 2 || questionnaire.Fields[1].Value != "" {
-		t.Fatalf("changed source answer retained prior variation approval: %#v", questionnaire)
+	if len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Value != "" {
+		t.Fatalf("changed measured evidence retained prior variation approval: %#v", questionnaire)
 	}
 }

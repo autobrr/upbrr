@@ -16,19 +16,6 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		return nil
 	}
 	var fields []api.TrackerQuestionnaireField
-	for _, track := range additionalMainAudio(subject.LanguageFacts) {
-		if !slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(subject.LanguageFacts.OriginalLanguages, language) }) {
-			continue
-		}
-		fields = append(fields, api.TrackerQuestionnaireField{
-			Key:      trackers.LanguageQuestionKey(subject, "music_video_audio_"+track.ID),
-			Label:    "AITHER additional main-audio source for " + track.ID,
-			Kind:     "select",
-			Options:  []string{"original_music_video", "not_original_music_video", "unresolved"},
-			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
-			Help:     "Confirm that this release is a music video and this additional original-language main-audio track is in its original, non-transcoded form. This source exception does not permit foreign dubs or waive mandatory original audio, subtitles or compatibility audio.",
-		})
-	}
 	for _, track := range subject.LanguageFacts.Tracks {
 		if track.Kind != api.MediaTrackAudio || track.Role != api.AudioRoleCompatibility {
 			continue

@@ -23,7 +23,7 @@ func ValidationPolicy() trackers.ValidationPolicyBinding {
 
 func validationPolicy(regionID func(string) string) trackers.ValidationPolicyBinding {
 	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{
-		ID: "unit3d-ulcx-policy-v8",
+		ID: "unit3d-ulcx-policy-v9",
 		Check: func(ctx context.Context, meta api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error) {
 			return checkRules(ctx, meta, logger, regionID)
 		},

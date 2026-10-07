@@ -21,25 +21,25 @@ func TestLanguageEligibilityQuestionsPreserveDebugBypass(t *testing.T) {
 	facts.SubtitleLanguages = nil
 	facts.Tracks = append(facts.Tracks,
 		api.MediaTrackFacts{
-ID: "compatibility",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleCompatibility,
- Codec: "AC-3",
- Languages: []string{"Japanese"},
-},
+			ID:        "compatibility",
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleCompatibility,
+			Codec:     "AC-3",
+			Languages: []string{"Japanese"},
+		},
 		api.MediaTrackFacts{
-ID: "commentary",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleCommentary,
- Languages: []string{"Japanese"},
-},
+			ID:        "commentary",
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleCommentary,
+			Languages: []string{"Japanese"},
+		},
 	)
 	meta := api.UploadSubject{
-Type: "REMUX",
- Source: "BluRay",
- PersonalRelease: true,
- LanguageFacts: facts,
-}
+		Type:            "REMUX",
+		Source:          "BluRay",
+		PersonalRelease: true,
+		LanguageFacts:   facts,
+	}
 	for _, name := range []string{"BHD", "BTN", "HHD", "AITHER", "LST", "ULCX", "AZ", "HDB", "LUME", "RF", "PTP"} {
 		t.Run(name, func(t *testing.T) {
 			descriptor, ok := registry.LookupDescriptor(name)
@@ -56,10 +56,17 @@ Type: "REMUX",
 			}
 			normal := provider.ProjectionQuestionnaire(trackers.PreparationInput{Tracker: name, Meta: normalMeta})
 			debug := provider.ProjectionQuestionnaire(trackers.PreparationInput{
-Tracker: name,
- Meta: normalMeta,
- ExecutionMode: api.WorkflowExecutionModeDebug,
-})
+				Tracker:       name,
+				Meta:          normalMeta,
+				ExecutionMode: api.WorkflowExecutionModeDebug,
+			})
+			switch name {
+			case "BHD", "HDB", "ULCX", "RF":
+				if normal != nil || debug != nil {
+					t.Fatal("source reassurance returned a questionnaire")
+				}
+				return
+			}
 			if normal == nil || debug == nil || len(normal.Fields) != len(debug.Fields) {
 				t.Fatal("debug lost visible review evidence")
 			}
@@ -81,7 +88,7 @@ Tracker: name,
 					}
 				}
 			}
-			if changed == 0 {
+			if changed == 0 && name != "BTN" {
 				t.Fatal("fixture did not exercise required eligibility evidence")
 			}
 		})
@@ -101,10 +108,10 @@ func TestAitherLanguageBalanceStillRequiredInDebug(t *testing.T) {
 	facts := languageSubject("Japanese", "Japanese").LanguageFacts
 	facts.Tracks[0].Languages = []string{"Japanese", "English"}
 	schema := provider.ProjectionQuestionnaire(trackers.PreparationInput{
-Tracker: "AITHER",
- Meta: api.UploadSubject{Type: "ENCODE", LanguageFacts: facts},
- ExecutionMode: api.WorkflowExecutionModeDebug,
-})
+		Tracker:       "AITHER",
+		Meta:          api.UploadSubject{Type: "ENCODE", LanguageFacts: facts},
+		ExecutionMode: api.WorkflowExecutionModeDebug,
+	})
 	if schema == nil {
 		t.Fatal("missing balance question")
 	}

@@ -19,7 +19,6 @@ import (
 )
 
 func (d *Definition) prepareDryRun(ctx context.Context, input trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	input.Meta = bhdNewReleaseFixture(input.Meta)
 	input.Intent = trackers.PreparationIntentDryRun
 	plan, failure := d.Prepare(ctx, input)
 	if failure != nil {
@@ -29,7 +28,6 @@ func (d *Definition) prepareDryRun(ctx context.Context, input trackers.Preparati
 }
 
 func (d *Definition) submit(ctx context.Context, input trackers.PreparationInput) (api.UploadSummary, error) {
-	input.Meta = bhdNewReleaseFixture(input.Meta)
 	input.Intent = trackers.PreparationIntentUpload
 	plan, failure := d.Prepare(ctx, input)
 	if failure != nil {

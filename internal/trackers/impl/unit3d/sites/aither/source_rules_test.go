@@ -12,10 +12,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestAitherAdditionalOriginalAudioRequiresSourceReview(t *testing.T) {
+func TestAitherAdditionalOriginalAudioIsSourceGuidance(t *testing.T) {
 	subject := aitherPassingSubject()
 	subject.LanguageFacts = aitherTestLanguageFacts("Japanese", []string{"Japanese", "Japanese"}, []string{"English"})
-	assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_additional_main_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_additional_main_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	if Profile().Site.ProjectionQuestionnaire == nil {
 		t.Fatal("music-video source evidence is unreachable")
 	}
@@ -34,21 +34,18 @@ func TestAitherCompatibilityRequiresSourceAssociation(t *testing.T) {
 	assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_compatibility_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 }
 
-func TestAitherMusicVideoExceptionIsNarrowAndGenerationBound(t *testing.T) {
+func TestAitherMusicVideoGuidanceDoesNotWaiveExtraDubs(t *testing.T) {
 	subject := aitherPassingSubject()
 	subject.LanguageFacts = aitherTestLanguageFacts("Japanese", []string{"Japanese", "Japanese", "English", "German"}, []string{"English"})
-	key := trackers.LanguageQuestionKey(subject, "music_video_audio_audio-1")
-	subject.QuestionnaireAnswers = map[string]string{key: "original_music_video"}
-	for _, failure := range evaluateAitherEvidence(t, subject) {
-		if failure.Rule == "language_additional_main_audio" {
-			t.Fatalf("confirmed music-video main audio blocked: %+v", failure)
-		}
+	for _, answer := range []string{"", "original_music_video", "not_original_music_video"} {
+		subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "music_video_audio_audio-1"): answer}
+		assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_additional_main_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+		assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_extra_dub", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	}
-	assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_extra_dub", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
-	subject.Identity.Generation++
-	assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_additional_main_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "music_video_audio_audio-1")] = "not_original_music_video"
-	assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_additional_main_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{Type: subject.Type, LanguageFacts: subject.LanguageFacts}})
+	if question != nil {
+		t.Fatalf("music-video source history requires reassurance: %+v", question)
+	}
 	subject.Type = "DISC"
 	if got := evaluateAitherEvidence(t, subject); len(got) != 0 {
 		t.Fatalf("full disc: %+v", got)
@@ -79,8 +76,10 @@ func TestAitherCompatibilityAssociationCannotCoverAnotherMix(t *testing.T) {
 	}
 	assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_compatibility_missing", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "compatibility_mix_compat-2")] = "audio-1"
-	if got := evaluateAitherEvidence(t, subject); len(got) != 0 {
-		t.Fatalf("source-confirmed standalone tracks: %+v", got)
+	for _, failure := range evaluateAitherEvidence(t, subject) {
+		if failure.Disposition != api.RuleDispositionAdvisory {
+			t.Fatalf("source-confirmed standalone tracks: %+v", failure)
+		}
 	}
 	subject.LanguageFacts.Tracks[0].EmbeddedCompatibility = true
 	subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[:3]

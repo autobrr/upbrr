@@ -5,7 +5,6 @@ package bhd
 
 import (
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -19,144 +18,107 @@ func bhdSourceAnswer(subject *api.TrackerValidationSubject, key, value string) {
 	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(*subject, key)] = value
 }
 
-func TestBHDSourceHistoryIsStrictAndGenerationBound(t *testing.T) {
-	subject := bhdValidationSubject()
-	subject.Identity.Generation = 1
-	requireBHDValidationFailure(t, languageAssessment(subject), "language_existing_release", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("new release blocked: %#v", failures)
-	}
-	subject.Identity.Generation++
-	requireBHDValidationFailure(t, languageAssessment(subject), "language_existing_release", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	bhdSourceAnswer(&subject, "existing_release", "tracks_or_chapters_added")
+func requireBHDSourceWarnings(t *testing.T, subject api.TrackerValidationSubject, rules ...string) {
+	t.Helper()
 	failures := languageAssessment(subject)
-	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-		return f.Rule == "language_existing_release" && strings.Contains(f.Reason, "Staff approval required") && trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, true)
-	}) {
-		t.Fatalf("added content did not remain staff-only: %#v", failures)
+	if len(failures) != len(rules) {
+		t.Fatalf("warnings = %#v, want %v", failures, rules)
 	}
-	subject.LanguageFacts = bhdTestLanguageFacts("Japanese", []string{"Japanese", "English", "German"}, nil)
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
-	requireBHDValidationFailure(t, languageAssessment(subject), "language_extra_dub", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	for _, rule := range rules {
+		requireBHDValidationFailure(t, failures, rule, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	}
+	for _, failure := range failures {
+		if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+			t.Fatalf("source warning blocked execution: %#v", failure)
+		}
+	}
+}
+
+func TestBHDSourceHistoryWarningIgnoresSavedAnswers(t *testing.T) {
+	for _, answer := range []string{"", "unresolved", "unchanged_or_new", "tracks_or_chapters_added", "staff_approved"} {
+		t.Run(answer, func(t *testing.T) {
+			subject := bhdValidationSubject()
+			bhdSourceAnswer(&subject, "existing_release", answer)
+			requireBHDSourceWarnings(t, subject, "language_existing_release")
+			subject.Identity.Generation++
+			requireBHDSourceWarnings(t, subject, "language_existing_release")
+		})
+	}
+	if Profile().ProjectionQuestionnaire != nil {
+		t.Fatal("BHD source warnings still request answers")
+	}
 }
 
 func TestBHDAlternateMixNeedsContentEvidence(t *testing.T) {
 	for _, role := range []api.AudioTrackRole{api.AudioRoleProgramme, api.AudioRoleAlternateMix} {
-		subject := bhdValidationSubject()
-		subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-			ID:        "second",
-			Kind:      api.MediaTrackAudio,
-			Role:      role,
-			Languages: []string{"English"},
-			Title:     "Alternate Mix",
-			Codec:     "FLAC",
-		})
-		bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
-		requireBHDValidationFailure(t, languageAssessment(subject), "language_redundant_original", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-		bhdSourceAnswer(&subject, "programme_mixes", "duplicate_main_mix")
-		requireBHDValidationFailure(t, languageAssessment(subject), "language_redundant_original", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
-		bhdSourceAnswer(&subject, "programme_mixes", "distinct_mixes")
-		if failures := languageAssessment(subject); len(failures) != 0 {
-			t.Fatalf("distinct mixes blocked: %#v", failures)
+		for _, answer := range []string{"", "distinct_mixes", "duplicate_main_mix"} {
+			subject := bhdValidationSubject()
+			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+				ID:        "second",
+				Kind:      api.MediaTrackAudio,
+				Role:      role,
+				Languages: []string{"English"},
+				Title:     "Alternate Mix",
+				Codec:     "FLAC",
+			})
+			bhdSourceAnswer(&subject, "programme_mixes", answer)
+			requireBHDSourceWarnings(t, subject, "language_existing_release", "language_redundant_original")
 		}
 	}
-	// Tracks from different pack resources are not duplicate versions of one mix.
+	// Separate pack resources do not require within-resource mix comparison.
 	subject := bhdValidationSubject()
 	second := subject.LanguageFacts.Tracks[0]
 	second.ResourceID = "episode-2"
 	subject.LanguageFacts.Tracks[0].ResourceID = "episode-1"
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, second)
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("separate episodes treated as duplicate mixes: %#v", failures)
-	}
+	requireBHDSourceWarnings(t, subject, "language_existing_release")
 }
 
 func TestBHDRemuxRecommendationsStayAdvisory(t *testing.T) {
+	for _, answers := range [][2]string{
+		{"", ""},
+		{"unresolved", "unresolved"},
+		{"incomplete", "missing"},
+		{"retained_or_unavailable", "included"},
+		{"retained_or_unavailable", "not_required"},
+	} {
+		subject := bhdValidationSubject()
+		subject.Type, subject.DiscType = "REMUX", "BDMV"
+		bhdSourceAnswer(&subject, "source_extras", answers[0])
+		bhdSourceAnswer(&subject, "foreign_dialogue_subtitles", answers[1])
+		requireBHDSourceWarnings(t, subject, "language_existing_release", "language_source_extras", "language_foreign_dialogue_subtitles")
+		// A forced flag does not establish coverage of the programme's dialogue.
+		subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{"English"},
+			Forced:    true,
+		})
+		requireBHDSourceWarnings(t, subject, "language_existing_release", "language_source_extras", "language_foreign_dialogue_subtitles")
+		subject.Type = "DISC"
+		requireBHDSourceWarnings(t, subject)
+	}
 	subject := bhdValidationSubject()
-	subject.Type, subject.DiscType = "REMUX", "BDMV"
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
-	requireBHDValidationFailure(t, languageAssessment(subject), "language_source_extras", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
-	for _, answer := range []string{"", "unresolved", "incomplete"} {
-		bhdSourceAnswer(&subject, "source_extras", answer)
-		bhdSourceAnswer(&subject, "foreign_dialogue_subtitles", "missing")
-		failures := languageAssessment(subject)
-		for _, rule := range []string{"language_source_extras", "language_foreign_dialogue_subtitles"} {
-			if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == rule && f.Disposition == api.RuleDispositionAdvisory }) {
-				t.Fatalf("recommendation lost or made mandatory: %s: %#v", rule, failures)
-			}
-		}
+	subject.Type = "REMUX"
+	subject.LanguageFacts = bhdTestLanguageFacts("ZXX", []string{"ZXX"}, nil)
+	requireBHDSourceWarnings(t, subject, "language_existing_release", "language_source_extras")
+	subject.LanguageFacts = bhdTestLanguageFacts("English", nil, nil)
+	subject.LanguageFacts.AudioAbsent = true
+	if slices.ContainsFunc(languageAssessment(subject), func(f api.RuleFailure) bool { return f.Rule == "language_foreign_dialogue_subtitles" }) {
+		t.Fatal("absent audio acquired hypothetical subtitle guidance")
 	}
-	bhdSourceAnswer(&subject, "source_extras", "retained_or_unavailable")
-	bhdSourceAnswer(&subject, "foreign_dialogue_subtitles", "included")
-	if !slices.ContainsFunc(languageAssessment(subject), func(f api.RuleFailure) bool { return f.Rule == "language_foreign_dialogue_subtitles" }) {
-		t.Fatal("unforced full subtitles proved separate forced coverage")
-	}
-	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-		Kind:      api.MediaTrackSubtitle,
-		Languages: []string{"English"},
-		Forced:    true,
-	})
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
-	bhdSourceAnswer(&subject, "source_extras", "retained_or_unavailable")
-	bhdSourceAnswer(&subject, "foreign_dialogue_subtitles", "included")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("reviewed remux blocked: %#v", failures)
-	}
-	subject.Type, subject.DiscType = "DISC", "BDMV"
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("full disc assessed: %#v", failures)
-	}
+	requireBHDValidationFailure(t, languageAssessment(subject), "language_primary_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 }
 
-func TestBHDAnimationAndQuestionApplicability(t *testing.T) {
+func TestBHDAnimationPreferenceAndMeasuredRestrictions(t *testing.T) {
 	subject := bhdValidationSubject()
 	subject.LanguageFacts = bhdTestLanguageFacts("Japanese", []string{"Japanese"}, nil)
 	subject.EffectiveMetadata.Genres = []string{"Animation"}
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
 	requireBHDValidationFailure(t, languageAssessment(subject), "language_animated_dual_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
-	questionnaire := Profile().ProjectionQuestionnaire
-	if questionnaire == nil {
-		t.Fatal("BHD source review is not wired")
-	}
-	for _, typ := range []string{"WEBDL", "REMUX", "DISC"} {
-		meta := api.UploadSubject{Type: typ, LanguageFacts: subject.LanguageFacts}
-		question := questionnaire(trackers.PreparationInput{Meta: meta})
-		if typ == "DISC" {
-			if question != nil {
-				t.Fatal("full disc questions")
-			}
-			continue
-		}
-		if question == nil {
-			t.Fatal("source history question missing")
-		}
-		if typ == "WEBDL" && len(question.Fields) != 1 {
-			t.Fatalf("WEB acquired remux questions: %#v", question)
-		}
-		for _, field := range question.Fields {
-			if !strings.HasPrefix(field.Key, "existing_release_") && !strings.HasPrefix(field.Key, "programme_mixes_") && field.Required {
-				t.Fatalf("should guidance became a required prompt: %#v", field)
-			}
-		}
-	}
-}
+	subject.LanguageFacts = bhdTestLanguageFacts("Japanese", []string{"Japanese", "English", "German"}, nil)
+	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
+	requireBHDValidationFailure(t, languageAssessment(subject), "language_extra_dub", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 
-// bhdNewReleaseFixture gives unrelated upload/payload fixtures their explicit
-// source history; source-policy regressions call the assessment directly.
-func bhdNewReleaseFixture(meta api.UploadSubject) api.UploadSubject {
-	subject := api.NewTrackerValidationSubject(meta, "BHD")
-	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{
-		"BHD": {trackers.LanguageQuestionKey(subject, "existing_release"): "unchanged_or_new"},
-	}
-	return meta
-}
-
-func TestBHDSourceAnswersDoNotWaiveCompatibilityOrAcceptUnknownOptions(t *testing.T) {
-	subject := bhdValidationSubject()
-	bhdSourceAnswer(&subject, "existing_release", "staff_approved")
-	requireBHDValidationFailure(t, languageAssessment(subject), "language_existing_release", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	subject = bhdValidationSubject()
 	subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
 		ID:        "compatibility",
@@ -165,57 +127,59 @@ func TestBHDSourceAnswersDoNotWaiveCompatibilityOrAcceptUnknownOptions(t *testin
 		Languages: []string{"English"},
 		Codec:     "AC-3",
 	})
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("valid TrueHD compatibility audio acquired mix question: %#v", failures)
-	}
+	requireBHDSourceWarnings(t, subject, "language_existing_release")
 	subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].Codec = "DTS"
-	bhdSourceAnswer(&subject, "existing_release", "unchanged_or_new")
+	bhdSourceAnswer(&subject, "programme_mixes", "distinct_mixes")
 	requireBHDValidationFailure(t, languageAssessment(subject), "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 }
 
-func TestBHDSourceHistoryDebugProjection(t *testing.T) {
+func TestBHDSourceHistoryDoesNotGateProjection(t *testing.T) {
 	registry := trackers.NewRegistry()
 	if err := registry.Register(New()); err != nil {
 		t.Fatal(err)
 	}
 	subject := bhdGeneratedSubject(t, api.ReleaseNameRequest{
-Category: "MOVIE",
- Type: "WEBDL",
- Title: "Example Release",
- Year: 2026,
- Resolution: "1080p",
- Source: "Web",
- VideoCodec: "H.264",
- Audio: "DD 2.0",
- Tag: "GRP",
-})
+		Category:   "MOVIE",
+		Type:       "WEBDL",
+		Title:      "Example Release",
+		Year:       2026,
+		Resolution: "1080p",
+		Source:     "Web",
+		VideoCodec: "H.264",
+		Audio:      "DD 2.0",
+		Tag:        "GRP",
+	})
 	subject.Source, subject.Type, subject.Container = "WEB", "WEBDL", "mkv"
 	subject.Identity = api.ExternalIdentity{
-Category: api.CanonicalCategoryMovie,
- TMDBID: 1234567,
- IMDBID: 1234567,
-}
+		Category: api.CanonicalCategoryMovie,
+		TMDBID:   1234567,
+		IMDBID:   1234567,
+	}
 	subject.EffectiveMetadata.Title, subject.EffectiveMetadata.Year = "Example Release", 2026
 	subject.Release.Category = "MOVIE"
 	subject.Audio, subject.VideoCodec = "DD 2.0", "H.264"
 	subject.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusNotApplicable
-	for _, answer := range []string{"", "unchanged_or_new"} {
-		subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"BHD": {trackers.LanguageQuestionKey(api.NewTrackerValidationSubject(subject, "BHD"), "existing_release"): answer}}
-		p, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
-Tracker: "BHD",
- Meta: subject,
- ExecutionMode: api.WorkflowExecutionModeDebug,
- RequestedUploadName: &subject.ReleaseName,
-}, "input", "catalog", "config")
-		if failure != nil {
-			t.Fatal(failure)
-		}
-		if answer == "" && !p.DupeReady {
-			t.Error("debug source-history eligibility-only questionnaire reblocks duplicate preparation")
-		}
-		if answer != "" && !p.DupeReady {
-			t.Error("control has an unrelated blocker")
+	for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+		for _, answer := range []string{"", "unchanged_or_new", "tracks_or_chapters_added"} {
+			key := trackers.LanguageQuestionKey(api.NewTrackerValidationSubject(subject, "BHD"), "existing_release")
+			subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"BHD": {key: answer}}
+			projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
+				Tracker:             "BHD",
+				Meta:                subject,
+				ExecutionMode:       mode,
+				RequestedUploadName: &subject.ReleaseName,
+			}, "input", "catalog", "config")
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			if !projection.DupeReady || len(projection.Questionnaire) != 0 {
+				t.Fatalf("source history gated %s projection: %#v", mode, projection)
+			}
+			if slices.ContainsFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Kind == api.RequiredActionAnswerQuestionnaire
+			}) {
+				t.Fatal("source history requested questionnaire answers")
+			}
 		}
 	}
 }

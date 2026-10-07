@@ -68,92 +68,42 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	return append(failures, sourceLanguageFailures(subject)...)
 }
 
-// sourceLanguageFailures keeps source comparisons separate from measured
-// language facts. These findings do not establish remote replacement eligibility.
+// sourceLanguageFailures reports source comparisons as partial-evidence guidance,
+// independent of saved answers. These findings do not establish replacement eligibility.
 func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	var failures []api.RuleFailure
-	add := func(key, reason string, outcome trackers.LanguageOutcome) {
-		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
-	}
-	// Unknown recommendation evidence does not turn should-guidance into a
-	// mandatory source requirement.
-	addUnresolvedGuidance := func(key, reason string) {
+	add := func(key, reason string) {
 		failure := trackers.LanguageRuleFailure(subject, key, reason, trackers.LanguageAdvisory)
 		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		failures = append(failures, failure)
 	}
 	if !sourceKindKnown(subject) {
-		add(
-			"source_kind",
-			"correct Source in Input to establish source-disc extras and Blu-ray/broadcast soundtrack applicability",
-			trackers.LanguageUnresolved,
-		)
+		add("source_kind", "source-disc extras and Blu-ray/broadcast soundtrack applicability are unknown; check the release source")
 	}
 	remux := strings.EqualFold(subject.Type, "REMUX")
 	if remux {
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "source_audio")] {
-		case "best_original_retained":
-		case "incomplete":
-			add("source_audio", "remuxes must retain the best available original-language primary audio", trackers.LanguageProhibited)
-		default:
-			add("source_audio", "source comparison must establish the best available original-language primary audio is retained", trackers.LanguageUnresolved)
-		}
+		add("source_audio", "remuxes must retain the best available original-language primary audio; track metadata does not establish best-source retention")
 	}
 	if discSourceVideo(subject) {
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "source_extras")] {
-		case "retained_or_unavailable":
-		case "incomplete":
-			add("source_extras", "available source-disc commentary, isolated scores and chapters must be included", trackers.LanguageProhibited)
-		default:
-			add("source_extras", "source-disc commentary, isolated-score and chapter availability/inclusion needs review", trackers.LanguageUnresolved)
-		}
+		add(
+			"source_extras",
+			"available source-disc commentary, isolated scores and chapters must be included; source availability and retention are not established",
+		)
 	}
 	if bluRaySourceVideo(subject) {
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "broadcast_soundtrack")] {
-		case "same_or_both_retained":
-		case "missing":
-			add(
-				"broadcast_soundtrack",
-				"a different Blu-ray and original broadcast soundtrack should both be retained; one is missing",
-				trackers.LanguageTrumpable,
-			)
-		default:
-			add(
-				"broadcast_soundtrack",
-				"compare the Blu-ray and original broadcast soundtracks and establish whether both are retained when different",
-				trackers.LanguageUnresolved,
-			)
-		}
+		add(
+			"broadcast_soundtrack",
+			"compare the Blu-ray and original broadcast soundtracks; both should be retained when different, and track metadata does not establish that comparison",
+		)
 	}
 	if needsRetailEnglishDubReview(subject) {
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "retail_english_dub")] {
-		case "unavailable":
-		case "available_missing":
-			add("retail_english_dub", "foreign animation should include an English dub when available from retail sources", trackers.LanguageAdvisory)
-		default:
-			addUnresolvedGuidance("retail_english_dub", "retail English-dub availability is unresolved; foreign animation should include it when available")
-		}
+		add("retail_english_dub", "foreign animation should include an English dub when available from retail sources; retail availability is not established")
 	}
 	if remux && foreignOriginal(subject.LanguageFacts) {
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "retail_english_subtitles")] {
-		case "unavailable":
-		case "retail_included":
-			if slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English") {
-				break
-			}
-			add("retail_english_subtitles", "retail English subtitle inclusion is not established in the finalized subtitle facts", trackers.LanguageAdvisory)
-		case "available_missing":
-			add(
-				"retail_english_subtitles",
-				"retail English subtitles can improve a foreign remux; replacement eligibility still requires a source/slot comparison",
-				trackers.LanguageAdvisory,
-			)
-		default:
-			addUnresolvedGuidance(
-				"retail_english_subtitles",
-				"retail English subtitle availability and inclusion are unresolved; they can improve a foreign remux",
-			)
-		}
+		add(
+			"retail_english_subtitles",
+			"retail English subtitles can improve a foreign remux; track metadata does not establish retail availability or provenance",
+		)
 	}
 	return failures
 }
@@ -186,7 +136,7 @@ func discSourceKindKnown(subject api.TrackerValidationSubject) bool {
 }
 
 // sourceKindKnown distinguishes unknown provenance from known non-disc video.
-// A remux without its disc kind still needs review for Blu-ray soundtrack rules.
+// A remux without its disc kind retains a warning about soundtrack applicability.
 func sourceKindKnown(subject api.TrackerValidationSubject) bool {
 	if discSourceKindKnown(subject) {
 		return true

@@ -191,17 +191,9 @@ func TestPTPProjectionCapturesReviewedPayloadChoices(t *testing.T) {
 		t.Fatalf("missing PTP review: %#v", pending)
 	}
 	input.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"PTP": {"trumpable_review": "yes", "subtitle_tags": "No English Subs"}}
-	subject := api.NewTrackerValidationSubject(input.Meta, "PTP")
-	input.Meta.TrackerQuestionnaireAnswers["PTP"][trackers.LanguageQuestionKey(subject, "english_subtitle_manager")] = "missing"
-	input.Meta.TrackerQuestionnaireAnswers["PTP"][trackers.LanguageQuestionKey(subject, "forced_english_dialogue")] = "not_required"
 	reviewed, failure := registry.ProjectRelease(t.Context(), input, "input-reviewed", "catalog", "config")
-	if failure != nil || reviewed.UploadReady || reviewed.WaivableRuleFingerprint == "" {
-		t.Fatalf("payload choices bypassed the separate rule waiver: %#v, %v", reviewed, failure)
-	}
-	input.AuthorizedRuleFingerprint = reviewed.WaivableRuleFingerprint
-	reviewed, failure = registry.ProjectRelease(t.Context(), input, "input-authorized", "catalog", "config")
-	if failure != nil || !reviewed.UploadReady {
-		t.Fatalf("reviewed=%#v failure=%v", reviewed, failure)
+	if failure != nil || !reviewed.UploadReady || reviewed.WaivableRuleFingerprint != "" {
+		t.Fatalf("payload choices acquired a source-comparison waiver: %#v, %v", reviewed, failure)
 	}
 	input.Projection = &reviewed
 	input.Intent = trackers.PreparationIntentDryRun

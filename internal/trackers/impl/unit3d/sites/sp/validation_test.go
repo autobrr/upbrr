@@ -127,7 +127,7 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestSPValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v5" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v6" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }

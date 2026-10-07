@@ -65,11 +65,10 @@ func TestPTPLanguageFindingsAccumulateWithoutLegacyWaivers(t *testing.T) {
 	subject.QuestionnaireAnswers["no_english_subtitles"] = "no"
 	subject.QuestionnaireAnswers["trumpable_review"] = "no"
 	failures := languageFailures(subject)
-	for _, rule := range []string{"language_non_english_dub", "language_english_subtitles", "language_forced_english_subtitles"} {
-		requirePTPLanguageFailure(t, failures, rule, api.RuleDispositionWaivable)
-	}
+	requirePTPLanguageFailure(t, failures, "language_non_english_dub", api.RuleDispositionWaivable)
+	requirePTPLanguageFailure(t, failures, "language_english_subtitles", api.RuleDispositionAdvisory)
 	for _, failure := range failures {
-		if !strings.Contains(failure.Reason, "Trumpable release") || !strings.Contains(failure.Reason, "compliant replacement") {
+		if failure.Disposition == api.RuleDispositionWaivable && (!strings.Contains(failure.Reason, "Trumpable release") || !strings.Contains(failure.Reason, "compliant replacement")) {
 			t.Fatalf("unlabelled defect: %#v", failure)
 		}
 	}
@@ -102,105 +101,70 @@ func TestPTPPrimaryProgrammeSubtitleApplicability(t *testing.T) {
 	foreign := ptpLanguageSubject("Japanese", "Japanese", "English")
 	ptpLanguageAnswer(&foreign, "english_subtitle_manager", "missing")
 	ptpLanguageAnswer(&foreign, "forced_english_dialogue", "not_required")
-	requirePTPLanguageFailure(t, languageFailures(foreign), "language_english_subtitles", api.RuleDispositionWaivable)
+	requirePTPLanguageFailure(t, languageFailures(foreign), "language_english_subtitles", api.RuleDispositionAdvisory)
 	ptpLanguageAnswer(&foreign, "english_subtitle_manager", "available")
-	if failures := languageFailures(foreign); len(failures) != 0 {
-		t.Fatalf("manager availability ignored: %#v", failures)
-	}
+	requirePTPLanguageFailure(t, languageFailures(foreign), "language_english_subtitles", api.RuleDispositionAdvisory)
 	foreign.LanguageFacts.PrimaryAudioTrackID = "unknown"
-	requirePTPLanguageFailure(t, languageFailures(foreign), "language_primary_evidence", api.RuleDispositionStrict)
+	requirePTPLanguageFailure(t, languageFailures(foreign), "language_primary_evidence", api.RuleDispositionAdvisory)
 }
 
-func TestPTPLanguageReviewFactsAndGenerationInvalidateAnswers(t *testing.T) {
+func TestPTPSourceAnswersDoNotChangeWarningsOrCreateQuestions(t *testing.T) {
 	subject := ptpLanguageSubject("Japanese", "Japanese", "German")
-	ptpLanguageAnswer(&subject, "programme_track_purpose", "distinct_content")
-	ptpLanguageAnswer(&subject, "english_subtitle_manager", "available")
-	ptpLanguageAnswer(&subject, "forced_english_dialogue", "not_required")
-	if failures := languageFailures(subject); len(failures) != 0 {
-		t.Fatalf("reviewed facts blocked: %#v", failures)
-	}
-	for _, change := range []func(*api.TrackerValidationSubject){
-		func(s *api.TrackerValidationSubject) { s.Identity.Generation++ },
-		func(s *api.TrackerValidationSubject) {
-			s.LanguageFacts = s.LanguageFacts.Clone()
-			s.LanguageFacts.PrimaryAudioTrackID = "audio-1"
-		},
-		func(s *api.TrackerValidationSubject) {
-			s.LanguageFacts = s.LanguageFacts.Clone()
-			s.LanguageFacts.Tracks[1].Role = api.AudioRoleAlternateMix
-		},
-	} {
-		changed := subject
-		change(&changed)
-		fields := languageReviewFields(changed, api.WorkflowExecutionModeNormal)
-		if len(fields) == 0 || slices.ContainsFunc(fields, func(field api.TrackerQuestionnaireField) bool { return field.Value != "" }) {
-			t.Fatalf("changed evidence reused answers: %#v", fields)
-		}
-		if failures := languageFailures(changed); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Disposition == api.RuleDispositionStrict }) {
-			t.Fatalf("changed evidence did not require reassessment: %#v", failures)
+	for _, answer := range []string{"", "distinct_content", "redundant", "unresolved"} {
+		ptpLanguageAnswer(&subject, "programme_track_purpose", answer)
+		ptpLanguageAnswer(&subject, "english_subtitle_manager", "available")
+		ptpLanguageAnswer(&subject, "forced_english_dialogue", "not_required")
+		for _, change := range []func(*api.TrackerValidationSubject){
+			func(*api.TrackerValidationSubject) {},
+			func(s *api.TrackerValidationSubject) { s.Identity.Generation++ },
+			func(s *api.TrackerValidationSubject) { s.LanguageFacts.Tracks[1].Role = api.AudioRoleAlternateMix },
+		} {
+			changed := subject
+			changed.LanguageFacts = subject.LanguageFacts.Clone()
+			change(&changed)
+			if fields := languageReviewFields(changed, api.WorkflowExecutionModeNormal); len(fields) != 0 {
+				t.Fatalf("source review became a questionnaire: %+v", fields)
+			}
+			failures := languageFailures(changed)
+			requirePTPLanguageFailure(t, failures, "language_redundant_audio", api.RuleDispositionAdvisory)
+			requirePTPLanguageFailure(t, failures, "language_english_subtitles", api.RuleDispositionAdvisory)
+			if len(ptpNonAdvisoryFailures(changed)) != 0 {
+				t.Fatalf("source answer gated upload: %+v", failures)
+			}
 		}
 	}
 	for _, disc := range []string{"", "DVD", "BDMV"} {
-		discSubject := subject
-		discSubject.Type, discSubject.DiscType = "DISC", disc
-		discSubject.QuestionnaireAnswers = nil
-		if failures := languageFailures(discSubject); len(failures) != 0 {
-			t.Fatalf("full disc assessed: %#v", failures)
+		subject.Type, subject.DiscType = "DISC", disc
+		if failures := languageFailures(subject); len(failures) != 0 {
+			t.Fatalf("full disc assessed: %+v", failures)
 		}
-		if fields := languageReviewFields(discSubject, api.WorkflowExecutionModeNormal); len(fields) != 0 {
-			t.Fatalf("full disc acquired questions: %#v", fields)
+		if fields := languageReviewFields(subject, api.WorkflowExecutionModeNormal); len(fields) != 0 {
+			t.Fatalf("full disc questioned: %+v", fields)
 		}
 	}
-	subject.Type, subject.DiscType = "REMUX", "BDMV"
-	subject.QuestionnaireAnswers = nil
-	requirePTPLanguageFailure(t, languageFailures(subject), "language_redundant_audio", api.RuleDispositionStrict)
 }
 
-func TestPTPSubtitleCompletenessAndForcedEvidence(t *testing.T) {
+func TestPTPSubtitleWarningsPreserveMeasuredEvidenceBoundaries(t *testing.T) {
 	subject := ptpLanguageSubject("Japanese", "Japanese")
-	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
-	ptpLanguageAnswer(&subject, "english_subtitle_manager", "missing")
-	ptpLanguageAnswer(&subject, "forced_english_dialogue", "missing")
-	for _, rule := range []string{"language_english_subtitles", "language_forced_english_subtitles"} {
-		requirePTPLanguageFailure(t, languageFailures(subject), rule, api.RuleDispositionStrict)
+	for _, status := range []api.MetadataEvidenceStatus{api.MetadataEvidenceStatusPartial, api.MetadataEvidenceStatusComplete} {
+		subject.LanguageFacts.SubtitleStatus = status
+		for _, answer := range []string{"missing", "available", "unresolved"} {
+			ptpLanguageAnswer(&subject, "english_subtitle_manager", answer)
+			ptpLanguageAnswer(&subject, "forced_english_dialogue", "missing")
+			failures := languageFailures(subject)
+			requirePTPLanguageFailure(t, failures, "language_english_subtitles", api.RuleDispositionAdvisory)
+			if len(ptpNonAdvisoryFailures(subject)) != 0 {
+				t.Fatalf("hypothetical coverage gated upload: %+v", failures)
+			}
+		}
 	}
-	ptpLanguageAnswer(&subject, "english_subtitle_manager", "available")
-	ptpLanguageAnswer(&subject, "forced_english_dialogue", "available_in_manager")
+	subject.LanguageFacts.SubtitleLanguages = []string{"English"}
 	if failures := languageFailures(subject); len(failures) != 0 {
-		t.Fatalf("known manager alternatives required irrelevant local completeness: %#v", failures)
+		t.Fatalf("current English subtitle evidence ignored: %+v", failures)
 	}
-	media := api.MediaFacts{
-		OriginalLanguage:      "English",
-		TrackCoverageComplete: true,
-		PrimaryAudioTrackID:   "main",
-		SubtitleLanguages:     []string{"English (Forced)"},
-		Tracks: []api.MediaTrackFacts{
-			{
-				ID:        "main",
-				Kind:      api.MediaTrackAudio,
-				Role:      api.AudioRoleProgramme,
-				Languages: []string{"English"},
-			},
-			{Kind: api.MediaTrackSubtitle, Languages: []string{"English (Forced)"}},
-		},
-	}
-	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
-	subject.QuestionnaireAnswers = nil
-	if failures := languageFailures(subject); len(failures) != 0 {
-		t.Fatalf("finalized forced-English evidence ignored: %#v", failures)
-	}
-	media.SubtitleLanguages, media.SubtitleLanguagesProvenance = nil, api.FactProvenanceManualEmpty
-	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
-	if ptpHasForcedEnglish(subject) {
-		t.Fatal("subtitle clear reused retained track English evidence")
-	}
-	requirePTPLanguageFailure(t, languageFailures(subject), "language_forced_english_subtitles", api.RuleDispositionStrict)
-	media.AudioLanguagesProvenance = api.FactProvenanceManualEmpty
-	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
-	requirePTPLanguageFailure(t, languageFailures(subject), "language_evidence", api.RuleDispositionStrict)
-	media.AudioLanguagesProvenance = api.FactProvenanceAutomatic
-	media.Tracks[0].Role = ""
-	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+	subject.LanguageFacts.SubtitleLanguages = nil
+	requirePTPLanguageFailure(t, languageFailures(subject), "language_english_subtitles", api.RuleDispositionAdvisory)
+	subject.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
 	requirePTPLanguageFailure(t, languageFailures(subject), "language_evidence", api.RuleDispositionStrict)
 }
 
@@ -221,32 +185,47 @@ func TestPTPNoAudioIsNotADub(t *testing.T) {
 	}
 }
 
-func TestPTPRepeatedProgrammeAudioNeedsSourceEvidence(t *testing.T) {
+func TestPTPRepeatedProgrammeAudioProducesSourceGuidance(t *testing.T) {
 	subject := ptpLanguageSubject("English", "English", "English")
-	ptpLanguageAnswer(&subject, "forced_english_dialogue", "not_required")
-	requirePTPLanguageFailure(t, languageFailures(subject), "language_redundant_audio", api.RuleDispositionStrict)
-	ptpLanguageAnswer(&subject, "programme_track_purpose", "distinct_content")
-	if failures := languageFailures(subject); len(failures) != 0 {
-		t.Fatalf("distinct mixes were treated as duplicates: %#v", failures)
+	for _, role := range []api.AudioTrackRole{api.AudioRoleProgramme, api.AudioRoleAlternateMix} {
+		subject.LanguageFacts.Tracks[1].Role = role
+		for _, answer := range []string{"", "distinct_content", "redundant"} {
+			ptpLanguageAnswer(&subject, "programme_track_purpose", answer)
+			requirePTPLanguageFailure(t, languageFailures(subject), "language_redundant_audio", api.RuleDispositionAdvisory)
+		}
 	}
-	subject.LanguageFacts.Tracks[1].Role = api.AudioRoleAlternateMix
-	ptpLanguageAnswer(&subject, "programme_track_purpose", "distinct_content")
-	ptpLanguageAnswer(&subject, "forced_english_dialogue", "not_required")
-	if failures := languageFailures(subject); len(failures) != 0 {
-		t.Fatalf("reviewed distinct alternate mix was treated as redundant: %#v", failures)
-	}
-	ptpLanguageAnswer(&subject, "programme_track_purpose", "redundant")
-	requirePTPLanguageFailure(t, languageFailures(subject), "language_redundant_audio", api.RuleDispositionWaivable)
 	for _, role := range []api.AudioTrackRole{api.AudioRoleCommentary, api.AudioRoleCompatibility, api.AudioRoleIsolatedScore} {
-		secondary := ptpLanguageSubject("English", "English")
-		secondary.LanguageFacts.Tracks = append(secondary.LanguageFacts.Tracks, api.MediaTrackFacts{
-			Kind:      api.MediaTrackAudio,
-			Role:      role,
-			Languages: []string{"English"},
-		})
-		ptpLanguageAnswer(&secondary, "forced_english_dialogue", "not_required")
-		if failures := languageFailures(secondary); len(failures) != 0 {
-			t.Fatalf("secondary %s treated as duplicate programme: %#v", role, failures)
+		subject.LanguageFacts.Tracks[1].Role = role
+		if failures := languageFailures(subject); len(failures) != 0 {
+			t.Fatalf("secondary %s treated as duplicate programme: %+v", role, failures)
+		}
+	}
+}
+
+func ptpNonAdvisoryFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	return slices.DeleteFunc(languageFailures(subject), func(failure api.RuleFailure) bool {
+		return failure.Disposition == api.RuleDispositionAdvisory
+	})
+}
+
+func TestPTPMultilingualPrimaryDoesNotGateSubtitleGuidance(t *testing.T) {
+	for _, subtitles := range [][]string{{"English"}, nil} {
+		subject := ptpLanguageSubject("Japanese", "English")
+		subject.LanguageFacts.Tracks[0].Languages = []string{"English", "Japanese"}
+		subject.LanguageFacts.ProgrammeLanguages = []string{"English", "Japanese"}
+		subject.LanguageFacts.SubtitleLanguages = subtitles
+		failures := languageFailures(subject)
+		if len(subtitles) > 0 {
+			if len(failures) != 0 {
+				t.Fatalf("known English subtitles acquired applicability findings: %+v", failures)
+			}
+		} else {
+			requirePTPLanguageFailure(t, failures, "language_primary_evidence", api.RuleDispositionAdvisory)
+			for _, failure := range failures {
+				if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+					t.Fatalf("subtitle guidance blocked: %+v", failure)
+				}
+			}
 		}
 	}
 }

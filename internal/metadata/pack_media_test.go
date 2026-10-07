@@ -480,7 +480,7 @@ func TestPackMediaIncompleteReportsPreserveUnknowns(t *testing.T) {
 	}
 }
 
-func TestPackMediaProducerFeedsSPSourceConsistencyReview(t *testing.T) {
+func TestPackMediaProducerWarnsAboutUnmeasuredSPSource(t *testing.T) {
 	analyzer := &packAnalyzer{}
 	service, request := packCollectionFixture(t, analyzer)
 	meta, err := service.collectSourceEvidence(t.Context(), request)
@@ -500,10 +500,9 @@ func TestPackMediaProducerFeedsSPSourceConsistencyReview(t *testing.T) {
 	}
 	profile := sp.Profile()
 	questionnaire := profile.Site.ProjectionQuestionnaire(trackers.PreparationInput{Meta: subject})
-	if questionnaire == nil || len(questionnaire.Fields) != 1 || !strings.HasPrefix(questionnaire.Fields[0].Key, "pack_source_consistency_") {
-		t.Fatalf("source review=%+v", questionnaire)
+	if questionnaire != nil {
+		t.Fatalf("unmeasured source history became a questionnaire: %+v", questionnaire)
 	}
-	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"SP": {questionnaire.Fields[0].Key: "consistent"}}
 	validation := api.NewTrackerValidationSubject(subject, "SP")
 	failures, err := profile.ValidationPolicy.Check(t.Context(), validation, api.NopLogger{})
 	if err != nil {
@@ -513,6 +512,12 @@ func TestPackMediaProducerFeedsSPSourceConsistencyReview(t *testing.T) {
 		if failure.Rule == "sp_pack_uniformity" {
 			t.Fatalf("uniform collected files rejected: %+v", failure)
 		}
+	}
+	if !slices.ContainsFunc(failures, func(failure api.RuleFailure) bool {
+		return failure.Rule == "sp_pack_source_history" && failure.Disposition == api.RuleDispositionAdvisory &&
+			failure.EvidenceStatus == api.MetadataEvidenceStatusPartial && !trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false)
+	}) {
+		t.Fatalf("unknown source provenance lost passive guidance: %+v", failures)
 	}
 	if len(analyzer.targets) != 2 {
 		t.Fatalf("projection reprobed files: %v", analyzer.targets)
@@ -607,10 +612,10 @@ func TestPackMediaMissingBitDepthStaysUnresolvedWithRetainedSourceAnswer(t *test
 	}
 	profile := sp.Profile()
 	question := profile.Site.ProjectionQuestionnaire(trackers.PreparationInput{Meta: subject})
-	if question == nil || len(question.Fields) != 1 {
-		t.Fatalf("initial source question=%+v", question)
+	if question != nil {
+		t.Fatalf("initial source history became a questionnaire: %+v", question)
 	}
-	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"SP": {question.Fields[0].Key: "consistent"}}
+	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"SP": {"pack_source_consistency_legacy": "consistent"}}
 	analyzer.inspect = func(context.Context, string) (string, error) {
 		return strings.Replace(packMediaReport, `,"BitDepth":"8"`, "", 1), nil
 	}

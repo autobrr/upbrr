@@ -103,7 +103,7 @@ func trackOrderingFailures(subject api.TrackerValidationSubject, outcome tracker
 	audioTracks, orderKnown := orderedAudioTracks(facts.Tracks)
 	var failures []api.RuleFailure
 	if !orderKnown {
-		failures = unresolvedTrackOrder(subject, outcome)
+		failures = unresolvedTrackOrder(subject)
 	}
 	otherAudioSeen, dubGroupEnded := false, false
 	lastDub := ""
@@ -147,13 +147,14 @@ func trackOrderingFailures(subject api.TrackerValidationSubject, outcome tracker
 		}
 	}
 	if multilingualDub && dubTracks > 1 {
-		if outcome != trackers.LanguageAdvisory {
-			outcome = trackers.LanguageUnresolved
-		}
-		failures = append(
-			failures,
-			trackers.LanguageRuleFailure(subject, "dub_order_evidence", "normal dub ordering is unresolved for a multilingual programme track", outcome),
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"dub_order_evidence",
+			"normal dub ordering could not be established for a multilingual programme track; check its position manually",
+			trackers.LanguageAdvisory,
 		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	return failures
 }
@@ -183,28 +184,12 @@ func orderedAudioTracks(tracks []api.MediaTrackFacts) ([]api.MediaTrackFacts, bo
 	return audio, len(audio) == count
 }
 
-func unresolvedTrackOrder(subject api.TrackerValidationSubject, outcome trackers.LanguageOutcome) []api.RuleFailure {
-	if outcome == trackers.LanguageProhibited {
-		switch subject.QuestionnaireAnswers[trackOrderQuestionKey(subject)] {
-		case "ordered":
-			return nil
-		case "out_of_order":
-			return []api.RuleFailure{trackers.LanguageRuleFailure(
-				subject,
-				"track_order",
-				"reviewed audio order does not put originals first or group normal dubs with English first and remaining languages alphabetically",
-				outcome,
-			)}
-		}
-	}
-	if outcome != trackers.LanguageAdvisory {
-		outcome = trackers.LanguageUnresolved
-	}
+func unresolvedTrackOrder(subject api.TrackerValidationSubject) []api.RuleFailure {
 	failure := trackers.LanguageRuleFailure(
 		subject,
 		"track_order_evidence",
-		"audio ordering is unresolved because container stream order is missing or ambiguous",
-		outcome,
+		"audio ordering could not be established from container stream order; check that original tracks come first and normal dubs are grouped, English first and remaining languages alphabetically",
+		trackers.LanguageAdvisory,
 	)
 	failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 	return []api.RuleFailure{failure}
@@ -220,9 +205,8 @@ func compareDubLanguages(left, right string) int {
 	return strings.Compare(left, right)
 }
 
-// trackMetadataFailures reports measured omissions independently of the personal
-// review: an attestation cannot clear contradictory inspected metadata. Default
-// suitability and semantic title accuracy require review, not invented flag rules.
+// trackMetadataFailures preserves measured omissions and contradictions.
+// Suitability that the inspected metadata cannot establish remains advisory.
 func trackMetadataFailures(subject api.TrackerValidationSubject, outcome trackers.LanguageOutcome) []api.RuleFailure {
 	var failures []api.RuleFailure
 	hasTracks := false
@@ -259,18 +243,12 @@ func trackMetadataFailures(subject api.TrackerValidationSubject, outcome tracker
 	if !hasTracks || outcome == trackers.LanguageAdvisory {
 		return failures
 	}
-	answer := subject.QuestionnaireAnswers[trackMetadataQuestionKey(subject)]
-	if outcome == trackers.LanguageProhibited && answer == "appropriate" {
-		return failures
-	}
-	reason := "appropriateness of track flags, default status and descriptive titles needs personal-release review"
-	switch {
-	case outcome == trackers.LanguageUnresolved:
-		reason = "personal-release recommendation exemption needs review"
-	case answer == "inappropriate":
-		reason = "appropriate flags, default status and descriptive titles are required for this personal release"
-	default:
-		outcome = trackers.LanguageUnresolved
-	}
-	return append(failures, trackers.LanguageRuleFailure(subject, "track_metadata", reason, outcome))
+	failure := trackers.LanguageRuleFailure(
+		subject,
+		"track_metadata",
+		"check that track flags, default status and descriptive titles match the actual content; their suitability cannot be established from inspected metadata alone",
+		trackers.LanguageAdvisory,
+	)
+	failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+	return append(failures, failure)
 }

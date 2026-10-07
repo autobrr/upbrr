@@ -4,6 +4,8 @@
 package hhd
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -14,48 +16,31 @@ import (
 
 func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	var failures []api.RuleFailure
-	if needsSubtitleManagerReview(subject.LanguageFacts) {
-		outcome := trackers.LanguageUnresolved
-		reason := "English subtitle coverage must be established locally or through HHD's subtitle manager, even with an English dub"
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "english_subtitle_manager")] {
-		case "available":
-			outcome = ""
-		case "missing":
-			if subject.LanguageFacts.SubtitleStatus == api.MetadataEvidenceStatusComplete {
-				outcome = trackers.LanguageProhibited
-				reason = "English subtitles are missing locally and from HHD's subtitle manager"
-			}
-		}
-		if outcome != "" {
-			failures = append(failures, trackers.LanguageRuleFailure(subject, "subtitles", reason, outcome))
-		}
+	if needsSubtitleAcknowledgement(subject.LanguageFacts) {
+		failure := trackers.NewEvidenceRuleFailure(
+			"language_subtitles",
+			"English subtitles were not identified locally. HHD requires matching English subtitles locally or through its subtitle manager, even with an English dub; acknowledge the actual track status before proceeding.",
+			api.RuleDispositionWaivable,
+			subject.LanguageFacts.SubtitleStatus,
+		)
+		failure.EvidenceFingerprint = api.WorkflowFingerprint(fmt.Sprintf("%x", sha256.Sum256([]byte(trackers.LanguageQuestionKey(subject, "subtitles")))))
+		failure.DebugBypass = true
+		failures = append(failures, failure)
 	}
-	if webSourceVideo(subject) {
-		return failures
-	}
-	answer := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "source_disc_audio")]
-	if answer == "retained" || answer == "no_disc_source" && !discSourceVideo(subject) {
-		return failures
-	}
-	outcome := trackers.LanguageAdvisory
-	reason := "source review must establish whether original mixes, commentary and unique isolated scores/music from the primary source discs were retained; equivalent material from additional sources is recommended"
-	if subject.PersonalRelease {
-		outcome = trackers.LanguageUnresolved
-	}
-	if answer == "incomplete" {
-		reason = "original mixes, commentary or unique isolated scores/music from the primary source discs were omitted; retain these tracks, with equivalent material from additional sources recommended"
-		if subject.PersonalRelease {
-			outcome = trackers.LanguageProhibited
-		}
-	}
-	failure := trackers.LanguageRuleFailure(subject, "source_disc_audio", reason, outcome)
-	if answer != "incomplete" {
+	if !webSourceVideo(subject) {
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"source_disc_audio",
+			"retain original mixes, commentary and unique isolated scores/music from primary source discs; this is mandatory for personal releases, and equivalent material from additional sources is recommended. Source retention has not been verified",
+			trackers.LanguageAdvisory,
+		)
 		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
-	return append(failures, failure)
+	return failures
 }
 
-func needsSubtitleManagerReview(facts api.LanguageFacts) bool {
+func needsSubtitleAcknowledgement(facts api.LanguageFacts) bool {
 	return facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0 &&
 		!slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX") &&
 		!slices.Contains(facts.SubtitleLanguages, "English")
@@ -98,7 +83,7 @@ func nonWebSourceVideo(subject api.TrackerValidationSubject) bool {
 }
 
 // compatibilityFailures uses measured tracks for codec/count constraints and
-// source attestations only for provenance and otherwise ambiguous mix identity.
+// explicit input only for otherwise ambiguous mix identity; provenance is advisory.
 func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	facts := subject.LanguageFacts
 	var failures []api.RuleFailure
@@ -118,32 +103,16 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 		if track.Role != api.AudioRoleCompatibility {
 			continue
 		}
-		source := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "compatibility_source_"+track.ID)]
-		switch source {
-		case "duplicated_core":
-			add("compatibility_core", "separately duplicated embedded core: "+track.ID, trackers.LanguageProhibited)
-		case "not_duplicated_core":
-		case "untouched_hls":
-			if !webSourceVideo(subject) {
-				add("compatibility_source", "untouched HLS provenance is permitted only for web-source video: "+track.ID, trackers.LanguageUnresolved)
-			}
-		default:
-			add(
-				"compatibility_source",
-				"source provenance and absence of a separately duplicated embedded core require review for track "+track.ID,
-				trackers.LanguageUnresolved,
-			)
-		}
-		if track.Codec != "" && !ac3Compatibility(track) && (source != "untouched_hls" || !webSourceVideo(subject)) {
-			outcome := trackers.LanguageProhibited
-			if !nonWebSourceVideo(subject) && source != "duplicated_core" && (!webSourceVideo(subject) || source != "not_duplicated_core") {
-				outcome = trackers.LanguageUnresolved
-			}
-			add(
-				"compatibility_format",
-				"track "+track.ID+" requires industry-standard AC-3 or source-confirmed untouched HLS compatibility audio for web video",
-				outcome,
-			)
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"compatibility_source",
+			"compatibility track "+track.ID+" must not separately duplicate an embedded core; web-source exceptions require untouched HLS audio. Source provenance has not been verified",
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
+		if track.Codec != "" && !ac3Compatibility(track) && nonWebSourceVideo(subject) {
+			add("compatibility_format", "track "+track.ID+" requires industry-standard AC-3 for non-web video", trackers.LanguageProhibited)
 		}
 		if track.ID == "" || track.Codec == "" || len(track.Languages) == 0 ||
 			slices.ContainsFunc(track.Languages, func(language string) bool {

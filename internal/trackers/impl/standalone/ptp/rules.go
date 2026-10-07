@@ -12,7 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// languageFailures assesses independent defects from finalized evidence.
+// languageFailures assesses language findings from finalized evidence.
 // Legacy payload choices never authorize a language-rule waiver.
 func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
@@ -34,64 +34,43 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	}
 	failures = append(failures, ptpRemuxLanguageFailures(subject)...)
 	if ptpNeedsTrackPurposeReview(facts) {
-		detail := ". Programme tracks: " + ptpProgrammeTrackDetails(facts)
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "programme_track_purpose")] {
-		case "distinct_content":
-		case "redundant":
-			add(
-				"redundant_audio",
-				"Redundant Audio Track(s); a replacement must resolve the reviewed duplicate mix or superfluous dub without losing required content"+detail,
-				trackers.LanguageTrumpable,
-			)
-		default:
-			add(
-				"redundant_audio",
-				"programme track purpose must establish whether additional mixes or dubs are redundant or preserve distinct necessary content"+detail,
-				trackers.LanguageUnresolved,
-			)
-		}
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"redundant_audio",
+			"additional programme tracks should preserve distinct necessary mixes/content; track counts and codecs cannot establish redundant mixes or superfluous dubs. Programme tracks: "+ptpProgrammeTrackDetails(
+				facts,
+			),
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	primary := ptpPrimaryProgrammeLanguage(facts)
-	if primary == "" && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete {
-		add("primary_evidence", "primary programme language is unresolved for English-subtitle applicability", trackers.LanguageUnresolved)
+	if primary == "" && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.SubtitleLanguages, "English") {
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"primary_evidence",
+			"primary programme language is unresolved; check English-subtitle guidance where applicable",
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	if primary != "" && primary != "English" && primary != "ZXX" && !slices.Contains(facts.SubtitleLanguages, "English") {
-		outcome := trackers.LanguageUnresolved
-		reason := "English subtitle availability must be established locally or in PTP's subtitle manager"
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "english_subtitle_manager")] {
-		case "available":
-			outcome = ""
-		case "missing":
-			if facts.SubtitleStatus == api.MetadataEvidenceStatusComplete {
-				outcome = trackers.LanguageTrumpable
-				reason = "Missing English Subtitles; no local subtitles or subtitle-manager alternative is available"
-			}
-		}
-		if outcome != "" {
-			add("english_subtitles", reason, outcome)
-		}
-	}
-	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !ptpHasForcedEnglish(subject) {
-		outcome := trackers.LanguageUnresolved
-		reason := "required forced English dialogue coverage and subtitle-manager availability need review"
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "forced_english_dialogue")] {
-		case "not_required", "available_in_manager":
-			outcome = ""
-		case "missing":
-			if facts.SubtitleStatus == api.MetadataEvidenceStatusComplete {
-				outcome = trackers.LanguageTrumpable
-				reason = "Missing Forced English Subtitles; required dialogue coverage is absent locally and from the subtitle manager"
-			}
-		}
-		if outcome != "" {
-			add("forced_english_subtitles", reason, outcome)
-		}
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"english_subtitles",
+			"English subtitles should be available locally or in PTP's subtitle manager; manager availability cannot be established from the upload alone",
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	return failures
 }
 
-// ptpRemuxLanguageFailures keeps measured remux boundaries independent of the
-// attestation about whether extra audio preserves distinct necessary content.
+// ptpRemuxLanguageFailures checks measured remux track/default boundaries
+// independently of source-comparison guidance about additional programme audio.
 func ptpRemuxLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	if !strings.EqualFold(strings.TrimSpace(subject.Type), "REMUX") {
 		return nil
@@ -263,7 +242,7 @@ func ptpPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
 	return languageutil.NormalizeLanguageLabel(track.Languages[0])
 }
 
-// ptpNeedsTrackPurposeReview identifies candidates for review. Track counts and
+// ptpNeedsTrackPurposeReview identifies source-comparison guidance. Track counts and
 // language differences alone never prove that a mix or dub is redundant.
 func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
 	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
@@ -285,33 +264,5 @@ func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
 	}
 	return programmeTracks > 1 && facts.OriginalLanguagesKnown && slices.ContainsFunc(facts.ProgrammeLanguages, func(language string) bool {
 		return language != "English" && language != "ZXX" && !slices.Contains(facts.OriginalLanguages, language)
-	})
-}
-
-// ptpHasForcedEnglish requires current English evidence before consulting
-// retained tracks, preserving an explicit aggregate subtitle-language clear.
-func ptpHasForcedEnglish(subject api.TrackerValidationSubject) bool {
-	if !slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English") {
-		return false
-	}
-	for _, value := range subject.SubtitleLanguages {
-		language, coverage := languageutil.SubtitleLanguageParts(value)
-		if language == "English" && strings.EqualFold(coverage, "Forced") {
-			return true
-		}
-	}
-	for _, track := range subject.LanguageFacts.Tracks {
-		if track.Kind != api.MediaTrackSubtitle {
-			continue
-		}
-		for _, value := range track.Languages {
-			language, coverage := languageutil.SubtitleLanguageParts(value)
-			if language == "English" && (track.Forced || strings.EqualFold(coverage, "Forced")) {
-				return true
-			}
-		}
-	}
-	return slices.ContainsFunc(subject.HardcodedSubtitleCoverage, func(coverage api.SubtitleLanguageCoverage) bool {
-		return coverage.Language == "English" && coverage.Coverage == api.SubtitleCoverageForced
 	})
 }

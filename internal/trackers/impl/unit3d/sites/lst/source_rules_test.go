@@ -4,7 +4,6 @@
 package lst
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -28,7 +27,7 @@ func TestLSTAudioDefectClassification(t *testing.T) {
 			subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "trumpable_audio_eligibility"): "yes"}
 			found := false
 			for _, failure := range languageAssessment(subject) {
-				if strings.Contains(failure.Reason, test.label) && failure.Disposition == api.RuleDispositionWaivable {
+				if strings.Contains(failure.Reason, test.label) && failure.Disposition == api.RuleDispositionAdvisory {
 					found = true
 				}
 			}
@@ -39,118 +38,100 @@ func TestLSTAudioDefectClassification(t *testing.T) {
 	}
 }
 
-func TestLSTAlternateAndSecondaryReview(t *testing.T) {
+func TestLSTAlternateAndSecondaryGuidance(t *testing.T) {
 	for _, role := range []api.AudioTrackRole{api.AudioRoleAlternateMix, api.AudioRoleDescription} {
 		t.Run(string(role), func(t *testing.T) {
 			subject := lstValidationSubject()
 			track := subject.LanguageFacts.Tracks[0]
-			track.ID = "secondary"
-			track.Role = role
-			track.Default = false
+			track.ID, track.Role, track.Default = "secondary", role, false
 			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
-			questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{LanguageFacts: subject.LanguageFacts}})
-			if questionnaire == nil {
-				t.Fatal("source review is unreachable")
+			question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{LanguageFacts: subject.LanguageFacts}})
+			if question != nil {
+				t.Fatalf("source reassurance question: %+v", question)
 			}
-			found := false
-			for _, failure := range languageAssessment(subject) {
-				if failure.EvidenceStatus == api.MetadataEvidenceStatusPartial && failure.Disposition == api.RuleDispositionStrict {
-					found = true
-				}
+			rule := "language_alternate_mix"
+			if role == api.AudioRoleDescription {
+				rule = "language_track_justification"
 			}
-			if !found {
-				t.Fatalf("title label accepted without source evidence: %+v", languageAssessment(subject))
-			}
+			requireLSTSourceFailure(t, languageAssessment(subject), rule, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 		})
 	}
 }
 
-func TestLSTExternalSubtitlesRemainPartial(t *testing.T) {
+func TestLSTUnverifiedSubtitlePresentationIsAdvisory(t *testing.T) {
 	subject := lstValidationSubject()
 	subject.LanguageFacts = lstTestLanguageFacts("Japanese", []string{"Japanese"}, []string{"English"})
 	subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[:1]
-	subject.QuestionnaireAnswers = map[string]string{subtitlePresentationQuestionKey(subject): "external"}
-	found := false
-	for _, failure := range languageAssessment(subject) {
-		if failure.Rule == "language_external_subtitles" && failure.Disposition == api.RuleDispositionWaivable {
-			found = true
+	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	if question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{LanguageFacts: subject.LanguageFacts}}); question != nil {
+		t.Fatalf("subtitle reassurance question: %+v", question)
+	}
+}
+
+func TestLSTSourceAnswersCannotInventUniquenessOrReplacementEligibility(t *testing.T) {
+	for _, role := range []api.AudioTrackRole{api.AudioRoleAlternateMix, api.AudioRoleDescription} {
+		subject := lstValidationSubject()
+		track := subject.LanguageFacts.Tracks[0]
+		track.ID, track.Role, track.Default = "mix", role, false
+		subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
+		rule := "language_alternate_mix"
+		if role == api.AudioRoleDescription {
+			rule = "language_track_justification"
+		}
+		for _, answer := range []string{"", "unique", "duplicate"} {
+			for _, eligible := range []string{"", "yes", "no"} {
+				subject.QuestionnaireAnswers = map[string]string{
+					trackers.LanguageQuestionKey(subject, "alternate_mix_mix"):           answer,
+					trackers.LanguageQuestionKey(subject, "trumpable_audio_eligibility"): eligible,
+				}
+				requireLSTSourceFailure(t, languageAssessment(subject), rule, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+				for _, failure := range languageAssessment(subject) {
+					if failure.Disposition != api.RuleDispositionAdvisory {
+						t.Fatalf("source answer created a gate: %+v", failure)
+					}
+				}
+			}
 		}
 	}
-	if !found {
-		t.Fatalf("external subtitles treated as embedded: %+v", languageAssessment(subject))
-	}
 }
 
-func TestLSTAlternateMixUniquenessAndSecondaryConditionalReview(t *testing.T) {
-	subject := lstValidationSubject()
-	track := subject.LanguageFacts.Tracks[0]
-	track.ID = "mix"
-	track.Role = api.AudioRoleAlternateMix
-	track.Default = false
-	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
-	subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "alternate_mix_mix"): "unique"}
-	if got := languageAssessment(subject); len(got) != 0 {
-		t.Fatalf("unique original mix: %+v", got)
-	}
-	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "alternate_mix_mix")] = "duplicate"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_redundant_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "trumpable_audio_eligibility")] = "yes"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_redundant_mix", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
-	subject.Identity.Generation++
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_alternate_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].Role = api.AudioRoleDescription
-	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "trumpable_audio_eligibility")] = "yes"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_track_justification", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
-	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "trumpable_audio_eligibility")] = "no"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_track_justification", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-}
-
-func TestLSTCompatibilitySourceQualityAndMixReview(t *testing.T) {
-	for _, test := range []struct {
-		name, codec, source string
-		wantRule            string
-		disposition         api.RuleDisposition
-		status              api.MetadataEvidenceStatus
-	}{
-		{"disc core", "AC-3", "dd_core", "", "", ""},
-		{"web DD", "DD", "web_not_inferior", "", "", ""},
-		{"web DD plus", "DD+", "web_not_inferior", "", "", ""},
-		{"web Atmos", "DD+ Atmos", "web_not_inferior", "", "", ""},
-		{"inferior web", "E-AC-3", "web_inferior", "language_compatibility_quality", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete},
-		{"unknown provenance", "DD+", "", "language_compatibility_source", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial},
-		{"DD plus is not core", "DD+", "dd_core", "language_compatibility_source", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial},
-		{"unsupported codec", "AAC", "web_not_inferior", "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			subject := lstValidationSubject()
-			subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
-			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-				ID:        "compat",
-				Kind:      api.MediaTrackAudio,
-				Role:      api.AudioRoleCompatibility,
-				Codec:     test.codec,
-				Languages: []string{"English"},
-			})
-			subject.QuestionnaireAnswers = map[string]string{
-				trackers.LanguageQuestionKey(subject, "compatibility_source_compat"): test.source,
-				trackers.LanguageQuestionKey(subject, "compatibility_mix_compat"):    "audio-0",
-			}
-			failures := languageAssessment(subject)
-			if test.wantRule == "" {
-				if len(failures) != 0 {
-					t.Fatalf("permitted compatibility audio: %+v", failures)
+func TestLSTCompatibilitySourceQualityIsAdvisory(t *testing.T) {
+	for _, codec := range []string{"AC-3", "DD", "DD+", "DD+ Atmos", "E-AC-3", "AAC"} {
+		t.Run(codec, func(t *testing.T) {
+			for _, answer := range []string{"", "dd_core", "web_not_inferior", "web_inferior"} {
+				subject := lstValidationSubject()
+				subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
+				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+ID: "compat",
+ Kind: api.MediaTrackAudio,
+ Role: api.AudioRoleCompatibility,
+ Codec: codec,
+ Languages: []string{"English"},
+})
+				subject.QuestionnaireAnswers = map[string]string{
+					trackers.LanguageQuestionKey(subject, "compatibility_source_compat"): answer,
+					trackers.LanguageQuestionKey(subject, "compatibility_mix_compat"):    "audio-0",
 				}
-			} else {
-				requireLSTSourceFailure(t, failures, test.wantRule, test.disposition, test.status)
+				failures := languageAssessment(subject)
+				requireLSTSourceFailure(t, failures, "language_compatibility_source", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+				if codec == "AAC" {
+					requireLSTSourceFailure(t, failures, "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+				} else {
+					for _, failure := range failures {
+						if failure.Disposition != api.RuleDispositionAdvisory {
+							t.Fatalf("source quality became a gate: %+v", failure)
+						}
+					}
+				}
+				question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{Type: subject.Type, LanguageFacts: subject.LanguageFacts}})
+				if question == nil || len(question.Fields) != 1 || !strings.HasPrefix(question.Fields[0].Key, "compatibility_mix_") {
+					t.Fatalf("only measured association input should remain: %+v", question)
+				}
+				subject.Type = "DISC"
+				if got := languageAssessment(subject); len(got) != 0 {
+					t.Fatalf("full disc gained guidance: %+v", got)
+				}
 			}
-			subject.Source = "BluRay"
-			requireLSTSourceFailure(t, languageAssessment(subject), "language_compatibility_source", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-			subject.Type = "DISC"
-			if got := languageAssessment(subject); len(got) != 0 {
-				t.Fatalf("disc acquired source gates: %+v", got)
-			}
-			subject.Type = "REMUX"
-			requireLSTSourceFailure(t, languageAssessment(subject), "language_compatibility_source", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 		})
 	}
 }
@@ -181,26 +162,23 @@ func TestLSTCompatibilityEmbeddedAndWrongMix(t *testing.T) {
 	requireLSTSourceFailure(t, languageAssessment(subject), "language_compatibility_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 }
 
-func TestLSTExternalSubtitleReviewCannotClearIndependentBlocks(t *testing.T) {
+func TestLSTSubtitleGuidanceCannotClearIndependentBlocks(t *testing.T) {
 	subject := lstValidationSubject()
 	subject.LanguageFacts = lstTestLanguageFacts("Japanese", []string{"Japanese"}, []string{"English"})
 	subject.LanguageFacts.Tracks[1].ResourceID = "external-subtitle-file"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	subject.QuestionnaireAnswers = map[string]string{subtitlePresentationQuestionKey(subject): "external"}
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_external_subtitles", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
+	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.PersonalRelease = true
 	subject.LanguageFacts.Tracks[1].Default = false
-	subject.QuestionnaireAnswers[subtitlePresentationQuestionKey(subject)] = "external"
 	failures := languageAssessment(subject)
 	requireLSTSourceFailure(t, failures, "language_subtitle_default", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	for _, failure := range failures {
 		if failure.Rule == "language_subtitle_default" && !trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, true) {
-			t.Fatal("external-subtitle waiver cleared personal requirement")
+			t.Fatal("subtitle guidance cleared personal requirement")
 		}
 	}
 	subject.LanguageFacts.Tracks[1].ResourceID = ""
 	if needsSubtitlePresentation(subject) {
-		t.Fatal("inspected embedded English subtitles still need external review")
+		t.Fatal("inspected embedded English subtitles still need guidance")
 	}
 }
 
@@ -237,7 +215,6 @@ func TestLSTKnownHardcodedEnglishIsNotExternal(t *testing.T) {
 		Type:                       "WEBDL",
 	}
 	subject := api.NewTrackerValidationSubject(meta, "LST")
-	subject.QuestionnaireAnswers = map[string]string{subtitlePresentationQuestionKey(subject): "external"}
 	for _, failure := range languageAssessment(subject) {
 		if failure.Rule == "language_subtitle_presentation" || failure.Rule == "language_external_subtitles" {
 			t.Fatalf("known burned-in English misclassified: %+v", failure)
@@ -256,37 +233,28 @@ func TestLSTSubtitlePresentationCoversEveryProgrammeResource(t *testing.T) {
 	subject.LanguageFacts.Tracks[0].ResourceID = "media-1"
 	subject.LanguageFacts.Tracks[1].ResourceID = "media-2"
 	subject.LanguageFacts.Tracks[2].ResourceID = "media-1"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	meta := api.UploadSubject{Type: subject.Type, LanguageFacts: subject.LanguageFacts}
-	questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if questionnaire == nil {
-		t.Fatal("uncovered resource has no presentation review")
+	if question := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); question != nil {
+		t.Fatalf("unverified presentation became a question: %+v", question)
 	}
-	for _, field := range questionnaire.Fields {
-		if strings.HasPrefix(field.Key, "english_subtitle_presentation") {
-			subject.QuestionnaireAnswers = map[string]string{field.Key: "external"}
-		}
-	}
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_external_subtitles", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 	subtitle := subject.LanguageFacts.Tracks[2]
-	subtitle.ID = "subtitle-2"
-	subtitle.ResourceID = "media-2"
+	subtitle.ID, subtitle.ResourceID = "subtitle-2", "media-2"
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, subtitle)
 	for _, failure := range languageAssessment(subject) {
-		if failure.Rule == "language_subtitle_presentation" || failure.Rule == "language_external_subtitles" {
+		if failure.Rule == "language_subtitle_presentation" {
 			t.Fatalf("all resources embedded: %+v", failure)
 		}
 	}
 }
 
-func TestLSTExternalAnswerCannotClearIncompleteSubtitleEvidence(t *testing.T) {
+func TestLSTIncompleteSubtitlePresentationStaysUnverified(t *testing.T) {
 	for _, status := range []api.MetadataEvidenceStatus{api.MetadataEvidenceStatusPartial, api.MetadataEvidenceStatusContradictory} {
 		subject := lstValidationSubject()
 		subject.LanguageFacts = lstTestLanguageFacts("Japanese", []string{"Japanese"}, []string{"English"})
 		subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[:1]
 		subject.LanguageFacts.SubtitleStatus = status
-		subject.QuestionnaireAnswers = map[string]string{subtitlePresentationQuestionKey(subject): "external"}
-		requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+		requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	}
 }
 
@@ -296,7 +264,7 @@ func TestLSTSubtitlePresentationKeepsResourceSpecificEnglishDub(t *testing.T) {
 	subject.LanguageFacts.Tracks[0].ResourceID = "foreign-media"
 	subject.LanguageFacts.Tracks[1].ResourceID = "english-media"
 	subject.LanguageFacts.Tracks[2].ResourceID = "english-media"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.LanguageFacts.Tracks[1].ResourceID = "foreign-media"
 	subject.LanguageFacts.Tracks[2].ResourceID = "foreign-media"
 	if needsSubtitlePresentation(subject) {
@@ -304,42 +272,32 @@ func TestLSTSubtitlePresentationKeepsResourceSpecificEnglishDub(t *testing.T) {
 	}
 }
 
-func TestLSTHardcodedPresentationIsGenerationBoundWithoutInferredPackCoverage(t *testing.T) {
+func TestLSTHardcodedPresentationDoesNotInferPackCoverage(t *testing.T) {
 	subject := lstValidationSubject()
 	subject.LanguageFacts = lstTestLanguageFacts("Japanese", []string{"Japanese"}, []string{"English"})
 	subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[:1]
-	key := subtitlePresentationQuestionKey(subject)
-	subject.QuestionnaireAnswers = map[string]string{key: "external"}
 	subject.HardcodedSubtitleLanguages = []string{"English"}
-	if subtitlePresentationQuestionKey(subject) == key {
-		t.Fatal("hardcoded evidence did not invalidate presentation answer")
-	}
 	if needsSubtitlePresentation(subject) {
-		t.Fatal("known hardcoded English on one resource needs external review")
+		t.Fatal("known hardcoded English on one resource needs review")
 	}
 	track := subject.LanguageFacts.Tracks[0]
-	track.ID = "audio-2"
-	track.ResourceID = "media-2"
-	track.Default = false
+	track.ID, track.ResourceID, track.Default = "audio-2", "media-2", false
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
-	subject.QuestionnaireAnswers[subtitlePresentationQuestionKey(subject)] = "external"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
-		Type:                       subject.Type,
-		LanguageFacts:              subject.LanguageFacts,
-		HardcodedSubtitleLanguages: subject.HardcodedSubtitleLanguages,
-	}})
-	for _, field := range questionnaire.Fields {
-		if strings.HasPrefix(field.Key, "english_subtitle_presentation") && slices.Contains(field.Options, "external") {
-			t.Fatal("ambiguous multi-resource hardcoded coverage permits a contradictory external answer")
-		}
+	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
+Type: subject.Type,
+ LanguageFacts: subject.LanguageFacts,
+ HardcodedSubtitleLanguages: subject.HardcodedSubtitleLanguages,
+}})
+	if question != nil {
+		t.Fatalf("unverified pack coverage became reassurance: %+v", question)
 	}
 	subject.Type = "DISC"
 	if failures := languageAssessment(subject); len(failures) != 0 {
 		t.Fatalf("full disc acquired presentation rule: %+v", failures)
 	}
 	subject.Type = "REMUX"
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 }
 
 func TestLSTEnglishDubExemptionPrecedesUnrelatedSubtitleEvidence(t *testing.T) {
@@ -379,7 +337,7 @@ func TestLSTEnglishDubExemptionPrecedesUnrelatedSubtitleEvidence(t *testing.T) {
 				t.Fatalf("needs presentation review=%t, want %t", got, test.wantReview)
 			}
 			if test.wantReview {
-				requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+				requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 			} else {
 				for _, failure := range languageAssessment(subject) {
 					if failure.Rule == "language_subtitle_presentation" || failure.Rule == "language_external_subtitles" {
@@ -396,5 +354,30 @@ func TestLSTEnglishDubExemptionPrecedesUnrelatedSubtitleEvidence(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLSTKnownEnglishCoveragePrecedesUnrelatedUnknownTracks(t *testing.T) {
+	for _, englishAudio := range []bool{false, true} {
+		subject := lstValidationSubject()
+		subject.LanguageFacts = lstTestLanguageFacts("Japanese", []string{"Japanese"}, []string{"English"})
+		for i := range subject.LanguageFacts.Tracks {
+			subject.LanguageFacts.Tracks[i].ResourceID = "media-1"
+		}
+		if englishAudio {
+			track := subject.LanguageFacts.Tracks[0]
+			track.ID, track.Languages, track.Default = "dub", []string{"English"}, false
+			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
+		}
+		subject.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
+		subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
+		subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+ID: "unknown",
+ ResourceID: "media-1",
+ Kind: api.MediaTrackSubtitle,
+})
+		if needsSubtitlePresentation(subject) {
+			t.Fatalf("known relevant English coverage requires unrelated evidence: %+v", subject.LanguageFacts)
+		}
 	}
 }

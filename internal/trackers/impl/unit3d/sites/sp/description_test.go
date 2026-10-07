@@ -4,6 +4,7 @@
 package sp
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,7 +14,6 @@ import (
 func TestSPVariationExplanationSurvivesPreparedDescription(t *testing.T) {
 	meta := collectedPackSubject()
 	meta.MediaFileFacts.Files[1].AudioLanguages = []string{"German"}
-	answerPackQuestion(&meta, packSourceKey, "consistent")
 	answerPackQuestion(&meta, packVariationKey, "yes")
 	const explanation = "Episode 2 retains the German audio of its original source."
 	answerPackQuestion(&meta, packExplanationKey, explanation)
@@ -26,7 +26,7 @@ func TestSPVariationExplanationSurvivesPreparedDescription(t *testing.T) {
 		t.Fatalf("description omitted or duplicated source evidence: %s", meta.DescriptionOverride)
 	}
 	meta.DescriptionGroupsFinal = true
-	if failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")); len(failures) != 0 {
+	if failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")); slices.ContainsFunc(failures, func(failure api.RuleFailure) bool { return failure.Disposition != api.RuleDispositionAdvisory }) {
 		t.Fatal(failures)
 	}
 	meta.DescriptionOverride = "A later manual description override removed the evidence."
@@ -44,7 +44,6 @@ func TestSPFinalGroupUsesActualEditedDescription(t *testing.T) {
 	for _, globalFinal := range []bool{false, true} {
 		meta := collectedPackSubject()
 		meta.MediaFileFacts.Files[1].AudioLanguages = []string{"German"}
-		answerPackQuestion(&meta, packSourceKey, "consistent")
 		answerPackQuestion(&meta, packVariationKey, "yes")
 		const explanation = "Episode 2 retains its original German source audio."
 		answerPackQuestion(&meta, packExplanationKey, explanation)
@@ -66,7 +65,7 @@ func TestSPFinalGroupUsesActualEditedDescription(t *testing.T) {
 		}
 		requirePackBlocked(t, meta, api.MetadataEvidenceStatusComplete)
 		meta.DescriptionGroups[0].RawDescription = "Current description: " + explanation
-		if failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")); len(failures) != 0 {
+		if failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP")); slices.ContainsFunc(failures, func(failure api.RuleFailure) bool { return failure.Disposition != api.RuleDispositionAdvisory }) {
 			t.Fatalf("globalFinal=%v: current group source retained the explanation: %#v", globalFinal, failures)
 		}
 	}

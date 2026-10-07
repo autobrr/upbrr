@@ -59,6 +59,31 @@ const renderPage = (facet: DuplicatesFacet, trackers = ["EXAMPLE"]) =>
   );
 
 describe("DupeCheckPage", () => {
+  it.each([
+    { required: true, value: "", draft: undefined, label: "Required answers missing" },
+    { required: true, value: "Known", draft: undefined, label: "Required fields filled" },
+    { required: true, value: "Known", draft: " ", label: "Required answers missing" },
+    { required: true, value: "", draft: "Choice", label: "Required fields filled" },
+    { required: false, value: "", draft: undefined, label: "Optional controls" },
+  ])("describes effective questionnaire values as $label", ({ required, value, draft, label }) => {
+    renderPage(
+      facetFor({
+        questionnaires: [
+          {
+            trackerId: "EXAMPLE",
+            displayName: "Example Tracker",
+            questionnaire: [{ key: "choice", label: "Choice", required, value }],
+            questionnaireAnswers: { choice: value },
+          },
+        ],
+        questionnaireAnswers: draft === undefined ? {} : { EXAMPLE: { choice: draft } },
+      }),
+    );
+    const summary = screen.getByText(/Example Tracker/, { selector: "summary" });
+    expect(summary).toHaveTextContent(label);
+    if (draft !== undefined) expect(summary).toHaveTextContent("Unapplied changes");
+  });
+
   it("shows the backend pack warning beside its risk acknowledgement", () => {
     const warning =
       "Audio-language matching is unverified. You may acknowledge this warning and continue the upload; this does not establish matching content or trump eligibility.";
@@ -855,13 +880,14 @@ describe("DupeCheckPage", () => {
     expect(screen.getByText("Release identity needs manual confirmation.")).toBeInTheDocument();
     expect(screen.queryByText("Strict blockers")).not.toBeInTheDocument();
     expect(screen.queryByText("Advisories")).not.toBeInTheDocument();
-    expect(screen.queryByText("Poster metadata is not available.")).not.toBeInTheDocument();
+    expect(screen.getByText("Warning: Poster metadata is not available.")).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /Acknowledge warnings/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/Evidence complete/)).not.toBeInTheDocument();
     expect(screen.queryByText("Canonical:")).not.toBeInTheDocument();
     expect(screen.queryByText("Tracker upload:")).not.toBeInTheDocument();
   });
 
-  it.each(["OE", "DVL", "OTW", "AITHER"])(
+  it.each(["OE", "DVL", "OTW", "AITHER", "HHD"])(
     "uses the same warning acknowledgement toggle for %s",
     (tracker) => {
       const acknowledgeRules = vi.fn(async () => true);

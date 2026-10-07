@@ -4,102 +4,80 @@
 package hhd
 
 import (
-	"slices"
-	"strings"
+	"encoding/hex"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestHHDSubtitleManagerReview(t *testing.T) {
-	for _, test := range []struct {
-		name, answer string
-		status       api.MetadataEvidenceStatus
-		want         string
-		disposition  api.RuleDisposition
-	}{
-		{"confirmed manager coverage", "available", api.MetadataEvidenceStatusComplete, "", ""},
-		{"missing from both", "missing", api.MetadataEvidenceStatusComplete, "language_subtitles", api.RuleDispositionStrict},
-		{"unknown manager coverage", "unresolved", api.MetadataEvidenceStatusComplete, "language_subtitles", api.RuleDispositionStrict},
-		{"unanswered manager coverage", "", api.MetadataEvidenceStatusComplete, "language_subtitles", api.RuleDispositionStrict},
-		{"manager cannot resolve unknown local coverage", "missing", api.MetadataEvidenceStatusPartial, "language_subtitles", api.RuleDispositionStrict},
-	} {
-		t.Run(test.name, func(t *testing.T) {
+func TestHHDSubtitleStatusRequiresAcknowledgement(t *testing.T) {
+	for _, status := range []api.MetadataEvidenceStatus{api.MetadataEvidenceStatusComplete, api.MetadataEvidenceStatusPartial} {
+		for _, answer := range []string{"", "available", "missing", "unresolved"} {
 			subject := hhdValidationSubject()
 			subject.Source = "WEB"
 			subject.LanguageFacts = hhdTestLanguageFacts("Japanese", []string{"Japanese", "English"}, nil)
-			subject.LanguageFacts.SubtitleStatus = test.status
-			hhdAnswer(&subject, "english_subtitle_manager", test.answer)
+			subject.LanguageFacts.SubtitleStatus = status
+			hhdAnswer(&subject, "english_subtitle_manager", answer)
 			failures := languageAssessment(subject)
-			if test.want == "" {
-				hhdRequireNoFailures(t, failures)
-				return
+			requireHHDValidationFailure(t, failures, "language_subtitles", api.RuleDispositionWaivable, status)
+			fingerprint, err := hex.DecodeString(string(failures[0].EvidenceFingerprint))
+			if err != nil || len(fingerprint) != 32 {
+				t.Fatalf("invalid acknowledgement evidence fingerprint: %q", failures[0].EvidenceFingerprint)
 			}
-			status := api.MetadataEvidenceStatusPartial
-			if test.answer == "missing" && test.status == api.MetadataEvidenceStatusComplete {
-				status = api.MetadataEvidenceStatusComplete
+			if len(failures) != 1 || failures[0].EvidenceFingerprint == "" || !trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) || trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, true) {
+				t.Fatalf("actual subtitle status did not use tracker acknowledgement: %+v", failures)
 			}
-			requireHHDValidationFailure(t, failures, test.want, test.disposition, status)
-		})
+			if got := hhdProjectedQuestionnaire(subject); got != nil {
+				t.Fatalf("subtitle status became a questionnaire: %+v", got)
+			}
+			subject.Identity.Generation++
+			if languageAssessment(subject)[0].EvidenceFingerprint == failures[0].EvidenceFingerprint {
+				t.Fatal("changed generation reused acknowledgement evidence")
+			}
+			subject.LanguageFacts = hhdTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English"})
+			hhdRequireNoFailures(t, languageAssessment(subject))
+		}
 	}
 }
 
-func TestHHDSourceDiscRetention(t *testing.T) {
-	for _, test := range []struct {
-		name, answer string
-		personal     bool
-		want         api.RuleDisposition
-		status       api.MetadataEvidenceStatus
-	}{
-		{"retained primary material", "retained", true, "", ""},
-		{"ordinary omission is guidance", "incomplete", false, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete},
-		{"personal omission is prohibited", "incomplete", true, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete},
-		{"ordinary unknown is visible guidance", "unresolved", false, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial},
-		{"personal unknown is unresolved", "unresolved", true, api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial},
-		{"disc cannot claim no disc source", "no_disc_source", true, api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial},
-	} {
-		t.Run(test.name, func(t *testing.T) {
+func TestHHDSourceDiscRetentionIsAdvisory(t *testing.T) {
+	for _, personal := range []bool{false, true} {
+		for _, answer := range []string{"", "retained", "incomplete", "unresolved", "no_disc_source"} {
 			subject := hhdValidationSubject()
-			subject.Type, subject.Source, subject.PersonalRelease = "REMUX", "BluRay", test.personal
-			hhdAnswer(&subject, "source_disc_audio", test.answer)
+			subject.Type, subject.Source, subject.PersonalRelease = "REMUX", "BluRay", personal
+			hhdAnswer(&subject, "source_disc_audio", answer)
 			failures := languageAssessment(subject)
-			if test.want == "" {
-				hhdRequireNoFailures(t, failures)
-				return
+			requireHHDValidationFailure(t, failures, "language_source_disc_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+			hhdRequireNoBlockingFailures(t, failures)
+			if got := hhdProjectedQuestionnaire(subject); got != nil {
+				t.Fatalf("retention became a questionnaire: %+v", got)
 			}
-			requireHHDValidationFailure(t, failures, "language_source_disc_audio", test.want, test.status)
-		})
+		}
 	}
 }
 
-func TestHHDCompatibilitySourceEvidence(t *testing.T) {
-	for _, test := range []struct {
-		name, source, main, compat, answer, want string
-		status                                   api.MetadataEvidenceStatus
-	}{
-		{"untouched web HLS permitted", "WEB", "AAC", "AAC", "untouched_hls", "", ""},
-		{"web provenance remains unknown", "WEB", "AAC", "AAC", "", "language_compatibility_source", api.MetadataEvidenceStatusPartial},
-		{"HLS cannot excuse disc codec", "BluRay", "DTS-HD MA", "AAC", "untouched_hls", "language_compatibility_format", api.MetadataEvidenceStatusComplete},
-		{"ordinary AC3 provenance", "WEB", "TrueHD", "AC-3", "not_duplicated_core", "", ""},
-		{"duplicated embedded core prohibited", "WEB", "DTS-HD MA", "DD", "duplicated_core", "language_compatibility_core", api.MetadataEvidenceStatusComplete},
-		{"HLS cannot replace TrueHD AC3", "WEB", "TrueHD", "AAC", "untouched_hls", "language_compatibility_missing", api.MetadataEvidenceStatusComplete},
-		{"unsupported format source does not waive", "WEB", "AAC", "DTS", "not_duplicated_core", "language_compatibility_format", api.MetadataEvidenceStatusComplete},
+func TestHHDCompatibilitySourceIsAdvisoryAndMeasuredRulesRemain(t *testing.T) {
+	for _, test := range []struct{ name, source, main, compat, want string }{
+		{"web HLS provenance", "WEB", "AAC", "AAC", ""},
+		{"disc unsupported codec", "BluRay", "DTS-HD MA", "AAC", "language_compatibility_format"},
+		{"standalone AC3", "WEB", "TrueHD", "AC-3", ""},
+		{"possible duplicated core", "WEB", "DTS-HD MA", "DD", ""},
+		{"HLS cannot replace TrueHD AC3", "WEB", "TrueHD", "AAC", "language_compatibility_missing"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			subject := hhdCompatibilitySubject(test.main, test.compat)
-			subject.Source = test.source
-			if test.source != "WEB" {
-				subject.Type = "ENCODE"
-				hhdAnswer(&subject, "source_disc_audio", "retained")
+			for _, answer := range []string{"", "untouched_hls", "not_duplicated_core", "duplicated_core"} {
+				subject := hhdCompatibilitySubject(test.main, test.compat)
+				subject.Type, subject.Source = "ENCODE", test.source
+				hhdAnswer(&subject, "compatibility_source_compat-0", answer)
+				failures := languageAssessment(subject)
+				requireHHDValidationFailure(t, failures, "language_compatibility_source", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+				if test.want != "" {
+					requireHHDValidationFailure(t, failures, test.want, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+				} else {
+					hhdRequireNoBlockingFailures(t, failures)
+				}
 			}
-			hhdAnswer(&subject, "compatibility_source_compat-0", test.answer)
-			failures := languageAssessment(subject)
-			if test.want == "" {
-				hhdRequireNoFailures(t, failures)
-				return
-			}
-			requireHHDValidationFailure(t, failures, test.want, api.RuleDispositionStrict, test.status)
 		})
 	}
 }
@@ -128,47 +106,36 @@ func TestHHDCompatibilityAssociation(t *testing.T) {
 	requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 	hhdAnswer(&subject, "compatibility_mix_compat-0", "audio-0")
 	hhdAnswer(&subject, "compatibility_mix_compat-1", "audio-1")
-	hhdRequireNoFailures(t, languageAssessment(subject))
+	hhdRequireNoBlockingFailures(t, languageAssessment(subject))
 	hhdAnswer(&subject, "compatibility_mix_compat-1", "audio-0")
 	requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_count", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_missing", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 }
 
-func TestHHDQuestionnaireReachabilityAndEvidenceBinding(t *testing.T) {
-	subject := hhdCompatibilitySubject("AAC", "AAC")
-	subject.LanguageFacts = hhdTestLanguageFacts("Japanese", []string{"Japanese", "English"}, nil)
-	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-		ID:        "compat-0",
-		Kind:      api.MediaTrackAudio,
-		Role:      api.AudioRoleCompatibility,
-		Languages: []string{"Japanese"},
-		Codec:     "AAC",
-	})
-	hhdAnswer(&subject, "english_subtitle_manager", "available")
-	hhdAnswer(&subject, "compatibility_source_compat-0", "untouched_hls")
-	hhdRequireNoFailures(t, languageAssessment(subject))
-	questionnaire := hhdProjectedQuestionnaire(subject)
-	if questionnaire == nil {
-		t.Fatal("missing HHD source questionnaire")
+func TestHHDQuestionnaireOnlyAsksAmbiguousMixAssociation(t *testing.T) {
+	subject := hhdCompatibilitySubject("TrueHD", "AC-3")
+	if question := hhdProjectedQuestionnaire(subject); question != nil {
+		t.Fatalf("unambiguous mix gained reassurance: %+v", question)
 	}
-	for _, key := range []string{"english_subtitle_manager", "compatibility_source_compat-0"} {
-		index := slices.IndexFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool {
-			return field.Key == trackers.LanguageQuestionKey(subject, key)
-		})
-		if index < 0 || questionnaire.Fields[index].Value == "" {
-			t.Fatalf("review %s is unreachable or lost: %+v", key, questionnaire)
-		}
+	track := subject.LanguageFacts.Tracks[0]
+	track.ID, track.Role = "other-mix", api.AudioRoleAlternateMix
+	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
+	question := hhdProjectedQuestionnaire(subject)
+	if question == nil || len(question.Fields) != 1 || question.Fields[0].Key != trackers.LanguageQuestionKey(subject, "compatibility_mix_compat-0") || !question.Fields[0].Required {
+		t.Fatalf("ambiguous mix question: %+v", question)
+	}
+	hhdAnswer(&subject, "compatibility_mix_compat-0", "audio-0")
+	if hhdProjectedQuestionnaire(subject).Fields[0].Value != "audio-0" {
+		t.Fatal("mix answer not retained")
 	}
 	subject.Identity.Generation++
-	requireHHDValidationFailure(t, languageAssessment(subject), "language_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	subject.DiscType, subject.Type = "BDMV", "DISC"
-	hhdRequireNoFailures(t, languageAssessment(subject))
-	if got := hhdProjectedQuestionnaire(subject); got != nil {
-		t.Fatalf("full disc gained questionnaire: %+v", got)
+	if hhdProjectedQuestionnaire(subject).Fields[0].Value != "" {
+		t.Fatal("changed generation reused mix answer")
 	}
-	subject.Type = "REMUX"
-	if got := hhdProjectedQuestionnaire(subject); got == nil {
-		t.Fatal("disc-sourced remux escaped review")
+	subject.Type, subject.DiscType = "DISC", "BDMV"
+	hhdRequireNoFailures(t, languageAssessment(subject))
+	if question := hhdProjectedQuestionnaire(subject); question != nil {
+		t.Fatalf("full disc gained questionnaire: %+v", question)
 	}
 }
 
@@ -217,7 +184,7 @@ func hhdRequireNoFailures(t *testing.T, failures []api.RuleFailure) {
 	}
 }
 
-func TestHHDSourceAnswersCannotWaiveProgrammeRules(t *testing.T) {
+func TestHHDAcknowledgementCannotWaiveProgrammeRules(t *testing.T) {
 	subject := hhdValidationSubject()
 	subject.Source = "WEB"
 	subject.LanguageFacts = hhdTestLanguageFacts("Japanese", []string{"English", "German"}, nil)
@@ -225,12 +192,13 @@ func TestHHDSourceAnswersCannotWaiveProgrammeRules(t *testing.T) {
 	failures := languageAssessment(subject)
 	for _, rule := range []string{"language_original", "language_extra_dub"} {
 		requireHHDValidationFailure(t, failures, rule, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
-	}
-	for _, failure := range failures {
-		if strings.Contains(failure.Rule, "subtitles") {
-			t.Fatalf("manager coverage ignored: %+v", failure)
+		for _, failure := range failures {
+			if failure.Rule == rule && !trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, true) {
+				t.Fatalf("acknowledgement waived strict programme rule: %+v", failure)
+			}
 		}
 	}
+	requireHHDValidationFailure(t, failures, "language_subtitles", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 }
 
 func TestHHDCompatibilityMeasuredBoundsSurviveAnswers(t *testing.T) {
@@ -276,55 +244,23 @@ func TestHHDCompatibilityMeasuredBoundsSurviveAnswers(t *testing.T) {
 	}
 }
 
-func TestHHDQuestionnaireKeepsSourceAttestationsSeparate(t *testing.T) {
+func TestHHDPersonalRetentionStaysAdvisoryWhenTracksChange(t *testing.T) {
 	subject := hhdCompatibilitySubject("TrueHD", "AC-3")
-	subject.Type, subject.Source = "REMUX", "BluRay"
-	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-		ID:        "audio-1",
-		Kind:      api.MediaTrackAudio,
-		Role:      api.AudioRoleAlternateMix,
-		Languages: []string{"English"},
-		Codec:     "TrueHD",
-	})
-	questionnaire := hhdProjectedQuestionnaire(subject)
-	for _, key := range []string{"source_disc_audio", "compatibility_source_compat-0", "compatibility_mix_compat-0"} {
-		index := slices.IndexFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool {
-			return field.Key == trackers.LanguageQuestionKey(subject, key)
-		})
-		if index < 0 {
-			t.Fatalf("missing source review %s", key)
-		}
-		field := questionnaire.Fields[index]
-		if field.Value != "" {
-			t.Fatalf("invented source evidence: %+v", field)
-		}
-		if key == "source_disc_audio" {
-			if field.Required || !strings.Contains(field.Help, "additional sources") {
-				t.Fatalf("ordinary guidance became mandatory or lost additional sources: %+v", field)
-			}
-		} else if !field.Required {
-			t.Fatalf("required compatibility review became optional: %+v", field)
-		}
-		if slices.Contains(field.Options, "untouched_hls") || slices.Contains(field.Options, "no_disc_source") {
-			t.Fatalf("disc source exposes contradictory answers: %+v", field)
-		}
-	}
-	subject.PersonalRelease = true
-	questionnaire = hhdProjectedQuestionnaire(subject)
-	if !questionnaire.Fields[0].Required {
-		t.Fatal("personal source retention is not required")
-	}
+	subject.Type, subject.Source, subject.PersonalRelease = "REMUX", "BluRay", true
 	hhdAnswer(&subject, "source_disc_audio", "retained")
 	subject.LanguageFacts.Tracks[0].Title = "Updated source mix"
-	requireHHDValidationFailure(t, languageAssessment(subject), "language_source_disc_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	requireHHDValidationFailure(t, languageAssessment(subject), "language_source_disc_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	if question := hhdProjectedQuestionnaire(subject); question != nil {
+		t.Fatalf("personal retention asks for reassurance: %+v", question)
+	}
 }
 
-func TestHHDSourceChangeInvalidatesAttestation(t *testing.T) {
+func TestHHDChangedSourceReassessesMeasuredCodec(t *testing.T) {
 	subject := hhdCompatibilitySubject("AAC", "AAC")
 	hhdAnswer(&subject, "compatibility_source_compat-0", "untouched_hls")
-	hhdRequireNoFailures(t, languageAssessment(subject))
-	subject.Type = "ENCODE"
-	requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_source", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	hhdRequireNoBlockingFailures(t, languageAssessment(subject))
+	subject.Type, subject.Source = "ENCODE", "BluRay"
+	requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 }
 
 func TestHHDUnknownCompatibilityCannotBecomeConfirmedAbsence(t *testing.T) {
@@ -346,24 +282,19 @@ func TestHHDUnknownCompatibilityCannotBecomeConfirmedAbsence(t *testing.T) {
 	}
 }
 
-func TestHHDDiscAliasesCannotDenyPersonalRetention(t *testing.T) {
+func TestHHDDiscAliasesKeepRetentionAdvisoryAndCodecStrict(t *testing.T) {
 	for _, source := range []string{"BLU RAY", "BLU-RAY 3D", "BD", "BDMV", "PAL DVD", "NTSC DVD", "HD DVD"} {
 		t.Run(source, func(t *testing.T) {
-			subject := hhdValidationSubject()
+			subject := hhdCompatibilitySubject("AAC", "AAC")
 			subject.Type, subject.Source, subject.PersonalRelease = "ENCODE", source, true
 			hhdAnswer(&subject, "source_disc_audio", "no_disc_source")
-			requireHHDValidationFailure(t, languageAssessment(subject), "language_source_disc_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-			question := hhdProjectedQuestionnaire(subject)
-			if question == nil || len(question.Fields) != 1 || !question.Fields[0].Required || slices.Contains(question.Fields[0].Options, "no_disc_source") {
-				t.Fatalf("known disc permits contradictory source evidence: %#v", question)
+			requireHHDValidationFailure(t, languageAssessment(subject), "language_source_disc_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+			requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+			if hhdProjectedQuestionnaire(subject) != nil {
+				t.Fatal("disc source gained reassurance question")
 			}
-			hhdAnswer(&subject, "source_disc_audio", "retained")
-			hhdRequireNoFailures(t, languageAssessment(subject))
 			subject.Type = "DISC"
 			hhdRequireNoFailures(t, languageAssessment(subject))
-			if hhdProjectedQuestionnaire(subject) != nil {
-				t.Fatal("full disc gained review")
-			}
 		})
 	}
 }
@@ -376,10 +307,10 @@ func TestHHDUnknownVideoSourceDoesNotProhibitPossibleHLS(t *testing.T) {
 				subject.Type, subject.Source = "ENCODE", source
 				hhdAnswer(&subject, "source_disc_audio", "no_disc_source")
 				hhdAnswer(&subject, "compatibility_source_compat-0", answer)
-				requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+				requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_source", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 				subject.Source = "WEB"
 				hhdAnswer(&subject, "compatibility_source_compat-0", "untouched_hls")
-				hhdRequireNoFailures(t, languageAssessment(subject))
+				hhdRequireNoBlockingFailures(t, languageAssessment(subject))
 				subject.Source = "HDTV"
 				hhdAnswer(&subject, "compatibility_source_compat-0", "untouched_hls")
 				requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
@@ -393,7 +324,7 @@ func TestHHDUnknownVideoSourceCannotWaiveKnownViolations(t *testing.T) {
 	subject.Type, subject.Source = "ENCODE", "Unknown"
 	hhdAnswer(&subject, "source_disc_audio", "no_disc_source")
 	hhdAnswer(&subject, "compatibility_source_compat-0", "duplicated_core")
-	for _, rule := range []string{"language_compatibility_core", "language_compatibility_format", "language_compatibility_missing"} {
+	for _, rule := range []string{"language_compatibility_missing"} {
 		requireHHDValidationFailure(t, languageAssessment(subject), rule, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	}
 	hhdAnswer(&subject, "compatibility_source_compat-0", "untouched_hls")
@@ -403,17 +334,26 @@ func TestHHDUnknownVideoSourceCannotWaiveKnownViolations(t *testing.T) {
 	requireHHDValidationFailure(t, languageAssessment(subject), "language_compatibility_missing", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 }
 
-func TestHHDKnownWebSourceFormsKeepHLSReview(t *testing.T) {
+func TestHHDKnownWebSourceFormsKeepHLSAdvisory(t *testing.T) {
 	for _, source := range []string{"WEB-DL", "WEBDL", "WEBRip", "WEB-RIP"} {
 		t.Run(source, func(t *testing.T) {
 			subject := hhdCompatibilitySubject("AAC", "AAC")
 			subject.Type, subject.Source, subject.PersonalRelease = "ENCODE", source, true
 			hhdAnswer(&subject, "compatibility_source_compat-0", "untouched_hls")
-			hhdRequireNoFailures(t, languageAssessment(subject))
+			hhdRequireNoBlockingFailures(t, languageAssessment(subject))
 			question := hhdProjectedQuestionnaire(subject)
-			if question == nil || len(question.Fields) != 1 || !slices.Contains(question.Fields[0].Options, "untouched_hls") {
-				t.Fatalf("known WEB source lost its bounded HLS review: %#v", question)
+			if question != nil {
+				t.Fatalf("known WEB source gained HLS reassurance: %#v", question)
 			}
 		})
+	}
+}
+
+func hhdRequireNoBlockingFailures(t *testing.T, failures []api.RuleFailure) {
+	t.Helper()
+	for _, failure := range failures {
+		if failure.Disposition != api.RuleDispositionAdvisory {
+			t.Fatalf("unexpected blocking HHD finding: %+v", failure)
+		}
 	}
 }

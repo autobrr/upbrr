@@ -29,28 +29,20 @@ func TestULCXOriginalAudioRecommendation(t *testing.T) {
 	}
 }
 
-func TestULCXAlternateMixSourceReview(t *testing.T) {
+func TestULCXAlternateMixSourceIsAdvisory(t *testing.T) {
 	subject := api.TrackerValidationSubject{
-		Tracker:       "ULCX",
-		Type:          "REMUX",
-		LanguageFacts: ulcxTestLanguageFacts("English", []string{"English", "English"}, nil),
-	}
+Tracker: "ULCX",
+ Type: "REMUX",
+ LanguageFacts: ulcxTestLanguageFacts("English", []string{"English", "English"}, nil),
+}
 	subject.LanguageFacts.Tracks[1].Role = api.AudioRoleAlternateMix
-	requireULCXSourceFailure(t, languageAssessment(subject), "language_alternate_mix", api.RuleDispositionAdvisory)
+	for _, answer := range []string{"", "unique", "duplicate", "unresolved"} {
+		subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "alternate_mix_audio-1"): answer}
+		requireULCXValidationFailure(t, languageAssessment(subject), "language_alternate_mix", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	}
 	question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{LanguageFacts: subject.LanguageFacts, Type: subject.Type}})
-	if question == nil {
-		t.Fatal("alternate mix source review is unreachable")
-	}
-	subject.QuestionnaireAnswers = map[string]string{}
-	for _, field := range question.Fields {
-		if strings.HasPrefix(field.Key, "alternate_mix_") {
-			subject.QuestionnaireAnswers[field.Key] = "unique"
-		}
-	}
-	for _, failure := range languageAssessment(subject) {
-		if failure.Rule == "language_alternate_mix" {
-			t.Fatalf("source-confirmed unique mix: %+v", failure)
-		}
+	if question != nil {
+		t.Fatalf("alternate mix asks for reassurance: %+v", question)
 	}
 }
 
@@ -90,11 +82,11 @@ func TestULCXNonForeignSubtitleDefaultEvidence(t *testing.T) {
 		} {
 			t.Run(fmt.Sprintf("%s/personal=%t", test.name, personal), func(t *testing.T) {
 				subject := api.TrackerValidationSubject{
-Tracker: "ULCX",
- PersonalRelease: personal,
- Type: "WEBDL",
- LanguageFacts: ulcxTestLanguageFacts("English", []string{"English"}, nil),
-}
+					Tracker:         "ULCX",
+					PersonalRelease: personal,
+					Type:            "WEBDL",
+					LanguageFacts:   ulcxTestLanguageFacts("English", []string{"English"}, nil),
+				}
 				for i, track := range []api.MediaTrackFacts{test.first, test.second} {
 					track.ID, track.Kind, track.Languages = fmt.Sprintf("subtitle-%d", i), api.MediaTrackSubtitle, []string{"English"}
 					subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)

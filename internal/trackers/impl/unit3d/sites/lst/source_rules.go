@@ -24,7 +24,7 @@ func audioDefects(subject api.TrackerValidationSubject) []audioDefect {
 			if language == "English" || slices.Contains(facts.OriginalLanguages, language) {
 				continue
 			}
-			key, label := "extra_dub", "Redundant Audio Tracks — unjustified extra programme dub: "
+			key, label := "extra_dub", "Redundant Audio Tracks — extra programme dub: "
 			if !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
 				key, label = "non_original_non_english_dub", "Non-Original Non-English Dub — programme audio contains only non-original, non-English dubs: "
 			}
@@ -37,7 +37,12 @@ func audioDefects(subject api.TrackerValidationSubject) []audioDefect {
 			continue
 		}
 		switch track.Role {
-		case api.AudioRoleCommentary, api.AudioRoleCompatibility, api.AudioRoleIsolatedScore, api.AudioRoleInterview, api.AudioRoleNovelty:
+		case api.AudioRoleCommentary,
+			api.AudioRoleCompatibility,
+			api.AudioRoleIsolatedScore,
+			api.AudioRoleInterview,
+			api.AudioRoleNovelty,
+			api.AudioRoleAlternateMix:
 			continue
 		case api.AudioRoleProgramme:
 			if counts[track.ResourceID] == nil {
@@ -50,23 +55,19 @@ func audioDefects(subject api.TrackerValidationSubject) []audioDefect {
 						defects,
 						audioDefect{
 							key:    "redundant_programme",
-							reason: "Redundant Audio Tracks — duplicate programme mix: " + track.ID + " (" + language + ")",
+							reason: "Redundant Audio Tracks — multiple programme tracks for " + language + " include " + track.ID + "; redundancy has not been verified",
 						},
 					)
 				}
-			}
-		case api.AudioRoleAlternateMix:
-			if subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "alternate_mix_"+track.ID)] == "duplicate" {
-				defects = append(defects, audioDefect{key: "redundant_mix", reason: "Redundant Audio Tracks — non-unique alternate mix: " + track.ID})
 			}
 		case api.AudioRoleDescription, api.AudioRoleVoiceOver, api.AudioRoleHistorical:
 			defects = append(
 				defects,
 				audioDefect{
 					key: "track_justification",
-					reason: "Redundant Audio Tracks — unjustified secondary track " + track.ID + " (" + string(
+					reason: "Redundant Audio Tracks — secondary track " + track.ID + " (" + string(
 						track.Role,
-					) + "); conditional eligibility must establish an avoidable drawback, not a novelty label or new permission",
+					) + "); redundancy has not been verified",
 				},
 			)
 		}
@@ -80,35 +81,27 @@ func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFail
 		if track.Kind != api.MediaTrackAudio || track.Role != api.AudioRoleAlternateMix {
 			continue
 		}
-		answer := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "alternate_mix_"+track.ID)]
-		if answer != "unique" && answer != "duplicate" {
-			failures = append(failures, trackers.LanguageRuleFailure(
-				subject,
-				"alternate_mix",
-				"source review must establish that alternate mix "+track.ID+" is an additional original mix or unique remix; its title alone does not establish uniqueness",
-				trackers.LanguageUnresolved,
-			))
-		}
+		failure := trackers.LanguageRuleFailure(subject, "alternate_mix",
+			"alternate mix "+track.ID+" should be an additional original mix or unique remix; source uniqueness has not been verified",
+			trackers.LanguageAdvisory)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	if needsSubtitlePresentation(subject) {
-		outcome, key := trackers.LanguageUnresolved, "subtitle_presentation"
-		reason := "English subtitle presentation needs source review; aggregate language evidence does not establish embedded coverage"
+		reason := "English subtitle presentation and coverage have not been verified for every programme resource; external subtitles remain subject to an embedded-subtitle improvement"
 		if hardcodedEnglishSubtitles(subject) {
-			reason = "known burned-in English subtitles must retain their hardcoded presentation; their coverage of each programme resource is unresolved"
+			reason = "known burned-in English subtitles retain their hardcoded presentation; coverage of every programme resource has not been verified"
 		}
-		if subject.QuestionnaireAnswers[subtitlePresentationQuestionKey(subject)] == "external" &&
-			completeSubtitlePresentationEvidence(subject.LanguageFacts) && !hardcodedEnglishSubtitles(subject) {
-			outcome, key = trackers.LanguageTrumpable, "external_subtitles"
-			reason = "external English subtitles only partially satisfy the requirement; embedded English subtitles can provide a trumping improvement"
-		}
-		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
+		failure := trackers.LanguageRuleFailure(subject, "subtitle_presentation", reason, trackers.LanguageAdvisory)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	return append(failures, compatibilityFailures(subject)...)
 }
 
-// Embedded coverage must accompany every represented programme resource. Known
-// burned-in English is separate presentation evidence, scoped to the single
-// resource currently inspected by production; it cannot prove multi-file coverage.
+// Each represented programme resource needs known English programme audio or
+// subtitles. Unrelated unknown tracks do not negate that positive evidence. Known
+// burned-in English covers only the single resource inspected by production.
 func needsSubtitlePresentation(subject api.TrackerValidationSubject) bool {
 	facts := subject.LanguageFacts
 	if !facts.OriginalLanguagesKnown || slices.Contains(facts.OriginalLanguages, "English") || slices.Contains(facts.OriginalLanguages, "ZXX") ||
@@ -121,24 +114,7 @@ func needsSubtitlePresentation(subject api.TrackerValidationSubject) bool {
 			resources[track.ResourceID] = resources[track.ResourceID] || slices.Contains(track.Languages, "English")
 		}
 	}
-	needsEnglishSubtitles := len(resources) == 0
-	for _, englishAudio := range resources {
-		if !englishAudio {
-			needsEnglishSubtitles = true
-		}
-	}
-	// A proved English programme alternative makes subtitle presentation
-	// irrelevant for that resource, even when unrelated subtitles are unresolved.
-	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !needsEnglishSubtitles {
-		return false
-	}
-	if !completeSubtitlePresentationEvidence(facts) {
-		return true
-	}
-	if len(resources) <= 1 && slices.Contains(facts.ProgrammeLanguages, "English") {
-		return false
-	}
-	if len(resources) == 0 {
+	if len(resources) == 0 || !facts.TrackCoverageComplete {
 		return true
 	}
 	if len(resources) == 1 && hardcodedEnglishSubtitles(subject) {
@@ -158,11 +134,6 @@ func needsSubtitlePresentation(subject api.TrackerValidationSubject) bool {
 		}
 	}
 	return false
-}
-
-func completeSubtitlePresentationEvidence(facts api.LanguageFacts) bool {
-	return facts.SubtitleStatus == api.MetadataEvidenceStatusComplete && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
-		facts.TrackCoverageComplete
 }
 
 func hardcodedEnglishSubtitles(subject api.TrackerValidationSubject) bool {
@@ -186,8 +157,8 @@ func compatibilityMixes(facts api.LanguageFacts, compatibility api.MediaTrackFac
 	return candidates
 }
 
-// WEB substitute provenance and relative quality are source facts. Confirming
-// an inferior substitute creates a local trumpable finding, never a remote tag.
+// Compatibility checks preserve measured codec and per-mix requirements.
+// Source provenance and relative quality remain unverified advisory guidance.
 func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	var failures []api.RuleFailure
 	confirmed, pending := map[string]bool{}, map[string]bool{}
@@ -233,35 +204,18 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 				trackers.LanguageRuleFailure(subject, "compatibility_format", "unsupported compatibility audio format on track "+track.ID, outcome),
 			)
 		}
-		source := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "compatibility_source_"+track.ID)]
-		validSource := source == "dd_core" && (strings.EqualFold(track.Codec, "DD") || strings.EqualFold(track.Codec, "AC-3")) ||
-			source == "web_not_inferior" ||
-			source == "web_inferior"
-		if !validSource {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"compatibility_source",
-					"track "+track.ID+" must be the matching DD core or a source-reviewed WEB DD/DD+/DD+ Atmos substitute with assessed relative quality",
-					trackers.LanguageUnresolved,
-				),
-			)
-		} else if source == "web_inferior" {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"compatibility_quality",
-					"WEB compatibility substitute "+track.ID+" is demonstrably inferior to the disc-sourced AC-3",
-					trackers.LanguageTrumpable,
-				),
-			)
-		}
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"compatibility_source",
+			"compatibility track "+track.ID+" should be the matching DD core or a WEB DD/DD+/DD+ Atmos substitute; a demonstrably inferior WEB substitute is trumpable. Source provenance and relative quality have not been verified",
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 		candidates := compatibilityMixes(subject.LanguageFacts, track)
 		answer := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)]
 		if answer != "" && slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID == answer }) {
-			if validCodec && validSource && identified {
+			if validCodec && identified {
 				confirmed[answer] = true
 			} else {
 				pending[answer] = true

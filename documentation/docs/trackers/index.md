@@ -60,6 +60,7 @@ Review the assessment displayed for each selected tracker:
 - **Staff approval required**: the release needs permission from the tracker's staff; answering a question or acknowledging a warning does not grant that permission.
 - **Trumpable release**: a compliant replacement may supersede the upload. Proceed only when the displayed finding permits an explicit acknowledgement.
 - **Unresolved**: required evidence is missing or conflicting. Correct the facts or answer the requested questions before continuing.
+- **Warning**: non-blocking guidance. It requires no answer or acknowledgement and does not establish that unknown source details are correct.
 
 Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
 
@@ -67,13 +68,13 @@ Correct language and other factual evidence on **Input**. Naming overrides and w
 
 ### Media analysis
 
-Preparation may inspect every selected media file when the current requirements need per-file evidence. The first analysis can therefore take longer for larger inputs; unchanged evidence can reuse cached reports. Media inspection cannot establish every source fact. Answer source questions only after checking the release, and resolve missing or conflicting evidence before proceeding.
+Preparation may inspect every selected media file when the current requirements need per-file evidence. The first analysis can therefore take longer for larger inputs; unchanged evidence can reuse cached reports. Inspected languages, track titles, default/forced flags and container order inform the assessment. Source-history and hypothetical subtitle concerns remain warnings rather than requests to guess missing facts.
 
 ## Tracker questions
 
 On **Dupe Checking**, open **Tracker questions** for a selected tracker, review any required fields, and choose **Apply tracker answers**. Loading the questions uses existing prepared facts without contacting the tracker. Applying answers refreshes the assessment; it does not upload or start another duplicate search. Unanswered required fields block only their tracker, and unapplied edits must be applied before dry runs or uploads. See [the questionnaire workflow](../workflow/index.md#tracker-questions) for retained duplicate evidence and questions discovered during preparation.
 
-Answer only after checking the relevant source. Unknown mandatory facts remain unresolved. Correct an unknown **Source** on Input where requested; changing source, type, tracks or prepared generation requires source answers to be reviewed again. A source answer cannot waive an independent prohibited or staff-only finding. Existing debug-mode policy bypasses also leave eligibility-only questions optional; evidence needed to construct names, payloads or required descriptions remains necessary.
+Questions remain for genuine upload inputs, naming choices and ambiguous track associations that available metadata cannot supply. Required fields with supplied values are identified separately from missing answers; optional controls do not require a response. Correct missing canonical facts on **Input**. An answer cannot waive an independent prohibited or staff-only finding. Existing debug-mode policy bypasses also leave eligibility-only questions optional; evidence needed to construct names, payloads or required descriptions remains necessary.
 
 ## Names and payloads
 

@@ -16,7 +16,7 @@ import (
 // ValidationPolicy returns AITHER's source-backed package, language, and
 // prepared-asset policy.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{ID: "unit3d-aither-policy-v3", Check: checkEvidenceRules}, languageAssessment)
+	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{ID: "unit3d-aither-policy-v4", Check: checkEvidenceRules}, languageAssessment)
 }
 
 func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {

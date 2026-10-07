@@ -33,112 +33,45 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		}
 	}
 	if strings.EqualFold(subject.Type, "REMUX") {
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "source_audio")] {
-		case "best_original_retained":
-		case "source_mix_pair_retained":
-			failures = append(failures, sourceMixPairFailures(subject)...)
-		case "incomplete":
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"source_audio",
-					"the best original soundtrack or a required original/source upmix is missing",
-					trackers.LanguageProhibited,
-				),
-			)
-		default:
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"source_audio",
-					"source evidence must establish the best original soundtrack and any required original mono/stereo plus upmix",
-					trackers.LanguageUnresolved,
-				),
-			)
-		}
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"source_audio",
+			"retain the best available original-language soundtrack; if the source has an original mono/stereo mix and surround upmix, retain both with the original mix default. Source availability cannot be established from the upload alone",
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	if needsForeignDialogueReview(subject.LanguageFacts) {
-		outcome := trackers.LanguageUnresolved
-		reason := "foreign-dialogue subtitle need and inclusion require review"
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "foreign_dialogue_subtitles")] {
-		case "not_required":
-			outcome = ""
-		case "missing":
-			outcome = trackers.LanguageProhibited
-			reason = "required foreign-dialogue subtitles are missing"
-		case "included":
-			included, unknownDefault := forcedDefaultSubtitleEvidence(subject.LanguageFacts)
-			if included {
-				outcome = ""
-			} else if subject.LanguageFacts.SubtitleStatus == api.MetadataEvidenceStatusComplete && !unknownDefault {
+		hasForced, defaultPresent, unknownDefault := forcedDefaultSubtitleEvidence(subject.LanguageFacts)
+		if !defaultPresent {
+			outcome := trackers.LanguageAdvisory
+			reason := "if foreign dialogue requires subtitles, include a forced/default subtitle track; dialogue coverage cannot be established from track metadata alone"
+			if hasForced {
 				outcome = trackers.LanguageProhibited
-				reason = "required foreign-dialogue subtitles must be included, forced and default"
+				reason = "the inspected forced subtitles must include a default track"
+				if unknownDefault {
+					outcome = trackers.LanguageUnresolved
+					reason = "the default flag of the inspected forced subtitles is unresolved"
+				}
 			}
-		}
-		if outcome != "" {
-			failures = append(failures, trackers.LanguageRuleFailure(subject, "foreign_dialogue_subtitles", reason, outcome))
+			failure := trackers.LanguageRuleFailure(subject, "foreign_dialogue_subtitles", reason, outcome)
+			if !hasForced {
+				failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+			}
+			failures = append(failures, failure)
 		}
 	}
 	return failures
-}
-
-// sourceMixPairFailures checks necessary track/default facts only after the
-// uploader establishes that the source contains the original/upmix pair.
-func sourceMixPairFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
-	facts := subject.LanguageFacts
-	if !facts.OriginalLanguagesKnown || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
-		return nil // The shared original/programme evidence findings already block.
-	}
-	monoStereo, surround, defaultOriginal, unknownChannels, unknownDefault := false, false, false, false, false
-	for _, track := range facts.Tracks {
-		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) ||
-			!slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) }) {
-			continue
-		}
-		switch {
-		case track.Channels <= 0:
-			unknownChannels = true
-		case track.Channels <= 2:
-			monoStereo = true
-			defaultOriginal = defaultOriginal || track.DefaultKnown && track.Default
-			unknownDefault = unknownDefault || !track.DefaultKnown
-		default:
-			surround = true
-		}
-	}
-	outcome := trackers.LanguageProhibited
-	if unknownChannels {
-		outcome = trackers.LanguageUnresolved
-	}
-	if !monoStereo || !surround {
-		return []api.RuleFailure{
-			trackers.LanguageRuleFailure(
-				subject,
-				"source_mix_pair",
-				"the reviewed source original mono/stereo and surround upmix are not both established in the upload",
-				outcome,
-			),
-		}
-	}
-	if !defaultOriginal {
-		if unknownDefault {
-			outcome = trackers.LanguageUnresolved
-		}
-		return []api.RuleFailure{trackers.LanguageRuleFailure(subject, "original_mix_default", "the source original mono/stereo mix must be default", outcome)}
-	}
-	return nil
 }
 
 func needsForeignDialogueReview(facts api.LanguageFacts) bool {
 	return !facts.AudioAbsent && (facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || !slices.Equal(facts.ProgrammeLanguages, []string{"ZXX"}))
 }
 
-// forcedDefaultSubtitleEvidence distinguishes a known qualifying default from
-// an otherwise eligible subtitle whose inspected default flag is unknown.
-func forcedDefaultSubtitleEvidence(facts api.LanguageFacts) (bool, bool) {
-	unknownDefault := false
+// forcedDefaultSubtitleEvidence checks only forced tracks supported by current
+// subtitle-language facts. One known default satisfies the track requirement.
+func forcedDefaultSubtitleEvidence(facts api.LanguageFacts) (hasForced, defaultPresent, unknownDefault bool) {
 	for _, track := range facts.Tracks {
 		if track.Kind != api.MediaTrackSubtitle {
 			continue
@@ -152,10 +85,11 @@ func forcedDefaultSubtitleEvidence(facts api.LanguageFacts) (bool, bool) {
 		if !eligible {
 			continue
 		}
+		hasForced = true
 		if track.DefaultKnown && track.Default {
-			return true, false
+			return true, true, false
 		}
 		unknownDefault = unknownDefault || !track.DefaultKnown
 	}
-	return false, unknownDefault
+	return hasForced, false, unknownDefault
 }

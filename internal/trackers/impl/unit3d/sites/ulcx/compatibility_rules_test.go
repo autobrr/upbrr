@@ -30,8 +30,10 @@ func TestULCXCompatibilityAssociations(t *testing.T) {
 				requireULCXSourceFailure(t, failures, test.want, api.RuleDispositionStrict)
 				return
 			}
-			if len(failures) != 0 {
-				t.Fatalf("source-confirmed unique mixes blocked: %+v", failures)
+			for _, failure := range failures {
+				if failure.Disposition != api.RuleDispositionAdvisory {
+					t.Fatalf("source-confirmed mixes blocked: %+v", failure)
+				}
 			}
 		})
 	}
@@ -78,8 +80,10 @@ func TestULCXCompatibilityDoesNotImportOtherTrackerRules(t *testing.T) {
 	ulcxCompatibilityAnswer(&subject, "alternate_mix_audio-1", "unique")
 	ulcxCompatibilityAnswer(&subject, "compatibility_mix_compat-0", "audio-0")
 	ulcxCompatibilityAnswer(&subject, "compatibility_mix_compat-1", "audio-1")
-	if got := languageAssessment(subject); len(got) != 0 {
-		t.Fatalf("ULCX gained an unestablished codec or provenance restriction: %+v", got)
+	for _, failure := range languageAssessment(subject) {
+		if failure.Disposition != api.RuleDispositionAdvisory {
+			t.Fatalf("ULCX gained an unestablished codec or provenance restriction: %+v", failure)
+		}
 	}
 	subject.LanguageFacts.Tracks = slices.Delete(subject.LanguageFacts.Tracks, 1, 2)
 	ulcxCompatibilityAnswer(&subject, "compatibility_mix_compat-0", "audio-0")

@@ -25,18 +25,14 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		outcome := trackers.LanguageStaffException
 		reason := "additional main audio " + track.ID + " is outside the ordinary original-plus-English programme set"
 		if original {
-			outcome = trackers.LanguageUnresolved
-			reason = "additional original-language main audio " + track.ID + " requires source confirmation that this is a music video and the audio remains original and non-transcoded"
-			switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "music_video_audio_"+track.ID)] {
-			case "original_music_video":
-				if track.ID != "" {
-					continue
-				}
-			case "not_original_music_video":
-				outcome = trackers.LanguageStaffException
-			}
+			outcome = trackers.LanguageAdvisory
+			reason = "additional original-language main audio " + track.ID + " is permitted for music videos in original, non-transcoded form; source history has not been verified"
 		}
-		failures = append(failures, trackers.LanguageRuleFailure(subject, "additional_main_audio", reason, outcome))
+		failure := trackers.LanguageRuleFailure(subject, "additional_main_audio", reason, outcome)
+		if original {
+			failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		}
+		failures = append(failures, failure)
 	}
 	failures = append(failures, compatibilityFailures(subject)...)
 	if track, ok := multilingualProgrammeTrack(subject.LanguageFacts); ok && multilingualMarker(subject, track) == "" {

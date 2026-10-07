@@ -42,88 +42,38 @@ func hdbLanguageAnswer(subject *api.TrackerValidationSubject, key, value string)
 	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(*subject, key)] = value
 }
 
-func TestHDBSourceAudioRequiresApplicableEvidence(t *testing.T) {
-	for _, test := range []struct {
-		answer string
-		want   api.MetadataEvidenceStatus
-	}{
-		{"", api.MetadataEvidenceStatusPartial},
-		{"unresolved", api.MetadataEvidenceStatusPartial},
-		{"incomplete", api.MetadataEvidenceStatusComplete},
-	} {
+func TestHDBSourceMixPairsAreNotInferredFromChannels(t *testing.T) {
+	for _, channels := range []int{0, 2, 6} {
 		subject := hdbLanguageSubject()
-		hdbLanguageAnswer(&subject, "source_audio", test.answer)
-		hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
-		requireHDBValidationFailure(t, languageAssessment(subject), "language_source_audio", api.RuleDispositionStrict, test.want)
-	}
-	subject := hdbLanguageSubject()
-	hdbLanguageAnswer(&subject, "source_audio", "best_original_retained")
-	hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("reviewed best original blocked: %#v", failures)
-	}
-	subject.Type = "WEBDL"
-	subject.QuestionnaireAnswers = nil
-	hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("WEB upload acquired source-mix gate: %#v", failures)
-	}
-}
-
-func TestHDBReviewedMixPairChecksRetainedTracksAndDefault(t *testing.T) {
-	for _, test := range []struct {
-		name                      string
-		surround, defaultOriginal bool
-		wantRule                  string
-	}{
-		{"retained original default", true, true, ""},
-		{"missing source upmix", false, true, "language_source_mix_pair"},
-		{"wrong default", true, false, "language_original_mix_default"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			subject := hdbLanguageSubject()
-			subject.LanguageFacts.Tracks[0].Default = test.defaultOriginal
-			if test.surround {
-				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-					ID:        "mix",
-					Kind:      api.MediaTrackAudio,
-					Role:      api.AudioRoleAlternateMix,
-					Languages: []string{"English"},
-					Channels:  6,
-				})
-			}
-			hdbLanguageAnswer(&subject, "source_audio", "source_mix_pair_retained")
-			hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
-			failures := languageAssessment(subject)
-			if test.wantRule == "" {
-				if len(failures) != 0 {
-					t.Fatalf("valid mix pair blocked: %#v", failures)
-				}
-				return
-			}
-			requireHDBValidationFailure(t, failures, test.wantRule, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+		subject.LanguageFacts.Tracks[0].Channels = channels
+		subject.LanguageFacts.Tracks[0].Default = false
+		subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+			ID:        "mix",
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleAlternateMix,
+			Languages: []string{"English"},
+			Channels:  6,
 		})
+		hdbLanguageAnswer(&subject, "source_audio", "source_mix_pair_retained")
+		for _, failure := range languageAssessment(subject) {
+			if failure.Rule == "language_source_mix_pair" || failure.Rule == "language_original_mix_default" {
+				t.Fatalf("channel counts invented source-mix provenance: %+v", failure)
+			}
+		}
 	}
-	// Unknown channels cannot prove an omitted source mix.
-	subject := hdbLanguageSubject()
-	subject.LanguageFacts.Tracks[0].Channels = 0
-	hdbLanguageAnswer(&subject, "source_audio", "source_mix_pair_retained")
-	hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
-	requireHDBValidationFailure(t, languageAssessment(subject), "language_source_mix_pair", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 }
 
-func TestHDBForeignDialogueRequiresReviewedForcedDefaultSubtitles(t *testing.T) {
+func TestHDBForcedSubtitleDefaultUsesInspectedTracks(t *testing.T) {
 	for _, test := range []struct {
-		name, answer       string
-		forced, defaultSub bool
-		want               api.MetadataEvidenceStatus
+		name                             string
+		forced, defaultSub, defaultKnown bool
+		disposition                      api.RuleDisposition
+		status                           api.MetadataEvidenceStatus
 	}{
-		{"need is unknown", "", false, false, api.MetadataEvidenceStatusPartial},
-		{"required subtitles missing", "missing", false, false, api.MetadataEvidenceStatusComplete},
-		{"required track not forced", "included", false, true, api.MetadataEvidenceStatusComplete},
-		{"required track not default", "included", true, false, api.MetadataEvidenceStatusComplete},
-		{"required forced default present", "included", true, true, ""},
-		{"no required foreign dialogue", "not_required", false, false, ""},
+		{"full subtitles do not prove forced need", false, true, true, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial},
+		{"forced track not default", true, false, true, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete},
+		{"forced track unknown default", true, false, false, api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial},
+		{"forced track default", true, true, true, "", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			subject := hdbLanguageSubject()
@@ -134,17 +84,17 @@ func TestHDBForeignDialogueRequiresReviewedForcedDefaultSubtitles(t *testing.T) 
 				Languages:    []string{"English"},
 				Forced:       test.forced,
 				Default:      test.defaultSub,
-				DefaultKnown: true,
+				DefaultKnown: test.defaultKnown,
 			})
-			hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", test.answer)
+			hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
 			failures := languageAssessment(subject)
-			if test.want == "" {
+			if test.disposition == "" {
 				if len(failures) != 0 {
-					t.Fatalf("subtitle exception/compliance blocked: %#v", failures)
+					t.Fatalf("known forced/default track rejected: %+v", failures)
 				}
 				return
 			}
-			requireHDBValidationFailure(t, failures, "language_foreign_dialogue_subtitles", api.RuleDispositionStrict, test.want)
+			requireHDBValidationFailure(t, failures, "language_foreign_dialogue_subtitles", test.disposition, test.status)
 		})
 	}
 }
@@ -200,7 +150,7 @@ func TestHDBEnglishDubUsesFinalizedManualGenres(t *testing.T) {
 			hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
 			failures := languageAssessment(subject)
 			if test.want == "" {
-				if len(failures) != 0 {
+				if slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Disposition != api.RuleDispositionAdvisory }) {
 					t.Fatalf("manual animation rejected: %#v", failures)
 				}
 				return
@@ -210,51 +160,19 @@ func TestHDBEnglishDubUsesFinalizedManualGenres(t *testing.T) {
 	}
 }
 
-func TestHDBReviewInvalidationAndDiscBoundaries(t *testing.T) {
+func TestHDBLanguageReviewHasNoQuestionnaire(t *testing.T) {
 	subject := hdbLanguageSubject()
-	meta := api.UploadSubject{
-		SourcePath:    subject.SourcePath,
-		Type:          "REMUX",
-		DiscType:      "BDMV",
-		Identity:      subject.Identity,
-		LanguageFacts: subject.LanguageFacts,
-	}
-	question := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if question == nil || len(question.Fields) != 2 {
-		t.Fatalf("disc-sourced remux question scope: %#v", question)
-	}
-	answers := map[string]string{question.Fields[0].Key: "best_original_retained", question.Fields[1].Key: "not_required"}
-	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"HDB": answers}
-	for _, change := range []func(*api.UploadSubject){
-		func(m *api.UploadSubject) { m.Identity.Generation++ },
-		func(m *api.UploadSubject) {
-			m.LanguageFacts = m.LanguageFacts.Clone()
-			m.LanguageFacts.Tracks[0].Default = false
-		},
-		func(m *api.UploadSubject) {
-			m.LanguageFacts.ProgrammeLanguages = nil
-			m.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
-		},
-	} {
-		changed := meta
-		change(&changed)
-		question := languageQuestionnaire(trackers.PreparationInput{Meta: changed})
-		if question == nil || slices.ContainsFunc(question.Fields, func(field api.TrackerQuestionnaireField) bool { return field.Value != "" }) {
-			t.Fatalf("changed evidence reused answers: %#v", question)
+	for _, releaseType := range []string{"REMUX", "WEBDL", "DISC"} {
+		meta := api.UploadSubject{
+			Type:          releaseType,
+			DiscType:      "BDMV",
+			LanguageFacts: subject.LanguageFacts,
 		}
-		if failures := languageAssessment(api.NewTrackerValidationSubject(changed, "HDB")); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-			return f.Disposition == api.RuleDispositionStrict && f.EvidenceStatus == api.MetadataEvidenceStatusPartial
-		}) {
-			t.Fatalf("changed facts accepted: %#v", failures)
+		if question := New().ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta}); question != nil {
+			t.Fatalf("language guidance acquired questions: %+v", question)
 		}
-	}
-	for _, disc := range []string{"", "DVD", "BDMV"} {
-		meta.Type, meta.DiscType = "DISC", disc
-		if question := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); question != nil {
-			t.Fatalf("full disc acquired questions: %#v", question)
-		}
-		if failures := languageAssessment(api.NewTrackerValidationSubject(meta, "HDB")); len(failures) != 0 {
-			t.Fatalf("full disc acquired rules: %#v", failures)
+		if releaseType == "DISC" && len(languageAssessment(api.NewTrackerValidationSubject(meta, "HDB"))) != 0 {
+			t.Fatal("full disc acquired language findings")
 		}
 	}
 }
@@ -291,17 +209,31 @@ func TestHDBSubtitleEvidenceAndClearPreservation(t *testing.T) {
 	}
 	media.SubtitleLanguages, media.SubtitleLanguagesProvenance = nil, api.FactProvenanceManualEmpty
 	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
-	if found, _ := forcedDefaultSubtitleEvidence(subject.LanguageFacts); found {
+	if found, _, _ := forcedDefaultSubtitleEvidence(subject.LanguageFacts); found {
 		t.Fatal("manual subtitle clear resurrected stale track language")
 	}
-	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "included")
-	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
-	hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "included")
-	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.LanguageFacts.AudioAbsent = true
 	if needsForeignDialogueReview(subject.LanguageFacts) {
-		t.Fatal("absent audio acquired a foreign-speech question")
+		t.Fatal("absent audio acquired foreign-dialogue guidance")
+	}
+}
+
+func TestHDBSourceAndHypotheticalSubtitleWarningsNeedNoAnswers(t *testing.T) {
+	for _, answer := range []string{"", "best_original_retained", "source_mix_pair_retained", "incomplete"} {
+		subject := hdbLanguageSubject()
+		hdbLanguageAnswer(&subject, "source_audio", answer)
+		hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "missing")
+		failures := languageAssessment(subject)
+		for _, rule := range []string{"language_source_audio", "language_foreign_dialogue_subtitles"} {
+			requireHDBValidationFailure(t, failures, rule, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+		}
+		if slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+			return trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, false)
+		}) {
+			t.Fatalf("source history answer %q created a gate: %+v", answer, failures)
+		}
 	}
 }

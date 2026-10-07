@@ -69,7 +69,7 @@ func TestRFRejectsMultipleMovieFilesAndMissingScreenshots(t *testing.T) {
 func TestRFValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-rf-policy-v3" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-rf-policy-v4" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -94,20 +94,20 @@ func TestRFFullDVDUsesVOBMediaInfoInsteadOfBDInfo(t *testing.T) {
 
 func rfPassingSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
-		Tracker:       "RF",
+		Tracker: "RF",
 		LanguageFacts: mediafacts.ResolveLanguages(api.MediaFacts{
-OriginalLanguage: "English",
- TrackCoverageComplete: true,
- PrimaryAudioTrackID: "main",
- Tracks: []api.MediaTrackFacts{{
-ID: "main",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
- Languages: []string{"English"},
- Default: true,
-}},
-}),
-		Identity:      api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			OriginalLanguage:      "English",
+			TrackCoverageComplete: true,
+			PrimaryAudioTrackID:   "main",
+			Tracks: []api.MediaTrackFacts{{
+				ID:        "main",
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"English"},
+				Default:   true,
+			}},
+		}),
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 		PackageFacts: api.PackageFacts{
 			Status:         api.MetadataEvidenceStatusComplete,
 			KnownFileCount: 1,
@@ -168,18 +168,18 @@ func assertRFFailure(
 func TestRFLanguageEvidenceAndForcedSubtitleException(t *testing.T) {
 	t.Parallel()
 	subject := api.TrackerValidationSubject{Tracker: "RF", LanguageFacts: api.LanguageFacts{
-OriginalLanguages: []string{"Japanese"},
- OriginalLanguagesKnown: true,
- SubtitleStatus: api.MetadataEvidenceStatusComplete,
-}}
+		OriginalLanguages:      []string{"Japanese"},
+		OriginalLanguagesKnown: true,
+		SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+	}}
 	key := trackers.LanguageQuestionKey(subject, "english_subtitles_expected")
 	subject.QuestionnaireAnswers = map[string]string{key: "yes"}
-	assertRFFailure(t, languageFailures(subject), "language_retail_subtitles", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
+	assertRFFailure(t, languageFailures(subject), "language_retail_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
 	assertRFFailure(t, languageFailures(subject), "language_subtitle_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusComplete
 	subject.Identity.Generation++
-	assertRFFailure(t, languageFailures(subject), "language_retail_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	assertRFFailure(t, languageFailures(subject), "language_retail_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.LanguageFacts.OriginalLanguagesKnown = false
 	assertRFFailure(t, languageFailures(subject), "language_subtitle_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 	subject.Type = "DISC"
@@ -201,15 +201,15 @@ OriginalLanguages: []string{"Japanese"},
 func TestRFManualSubtitleClearDoesNotReuseForcedException(t *testing.T) {
 	t.Parallel()
 	media := api.MediaFacts{
-OriginalLanguage: "English",
- TrackCoverageComplete: true,
- SubtitleLanguages: []string{"English (Forced)"},
- Tracks: []api.MediaTrackFacts{{
-Kind: api.MediaTrackSubtitle,
- Languages: []string{"English"},
- Forced: true,
-}},
-}
+		OriginalLanguage:      "English",
+		TrackCoverageComplete: true,
+		SubtitleLanguages:     []string{"English (Forced)"},
+		Tracks: []api.MediaTrackFacts{{
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{"English"},
+			Forced:    true,
+		}},
+	}
 	subject := api.TrackerValidationSubject{Tracker: "RF", LanguageFacts: mediafacts.ResolveLanguages(media)}
 	if failures := languageFailures(subject); len(failures) != 0 {
 		t.Fatalf("known forced English rejected: %+v", failures)
@@ -223,16 +223,16 @@ Kind: api.MediaTrackSubtitle,
 func TestRFMixedOriginalForcedExceptionRequiresPredominanceEvidence(t *testing.T) {
 	t.Parallel()
 	subject := api.TrackerValidationSubject{Tracker: "RF", LanguageFacts: api.LanguageFacts{
-OriginalLanguages: []string{"English", "Japanese"},
- OriginalLanguagesKnown: true,
- SubtitleStatus: api.MetadataEvidenceStatusComplete,
- SubtitleLanguages: []string{"English"},
- Tracks: []api.MediaTrackFacts{{
-Kind: api.MediaTrackSubtitle,
- Languages: []string{"English"},
- Forced: true,
-}},
-}}
+		OriginalLanguages:      []string{"English", "Japanese"},
+		OriginalLanguagesKnown: true,
+		SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+		SubtitleLanguages:      []string{"English"},
+		Tracks: []api.MediaTrackFacts{{
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{"English"},
+			Forced:    true,
+		}},
+	}}
 	assertRFFailure(t, languageFailures(subject), "language_predominance_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 	key := trackers.LanguageQuestionKey(subject, "predominantly_english")
 	subject.QuestionnaireAnswers = map[string]string{key: "yes"}
@@ -252,5 +252,26 @@ Kind: api.MediaTrackSubtitle,
 	meta.Type = "DISC"
 	if schema := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); schema != nil {
 		t.Fatalf("full disc received question: %+v", schema)
+	}
+}
+
+func TestRFRetailSubtitleExpectationIsWarnOnly(t *testing.T) {
+	meta := api.UploadSubject{LanguageFacts: api.LanguageFacts{
+		OriginalLanguages:      []string{"Japanese"},
+		OriginalLanguagesKnown: true,
+		SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+	}}
+	if schema := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); schema != nil {
+		t.Fatalf("hypothetical retail source required a questionnaire: %+v", schema)
+	}
+	subject := api.NewTrackerValidationSubject(meta, "RF")
+	key := trackers.LanguageQuestionKey(subject, "english_subtitles_expected")
+	for _, answer := range []string{"", "yes", "no"} {
+		subject.QuestionnaireAnswers = map[string]string{key: answer}
+		failures := languageFailures(subject)
+		assertRFFailure(t, failures, "language_retail_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+		if len(failures) != 1 || trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) {
+			t.Fatalf("retail expectation blocked without an answer or acknowledgement: %+v", failures)
+		}
 	}
 }

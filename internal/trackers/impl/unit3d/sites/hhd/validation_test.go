@@ -184,7 +184,11 @@ func TestHHDLanguageRequirementsRemainIndependent(t *testing.T) {
 					t.Fatalf("compliant language facts blocked: %+v", failures)
 				}
 			} else {
-				requireHHDValidationFailure(t, failures, test.want, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+				disposition := api.RuleDispositionStrict
+				if test.want == "language_subtitles" {
+					disposition = api.RuleDispositionWaivable
+				}
+				requireHHDValidationFailure(t, failures, test.want, disposition, api.MetadataEvidenceStatusComplete)
 			}
 		})
 	}

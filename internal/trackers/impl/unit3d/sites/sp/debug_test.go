@@ -43,7 +43,6 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 			name: "language variance",
 			mutate: func(meta *api.UploadSubject) {
 				meta.MediaFileFacts.Files[1].AudioLanguages = []string{"German"}
-				answerPackQuestion(meta, packSourceKey, "consistent")
 			},
 			debugReady: true,
 		},
@@ -51,7 +50,6 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 			name: "subtitle variance",
 			mutate: func(meta *api.UploadSubject) {
 				meta.MediaFileFacts.Files[1].SubtitleLanguages = []string{"English"}
-				answerPackQuestion(meta, packSourceKey, "consistent")
 			},
 			debugReady: true,
 		},
@@ -93,7 +91,7 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 				test.mutate(&meta)
 			}
 			for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
-				wantReady := mode == api.WorkflowExecutionModeDebug && test.debugReady
+				wantReady := test.name == "unresolved source" || mode == api.WorkflowExecutionModeDebug && test.debugReady
 				_, _, _, projections, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, meta, []api.TrackerID{"SP"}, nil, nil, mode)
 				if err != nil {
 					t.Fatal(err)
@@ -102,7 +100,7 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 				if got := projection.Readiness == api.ReadinessStatusReady && projection.DupeReady; got != wantReady {
 					t.Fatalf("mode=%s: projection readiness=%s wantReady=%t decisions=%#v", mode, projection.Readiness, wantReady, projection.PolicyDecisions)
 				}
-				if wantReady && (len(projection.Questionnaire) != 0 || !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+				if wantReady && test.name != "unresolved source" && (len(projection.Questionnaire) != 0 || !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
 					return decision.Code == "sp_pack_uniformity" && decision.Decision == "bypassed" && !decision.Blocking
 				})) {
 					t.Fatalf("debug lost its bypass notice or retained required pack questions: %#v", projection)

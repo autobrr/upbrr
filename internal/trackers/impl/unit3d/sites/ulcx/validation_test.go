@@ -66,7 +66,7 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v8/languages-v1" {
+	if policy.ID != "unit3d-ulcx-policy-v9/languages-v1" {
 		t.Fatalf("validation policy = %q, want upload rules policy v6", policy.ID)
 	}
 	tests := []struct {
@@ -589,31 +589,23 @@ func TestULCXForcedAndNonForeignSubtitleDefaults(t *testing.T) {
 	}
 }
 
-func TestULCXRetailAnswerCannotAuthorizeChangedTracks(t *testing.T) {
+func TestULCXRetailSourceRemainsUnverifiedGuidance(t *testing.T) {
 	t.Parallel()
-	meta := api.UploadSubject{
-		Type:          "WEBDL",
-		Identity:      api.ExternalIdentity{Generation: 1},
-		LanguageFacts: ulcxTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English"}),
-	}
-	meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
-		ID:        "commentary",
-		Kind:      api.MediaTrackAudio,
-		Role:      api.AudioRoleCommentary,
-		Languages: []string{"English"},
-	})
-	question := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if question == nil || len(question.Fields) != 1 {
-		t.Fatalf("missing retail question: %+v", question)
-	}
-	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"ULCX": {question.Fields[0].Key: "yes"}}
-	if failures := languageAssessment(api.NewTrackerValidationSubject(meta, "ULCX")); len(failures) != 0 {
-		t.Fatalf("current attestation rejected: %+v", failures)
-	}
-	meta.LanguageFacts.Tracks[len(meta.LanguageFacts.Tracks)-1].ID = "different-commentary"
-	requireULCXValidationFailure(t, languageAssessment(api.NewTrackerValidationSubject(meta, "ULCX")), "language_secondary_source", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	next := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if next.Fields[0].Key == question.Fields[0].Key || next.Fields[0].Value != "" {
-		t.Fatal("changed tracks retained retail attestation")
+	for _, role := range []api.AudioTrackRole{api.AudioRoleCommentary, api.AudioRoleIsolatedScore} {
+		meta := api.UploadSubject{Type: "WEBDL", LanguageFacts: ulcxTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English"})}
+		meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
+ID: "secondary",
+ Kind: api.MediaTrackAudio,
+ Role: role,
+ Languages: []string{"English"},
+})
+		if question := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); question != nil {
+			t.Fatalf("retail reassurance question: %+v", question)
+		}
+		for _, answer := range []string{"", "yes", "no"} {
+			subject := api.NewTrackerValidationSubject(meta, "ULCX")
+			subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "language_secondary_retail"): answer}
+			requireULCXValidationFailure(t, languageAssessment(subject), "language_secondary_source", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+		}
 	}
 }

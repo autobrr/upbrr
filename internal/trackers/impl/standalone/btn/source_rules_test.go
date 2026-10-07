@@ -20,12 +20,14 @@ func btnSourceSubject() api.TrackerValidationSubject {
 		LanguageFacts: btnLanguageFacts("English", "English"),
 	}
 }
+
 func btnSourceAnswer(subject *api.TrackerValidationSubject, key, value string) {
 	if subject.QuestionnaireAnswers == nil {
 		subject.QuestionnaireAnswers = make(map[string]string)
 	}
 	subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(*subject, key)] = value
 }
+
 func requireBTNSourceFailure(t *testing.T, subject api.TrackerValidationSubject, rule string, disposition api.RuleDisposition, status api.MetadataEvidenceStatus) {
 	t.Helper()
 	failures := languageAssessment(subject)
@@ -36,105 +38,107 @@ func requireBTNSourceFailure(t *testing.T, subject api.TrackerValidationSubject,
 	}
 }
 
-func TestBTNSourceRetentionMandatoryAndSoundtrackPairTrumpable(t *testing.T) {
-	subject := btnSourceSubject()
-	for _, key := range []string{"source_audio", "source_extras", "broadcast_soundtrack"} {
-		requireBTNSourceFailure(t, subject, "language_"+key, api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+func requireBTNSourceWarnings(t *testing.T, subject api.TrackerValidationSubject, rules ...string) {
+	t.Helper()
+	failures := languageAssessment(subject)
+	if len(failures) != len(rules) {
+		t.Fatalf("warnings = %#v, want %v", failures, rules)
 	}
-	btnSourceAnswer(&subject, "source_audio", "incomplete")
-	btnSourceAnswer(&subject, "source_extras", "incomplete")
-	btnSourceAnswer(&subject, "broadcast_soundtrack", "missing")
-	requireBTNSourceFailure(t, subject, "language_source_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
-	requireBTNSourceFailure(t, subject, "language_source_extras", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
-	requireBTNSourceFailure(t, subject, "language_broadcast_soundtrack", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
-	for _, f := range languageAssessment(subject) {
-		if (f.Rule == "language_source_audio" || f.Rule == "language_source_extras") && !trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, true) {
-			t.Fatal("soundtrack waiver cleared independent strict source omission")
+	for _, rule := range rules {
+		requireBTNSourceFailure(t, subject, rule, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	}
+	for _, failure := range failures {
+		if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+			t.Fatalf("source warning blocked execution: %#v", failure)
 		}
-	}
-	btnSourceAnswer(&subject, "source_audio", "best_original_retained")
-	btnSourceAnswer(&subject, "source_extras", "retained_or_unavailable")
-	btnSourceAnswer(&subject, "broadcast_soundtrack", "same_or_both_retained")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("reviewed source blocked: %#v", failures)
-	}
-	subject.Identity.Generation++
-	requireBTNSourceFailure(t, subject, "language_source_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-	subject.Type = "DISC"
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("full disc assessed: %#v", failures)
 	}
 }
 
-func TestBTNSourceQuestionsHaveBoundedApplicability(t *testing.T) {
+func TestBTNSourceRetentionWarningIgnoresSavedAnswers(t *testing.T) {
+	for _, answers := range [][3]string{
+		{"", "", ""},
+		{"incomplete", "incomplete", "missing"},
+		{"best_original_retained", "retained_or_unavailable", "same_or_both_retained"},
+		{"unresolved", "unresolved", "unresolved"},
+	} {
+		subject := btnSourceSubject()
+		btnSourceAnswer(&subject, "source_audio", answers[0])
+		btnSourceAnswer(&subject, "source_extras", answers[1])
+		btnSourceAnswer(&subject, "broadcast_soundtrack", answers[2])
+		requireBTNSourceWarnings(t, subject, "language_source_audio", "language_source_extras", "language_broadcast_soundtrack")
+		subject.Identity.Generation++
+		requireBTNSourceWarnings(t, subject, "language_source_audio", "language_source_extras", "language_broadcast_soundtrack")
+		subject.Type = "DISC"
+		requireBTNSourceWarnings(t, subject)
+	}
+}
+
+func TestBTNSourceWarningsHaveBoundedApplicability(t *testing.T) {
 	for _, test := range []struct {
 		typ, source string
-		keys        []string
+		rules       []string
 	}{
 		{"WEBDL", "WEB", nil},
 		{"HDTV", "HDTV", nil},
 		{"ENCODE", "UHDTV", nil},
-		{"ENCODE", "BluRay", []string{"source_extras_", "broadcast_soundtrack_"}},
-		{"ENCODE", "DVD", []string{"source_extras_"}},
-		{"REMUX", "BluRay", []string{"source_audio_", "source_extras_", "broadcast_soundtrack_"}},
+		{"ENCODE", "BluRay", []string{"language_source_extras", "language_broadcast_soundtrack"}},
+		{"ENCODE", "DVD", []string{"language_source_extras"}},
+		{"REMUX", "BluRay", []string{"language_source_audio", "language_source_extras", "language_broadcast_soundtrack"}},
 		{"DISC", "BluRay", nil},
 	} {
-		meta := api.UploadSubject{
-			Type:          test.typ,
-			Source:        test.source,
-			LanguageFacts: btnLanguageFacts("English", "English"),
-		}
-		question := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-		if len(test.keys) == 0 {
-			if question != nil {
-				t.Fatalf("unrelated type acquired source questions: %#v", question)
+		t.Run(test.typ+"/"+test.source, func(t *testing.T) {
+			subject := btnSourceSubject()
+			subject.Type, subject.Source = test.typ, test.source
+			requireBTNSourceWarnings(t, subject, test.rules...)
+			if question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
+				Type:          test.typ,
+				Source:        test.source,
+				LanguageFacts: subject.LanguageFacts,
+			}}); question != nil {
+				t.Fatalf("source comparison still requests answers: %#v", question)
 			}
-			continue
-		}
-		if question == nil || len(question.Fields) != len(test.keys) {
-			t.Fatalf("%s/%s questions = %#v", test.typ, test.source, question)
-		}
-		for _, key := range test.keys {
-			if !slices.ContainsFunc(question.Fields, func(f api.TrackerQuestionnaireField) bool { return strings.HasPrefix(f.Key, key) && f.Required }) {
-				t.Fatalf("missing %s: %#v", key, question)
-			}
-		}
+		})
 	}
 }
 
 func TestBTNAnimationDubAndRetailSubtitleGuidance(t *testing.T) {
-	subject := btnSourceSubject()
-	subject.LanguageFacts = btnLanguageFacts("Japanese", "Japanese")
-	subject.EffectiveMetadata.Genres = []string{"Animation"}
-	btnSourceAnswer(&subject, "primary_audio_country", "Japan")
-	requireBTNSourceFailure(t, subject, "language_retail_english_dub", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
-	requireBTNSourceFailure(t, subject, "language_retail_english_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
-	btnSourceAnswer(&subject, "retail_english_dub", "available_missing")
-	btnSourceAnswer(&subject, "retail_english_subtitles", "available_missing")
-	requireBTNSourceFailure(t, subject, "language_retail_english_dub", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
-	requireBTNSourceFailure(t, subject, "language_retail_english_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
-	btnSourceAnswer(&subject, "retail_english_dub", "unavailable")
-	btnSourceAnswer(&subject, "retail_english_subtitles", "unavailable")
-	if slices.ContainsFunc(languageAssessment(subject), func(f api.RuleFailure) bool {
-		return f.Rule == "language_retail_english_dub" || f.Rule == "language_retail_english_subtitles"
-	}) {
-		t.Fatal("unavailable retail tracks were required")
-	}
-	subject.Type, subject.Source = "WEBDL", "WEB"
-	subject.EffectiveMetadata.Genres = []string{"Drama"}
-	meta := api.UploadSubject{
-		Type:              subject.Type,
-		Source:            subject.Source,
-		LanguageFacts:     subject.LanguageFacts,
-		EffectiveMetadata: subject.EffectiveMetadata,
-	}
-	question := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if question == nil || len(question.Fields) != 1 {
-		t.Fatalf("live-action WEB acquired animation/remux questions: %#v", question)
+	for _, answers := range [][2]string{
+		{"", ""},
+		{"available_missing", "available_missing"},
+		{"unavailable", "unavailable"},
+		{"unavailable", "retail_included"},
+	} {
+		subject := btnSourceSubject()
+		subject.LanguageFacts = btnLanguageFacts("Japanese", "Japanese")
+		subject.EffectiveMetadata.Genres = []string{"Animation"}
+		btnSourceAnswer(&subject, "primary_audio_country", "Japan")
+		btnSourceAnswer(&subject, "retail_english_dub", answers[0])
+		btnSourceAnswer(&subject, "retail_english_subtitles", answers[1])
+		requireBTNSourceWarnings(t, subject, "language_source_audio", "language_source_extras", "language_broadcast_soundtrack", "language_retail_english_dub", "language_retail_english_subtitles")
+		meta := api.UploadSubject{
+			Type:                        subject.Type,
+			Source:                      subject.Source,
+			LanguageFacts:               subject.LanguageFacts,
+			EffectiveMetadata:           subject.EffectiveMetadata,
+			TrackerQuestionnaireAnswers: map[string]map[string]string{"BTN": subject.QuestionnaireAnswers},
+		}
+		question := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
+		if question == nil || len(question.Fields) != 1 || !strings.HasPrefix(question.Fields[0].Key, "primary_audio_country_") || !question.Fields[0].Required || question.Fields[0].Value != "Japan" {
+			t.Fatalf("primary-country question changed or source questions remain: %#v", question)
+		}
+		// English subtitle presence does not establish its retail provenance.
+		subject.LanguageFacts.SubtitleLanguages = []string{"English"}
+		btnSourceAnswer(&subject, "primary_audio_country", "Japan")
+		btnSourceAnswer(&subject, "retail_english_subtitles", "retail_included")
+		requireBTNSourceFailure(t, subject, "language_retail_english_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+		subject.Type, subject.Source = "WEBDL", "WEB"
+		subject.EffectiveMetadata.Genres = []string{"Drama"}
+		btnSourceAnswer(&subject, "primary_audio_country", "Japan")
+		requireBTNSourceWarnings(t, subject)
 	}
 }
 
-func TestBTNSourceReviewDoesNotWaiveOriginalOrStaffRules(t *testing.T) {
+func TestBTNSourceReviewDoesNotWaiveMeasuredRules(t *testing.T) {
 	subject := btnSourceSubject()
 	subject.LanguageFacts = btnLanguageFacts("English", "German")
 	btnSourceAnswer(&subject, "primary_audio_country", "Germany")
@@ -144,141 +148,62 @@ func TestBTNSourceReviewDoesNotWaiveOriginalOrStaffRules(t *testing.T) {
 	for _, key := range []string{"language_staff_dub", "language_original", "language_original_primary"} {
 		requireBTNSourceFailure(t, subject, key, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	}
-	requireBTNSourceFailure(t, subject, "language_broadcast_soundtrack", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
+	requireBTNSourceFailure(t, subject, "language_broadcast_soundtrack", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.Source = "WEB"
-	btnSourceAnswer(&subject, "source_audio", "best_original_retained")
-	btnSourceAnswer(&subject, "source_extras", "retained_or_unavailable")
+	btnSourceAnswer(&subject, "primary_audio_country", "Germany")
 	for _, key := range []string{"language_staff_dub", "language_original", "language_original_primary"} {
 		requireBTNSourceFailure(t, subject, key, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	}
+	subject.LanguageFacts = btnLanguageFacts("Japanese", "Japanese")
+	subject.Anime = true
+	btnSourceAnswer(&subject, "primary_audio_country", "Japan")
+	btnSourceAnswer(&subject, "retail_english_subtitles", "retail_included")
+	requireBTNSourceFailure(t, subject, "language_anime_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 }
 
-func TestBTNSourceQuestionAnswersInvalidateWithTrackChanges(t *testing.T) {
-	subject := btnSourceSubject()
-	meta := api.UploadSubject{
-		Type:          subject.Type,
-		Source:        subject.Source,
-		LanguageFacts: subject.LanguageFacts,
-		Identity:      api.ExternalIdentity{Generation: 1},
-	}
-	question := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"BTN": {question.Fields[0].Key: "best_original_retained"}}
-	question = languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if question.Fields[0].Value != "best_original_retained" {
-		t.Fatal("current source answer not retained")
-	}
-	oldKey := question.Fields[0].Key
-	meta.LanguageFacts.Tracks[0].Codec = "FLAC"
-	question = languageQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if question.Fields[0].Key == oldKey || question.Fields[0].Value != "" {
-		t.Fatal("changed tracks reused source answer")
-	}
-}
-
-func TestBTNSourceAliasesKeepRequiredReviews(t *testing.T) {
+func TestBTNSourceAliasesKeepApplicableWarnings(t *testing.T) {
 	for _, source := range []string{"BLU RAY", "BLU-RAY 3D", "BD", "BDMV", "PAL DVD", "NTSC DVD", "HD DVD"} {
 		t.Run(source, func(t *testing.T) {
 			subject := btnSourceSubject()
 			subject.Type, subject.Source = "ENCODE", source
-			requireBTNSourceFailure(t, subject, "language_source_extras", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-			question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
-				Type:          subject.Type,
-				Source:        source,
-				LanguageFacts: subject.LanguageFacts,
-			}})
-			keys := []string{"source_extras"}
+			rules := []string{"language_source_extras"}
 			if slices.Contains([]string{"BLU RAY", "BLU-RAY 3D", "BD", "BDMV"}, source) {
-				keys = append(keys, "broadcast_soundtrack")
-				requireBTNSourceFailure(t, subject, "language_broadcast_soundtrack", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+				rules = append(rules, "language_broadcast_soundtrack")
 			}
-			if question == nil || len(question.Fields) != len(keys) {
-				t.Fatalf("source reviews = %#v", question)
-			}
-			for _, key := range keys {
-				if !slices.ContainsFunc(question.Fields, func(field api.TrackerQuestionnaireField) bool {
-					return field.Key == trackers.LanguageQuestionKey(subject, key) && field.Required
-				}) {
-					t.Fatalf("missing required %s review: %#v", key, question)
-				}
-			}
+			requireBTNSourceWarnings(t, subject, rules...)
 		})
 	}
 }
 
-func TestBTNSourceAnswersInvalidateOnSameGenerationSourceChanges(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*api.TrackerValidationSubject)
-	}{
-		{"source", func(subject *api.TrackerValidationSubject) { subject.Source = "BLU RAY" }},
-		{"type", func(subject *api.TrackerValidationSubject) { subject.Type = "ENCODE" }},
-		{"disc type", func(subject *api.TrackerValidationSubject) { subject.DiscType = "BDMV" }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			subject := btnSourceSubject()
-			btnSourceAnswer(&subject, "source_audio", "best_original_retained")
-			btnSourceAnswer(&subject, "source_extras", "retained_or_unavailable")
-			btnSourceAnswer(&subject, "broadcast_soundtrack", "same_or_both_retained")
-			if failures := languageAssessment(subject); len(failures) != 0 {
-				t.Fatalf("current answers did not resolve source review: %#v", failures)
-			}
-			test.mutate(&subject)
-			requireBTNSourceFailure(t, subject, "language_source_extras", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-			requireBTNSourceFailure(t, subject, "language_broadcast_soundtrack", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-			question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
-				Type:                        subject.Type,
-				Source:                      subject.Source,
-				DiscType:                    subject.DiscType,
-				LanguageFacts:               subject.LanguageFacts,
-				TrackerQuestionnaireAnswers: map[string]map[string]string{"BTN": subject.QuestionnaireAnswers},
-			}})
-			for _, field := range question.Fields {
-				if field.Value != "" {
-					t.Fatalf("stale source answer retained: %#v", field)
-				}
-			}
-		})
-	}
-}
-
-func TestBTNUnknownSourceApplicabilityStaysUnresolved(t *testing.T) {
+func TestBTNUnknownSourceApplicabilityStaysAdvisory(t *testing.T) {
 	for _, source := range []string{"", "Mixed", "Unknown", "unrecognized source", "WEB-archive"} {
 		t.Run(source, func(t *testing.T) {
 			subject := btnSourceSubject()
 			subject.Type, subject.Source = "ENCODE", source
 			btnSourceAnswer(&subject, "source_extras", "retained_or_unavailable")
 			btnSourceAnswer(&subject, "broadcast_soundtrack", "same_or_both_retained")
-			requireBTNSourceFailure(t, subject, "language_source_kind", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+			requireBTNSourceWarnings(t, subject, "language_source_kind")
 			subject.Source = "WEB"
-			if failures := languageAssessment(subject); len(failures) != 0 {
-				t.Fatalf("known WEB acquired a source gate: %#v", failures)
-			}
+			requireBTNSourceWarnings(t, subject)
 			subject.Source, subject.Type = source, "DISC"
-			if failures := languageAssessment(subject); len(failures) != 0 {
-				t.Fatalf("full disc acquired a source gate: %#v", failures)
-			}
+			requireBTNSourceWarnings(t, subject)
 		})
 	}
 }
 
-func TestBTNRemuxSourceKindNeedsPositiveEvidence(t *testing.T) {
+func TestBTNRemuxSourceKindBoundsSoundtrackWarning(t *testing.T) {
 	for _, discType := range []string{"", "Unknown", "BDMV", "Blu-Ray", "BLU RAY", "DVD", "HDDVD"} {
 		t.Run(discType, func(t *testing.T) {
 			subject := btnSourceSubject()
 			subject.Source, subject.DiscType = "", discType
-			btnSourceAnswer(&subject, "source_audio", "best_original_retained")
-			btnSourceAnswer(&subject, "source_extras", "retained_or_unavailable")
-			if discType == "" || discType == "Unknown" {
-				requireBTNSourceFailure(t, subject, "language_source_kind", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-				return
+			rules := []string{"language_source_audio", "language_source_extras"}
+			switch discType {
+			case "", "Unknown":
+				rules = append(rules, "language_source_kind")
+			case "BDMV", "Blu-Ray", "BLU RAY":
+				rules = append(rules, "language_broadcast_soundtrack")
 			}
-			if discType == "BDMV" || discType == "Blu-Ray" || discType == "BLU RAY" {
-				requireBTNSourceFailure(t, subject, "language_broadcast_soundtrack", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
-				btnSourceAnswer(&subject, "broadcast_soundtrack", "same_or_both_retained")
-			}
-			if failures := languageAssessment(subject); len(failures) != 0 {
-				t.Fatalf("known and reviewed disc kind stayed unresolved: %#v", failures)
-			}
+			requireBTNSourceWarnings(t, subject, rules...)
 		})
 	}
 }
@@ -288,15 +213,13 @@ func TestBTNSupportedNonDiscSourcesNeedNoDiscReview(t *testing.T) {
 		t.Run(source, func(t *testing.T) {
 			subject := btnSourceSubject()
 			subject.Type, subject.Source = "ENCODE", source
-			if failures := languageAssessment(subject); len(failures) != 0 {
-				t.Fatalf("supported non-disc source acquired a language gate: %#v", failures)
-			}
+			requireBTNSourceWarnings(t, subject)
 			if question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
 				Type:          subject.Type,
-				Source:        subject.Source,
+				Source:        source,
 				LanguageFacts: subject.LanguageFacts,
 			}}); question != nil {
-				t.Fatalf("supported non-disc source acquired disc questions: %#v", question)
+				t.Fatalf("non-disc source acquired a country question: %#v", question)
 			}
 		})
 	}
