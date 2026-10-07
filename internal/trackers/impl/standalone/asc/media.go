@@ -109,12 +109,26 @@ func resolveMediaInfoReport(meta api.UploadSubject, dbPath string) (string, erro
 	if reportPath := strings.TrimSpace(meta.MediaInfoTextPath); reportPath != "" {
 		report, err := readTextFile(reportPath)
 		if report = strings.TrimSpace(report); err == nil && report != "" {
-			return report, nil
+			return renameMediaInfoFiles(meta, report), nil
 		}
 		readErr = err
 	}
 	if fallback := strings.TrimSpace(trackers.ReadBDinfoOrMediaInfo(dbPath, meta)); fallback != "" {
-		return fallback, nil
+		return renameMediaInfoFiles(meta, fallback), nil
 	}
 	return "", readErr
+}
+
+var mediaInfoCompleteNamePattern = regexp.MustCompile(`(?m)^(\s*Complete name\s*:\s*)(.*?)(\r?)$`)
+
+// renameMediaInfoFiles rewrites the file name of each `Complete name` line with
+// the same rename applied to the ASC torrent. The site rejects a report whose
+// file is not listed in the torrent, so both must carry the same name.
+func renameMediaInfoFiles(meta api.UploadSubject, report string) string {
+	return mediaInfoCompleteNamePattern.ReplaceAllStringFunc(report, func(line string) string {
+		parts := mediaInfoCompleteNamePattern.FindStringSubmatch(line)
+		value := parts[2]
+		split := strings.LastIndexAny(value, `/\`) + 1
+		return parts[1] + value[:split] + complianceFileName(meta, value[split:]) + parts[3]
+	})
 }

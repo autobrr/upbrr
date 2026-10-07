@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/go-torrent/metainfo"
+
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -460,6 +462,9 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, hasC
 		return uploadState{}, fmt.Errorf("trackers: ASC release name: %w", err)
 	}
 	mediaInfo, mediaInfoErr := resolveMediaInfoReport(req.Meta, req.Runtime.DBPath)
+	if name := torrentContentName(torrentFile); name != "" {
+		req.Logger.Infof("trackers: ASC torrent content name tracker=ASC name=%q", name)
+	}
 	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets, req.Logger)
 	state := uploadState{
 		torrentPath:     torrentFile,
@@ -496,4 +501,18 @@ func parseUploadID(location string) string {
 		return matches[1]
 	}
 	return ""
+}
+
+// torrentContentName returns the root name stored in the tracker torrent, or ""
+// when it cannot be read; it only feeds operator logging.
+func torrentContentName(path string) string {
+	torrentMeta, err := metainfo.LoadFromFile(path)
+	if err != nil {
+		return ""
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		return ""
+	}
+	return info.BestName()
 }

@@ -35,3 +35,19 @@ func TestResolveMediaInfoReport(t *testing.T) {
 		t.Fatalf("no report = %q err=%v, want empty without error", report, err)
 	}
 }
+
+func TestRenameMediaInfoFilesMatchesTorrentName(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}
+	report := "General\r\nUnique ID : 1\r\nComplete name                            : /data/Downloads/Example.Show.S01E05.1080p.WEB-DL.H.264-GRP/Example.Show.S01E05.1080p.WEB-DL.H.264-GRP.mkv\r\nFormat : Matroska\r\n"
+	want := "General\r\nUnique ID : 1\r\nComplete name                            : /data/Downloads/Example.Show.S01E05.1080p.WEB-DL.H.264-GRP/Example.Show.S01E05.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv\r\nFormat : Matroska\r\n"
+	if got := renameMediaInfoFiles(meta, report); got != want {
+		t.Fatalf("renamed report = %q", got)
+	}
+	// Names that need no rename, and other lines, are untouched.
+	plain := "Complete name : C:\\media\\Example.Movie.2020.mkv\nFormat : AVC\n"
+	if got := renameMediaInfoFiles(meta, plain); got != plain {
+		t.Fatalf("report without a rename changed: %q", got)
+	}
+}
