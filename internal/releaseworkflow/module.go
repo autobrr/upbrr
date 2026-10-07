@@ -54,8 +54,9 @@ const (
 // Option configures a workflow module.
 type Option func(*Module) error
 
-// OperationLifetime retains a config-scoped dependency bundle until an
-// asynchronous operation worker has finished cleanup.
+// OperationLifetime borrows a config-scoped dependency bundle for asynchronous
+// workers and recovery timers. Success returns a release callback to call exactly
+// once after cleanup; false rejects work from a retired runtime generation.
 type OperationLifetime func() (func(), bool)
 
 // ConfigActivationGuard rejects admissions from a runtime generation that is
@@ -643,8 +644,9 @@ func (m *Module) cleanupSupersededMediaResources(
 	}
 }
 
-// Start durably accepts one long-running command and returns its queued
-// operation before server-owned background work begins.
+// Start durably accepts one long-running command and returns its operation status.
+// Idempotent retries return the retained status. Newly accepted work runs on
+// coordinator-owned workers independently of the request context.
 func (m *Module) Start(ctx context.Context, ownerID string, command Command) (api.WorkflowOperationStatus, error) {
 	if err := m.rejectLiveTestCommand(command); err != nil {
 		return api.WorkflowOperationStatus{}, err
@@ -828,6 +830,9 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 	return cloneWorkflowOperationStatus(status, "start operation")
 }
 
+// dispatchOperationWorker takes ownership of release, including rejected
+// dispatches. Accepted work outlives the request context and remains tracked
+// until operation cleanup and runtime-lifetime release have both finished.
 func (m *Module) dispatchOperationWorker(
 	ctx context.Context,
 	ownerID string,
@@ -838,7 +843,7 @@ func (m *Module) dispatchOperationWorker(
 	workerCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	workerDone := make(chan struct{})
 	m.operationWorkersMu.Lock()
-	if _, exists := m.operationWorkers[record.OperationID]; exists {
+	if _, exists := m.operationWorkers[record.OperationID]; exists || m.shuttingDown.Load() {
 		m.operationWorkersMu.Unlock()
 		cancel()
 		if release != nil {
@@ -849,14 +854,14 @@ func (m *Module) dispatchOperationWorker(
 	m.operationWorkers[record.OperationID] = operationWorker{cancel: cancel, done: workerDone}
 	m.operationWorkersMu.Unlock()
 	go func() {
-		if release != nil {
-			defer release()
-		}
-		defer cancel()
 		defer func() {
-			close(workerDone)
+			cancel()
+			if release != nil {
+				release()
+			}
 			m.operationWorkersMu.Lock()
 			delete(m.operationWorkers, record.OperationID)
+			close(workerDone)
 			m.operationWorkersMu.Unlock()
 		}()
 		m.runOperation(context.WithValue(workerCtx, operationLifetimeContextKey{}, struct{}{}), ownerID, command, record)
@@ -1066,9 +1071,18 @@ func (m *Module) runOperation(
 	command Command,
 	record api.ReleaseWorkflowOperationRecord,
 ) {
-	workerLeaseCtx, stopLease := context.WithCancel(ctx)
+	// Lease renewal is part of worker cleanup and must join before lifetime release.
+	workerLeaseCtx, cancelLease := context.WithCancel(ctx)
+	leaseDone := make(chan struct{})
+	go func() {
+		defer close(leaseDone)
+		m.renewOperationWorkLease(workerLeaseCtx, record)
+	}()
+	stopLease := func() {
+		cancelLease()
+		<-leaseDone
+	}
 	defer stopLease()
-	go m.renewOperationWorkLease(workerLeaseCtx, record)
 	_, runningErr := m.mutateOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID, func(status *api.WorkflowOperationStatus) {
 		status.Status = api.StageStatusRunning
 		status.Message = "Operation running."
@@ -1399,7 +1413,10 @@ func (m *Module) renewOperationWorkLease(ctx context.Context, record api.Release
 				Checkpoint:     []byte(`{}`),
 				UpdatedAt:      now,
 			}
-			if err := m.durability.RenewWork(context.WithoutCancel(ctx), renewal); err != nil {
+			if err := m.durability.RenewWork(ctx, renewal); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				m.operationWorkersMu.Lock()
 				worker := m.operationWorkers[record.OperationID]
 				m.operationWorkersMu.Unlock()
@@ -1794,14 +1811,42 @@ func (m *Module) recoverOperationAfterLease(
 				return m.recoverOperationAfterLease(ctx, record, true)
 			}
 		}
-		recoveryCtx := context.WithoutCancel(ctx)
+		// Delayed recovery outlives this request, so retain the runtime bundle and
+		// register the timer with the coordinator before starting its goroutine.
+		release, ok := m.borrowOperationLifetime()
+		if !ok {
+			return errors.New("release workflow: runtime generation retired")
+		}
+		recoveryCtx, cancelRecovery := context.WithCancel(context.WithoutCancel(ctx))
+		recoveryDone := make(chan struct{})
+		m.operationWorkersMu.Lock()
+		if m.shuttingDown.Load() {
+			m.operationWorkersMu.Unlock()
+			cancelRecovery()
+			release()
+			return errors.New("release workflow: coordinator shutting down")
+		}
+		m.recoveryWorkers[recoveryDone] = operationWorker{cancel: cancelRecovery, done: recoveryDone}
+		m.operationWorkersMu.Unlock()
 		go func() {
+			defer func() {
+				cancelRecovery()
+				release()
+				m.operationWorkersMu.Lock()
+				delete(m.recoveryWorkers, recoveryDone)
+				close(recoveryDone)
+				m.operationWorkersMu.Unlock()
+			}()
 			timer := time.NewTimer(delay)
 			defer timer.Stop()
-			<-timer.C
+			select {
+			case <-recoveryCtx.Done():
+				return
+			case <-timer.C:
+			}
 			m.operationRecoveryMu.Lock()
 			defer m.operationRecoveryMu.Unlock()
-			if m.startupRecoveryRequested {
+			if recoveryCtx.Err() != nil || m.startupRecoveryRequested {
 				return
 			}
 			if recoveryErr := m.recoverOperationAfterLease(recoveryCtx, record, discardInterrupted); recoveryErr != nil {

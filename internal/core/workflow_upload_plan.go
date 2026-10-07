@@ -1591,16 +1591,5 @@ func sanitizeWorkflowFieldValue(key string, value string) string {
 }
 
 func sanitizeWorkflowRemoteURL(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || !parsed.IsAbs() || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return ""
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	parsed.User = nil
-	return parsed.String()
+	return redaction.TrackerPageURL(value)
 }

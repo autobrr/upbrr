@@ -116,7 +116,9 @@ func (m *Module) claimLegacyRecoverySlot(
 	if err := m.activeInputs.CompareAndSwapActiveInput(ctx, slot, next, now); err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow claim legacy recovery input: %w", err)
 	}
-	m.startActiveInputHeartbeat(ctx, next.Fence)
+	if err := m.startActiveInputHeartbeat(ctx, next.Fence); err != nil {
+		return api.ActiveInputRecord{}, err
+	}
 	return next, nil
 }
 

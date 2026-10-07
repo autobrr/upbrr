@@ -24,6 +24,8 @@ import (
 )
 
 type cliOptions struct {
+	UI                         string
+	UIKeepOpen                 bool
 	LiveTestMaxImages          int
 	LiveTest                   bool
 	ConfigPath                 string
@@ -161,6 +163,13 @@ type serveOptions struct {
 }
 
 func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
+	fs.StringVar(
+		&opts.UI,
+		"ui",
+		"plain",
+		"Presentation: plain (default), auto or tui (uploads, audio and local auth forms; static commands keep ordinary output)",
+	)
+	fs.BoolVar(&opts.UIKeepOpen, "ui-keep-open", false, "Keep the TUI dashboard open after completion until closed (ignored in plain mode)")
 	fs.IntVar(&opts.LiveTestMaxImages, "live-test-max-images", 0, "Maximum journaled image uploads in this live-test run (zero keeps captures local)")
 	fs.BoolVar(&opts.LiveTest, "live-test", false, "Use an isolated live-test profile with tracker and client writes disabled")
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
@@ -372,6 +381,9 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 }
 
 func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
+	if err := validateCLIUI(opts.UI); err != nil {
+		return err
+	}
 	if opts.UnattendedConfirm {
 		opts.Unattended = true
 		visited["unattended"] = true

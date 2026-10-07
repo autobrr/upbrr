@@ -79,20 +79,21 @@ type cliReleaseWorkflowCore interface {
 }
 
 type cliWorkflowSession struct {
-	core               cliReleaseWorkflowCore
-	logger             api.Logger
-	current            releaseworkflow.CommandResult
-	intent             cliWorkflowIntent
-	uploadRequest      api.Request
-	idempotencyRun     string
-	intentSequence     uint64
-	printedProgress    map[api.OperationKind]struct{}
-	projectionsPrinted bool
-	eventLogState      cliWorkflowEventLogState
-	progressWriter     io.Writer
-	streams            cliIO
-	inputBaseline      cliInputSlotBaseline
-	inputClaim         cliInputSlotClaim
+	core                 cliReleaseWorkflowCore
+	logger               api.Logger
+	current              releaseworkflow.CommandResult
+	intent               cliWorkflowIntent
+	uploadRequest        api.Request
+	idempotencyRun       string
+	intentSequence       uint64
+	printedProgress      map[api.OperationKind]struct{}
+	projectionsPrinted   bool
+	submissionSuppressed bool
+	eventLogState        cliWorkflowEventLogState
+	progressWriter       io.Writer
+	streams              cliIO
+	inputBaseline        cliInputSlotBaseline
+	inputClaim           cliInputSlotClaim
 }
 
 type cliInputSlotBaseline struct {
@@ -197,6 +198,7 @@ func (s *cliWorkflowSession) executeContinuation(
 			return err
 		}
 	}
+	ctx = s.presentationProgressContext(ctx)
 	current, err := s.core.ContinueReleaseWorkflow(ctx, cliWorkflowOwnerID, request)
 	if err != nil {
 		if initial {
@@ -215,6 +217,7 @@ func (s *cliWorkflowSession) executeContinuation(
 	}
 	// Retain ownership before polling so canceled waits can close the exact input.
 	s.current = current
+	s.publishPresentation(ctx)
 	if current.Operation != nil && !isTerminalCLIWorkflowOperation(current.Operation.Status) {
 		completed, waitErr := s.waitForOperation(ctx, *current.Operation)
 		if waitErr != nil {
@@ -227,6 +230,7 @@ func (s *cliWorkflowSession) executeContinuation(
 		current.Operation = &completed
 	}
 	s.current = current
+	s.publishPresentation(ctx)
 	return nil
 }
 
@@ -276,6 +280,7 @@ func (s *cliWorkflowSession) waitForOperation(
 	ctx context.Context,
 	operation api.WorkflowOperationStatus,
 ) (api.WorkflowOperationStatus, error) {
+	s.publishOperationPresentation(ctx, operation)
 	if _, printed := s.printedProgress[operation.Operation]; !printed {
 		if s.printedProgress == nil {
 			s.printedProgress = make(map[api.OperationKind]struct{})
@@ -317,6 +322,7 @@ func (s *cliWorkflowSession) waitForOperation(
 			return api.WorkflowOperationStatus{}, fmt.Errorf("upbrr: poll release workflow command: %w", err)
 		}
 		operation = current
+		s.publishOperationPresentation(ctx, operation)
 		if err := s.logNewOperationEvents(ctx, operation, &s.eventLogState); err != nil {
 			return api.WorkflowOperationStatus{}, err
 		}
@@ -463,6 +469,7 @@ func (s *cliWorkflowSession) resolvePlaylistAction(
 	if interaction == api.InteractionModeUnattended && !cfg.Metadata.UseLargestPlaylist {
 		return errors.New("upbrr: unattended Blu-ray preparation requires playlist selection; use --unattended_confirm/--uac to allow the prompt")
 	}
+	s.bindAction(ctx, *action, action.Prompt)
 	selected, err := selectCLIWorkflowPlaylists(reader, s.streams.out, *action, cfg.Metadata.UseLargestPlaylist)
 	if err != nil {
 		return err
@@ -518,7 +525,17 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 	for index, option := range action.Options {
 		fmt.Fprintf(output, "%d. %s\n", index+1, option.Label)
 	}
-	answer, err := promptLine(reader, output, "Playlist number(s), comma-separated: ")
+	options := make([]cliPromptOption, len(action.Options))
+	for index, option := range action.Options {
+		options[index] = cliPromptOption{Label: option.Label, Value: option.Value}
+	}
+	answer, err := askCLIField(reader, output, cliPrompt{
+		Kind:     cliPromptMultiSelect,
+		Question: "Playlist number(s), comma-separated: ",
+		Evidence: action.Prompt,
+		Options:  options,
+		Required: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -582,6 +599,7 @@ func runCLIWorkflowInteractive(
 	)
 	defer func() { session.releaseActiveInput(ctx) }()
 	for {
+		publishCLIInvocation(streams, currentArgs, currentOpts.Debug || currentOpts.SiteCheck || coreSvc.LiveTestEnabled())
 		if len(currentOpts.TrackLanguages) > 0 && inputTracks == nil {
 			history, historyErr := coreSvc.GetInputHistory(ctx, sourcePath)
 			if historyErr != nil || len(history.Tracks) == 0 {
@@ -635,6 +653,9 @@ func runCLIWorkflowInteractive(
 		if currentOpts.InputOnly || currentOpts.interactionMode() == api.InteractionModeUnattended {
 			break
 		}
+		var metadataEvidence strings.Builder
+		printMetadataPreview(&metadataEvidence, preview, currentOpts.Debug)
+		bindCLIQuestion(ctx, streams.out, session.current.Workflow.ID, session.current.Workflow.Revision, "", metadataEvidence.String())
 		confirmed, promptErr := promptYesNo(reader, streams.out, "Metadata correct? [Y/n]: ", true)
 		if promptErr != nil {
 			return promptErr
@@ -915,6 +936,7 @@ func (s *cliWorkflowSession) completeAudioAnalysis(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("upbrr: prepare audio analysis command: %w", err)
 	}
+	ctx = s.presentationProgressContext(ctx)
 	operation, err := s.core.StartReleaseWorkflow(ctx, cliWorkflowOwnerID, command)
 	if err != nil {
 		return fmt.Errorf("upbrr: start audio analysis: %w", err)
@@ -928,6 +950,7 @@ func (s *cliWorkflowSession) completeAudioAnalysis(ctx context.Context) error {
 		return fmt.Errorf("upbrr: load audio analysis result: %w", err)
 	}
 	s.current = current
+	s.publishPresentation(ctx)
 	if current.AudioAnalysis == nil || current.Workflow.AudioAnalysis == nil {
 		return errors.New("upbrr: audio analysis produced no retained result")
 	}
@@ -944,14 +967,19 @@ func (s *cliWorkflowSession) completeAudioAnalysis(ctx context.Context) error {
 			if pathErr != nil {
 				return fmt.Errorf("upbrr: resolve audio analysis artifact: %w", pathErr)
 			}
-			fmt.Fprintf(
-				s.streams.out,
-				"Audio analysis resource 1 track %d %s: %s\n",
-				track.Ordinal,
-				artifact.Variant,
-				//logpolicy:allow local CLI output intentionally exposes an owner-authorized retained artifact path
-				pathValue,
-			)
+			if bridge := cliBridgeFromOutput(s.streams.out); bridge != nil {
+				item, _ := ctx.Value(cliItemContextKey{}).(uint64)
+				bridge.RetainAudioArtifact(item, track.Ordinal, artifact.Variant, pathValue)
+			} else {
+				fmt.Fprintf(
+					s.streams.out,
+					"Audio analysis resource 1 track %d %s: %s\n",
+					track.Ordinal,
+					artifact.Variant,
+					//logpolicy:allow local CLI output intentionally exposes an owner-authorized retained artifact path
+					pathValue,
+				)
+			}
 		}
 		if track.Failure != nil {
 			fmt.Fprintf(s.streams.errOut, "Audio track %d failed: %s\n", track.Ordinal, logging.SanitizeMessage(track.Failure.Message))
@@ -1082,7 +1110,22 @@ func collectCLIWorkflowQuestionnaires(
 			} else if len(field.Options) > 0 {
 				label += " [" + strings.Join(field.Options, "/") + "]"
 			}
-			answer, err := promptLine(reader, output, fmt.Sprintf("%s %s: ", projection.TrackerID, label))
+			prompt := cliPrompt{
+				Kind:     cliPromptText,
+				Question: fmt.Sprintf("%s %s: ", projection.TrackerID, label),
+				Help:     field.Help,
+				Required: true,
+			}
+			if len(field.Options) > 0 {
+				prompt.Kind = cliPromptSelect
+				if field.Kind == "multiselect" {
+					prompt.Kind = cliPromptMultiSelect
+				}
+				for _, option := range field.Options {
+					prompt.Options = append(prompt.Options, cliPromptOption{Label: option, Value: option})
+				}
+			}
+			answer, err := askCLIField(reader, output, prompt)
 			if err != nil {
 				return false, err
 			}
@@ -1287,6 +1330,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 				return nil, false, err
 			}
 			if !confirmed {
+				s.publishDeclinedAction(action)
 				return nil, true, nil
 			}
 			answers = append(answers, api.RequiredActionAnswer{
@@ -1316,6 +1360,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 				return nil, false, err
 			}
 			if !confirmed {
+				s.publishDeclinedAction(action)
 				return nil, true, nil
 			}
 			answers = append(answers, api.RequiredActionAnswer{
@@ -1501,7 +1546,9 @@ func runCLIWorkflowUploadOnly(
 	streams = streams.normalized()
 	reader := bufio.NewReader(streams.in)
 	uploaded := 0
-	return processCLIPreparationItems(ctx, batch, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) error {
+	return processCLIPreparationItems(ctx, batch, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) (itemResult error) {
+		itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
+		defer func() { publishCLIItemResult(streams, itemResult) }()
 		request := batch.defaults
 		request.SourcePath = item.originalPath
 		request.ExternalIDOverrides = item.externalIDs

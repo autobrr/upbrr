@@ -24,7 +24,7 @@ import (
 func runAudioAnalysisOnly(ctx context.Context, opts cliOptions, visited map[string]bool, paths []string, streams cliIO) error {
 	for _, flag := range slices.Sorted(maps.Keys(visited)) {
 		switch flag {
-		case "audio-analysis-only", "audio-output", "audio-tracks", "audio-images":
+		case "audio-analysis-only", "audio-output", "audio-tracks", "audio-images", "ui", "ui-keep-open":
 		default:
 			return exitError(2, fmt.Errorf("--%s cannot be used with --audio-analysis-only", flag))
 		}
@@ -61,7 +61,22 @@ func runAudioAnalysisOnly(ctx context.Context, opts cliOptions, visited map[stri
 	variants = append(variants, api.AudioAnalysisStats)
 	fmt.Fprintf(streams.errOut, "Analyzing audio in %s\n", formatPathLabel(input))
 	progress := newCLIAudioProgress(streams.errOut)
-	ctx = api.WithWorkflowProgressReporter(ctx, progress.update)
+	if bridge, ok := streams.presenter.(*cliTUIBridge); ok {
+		bridge.Publish(cliView{Source: input, Stage: "Analyzing audio"})
+	}
+	ctx = api.WithWorkflowProgressReporter(ctx, func(update api.WorkflowProgressUpdate) {
+		if bridge, ok := streams.presenter.(*cliTUIBridge); ok {
+			bridge.Progress(cliTelemetry{
+				Phase:     update.Phase,
+				Lane:      update.ItemID,
+				ItemOnly:  update.ItemOnly,
+				Completed: update.Completed,
+				Total:     update.Total,
+			})
+			return
+		}
+		progress.update(update)
+	})
 	results, err := audioanalysis.NewService(nil).AnalyzeFile(ctx, input, selection, ordinals, variants, output)
 	success := err == nil && len(results) > 0
 	for _, result := range results {
@@ -69,8 +84,15 @@ func runAudioAnalysisOnly(ctx context.Context, opts cliOptions, visited map[stri
 			success = false
 		}
 	}
-	progress.finish(results, success)
-	reportErr := reportAudioAnalysisResults(results, streams.out)
+	if _, tui := streams.presenter.(*cliTUIBridge); !tui {
+		progress.finish(results, success)
+	}
+	reportOutput := streams.out
+	if streams.terminalResult != nil {
+		streams.terminalResult <- func(output io.Writer) error { return writeAudioAnalysisArtifacts(results, output) }
+		reportOutput = io.Discard
+	}
+	reportErr := reportAudioAnalysisResults(results, reportOutput)
 	if err != nil {
 		return errors.Join(fmt.Errorf("analyze audio: %w", err), reportErr)
 	}
@@ -249,11 +271,9 @@ func (p *cliAudioProgress) renderFinal(success bool) {
 }
 
 func reportAudioAnalysisResults(results []audioanalysis.TrackResult, output io.Writer) error {
+	outputErr := writeAudioAnalysisArtifacts(results, output)
 	var failures []string
 	for _, result := range results {
-		for _, artifact := range result.Artifacts {
-			fmt.Fprintf(output, "Audio track %d %s: %s\n", result.Public.Ordinal, artifact.Public.Variant, artifact.Path)
-		}
 		failed := false
 		if result.Public.Failure != nil {
 			failures = append(failures, fmt.Sprintf("track %d: %s", result.Public.Ordinal, result.Public.Failure.Message))
@@ -270,7 +290,18 @@ func reportAudioAnalysisResults(results []audioanalysis.TrackResult, output io.W
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("audio analysis incomplete: %s", strings.Join(failures, "; "))
+		return errors.Join(outputErr, fmt.Errorf("audio analysis incomplete: %s", strings.Join(failures, "; ")))
+	}
+	return outputErr
+}
+
+func writeAudioAnalysisArtifacts(results []audioanalysis.TrackResult, output io.Writer) error {
+	for _, result := range results {
+		for _, artifact := range result.Artifacts {
+			if _, err := fmt.Fprintf(output, "Audio track %d %s: %s\n", result.Public.Ordinal, artifact.Public.Variant, artifact.Path); err != nil {
+				return fmt.Errorf("write audio analysis artifact result: %w", err)
+			}
+		}
 	}
 	return nil
 }

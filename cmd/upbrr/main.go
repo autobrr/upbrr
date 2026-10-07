@@ -61,7 +61,7 @@ func printTerminalError(err error) {
 
 func printCLIError(output io.Writer, err error) {
 	if err != nil {
-		fmt.Fprintf(output, "error: %s\n", logging.SanitizeMessage(formatCLIError(err)))
+		fmt.Fprintf(output, "error: %s\n", safeDiagnosticText(formatCLIError(err)))
 	}
 }
 
@@ -77,7 +77,7 @@ func formatCLIError(err error) string {
 }
 
 func printCLIWarning(output io.Writer, warning string) {
-	fmt.Fprintf(output, "warning: %s\n", logging.SanitizeMessage(warning))
+	fmt.Fprintf(output, "warning: %s\n", safeDiagnosticText(warning))
 }
 
 type cliExitError struct {
@@ -133,7 +133,7 @@ type cliHistoryPurger interface {
 
 func run() error {
 	api.SetApplicationBuild(version, buildIdentifier)
-	return executeCLI(context.Background(), os.Args[1:], cliIO{
+	return executeCLI(context.WithValue(context.Background(), cliProductionContextKey{}, true), os.Args[1:], cliIO{
 		in:     os.Stdin,
 		out:    os.Stdout,
 		errOut: os.Stderr,
@@ -146,30 +146,50 @@ type cliWorkflowCoreLifecycle interface {
 }
 
 // closeCLIWorkflowCore relinquishes active workflow ownership before closing
-// the Core-owned repository. It preserves the command result by reporting
-// shutdown and close failures independently from the deferred cleanup path.
-func closeCLIWorkflowCore(ctx context.Context, coreSvc cliWorkflowCoreLifecycle, errOut io.Writer) {
+// the Core-owned repository. Shutdown retries share one bounded cleanup lifetime;
+// if workers cannot be joined, the repository stays open and the error identifies
+// unconfirmed shutdown. Callers join cleanup errors with the command result.
+func closeCLIWorkflowCore(ctx context.Context, coreSvc cliWorkflowCoreLifecycle) error {
 	if coreSvc == nil {
-		return
+		return nil
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	if started, ok := ctx.Value(cliShutdownStartedContextKey{}).(chan struct{}); ok {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cliShutdownWatchdog)
 	defer cancel()
-	if err := coreSvc.ShutdownWorkflowCoordinator(shutdownCtx); err != nil {
-		printCLIError(errOut, err)
+	var shutdownErr error
+	for range 3 {
+		attempt, stop := context.WithTimeout(shutdownCtx, 5*time.Second)
+		shutdownErr = coreSvc.ShutdownWorkflowCoordinator(attempt)
+		stop()
+		if shutdownErr == nil {
+			break
+		}
+		if shutdownCtx.Err() != nil {
+			break
+		}
+	}
+	if shutdownErr != nil {
+		return fmt.Errorf("%w; repository remains open: %w", errCLIShutdownUnconfirmed, shutdownErr)
 	}
 	if err := coreSvc.Close(); err != nil {
-		printCLIError(errOut, err)
+		return fmt.Errorf("close workflow repository: %w", err)
 	}
+	return nil
 }
 
-func runUpload(
+func runUploadDriver(
 	ctx context.Context,
 	originalArgs []string,
 	opts cliOptions,
 	visitedFlags map[string]bool,
 	paths []string,
 	streams cliIO,
-) error {
+) (result error) {
 	configFlagProvided := visitedFlags["config"]
 
 	if opts.ShowVersion {
@@ -205,6 +225,9 @@ func runUpload(
 	}
 
 	if opts.CreateAuth {
+		if opts.interactionMode() == api.InteractionModeUnattended {
+			return exitError(2, errors.New("--create-auth cannot prompt in unattended mode; use --uac to provide required input"))
+		}
 		dbPath, err := resolveExportDBPath(opts.ConfigPath, configFlagProvided)
 		if err != nil {
 			return exitError(1, err)
@@ -292,7 +315,7 @@ func runUpload(
 	// an earlier phase cannot starve a later one:
 	//   - phase 1 (setupCtx): core init + cleanup + delete-tmp (cliSetupTimeout)
 	//   - phase 2 (gatherCtx): queue gather (cliQueueGatherTimeout)
-	//   - phase 3 (per-disc): BDMV discovery (cliDiscDiscoveryTimeout per disc)
+	//   - phase 3: each workflow-owned preparation/upload item (cliItemTimeout)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ctx = withCLIUploadProgressLogger(ctx, logger)
@@ -318,7 +341,7 @@ func runUpload(
 	if err != nil {
 		return exitError(1, err)
 	}
-	defer closeCLIWorkflowCore(ctx, coreSvc, streams.errOut)
+	defer func() { result = errors.Join(result, closeCLIWorkflowCore(ctx, coreSvc)) }()
 
 	if opts.Cleanup {
 		deleted, err := purgeCLIStoredReleases(setupCtx, coreSvc)
@@ -368,7 +391,9 @@ func runUpload(
 	}
 
 	queueMode := strings.TrimSpace(opts.QueueName) != ""
-	return processCLIPreparationItems(ctx, batch, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) error {
+	return processCLIPreparationItems(ctx, batch, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) (itemResult error) {
+		itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
+		defer func() { publishCLIItemResult(streams, itemResult) }()
 		if opts.SiteCheck {
 			return runCLIWorkflowSiteCheck(itemCtx, coreSvc, opts, visitedFlags, item, screens, cfg, streams, logger)
 		}
@@ -514,6 +539,14 @@ func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {
 }
 
 func promptAuthValue(reader *bufio.Reader, stdout io.Writer, label string) (string, error) {
+	if output, ok := stdout.(*cliPresentationWriter); ok && output.terminal {
+		answer, err := output.ask(cliPrompt{
+			Kind:     cliPromptSecret,
+			Question: label,
+			Required: true,
+		})
+		return answer.Text, err
+	}
 	if _, err := fmt.Fprint(stdout, label); err != nil {
 		return "", fmt.Errorf("create auth: write prompt: %w", err)
 	}
@@ -529,8 +562,27 @@ func promptAuthValue(reader *bufio.Reader, stdout io.Writer, label string) (stri
 }
 
 func promptPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer, label string, operation string) (string, error) {
+	if output, ok := stdout.(*cliPresentationWriter); ok && output.terminal {
+		answer, err := output.ask(cliPrompt{
+			Kind:     cliPromptSecret,
+			Question: label,
+			Required: true,
+		})
+		return answer.Text, err
+	}
 	if _, err := fmt.Fprint(stdout, label); err != nil {
 		return "", fmt.Errorf("%s: write password prompt: %w", operation, err)
+	}
+	if input, ok := stdin.(*cliPlainInput); ok {
+		value, err := input.readPassword(stdout)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintln(stdout)
+		if value == "" {
+			return "", fmt.Errorf("%s: password cannot be empty", operation)
+		}
+		return value, nil
 	}
 	if file, ok := stdin.(*os.File); ok {
 		fd, ok := terminalFileDescriptor(file)

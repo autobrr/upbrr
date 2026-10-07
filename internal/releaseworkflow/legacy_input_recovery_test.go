@@ -151,7 +151,9 @@ func TestFinishLegacyInputRecoverySerializesHeartbeatCancellation(t *testing.T) 
 		ready <- struct{}{}
 		<-start
 		module.activeMu.Lock()
-		module.startActiveInputHeartbeat(recoveryCtx, legacy.Fence)
+		if err := module.startActiveInputHeartbeat(recoveryCtx, legacy.Fence); err != nil {
+			t.Error(err)
+		}
 		module.activeMu.Unlock()
 		close(heartbeatDone)
 	}()
