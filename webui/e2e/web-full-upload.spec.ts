@@ -2029,22 +2029,13 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
     for (const tracker of ["HDS", "PTP"]) {
       await page.getByRole("checkbox", { name: tracker }).check();
     }
-    // Changing trackers can prepare a new generation; review its language evidence.
-    await applyTrackerAnswers(page);
-    const questions = page
-      .getByRole("region", { name: "Tracker questions", exact: true })
-      .locator("details")
-      .filter({ has: page.locator("summary").filter({ hasText: /^PTP(?: ·|$)/ }) });
-    await questions.locator("summary").click();
-    // This synthetic programme has no foreign dialogue needing forced subtitles.
-    await questions
-      .getByRole("combobox", { name: "PTP forced English dialogue coverage *", exact: true })
-      .selectOption("not_required");
-    const applied = await applyTrackerAnswers(page);
-    expect(
-      applied.projections?.projections.find((projection) => projection.trackerId === "PTP"),
-    ).toMatchObject({ readiness: "ready", dupeReady: true });
     const checked = await runDuplicateCheck(page, "blocked");
+    const ptp = checked.projections?.projections.find(
+      (projection) => projection.trackerId === "PTP",
+    );
+    expect(ptp).toMatchObject({ readiness: "ready", dupeReady: true });
+    expect(ptp?.questionnaire ?? []).toHaveLength(0);
+    await expect(page.getByRole("button", { name: "Apply tracker answers" })).toHaveCount(0);
     expect(checked.dupes?.results.map((result) => result.trackerId).sort()).toEqual(["HDS", "PTP"]);
     expect(checked.dupes?.results.find((result) => result.trackerId === "PTP")).toMatchObject({
       status: "blocked",
