@@ -172,18 +172,18 @@ func TestBuildNamePrefersManualTitleAndYear(t *testing.T) {
 func TestOTWAudioMarkersUseProgrammeFactsAndPresentationControls(t *testing.T) {
 	t.Parallel()
 	original := api.LanguageFacts{
-OriginalLanguages: []string{"Japanese"},
- OriginalLanguagesKnown: true,
- ProgrammeLanguages: []string{"Japanese", "English"},
- ProgrammeStatus: api.MetadataEvidenceStatusComplete,
-}
+		OriginalLanguages:      []string{"Japanese"},
+		OriginalLanguagesKnown: true,
+		ProgrammeLanguages:     []string{"Japanese", "English"},
+		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+	}
 	for _, audio := range []string{"DD+ 5.1 Dual-Audio", "Dual-Audio DD+ 5.1", "Dubbed Dual-Audio DD+ 5.1"} {
 		meta := api.UploadSubject{
-Type: "REMUX",
- DiscType: "BDMV",
- Audio: audio,
- LanguageFacts: original,
-}
+			Type:          "REMUX",
+			DiscType:      "BDMV",
+			Audio:         audio,
+			LanguageFacts: original,
+		}
 		if got := otwAudio(meta); got != "Dual Audio DD+ 5.1" {
 			t.Fatalf("remux marker: %q", got)
 		}

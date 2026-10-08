@@ -890,89 +890,96 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByText("Tracker upload:")).not.toBeInTheDocument();
   });
 
-  it("collapses language guidance while keeping blockers and bypass notices visible", () => {
-    const evidenceWarnings = [
-      ["package_extensions", "Complete package file evidence is required."],
-      ["multi_season_package", "Complete season evidence is required."],
-      ["required_assets", "Complete prepared-asset evidence is required."],
-      ["single_file_folder", "Complete source-layout evidence is required."],
-      ["media_constraints", "Complete technical media evidence is required."],
-      ["metadata_poster", "Guidance — poster metadata is not available."],
-    ];
-    renderPage(
-      facetFor({
-        projections: {
-          projections: [
-            {
-              trackerId: "EXAMPLE",
-              displayName: "Example Tracker",
-              readiness: "ineligible",
-              policyDecisions: [
-                ...evidenceWarnings.map(([code, message]) => ({
-                  code,
-                  decision: "advisory",
-                  blocking: false,
-                  disposition: "advisory",
-                  evidenceStatus: "unavailable",
-                  message,
-                })),
-                {
-                  code: "language_track_metadata",
-                  decision: "advisory",
-                  blocking: false,
-                  disposition: "advisory",
-                  evidenceStatus: "partial",
-                  message: "Guidance — review missing track titles.",
-                },
-                {
-                  code: "guidance_release_history",
-                  decision: "advisory",
-                  blocking: false,
-                  disposition: "advisory",
-                  evidenceStatus: "partial",
-                  message: "Guidance — review release history.",
-                },
-                {
-                  code: "language_original",
-                  decision: "ineligible",
-                  blocking: true,
-                  disposition: "strict",
-                  message: "Original-language audio is required.",
-                },
-                {
-                  code: "language_subtitles",
-                  decision: "bypassed",
-                  blocking: false,
-                  disposition: "waivable",
-                  message: "English subtitles are required.",
-                },
-              ],
-            },
-          ],
-        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
-      }),
-    );
+  it.each(["guidance_release_history", "guidance_sp_pack_source_history"])(
+    "collapses language guidance and %s while keeping safety notices visible",
+    (guidanceCode) => {
+      const evidenceWarnings = [
+        ["package_extensions", "Complete package file evidence is required."],
+        ["multi_season_package", "Complete season evidence is required."],
+        ["required_assets", "Complete prepared-asset evidence is required."],
+        ["single_file_folder", "Complete source-layout evidence is required."],
+        ["media_constraints", "Complete technical media evidence is required."],
+        ["metadata_poster", "Guidance — poster metadata is not available."],
+      ];
+      renderPage(
+        facetFor({
+          projections: {
+            projections: [
+              {
+                trackerId: "EXAMPLE",
+                displayName: "Example Tracker",
+                readiness: "ineligible",
+                policyDecisions: [
+                  ...evidenceWarnings.map(([code, message]) => ({
+                    code,
+                    decision: "advisory",
+                    blocking: false,
+                    disposition: "advisory",
+                    evidenceStatus: "unavailable",
+                    message,
+                  })),
+                  {
+                    code: "language_track_metadata",
+                    decision: "advisory",
+                    blocking: false,
+                    disposition: "advisory",
+                    evidenceStatus: "partial",
+                    message: "Guidance — review missing track titles.",
+                  },
+                  {
+                    code: guidanceCode,
+                    decision: "advisory",
+                    blocking: false,
+                    disposition: "advisory",
+                    evidenceStatus: "partial",
+                    message: "Guidance — review release history.",
+                  },
+                  {
+                    code: "language_original",
+                    decision: "ineligible",
+                    blocking: true,
+                    disposition: "strict",
+                    message: "Original-language audio is required.",
+                  },
+                  {
+                    code: "language_subtitles",
+                    decision: "bypassed",
+                    blocking: false,
+                    disposition: "waivable",
+                    message: "English subtitles are required.",
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        }),
+      );
 
-    const guidance = screen.getByLabelText("EXAMPLE guidance warnings");
-    const summary = within(guidance).getByText("Guidance (2)", { selector: "summary" });
-    const warning = within(guidance).getByText("Warning: Guidance — review missing track titles.");
-    expect(guidance).not.toHaveAttribute("open");
-    expect(warning).not.toBeVisible();
-    expect(screen.getByText("Original-language audio is required.")).toBeVisible();
-    expect(
-      screen.getByText("Debug mode bypassed this rule: English subtitles are required."),
-    ).toBeVisible();
-    for (const [, message] of evidenceWarnings) {
-      expect(screen.queryByText(`Warning: ${message}`)).not.toBeInTheDocument();
-    }
-    fireEvent.click(summary);
-    expect(guidance).toHaveAttribute("open");
-    expect(warning).toBeVisible();
-    expect(within(guidance).getByText("Warning: Guidance — review release history.")).toBeVisible();
-    fireEvent.click(summary);
-    expect(guidance).not.toHaveAttribute("open");
-    expect(warning).not.toBeVisible();
-  });
+      const guidance = screen.getByLabelText("EXAMPLE guidance warnings");
+      const summary = within(guidance).getByText("Guidance (2)", { selector: "summary" });
+      const warning = within(guidance).getByText(
+        "Warning: Guidance — review missing track titles.",
+      );
+      expect(guidance).not.toHaveAttribute("open");
+      expect(warning).not.toBeVisible();
+      expect(screen.getByText("Original-language audio is required.")).toBeVisible();
+      expect(
+        screen.getByText("Debug mode bypassed this rule: English subtitles are required."),
+      ).toBeVisible();
+      for (const [, message] of evidenceWarnings) {
+        expect(screen.queryByText(`Warning: ${message}`)).not.toBeInTheDocument();
+      }
+      fireEvent.click(summary);
+      expect(guidance).toHaveAttribute("open");
+      expect(warning).toBeVisible();
+      expect(
+        within(guidance).getByText("Warning: Guidance — review release history."),
+      ).toBeVisible();
+      fireEvent.click(summary);
+      expect(guidance).not.toHaveAttribute("open");
+      expect(warning).not.toBeVisible();
+    },
+  );
 
   it.each(["OE", "DVL", "OTW", "AITHER", "HHD"])(
     "uses the same warning acknowledgement toggle for %s",

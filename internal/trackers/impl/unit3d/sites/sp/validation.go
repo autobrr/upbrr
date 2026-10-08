@@ -18,7 +18,7 @@ import (
 // and resolution checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-sp-policy-v6",
+		ID:    "unit3d-sp-policy-v7",
 		Check: checkRequirements,
 	}
 }

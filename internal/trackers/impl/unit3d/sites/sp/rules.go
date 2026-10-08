@@ -125,8 +125,8 @@ func packUniformityFailures(subject api.TrackerValidationSubject) []api.RuleFail
 	var failures []api.RuleFailure
 	if evidence.sourceUnknown {
 		failures = append(failures, trackers.NewEvidenceRuleFailure(
-			"sp_pack_source_history",
-			"SP requires consistent pack sources and encoding characteristics unless differences are genuine source variation and explained in the description. Source and encoding history could not be established from the inspected reports; check the actual sources, since filenames and missing labels are not proof.",
+			"guidance_sp_pack_source_history",
+			"Guidance — SP requires consistent pack sources and encoding characteristics unless differences are genuine source variation and explained in the description. Source and encoding history could not be established from the inspected reports; check the actual sources, since filenames and missing labels are not proof.",
 			api.RuleDispositionAdvisory,
 			api.MetadataEvidenceStatusPartial,
 		))

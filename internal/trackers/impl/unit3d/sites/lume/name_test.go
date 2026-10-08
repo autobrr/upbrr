@@ -9,6 +9,125 @@ import (
 	"testing"
 )
 
+func TestLumeLanguageMarkersCountKnownProgrammeLanguages(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		languages []string
+		wantAudio string
+	}{
+		{
+			name:      "unknown language is not a second language",
+			languages: []string{"Japanese", "Unknown language"},
+			wantAudio: "DD 2.0",
+		},
+		{
+			name:      "undetermined language is not a second language",
+			languages: []string{"Japanese", "und"},
+			wantAudio: "DD 2.0",
+		},
+		{
+			name:      "aggregate label is not a second language",
+			languages: []string{"Japanese", "mul"},
+			wantAudio: "DD 2.0",
+		},
+		{
+			name:      "original and English remain dual with unknown language",
+			languages: []string{"Japanese", "English", "Unknown language"},
+			wantAudio: "DD 2.0 Dual-Audio",
+		},
+		{
+			name:      "aliases do not inflate the language count",
+			languages: []string{"Japanese", "jpn", "English", "eng"},
+			wantAudio: "DD 2.0 Dual-Audio",
+		},
+		{
+			name:      "unknown language leaves non-English composition unresolved",
+			languages: []string{"Japanese", "German", "Unknown language"},
+			wantAudio: "DD 2.0",
+		},
+		{
+			name:      "two established non-English languages remain multi",
+			languages: []string{"Japanese", "German"},
+			wantAudio: "Multi DD 2.0",
+		},
+		{
+			name:      "three established languages remain multi",
+			languages: []string{"Japanese", "English", "German"},
+			wantAudio: "Multi DD 2.0",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			media := api.MediaFacts{
+				OriginalLanguage:      "Japanese",
+				TrackCoverageComplete: true,
+			}
+			for _, language := range test.languages {
+				media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleProgramme,
+					Languages: []string{language},
+				})
+			}
+			subject := lumeSubject(t, api.ReleaseNameRequest{
+				Category: "MOVIE",
+				Type:     "WEBDL",
+				Title:    "Example",
+				Year:     2026,
+				Audio:    "DD 2.0",
+				Tag:      "-GRP",
+			})
+			subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+			if got, want := lumeName(t, subject, nil), "Example 2026 WEB-DL "+test.wantAudio+"-GRP"; got != want {
+				t.Fatalf("programme name = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLumeLanguageMarkersPreserveManualAndDiscNames(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		manual      bool
+		releaseType string
+		discType    string
+	}{
+		{
+			name:        "manual marker",
+			manual:      true,
+			releaseType: "WEBDL",
+		},
+		{
+			name:        "full disc",
+			releaseType: "DISC",
+			discType:    "BDMV",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := lumeSubject(t, api.ReleaseNameRequest{
+				Category: "MOVIE",
+				Type:     test.releaseType,
+				DiscType: test.discType,
+				Title:    "Example",
+				Year:     2026,
+				Audio:    "Dual-Audio DD 2.0",
+				Tag:      "-GRP",
+			})
+			subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+				OriginalLanguage: "Japanese",
+				AudioLanguages:   []string{"Japanese", "Unknown language"},
+			})
+			for index := range subject.GeneratedName.Components {
+				if subject.GeneratedName.Components[index].Role == api.NameRoleDualAudio {
+					subject.GeneratedName.Components[index].Manual = test.manual
+				}
+			}
+			if got := lumeName(t, subject, nil); got != subject.ReleaseName {
+				t.Fatalf("preserved name = %q, want %q", got, subject.ReleaseName)
+			}
+		})
+	}
+}
+
 func TestLumeMultiNameRequiresConsistentProgrammeFacts(t *testing.T) {
 	media := api.MediaFacts{
 		OriginalLanguage:         "Japanese",
@@ -103,7 +222,7 @@ func TestLumeOmitsExactHi10PWithoutOverwritingManualComponent(t *testing.T) {
 }
 func TestLumePolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/lume/v3" || p.Structured == nil {
+	if p.ID != "unit3d/lume/v4" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }

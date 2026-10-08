@@ -84,19 +84,19 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 		fences.records[identity.Digest+"|"+site] = api.SubmissionFenceRecord{Status: api.WorkflowEffectStatusSucceeded, ConfirmedAt: new(time.Now().UTC())}
 	}
 	languageFacts := api.LanguageFacts{
-		OriginalLanguages: []string{"French"},
- OriginalLanguagesKnown: true,
-		ProgrammeLanguages: []string{"French"},
- ProgrammeStatus: api.MetadataEvidenceStatusComplete,
-		SubtitleStatus: api.MetadataEvidenceStatusComplete,
- PrimaryAudioTrackID: "audio-1",
+		OriginalLanguages:      []string{"French"},
+		OriginalLanguagesKnown: true,
+		ProgrammeLanguages:     []string{"French"},
+		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+		SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+		PrimaryAudioTrackID:    "audio-1",
 		Tracks: []api.MediaTrackFacts{{
-ID: "audio-1",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
- Languages: []string{"French"},
- Default: true,
-}},
+			ID:        "audio-1",
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Languages: []string{"French"},
+			Default:   true,
+		}},
 	}
 	preparations := 0
 	preparer := releaseworkflow.ReleasePreparerFunc{
@@ -239,12 +239,12 @@ ID: "audio-1",
 		if trackerID == "PTP" {
 			answers["subtitle_tags"] = tags
 			languageSubject := api.TrackerValidationSubject{
-Tracker: "PTP",
- SourcePath: sourcePath,
- Source: "BluRay",
- Type: "ENCODE",
- LanguageFacts: languageFacts,
-}
+				Tracker:       "PTP",
+				SourcePath:    sourcePath,
+				Source:        "BluRay",
+				Type:          "ENCODE",
+				LanguageFacts: languageFacts,
+			}
 			answers[trackers.LanguageQuestionKey(languageSubject, "english_subtitle_manager")] = new("available")
 			answers[trackers.LanguageQuestionKey(languageSubject, "forced_english_dialogue")] = new("not_required")
 		}

@@ -514,7 +514,7 @@ func TestPackMediaProducerWarnsAboutUnmeasuredSPSource(t *testing.T) {
 		}
 	}
 	if !slices.ContainsFunc(failures, func(failure api.RuleFailure) bool {
-		return failure.Rule == "sp_pack_source_history" && failure.Disposition == api.RuleDispositionAdvisory &&
+		return failure.Rule == "guidance_sp_pack_source_history" && failure.Disposition == api.RuleDispositionAdvisory &&
 			failure.EvidenceStatus == api.MetadataEvidenceStatusPartial && !trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false)
 	}) {
 		t.Fatalf("unknown source provenance lost passive guidance: %+v", failures)

@@ -20,41 +20,41 @@ import (
 func TestWorkflowPackWarningUsesExistingBoundDuplicateReview(t *testing.T) {
 	evaluation := dupechecking.Evaluate(
 		api.TrackerDuplicateTarget{
-Category: "TV",
- Type: "WEBDL",
- Season: 1,
- Pack: true,
-},
+			Category: "TV",
+			Type:     "WEBDL",
+			Season:   1,
+			Pack:     true,
+		},
 		[]dupechecking.TrackerCandidate{{
-ID: "episode",
- Name: "Example Episode",
- Category: "TV",
- Type: "WEBDL",
- Season: 1,
- Episode: 2,
-}},
+			ID:       "episode",
+			Name:     "Example Episode",
+			Category: "TV",
+			Type:     "WEBDL",
+			Season:   1,
+			Episode:  2,
+		}},
 		trackers.DupePolicy{
-ID: "review/duplicate/v1",
- EvidenceID: "reviewed-pack-rules",
- PackContainmentRequiresReview: true,
-},
+			ID:                            "review/duplicate/v1",
+			EvidenceID:                    "reviewed-pack-rules",
+			PackContainmentRequiresReview: true,
+		},
 		dupechecking.SearchEvidence{Complete: true, WorkScope: dupechecking.WorkScopeProviderID},
 	)
 	item := evaluation.Candidates[0]
 	result := api.DupeCheckResult{
-Status: "completed",
- HasDupes: evaluation.RequiresAction,
-		Search:      api.DupeSearchEvidence{
-Complete: true,
- CandidateCount: 1,
- WorkScope: string(dupechecking.WorkScopeProviderID),
-},
+		Status:   "completed",
+		HasDupes: evaluation.RequiresAction,
+		Search: api.DupeSearchEvidence{
+			Complete:       true,
+			CandidateCount: 1,
+			WorkScope:      string(dupechecking.WorkScopeProviderID),
+		},
 		Evaluations: []api.DupeCandidateEvaluation{{
-ID: item.Candidate.ID,
- Name: item.Candidate.Name,
- Relation: item.Relation,
- Reasons: item.Reasons,
-}},
+			ID:       item.Candidate.ID,
+			Name:     item.Candidate.Name,
+			Relation: item.Relation,
+			Reasons:  item.Reasons,
+		}},
 	}
 	assessment := api.TrackerDupeAssessment{TrackerID: "SP", Matches: publicDupeMatches(result)}
 	setWorkflowDupeOutcome(&assessment, result)

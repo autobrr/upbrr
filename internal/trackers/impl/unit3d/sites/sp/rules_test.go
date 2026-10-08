@@ -74,7 +74,7 @@ func TestSPUnknownPackSourceIsWarnOnly(t *testing.T) {
 		meta := collectedPackSubject()
 		answerPackQuestion(&meta, "pack_source_consistency", answer)
 		failures := packUniformityFailures(api.NewTrackerValidationSubject(meta, "SP"))
-		if len(failures) != 1 || failures[0].Rule != "sp_pack_source_history" || failures[0].Disposition != api.RuleDispositionAdvisory || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+		if len(failures) != 1 || failures[0].Rule != "guidance_sp_pack_source_history" || failures[0].Disposition != api.RuleDispositionAdvisory || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
 			t.Fatalf("source history must remain a passive unknown with answer %q: %#v", answer, failures)
 		}
 		if trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) {
