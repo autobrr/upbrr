@@ -392,3 +392,78 @@ func TestResolveSearchTitlePrefersFinalizedTitle(t *testing.T) {
 		t.Fatalf("source path must never become a search title, got %q", got)
 	}
 }
+
+func TestRenameContentNamesGenericPackFolderAfterTheRelease(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Audio:       "Dual-Audio AAC 2.0",
+		Channels:    "2.0",
+		ReleaseName: "Example Show AKA Ekusanpuru S03 1080p Dual-Audio AAC 2.0 AVC",
+	}
+	tests := []struct {
+		name string
+		in   string
+		kind trackers.ContentNameKind
+		want string
+	}{
+		{
+name: "generic pack folder",
+ in: "Season 03",
+ kind: trackers.ContentRootFolderName,
+ want: "Example.Show.AKA.Ekusanpuru.S03.1080p.Dual-Audio.AAC.2.0.AVC",
+},
+		{
+name: "show-name folder without release info",
+ in: "Example Show",
+ kind: trackers.ContentRootFolderName,
+ want: "Example.Show.AKA.Ekusanpuru.S03.1080p.Dual-Audio.AAC.2.0.AVC",
+},
+		{
+name: "release-like folder is kept",
+ in: "Example.Show.S03.1080p.WEB-DL.AAC2.0.H.264-GRP",
+ kind: trackers.ContentRootFolderName,
+ want: "Example.Show.S03.1080p.WEB-DL.AAC2.0.H.264-GRP",
+},
+		{
+name: "files keep the file rule",
+ in: "Season 03",
+ kind: trackers.ContentFileName,
+ want: "Season 03",
+},
+		{
+name: "subfolders keep the file rule",
+ in: "Season 03",
+ kind: trackers.ContentSubfolderName,
+ want: "Season 03",
+},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := renameContent(meta, tt.in, tt.kind)
+			if got != tt.want {
+				t.Fatalf("renameContent(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			if again := renameContent(meta, got, tt.kind); again != got {
+				t.Fatalf("renameContent is not idempotent: %q then %q", got, again)
+			}
+		})
+	}
+
+	// Without a release name a generic folder keeps its name.
+	if got := renameContent(api.UploadSubject{}, "Season 03", trackers.ContentRootFolderName); got != "Season 03" {
+		t.Fatalf("without a release name = %q", got)
+	}
+}
+
+func TestReleaseFolderNameDropsUnsafeCharacters(t *testing.T) {
+	t.Parallel()
+
+	if got := releaseFolderName(` Example: Show / Part 2? "Cut" <1080p> | AAC 2.0 `); got != "Example.Show.Part.2.Cut.1080p.AAC.2.0" {
+		t.Fatalf("releaseFolderName = %q", got)
+	}
+	if got := releaseFolderName("   "); got != "" {
+		t.Fatalf("blank release name = %q", got)
+	}
+}

@@ -134,7 +134,7 @@ func TestProfileDeclaresContentRenamer(t *testing.T) {
 	if renamer == nil {
 		t.Fatal("ASC must declare a content renamer")
 	}
-	got := renamer(api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}, "Example.Show.S13E05.NORDiC.1080p.DSNP.WEB-DL.H.264-GRP.mkv")
+	got := renamer(api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}, "Example.Show.S13E05.NORDiC.1080p.DSNP.WEB-DL.H.264-GRP.mkv", trackers.ContentFileName)
 	if want := "Example.Show.S13E05.NORDiC.1080p.DSNP.WEB-DL.DDP5.1.H.264-GRP.mkv"; got != want {
 		t.Fatalf("renamer = %q, want %q", got, want)
 	}
@@ -151,8 +151,8 @@ func TestContentRenamerIsIdempotent(t *testing.T) {
 		"Example.Movie.2020.WEB-DL.H.264-GRP.mkv",
 		"Cover.jpg",
 	} {
-		once := renamer(meta, name)
-		if twice := renamer(meta, once); twice != once {
+		once := renamer(meta, name, trackers.ContentFileName)
+		if twice := renamer(meta, once, trackers.ContentFileName); twice != once {
 			t.Errorf("renamer is not idempotent for %q: %q then %q", name, once, twice)
 		}
 	}
