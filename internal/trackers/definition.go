@@ -509,6 +509,38 @@ type UploadArtifactPolicy struct {
 	RequireAnnounce bool
 }
 
+// ContentNameKind tells a ContentRenamer which part of the torrent a name is.
+type ContentNameKind int
+
+const (
+	// ContentFileName is a file: a path's last component, or the root name of a
+	// single-file torrent.
+	ContentFileName ContentNameKind = iota
+	// ContentRootFolderName is the root folder of a multi-file torrent, which a
+	// client shows as the torrent name and uses as the folder it seeds from.
+	ContentRootFolderName
+	// ContentSubfolderName is a folder below the root.
+	ContentSubfolderName
+)
+
+// ContentRenamer maps one torrent path component to the name a tracker
+// requires, given the exact upload subject and the component's kind. It must be
+// deterministic and side-effect free, return name unchanged when no rename
+// applies, and return a single legal path component (no separator, never empty).
+type ContentRenamer func(meta api.UploadSubject, name string, kind ContentNameKind) string
+
+// ContentRenamerProvider declares tracker-owned content naming for the
+// tracker's own upload torrent artifact. It requires an upload artifact policy,
+// which is what makes the artifact get written. Piece hashes are unaffected;
+// prepareTrackerUploadTorrentWithRegistry writes a separate artifact, so the
+// shared base torrent used by other trackers keeps its original names. It is a
+// separate provider because UploadArtifactPolicy is fingerprinted and compared
+// with ==, which a func field would break.
+type ContentRenamerProvider interface {
+	// ContentRenamer returns the tracker's content renamer, or nil.
+	ContentRenamer() ContentRenamer
+}
+
 // UploadArtifactPolicyProvider declares tracker-owned personalization policy.
 type UploadArtifactPolicyProvider interface {
 	// UploadArtifactPolicy returns tracker torrent personalization settings.
@@ -922,6 +954,8 @@ type Descriptor struct {
 	Metadata *TrackerMetadataPolicy
 	// UploadArtifact contains optional torrent personalization settings.
 	UploadArtifact *UploadArtifactPolicy
+	// ContentRenamer is nil when the tracker does not rename torrent content.
+	ContentRenamer ContentRenamer
 	// DupePolicy contains optional duplicate comparison settings.
 	DupePolicy *DupePolicy
 	// AudioPolicy contains optional audio-language restrictions.

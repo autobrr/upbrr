@@ -40,6 +40,8 @@ func TestDefinitionBuildUploadDryRunBlockedWithoutCookies(t *testing.T) {
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "movie.mkv"),
 			TorrentPath: torrentPath,
+			Type:        "WEBDL",
+			Container:   "mkv",
 			Release: api.ReleaseInfo{
 				Title:      "Movie",
 				Year:       2024,
@@ -76,7 +78,7 @@ func TestDefinitionBuildUploadDryRunRejectsMissingQuestionnaireMetadata(t *testi
 	if err := os.MkdirAll(cookieDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	content := "# Netscape HTTP Cookie File\n.cliente.amigos-share.club\tTRUE\t/\tTRUE\t0\tsession\tcookievalue\n"
+	content := "# Netscape HTTP Cookie File\n.amigos-share.club\tTRUE\t/\tTRUE\t0\tsession\tcookievalue\n"
 	if err := os.WriteFile(filepath.Join(cookieDir, testCookieFileName), []byte(content), 0o600); err != nil {
 		t.Fatalf("write cookie: %v", err)
 	}
@@ -90,6 +92,8 @@ func TestDefinitionBuildUploadDryRunRejectsMissingQuestionnaireMetadata(t *testi
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "movie.mkv"),
 			TorrentPath: torrentPath,
+			Type:        "WEBDL",
+			Container:   "mkv",
 			Release: api.ReleaseInfo{
 				Title:      "Movie",
 				Year:       2024,
@@ -120,5 +124,36 @@ func TestBuildQuestionnaireForMissingMetadata(t *testing.T) {
 	}
 	if got := len(questionnaire.Fields); got != 2 {
 		t.Fatalf("expected 2 questionnaire fields, got %d", got)
+	}
+}
+
+func TestProfileDeclaresContentRenamer(t *testing.T) {
+	t.Parallel()
+
+	renamer := New().ContentRenamer()
+	if renamer == nil {
+		t.Fatal("ASC must declare a content renamer")
+	}
+	got := renamer(api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}, "Example.Show.S13E05.NORDiC.1080p.DSNP.WEB-DL.H.264-GRP.mkv", trackers.ContentFileName)
+	if want := "Example.Show.S13E05.NORDiC.1080p.DSNP.WEB-DL.DDP5.1.H.264-GRP.mkv"; got != want {
+		t.Fatalf("renamer = %q, want %q", got, want)
+	}
+}
+
+func TestContentRenamerIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	renamer := New().ContentRenamer()
+	meta := api.UploadSubject{Audio: "DTS-HD MA 5.1", Channels: "5.1"}
+	for _, name := range []string{
+		"Example.Movie.2020.1080p.BluRay.x264-GRP.mkv",
+		"Example.Show.S01.1080p.WEB-DL.H.264-GRP",
+		"Example.Movie.2020.WEB-DL.H.264-GRP.mkv",
+		"Cover.jpg",
+	} {
+		once := renamer(meta, name, trackers.ContentFileName)
+		if twice := renamer(meta, once, trackers.ContentFileName); twice != once {
+			t.Errorf("renamer is not idempotent for %q: %q then %q", name, once, twice)
+		}
 	}
 }

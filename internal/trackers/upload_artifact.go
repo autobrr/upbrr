@@ -50,7 +50,12 @@ func prepareTrackerUploadTorrentWithRegistry(
 	if err != nil {
 		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent path: %w", normalizeTrackerName(tracker), err)
 	}
-	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, source); err != nil {
+	var rename func(string, ContentNameKind) string
+	if renamer, ok := registry.LookupContentRenamer(tracker); ok {
+		subject := meta
+		rename = func(name string, kind ContentNameKind) string { return renamer(subject, name, kind) }
+	}
+	if err := writePersonalizedTorrent(basePath, artifactPath, announce, source, rename); err != nil {
 		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent artifact: %w", normalizeTrackerName(tracker), err)
 	}
 	meta.TorrentPath = artifactPath
@@ -223,7 +228,7 @@ func WriteUploadTorrent(sourcePath string, outputPath string) error {
 		return fmt.Errorf("trackers: load upload torrent: %w: %w", errInvalidUploadTorrent, err)
 	}
 	cleanTorrentMeta(torrentMeta)
-	if err := rewriteTorrentInfoSource(torrentMeta, "", "upload torrent"); err != nil {
+	if err := rewriteTorrentInfo(torrentMeta, "", nil, "upload torrent"); err != nil {
 		return err
 	}
 	return writeTorrentMeta(*torrentMeta, outputPath, "upload torrent")
@@ -233,13 +238,19 @@ func WriteUploadTorrent(sourcePath string, outputPath string) error {
 // announce and source values plus canonical upload metadata, and atomically writes
 // outputPath with mode 0600.
 func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string) error {
+	return writePersonalizedTorrent(sourcePath, outputPath, announceURL, source, nil)
+}
+
+// writePersonalizedTorrent is WritePersonalizedTorrent plus an optional rename
+// applied to the torrent root name and every file path component.
+func writePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string, rename func(string, ContentNameKind) string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
 		return fmt.Errorf("trackers: load torrent artifact: %w", err)
 	}
 	cleanTorrentMeta(torrentMeta)
 
-	if err := rewriteTorrentInfoSource(torrentMeta, source, "torrent artifact"); err != nil {
+	if err := rewriteTorrentInfo(torrentMeta, source, rename, "torrent artifact"); err != nil {
 		return err
 	}
 
@@ -251,18 +262,105 @@ func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 	return writeTorrentMeta(*torrentMeta, outputPath, "torrent artifact")
 }
 
-func rewriteTorrentInfoSource(torrentMeta *metainfo.MetaInfo, source string, context string) error {
+// rewriteTorrentInfo sets the info source and, when rename is non-nil, renames
+// the root name and each file path component. Names are not part of the piece
+// hashes, so content and piece layout are untouched. Hybrid v2 torrents also
+// carry a file tree that is not rewritten, so they are rejected only when the
+// rename actually changes a name; an already-compliant hybrid torrent is
+// accepted unchanged.
+func rewriteTorrentInfo(torrentMeta *metainfo.MetaInfo, source string, rename func(string, ContentNameKind) string, context string) error {
 	info, err := torrentMeta.UnmarshalInfo()
 	if err != nil {
 		return fmt.Errorf("trackers: unmarshal %s info: %w", context, err)
 	}
 	info.Source = strings.TrimSpace(source)
+	if rename != nil {
+		changed, err := renameTorrentInfoContent(&info, rename)
+		if err != nil {
+			return fmt.Errorf("trackers: rename %s content: %w", context, err)
+		}
+		if changed && info.HasV2() {
+			return fmt.Errorf("trackers: rename %s content: v2 torrents are not supported", context)
+		}
+	}
 	infoBytes, err := bencode.Marshal(info)
 	if err != nil {
 		return fmt.Errorf("trackers: marshal %s info: %w", context, err)
 	}
 	torrentMeta.InfoBytes = infoBytes
 	return nil
+}
+
+// renameTorrentInfoContent applies rename to the root name and every file path
+// component of the info dictionary, including the name.utf-8 and path.utf-8
+// variants, telling the renamer each component's kind, and reports whether any
+// name changed. Results are memoised because folder names repeat across every
+// file. It rejects any result that is not a single legal path component, so a
+// renamer can never alter the torrent's directory layout.
+func renameTorrentInfoContent(info *metainfo.Info, rename func(string, ContentNameKind) string) (bool, error) {
+	type cacheKey struct {
+		name string
+		kind ContentNameKind
+	}
+	changed := false
+	cache := make(map[cacheKey]string)
+	renameComponent := func(name string, kind ContentNameKind) (string, error) {
+		key := cacheKey{name: name, kind: kind}
+		renamed, ok := cache[key]
+		if !ok {
+			renamed = rename(name, kind)
+			if renamed == "" || renamed == "." || renamed == ".." || strings.ContainsAny(renamed, `/\`) {
+				return "", fmt.Errorf("invalid renamed path component %q", renamed)
+			}
+			cache[key] = renamed
+		}
+		changed = changed || renamed != name
+		return renamed, nil
+	}
+	renameParts := func(parts []string) ([]string, error) {
+		// An absent path.utf-8 must stay absent: an empty list would be encoded
+		// as an empty UTF-8 path, which clients and trackers prefer over path.
+		if len(parts) == 0 {
+			return parts, nil
+		}
+		out := make([]string, len(parts))
+		for i, part := range parts {
+			kind := ContentSubfolderName
+			if i == len(parts)-1 {
+				kind = ContentFileName
+			}
+			renamed, err := renameComponent(part, kind)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = renamed
+		}
+		return out, nil
+	}
+
+	rootKind := ContentFileName
+	if len(info.Files) > 0 {
+		rootKind = ContentRootFolderName
+	}
+	var err error
+	if info.Name, err = renameComponent(info.Name, rootKind); err != nil {
+		return false, err
+	}
+	if info.NameUtf8 != "" {
+		if info.NameUtf8, err = renameComponent(info.NameUtf8, rootKind); err != nil {
+			return false, err
+		}
+	}
+	for i := range info.Files {
+		file := &info.Files[i]
+		if file.Path, err = renameParts(file.Path); err != nil {
+			return false, err
+		}
+		if file.PathUtf8, err = renameParts(file.PathUtf8); err != nil {
+			return false, err
+		}
+	}
+	return changed, nil
 }
 
 func cleanTorrentMeta(torrentMeta *metainfo.MetaInfo) {

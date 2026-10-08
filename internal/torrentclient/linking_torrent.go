@@ -16,7 +16,10 @@ import (
 
 	"github.com/autobrr/go-torrent/metainfo"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -399,4 +402,77 @@ func rollbackTorrentLinkPlan(trackerDir string, created []string, planErr error)
 		return planErr
 	}
 	return fmt.Errorf("rollback failed: %w", errors.Join(append([]error{planErr}, rollbackErrs...)...))
+}
+
+const (
+	renamedContentNeedsLinkStaging = "link staging is not active or could not be used; set linking to hardlink, symlink, or reflink with a linked_folder for this client"
+	renamedContentNeedsQbit        = "watch-folder clients cannot stage renamed files; use a qBittorrent client with link staging for this tracker"
+)
+
+// requireRenamedContentAccess rejects an add that would reference files that do
+// not exist: the tracker renames its torrent content and the client has no way
+// to stage the renamed files. It fails closed. When the torrent layout cannot
+// be compared with the source, the add is refused as well, because that is
+// exactly the case (for example ambiguous same-size files) where the renamed
+// names cannot be proven to exist. Trackers without a rename policy and
+// torrents without a local file are unaffected.
+func (s *Service) requireRenamedContentAccess(
+	ctx context.Context,
+	clientName string,
+	mode string,
+	meta api.ClientSubject,
+	torrent api.TorrentResult,
+	remedy string,
+) error {
+	tracker := strings.TrimSpace(torrent.Tracker)
+	if s.renamesContent == nil || !s.renamesContent(tracker) || strings.TrimSpace(torrent.Path) == "" {
+		return nil
+	}
+	logger := logging.FromContext(ctx, s.logger)
+	differs, err := torrentLayoutDiffersFromSource(ctx, torrent.Path, meta)
+	if err != nil {
+		logger.Warnf(
+			"clients: renamed tracker torrent layout could not be verified client=%s tracker=%s mode=%q decision=abort reason=%s",
+			clientName,
+			tracker,
+			mode,
+			redaction.RedactValue(err.Error(), nil),
+		)
+		return fmt.Errorf(
+			"clients: %s: cannot verify renamed files for tracker %s (%s): %w",
+			clientName,
+			strings.ToUpper(tracker),
+			redaction.RedactValue(err.Error(), nil),
+			internalerrors.ErrInvalidInput,
+		)
+	}
+	if !differs {
+		return nil
+	}
+	logger.Warnf("clients: renamed tracker torrent needs staged files client=%s tracker=%s mode=%q decision=abort", clientName, tracker, mode)
+	return fmt.Errorf("clients: %s: tracker %s requires renamed files but %s: %w", clientName, strings.ToUpper(tracker), remedy, internalerrors.ErrInvalidInput)
+}
+
+// torrentLayoutDiffersFromSource reports whether the client would not find the
+// data at the original location: the torrent root differs from the base name of
+// the prepared source, or any file is not matched to the source by exact
+// relative path and size.
+func torrentLayoutDiffersFromSource(ctx context.Context, torrentPath string, meta api.ClientSubject) (bool, error) {
+	plan, err := buildTorrentLinkPlan(ctx, torrentPath, meta)
+	if err != nil {
+		return false, err
+	}
+	source, err := sourcePathForQbitSavePath(meta)
+	if err != nil {
+		return false, err
+	}
+	if plan.root != filepath.Base(source) {
+		return true, nil
+	}
+	for _, file := range plan.files {
+		if file.match != "path_size" {
+			return true, nil
+		}
+	}
+	return false, nil
 }

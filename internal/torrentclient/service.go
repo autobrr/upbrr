@@ -38,6 +38,9 @@ type Service struct {
 	logger          api.Logger
 	trackerPatterns map[string]trackerPattern
 	trackerPriority []string
+	// renamesContent reports whether a tracker renames its torrent content, so
+	// its torrents need staged files to be found by the client.
+	renamesContent func(tracker string) bool
 }
 
 // qbit injection HTTP uses a short, single-attempt client so a dead WebUI or
@@ -104,6 +107,10 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 		logger:          logger,
 		trackerPatterns: buildTrackerIDPatterns(registry),
 		trackerPriority: registry.Priority(),
+	}
+	service.renamesContent = func(tracker string) bool {
+		_, ok := registry.LookupContentRenamer(tracker)
+		return ok
 	}
 	if len(liveTest) > 0 {
 		service.liveTest = liveTest[0]
@@ -205,6 +212,9 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 			logger.Debugf("clients: skipping disabled client %s", name)
 			continue
 		case "watch":
+			if err := s.requireRenamedContentAccess(ctx, name, "watch", meta, torrent, renamedContentNeedsQbit); err != nil {
+				return err
+			}
 			if err := s.injectWatchFolder(ctx, name, client.WatchFolder, torrent.Path); err != nil {
 				return err
 			}
@@ -395,6 +405,9 @@ func (s *Service) injectQbit(
 			staging.SavePath,
 		)
 	} else {
+		if err := s.requireRenamedContentAccess(ctx, name, client.LinkingMode(), meta, torrent, renamedContentNeedsLinkStaging); err != nil {
+			return err
+		}
 		// Without link staging, save beside the prepared source unless a
 		// local_path/remote_path pair maps that location to the client host.
 		savePath, mapped, err := qbitSavePathForSource(meta, client.LocalPath, client.RemotePath)

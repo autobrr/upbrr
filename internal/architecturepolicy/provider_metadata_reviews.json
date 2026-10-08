@@ -228,40 +228,40 @@
     "sha256": "bac7ae377ed4621563d56b2da929325f20efbac2be85d567897202b519c28fb8"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildCastSection": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "6ed55541d2c3733d026f7929794576859886e92e3240edf76148ffa757fda99e"
+    "reason": "ASC Laravel migration: provider-only descriptive or identity evidence rendered as text; no manually-correctable field selector observed.",
+    "sha256": "9c0372e923258776d747c947c83ac65eae0cf3aea73c8c9279ac60372b4bcae7"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildDescription": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "9d36eb71b8c179acbb74b60a4d858fb72586932d76b4c3d55d6198c39491bd9c"
+    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
+    "sha256": "2f6d0a5236ebc18050ecc319b58951f4e0752b8ab3069fabd36291db998005f2"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildProductionCompanies": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "f6c4bf12abd9155d8c0414b1f28490bf2e4dd0ade2a17322fd9b7970429d7e9c"
+    "reason": "ASC Laravel migration: provider-only descriptive or identity evidence rendered as text; no manually-correctable field selector observed.",
+    "sha256": "0075754b089266ff1c5a3576a99eeae34c20ad9128d85ea27206a1c71af3ea9c"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildRatingsBBCode": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "981fdb523546170574c1b9316a53e5c93fac63b86b0843aed4d99e125ccf7baf"
+    "reason": "ASC Laravel migration: provider-only descriptive or identity evidence rendered as text; no manually-correctable field selector observed.",
+    "sha256": "e304c553f5062e45e7a81523fdad4a227e2af4e376d966ee5ddccf190719623a"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildTechnicalSheet": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "f186dc0dc632caf7a79d5226703fdac4f3904fe34ed252c67aed13c5cac7b4af"
   },
   "internal/trackers/impl/standalone/asc/description.go:prepareDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "ef548baac570e012dc68169000ee63509250c93e718190107a62591d2ad1917d"
+    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
+    "sha256": "1007b29f9770bec2e1f99c7599db91453a9d2911c63b300a736bbc913ecfe939"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:buildASCSearchURL": {
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged.",
-    "sha256": "f830ae9440368026839c0f2df010fefebf460abe8b0a18d99bfd574cc6ca4040"
+    "reason": "ASC Laravel migration: provider-ID query priority unchanged; anime title fallback uses manual-aware resolveASCTitle and never the local source path.",
+    "sha256": "578a3b70b7b611a9a135b9fc49a91ea1e91adee987dd956d3a0b9d9607dbf953"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:dupeSearcher.Search": {
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged. Operation-local logger binding leaves these selectors and search filters unchanged.",
-    "sha256": "9d980e208aca3b561e6a3a3050b96017f514e532b534bb7d14c9aba2bf8c8014"
+    "reason": "ASC Laravel migration: provider-ID query priority unchanged; anime title fallback uses manual-aware resolveASCTitle and never the local source path. Upstream sync: operation-local logger binding leaves the title and IMDb selectors unchanged.",
+    "sha256": "2669d1ab80a513b73e22fdb951a55411545fbeab4d8cf001f15d519a81f73c9c"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
-    "reason": "Finalized/manual title precedence remains intact; missing titles never fall back to the local source path.",
-    "sha256": "61597eab2253ff8202fbfa974f6d1173dc1fd5e705818783538f8d742b124715"
+    "reason": "Manual title (including manual-empty) wins; then the finalized title before projection or parsed release names, so a pack folder or built release name cannot become the anime search term. Missing titles never fall back to the local source path.",
+    "sha256": "4bf131fbeb119b3a8a538f527518636b5a1427dd1aac5281502b11345c8524a5"
   },
   "internal/trackers/impl/standalone/asc/metadata.go:resolveCast": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -312,48 +312,28 @@
     "sha256": "3262a761092f75ef76cb9d4761052f368b4ad6abd2e6f194b19bb61e3c74cb69"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Adds the pure questionnaire binding only. Explicit requested upload names still precede resolved titles; existing manual title/original-title precedence, localized provider fallbacks, and anime search behavior are unchanged.",
-    "sha256": "17b969ecdee139d2632c2a5d8e6a7283605adbea77550c561656c7ad9e3820a7"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. ContentRenamer (renameContent) reads only finalized Audio/Channels media facts and the finalized release name, no provider metadata. Upstream sync: combined with upstream profile hooks; provider selectors unchanged.",
+    "sha256": "0bcfc4c775d6b6ecbee190960c2d110d3d241cc19eb8e0fde51dabe558021a6d"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
-    "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
-    "sha256": "294d2795f2333bc431df9aecd21e73a87f39747d30cdca1293a18eaa9007c2c3"
-  },
-  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAnimeAudioLanguage": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "e586016f1fd04e44d9f4b8fc919fd51255d07283c7e4979f9a3987ad2998a20c"
-  },
-  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAnimeLanguage": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "f5586708266a65f98c1d2b3ad620395ba4f3a0b3a1d99ea12b18e728f07b4936"
-  },
-  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAudio": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "3afaaf261a62ca03359a9220b4dcdd42b55ed685b9c75fea23e73e2595b753b0"
-  },
-  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveLanguage": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "62a39d1d4981eae700c9deb69aa2be7e650bc37397ac152a25ccb29203915857"
-  },
-  "internal/trackers/impl/standalone/asc/upload.go:buildPayload": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "a7f5860f543862cb27bae94cac7667654dd6e7cd89150aa084af3a5c7f6aee25"
+    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers. Upstream sync: answered fields stay editable with manual answers taking precedence; the genre field also appears when no answer or provider genre maps to an ASC genre ID.",
+    "sha256": "165ed2f0aa8c6cd4adfd3b79ff524be5a7cd006a60a73a4641864141605d1037"
   },
   "internal/trackers/impl/standalone/asc/upload.go:prepareUpload": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "7876269547cf64d970a9a62c5bedff673618a9295caa690c96d314d3d9a05b99"
+    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
+    "sha256": "81deac976d0a28d22a3bd2a14d93227ef267c676a338a5bae71c64c6e42d5045"
   },
   "internal/trackers/impl/standalone/asc/upload.go:prepareUploadState": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "070486d7f89d03140909ffaeb2a352b8d26af988cb0b8b033d1b2f2b1f4b2036"
+    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
+    "sha256": "dc71e35fe5ad368c4b86d9c47070b44af81432926a839a410fbb5d6b4bed8af9"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validatePayloadFields": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "4bb647cc901e533a1ca7945b5c7778c5fe81b4c920fa3076c1ff1557355b1798"
+    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
+    "sha256": "0bd67b69f178b4b03dfa993093cc34fa8d001df5b92c8d4c336023fbbe23d72f"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validationPolicy": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "8d953776c596653d565c1d63db730f819fcf2b03df0afb02ab0e0ff46361a2a5"
+    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
+    "sha256": "f284de5178c345061f9b7a3430e373fadcf71394cb152596153a8c842e2d467e"
   },
   "internal/trackers/impl/standalone/bhd/name.go:applyBHDMovieTitleDefaults": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1578,5 +1558,25 @@
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnOriginalAudioCountryID": {
     "sha256": "feebf612c84b3c2894fc45354e8c3d2e4b2dd7c1fb153efbd0cf92ff9a38b8ce",
     "reason": "Country inference requires the inspected primary language to equal the sole finalized original language, current source/generation and matching known provider IDs. All populated country values must agree, including the complete IMDb list; dubs, conflicts and unknown values remain unresolved."
+  },
+  "internal/trackers/impl/standalone/asc/payload.go:buildPayload": {
+    "reason": "ASC Laravel migration: site attribute IDs derive from manual-aware resolvers (resolveOriginalLanguage, resolveYear, resolveGenres); automatic provider precedence is unchanged.",
+    "sha256": "d6fd850513f00bf1704cb7e117dde57157adfe370857841042ea335e73d7d6d1"
+  },
+  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAudioID": {
+    "reason": "ASC Laravel migration: site attribute IDs derive from manual-aware resolvers (resolveOriginalLanguage, resolveYear, resolveGenres); automatic provider precedence is unchanged.",
+    "sha256": "1805f23148bf89639ec45d2f5622b68e848331b79834498979df454a83886ad5"
+  },
+  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveLanguageID": {
+    "reason": "ASC Laravel migration: site attribute IDs derive from manual-aware resolvers (resolveOriginalLanguage, resolveYear, resolveGenres); automatic provider precedence is unchanged.",
+    "sha256": "c88734bd95d09c0e051789f21d61f05dd13baab520af13e756f00f342c163915"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveCoverURL": {
+    "reason": "ASC Laravel migration: cover URL comes from reviewed provider-only resolvePoster; only the TMDB image size is capped.",
+    "sha256": "6d8f3762c117f3dc015f6327837c39a662c145936aa7c319b630d3ca8646b474"
+  },
+  "internal/trackers/impl/standalone/asc/name.go:resolveSearchTitle": {
+    "reason": "Anime duplicate-search name uses trackers.PreferredTitle (manual, then finalized title, then canonical release title) before the release name; never the source path.",
+    "sha256": "de3f368e34c687fe6d3abdc85ceb5a37ac18e8bdd16b7185a9a9bcd9d4f00c32"
   }
 }

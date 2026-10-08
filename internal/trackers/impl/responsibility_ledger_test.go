@@ -159,6 +159,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		releaseNamePolicy: "standalone/asc/v2",
 		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
+		hasAuthResolver:   true,
 	},
 	{
 		name:              "BHD",

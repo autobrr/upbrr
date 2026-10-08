@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -95,11 +96,52 @@ func readTextFile(path string) (string, error) {
 	return strings.ReplaceAll(string(payload), "\r", ""), nil
 }
 
-func readTextFileNoErr(path string) string {
-	value, _ := readTextFile(path)
-	return value
-}
-
 func parseDimensionStr(val any) string {
 	return metautil.ParseDimensionStr(val)
+}
+
+// resolveMediaInfoReport returns the MediaInfo text the site requires for
+// video uploads: the prepared MediaInfo report when present, otherwise the
+// disc evidence (BDInfo or DVD VOB MediaInfo). A report that exists but cannot
+// be read is returned as an error when no fallback text is available.
+func resolveMediaInfoReport(meta api.UploadSubject, dbPath string) (string, error) {
+	var readErr error
+	if reportPath := strings.TrimSpace(meta.MediaInfoTextPath); reportPath != "" {
+		report, err := readTextFile(reportPath)
+		if report = strings.TrimSpace(report); err == nil && report != "" {
+			return renameMediaInfoFiles(meta, report), nil
+		}
+		readErr = err
+	}
+	if fallback := strings.TrimSpace(trackers.ReadBDinfoOrMediaInfo(dbPath, meta)); fallback != "" {
+		return renameMediaInfoFiles(meta, fallback), nil
+	}
+	return "", readErr
+}
+
+var mediaInfoCompleteNamePattern = regexp.MustCompile(`(?m)^(\s*Complete name\s*:\s*)(.*?)(\r?)$`)
+
+// renameMediaInfoFiles rewrites the file name (the part after the last path
+// separator) of each `Complete name` line with the same rename applied to the
+// ASC torrent. The site rejects a report whose file is not listed in the
+// torrent, so both must carry the same name. Lines in another format are left
+// unchanged; the upload logs a warning when the report and torrent disagree.
+func renameMediaInfoFiles(meta api.UploadSubject, report string) string {
+	matches := mediaInfoCompleteNamePattern.FindAllStringSubmatchIndex(report, -1)
+	if len(matches) == 0 {
+		return report
+	}
+	var out strings.Builder
+	last := 0
+	for _, m := range matches {
+		// Groups: 2 is the value, 3 the optional trailing carriage return.
+		value := report[m[4]:m[5]]
+		split := strings.LastIndexAny(value, `/\`) + 1
+		out.WriteString(report[last:m[4]])
+		out.WriteString(value[:split])
+		out.WriteString(complianceFileName(meta, value[split:]))
+		last = m[5]
+	}
+	out.WriteString(report[last:])
+	return out.String()
 }

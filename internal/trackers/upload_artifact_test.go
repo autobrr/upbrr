@@ -559,3 +559,265 @@ func assertInfoSourceKeyAbsent(t *testing.T, meta metainfo.MetaInfo) {
 		t.Fatalf("expected raw info source key absent, got %q", string(meta.InfoBytes))
 	}
 }
+
+func TestWritePersonalizedTorrentRenamesContentWithoutTouchingPieces(t *testing.T) {
+	t.Parallel()
+
+	rename := func(name string, _ ContentNameKind) string { return strings.Replace(name, "H.264", "DDP5.1.H.264", 1) }
+	private := true
+	pieces := bytes.Repeat([]byte{7}, 40)
+	tests := []struct {
+		name  string
+		info  metainfo.Info
+		check func(t *testing.T, info metainfo.Info)
+	}{
+		{
+			name: "single file",
+			info: metainfo.Info{
+PieceLength: 16 * 1024,
+ Pieces: pieces,
+ Name: "Show.H.264-GRP.mkv",
+ Length: 4,
+ Private: &private,
+},
+			check: func(t *testing.T, info metainfo.Info) {
+				t.Helper()
+				if info.Name != "Show.DDP5.1.H.264-GRP.mkv" {
+					t.Fatalf("name = %q", info.Name)
+				}
+			},
+		},
+		{
+			name: "multi file",
+			info: metainfo.Info{
+				PieceLength: 16 * 1024,
+ Pieces: pieces,
+ Name: "Show.S01.H.264-GRP",
+ Private: &private,
+				Files: []metainfo.FileInfo{
+					{Length: 2, Path: []string{"Show.S01E01.H.264-GRP.mkv"}},
+					{
+Length: 2,
+ Path: []string{"Show.S01E02.H.264-GRP.mkv"},
+ PathUtf8: []string{"Show.S01E02.H.264-GRP.mkv"},
+},
+				},
+			},
+			check: func(t *testing.T, info metainfo.Info) {
+				t.Helper()
+				if info.Name != "Show.S01.DDP5.1.H.264-GRP" {
+					t.Fatalf("name = %q", info.Name)
+				}
+				if got := info.Files[0].Path[0]; got != "Show.S01E01.DDP5.1.H.264-GRP.mkv" {
+					t.Fatalf("file 0 = %q", got)
+				}
+				if got := info.Files[1].PathUtf8[0]; got != "Show.S01E02.DDP5.1.H.264-GRP.mkv" {
+					t.Fatalf("file 1 utf8 = %q", got)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			sourcePath := filepath.Join(dir, "base.torrent")
+			outputPath := filepath.Join(dir, "out.torrent")
+			infoBytes, err := bencode.Marshal(tt.info)
+			if err != nil {
+				t.Fatalf("marshal info: %v", err)
+			}
+			writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{InfoBytes: infoBytes})
+
+			if err := writePersonalizedTorrent(sourcePath, outputPath, "https://new.example/announce", "ASC", rename); err != nil {
+				t.Fatalf("write renamed torrent: %v", err)
+			}
+			out := readTestMetaInfo(t, outputPath)
+			info := testMetaInfoInfo(t, out)
+			tt.check(t, info)
+			if !bytes.Equal(info.Pieces, pieces) || info.PieceLength != tt.info.PieceLength {
+				t.Fatal("renaming must not change piece layout")
+			}
+			if info.TotalLength() != tt.info.TotalLength() {
+				t.Fatalf("total length = %d, want %d", info.TotalLength(), tt.info.TotalLength())
+			}
+			assertInfoSource(t, out, "ASC")
+
+			// The shared base torrent used by other trackers keeps its original names.
+			if baseInfo := testMetaInfoInfo(t, readTestMetaInfo(t, sourcePath)); baseInfo.Name != tt.info.Name {
+				t.Fatalf("base torrent name changed to %q", baseInfo.Name)
+			}
+		})
+	}
+}
+
+func TestWritePersonalizedTorrentRenameOfHybridTorrent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "base.torrent")
+	infoBytes, err := bencode.Marshal(metainfo.Info{
+PieceLength: 16 * 1024,
+ Name: "Show.H.264-GRP.mkv",
+ Length: 4,
+ MetaVersion: 2,
+})
+	if err != nil {
+		t.Fatalf("marshal info: %v", err)
+	}
+	writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{InfoBytes: infoBytes})
+
+	changing := func(name string, _ ContentNameKind) string { return strings.Replace(name, "H.264", "DDP5.1.H.264", 1) }
+	if err := writePersonalizedTorrent(sourcePath, filepath.Join(dir, "changed.torrent"), "", "ASC", changing); err == nil || !strings.Contains(err.Error(), "v2") {
+		t.Fatalf("expected v2 rejection when the rename changes a name, got %v", err)
+	}
+	// An already-compliant hybrid torrent is accepted unchanged.
+	unchanged := func(name string, _ ContentNameKind) string { return name }
+	if err := writePersonalizedTorrent(sourcePath, filepath.Join(dir, "same.torrent"), "", "ASC", unchanged); err != nil {
+		t.Fatalf("hybrid torrent with nothing to rename must still be accepted: %v", err)
+	}
+}
+
+func TestWritePersonalizedTorrentRejectsInvalidRenamerOutput(t *testing.T) {
+	t.Parallel()
+
+	for name, renamed := range map[string]string{
+		"empty":     "",
+		"dot":       ".",
+		"dotdot":    "..",
+		"slash":     "a/b.mkv",
+		"backslash": `a\b.mkv`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			sourcePath := filepath.Join(dir, "base.torrent")
+			writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, "")})
+			err := writePersonalizedTorrent(sourcePath, filepath.Join(dir, "out.torrent"), "", "ASC", func(string, ContentNameKind) string { return renamed })
+			if err == nil || !strings.Contains(err.Error(), "invalid renamed path component") {
+				t.Fatalf("expected invalid component error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestPrepareTrackerUploadTorrentAppliesTrackerRename(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	baseTorrentPath := filepath.Join(tmp, "base.torrent")
+	writeTestMetaInfo(t, baseTorrentPath, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, "")})
+
+	registry := NewRegistry()
+	var seenSubject api.UploadSubject
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:       "REN",
+		Definition: stubDefinition{name: "REN"},
+		UploadArtifact: &UploadArtifactPolicy{Source: "REN"},
+		ContentRenamer: func(meta api.UploadSubject, name string, _ ContentNameKind) string {
+			seenSubject = meta
+			return strings.Replace(name, "Release", "Renamed."+meta.Audio, 1)
+		},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	meta, err := prepareTrackerUploadTorrentWithRegistry(api.UploadSubject{
+		SourcePath: sourcePath,
+ TorrentPath: baseTorrentPath,
+ Audio: "DD+ 5.1",
+	}, filepath.Join(tmp, "state", "upbrr.db"), "REN", config.TrackerConfig{}, registry)
+	if err != nil {
+		t.Fatalf("prepare tracker torrent: %v", err)
+	}
+	info := testMetaInfoInfo(t, readTestMetaInfo(t, meta.TorrentPath))
+	if info.Name != "Renamed.DD+ 5.1.mkv" || seenSubject.Audio != "DD+ 5.1" {
+		t.Fatalf("renamed torrent name = %q", info.Name)
+	}
+	if baseInfo := testMetaInfoInfo(t, readTestMetaInfo(t, baseTorrentPath)); baseInfo.Name != "Release.mkv" {
+		t.Fatalf("base torrent name changed to %q", baseInfo.Name)
+	}
+}
+
+// testMetaInfoInfo decodes the info dictionary of a test torrent.
+func testMetaInfoInfo(t *testing.T, meta metainfo.MetaInfo) metainfo.Info {
+	t.Helper()
+	info, err := meta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("unmarshal info: %v", err)
+	}
+	return info
+}
+
+func TestWritePersonalizedTorrentKeepsAbsentUTF8PathsAbsent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "base.torrent")
+	private := true
+	infoBytes, err := bencode.Marshal(metainfo.Info{
+		PieceLength: 16 * 1024,
+		Pieces:      make([]byte, 20),
+		Name:        "Season 03",
+		Private:     &private,
+		Files: []metainfo.FileInfo{
+			{Length: 2, Path: []string{"Show.S03E01.1080p.WEB-DL.H.264-GRP.mkv"}},
+			{Length: 2, Path: []string{"Show.S03E02.1080p.WEB-DL.H.264-GRP.mkv"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal info: %v", err)
+	}
+	writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{InfoBytes: infoBytes})
+	outputPath := filepath.Join(dir, "out.torrent")
+	rename := func(name string, _ ContentNameKind) string { return strings.Replace(name, "H.264", "DDP5.1.H.264", 1) }
+	if err := writePersonalizedTorrent(sourcePath, outputPath, "", "ASC", rename); err != nil {
+		t.Fatalf("write renamed torrent: %v", err)
+	}
+
+	out := readTestMetaInfo(t, outputPath)
+	if bytes.Contains(out.InfoBytes, []byte("path.utf-8")) {
+		t.Fatalf("an absent path.utf-8 was written as an empty list: %q", out.InfoBytes)
+	}
+	info := testMetaInfoInfo(t, out)
+	for _, file := range info.Files {
+		if len(file.BestPath()) != 1 || !strings.Contains(file.BestPath()[0], "DDP5.1") {
+			t.Fatalf("file path = %v", file.BestPath())
+		}
+	}
+}
+
+func TestRenameTorrentInfoContentPassesComponentKinds(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]ContentNameKind{}
+	record := func(name string, kind ContentNameKind) string {
+		seen[name] = kind
+		return name
+	}
+	multi := metainfo.Info{
+		Name: "Season 03",
+		Files: []metainfo.FileInfo{
+			{Length: 1, Path: []string{"Extras", "Show.S03E01.mkv"}},
+		},
+	}
+	if _, err := renameTorrentInfoContent(&multi, record); err != nil {
+		t.Fatalf("rename multi-file: %v", err)
+	}
+	if seen["Season 03"] != ContentRootFolderName || seen["Extras"] != ContentSubfolderName || seen["Show.S03E01.mkv"] != ContentFileName {
+		t.Fatalf("multi-file kinds = %v", seen)
+	}
+
+	single := metainfo.Info{Name: "Show.S03E01.mkv", Length: 1}
+	clear(seen)
+	if _, err := renameTorrentInfoContent(&single, record); err != nil {
+		t.Fatalf("rename single-file: %v", err)
+	}
+	if seen["Show.S03E01.mkv"] != ContentFileName {
+		t.Fatalf("single-file root kind = %v", seen["Show.S03E01.mkv"])
+	}
+}

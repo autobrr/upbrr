@@ -161,7 +161,7 @@ trackers:
   ASC:
     link_dir_name: ""
     uploader_status: false
-    custom_layout: "2"
+    anon: false
     announce_url: ""
   AZ:
     link_dir_name: ""

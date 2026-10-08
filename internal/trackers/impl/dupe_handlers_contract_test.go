@@ -90,7 +90,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 				SourcePath: "x",
 			},
 			setup: func(t *testing.T, _ string, dbPath string) {
-				writeTextCookie(t, dbPath, "ASC", hostFromBaseURL(t, "https://cliente.amigos-share.club"))
+				writeTextCookie(t, dbPath, "ASC", hostFromBaseURL(t, "https://amigos-share.club"))
 			},
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(ascimpl.New(), "ASC", cfg, client, api.NopLogger{})
@@ -100,7 +100,9 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected ASC entries: %#v", entries)
 				}
 			},
-			scope: dupe.WorkScopeProviderID,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
 		},
 		{
 			name:    "BT",
@@ -520,8 +522,8 @@ func TestSiteHandlersSearch(t *testing.T) {
 					_, _ = w.Write([]byte(`{"data":[],"links":{"next":null}}`))
 					return
 				case "ASC":
-					if r.URL.Path == "/busca-series.php" && r.URL.Query().Get("search") == "" && r.URL.Query().Get("imdb") == "tt1234567" {
-						_, _ = w.Write([]byte(`<html><body></body></html>`))
+					if r.URL.Path == "/torrents" && r.URL.Query().Get("q") == "tt1234567" && r.URL.Query().Get("category") == "3" {
+						_, _ = w.Write([]byte(`<html><body><script data-page="app" type="application/json">{"props":{"torrents":{"current_page":1,"last_page":1,"data":[]}}}</script></body></html>`))
 						return
 					}
 				case "BT":
