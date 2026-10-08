@@ -260,8 +260,8 @@
     "sha256": "80692968bb005ca5ce0e4203be336f919abd3d937b96c773ba35f73ecc6c97fe"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
-    "reason": "Finalized/manual title precedence remains intact; missing titles never fall back to the local source path.",
-    "sha256": "61597eab2253ff8202fbfa974f6d1173dc1fd5e705818783538f8d742b124715"
+    "reason": "Manual title (including manual-empty) wins; then the finalized title before projection or parsed release names, so a pack folder or built release name cannot become the anime search term. Missing titles never fall back to the local source path.",
+    "sha256": "4bf131fbeb119b3a8a538f527518636b5a1427dd1aac5281502b11345c8524a5"
   },
   "internal/trackers/impl/standalone/asc/metadata.go:resolveCast": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -325,7 +325,7 @@
   },
   "internal/trackers/impl/standalone/asc/upload.go:prepareUploadState": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
-    "sha256": "f9b0539e9feae8bbe7f66ed60d1b18b8f48f141f030a338f7b37e66b28a0e508"
+    "sha256": "dc71e35fe5ad368c4b86d9c47070b44af81432926a839a410fbb5d6b4bed8af9"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validatePayloadFields": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
@@ -1574,5 +1574,9 @@
   "internal/trackers/impl/standalone/asc/metadata.go:resolveCoverURL": {
     "reason": "ASC Laravel migration: cover URL comes from reviewed provider-only resolvePoster; only the TMDB image size is capped.",
     "sha256": "6d8f3762c117f3dc015f6327837c39a662c145936aa7c319b630d3ca8646b474"
+  },
+  "internal/trackers/impl/standalone/asc/name.go:resolveSearchTitle": {
+    "reason": "Anime duplicate-search name uses trackers.PreferredTitle (manual, then finalized title, then canonical release title) before the release name; never the source path.",
+    "sha256": "de3f368e34c687fe6d3abdc85ceb5a37ac18e8bdd16b7185a9a9bcd9d4f00c32"
   }
 }

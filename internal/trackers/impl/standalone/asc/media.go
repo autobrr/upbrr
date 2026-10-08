@@ -121,14 +121,27 @@ func resolveMediaInfoReport(meta api.UploadSubject, dbPath string) (string, erro
 
 var mediaInfoCompleteNamePattern = regexp.MustCompile(`(?m)^(\s*Complete name\s*:\s*)(.*?)(\r?)$`)
 
-// renameMediaInfoFiles rewrites the file name of each `Complete name` line with
-// the same rename applied to the ASC torrent. The site rejects a report whose
-// file is not listed in the torrent, so both must carry the same name.
+// renameMediaInfoFiles rewrites the file name (the part after the last path
+// separator) of each `Complete name` line with the same rename applied to the
+// ASC torrent. The site rejects a report whose file is not listed in the
+// torrent, so both must carry the same name. Lines in another format are left
+// unchanged; the upload logs a warning when the report and torrent disagree.
 func renameMediaInfoFiles(meta api.UploadSubject, report string) string {
-	return mediaInfoCompleteNamePattern.ReplaceAllStringFunc(report, func(line string) string {
-		parts := mediaInfoCompleteNamePattern.FindStringSubmatch(line)
-		value := parts[2]
+	matches := mediaInfoCompleteNamePattern.FindAllStringSubmatchIndex(report, -1)
+	if len(matches) == 0 {
+		return report
+	}
+	var out strings.Builder
+	last := 0
+	for _, m := range matches {
+		// Groups: 2 is the value, 3 the optional trailing carriage return.
+		value := report[m[4]:m[5]]
 		split := strings.LastIndexAny(value, `/\`) + 1
-		return parts[1] + value[:split] + complianceFileName(meta, value[split:]) + parts[3]
-	})
+		out.WriteString(report[last:m[4]])
+		out.WriteString(value[:split])
+		out.WriteString(complianceFileName(meta, value[split:]))
+		last = m[5]
+	}
+	out.WriteString(report[last:])
+	return out.String()
 }

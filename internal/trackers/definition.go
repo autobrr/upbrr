@@ -509,16 +509,23 @@ type UploadArtifactPolicy struct {
 	RequireAnnounce bool
 }
 
-// ContentRenamer maps one torrent path component (the root name or a file or
+// ContentRenamer maps one torrent path component (the root name, or a file or
 // folder name) to the name a tracker requires, given the exact upload subject.
-// It must return name unchanged when no rename applies and must be pure.
+// It is called once per component, so it cannot tell a root from a file and must
+// recognise what it should change from the name itself. It must be
+// deterministic and side-effect free, return name unchanged when no rename
+// applies, and return a single legal path component (no separator, never empty).
 type ContentRenamer func(meta api.UploadSubject, name string) string
 
 // ContentRenamerProvider declares tracker-owned content naming for the
-// tracker's own upload torrent artifact. Piece hashes are unaffected, and the
-// shared base torrent used by other trackers keeps its original names.
+// tracker's own upload torrent artifact. It requires an upload artifact policy,
+// which is what makes the artifact get written. Piece hashes are unaffected;
+// prepareTrackerUploadTorrentWithRegistry writes a separate artifact, so the
+// shared base torrent used by other trackers keeps its original names. It is a
+// separate provider because UploadArtifactPolicy is fingerprinted and compared
+// with ==, which a func field would break.
 type ContentRenamerProvider interface {
-	// ContentRenamer returns the tracker's content renamer.
+	// ContentRenamer returns the tracker's content renamer, or nil.
 	ContentRenamer() ContentRenamer
 }
 
@@ -935,7 +942,7 @@ type Descriptor struct {
 	Metadata *TrackerMetadataPolicy
 	// UploadArtifact contains optional torrent personalization settings.
 	UploadArtifact *UploadArtifactPolicy
-	// ContentRenamer optionally renames torrent content for this tracker.
+	// ContentRenamer is nil when the tracker does not rename torrent content.
 	ContentRenamer ContentRenamer
 	// DupePolicy contains optional duplicate comparison settings.
 	DupePolicy *DupePolicy

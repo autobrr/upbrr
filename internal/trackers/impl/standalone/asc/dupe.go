@@ -399,13 +399,24 @@ func resolveASCCategory(meta api.DuplicateSubject) string {
 	return strings.ToUpper(string(category))
 }
 
+// resolveASCTitle returns the anime search term: a manual title (including an
+// explicit empty one), then the finalized title, then the tracker projection,
+// then names parsed from the release. The finalized title comes first because
+// a pack folder such as "Season 03" parses to an empty or meaningless title.
 func resolveASCTitle(meta api.DuplicateSubject) string {
-	title := strings.TrimSpace(meta.Release.Title)
-	if title == "" && meta.Projection != nil {
-		title = dupe.ProjectedSearchName(meta)
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.Title)
 	}
-	if title == "" {
-		title = strings.TrimSpace(meta.ReleaseName)
+	if title := strings.TrimSpace(meta.EffectiveMetadata.Title); title != "" {
+		return title
 	}
-	return meta.EffectiveMetadata.PreferredTitle(title)
+	if meta.Projection != nil {
+		if title := strings.TrimSpace(dupe.ProjectedSearchName(meta)); title != "" {
+			return title
+		}
+	}
+	if title := strings.TrimSpace(meta.Release.Title); title != "" {
+		return title
+	}
+	return strings.TrimSpace(meta.ReleaseName)
 }

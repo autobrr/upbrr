@@ -300,3 +300,22 @@ func TestDetailFilesAcceptsArrayAndPaginatedShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveASCTitlePrefersFinalizedTitleForPackFolders(t *testing.T) {
+	t.Parallel()
+
+	// A pack folder parses to an empty title, and the built release name carries
+	// resolution and codec tokens that ASC's title search cannot match.
+	meta := api.DuplicateSubject{
+		Anime:             true,
+		ReleaseName:       "Example Show AKA Ekusanpuru S03 1080p Dual-Audio AAC 2.0 AVC",
+		Projection:        &api.TrackerReleaseProjection{DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Example Show AKA Ekusanpuru S03 1080p Dual-Audio AAC 2.0 AVC"}},
+		EffectiveMetadata: api.EffectiveMetadata{Title: "Example Show"},
+	}
+	if got := resolveASCTitle(meta); got != "Example Show" {
+		t.Fatalf("ASC anime search title = %q, want the finalized title", got)
+	}
+	if got := buildASCSearchURL(meta, 1); !strings.Contains(got, "q=Example+Show&") && !strings.HasSuffix(got, "q=Example+Show") {
+		t.Fatalf("search URL does not query the finalized title: %s", got)
+	}
+}

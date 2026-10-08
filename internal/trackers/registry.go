@@ -541,6 +541,11 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 	if _, exists := r.descriptors[name]; exists {
 		return fmt.Errorf("trackers: definition already registered: %s", name)
 	}
+	if descriptor.ContentRenamer != nil && descriptor.UploadArtifact == nil {
+		// Renaming runs while the tracker's own torrent artifact is written, which
+		// only happens for trackers that declare an upload-artifact policy.
+		return fmt.Errorf("trackers: definition %s declares a content renamer without an upload artifact policy", name)
+	}
 	if descriptor.AuthCapability != nil {
 		authName := strings.ToUpper(strings.TrimSpace(descriptor.AuthCapability.TrackerID))
 		if authName != name {

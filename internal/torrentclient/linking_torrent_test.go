@@ -413,32 +413,80 @@ func TestPrepareLinkStagingHardlinksRenamedTrackerTorrent(t *testing.T) {
 	}
 }
 
-func TestRequireLinkStagingForRenamedContent(t *testing.T) {
-	t.Parallel()
+// newRenamingService returns a client service that treats ASC as a tracker that
+// renames its torrent content.
+func newRenamingService() *Service {
+	service := NewService(config.Config{}, nil)
+	service.renamesContent = func(tracker string) bool { return strings.EqualFold(tracker, "asc") }
+	return service
+}
 
+// writeRenamedFixture creates a source file and two torrents for it: one whose
+// name matches the source and one renamed with the audio token.
+func writeRenamedFixture(t *testing.T) (source string, renamed string, same string, meta api.ClientSubject) {
+	t.Helper()
 	root := t.TempDir()
-	source := filepath.Join(root, "Example.Show.S01E05.1080p.WEB-DL.H.264-GRP.mkv")
+	source = filepath.Join(root, "Example.Show.S01E05.1080p.WEB-DL.H.264-GRP.mkv")
 	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	renamed := filepath.Join(root, "renamed.torrent")
+	renamed = filepath.Join(root, "renamed.torrent")
 	writeQbitTestTorrent(t, renamed, "Example.Show.S01E05.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv", map[string]string{"source": source}, false)
-	same := filepath.Join(root, "same.torrent")
+	same = filepath.Join(root, "same.torrent")
 	writeQbitTestTorrent(t, same, filepath.Base(source), map[string]string{"source": source}, false)
-	meta := api.ClientSubject{SourcePath: source, FileList: []string{source}}
+	return source, renamed, same, api.ClientSubject{SourcePath: source, FileList: []string{source}}
+}
 
-	service := NewService(config.Config{}, nil)
-	service.renamingTrackers = map[string]struct{}{"asc": {}}
+func TestRequireRenamedContentAccess(t *testing.T) {
+	t.Parallel()
 
-	if err := service.requireLinkStagingForRenamedContent(context.Background(), "qbit", config.TorrentClientConfig{}, meta, api.TorrentResult{Path: renamed, Tracker: "ASC"}); err == nil ||
-		!strings.Contains(err.Error(), "link staging is not active") {
-		t.Fatalf("expected link staging requirement error, got %v", err)
+	_, renamed, same, meta := writeRenamedFixture(t)
+	service := newRenamingService()
+	tests := []struct {
+		name    string
+		mode    string
+		torrent api.TorrentResult
+		remedy  string
+		want    string // empty means the add is allowed
+	}{
+		{
+name: "qbit without staging rejects renamed torrent",
+ mode: "",
+ torrent: api.TorrentResult{Path: renamed, Tracker: "ASC"},
+ remedy: renamedContentNeedsLinkStaging,
+ want: "link staging is not active",
+},
+		{
+name: "watch folder rejects renamed torrent",
+ mode: "watch",
+ torrent: api.TorrentResult{Path: renamed, Tracker: "ASC"},
+ remedy: renamedContentNeedsQbit,
+ want: "watch-folder clients cannot stage renamed files",
+},
+		{
+name: "unchanged names need no staging",
+ mode: "",
+ torrent: api.TorrentResult{Path: same, Tracker: "ASC"},
+ remedy: renamedContentNeedsLinkStaging,
+},
+		{
+name: "tracker without a rename policy is unaffected",
+ mode: "",
+ torrent: api.TorrentResult{Path: renamed, Tracker: "OTHER"},
+ remedy: renamedContentNeedsLinkStaging,
+},
 	}
-	if err := service.requireLinkStagingForRenamedContent(context.Background(), "qbit", config.TorrentClientConfig{}, meta, api.TorrentResult{Path: same, Tracker: "ASC"}); err != nil {
-		t.Fatalf("unchanged names must not require staging: %v", err)
-	}
-	if err := service.requireLinkStagingForRenamedContent(context.Background(), "qbit", config.TorrentClientConfig{}, meta, api.TorrentResult{Path: renamed, Tracker: "OTHER"}); err != nil {
-		t.Fatalf("trackers without a rename policy must be unaffected: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := service.requireRenamedContentAccess(context.Background(), "client", tt.mode, meta, tt.torrent, tt.remedy)
+			switch {
+			case tt.want == "" && err != nil:
+				t.Fatalf("expected the add to be allowed, got %v", err)
+			case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -473,8 +521,7 @@ func TestPrepareLinkStagingCrossFilesystemHardlinkDoesNotCopy(t *testing.T) {
 	meta := api.ClientSubject{SourcePath: source, FileList: []string{source}}
 	torrent := api.TorrentResult{Path: torrentPath, Tracker: "ASC"}
 
-	service := NewService(config.Config{}, nil)
-	service.renamingTrackers = map[string]struct{}{"asc": {}}
+	service := newRenamingService()
 
 	// Fallback disabled: staging fails outright and leaves nothing behind.
 	_, err := service.prepareLinkStaging(context.Background(), "qbit", config.TorrentClientConfig{
@@ -502,8 +549,37 @@ func TestPrepareLinkStagingCrossFilesystemHardlinkDoesNotCopy(t *testing.T) {
 	if staging.Linked {
 		t.Fatal("cross-filesystem hardlink must not report linked staging")
 	}
-	if err := service.requireLinkStagingForRenamedContent(context.Background(), "qbit", config.TorrentClientConfig{}, meta, torrent); err == nil ||
+	if err := service.requireRenamedContentAccess(context.Background(), "qbit", "", meta, torrent, renamedContentNeedsLinkStaging); err == nil ||
 		!strings.Contains(err.Error(), "link staging is not active") {
 		t.Fatalf("expected renamed torrent to be rejected after fallback, got %v", err)
+	}
+}
+
+func TestRequireRenamedContentAccessFailsClosedWhenLayoutCannotBeVerified(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// Two same-size episodes: a renamed torrent file cannot be matched uniquely.
+	dir := filepath.Join(root, "Example.Show.S01.1080p.WEB-DL.H.264-GRP")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for _, name := range []string{"Example.Show.S01E01.1080p.WEB-DL.H.264-GRP.mkv", "Example.Show.S01E02.1080p.WEB-DL.H.264-GRP.mkv"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("media"), 0o600); err != nil {
+			t.Fatalf("write source: %v", err)
+		}
+	}
+	torrentPath := filepath.Join(root, "pack.torrent")
+	files := map[string]string{
+		"Example.Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv": filepath.Join(dir, "Example.Show.S01E01.1080p.WEB-DL.H.264-GRP.mkv"),
+		"Example.Show.S01E02.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv": filepath.Join(dir, "Example.Show.S01E02.1080p.WEB-DL.H.264-GRP.mkv"),
+	}
+	writeQbitTestTorrent(t, torrentPath, "Example.Show.S01.1080p.WEB-DL.DDP5.1.H.264-GRP", files, true)
+
+	service := newRenamingService()
+	err := service.requireRenamedContentAccess(context.Background(), "qbit", "",
+		api.ClientSubject{SourcePath: dir}, api.TorrentResult{Path: torrentPath, Tracker: "ASC"}, renamedContentNeedsLinkStaging)
+	if err == nil || !strings.Contains(err.Error(), "cannot verify renamed files") {
+		t.Fatalf("expected fail-closed error, got %v", err)
 	}
 }
