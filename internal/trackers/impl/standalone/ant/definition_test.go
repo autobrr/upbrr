@@ -87,7 +87,7 @@ func TestBuildQuestionnaireIncludesTypeOptionsWhenTypeIsUnresolved(t *testing.T)
 	}
 }
 
-func TestDefinitionBuildUploadDryRunMarksManualTagsWhenOnlyIMDbGenresExist(t *testing.T) {
+func TestDefinitionBuildUploadDryRunUsesIMDbGenresWhenTMDBGenresAreMissing(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -118,11 +118,11 @@ func TestDefinitionBuildUploadDryRunMarksManualTagsWhenOnlyIMDbGenresExist(t *te
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := entry.Payload["flagchangereason"]; got != "User prompted to add tags manually" {
-		t.Fatalf("expected manual tag prompt reason, got %q", got)
+	if got := entry.Payload["flagchangereason"]; got != "" {
+		t.Fatalf("automatic IMDb genres should not request manual tags, got %q", got)
 	}
-	if _, ok := entry.Payload["tags"]; ok {
-		t.Fatalf("expected imdb fallback genres to avoid automatic ANT tags, got %#v", entry.Payload)
+	if got := entry.Payload["tags"]; got != "action,drama" {
+		t.Fatalf("expected automatic IMDb genre tags, got %q", got)
 	}
 }
 

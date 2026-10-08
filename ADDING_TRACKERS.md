@@ -1102,7 +1102,10 @@ profile or Unit3D site profile, implemented in `questionnaire.go`. The callback 
 `PreparationInput`, including the centrally resolved name in `Projection.UploadReleaseName`, and
 must perform no I/O or payload preparation. Return backend-owned fields with stable keys,
 validated retained values, and empty values for unanswered required fields. Schema values may
-include display defaults; they do not become answers automatically. The projection's exact
+include display defaults; they do not become answers automatically. Resolve optional payload fields
+and question requiredness separately when the destination can supply an omitted value. Share the
+same normalized defaults with upload preparation, preserve explicit values and deliberate clears,
+and only fall back between providers when no usable primary-provider value remains. The projection's exact
 `QuestionnaireAnswers` map owns accepted answers for descriptions and upload. An allocated empty
 map clears earlier answers; an omitted legacy map has no new answer authority. The
 projector emits a tracker-scoped questionnaire action even alongside an unrelated strict failure;

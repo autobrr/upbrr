@@ -39,14 +39,16 @@ func buildQuestionnaire(meta api.UploadSubject, state uploadState) *api.TrackerQ
 		})
 	}
 	if _, answered := current["tags"]; strings.TrimSpace(state.tags) == "" || answered {
+		// ANT can obtain genres from TMDB when an explicit tag value is omitted.
+		required := meta.ProviderMetadata.TMDB == nil || genreTags(meta.ProviderMetadata.TMDB.Genres) == ""
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "tags",
 			Label:       "Tags",
 			Kind:        "text",
-			Value:       metautil.FirstNonEmptyTrimmed(state.tags, current["tags"]),
+			Value:       state.tags,
 			Placeholder: "action, drama",
 			Help:        "Comma-separated ANT tags",
-			Required:    true,
+			Required:    required,
 		})
 	}
 	if _, answered := current["adult_screens"]; state.adultContent || answered {
