@@ -17,10 +17,13 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 	}
 	var fields []api.TrackerQuestionnaireField
 	for _, track := range subject.LanguageFacts.Tracks {
-		if track.Kind != api.MediaTrackAudio || track.Role != api.AudioRoleCompatibility {
+		if !compatibilityCandidate(subject.LanguageFacts, track) {
 			continue
 		}
 		options := []string{"unresolved"}
+		if track.Role != api.AudioRoleCompatibility {
+			options = append(options, "not_compatibility")
+		}
 		details := ""
 		for _, candidate := range compatibilityMixes(subject.LanguageFacts, track) {
 			options = append(options, candidate.ID)
@@ -31,12 +34,15 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		}
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:      trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID),
-			Label:    "AITHER TrueHD mix for compatibility track " + track.ID,
+			Label:    "AITHER TrueHD mix for standalone audio " + track.ID,
 			Kind:     "select",
 			Options:  options,
 			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Help:     "Use source evidence to identify the TrueHD mix this standalone DD/DD+ track accompanies: " + details + ". Matching languages alone do not establish association, and an embedded core cannot replace the standalone track.",
 		})
+		if track.Role != api.AudioRoleCompatibility {
+			fields[len(fields)-1].Help += " Choose not_compatibility if this stream is not a companion to a TrueHD mix."
+		}
 	}
 	if track, ok := multilingualProgrammeTrack(subject.LanguageFacts); ok {
 		options := []string{"evenly_split", "unresolved"}

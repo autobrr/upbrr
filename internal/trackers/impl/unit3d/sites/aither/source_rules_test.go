@@ -91,7 +91,7 @@ func TestAitherProgrammeTracksInDifferentFilesAreNotAdditionalMixes(t *testing.T
 	subject.LanguageFacts = aitherTestLanguageFacts("Japanese", []string{"Japanese", "Japanese"}, []string{"English"})
 	subject.LanguageFacts.Tracks[0].ResourceID = "episode-1"
 	subject.LanguageFacts.Tracks[1].ResourceID = "episode-2"
-	if got := additionalMainAudio(subject.LanguageFacts); len(got) != 0 {
+	if got := additionalMainAudio(subject); len(got) != 0 {
 		t.Fatalf("distinct resources treated as duplicate mixes: %+v", got)
 	}
 }
