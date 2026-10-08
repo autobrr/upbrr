@@ -88,7 +88,7 @@ Categories, source/type mappings, descriptions, media selection, questionnaires 
 
 A solitary Theatrical cut or edition is ignored. Compound editions retain their constituent cuts and multi-edition marker. Presentation and technical-feature annotations do not establish another edition. Actual additional editions and multi-cut sets remain intact; opaque manual Edition compounds retain their existing wording.
 
-Review detected labels and inspected tracks before approval. Missing track languages cannot be borrowed from another report without a reliable identity match; correct missing languages explicitly when needed. Consult the tracker's current rules when interpreting any eligibility finding.
+Review detected labels and inspected tracks before approval. Missing track languages cannot be borrowed from another report without a reliable identity match; correct missing languages explicitly when needed. A separate compatibility stream can match a single suitable mix automatically when its known languages agree and it is not identified as commentary or a distinct mix. Ambiguous associations and current manual choices remain editable. Automatic association does not change inspected track roles or waive independent codec, core, or track-count requirements. Consult the tracker's current rules when interpreting any eligibility finding.
 
 To override commentary detection, set **Commentary** to **Yes** or **No** and refresh metadata, or use `--commentary=true` / `--commentary=false` (`--mc` is an alias). Explicit No survives re-preparation and removes `With Commentary`. No extra commentary prompt is introduced, including in unattended mode. Older prepared generations must be refreshed to use the new evidence and classification.
 

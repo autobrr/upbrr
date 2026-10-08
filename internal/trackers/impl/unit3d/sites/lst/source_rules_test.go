@@ -102,12 +102,12 @@ func TestLSTCompatibilitySourceQualityIsAdvisory(t *testing.T) {
 				subject := lstValidationSubject()
 				subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
 				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-ID: "compat",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleCompatibility,
- Codec: codec,
- Languages: []string{"English"},
-})
+					ID:        "compat",
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleCompatibility,
+					Codec:     codec,
+					Languages: []string{"English"},
+				})
 				subject.QuestionnaireAnswers = map[string]string{
 					trackers.LanguageQuestionKey(subject, "compatibility_source_compat"): answer,
 					trackers.LanguageQuestionKey(subject, "compatibility_mix_compat"):    "audio-0",
@@ -123,7 +123,11 @@ ID: "compat",
 						}
 					}
 				}
-				question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{Type: subject.Type, LanguageFacts: subject.LanguageFacts}})
+				question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
+					Type:                        subject.Type,
+					LanguageFacts:               subject.LanguageFacts,
+					TrackerQuestionnaireAnswers: map[string]map[string]string{"LST": subject.QuestionnaireAnswers},
+				}})
 				if question == nil || len(question.Fields) != 1 || !strings.HasPrefix(question.Fields[0].Key, "compatibility_mix_") {
 					t.Fatalf("only measured association input should remain: %+v", question)
 				}
@@ -285,10 +289,10 @@ func TestLSTHardcodedPresentationDoesNotInferPackCoverage(t *testing.T) {
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
 	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
-Type: subject.Type,
- LanguageFacts: subject.LanguageFacts,
- HardcodedSubtitleLanguages: subject.HardcodedSubtitleLanguages,
-}})
+		Type:                       subject.Type,
+		LanguageFacts:              subject.LanguageFacts,
+		HardcodedSubtitleLanguages: subject.HardcodedSubtitleLanguages,
+	}})
 	if question != nil {
 		t.Fatalf("unverified pack coverage became reassurance: %+v", question)
 	}
@@ -372,10 +376,10 @@ func TestLSTKnownEnglishCoveragePrecedesUnrelatedUnknownTracks(t *testing.T) {
 		subject.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
 		subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
 		subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-ID: "unknown",
- ResourceID: "media-1",
- Kind: api.MediaTrackSubtitle,
-})
+			ID:         "unknown",
+			ResourceID: "media-1",
+			Kind:       api.MediaTrackSubtitle,
+		})
 		if needsSubtitlePresentation(subject) {
 			t.Fatalf("known relevant English coverage requires unrelated evidence: %+v", subject.LanguageFacts)
 		}

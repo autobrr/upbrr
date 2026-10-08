@@ -146,6 +146,18 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 		}
 		add("subtitles", "missing English subtitles", outcome)
 	}
+	compatibilityMatches := make(map[string]string)
+	if policy.CompatibilityRequired || policy.CompatibilityOnlyTrueHD || len(policy.CompatibilityCodecs) > 0 {
+		for _, track := range facts.Tracks {
+			mix := AutomaticDolbyCompatibilityMix(facts, track)
+			if track.Role == api.AudioRoleCompatibility {
+				mix = AutomaticCompatibilityMix(track, CompatibilityAudioMixes(facts, track, true))
+			}
+			if mix != "" {
+				compatibilityMatches[track.ID] = mix
+			}
+		}
+	}
 	for _, track := range facts.Tracks {
 		if track.Kind != api.MediaTrackAudio {
 			continue
@@ -153,39 +165,24 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 		if slices.Contains(policy.DisallowedRoles, track.Role) {
 			add("track_role", "disallowed "+string(track.Role)+" track "+track.ID, LanguageProhibited)
 		}
-		if strings.Contains(strings.ToLower(track.Codec), "truehd") {
-			if policy.CompatibilityRequired && (!policy.EmbeddedCompatibilityAllowed || !track.EmbeddedCompatibility) {
-				matching := slices.ContainsFunc(facts.Tracks, func(candidate api.MediaTrackFacts) bool {
-					return candidate.Kind == api.MediaTrackAudio && candidate.Role == api.AudioRoleCompatibility &&
-						slices.ContainsFunc(candidate.Languages, func(language string) bool { return slices.Contains(track.Languages, language) })
-				})
-				sameLanguageMixes := 0
-				for _, other := range facts.Tracks {
-					if other.Kind == api.MediaTrackAudio && strings.Contains(strings.ToLower(other.Codec), "truehd") &&
-						slices.ContainsFunc(other.Languages, func(language string) bool { return slices.Contains(track.Languages, language) }) {
-						sameLanguageMixes++
-					}
-				}
-				if sameLanguageMixes > 1 {
-					add("compatibility_mix", "individual TrueHD mix-to-compatibility association is unresolved", LanguageUnresolved)
-				}
-				if !matching {
-					add("compatibility_missing", "per-mix TrueHD compatibility audio is not established for track "+track.ID, LanguageUnresolved)
-				}
+		if strings.Contains(strings.ToLower(track.Codec), "truehd") &&
+			policy.CompatibilityRequired && (!policy.EmbeddedCompatibilityAllowed || !track.EmbeddedCompatibility) {
+			matching := slices.ContainsFunc(facts.Tracks, func(candidate api.MediaTrackFacts) bool {
+				return track.ID != "" && compatibilityMatches[candidate.ID] == track.ID
+			})
+			if len(CompatibilityAudioMixes(facts, track, true)) > 0 {
+				add("compatibility_mix", "individual TrueHD mix-to-compatibility association is unresolved", LanguageUnresolved)
+			}
+			if !matching {
+				add("compatibility_missing", "per-mix TrueHD compatibility audio is not established for track "+track.ID, LanguageUnresolved)
 			}
 		}
-		if track.Role == api.AudioRoleCompatibility {
+		if track.Role == api.AudioRoleCompatibility || compatibilityMatches[track.ID] != "" {
 			if policy.CompatibilityOnlyTrueHD {
-				matches := 0
-				for _, main := range facts.Tracks {
-					if main.Kind == api.MediaTrackAudio && strings.Contains(strings.ToLower(main.Codec), "truehd") &&
-						slices.ContainsFunc(main.Languages, func(language string) bool { return slices.Contains(track.Languages, language) }) {
-						matches++
-					}
-				}
-				if matches == 0 {
+				candidates := CompatibilityAudioMixes(facts, track, true)
+				if len(candidates) == 0 {
 					add("compatibility_mix", "compatibility track has no matching-language TrueHD mix", LanguageProhibited)
-				} else if matches > 1 {
+				} else if compatibilityMatches[track.ID] == "" {
 					add("compatibility_mix", "compatibility track association with its TrueHD mix is unresolved", LanguageUnresolved)
 				}
 			}

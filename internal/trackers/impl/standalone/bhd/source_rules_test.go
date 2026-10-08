@@ -183,3 +183,22 @@ func TestBHDSourceHistoryDoesNotGateProjection(t *testing.T) {
 		}
 	}
 }
+
+func TestBHDOrdinaryCompatibilityIsNotARedundantProgrammeMix(t *testing.T) {
+	subject := bhdValidationSubject()
+	subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
+	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+		ID:        "standalone",
+		Kind:      api.MediaTrackAudio,
+		Role:      api.AudioRoleProgramme,
+		Codec:     "DD",
+		Languages: []string{"English"},
+	})
+	requireBHDSourceWarnings(t, subject, "language_existing_release")
+	subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].Codec = "DD+"
+	if failures := languageAssessment(subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+		return f.Rule == "language_compatibility_format" && f.Disposition == api.RuleDispositionStrict
+	}) {
+		t.Fatalf("BHD AC-3-only constraint lost: %+v", failures)
+	}
+}

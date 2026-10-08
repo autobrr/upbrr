@@ -7,27 +7,20 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// compatibilityMixes returns selectable mixes and reports matching tracks whose identity is missing.
-func compatibilityMixes(facts api.LanguageFacts, compatibility api.MediaTrackFacts) ([]api.MediaTrackFacts, bool) {
-	var candidates []api.MediaTrackFacts
-	unidentified := false
-	for _, track := range facts.Tracks {
-		if track.Kind == api.MediaTrackAudio && track.Role != api.AudioRoleCompatibility &&
-			strings.Contains(strings.ToLower(track.Codec), "truehd") && track.ResourceID == compatibility.ResourceID &&
-			slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(compatibility.Languages, language) }) {
-			if track.ID == "" {
-				unidentified = true
-			} else {
-				candidates = append(candidates, track)
-			}
-		}
+func compatibilityMixes(facts api.LanguageFacts, compatibility api.MediaTrackFacts) []api.MediaTrackFacts {
+	return trackers.CompatibilityAudioMixes(facts, compatibility, true)
+}
+
+// compatibilityMix retains current manual answers, including explicit uncertainty.
+func compatibilityMix(subject api.TrackerValidationSubject, track api.MediaTrackFacts, candidates []api.MediaTrackFacts) string {
+	if answer, present := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)]; present {
+		return answer
 	}
-	return candidates, unidentified
+	return trackers.AutomaticCompatibilityMix(track, candidates)
 }
 
 // compatibilityFailures preserves unambiguous matches and requires source review
@@ -44,22 +37,21 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 		if track.Kind != api.MediaTrackAudio {
 			continue
 		}
-		if track.Role != api.AudioRoleCompatibility {
+		candidates := compatibilityMixes(facts, track)
+		if track.Role != api.AudioRoleCompatibility &&
+			(!trackers.StandaloneDolbyAudio(track) || !slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.Codec != "" })) {
 			continue
 		}
-		identified := track.ID != "" && len(track.Languages) > 0 && !slices.ContainsFunc(track.Languages, func(language string) bool {
-			code := languageutil.NormalizeLanguageCode(language)
-			return code == "" || code == "und" || code == "mul"
-		})
+		answer := compatibilityMix(subject, track, candidates)
+		if track.Role != api.AudioRoleCompatibility && answer == "not_compatibility" {
+			continue
+		}
+		identified := track.ID != "" && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0
 		if !identified {
 			add("compatibility_evidence", "compatibility track identity and language require review", trackers.LanguageUnresolved)
 		}
-		candidates, unidentifiedMix := compatibilityMixes(facts, track)
-		answer := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)]
-		if len(candidates) == 1 && !unidentifiedMix {
-			answer = candidates[0].ID
-		}
-		if answer != "" && slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID == answer }) {
+		if answer != "" &&
+			slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID == answer && candidate.Codec != "" }) {
 			if identified {
 				confirmed[answer] = true
 			}
@@ -67,7 +59,7 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 		}
 		outcome := trackers.LanguageUnresolved
 		reason := "source association with its TrueHD mix is unresolved for compatibility track " + track.ID
-		if len(candidates) == 0 && identified && !unidentifiedMix && !unknownCodec && facts.AudioStatus == api.MetadataEvidenceStatusComplete {
+		if len(candidates) == 0 && identified && !unknownCodec && facts.AudioStatus == api.MetadataEvidenceStatusComplete {
 			outcome = trackers.LanguageProhibited
 			reason = "compatibility track " + track.ID + " has no matching-language TrueHD mix in its media resource; compatibility for other codecs is prohibited"
 		}

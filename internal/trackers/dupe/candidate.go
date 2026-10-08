@@ -204,7 +204,7 @@ func NormalizeTrackerTitleHDR(name string) api.HDRFacts {
 		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatWCG)
 	}
 	switch {
-	case strings.Contains(upper, "HDR10+"), strings.Contains(upper, "HDR10PLUS"):
+	case strings.Contains(upper, "HDR10+"), strings.Contains(upper, "HDR10PLUS"), tokenPresent(upper, "HDR10P"):
 		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
 	case tokenPresent(upper, "HDR10"), !hdrVivid && tokenPresent(upper, "HDR"):
 		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10)

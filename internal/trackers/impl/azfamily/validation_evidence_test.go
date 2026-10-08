@@ -65,8 +65,8 @@ func TestAZFamilyValidationPolicyVersions(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"AZ":  "azfamily-az-policy-v4",
-		"CZ":  "azfamily-cz-policy-v5",
+		"AZ":  "azfamily-az-policy-v5",
+		"CZ":  "azfamily-cz-policy-v6",
 		"PHD": "azfamily-phd-constructibility-v2",
 	}
 	for site, expected := range tests {

@@ -17,7 +17,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v5", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v6", trackers.StructuredNamePolicy{
 		Defaults: applyAitherNameDefaults,
 	})
 }
@@ -215,8 +215,9 @@ func aitherLanguage(meta api.UploadSubject) string {
 		return ""
 	}
 	if !trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
-		if track, ok := multilingualProgrammeTrack(meta.LanguageFacts); ok {
-			return multilingualMarker(api.NewTrackerValidationSubject(meta, "AITHER"), track)
+		subject := api.NewTrackerValidationSubject(meta, "AITHER")
+		if track, ok := multilingualProgrammeTrack(subject); ok {
+			return multilingualMarker(subject, track)
 		}
 	}
 	for _, value := range languages {
@@ -255,10 +256,20 @@ func isDVDSource(source string) bool {
 	}
 }
 
-func multilingualProgrammeTrack(facts api.LanguageFacts) (api.MediaTrackFacts, bool) {
+// multilingualProgrammeTrack counts accepted standalone companions as part of
+// their programme mix, preserving the independent spoken-language balance review.
+func multilingualProgrammeTrack(subject api.TrackerValidationSubject) (api.MediaTrackFacts, bool) {
+	facts := subject.LanguageFacts
 	var programme []api.MediaTrackFacts
 	for _, track := range facts.Tracks {
 		if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) {
+			if trackers.StandaloneDolbyAudio(track) && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0 {
+				answer, _ := resolveCompatibilityMix(subject, track)
+				if answer != "" &&
+					slices.ContainsFunc(compatibilityMixes(facts, track), func(mix api.MediaTrackFacts) bool { return mix.ID == answer && mix.Codec != "" }) {
+					continue
+				}
+			}
 			programme = append(programme, track)
 		}
 	}

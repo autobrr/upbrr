@@ -66,7 +66,7 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v10/languages-v1" {
+	if policy.ID != "unit3d-ulcx-policy-v11/languages-v1" {
 		t.Fatalf("validation policy = %q, want upload rules policy v6", policy.ID)
 	}
 	tests := []struct {

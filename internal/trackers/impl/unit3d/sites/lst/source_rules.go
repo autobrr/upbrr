@@ -36,6 +36,13 @@ func audioDefects(subject api.TrackerValidationSubject) []audioDefect {
 		if track.Kind != api.MediaTrackAudio {
 			continue
 		}
+		if standaloneCompatibilityAudio(track) && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0 {
+			candidates := compatibilityMixes(facts, track)
+			mix := compatibilityMix(subject, track, candidates)
+			if mix != "" && slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID == mix && candidate.Codec != "" }) {
+				continue
+			}
+		}
 		switch track.Role {
 		case api.AudioRoleCommentary,
 			api.AudioRoleCompatibility,
@@ -145,21 +152,31 @@ func hardcodedEnglishSubtitles(subject api.TrackerValidationSubject) bool {
 	})
 }
 
-func compatibilityMixes(facts api.LanguageFacts, compatibility api.MediaTrackFacts) []api.MediaTrackFacts {
-	var candidates []api.MediaTrackFacts
-	for _, track := range facts.Tracks {
-		if track.Kind == api.MediaTrackAudio && track.Role != api.AudioRoleCompatibility && track.ID != "" &&
-			strings.Contains(strings.ToLower(track.Codec), "truehd") && track.ResourceID == compatibility.ResourceID &&
-			slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(compatibility.Languages, language) }) {
-			candidates = append(candidates, track)
-		}
+// standaloneCompatibilityAudio preserves LST's existing DD+ Atmos allowance
+// while leaving the inspected codec and role unchanged.
+func standaloneCompatibilityAudio(track api.MediaTrackFacts) bool {
+	if strings.EqualFold(track.Codec, "DD+ Atmos") {
+		track.Codec = "DD+"
 	}
-	return candidates
+	return trackers.StandaloneDolbyAudio(track)
+}
+
+func compatibilityMixes(facts api.LanguageFacts, compatibility api.MediaTrackFacts) []api.MediaTrackFacts {
+	return trackers.CompatibilityAudioMixes(facts, compatibility, true)
+}
+
+// compatibilityMix retains current manual answers, including explicit uncertainty.
+func compatibilityMix(subject api.TrackerValidationSubject, track api.MediaTrackFacts, candidates []api.MediaTrackFacts) string {
+	if answer, present := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)]; present {
+		return answer
+	}
+	return trackers.AutomaticCompatibilityMix(track, candidates)
 }
 
 // Compatibility checks preserve measured codec and per-mix requirements.
 // Source provenance and relative quality remain unverified advisory guidance.
 func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	facts := subject.LanguageFacts
 	var failures []api.RuleFailure
 	confirmed, pending := map[string]bool{}, map[string]bool{}
 	for _, track := range subject.LanguageFacts.Tracks {
@@ -172,13 +189,16 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 				trackers.LanguageRuleFailure(subject, "compatibility_evidence", "audio codec requires review for track "+track.ID, trackers.LanguageUnresolved),
 			)
 		}
-		if track.Role != api.AudioRoleCompatibility {
+		candidates := compatibilityMixes(facts, track)
+		if track.Role != api.AudioRoleCompatibility &&
+			(!standaloneCompatibilityAudio(track) || !slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.Codec != "" })) {
 			continue
 		}
-		identified := track.ID != "" && len(track.Languages) > 0 && !slices.ContainsFunc(track.Languages, func(language string) bool {
-			code := languageutil.NormalizeLanguageCode(language)
-			return code == "" || code == "und" || code == "mul"
-		})
+		answer := compatibilityMix(subject, track, candidates)
+		if track.Role != api.AudioRoleCompatibility && answer == "not_compatibility" {
+			continue
+		}
+		identified := track.ID != "" && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0
 		if !identified {
 			failures = append(
 				failures,
@@ -190,10 +210,7 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 				),
 			)
 		}
-		validCodec := slices.ContainsFunc(
-			[]string{"DD", "AC-3", "DD+", "E-AC-3", "DD+ Atmos"},
-			func(codec string) bool { return strings.EqualFold(codec, track.Codec) },
-		)
+		validCodec := trackers.DolbyCompatibilityCodec(track.Codec) || strings.EqualFold(track.Codec, "DD+ Atmos")
 		if !validCodec {
 			outcome := trackers.LanguageProhibited
 			if track.Codec == "" {
@@ -212,9 +229,8 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 		)
 		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		failures = append(failures, failure)
-		candidates := compatibilityMixes(subject.LanguageFacts, track)
-		answer := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)]
-		if answer != "" && slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID == answer }) {
+		if answer != "" &&
+			slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID == answer && candidate.Codec != "" }) {
 			if validCodec && identified {
 				confirmed[answer] = true
 			} else {

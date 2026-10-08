@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "CinemaZ default-evidence policy version advances after reviewing the shared finalized-facts predicate. AvistaZ and PHD versions and all provider/manual correction precedence remain unchanged; no provider lookup or fallback is introduced.",
-    "sha256": "13204f0c6a492047bda012ba2aa714d8a3893c4f6a8c13c6d5888b72d7390b88"
+    "reason": "Advances AZ/CZ policy versions for compatibility assessment over finalized LanguageFacts. Existing TMDB country routing, PreferredYear manual/explicit-clear precedence, and constructibility callbacks are unchanged; no provider fallback is added.",
+    "sha256": "0c5b2bda19c197925bec51d9a79df8156c812a072dd8b67cd8d4c80dc1c043d9"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
@@ -388,8 +388,8 @@
     "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/bhd/validation.go:validationPolicy": {
-    "sha256": "aef6a6c8a1b0a3994172098539dc3868a63cd999c013ed3f686a61bc7bbd068f",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "371c77187d121902436f5a26cb61c5d157489ae65358868279b78cbbe12d461c",
+    "reason": "Advances the validation version for compatibility assessment over finalized LanguageFacts. checkRequirements and languageAssessment wiring are unchanged; canonical identity, finalized genres, and manual metadata remain authoritative."
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1532,8 +1532,8 @@
     "sha256": "c749e22235850b73d39f33dc467bc3acfdf832bc4f646db4de3e80730d775af9"
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:validationPolicy": {
-    "sha256": "b870c4b866a24a245e3b33773c43b6a9be517e0fa0dc38788d6349d9919439c9",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "a043becb3e6900180f2f316fff09bae8a44a8a6a05b6b83c1e4bc3de6c851313",
+    "reason": "Advances the validation version for compatibility assessment over finalized LanguageFacts. Region resolution, checkRules wiring, finalized technical facts, and existing provider-aware animation paths are unchanged; no provider fallback is added."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
