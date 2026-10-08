@@ -250,3 +250,16 @@ func canonicalDisplayFixtureRelease() api.PreparedRelease {
 		},
 	}
 }
+
+func TestProjectDisplayPreservesEffectiveCommentary(t *testing.T) {
+	t.Parallel()
+	for _, commentary := range []bool{true, false} {
+		display, err := ProjectDisplay(api.PreparedRelease{Media: api.MediaFacts{Commentary: commentary}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if display.Commentary != commentary {
+			t.Fatalf("display commentary = %t, want %t", display.Commentary, commentary)
+		}
+	}
+}

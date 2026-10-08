@@ -407,6 +407,15 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		dupe := dupeByTracker[trackerID]
 		fmt.Fprintf(s.streams.out, "Tracker: %s (%s)\n", tracker, trackerID)
 		fmt.Fprintf(s.streams.out, "Upload name: %q\n", projection.UploadReleaseName)
+		if len(projection.EditionFeatures) > 0 {
+			selected := make([]string, 0, len(projection.EditionFeatures))
+			for _, feature := range projection.EditionFeatures {
+				if feature.Selected {
+					selected = append(selected, "["+feature.Label+"]")
+				}
+			}
+			fmt.Fprintf(s.streams.out, "%s edition/features: %s\n", trackerID, emptyCLIValue(strings.Join(selected, " ")))
+		}
 		fmt.Fprintf(
 			s.streams.out,
 			"Duplicate check: decision=%s candidates=%d search_complete=%t policy=%s\n",
@@ -665,6 +674,11 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 			}
 			if len(reasons) > 0 {
 				fmt.Fprintf(output, "     Reasons: %s\n", strings.Join(reasons, ","))
+			}
+			for _, reason := range match.Reasons {
+				if message := strings.TrimSpace(logging.SanitizeMessage(reason.Message)); message != "" {
+					fmt.Fprintf(output, "     %s\n", message)
+				}
 			}
 		} else if reason := strings.TrimSpace(match.Reason); reason != "" {
 			fmt.Fprintf(output, "     Reason: %s\n", reason)

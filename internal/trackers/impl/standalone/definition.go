@@ -115,6 +115,11 @@ func (d *Definition) ProjectionQuestionnaire(input trackers.PreparationInput) *a
 	return d.profile.ProjectionQuestionnaire(input)
 }
 
+// EditionFeatureResolver returns the optional pure tracker review mapper.
+func (d *Definition) EditionFeatureResolver() trackers.EditionFeatureResolver {
+	return d.profile.EditionFeatures
+}
+
 // Prepare dispatches intent through the tracker-local profile callbacks.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
 	if input.Intent == trackers.PreparationIntentDescriptionPreview && !d.profile.UploadContentMode.UsesDescription() {

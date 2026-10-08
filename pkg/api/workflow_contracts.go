@@ -270,6 +270,8 @@ type TrackerPolicyDecision struct {
 
 // TrackerReleaseProjection is one exact tracker-local interpretation of a release.
 type TrackerReleaseProjection struct {
+	// TitleSearchEvidence retains tracker-scoped, generation-bound rule evidence.
+	TitleSearchEvidence *TrackerTitleSearchEvidence `json:"titleSearchEvidence,omitempty"`
 	// QuestionnaireAnswers owns exact tracker-scoped answers after projection instructions.
 	// An empty object clears prior answers; nil identifies a legacy projection without this authority.
 	QuestionnaireAnswers map[string]string        `json:"questionnaireAnswers,omitzero"`
@@ -277,6 +279,7 @@ type TrackerReleaseProjection struct {
 	DisplayName          string                   `json:"displayName"`
 	CanonicalReleaseName string                   `json:"canonicalReleaseName"`
 	UploadReleaseName    string                   `json:"uploadReleaseName"`
+	EditionFeatures      []TrackerEditionFeature  `json:"editionFeatures,omitempty"`
 	AdditionalNames      []TrackerReleaseName     `json:"additionalNames,omitempty"`
 	Taxonomy             TrackerTaxonomy          `json:"taxonomy"`
 	ProviderIDs          []TrackerProviderID      `json:"providerIds,omitempty"`
@@ -675,6 +678,7 @@ type UploadPlanTracker struct {
 	TorrentFingerprint     WorkflowFingerprint               `json:"torrentFingerprint,omitempty"`
 	ClientFailureCode      OperationFailureCode              `json:"clientFailureCode,omitempty"`
 	SemanticFingerprint    WorkflowFingerprint               `json:"semanticFingerprint"`
+	EditionFeatures        []TrackerEditionFeature           `json:"editionFeatures,omitempty"`
 }
 
 // UploadPlan is a safe projection of exact retained private prepared operations.

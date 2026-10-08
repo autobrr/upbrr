@@ -16,7 +16,7 @@ import (
 // ValidationPolicy returns LUME's tracker-specific constructibility checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-lume-constructibility-v2",
+		ID:    "unit3d-lume-constructibility-v3",
 		Check: checkRequirements,
 	}
 }
@@ -70,11 +70,6 @@ func checkRequirements(ctx context.Context, meta api.TrackerValidationSubject, _
 			Evidence:           lumeEvidencePolicy("lume_media_constraints"),
 			MinVideoTrackCount: 1,
 			MaxVideoTrackCount: 1,
-		})...)
-		failures = append(failures, trackers.ValidateLanguageCombination(meta.MediaFileFacts, trackers.LanguageCombinationPolicy{
-			Evidence:               lumeEvidencePolicy("lume_language"),
-			RequireOriginalAudio:   true,
-			RequireEnglishSubtitle: true,
 		})...)
 		failures = append(failures, lumeResolutionFailures(meta)...)
 	}

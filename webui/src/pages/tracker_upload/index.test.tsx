@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UploadFacet } from "../../releaseSession/types";
 import TrackerUploadPage from "./index";
@@ -712,4 +712,63 @@ describe("TrackerUploadPage", () => {
     expect(screen.getByText("Skipped: Tracker does not accept this genre.")).toBeInTheDocument();
     expect(screen.getByText("Skipped: tracker is not ready to upload")).toBeInTheDocument();
   });
+  it.each(["projection", "report"] as const)(
+    "renders the complete read-only %s option catalogue without changing payload fields",
+    (source) => {
+      const editionFeatures = [
+        {
+          label: "With Commentary",
+          category: "Feature",
+          selected: true,
+          evidence: "Effective commentary is true",
+        },
+        {
+          label: "Remastered",
+          category: "Edition",
+          selected: false,
+          evidence: "No prepared remaster evidence",
+        },
+      ];
+      const fields = [{ key: "remaster_title", value: "With Commentary" }];
+      const facet = uploadFacet({
+        projections: {
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              uploadReleaseName: "Example.Release.2026-GRP",
+              ...(source === "projection" ? { editionFeatures } : {}),
+            },
+          ],
+        } as unknown as NonNullable<UploadFacet["view"]["projections"]>,
+        dryRunResult: {
+          status: "completed",
+          reports: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              status: "ready",
+              fields,
+              clientInjection: {},
+              ...(source === "report" ? { editionFeatures } : {}),
+            },
+          ],
+        } as unknown as NonNullable<UploadFacet["view"]["dryRunResult"]>,
+      });
+      renderPage(facet);
+      const catalogue = screen.getByRole("region", { name: "Example Tracker edition/features" });
+      const options = within(catalogue).getAllByRole("listitem");
+      expect(options).toHaveLength(2);
+      expect(options[0]).toHaveTextContent("With Commentary · Selected · Feature");
+      expect(options[1]).toHaveTextContent("Remastered · Not selected · Edition");
+      expect(within(catalogue).getByText("Effective commentary is true")).toBeInTheDocument();
+      expect(within(catalogue).getByText("No prepared remaster evidence")).toBeInTheDocument();
+      expect(within(catalogue).queryByRole("checkbox")).not.toBeInTheDocument();
+      expect(screen.queryByText("remaster_title: With Commentary")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Expand Example Tracker" }));
+      expect(screen.getByText("remaster_title: With Commentary")).toBeInTheDocument();
+      expect(fields).toEqual([{ key: "remaster_title", value: "With Commentary" }]);
+      expect(facet.changeOptions).not.toHaveBeenCalled();
+    },
+  );
 });

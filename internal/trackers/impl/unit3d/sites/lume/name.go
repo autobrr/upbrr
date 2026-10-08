@@ -15,10 +15,22 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v3", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v4", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
 }
 
 func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if !isLumeFullDisc(meta) {
+		if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
+			return fmt.Errorf("apply LUME language markers: %w", err)
+		}
+		languageCount := trackers.KnownProgrammeLanguageCount(meta.LanguageFacts)
+		if languageCount >= 2 && languageCount == len(meta.LanguageFacts.ProgrammeLanguages) && meta.LanguageFacts.HasOriginalAudio() &&
+			(languageCount != 2 || !meta.LanguageFacts.HasEnglishDub()) {
+			if err := editor.InsertBefore(api.NameRoleDualAudio, "Multi", api.NameRoleAudio); err != nil {
+				return fmt.Errorf("set LUME multi-language marker: %w", err)
+			}
+		}
+	}
 	if err := applyLumeTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
@@ -101,8 +113,7 @@ func omitLumeHi10P(editor *trackers.NameEditor) error {
 }
 
 func isLumeFullDisc(meta api.UploadSubject) bool {
-	nameType := strings.TrimSpace(meta.Type)
-	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
+	return trackers.IsFullDiscUpload(meta.DiscType, meta.Type)
 }
 
 func lumeHDR(facts api.HDRFacts) string {

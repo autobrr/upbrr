@@ -101,14 +101,15 @@ Check tracker eligibility after the change. A tracker that requires the missing 
 
 ## Tracker authentication is blocked
 
-1. Open the tracker in **Settings**.
-2. confirm every required field is present;
-3. import a current cookie or use the supported login flow;
-4. complete 2FA when requested;
-5. run the tracker auth test;
-6. retry preparation.
+1. Open **Settings → Trackers**, confirm every required field is present, and save changes.
+2. For cookie-file authentication, follow the [Firefox export and import walkthrough](../web-ui/settings/tracker-auth.md#export-and-import-cookies), or use the tracker's supported login flow.
+3. Complete 2FA when requested.
+4. Open **Settings → Tracker Auth**, inspect the stored cookie status/count, and select **Check Auth** where supported.
+5. Retry preparation after resolving the reported auth requirement.
 
-Upload preflight does not silently log in or mutate auth state. Fix auth on the dedicated Settings surface.
+Stored cookies do not prove a valid remote session. See [Cookie troubleshooting](../web-ui/settings/tracker-auth.md#cookie-troubleshooting) for wrong Firefox containers, expired sessions, rejected formats, missing folder imports, and tracker-side failures. For **Storage unavailable**, follow [Storage recovery](../web-ui/settings/tracker-auth.md#storage-recovery); do not delete the database or auth key material.
+
+Upload preflight can validate sessions and perform tracker-supported automatic login or refresh, including storing a refreshed session. If authentication remains blocked or requires manual 2FA, resolve it under **Settings → Tracker Auth** before retrying preparation.
 
 ## No screenshots or image links
 

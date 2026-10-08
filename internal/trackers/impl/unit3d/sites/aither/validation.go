@@ -16,7 +16,7 @@ import (
 // ValidationPolicy returns AITHER's source-backed package, language, and
 // prepared-asset policy.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-aither-policy-v2", Check: checkEvidenceRules}
+	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{ID: "unit3d-aither-policy-v4", Check: checkEvidenceRules}, languageAssessment)
 }
 
 func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -41,16 +41,7 @@ func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubjec
 			aitherEvidencePolicy("aither_multi_season"),
 		)...)
 	}
-	if !unit3d.IsDiscType(subject.DiscType) {
-		failures = append(failures, trackers.ValidateLanguageCombination(
-			subject.MediaFileFacts,
-			trackers.LanguageCombinationPolicy{
-				Evidence:                           aitherEvidencePolicy("aither_language"),
-				RequireOriginalAudio:               true,
-				RequireEnglishSubtitleWithoutAudio: true,
-			},
-		)...)
-	}
+
 	failures = append(failures, trackers.ValidateRequiredAssets(
 		subject.AssetFacts,
 		trackers.RequiredAssetPolicy{

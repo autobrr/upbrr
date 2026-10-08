@@ -341,8 +341,7 @@ func torrentClientComplete(client config.TorrentClientConfig) bool {
 	case "watch":
 		return strings.TrimSpace(client.WatchFolder) != ""
 	case "qbit", "qbittorrent":
-		return client.UsesQuiProxy() || (strings.TrimSpace(client.QbitHost()) != "" &&
-			strings.TrimSpace(client.QbitUsername()) != "" && strings.TrimSpace(client.QbitPassword()) != "")
+		return strings.TrimSpace(client.QbitHost()) != ""
 	case "qui":
 		return client.UsesQuiProxy()
 	default:

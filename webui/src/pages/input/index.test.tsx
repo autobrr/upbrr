@@ -1765,6 +1765,35 @@ describe("InputPage", () => {
     expect(screen.getByText("No inspected audio or subtitle tracks.")).toBeInTheDocument();
   });
 
+  it("shows inspected disc audio provenance without deriving commentary from hidden tracks", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Media.Tracks[0] = {
+      ...release.Media.Tracks[0],
+      DiscID: "disc-1",
+      PlaylistID: "00800.MPLS",
+      NativeID: "",
+      BitrateBitsPerSecond: 640000,
+      Hidden: true,
+      Commentary: false,
+    };
+    render(<InputCorrectionEditor facet={{ ...base, view: { ...base.view, release } }} />);
+    expect(
+      screen.getByText(
+        /Disc: disc-1 · Playlist: 00800.MPLS · Ordinal: 1 · Bitrate: 640000 bps · Hidden: yes · Commentary: no/,
+      ),
+    ).toBeInTheDocument();
+    expect(base.changeMetadata).not.toHaveBeenCalled();
+  });
+
+  it("does not invent BDInfo bitrate or hidden evidence for file audio tracks", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    render(<InputCorrectionEditor facet={{ ...base, view: { ...base.view, release } }} />);
+    expect(screen.queryByText(/Hidden:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Bitrate:/)).not.toBeInTheDocument();
+  });
+
   it("binds track corrections and source options to their typed facet commands", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {

@@ -184,6 +184,8 @@ export type AudioAnalysisTrackResult = Readonly<{
 
 export type AudioAnalysisVariant = string;
 
+export type AudioTrackRole = string;
+
 export type BlurayDiscSpec = Readonly<{
   Count: number;
   Format: string;
@@ -795,6 +797,21 @@ export type InvalidateReleaseWorkflowTrackersRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type LanguageFacts = Readonly<{
+  AudioAbsent: boolean;
+  AudioStatus: MetadataEvidenceStatus;
+  FullSubtitleLanguages: readonly string[];
+  OriginalLanguages: readonly string[];
+  OriginalLanguagesKnown: boolean;
+  PrimaryAudioTrackID: string;
+  ProgrammeLanguages: readonly string[];
+  ProgrammeStatus: MetadataEvidenceStatus;
+  SubtitleLanguages: readonly string[];
+  SubtitleStatus: MetadataEvidenceStatus;
+  TrackCoverageComplete: boolean;
+  Tracks: readonly MediaTrackFacts[];
+}>;
+
 export type MediaArtifact = Readonly<{
   discId?: string;
   discName?: string;
@@ -879,6 +896,7 @@ export type MediaDiscPlan = Readonly<{
 export type MediaFacts = Readonly<{
   Anime: boolean;
   Audio: string;
+  AudioAbsent: boolean;
   AudioLanguages: readonly string[];
   AudioLanguagesProvenance: FactProvenance;
   BitDepth: string;
@@ -898,12 +916,15 @@ export type MediaFacts = Readonly<{
   HardcodedSubtitleLanguages: readonly string[];
   HardcodedSubtitleLanguagesProvenance: FactProvenance;
   HasEncodeSettings: boolean;
+  LanguageFacts: LanguageFacts;
+  MediaFileFacts: MediaFileFacts;
   MediaInfoUniqueID: string;
   OriginalLanguage: string;
   OriginalLanguageProvenance: FactProvenance;
   Presentation: string;
   PrimaryAudioTrackID: string;
   Region: string;
+  ReleaseFeatures?: readonly ReleaseFeature[];
   Repack: string;
   Service: string;
   ServiceLongName: string;
@@ -921,6 +942,31 @@ export type MediaFacts = Readonly<{
   VideoCodec: string;
   VideoEncode: string;
   WebDV: boolean;
+}>;
+
+export type MediaFileFact = Readonly<{
+  AudioLanguages: readonly string[];
+  AudioStatus: MetadataEvidenceStatus;
+  BitDepth: string;
+  Container: string;
+  FileName: string;
+  Primary: boolean;
+  Resolution: string;
+  Source: string;
+  SubtitleLanguages: readonly string[];
+  SubtitleStatus: MetadataEvidenceStatus;
+  VideoCodec: string;
+  VideoEncode: string;
+  VideoTrackCount: number;
+}>;
+
+export type MediaFileFacts = Readonly<{
+  ExpectedFileCount: number;
+  Files: readonly MediaFileFact[];
+  LanguageStatus: MetadataEvidenceStatus;
+  OriginalLanguage: string;
+  Status: MetadataEvidenceStatus;
+  TechnicalStatus: MetadataEvidenceStatus;
 }>;
 
 export type MediaPlan = Readonly<{
@@ -950,12 +996,19 @@ export type MediaPlanSavedImage = Readonly<{
 }>;
 
 export type MediaTrackFacts = Readonly<{
+  AudioLabel: string;
+  BitrateBitsPerSecond: number;
   ChannelLayout: string;
   Channels: number;
   Codec: string;
   Commentary: boolean;
   Default: boolean;
+  DefaultKnown: boolean;
   DetectedLanguages: readonly string[];
+  DiscID: string;
+  EmbeddedCompatibility: boolean;
+  Forced: boolean;
+  Hidden: boolean;
   ID: string;
   Kind: MediaTrackKind;
   LanguageProvenance: FactProvenance;
@@ -963,8 +1016,12 @@ export type MediaTrackFacts = Readonly<{
   ManifestFingerprint: string;
   NativeID: string;
   Ordinal: number;
+  PlaylistID: string;
   ResourceID: string;
+  Role: AudioTrackRole;
   SampleRate: number;
+  StreamOrder: number;
+  StreamOrderKnown: boolean;
   Title: string;
 }>;
 
@@ -1175,6 +1232,7 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  Commentary?: boolean;
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
@@ -1316,6 +1374,8 @@ export type ReleaseFactInstructions = Readonly<{
   SourceLookup: string;
   TrackerIDs: Readonly<Record<string, string>>;
 }>;
+
+export type ReleaseFeature = string;
 
 export type ReleaseNameComponent = Readonly<{
   AttachTo?: readonly ReleaseNameRole[];
@@ -2272,6 +2332,7 @@ export type TrackerDerivedFlag = Readonly<{
 export type TrackerDryRunReport = Readonly<{
   clientInjection: ClientInjectionOutcome;
   displayName: string;
+  editionFeatures?: readonly TrackerEditionFeature[];
   endpoint?: string;
   failures?: readonly WorkflowFailure[];
   fields?: readonly UploadPlanField[];
@@ -2345,6 +2406,13 @@ export type TrackerDuplicateTarget = Readonly<{
   type?: string;
   videoCodec?: string;
   videoEncode?: string;
+}>;
+
+export type TrackerEditionFeature = Readonly<{
+  category: string;
+  evidence?: string;
+  label: string;
+  selected: boolean;
 }>;
 
 export type TrackerID = string;
@@ -2513,6 +2581,7 @@ export type TrackerReleaseProjection = Readonly<{
   duplicateSearchFingerprint: WorkflowFingerprint;
   duplicateTarget: TrackerDuplicateTarget;
   duplicateTargetFingerprint: WorkflowFingerprint;
+  editionFeatures?: readonly TrackerEditionFeature[];
   episodeTitleMode: EpisodeTitleMode;
   failures?: readonly WorkflowFailure[];
   inputFingerprint: WorkflowFingerprint;
@@ -2530,6 +2599,7 @@ export type TrackerReleaseProjection = Readonly<{
   requiredActions?: readonly RequiredAction[];
   ruleAuthorizationFingerprint?: WorkflowFingerprint;
   taxonomy: TrackerTaxonomy;
+  titleSearchEvidence?: TrackerTitleSearchEvidence | null;
   trackerId: TrackerID;
   uploadReady: boolean;
   uploadReleaseName: string;
@@ -2623,6 +2693,17 @@ export type TrackerTaxonomy = Readonly<{
 export type TrackerTaxonomyValue = Readonly<{
   id: string;
   label: string;
+}>;
+
+export type TrackerTitleSearchEvidence = Readonly<{
+  checkedAt: string;
+  configFingerprint: WorkflowFingerprint;
+  freshUntil: string;
+  policyId: string;
+  resultFingerprint: WorkflowFingerprint;
+  status: MetadataEvidenceStatus;
+  titleFingerprint: WorkflowFingerprint;
+  torrentCount: number;
 }>;
 
 export type UniqueIDStatus = string;

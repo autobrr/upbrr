@@ -212,8 +212,10 @@ func analyzeVOB(ctx context.Context, analyzer Analyzer, vobPath string) (string,
 
 type moduleAnalyzer struct{}
 
-func (moduleAnalyzer) Analyze(_ context.Context, target string) (string, []byte, error) {
-	report, err := gomediainfo.AnalyzeFile(target)
+// Analyze observes cancellation between input reads; an OS read already in
+// progress may finish before cancellation is reported by the module.
+func (moduleAnalyzer) Analyze(ctx context.Context, target string) (string, []byte, error) {
+	report, err := gomediainfo.AnalyzeFileContext(ctx, target)
 	if err != nil {
 		return "", nil, fmt.Errorf("mediainfo: analyze file: %w", err)
 	}

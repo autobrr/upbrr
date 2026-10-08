@@ -13,10 +13,10 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{
-		ID:    "standalone-bhd-constructibility-v2",
+	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{
+		ID:    "standalone-bhd-constructibility-v4",
 		Check: checkRequirements,
-	}
+	}, languageAssessment)
 }
 
 // checkRequirements enforces rules 1.2.3-1.2.4, 1.2.9, 4.1.1-4.1.3, and 4.2.1.

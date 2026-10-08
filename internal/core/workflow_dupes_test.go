@@ -12,9 +12,71 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestWorkflowPackWarningUsesExistingBoundDuplicateReview(t *testing.T) {
+	evaluation := dupechecking.Evaluate(
+		api.TrackerDuplicateTarget{
+			Category: "TV",
+			Type:     "WEBDL",
+			Season:   1,
+			Pack:     true,
+		},
+		[]dupechecking.TrackerCandidate{{
+			ID:       "episode",
+			Name:     "Example Episode",
+			Category: "TV",
+			Type:     "WEBDL",
+			Season:   1,
+			Episode:  2,
+		}},
+		trackers.DupePolicy{
+			ID:                            "review/duplicate/v1",
+			EvidenceID:                    "reviewed-pack-rules",
+			PackContainmentRequiresReview: true,
+		},
+		dupechecking.SearchEvidence{Complete: true, WorkScope: dupechecking.WorkScopeProviderID},
+	)
+	item := evaluation.Candidates[0]
+	result := api.DupeCheckResult{
+		Status:   "completed",
+		HasDupes: evaluation.RequiresAction,
+		Search: api.DupeSearchEvidence{
+			Complete:       true,
+			CandidateCount: 1,
+			WorkScope:      string(dupechecking.WorkScopeProviderID),
+		},
+		Evaluations: []api.DupeCandidateEvaluation{{
+			ID:       item.Candidate.ID,
+			Name:     item.Candidate.Name,
+			Relation: item.Relation,
+			Reasons:  item.Reasons,
+		}},
+	}
+	assessment := api.TrackerDupeAssessment{TrackerID: "SP", Matches: publicDupeMatches(result)}
+	setWorkflowDupeOutcome(&assessment, result)
+	if assessment.Decision != api.DupeDecisionPending || len(assessment.RequiredActions) != 1 || assessment.RequiredActions[0].Kind != api.RequiredActionReviewDuplicates ||
+		len(assessment.Matches) != 1 || assessment.Matches[0].Reasons[0].Message != item.Reasons[0].Message {
+		t.Fatalf("comparison warning bypassed shared review: %#v", assessment)
+	}
+	before, err := duplicateEvidenceFingerprint(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Evaluations[0].Group = "CHANGED"
+	after, err := duplicateEvidenceFingerprint(result)
+	if err != nil || before == after {
+		t.Fatalf("changed candidate facts retained evidence authority: %v", err)
+	}
+	result.Search.Complete = false
+	refreshed, err := duplicateEvidenceFingerprint(result)
+	if err != nil || refreshed == after {
+		t.Fatalf("changed enumeration retained evidence authority: %v", err)
+	}
+}
 
 type workflowDupeServiceFake struct {
 	queries     []string

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/releasepolicy"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -274,6 +275,9 @@ func RuleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSub
 		sceneNFOPath = "ready"
 	}
 	return api.RuleSubject{
+		MediaFileFacts:             subject.MediaFileFacts.Clone(),
+		TitleSearchEvidence:        subject.TitleSearchEvidence,
+		LanguageFacts:              subject.LanguageFacts.Clone(),
 		EffectiveMetadata:          subject.EffectiveMetadata,
 		ManualLanguages:            subject.ManualLanguages,
 		HardcodedSubs:              subject.HardcodedSubs,
@@ -320,6 +324,12 @@ func ResolveRuleType(meta api.RuleSubject) string { return resolveType(meta) }
 // ResolveRuleResolution returns the common resolution used by tracker rules.
 func ResolveRuleResolution(meta api.RuleSubject) string { return resolveResolution(meta) }
 
+// EvaluateLanguageRule checks a declared language requirement against flattened
+// release languages, returning the unmet requirement when it does not pass.
+func EvaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, string) {
+	return evaluateLanguageRule(meta, rule)
+}
+
 // IsDiscType reports whether value identifies a supported disc source.
 func IsDiscType(value string) bool { return isDiscType(value) }
 
@@ -352,13 +362,7 @@ func resolveResolution(meta api.RuleSubject) string {
 }
 
 func isDiscType(value string) bool {
-	normalized := strings.NewReplacer(" ", "", "-", "", "_", "").Replace(strings.ToUpper(strings.TrimSpace(value)))
-	switch normalized {
-	case "BDMV", "BLURAY", "DVD", "HDDVD":
-		return true
-	default:
-		return false
-	}
+	return mediafacts.IsDiscType(value)
 }
 
 func isHEVC(meta api.RuleSubject) bool {

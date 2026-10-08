@@ -127,8 +127,8 @@ func TestBuildNameUsesPreparedSeasonFactsOnly(t *testing.T) {
 
 func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().Site.BuildNameVersion; got != "v5" {
-		t.Fatalf("OTW BuildNameVersion = %q, want v5", got)
+	if got := Profile().Site.BuildNameVersion; got != "v6" {
+		t.Fatalf("OTW BuildNameVersion = %q, want v6", got)
 	}
 }
 
@@ -166,5 +166,64 @@ func TestBuildNamePrefersManualTitleAndYear(t *testing.T) {
 	}
 	if got := buildName(meta, config.TrackerConfig{}); !strings.HasPrefix(got, "Manual Title 2030 ") {
 		t.Fatalf("manual name = %q", got)
+	}
+}
+
+func TestOTWAudioMarkersUseProgrammeFactsAndPresentationControls(t *testing.T) {
+	t.Parallel()
+	original := api.LanguageFacts{
+		OriginalLanguages:      []string{"Japanese"},
+		OriginalLanguagesKnown: true,
+		ProgrammeLanguages:     []string{"Japanese", "English"},
+		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+	}
+	for _, audio := range []string{"DD+ 5.1 Dual-Audio", "Dual-Audio DD+ 5.1", "Dubbed Dual-Audio DD+ 5.1"} {
+		meta := api.UploadSubject{
+			Type:          "REMUX",
+			DiscType:      "BDMV",
+			Audio:         audio,
+			LanguageFacts: original,
+		}
+		if got := otwAudio(meta); got != "Dual Audio DD+ 5.1" {
+			t.Fatalf("remux marker: %q", got)
+		}
+		yes := true
+		meta.ReleaseNameOverrides.NoDual = &yes
+		if got := otwAudio(meta); got != "DD+ 5.1" {
+			t.Fatalf("NoDual retained marker: %q", got)
+		}
+		meta.ReleaseNameOverrides.DualAudio = &yes
+		if got := otwAudio(meta); got != "Dual Audio DD+ 5.1" {
+			t.Fatalf("forced dual lost precedence: %q", got)
+		}
+		meta.ReleaseNameOverrides.DualAudio = nil
+		meta.ReleaseNameOverrides.NoDual = nil
+		meta.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusContradictory
+		if got := otwAudio(meta); got != "DD+ 5.1" {
+			t.Fatalf("contradictory facts added marker: %q", got)
+		}
+		meta.Type = "DISC"
+		if got := otwAudio(meta); got != audio {
+			t.Fatalf("full disc changed: %q", got)
+		}
+	}
+	meta := api.UploadSubject{Audio: "DD+ 5.1", LanguageFacts: original}
+	meta.LanguageFacts.ProgrammeLanguages = []string{"English"}
+	if got := otwAudio(meta); got != "Dubbed DD+ 5.1" {
+		t.Fatalf("dub-only marker: %q", got)
+	}
+	meta.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
+	if got := otwAudio(meta); got != "DD+ 5.1" {
+		t.Fatalf("partial facts claimed dub-only: %q", got)
+	}
+	meta.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusComplete
+	meta.LanguageFacts.ProgrammeLanguages = []string{"Japanese", "English", "German"}
+	if got := otwAudio(meta); got != "MULTI DD+ 5.1" {
+		t.Fatalf("multiple marker: %q", got)
+	}
+	meta.LanguageFacts.ProgrammeLanguages = []string{"Japanese"}
+	meta.LanguageFacts.SubtitleLanguages = []string{"English", "German"}
+	if got := otwAudio(meta); got != "DD+ 5.1" {
+		t.Fatalf("subtitles created audio marker: %q", got)
 	}
 }

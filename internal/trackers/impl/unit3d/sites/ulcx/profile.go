@@ -13,6 +13,7 @@ func Profile() unit3d.Profile {
 }
 
 func profileWithTaxonomy(site unit3d.SiteProfile) unit3d.Profile {
+	site.ProjectionQuestionnaire = languageQuestionnaire
 	return unit3d.Profile{
 		Name:              "ULCX",
 		BaseURL:           "https://upload.cx",

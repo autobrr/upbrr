@@ -59,6 +59,79 @@ const renderPage = (facet: DuplicatesFacet, trackers = ["EXAMPLE"]) =>
   );
 
 describe("DupeCheckPage", () => {
+  it.each([
+    { required: true, value: "", draft: undefined, label: "Required answers missing" },
+    { required: true, value: "Known", draft: undefined, label: "Required fields filled" },
+    { required: true, value: "Known", draft: " ", label: "Required answers missing" },
+    { required: true, value: "", draft: "Choice", label: "Required fields filled" },
+    { required: false, value: "", draft: undefined, label: "Optional controls" },
+  ])("describes effective questionnaire values as $label", ({ required, value, draft, label }) => {
+    renderPage(
+      facetFor({
+        questionnaires: [
+          {
+            trackerId: "EXAMPLE",
+            displayName: "Example Tracker",
+            questionnaire: [{ key: "choice", label: "Choice", required, value }],
+            questionnaireAnswers: { choice: value },
+          },
+        ],
+        questionnaireAnswers: draft === undefined ? {} : { EXAMPLE: { choice: draft } },
+      }),
+    );
+    const summary = screen.getByText(/Example Tracker/, { selector: "summary" });
+    expect(summary).toHaveTextContent(label);
+    if (draft !== undefined) expect(summary).toHaveTextContent("Unapplied changes");
+  });
+
+  it("shows the backend pack warning beside its risk acknowledgement", () => {
+    const warning =
+      "Audio-language matching is unverified. You may acknowledge this warning and continue the upload; this does not establish matching content or trump eligibility.";
+    const setIgnored = vi.fn();
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: ["SP"],
+          status: "ready",
+          assessment: {
+            results: [
+              {
+                trackerId: "SP",
+                decision: "pending",
+                status: "blocked",
+                search: { complete: true, pages: 1, candidateCount: 1 },
+                matches: [
+                  {
+                    id: "episode",
+                    name: "Example.Show.S01E02.1080p.WEB-DL-GRP",
+                    relation: "manual_review",
+                    reasons: [{ code: "pack_audio_languages_unverified", message: warning }],
+                    pack: false,
+                    internal: false,
+                    trumpable: false,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [{ trackerId: "SP", displayName: "SP", readiness: "ready" }],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+          preflight: { results: [{ trackerId: "SP", state: "ready" }] } as unknown as NonNullable<
+            DuplicatesFacet["view"]["preflight"]
+          >,
+        },
+        { setIgnored },
+      ),
+      ["SP"],
+    );
+    expect(screen.getByText(warning)).toBeInTheDocument();
+    expect(screen.getByText("manual review")).toBeInTheDocument();
+    expect(screen.queryByText("proposed trumps")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Acknowledge dupe risk for SP" }));
+    expect(setIgnored).toHaveBeenCalledWith("SP", true);
+  });
+
   it("loads questions for initially selected trackers and starts their disclosures closed", () => {
     const facet = facetFor({
       questionnaires: [
@@ -807,13 +880,108 @@ describe("DupeCheckPage", () => {
     expect(screen.getByText("Release identity needs manual confirmation.")).toBeInTheDocument();
     expect(screen.queryByText("Strict blockers")).not.toBeInTheDocument();
     expect(screen.queryByText("Advisories")).not.toBeInTheDocument();
-    expect(screen.queryByText("Poster metadata is not available.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Warning: Poster metadata is not available."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("EXAMPLE guidance warnings")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /Acknowledge warnings/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/Evidence complete/)).not.toBeInTheDocument();
     expect(screen.queryByText("Canonical:")).not.toBeInTheDocument();
     expect(screen.queryByText("Tracker upload:")).not.toBeInTheDocument();
   });
 
-  it.each(["OE", "DVL", "OTW", "AITHER"])(
+  it.each(["guidance_release_history", "guidance_sp_pack_consistency"])(
+    "collapses language guidance and %s while keeping safety notices visible",
+    (guidanceCode) => {
+      const evidenceWarnings = [
+        ["package_extensions", "Complete package file evidence is required."],
+        ["multi_season_package", "Complete season evidence is required."],
+        ["required_assets", "Complete prepared-asset evidence is required."],
+        ["single_file_folder", "Complete source-layout evidence is required."],
+        ["media_constraints", "Complete technical media evidence is required."],
+        ["metadata_poster", "Guidance — poster metadata is not available."],
+      ];
+      renderPage(
+        facetFor({
+          projections: {
+            projections: [
+              {
+                trackerId: "EXAMPLE",
+                displayName: "Example Tracker",
+                readiness: "ineligible",
+                policyDecisions: [
+                  ...evidenceWarnings.map(([code, message]) => ({
+                    code,
+                    decision: "advisory",
+                    blocking: false,
+                    disposition: "advisory",
+                    evidenceStatus: "unavailable",
+                    message,
+                  })),
+                  {
+                    code: "language_track_metadata",
+                    decision: "advisory",
+                    blocking: false,
+                    disposition: "advisory",
+                    evidenceStatus: "partial",
+                    message: "Guidance — review missing track titles.",
+                  },
+                  {
+                    code: guidanceCode,
+                    decision: "advisory",
+                    blocking: false,
+                    disposition: "advisory",
+                    evidenceStatus: "partial",
+                    message: "Guidance — review release history.",
+                  },
+                  {
+                    code: "language_original",
+                    decision: "ineligible",
+                    blocking: true,
+                    disposition: "strict",
+                    message: "Original-language audio is required.",
+                  },
+                  {
+                    code: "language_subtitles",
+                    decision: "bypassed",
+                    blocking: false,
+                    disposition: "waivable",
+                    message: "English subtitles are required.",
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        }),
+      );
+
+      const guidance = screen.getByLabelText("EXAMPLE guidance warnings");
+      const summary = within(guidance).getByText("Guidance (2)", { selector: "summary" });
+      const warning = within(guidance).getByText(
+        "Warning: Guidance — review missing track titles.",
+      );
+      expect(guidance).not.toHaveAttribute("open");
+      expect(warning).not.toBeVisible();
+      expect(screen.getByText("Original-language audio is required.")).toBeVisible();
+      expect(
+        screen.getByText("Debug mode bypassed this rule: English subtitles are required."),
+      ).toBeVisible();
+      for (const [, message] of evidenceWarnings) {
+        expect(screen.queryByText(`Warning: ${message}`)).not.toBeInTheDocument();
+      }
+      fireEvent.click(summary);
+      expect(guidance).toHaveAttribute("open");
+      expect(warning).toBeVisible();
+      expect(
+        within(guidance).getByText("Warning: Guidance — review release history."),
+      ).toBeVisible();
+      fireEvent.click(summary);
+      expect(guidance).not.toHaveAttribute("open");
+      expect(warning).not.toBeVisible();
+    },
+  );
+
+  it.each(["OE", "DVL", "OTW", "AITHER", "HHD"])(
     "uses the same warning acknowledgement toggle for %s",
     (tracker) => {
       const acknowledgeRules = vi.fn(async () => true);
@@ -829,6 +997,13 @@ describe("DupeCheckPage", () => {
             blocking: true,
             disposition: "waivable",
             message: "Review this tracker's upload requirements.",
+          },
+          {
+            code: "language_track_metadata",
+            decision: "advisory",
+            blocking: false,
+            disposition: "advisory",
+            message: "Guidance — review missing track titles.",
           },
         ],
         requiredActions: [
@@ -851,7 +1026,9 @@ describe("DupeCheckPage", () => {
       const { unmount } = renderPage(facetFor(view, { acknowledgeRules }), [tracker]);
 
       expect(screen.getByText("Tracker acknowledgement needed")).toBeInTheDocument();
+      expect(screen.getByLabelText(`${tracker} guidance warnings`)).not.toHaveAttribute("open");
       const toggle = screen.getByRole("switch", { name: `Acknowledge warnings for ${tracker}` });
+      expect(toggle).toBeVisible();
       expect(toggle).toHaveAttribute("aria-checked", "false");
       expect(screen.queryByRole("button", { name: /Upload .*anyway/ })).not.toBeInTheDocument();
       fireEvent.click(toggle);
@@ -917,6 +1094,159 @@ describe("DupeCheckPage", () => {
       expect(toggle).not.toBeInTheDocument();
     }
     expect(acknowledgeRules).not.toHaveBeenCalled();
+  });
+
+  it("labels LST's empty-title exception as trumpable and acknowledges only that tracker", () => {
+    const acknowledgeRules = vi.fn(async () => true);
+    const prompt =
+      "Trumpable release — missing English subtitles (LST). Original: Japanese; programme audio: Japanese. A compliant replacement may supersede this upload. Acknowledge these tracker warnings?";
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: ["LST", "BHD"],
+          projections: {
+            projections: [
+              {
+                trackerId: "LST",
+                displayName: "LST",
+                readiness: "blocked",
+                waivableRuleFingerprint: "empty-title-current-generation",
+                policyDecisions: [
+                  { code: "language_subtitles_search", disposition: "waivable", blocking: true },
+                ],
+                requiredActions: [
+                  {
+                    id: "authorize-lst-current-generation",
+                    trackerId: "LST",
+                    kind: "authorize_rules",
+                    status: "pending",
+                    prompt,
+                  },
+                ],
+              },
+              { trackerId: "BHD", displayName: "BHD", readiness: "ready" },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { acknowledgeRules },
+      ),
+      ["LST", "BHD"],
+    );
+    expect(screen.getByText(prompt)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Acknowledge warnings for BHD" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Acknowledge warnings for LST" }));
+    expect(acknowledgeRules).toHaveBeenCalledExactlyOnceWith("LST", true);
+  });
+
+  it.each([
+    ["BHD", "Prohibited — non-original, non-English programme dub"],
+    ["AITHER", "Staff approval required — programme-audio exception"],
+    ["LST", "Unresolved — complete title-wide search is required"],
+  ])("keeps %s language blocks separate from warning acknowledgement", (tracker, label) => {
+    const acknowledgeRules = vi.fn(async () => true);
+    const reason = `${label} (${tracker}). Original: Japanese; programme audio: Japanese, English, German.`;
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: [tracker],
+          projections: {
+            projections: [
+              {
+                trackerId: tracker,
+                displayName: tracker,
+                readiness: "ineligible",
+                // Even an independently acknowledged warning cannot remove this block.
+                waivableRuleFingerprint: "acknowledged-warning",
+                ruleAuthorizationFingerprint: "acknowledged-warning",
+                policyDecisions: [
+                  {
+                    code: "language_extra_dub",
+                    decision: "ineligible",
+                    disposition: "strict",
+                    blocking: true,
+                    message: reason,
+                  },
+                  {
+                    code: "language_subtitles",
+                    decision: "authorized",
+                    disposition: "waivable",
+                    blocking: false,
+                  },
+                ],
+                requiredActions: [],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { acknowledgeRules },
+      ),
+      [tracker],
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: `Acknowledge warnings for ${tracker}` }),
+    ).not.toBeInTheDocument();
+    expect(acknowledgeRules).not.toHaveBeenCalled();
+  });
+
+  it("does not invent a language acknowledgement for exempt full-disc backend results", () => {
+    renderPage(
+      facetFor({
+        selectedTrackers: ["LST"],
+        projections: {
+          projections: [
+            { trackerId: "LST", readiness: "ready", policyDecisions: [], requiredActions: [] },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      }),
+      ["LST"],
+    );
+    expect(
+      screen.queryByRole("switch", { name: "Acknowledge warnings for LST" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Blocked")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Trumpable release|Staff approval required|missing English subtitles/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows backend debug-bypassed language decisions without a waiver or strict block", () => {
+    const message =
+      "Prohibited — non-original, non-English programme dub: German (BHD). Original: Japanese; programme audio: Japanese, English, German.";
+    renderPage(
+      facetFor({
+        selectedTrackers: ["BHD"],
+        projections: {
+          projections: [
+            {
+              trackerId: "BHD",
+              readiness: "ready",
+              policyDecisions: [
+                {
+                  code: "language_extra_dub",
+                  decision: "bypassed",
+                  disposition: "strict",
+                  blocking: false,
+                  message,
+                },
+              ],
+              requiredActions: [],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      }),
+      ["BHD"],
+    );
+    expect(screen.getByLabelText("BHD debug policy decisions")).toHaveTextContent(
+      `Debug mode bypassed this rule: ${message}`,
+    );
+    expect(
+      screen.queryByRole("switch", { name: "Acknowledge warnings for BHD" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Blocked")).not.toBeInTheDocument();
   });
 
   it("renders auth failure as retryable blocked lane evidence without an action card", () => {

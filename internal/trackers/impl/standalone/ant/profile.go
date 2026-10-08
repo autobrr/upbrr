@@ -27,7 +27,7 @@ func Profile() standalone.Profile {
 			api.IdentityProviderTMDB,
 		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
-		Rules:                &trackers.RuleSet{RequireMovieOnly: true},
+		Rules:                &trackers.RuleSet{},
 		ValidationPolicy:     validationPolicy(),
 		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 128, MaxTorrentBytes: 250 << 10},
 		BannedGroups:         bannedGroups(),
@@ -88,7 +88,7 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
-				Scope:       trackers.MetadataScopeMovie,
+				Scope:       trackers.MetadataScopeAny,
 				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB},
 				Disposition: api.RuleDispositionStrict,
 			}},

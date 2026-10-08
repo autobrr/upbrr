@@ -25,6 +25,8 @@ type Definition struct {
 
 // Profile declares Unit3D site identity, endpoint, and site-owned policies.
 type Profile struct {
+	// TitleSearchPolicy opts into preflight whole-work language evidence.
+	TitleSearchPolicy trackers.TitleSearchPolicy
 	// Name is the stable normalized tracker identifier.
 	Name string
 	// BaseURL is the site's default Unit3D endpoint.
@@ -111,6 +113,11 @@ func (d *Definition) InputReadiness(subject api.UploadSubject) []api.InputReadin
 		return nil
 	}
 	return d.profile.Site.InputReadiness(subject)
+}
+
+// TitleSearchPolicy returns the site-owned whole-work evidence requirement.
+func (d *Definition) TitleSearchPolicy() trackers.TitleSearchPolicy {
+	return d.profile.TitleSearchPolicy
 }
 
 // DefaultBaseURL returns the site's endpoint used when configuration supplies none.
@@ -292,7 +299,7 @@ func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInpu
 
 func (d *Definition) prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 	policy := d.ValidationPolicy()
-	failures, err := policy.Check(ctx, api.NewTrackerValidationSubject(req.Meta, req.Tracker), req.Logger)
+	failures, err := trackers.EvaluatePreparationRules(ctx, req, api.NewTrackerValidationSubject(req.Meta, req.Tracker), policy)
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s constructibility: %w", d.profile.Name, err)
 	}

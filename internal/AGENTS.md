@@ -84,6 +84,7 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 - No stdlib print/log under `internal/**`.
 - Satisfy `cmd/logpolicy`.
 - Redaction source: `internal/redaction/redaction.go`.
+- Torrent-client connection diagnostics must omit private endpoints, including credential-free hosts and URL prefixes. Use the client boundary error sanitizer; preserve causal error identity and safe operation context.
 - Never log credentials, usernames, passwords, tokens, API keys, auth keys, passkeys, cookies, 2FA codes, challenge IDs, refreshed API tokens, secret payloads.
 
 ## Path Portability

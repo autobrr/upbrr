@@ -11,7 +11,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// requiresMetadataField selects one provider enrichment from the normalized
+// requiresMetadataField selects one collection demand from the normalized
 // demand union without carrying selected tracker identities into release facts.
 func requiresMetadataField(set api.MetadataRequirementSet, category api.CanonicalCategory, field api.MetadataRequirementField) bool {
 	for _, requirement := range set.Requirements {

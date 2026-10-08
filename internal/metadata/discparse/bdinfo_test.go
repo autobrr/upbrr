@@ -40,6 +40,49 @@ func TestParseBDInfoSummary(t *testing.T) {
 	}
 }
 
+func TestParseBDInfoSummaryAudioBitrateAndHidden(t *testing.T) {
+	for _, test := range []struct {
+		bitrate string
+		bits    int64
+	}{
+		{"257 kbps", 257_000},
+		{"258 kbps", 258_000},
+		{"259 kbps", 259_000},
+		{"257.999 kb/s", 257_999},
+		{"0.2579999 Mbps", 257_999},
+		{"0.256 Mbps", 256_000},
+		{"0.258 Mb/s", 258_000},
+		{"256,000 bps", 256_000},
+		{"256000 b/s", 256_000},
+		{"640 Kbps", 640_000},
+		{"", 0},
+		{"256", 0},
+		{"unknown", 0},
+		{"256 Hz", 0},
+		{"-256 kbps", 0},
+		{"0 kbps", 0},
+		{"NaN kbps", 0},
+		{"999999999999999999999999 kbps", 0},
+	} {
+		t.Run(test.bitrate, func(t *testing.T) {
+			line := "Audio: French / Dolby Digital Audio / 2.0 / 48 kHz / " + test.bitrate + " / 16-bit"
+			raw := line + "\n* " + line
+			normalized, _, _ := SplitBDInfoReport("QUICK SUMMARY:\n" + raw)
+			for _, summary := range []string{raw, normalized} {
+				info := ParseBDInfoSummary(summary, "", "")
+				if len(info.Audio) != 2 {
+					t.Fatalf("audio count = %d", len(info.Audio))
+				}
+				for index, audio := range info.Audio {
+					if audio.BitrateBitsPerSecond != test.bits || audio.Hidden != (index == 1) || audio.BitDepth != "16-bit" {
+						t.Fatalf("audio[%d] = %#v, want bitrate=%d hidden=%t", index, audio, test.bits, index == 1)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestParseBDInfoSummaryVideoLayouts(t *testing.T) {
 	tests := []struct {
 		name  string

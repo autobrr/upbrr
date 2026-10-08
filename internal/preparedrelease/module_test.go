@@ -1964,3 +1964,101 @@ func TestPrepareRecomputesOldVideoEncodeAfterRestart(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveUploadSubjectRetainsOperationLocalStaffTokens(t *testing.T) {
+	t.Parallel()
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	module := newTestModule(t, newMemoryStore(), newClientEvidenceTestCollector(clientEvidenceTestSnapshot("client-hash")))
+	prepared, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := map[string]api.StaffUploadToken{"AITHER": api.NewStaffUploadToken("synthetic-staff-token")}
+	input := api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}, StaffUploadTokens: tokens}
+	subject, err := module.ResolveUploadSubject(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparation := trackers.PreparationInput{Tracker: "AITHER", Meta: subject}
+	if preparation.StaffUploadToken().Secret() != "synthetic-staff-token" {
+		t.Fatal("operation-local token was dropped")
+	}
+	delete(tokens, "AITHER")
+	if preparation.StaffUploadToken().Secret() != "synthetic-staff-token" {
+		t.Fatal("returned token map aliases input")
+	}
+	preparation.Tracker = "BHD"
+	if preparation.StaffUploadToken().Secret() != "" {
+		t.Fatal("token leaked to another tracker")
+	}
+	subject, err = module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: input.Release})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subject.StaffUploadTokens) != 0 {
+		t.Fatal("operation-local token persisted into another resolution")
+	}
+}
+
+func TestPrepareRecomputesPreCommentaryContractFacts(t *testing.T) {
+	for _, version := range []string{"prepared-release-v25", "prepared-release-v26", "prepared-release-v27"} {
+		t.Run(version, func(t *testing.T) {
+			path := writePreparedTestFile(t, "Example.Movie.2026.mkv", "source")
+			store := newMemoryStore()
+			input := api.PrepareInput{SourcePath: path}
+			previous, err := newTestModule(t, store, &recordingCollector{}).Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stale := previous.Release
+			stale.Compatibility.ContractVersion = version
+			store.mu.Lock()
+			store.current[canonicalSourceKey(path)] = stale
+			store.mu.Unlock()
+			collector := &recordingCollector{facts: &CollectedFacts{Media: api.MediaFacts{Commentary: true, Tracks: []api.MediaTrackFacts{{
+				ID:                   "track",
+				Kind:                 api.MediaTrackAudio,
+				DiscID:               "disc",
+				PlaylistID:           "playlist",
+				BitrateBitsPerSecond: 192_000,
+				Commentary:           true,
+			}}}}}
+			current, err := newTestModule(t, store, collector).Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.Release.Generation != previous.Release.Generation+1 || !current.Release.Media.Commentary || len(current.Release.Media.Tracks) != 1 || current.Release.Compatibility.ContractVersion != ContractVersion {
+				t.Fatalf("stale commentary facts reused: %#v", current.Release)
+			}
+		})
+	}
+}
+
+func TestPreparedReleaseFeaturesRemainDistinctAndDetached(t *testing.T) {
+	path := writePreparedTestFile(t, "Example.Movie.2026.mkv", "source")
+	state := preparationstate.State{
+		SourcePath:      path,
+		Release:         api.ReleaseInfo{Collection: "Criterion.Collection"},
+		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature4KRestoration},
+		Edition:         "Collector's",
+		Presentation:    "Open Matte",
+	}
+	facts := mapCollectedFacts(state)
+	state.ReleaseFeatures[0] = api.ReleaseFeatureExtras
+	module := newTestModule(t, newMemoryStore(), &recordingCollector{facts: &facts})
+	prepared, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}}
+	for range 2 {
+		subject, err := module.ResolveUploadSubject(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(subject.ReleaseFeatures, []api.ReleaseFeature{api.ReleaseFeature4KRestoration}) || subject.Release.Collection != "Criterion.Collection" || subject.Edition != "Collector's" || subject.Presentation != "Open Matte" {
+			t.Fatalf("feature/edition contracts lost: %#v", subject)
+		}
+		subject.ReleaseFeatures[0] = api.ReleaseFeatureExtras
+	}
+}

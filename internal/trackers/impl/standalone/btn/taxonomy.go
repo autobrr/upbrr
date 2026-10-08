@@ -7,9 +7,103 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// btnPrimaryProgrammeLanguage resolves the inspected primary track, not the
+// title's original language or the first aggregate language.
+func btnPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
+	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || facts.PrimaryAudioTrackID == "" {
+		return ""
+	}
+	for _, track := range facts.Tracks {
+		if track.ID != facts.PrimaryAudioTrackID || track.Kind != api.MediaTrackAudio ||
+			(track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) || len(track.Languages) != 1 {
+			continue
+		}
+		code := languageutil.NormalizeLanguageCode(track.Languages[0])
+		if code == "" || code == "und" || code == "mul" {
+			return ""
+		}
+		return languageutil.NormalizeLanguageLabel(track.Languages[0])
+	}
+	return ""
+}
+
+func btnPrimaryCountryID(subject api.TrackerValidationSubject) string {
+	key := trackers.LanguageQuestionKey(subject, "primary_audio_country")
+	if answer, supplied := subject.QuestionnaireAnswers[key]; supplied {
+		return btnCountryMap[normalizeBTNCountryAlias(answer)]
+	}
+	return btnOriginalAudioCountryID(subject)
+}
+
+// btnOriginalAudioCountryID uses current work-origin evidence only for an
+// identified original-language primary track, never to locate a dub.
+func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
+	facts := subject.LanguageFacts
+	language := btnPrimaryProgrammeLanguage(facts)
+	metadata := subject.ProviderMetadata
+	if language == "" || !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) != 1 ||
+		language != facts.OriginalLanguages[0] || !metadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
+		return ""
+	}
+	var countries []string
+	if metadata.TVDB != nil {
+		if subject.Identity.TVDBID > 0 && metadata.TVDB.TVDBID != subject.Identity.TVDBID {
+			return ""
+		}
+		countries = append(countries, metadata.TVDB.OriginalCountry)
+	}
+	if metadata.TMDB != nil {
+		if subject.Identity.TMDBID > 0 && metadata.TMDB.TMDBID != subject.Identity.TMDBID {
+			return ""
+		}
+		countries = append(countries, metadata.TMDB.OriginCountry...)
+	}
+	if metadata.IMDB != nil {
+		if subject.Identity.IMDBID > 0 && metadata.IMDB.IMDBID != subject.Identity.IMDBID {
+			return ""
+		}
+		value := strings.TrimSpace(metadata.IMDB.CountryList)
+		if value == "" {
+			value = metadata.IMDB.Country
+		}
+		if btnCountryMap[normalizeBTNCountryAlias(value)] != "" {
+			countries = append(countries, value)
+		} else {
+			countries = append(countries, strings.Split(value, ",")...)
+		}
+	}
+	countryID := ""
+	for _, country := range countries {
+		if strings.TrimSpace(country) == "" {
+			continue
+		}
+		id := btnCountryMap[normalizeBTNCountryAlias(country)]
+		if id == "" || countryID != "" && id != countryID {
+			return ""
+		}
+		countryID = id
+	}
+	return countryID
+}
+
+// btnLanguagePayload preserves full-disc behavior and uses reviewed primary
+// programme evidence for the non-disc Foreign flag and country selection.
+func btnLanguagePayload(meta api.UploadSubject) (bool, string) {
+	if trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+		language := resolveBTNOriginalLanguage(meta)
+		return language != "" && !isBTNEnglishLanguage(language), resolveCountryID(meta)
+	}
+	language := btnPrimaryProgrammeLanguage(meta.LanguageFacts)
+	if language == "" || isBTNEnglishLanguage(language) {
+		return false, ""
+	}
+	return true, btnPrimaryCountryID(api.NewTrackerValidationSubject(meta, "BTN"))
+}
 
 var (
 	btnInputPattern       = regexp.MustCompile(`(?is)<input[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["'][^>]*>`)

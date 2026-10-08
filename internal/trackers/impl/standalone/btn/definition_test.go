@@ -32,7 +32,7 @@ func TestBTNProfileOwnsPreparationAndPolicies(t *testing.T) {
 	if profile.PrepareUpload == nil || profile.NewDuplicateAdapter == nil {
 		t.Fatal("BTN profile must own upload preparation and duplicate search")
 	}
-	if profile.ReleaseNamePolicy.ID != "standalone/btn/v5" || profile.ValidationPolicy.ID != "standalone-btn-constructibility-v2" {
+	if profile.ReleaseNamePolicy.ID != "standalone/btn/v5" || profile.ValidationPolicy.ID != "standalone-btn-constructibility-v5/languages-v1" {
 		t.Fatalf("unexpected BTN naming/validation policies: %q %q", profile.ReleaseNamePolicy.ID, profile.ValidationPolicy.ID)
 	}
 	if profile.DupePolicy == nil || profile.DupePolicy.ID != "standalone/btn/duplicate/v1" {
@@ -178,7 +178,7 @@ func TestResolveOrigin(t *testing.T) {
 		{
 			name: "internal group uses p2p origin",
 			meta: api.UploadSubject{
-				Tag: "NTb",
+				Tag:     "NTb",
 				Release: api.ReleaseInfo{Group: "NTb"},
 			},
 			expected: "P2P",

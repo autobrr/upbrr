@@ -523,6 +523,28 @@ func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.
 	}
 }
 
+func TestPrintCLIWorkflowProjectionsShowsPassiveWarningsWithoutDetailedOutput(t *testing.T) {
+	for _, readiness := range []api.ReadinessStatus{api.ReadinessStatusReady, api.ReadinessStatusIneligible} {
+		output := captureWriter(func(output io.Writer) {
+			printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{
+				Projections: []api.TrackerReleaseProjection{{
+					DisplayName: "Example",
+					Readiness:   readiness,
+					PolicyDecisions: []api.TrackerPolicyDecision{{
+						Code:        "source_history",
+						Decision:    "advisory",
+						Disposition: api.RuleDispositionAdvisory,
+						Message:     "Check the source history when relevant.",
+					}},
+				}},
+			}, nil, false)
+		})
+		if !strings.Contains(output, "Example warning: Check the source history when relevant.") || strings.Contains(output, "acknowledge") {
+			t.Fatalf("passive warning output = %q", output)
+		}
+	}
+}
+
 func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T) {
 	output := captureWriter(func(output io.Writer) {
 		printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{
@@ -1330,6 +1352,8 @@ func TestCLIWorkflowUnattendedDefersQuestionnaireToCentralPolicy(t *testing.T) {
 			TrackerID: "ALPHA",
 			Questionnaire: []api.TrackerQuestionnaireRequirement{{
 				Key:      "edition",
+				Kind:     "select",
+				Options:  []string{"yes", "no"},
 				Required: true,
 			}},
 		}}},
@@ -2100,5 +2124,109 @@ func TestCLIQuestionnaireDoesNotPromoteDisplayedDefaults(t *testing.T) {
 	changed, err := collectCLIWorkflowQuestionnaires(bufio.NewReader(strings.NewReader("")), &output, api.InteractionModeInteractive, projections, instructions)
 	if err != nil || changed || len(instructions["FL"].Questionnaire) != 0 || output.Len() != 0 {
 		t.Fatalf("displayed default became explicit or prompted: %+v changed=%t output=%q error=%v", instructions, changed, output.String(), err)
+	}
+}
+
+func TestCLIQuestionnaireYesNoShorthand(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		answer  string
+		options []string
+		kind    string
+		want    string
+	}{
+		{"yes shorthand", "y", []string{"yes", "no"}, "select", "yes"},
+		{"no shorthand", "n", []string{"yes", "no"}, "select", "no"},
+		{"yes word", "yes", []string{"yes", "no"}, "select", "yes"},
+		{"no word", "no", []string{"yes", "no"}, "select", "no"},
+		{"case and whitespace", " YEs ", []string{"no", "yes"}, "select", "yes"},
+		{"uppercase shorthand", " N ", []string{"yes", "no"}, "select", "no"},
+		{"invalid boolean", "maybe", []string{"yes", "no"}, "select", ""},
+		{"required blank", "", []string{"yes", "no"}, "select", ""},
+		{"unrelated select", "y", []string{"yellow", "blue"}, "select", ""},
+		{"three options", "y", []string{"yes", "no", "auto"}, "select", ""},
+		{"multiselect unchanged", "y", []string{"yes", "no"}, "multiselect", ""},
+		{"text unchanged", "y", nil, "text", "y"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
+			projections := &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+				TrackerID: "PTP",
+				Questionnaire: []api.TrackerQuestionnaireRequirement{{
+					Key:      "trumpable_review",
+					Kind:     test.kind,
+					Options:  test.options,
+					Required: true,
+				}},
+			}}}
+			changed, err := collectCLIWorkflowQuestionnaires(bufio.NewReader(strings.NewReader(test.answer+"\n")), io.Discard, api.InteractionModeInteractive, projections, instructions)
+			if test.want == "" {
+				if err == nil || changed || len(instructions) != 0 {
+					t.Fatalf("invalid answer accepted: changed=%v err=%v instructions=%#v", changed, err, instructions)
+				}
+				return
+			}
+			if err != nil || !changed {
+				t.Fatalf("answer rejected: changed=%v err=%v", changed, err)
+			}
+			got := instructions["PTP"].Questionnaire["trumpable_review"]
+			if got == nil || *got != test.want {
+				t.Fatalf("canonical answer = %v, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCLIInteractiveCommentaryCorrectionUsesExistingLoop(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"example.mkv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-commentary", Revision: 1},
+		Release: &api.ReleaseSnapshot{
+			Release: api.PreparedRelease{
+				Generation: 1,
+				Source:     api.SourceManifest{SourcePath: "example.mkv"},
+				Media:      api.MediaFacts{Commentary: true},
+			},
+			Display: api.PreparedReleaseDisplay{Commentary: true},
+		},
+		FactInstructions: &api.ReleaseFactInstructionSnapshot{CorrectionRevision: 1},
+	}
+	corrected := initial
+	corrected.Workflow.Revision = 2
+	corrected.Release = &api.ReleaseSnapshot{
+		Release: api.PreparedRelease{
+			Generation: 2,
+			Source:     api.SourceManifest{SourcePath: "example.mkv"},
+			Media:      api.MediaFacts{Commentary: false},
+		},
+		Display: api.PreparedReleaseDisplay{Commentary: false},
+	}
+	corrected.Selection = &api.TrackerSelection{}
+	coreSvc := &cliWorkflowCoreFake{current: initial}
+	corrections := 0
+	coreSvc.continueFn = func(request api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		if instructions := request.Intent.FactInstructions; instructions != nil && instructions.Metadata.Commentary != nil {
+			if *instructions.Metadata.Commentary {
+				t.Fatal("commentary=false correction was lost")
+			}
+			if coreSvc.current.Release.Release.Generation == 1 {
+				corrections++
+			}
+			coreSvc.current = corrected
+		}
+		return coreSvc.current, nil
+	}
+	var output strings.Builder
+	err = runCLIWorkflowInteractive(t.Context(), coreSvc, []string{"example.mkv"}, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0, config.Config{}, cliIO{in: strings.NewReader("n\n--commentary=false\ny\n"), out: &output}, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("run correction: %v, corrections=%d output=%q", err, corrections, output.String())
+	}
+	if corrections != 1 || !strings.Contains(output.String(), "Commentary: true") || !strings.Contains(output.String(), "Commentary: false") {
+		t.Fatalf("commentary correction loop = %d corrections, output %q", corrections, output.String())
 	}
 }

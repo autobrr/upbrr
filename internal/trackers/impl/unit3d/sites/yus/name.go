@@ -14,10 +14,25 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v5", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v7", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
 }
 
 func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if !isYUSFullDisc(meta) {
+		for _, role := range []api.ReleaseNameRole{api.NameRoleDualAudio, api.NameRoleDubbed} {
+			if err := editor.Omit(role); err != nil {
+				return fmt.Errorf("omit YUS audio-language marker: %w", err)
+			}
+		}
+		if trackers.KnownProgrammeLanguageCount(meta.LanguageFacts) >= 2 {
+			if err := editor.InsertBefore(api.NameRoleDualAudio, "Multi-Audio", api.NameRoleAudio); err != nil {
+				return fmt.Errorf("set YUS audio-language marker: %w", err)
+			}
+		}
+		if err := trackers.ApplyDefaultAudioName(editor, meta); err != nil {
+			return fmt.Errorf("apply YUS default audio: %w", err)
+		}
+	}
 	if err := applyYUSTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
@@ -95,6 +110,5 @@ func insertYUSDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubjec
 }
 
 func isYUSFullDisc(meta api.UploadSubject) bool {
-	nameType := strings.TrimSpace(meta.Type)
-	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
+	return trackers.IsFullDiscUpload(meta.DiscType, meta.Type)
 }

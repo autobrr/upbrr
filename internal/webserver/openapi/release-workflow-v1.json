@@ -796,6 +796,9 @@
       "AudioAnalysisVariant": {
         "type": "string"
       },
+      "AudioTrackRole": {
+        "type": "string"
+      },
       "BlurayDiscSpec": {
         "type": "object",
         "properties": {
@@ -3043,6 +3046,76 @@
           "workflowId"
         ]
       },
+      "LanguageFacts": {
+        "type": "object",
+        "properties": {
+          "AudioAbsent": {
+            "type": "boolean"
+          },
+          "AudioStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "FullSubtitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "OriginalLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "OriginalLanguagesKnown": {
+            "type": "boolean"
+          },
+          "PrimaryAudioTrackID": {
+            "type": "string"
+          },
+          "ProgrammeLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ProgrammeStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "SubtitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "SubtitleStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "TrackCoverageComplete": {
+            "type": "boolean"
+          },
+          "Tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaTrackFacts"
+            }
+          }
+        },
+        "required": [
+          "AudioAbsent",
+          "AudioStatus",
+          "FullSubtitleLanguages",
+          "OriginalLanguages",
+          "OriginalLanguagesKnown",
+          "PrimaryAudioTrackID",
+          "ProgrammeLanguages",
+          "ProgrammeStatus",
+          "SubtitleLanguages",
+          "SubtitleStatus",
+          "TrackCoverageComplete",
+          "Tracks"
+        ]
+      },
       "MediaArtifact": {
         "type": "object",
         "properties": {
@@ -3338,6 +3411,9 @@
           "Audio": {
             "type": "string"
           },
+          "AudioAbsent": {
+            "type": "boolean"
+          },
           "AudioLanguages": {
             "type": "array",
             "items": {
@@ -3404,6 +3480,12 @@
           "HasEncodeSettings": {
             "type": "boolean"
           },
+          "LanguageFacts": {
+            "$ref": "#/components/schemas/LanguageFacts"
+          },
+          "MediaFileFacts": {
+            "$ref": "#/components/schemas/MediaFileFacts"
+          },
           "MediaInfoUniqueID": {
             "type": "string"
           },
@@ -3421,6 +3503,12 @@
           },
           "Region": {
             "type": "string"
+          },
+          "ReleaseFeatures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseFeature"
+            }
           },
           "Repack": {
             "type": "string"
@@ -3489,6 +3577,7 @@
         "required": [
           "Anime",
           "Audio",
+          "AudioAbsent",
           "AudioLanguages",
           "AudioLanguagesProvenance",
           "BitDepth",
@@ -3507,6 +3596,8 @@
           "HardcodedSubtitleLanguages",
           "HardcodedSubtitleLanguagesProvenance",
           "HasEncodeSettings",
+          "LanguageFacts",
+          "MediaFileFacts",
           "MediaInfoUniqueID",
           "OriginalLanguage",
           "OriginalLanguageProvenance",
@@ -3530,6 +3621,105 @@
           "VideoCodec",
           "VideoEncode",
           "WebDV"
+        ]
+      },
+      "MediaFileFact": {
+        "type": "object",
+        "properties": {
+          "AudioLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "AudioStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "BitDepth": {
+            "type": "string"
+          },
+          "Container": {
+            "type": "string"
+          },
+          "FileName": {
+            "type": "string"
+          },
+          "Primary": {
+            "type": "boolean"
+          },
+          "Resolution": {
+            "type": "string"
+          },
+          "Source": {
+            "type": "string"
+          },
+          "SubtitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "SubtitleStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "VideoCodec": {
+            "type": "string"
+          },
+          "VideoEncode": {
+            "type": "string"
+          },
+          "VideoTrackCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "AudioLanguages",
+          "AudioStatus",
+          "BitDepth",
+          "Container",
+          "FileName",
+          "Primary",
+          "Resolution",
+          "Source",
+          "SubtitleLanguages",
+          "SubtitleStatus",
+          "VideoCodec",
+          "VideoEncode",
+          "VideoTrackCount"
+        ]
+      },
+      "MediaFileFacts": {
+        "type": "object",
+        "properties": {
+          "ExpectedFileCount": {
+            "type": "integer"
+          },
+          "Files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaFileFact"
+            }
+          },
+          "LanguageStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "OriginalLanguage": {
+            "type": "string"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "TechnicalStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "ExpectedFileCount",
+          "Files",
+          "LanguageStatus",
+          "OriginalLanguage",
+          "Status",
+          "TechnicalStatus"
         ]
       },
       "MediaPlan": {
@@ -3632,6 +3822,12 @@
       "MediaTrackFacts": {
         "type": "object",
         "properties": {
+          "AudioLabel": {
+            "type": "string"
+          },
+          "BitrateBitsPerSecond": {
+            "type": "integer"
+          },
           "ChannelLayout": {
             "type": "string"
           },
@@ -3647,11 +3843,26 @@
           "Default": {
             "type": "boolean"
           },
+          "DefaultKnown": {
+            "type": "boolean"
+          },
           "DetectedLanguages": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "DiscID": {
+            "type": "string"
+          },
+          "EmbeddedCompatibility": {
+            "type": "boolean"
+          },
+          "Forced": {
+            "type": "boolean"
+          },
+          "Hidden": {
+            "type": "boolean"
           },
           "ID": {
             "type": "string"
@@ -3677,23 +3888,42 @@
           "Ordinal": {
             "type": "integer"
           },
+          "PlaylistID": {
+            "type": "string"
+          },
           "ResourceID": {
             "type": "string"
           },
+          "Role": {
+            "$ref": "#/components/schemas/AudioTrackRole"
+          },
           "SampleRate": {
             "type": "integer"
+          },
+          "StreamOrder": {
+            "type": "integer"
+          },
+          "StreamOrderKnown": {
+            "type": "boolean"
           },
           "Title": {
             "type": "string"
           }
         },
         "required": [
+          "AudioLabel",
+          "BitrateBitsPerSecond",
           "ChannelLayout",
           "Channels",
           "Codec",
           "Commentary",
           "Default",
+          "DefaultKnown",
           "DetectedLanguages",
+          "DiscID",
+          "EmbeddedCompatibility",
+          "Forced",
+          "Hidden",
           "ID",
           "Kind",
           "LanguageProvenance",
@@ -3701,8 +3931,12 @@
           "ManifestFingerprint",
           "NativeID",
           "Ordinal",
+          "PlaylistID",
           "ResourceID",
+          "Role",
           "SampleRate",
+          "StreamOrder",
+          "StreamOrderKnown",
           "Title"
         ]
       },
@@ -4563,6 +4797,9 @@
       "PreparedReleaseDisplay": {
         "type": "object",
         "properties": {
+          "Commentary": {
+            "type": "boolean"
+          },
           "MediaInfoHTML": {
             "type": "string"
           },
@@ -5085,6 +5322,9 @@
           "SourceLookup",
           "TrackerIDs"
         ]
+      },
+      "ReleaseFeature": {
+        "type": "string"
       },
       "ReleaseNameComponent": {
         "type": "object",
@@ -9495,6 +9735,12 @@
           "displayName": {
             "type": "string"
           },
+          "editionFeatures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerEditionFeature"
+            }
+          },
           "endpoint": {
             "type": "string"
           },
@@ -9773,6 +10019,28 @@
         "required": [
           "hdr",
           "pack"
+        ]
+      },
+      "TrackerEditionFeature": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "selected": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "category",
+          "label",
+          "selected"
         ]
       },
       "TrackerID": {
@@ -10373,6 +10641,12 @@
           "duplicateTargetFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
+          "editionFeatures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerEditionFeature"
+            }
+          },
           "episodeTitleMode": {
             "$ref": "#/components/schemas/EpisodeTitleMode"
           },
@@ -10441,6 +10715,16 @@
           },
           "taxonomy": {
             "$ref": "#/components/schemas/TrackerTaxonomy"
+          },
+          "titleSearchEvidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerTitleSearchEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "trackerId": {
             "$ref": "#/components/schemas/TrackerID"
@@ -10795,6 +11079,45 @@
         "required": [
           "id",
           "label"
+        ]
+      },
+      "TrackerTitleSearchEvidence": {
+        "type": "object",
+        "properties": {
+          "checkedAt": {
+            "type": "string"
+          },
+          "configFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "freshUntil": {
+            "type": "string"
+          },
+          "policyId": {
+            "type": "string"
+          },
+          "resultFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "titleFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "torrentCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checkedAt",
+          "configFingerprint",
+          "freshUntil",
+          "policyId",
+          "resultFingerprint",
+          "status",
+          "titleFingerprint",
+          "torrentCount"
         ]
       },
       "UniqueIDStatus": {

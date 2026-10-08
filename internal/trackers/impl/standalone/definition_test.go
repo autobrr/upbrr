@@ -87,3 +87,47 @@ func TestDefinitionLeavesUndeclaredAuthCapabilityAbsent(t *testing.T) {
 		t.Fatalf("expected absent auth capability, got %#v", capability)
 	}
 }
+
+func TestDefinitionProjectsEditionFeaturesWithoutPreparation(t *testing.T) {
+	t.Parallel()
+	profile := validProfile()
+	calls := 0
+	profile.PrepareUpload = func(context.Context, trackers.PreparationInput) (trackers.PreparedOperation, error) {
+		calls++
+		return trackers.PreparedOperation{}, nil
+	}
+	profile.EditionFeatures = func(meta api.UploadSubject) []api.TrackerEditionFeature {
+		return []api.TrackerEditionFeature{
+			{
+				Label:    "With Commentary",
+				Category: "Feature",
+				Selected: meta.HasCommentary,
+				Evidence: "Effective commentary",
+			},
+			{Label: "Remastered", Category: "Edition"},
+		}
+	}
+	registry := trackers.NewRegistry()
+	if err := registry.Register(MustNew(profile)); err != nil {
+		t.Fatal(err)
+	}
+	input := trackers.PreparationInput{Tracker: "DC", Meta: api.UploadSubject{ReleaseName: "Example.Release.2026-GRP", HasCommentary: true}}
+	selected, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if calls != 0 || len(selected.EditionFeatures) != 2 || !selected.EditionFeatures[0].Selected || selected.EditionFeatures[1].Selected {
+		t.Fatalf("edition/features = %#v, preparation calls = %d", selected.EditionFeatures, calls)
+	}
+	input.Meta.HasCommentary = false
+	cleared, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if cleared.EditionFeatures[0].Selected || cleared.ProjectorFingerprint == selected.ProjectorFingerprint {
+		t.Fatal("changed edition/features retained selection or projection fingerprint")
+	}
+	if !selected.EditionFeatures[0].Selected {
+		t.Fatal("repeated projection mutated earlier options")
+	}
+}

@@ -6,6 +6,7 @@ package ptp
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -485,4 +486,182 @@ func subtitleID(value string) (int, bool) {
 	}
 	id, ok := subtitleIDs[strings.ToLower(strings.TrimSpace(base))]
 	return id, ok
+}
+
+var theatricalEditionPattern = regexp.MustCompile(`(?i)\btheatrical(?:[ ._-]+(?:cut|edition|version))?\b`)
+
+var editionFeatureCatalogue = []struct {
+	label    string
+	category string
+	pattern  *regexp.Regexp
+}{
+	{"Masters of Cinema", "Collection", regexp.MustCompile(`(?i)\bmasters[ ._-]+of[ ._-]+cinema\b`)},
+	{"The Criterion Collection", "Collection", regexp.MustCompile(`(?i)\b(?:the[ ._-]+)?criterion(?:[ ._-]+collection)?\b`)},
+	{"Warner Archive Collection", "Collection", regexp.MustCompile(`(?i)\bwarner[ ._-]+archive(?:[ ._-]+collection)?\b`)},
+	{"Director's Cut", "Edition", regexp.MustCompile(`(?i)\bdirector'?s[ ._-]+cut\b`)},
+	{"Extended Edition", "Edition", regexp.MustCompile(`(?i)\bextended(?:[ ._-]+(?:cut|edition))?\b`)},
+	{"Theatrical Cut", "Edition", theatricalEditionPattern},
+	{"Uncut", "Edition", regexp.MustCompile(`(?i)\buncut\b`)},
+	{"Unrated", "Edition", regexp.MustCompile(`(?i)\bunrated(?:[ ._-]+cut)?\b`)},
+	{"Rifftrax", "Edition", regexp.MustCompile(`(?i)\brifftrax\b`)},
+	{"Remux", "Feature", regexp.MustCompile(`(?i)\bremux\b`)},
+	{"DTS:X", "Feature", regexp.MustCompile(`(?i)\bdts:x\b`)},
+	{"Dolby Atmos", "Feature", regexp.MustCompile(`(?i)\bdolby[ ._-]+atmos\b`)},
+	{"Dual Audio", "Feature", regexp.MustCompile(`(?i)\bdual[ ._-]+audio\b`)},
+	{"English Dub", "Feature", regexp.MustCompile(`(?i)\benglish[ ._-]+dub\b`)},
+	{"10-bit", "Feature", regexp.MustCompile(`(?i)\b10[ ._-]?bit\b`)},
+	{"Dolby Vision", "Feature", regexp.MustCompile(`(?i)\bdolby[ ._-]+vision\b`)},
+	{"HDR10+", "Feature", regexp.MustCompile(`(?i)\bhdr10\+(?:$|[ ./_-])`)},
+	{"HDR10", "Feature", regexp.MustCompile(`(?i)\bhdr10(?:$|[ ./_-])`)},
+	{"HLG", "Feature", regexp.MustCompile(`(?i)\bhlg\b`)},
+	{"With Commentary", "Feature", regexp.MustCompile(`(?i)\bwith[ ._-]+commentary\b`)},
+	{"2in1", "Feature", regexp.MustCompile(`(?i)\b2in1\b`)},
+	{"2D/3D Edition", "Feature", regexp.MustCompile(`(?i)\b2d[ ./_-]+3d(?:[ ._-]+edition)?\b`)},
+	{"3D Anaglyph", "Feature", regexp.MustCompile(`(?i)\b(?:3d[ ._-]+)?anaglyph\b`)},
+	{"3D Full SBS", "Feature", regexp.MustCompile(`(?i)\b(?:3d[ ._-]+)?f(?:ull)?[ ._-]*sbs\b`)},
+	{"3D Half OU", "Feature", regexp.MustCompile(`(?i)\b(?:3d[ ._-]+)?h(?:alf)?[ ._-]*ou\b`)},
+	{"3D Half SBS", "Feature", regexp.MustCompile(`(?i)\b(?:3d[ ._-]+)?h(?:alf)?[ ._-]*sbs\b`)},
+	{"2-Disc Set", "Feature", regexp.MustCompile(`(?i)\b2[ ._-]*disc[ ._-]+set\b`)},
+	{"4K Restoration", "Feature", regexp.MustCompile(`(?i)\b4k[ ._-]+restoration\b`)},
+	{"4K Remaster", "Feature", regexp.MustCompile(`(?i)\b4k[ ._-]+remaster(?:ed)?\b`)},
+	{"Extras", "Feature", regexp.MustCompile(`(?i)\b(?:digital[ ._-]+)?extras\b`)},
+}
+
+// editionFeatures maps only prepared category and technical facts. The same
+// ordered catalogue drives pre-upload review and PTP's remaster_title field.
+func editionFeatures(meta api.UploadSubject) []api.TrackerEditionFeature {
+	selected := make(map[string]string)
+	distributor := strings.TrimSpace(meta.Distributor)
+	collectionSource := "Distributor: " + distributor
+	if distributor == "" && !meta.EffectiveMetadata.DistributorProvenance.IsManual() {
+		distributor = strings.TrimSpace(meta.Release.Collection)
+		collectionSource = "Collection: " + distributor
+	}
+	switch strings.ToUpper(distributor) {
+	case "WARNER ARCHIVE", "WARNER ARCHIVE COLLECTION", "WAC":
+		selected["Warner Archive Collection"] = collectionSource
+	case "CRITERION", "THE CRITERION COLLECTION", "CRITERION COLLECTION", "CRITERION.COLLECTION", "CC":
+		selected["The Criterion Collection"] = collectionSource
+	case "MASTERS OF CINEMA", "MOC":
+		selected["Masters of Cinema"] = collectionSource
+	}
+	for _, feature := range meta.ReleaseFeatures {
+		var label string
+		switch feature {
+		case api.ReleaseFeatureTwoDiscSet:
+			label = "2-Disc Set"
+		case api.ReleaseFeature4KRestoration:
+			label = "4K Restoration"
+		case api.ReleaseFeature4KRemaster:
+			label = "4K Remaster"
+		case api.ReleaseFeatureExtras:
+			label = "Extras"
+		case api.ReleaseFeature2D3DEdition:
+			label = "2D/3D Edition"
+		case api.ReleaseFeature3DAnaglyph:
+			label = "3D Anaglyph"
+		case api.ReleaseFeature3DFullSBS:
+			label = "3D Full SBS"
+		case api.ReleaseFeature3DHalfOU:
+			label = "3D Half OU"
+		case api.ReleaseFeature3DHalfSBS:
+			label = "3D Half SBS"
+		}
+		if label != "" {
+			selected[label] = "Prepared feature: " + label
+		}
+	}
+	var remaining []string
+	for _, value := range []struct{ name, text string }{{"Cut", meta.Cut}, {"Edition", meta.Edition}, {"Presentation", meta.Presentation}, {"Edition set", meta.EditionSet}} {
+		residue := value.text
+		matched := false
+		for _, option := range editionFeatureCatalogue {
+			if option.pattern.MatchString(value.text) {
+				matched = true
+				// Commentary is controlled by the presence-aware metadata correction,
+				// including explicit false; free-form edition wording cannot override it.
+				if option.label != "With Commentary" {
+					selected[option.label] = value.name + ": " + value.text
+				}
+				residue = option.pattern.ReplaceAllString(residue, "")
+			}
+		}
+		residue = strings.TrimSpace(residue)
+		if matched {
+			if strings.Trim(residue, " ./_-+") == "" {
+				residue = ""
+			} else {
+				residue = strings.Trim(strings.Join(strings.Fields(residue), " "), " ./_-")
+			}
+		}
+		if residue != "" {
+			remaining = append(remaining, residue)
+		}
+	}
+	if selected["Theatrical Cut"] != "" {
+		other := strings.Join([]string{meta.Cut, meta.Edition, meta.EditionSet}, " ")
+		if strings.Trim(theatricalEditionPattern.ReplaceAllString(other, ""), " ./_-+") == "" {
+			delete(selected, "Theatrical Cut")
+		}
+	}
+	for _, fact := range []struct {
+		label    string
+		present  bool
+		evidence string
+	}{
+		{"Remux", strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX"), "Release type: " + meta.Type},
+		{"DTS:X", strings.Contains(meta.Audio, "DTS:X"), "Audio: " + meta.Audio},
+		{"Dolby Atmos", strings.Contains(meta.Audio, "Atmos"), "Audio: " + meta.Audio},
+		{"Dual Audio", strings.Contains(meta.Audio, "Dual"), "Audio: " + meta.Audio},
+		{"English Dub", strings.Contains(meta.Audio, "Dubbed"), "Audio: " + meta.Audio},
+		{"10-bit", meta.HDR == "" && meta.BitDepth == "10", "10-bit video without HDR"},
+		{"Dolby Vision", strings.Contains(meta.HDR, "DV"), "HDR: " + meta.HDR},
+		{"HDR10+", strings.Contains(meta.HDR, "HDR10+"), "HDR: " + meta.HDR},
+		{"HDR10", strings.Contains(meta.HDR, "HDR") && !strings.Contains(meta.HDR, "HDR10+"), "HDR: " + meta.HDR},
+		{"HLG", strings.Contains(meta.HDR, "HLG"), "HDR: " + meta.HDR},
+		{"With Commentary", meta.HasCommentary, "Effective commentary: true (inspected tracks or manual correction)"},
+		{"2-Disc Set", len(meta.Disc.Items) == 2, fmt.Sprintf("Prepared source contains %d discs", len(meta.Disc.Items))},
+	} {
+		if fact.present {
+			selected[fact.label] = fact.evidence
+		}
+	}
+	options := make([]api.TrackerEditionFeature, 0, len(editionFeatureCatalogue)+1)
+	for _, item := range editionFeatureCatalogue {
+		evidence, present := selected[item.label]
+		if !present {
+			evidence = "No supporting prepared evidence"
+			if item.label == "With Commentary" {
+				evidence = "Effective commentary: false; the Commentary correction controls this tag"
+			}
+			if item.label != "With Commentary" {
+				evidence += "; explicit Edition input is supported"
+			}
+		}
+		options = append(options, api.TrackerEditionFeature{
+			Label:    item.label,
+			Category: item.category,
+			Selected: present,
+			Evidence: evidence,
+		})
+	}
+	if label := strings.Join(remaining, " "); label != "" {
+		options = append(options, api.TrackerEditionFeature{
+			Label:    label,
+			Category: "Edition",
+			Selected: true,
+			Evidence: "Additional prepared edition/presentation wording",
+		})
+	}
+	return options
+}
+
+func resolveRemasterTitle(meta api.UploadSubject) string {
+	var labels []string
+	for _, option := range editionFeatures(meta) {
+		if option.Selected {
+			labels = append(labels, option.Label)
+		}
+	}
+	return strings.Join(labels, " / ")
 }

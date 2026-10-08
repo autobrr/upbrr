@@ -19,7 +19,6 @@ import (
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/trackers"
-	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	isimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -52,15 +51,6 @@ func preparePolicyDefinition(ctx context.Context, input trackers.PreparationInpu
 			), nil
 		},
 	)
-}
-
-func antRuleRegistry(t *testing.T) *trackers.Registry {
-	t.Helper()
-	registry, err := trackerimpl.NewRegistry()
-	if err != nil {
-		t.Fatalf("create tracker registry: %v", err)
-	}
-	return registry
 }
 
 func TestEditionFromMetaMultiPlaylistAggregatesIMDbMatches(t *testing.T) {
@@ -2920,70 +2910,6 @@ func TestAudioFromMediaNormalizesBDInfoCodecWithAtmos(t *testing.T) {
 	}
 }
 
-func TestResolveAudioBloatPolicyBlocksStrictTrackersForEnglishOriginal(t *testing.T) {
-	blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
-		AudioLanguages: []string{"English", "French"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
-		},
-	}, []string{"ANT", "BHD", "AITHER", "ASC"}, antRuleRegistry(t))
-
-	if got := blocked["ANT"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected ANT blocked for French bloat, got %#v", blocked)
-	}
-	if got := blocked["BHD"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected BHD blocked for French bloat, got %#v", blocked)
-	}
-	if got := warned["AITHER"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected AITHER warning for French bloat, got %#v", warned)
-	}
-	if _, ok := warned["ASC"]; ok {
-		t.Fatalf("did not expect ASC warning, got %#v", warned)
-	}
-}
-
-func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testing.T) {
-	blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
-		AudioLanguages: []string{"English", "Japanese", "French"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
-		},
-	}, []string{"ANT", "BHD", "SPD"}, antRuleRegistry(t))
-
-	if blocked != nil {
-		t.Fatalf("expected no blocked trackers, got %#v", blocked)
-	}
-	if got := warned["ANT"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected ANT warning for French bloat, got %#v", warned)
-	}
-	if got := warned["BHD"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected BHD warning for French bloat, got %#v", warned)
-	}
-	if got := warned["SPD"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected SPD warning for French bloat, got %#v", warned)
-	}
-}
-
-func TestResolveAudioBloatPolicyExemptsDiscContent(t *testing.T) {
-	t.Parallel()
-
-	for _, discType := range []string{"DVD", "BDMV", "Blu-Ray", "HD DVD"} {
-		t.Run(discType, func(t *testing.T) {
-			t.Parallel()
-			blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
-				DiscType:       discType,
-				AudioLanguages: []string{"English", "French", "Spanish"},
-				ProviderMetadata: api.SourceScopedMetadata{
-					TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
-				},
-			}, []string{"ANT", "BHD", "AITHER"}, antRuleRegistry(t))
-			if blocked != nil || warned != nil {
-				t.Fatalf("%s disc audio policy blocked=%#v warned=%#v", discType, blocked, warned)
-			}
-		})
-	}
-}
-
 func TestCanonicalAudioLanguagePreservesCompleteScottishGaelicLabel(t *testing.T) {
 	t.Parallel()
 
@@ -2995,10 +2921,6 @@ func TestCanonicalAudioLanguagePreservesCompleteScottishGaelicLabel(t *testing.T
 	}
 	if got := languageutil.NormalizeLanguageLabel("mul"); got != "Multiple Languages" {
 		t.Fatalf("multiple-language label = %q", got)
-	}
-	_, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{AudioLanguages: []string{"Scottish Gaelic", "English", "French"}, ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "gd"}}}, []string{"AITHER"}, antRuleRegistry(t))
-	if got := warned["AITHER"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("Scottish Gaelic audio warning = %#v", warned)
 	}
 }
 

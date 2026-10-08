@@ -167,7 +167,8 @@ func TestPTPProjectionCapturesReviewedPayloadChoices(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := api.UploadSubject{
-		ReleaseName: "Example.Movie.2026.1080p.BluRay.x264-GRP",
+		ReleaseName:   "Example.Movie.2026.1080p.BluRay.x264-GRP",
+		LanguageFacts: ptpLanguageSubject("French", "French").LanguageFacts,
 		Release: api.ReleaseInfo{
 			Title:      "Example Movie",
 			Year:       2026,
@@ -191,8 +192,8 @@ func TestPTPProjectionCapturesReviewedPayloadChoices(t *testing.T) {
 	}
 	input.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"PTP": {"trumpable_review": "yes", "subtitle_tags": "No English Subs"}}
 	reviewed, failure := registry.ProjectRelease(t.Context(), input, "input-reviewed", "catalog", "config")
-	if failure != nil || !reviewed.UploadReady {
-		t.Fatalf("reviewed=%#v failure=%v", reviewed, failure)
+	if failure != nil || !reviewed.UploadReady || reviewed.WaivableRuleFingerprint != "" {
+		t.Fatalf("payload choices acquired a source-comparison waiver: %#v, %v", reviewed, failure)
 	}
 	input.Projection = &reviewed
 	input.Intent = trackers.PreparationIntentDryRun
@@ -203,10 +204,11 @@ func TestPTPProjectionCapturesReviewedPayloadChoices(t *testing.T) {
 		var err error
 		payload, err = buildUploadFields(prepared.Meta, "description", "123", prepared.Meta.TrackerQuestionnaireAnswers["PTP"], "")
 		return trackers.NewPreparedOperation(api.TrackerDryRunEntry{
-			Tracker:     "PTP",
-			Status:      "ready",
-			ReleaseName: reviewed.UploadReleaseName,
-			Payload:     payload,
+			Tracker:         "PTP",
+			Status:          "ready",
+			ReleaseName:     reviewed.UploadReleaseName,
+			EditionFeatures: editionFeatures(prepared.Meta),
+			Payload:         payload,
 		}, nil, nil), err
 	})
 	if failure != nil {

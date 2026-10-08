@@ -611,6 +611,7 @@ func releaseNameProjectionFingerprint(
 		RequestedName    string
 		UploadName       string
 		DuplicateName    string
+		EditionFeatures  []api.TrackerEditionFeature `json:",omitempty"`
 		AdditionalNames  []api.TrackerReleaseName
 		Authority        []NameAuthority
 		Opaque           OpaqueNameMode
@@ -629,6 +630,7 @@ func releaseNameProjectionFingerprint(
 		RequestedName:    requestedName,
 		UploadName:       projection.UploadReleaseName,
 		DuplicateName:    projection.DuplicateCriteria.Name,
+		EditionFeatures:  projection.EditionFeatures,
 		AdditionalNames:  projection.AdditionalNames,
 		Authority:        structuredNameAuthority(descriptor.ReleaseNamePolicy),
 		Opaque:           structuredNameOpaqueMode(descriptor.ReleaseNamePolicy),

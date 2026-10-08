@@ -487,6 +487,7 @@ func (p TrackerPlan) Release() error {
 }
 
 func cloneTrackerDryRunEntry(entry api.TrackerDryRunEntry) api.TrackerDryRunEntry {
+	entry.EditionFeatures = slices.Clone(entry.EditionFeatures)
 	entry.Payload = maps.Clone(entry.Payload)
 	entry.Files = append([]api.TrackerDryRunFile(nil), entry.Files...)
 	entry.DebugSections = append([]api.TrackerDryRunDebugSection(nil), entry.DebugSections...)

@@ -2029,7 +2029,24 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
     for (const tracker of ["HDS", "PTP"]) {
       await page.getByRole("checkbox", { name: tracker }).check();
     }
-    await runDuplicateCheck(page, "blocked");
+    const checked = await runDuplicateCheck(page, "blocked");
+    const ptp = checked.projections?.projections.find(
+      (projection) => projection.trackerId === "PTP",
+    );
+    expect(ptp).toMatchObject({ readiness: "ready", dupeReady: true });
+    expect(ptp?.questionnaire ?? []).toHaveLength(0);
+    await expect(page.getByRole("button", { name: "Apply tracker answers" })).toHaveCount(0);
+    expect(checked.dupes?.results.map((result) => result.trackerId).sort()).toEqual(["HDS", "PTP"]);
+    expect(checked.dupes?.results.find((result) => result.trackerId === "PTP")).toMatchObject({
+      status: "blocked",
+      decision: "pending",
+      matches: [
+        {
+          name: "Example.Show.S01E01.1080p.WEB-DL.DV-GRP",
+          relation: "manual_review",
+        },
+      ],
+    });
 
     await expect(page.getByText("Example.Release.2026.1080p.SDR-GRP")).toHaveCount(0);
     await expect(page.getByText("Example.Release.2026.1080p.HDR10-GRP")).toBeVisible();

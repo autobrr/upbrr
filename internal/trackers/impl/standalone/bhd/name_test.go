@@ -125,6 +125,7 @@ func TestBHDStructuredNamePolicyUsesComponentAudioAndCurrentProviders(t *testing
 	})
 	subject.Identity.Category = api.CanonicalCategoryMovie
 	subject.Audio = "Dubbed DD 2.0"
+	subject.LanguageFacts = bhdTestLanguageFacts("Japanese", []string{"English"}, []string{"English"})
 	if got, want := bhdReviewedName(t, subject, nil), "Example Release 2026 1080p WEB-DL Dubbed DD2.0-GRP"; got != want {
 		t.Fatalf("component audio markers = %q, want %q", got, want)
 	}
@@ -193,6 +194,7 @@ func bhdGeneratedSubject(t *testing.T, request api.ReleaseNameRequest) api.Uploa
 		t.Fatal("BuildReleaseName did not produce a structured document")
 	}
 	return api.UploadSubject{
+		LanguageFacts:    bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
 		ReleaseName:      generated.Name,
 		ReleaseNameNoTag: generated.NameNoTag,
 		GeneratedName:    generated.GeneratedName,

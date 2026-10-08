@@ -680,13 +680,30 @@ Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;
 - `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug mode bypasses it automatically;
-- `strict` blocks in every execution mode.
+- `strict` blocks normal uploads and cannot be acknowledged. An explicitly marked `RuleFailure.DebugBypass` may preserve a tracker eligibility bypass in debug mode; unrelated strict constructibility checks still block.
 
 The workflow emits one tracker-scoped override for the exact current warning set. WebUI places it
 on that tracker's duplicate-review card as a reversible acknowledgement toggle; interactive CLI
 prompts for it. A changed warning set or prepared generation invalidates that authority and requires
 new approval. Revocation clears dependent checks and preparation through the shared workflow.
-Strict failures cannot be overridden.
+Strict failures cannot be overridden for a normal upload.
+
+A tracker that requires remote title-existence evidence can opt into `TitleSearchPolicyProvider`.
+For Unit3D sites, bind a versioned `TitleSearchPolicy` and a site-local `AdjustTitleSearchParams`
+callback in `dupe.go`. The dedicated `TitleSearchAdapter.SearchTitle` lookup must preserve provider
+identity and the complete category family while removing season, episode, resolution, and format
+narrowing. Ordinary duplicate searches, including full-disc searches, retain their existing scope.
+The pure requirement predicate must exclude full discs when the rule does not apply to them.
+
+Preflight performs the lookup before language-rule readiness gates and passes detached
+`TrackerTitleSearchEvidence` into pure validation. Only a completed, authoritatively bound lookup
+can prove zero torrents; failed, incomplete, or unbound searches remain unresolved. Count every
+same-work row before duplicate-slot filtering. Evidence and any acknowledgement are bound to the
+prepared generation, title identity, tracker configuration, and versioned search policy. The workflow
+retains that evidence for later validation, reuses fresh complete empty searches for duplicate
+checking, and never extends their original freshness. Version the title-search policy when its
+query contract changes. Do not put network work in `ValidationPolicy.Check`, expose private
+tracker rows in review results, or represent a local acknowledgement as a remote tracker tag.
 
 Every constructibility predicate whose result depends on a required mapping or resource, including
 a missing resolution, category, type, questionnaire answer, or prepared media fact, must be
@@ -867,6 +884,15 @@ internal/trackers/impl/standalone/example/
   upload_test.go
   dupe_test.go
 ```
+
+For tracker-owned edition/feature review, `standalone.Profile.EditionFeatures` may bind a pure
+resolver over `api.UploadSubject`. Return the full typed catalogue with effective selections and
+evidence, and use that same mapping for payload construction and `TrackerDryRunEntry.EditionFeatures`.
+The shared projection binds the catalogue to review fingerprints and rejects changed selections
+or evidence during final preparation. Inspection fields are separate from tracker wire payloads.
+Canonical `ReleaseFeatures` annotations are distinct from Cut, Edition, Presentation, and
+EditionSet. Consume those prepared feature values directly; do not recover them from rendered
+names or promote them into edition identity just to expose tracker tags.
 
 Keep all endpoint, payload, protocol auth, parser, rule, validation, and policy behavior in this
 package.
@@ -1080,7 +1106,10 @@ include display defaults; they do not become answers automatically. The projecti
 `QuestionnaireAnswers` map owns accepted answers for descriptions and upload. An allocated empty
 map clears earlier answers; an omitted legacy map has no new answer authority. The
 projector emits a tracker-scoped questionnaire action even alongside an unrelated strict failure;
-answering the questionnaire never waives that failure. Do not turn an upload review into a global
+answering the questionnaire never waives that failure. Preflight publication must use the same
+stamped action IDs, workflow revision and expiry in the aggregate assessment and each tracker
+projection; tracker lanes must not retain stale or duplicate unstamped questions.
+Do not turn an upload review into a global
 Input prerequisite. Legacy explicit CLI answer staging validates against these pure schemas by default,
 but does not publish them as Input controls or block canonical Input readiness. A tracker whose
 accepted CLI fields exceed its visible questions may implement `TrackerAnswerSchemaProvider` on
@@ -1108,6 +1137,33 @@ generation, private evidence, skip mode, and in-client restrictions still apply.
 incomplete answer retains only a private reuse baseline, with no current duplicate or upload
 authority. Rebinding never extends duplicate freshness. Canonical prepared-release contract versions do not change for
 tracker-only questionnaire semantics; version the tracker projector instead.
+
+Non-disc TV-pack preparation uses the selected primary video's MediaInfo report. Passive pack
+consistency guidance must not request all-file collection, block on missing per-file reports,
+or ask users to establish source variation. A primary report cannot prove pack-wide consistency.
+Track ordering must use explicit measured container stream order, never MediaInfo document order,
+per-kind ordinals, or opaque native IDs. Unknown order remains evidence to resolve rather than a
+guessed violation.
+
+Source-history, retention, provenance, quality and hypothetical subtitle concerns are passive
+advisories, not questionnaires or unresolved answer gates. Keep unknown facts unknown; warnings
+must not assert source compliance or grant staff permission, replacement qualification, or an
+exception to independent measured constraints. Use inspected languages, titles, default/forced
+flags and container order before asking for genuinely missing upload input. Use an advisory
+`guidance_` rule code for non-language guidance that should appear in the collapsed WebUI
+Guidance panel; language guidance retains its existing `language_` codes.
+
+Origin-country defaults must use current, source-bound provider evidence and the inspected primary
+original-language audio. Normalize supported country codes and names, retain all co-production
+countries when checking agreement, and never use the work’s origin to infer a dub’s country.
+Explicit answers and finalized language corrections retain precedence.
+
+Retained factual choices and tracker acknowledgements must bind to the tracker, prepared
+generation, finalized track evidence, source, release type and disc type. Use `LanguageQuestionKey`
+for that shared contract; include additional evidence separately when it is not part of
+`LanguageFacts`. An acknowledgement accepts the current waivable finding, not a claim about
+uninspected source material. Recognize supported source forms without importing another site's
+source whitelist.
 
 ### 7. Add optional capabilities
 

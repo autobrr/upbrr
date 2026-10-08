@@ -1121,6 +1121,19 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     Track ID: {track.ID} · Resource: {track.ResourceID || "unknown"} · Detected:{" "}
                     {listText(track.DetectedLanguages) || "unknown"}
                   </span>
+                  {track.Kind === "audio" && (track.DiscID || track.PlaylistID) ? (
+                    <span className="break-words text-xs text-muted-foreground">
+                      {track.DiscID ? `Disc: ${track.DiscID} · ` : ""}
+                      {track.PlaylistID ? `Playlist: ${track.PlaylistID} · ` : ""}
+                      {track.NativeID ? `Native ID: ${track.NativeID}` : `Ordinal: ${ordinal}`}
+                      {" · "}Bitrate:{" "}
+                      {track.BitrateBitsPerSecond && track.BitrateBitsPerSecond > 0
+                        ? `${track.BitrateBitsPerSecond} bps`
+                        : "unknown"}
+                      {" · "}Hidden: {track.Hidden ? "yes" : "no"}
+                      {" · "}Commentary: {track.Commentary ? "yes" : "no"}
+                    </span>
+                  ) : null}
                 </CorrectionRow>
               );
             })}

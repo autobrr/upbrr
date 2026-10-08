@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { SubtitleLanguageCoverage } from "./api/generated/release-workflow";
+import type { MediaFileFacts, SubtitleLanguageCoverage } from "./api/generated/release-workflow";
 
 /** Editable identity projection derived from the canonical prepared release. */
 export type ExternalIdentityDraft = {
@@ -191,6 +191,7 @@ export type EpisodeFacts = {
 };
 
 export type MediaFacts = {
+  MediaFileFacts?: MediaFileFacts;
   AudioLanguages: string[];
   SubtitleLanguages: string[];
   TrackAudioLanguages: string[];
@@ -222,6 +223,17 @@ export type MediaFacts = {
   VideoEncode: string;
   HasEncodeSettings: boolean;
   BitDepth: string;
+  ReleaseFeatures?: Array<
+    | "two_disc_set"
+    | "4k_restoration"
+    | "4k_remaster"
+    | "extras"
+    | "2d_3d_edition"
+    | "3d_anaglyph"
+    | "3d_full_sbs"
+    | "3d_half_ou"
+    | "3d_half_sbs"
+  >;
   EditionSet: string;
   Cut: string;
   Presentation: string;
@@ -237,6 +249,10 @@ export type MediaFacts = {
 
 export type MediaTrackFacts = {
   ID: string;
+  DiscID?: string;
+  PlaylistID?: string;
+  BitrateBitsPerSecond?: number;
+  Hidden?: boolean;
   Kind: "audio" | "subtitle" | string;
   ResourceID: string;
   ManifestFingerprint: string;
@@ -882,6 +898,7 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  Commentary?: boolean;
   ReleaseName: string;
   Providers: ProviderDisplay[];
   TrackerData?: TrackerPreview[];
@@ -968,6 +985,10 @@ export type TrackerPreview = {
 
 /** Upload rule failure attached to a tracker before dupe checking or upload. */
 export type RuleFailure = {
+  /** Backend-owned opt-in for non-submitting debug eligibility checks. */
+  debugBypass?: boolean;
+  /** Opaque identity of the evidence bound to this warning. */
+  evidenceFingerprint?: string;
   Rule: string;
   Reason: string;
   /** Empty legacy values are waivable; unknown non-empty values fail closed. */

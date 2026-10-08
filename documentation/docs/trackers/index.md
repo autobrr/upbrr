@@ -7,15 +7,13 @@ description: Configure tracker credentials, authentication, default selection, d
 
 upbrr's tracker catalog is built from registered tracker implementations. The Web UI renders each tracker's supported settings and capabilities from that catalog.
 
-THR support, including its tracker-owned image host, has been removed because the site changed its underlying codebase. On upgrade or config import, THR settings, default/preferred selections, and obsolete Pronfo credentials are discarded before secret decryption. Historical upload records and unrelated settings are preserved. Startup writes repaired database configuration atomically; if that write fails, the original configuration remains available for retry. A replacement integration is not included.
-
 ## Configure a tracker
 
 1. Open **Settings**.
 2. Open the tracker section.
 3. Enter only the requested credentials and options.
 4. Save settings.
-5. Import cookies, sign in, or test authentication when those actions are available.
+5. [Export and import browser cookies](../web-ui/settings/tracker-auth.md#export-and-import-cookies), sign in, or test authentication when those actions are available.
 6. Add the tracker to default selection only after it reports ready.
 
 Auth requirements vary. A tracker can require an API key, passkey, cookie session, username/password login, 2FA, or a supported combination. upbrr stores managed tracker cookies encrypted in SQLite.
@@ -40,9 +38,7 @@ Tracker adapters normalize duplicate results into a common review surface. A tra
 - a not-run result with a reason, such as missing auth or metadata;
 - an attempted search failure.
 
-Warnings that permit an override can block a live upload while allowing debug preparation. Strict validation failures block every mode. Subjective or incomplete tracker rules remain manual decisions.
-
-Unit3D duplicate searches cover the complete movie or TV category family, including site-specific categories such as anime or season packs. They do not filter by upload type, resolution, or individual episode number; the evaluator compares the returned release variants and overlapping content. A TV season may still narrow the search, except where the site needs a broader query, as described for [ACM](#acm-diagnostics).
+Warnings that permit an override can block a live upload while allowing debug preparation. Strict constructibility failures block every mode. Non-submitting debug execution preserves the explicit language-eligibility bypass and displays the bypassed assessment. Subjective or incomplete tracker rules remain visible for review.
 
 Tracker settings can restrict duplicate competition by incoming release group. When a tag matches that tracker's **Duplicate bypass groups** or **Internal groups**, confirmed candidates from other groups coexist and are omitted from slot-capacity decisions. Exact duplicates, same-group candidates, conflicting evidence, and unknown groups keep their normal duplicate result. See [tracker group policy lists](../web-ui/settings/trackers.md#group-policy-lists).
 
@@ -52,37 +48,57 @@ Tracker settings can restrict duplicate competition by incoming release group. W
 
 Some tracker warnings permit an explicit override. On **Dupe Check**, read the warnings on the affected tracker's card. Turn on **Acknowledge tracker warnings** only after deciding that the release is appropriate for that tracker. The warning details remain visible while acknowledged.
 
-Approval applies only to that tracker and its current warning set. After the initial duplicate check, changing its warning toggle rechecks only that tracker when eligible. Other trackers keep their fresh, unchanged duplicate evidence and decisions. Turning the toggle off withdraws approval and skips that tracker's search until it is eligible again. Changed inputs, configuration, or expired evidence still require fresh checks. Changed warnings or a new prepared generation require renewed approval. Strict failures remain blocked and cannot be overridden, including in debug mode.
+Approval applies only to that tracker and its current warning set. After the initial duplicate check, changing its warning toggle rechecks only that tracker when eligible. Other trackers keep their fresh, unchanged duplicate evidence and decisions. Turning the toggle off withdraws approval and skips that tracker's search until it is eligible again. Changed inputs, configuration, or expired evidence still require fresh checks. Changed warnings or a new prepared generation require renewed approval. Strict failures cannot be waived for a live upload. Debug may bypass the explicitly identified language-eligibility assessments, but never authorizes tracker submission.
 
-The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override.
+The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override and explicitly marked language-eligibility assessments; bypass details remain visible.
+
+### Blocking reasons and warnings
+
+Review the assessment displayed for each selected tracker:
+
+- **Prohibited**: a rule prevents the release from proceeding in a normal upload.
+- **Staff approval required**: the release needs permission from the tracker's staff; answering a question or acknowledging a warning does not grant that permission.
+- **Trumpable release**: a compliant replacement may supersede the upload. Proceed only when the displayed finding permits an explicit acknowledgement.
+- **Unresolved**: required evidence is missing or conflicting. Correct the facts or answer the requested questions before continuing.
+- **Guidance**: non-blocking advice in a panel that starts collapsed on **Dupe Check**. Expand it to read the warnings. It requires no answer or acknowledgement and does not establish that unknown source details are correct.
+
+Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
+
+Correct language and other factual evidence on **Input**. Naming overrides and warning acknowledgements do not change media facts. An acknowledgement applies only to its tracker and current prepared generation; it cannot clear an independent strict finding. Changed evidence requires renewed review. upbrr does not remove or remux tracks automatically.
+
+### Media analysis
+
+Non-disc pack preparation uses the selected primary video’s MediaInfo report. A pack-consistency reminder is passive Guidance: it does not scan every episode, establish pack-wide consistency, or require an answer or acknowledgement. Check the pack against the tracker’s current rules. Cancellation is checked between input-file reads; an operating-system read already in progress may delay stopping. Inspected languages, track titles, default/forced flags and container order inform the assessment. Source-history and hypothetical subtitle concerns remain warnings rather than requests to guess missing facts.
 
 ## Tracker questions
 
 On **Dupe Checking**, open **Tracker questions** for a selected tracker, review any required fields, and choose **Apply tracker answers**. Loading the questions uses existing prepared facts without contacting the tracker. Applying answers refreshes the assessment; it does not upload or start another duplicate search. Unanswered required fields block only their tracker, and unapplied edits must be applied before dry runs or uploads. See [the questionnaire workflow](../workflow/index.md#tracker-questions) for retained duplicate evidence and questions discovered during preparation.
 
-PTP can ask you to review subtitle and trumpable tags when neither English subtitles nor a first English audio track are established, or hardcoded languages are unknown. Known hardcoded-language corrections, including **English (Full)** and **English (Forced)**, supply that evidence directly. Review every applicable choice; contradictory English and no-English claims block PTP. Choosing **English Softsubs Exist (Mislabeled)** does not correct a media track’s language. Use [Input language corrections](../workflow/index.md#subtitle-review) for that, or follow the [CLI subtitle-review guide](../cli/index.md#ptp-subtitle-review).
+Questions remain for genuine upload inputs, naming choices and ambiguous track associations that available metadata cannot supply. Required fields with supplied values are identified separately from missing answers; optional controls do not require a response. Correct missing canonical facts on **Input**. An answer cannot waive an independent prohibited or staff-only finding. Existing debug-mode policy bypasses also leave eligibility-only questions optional; evidence needed to construct names, payloads or required descriptions remains necessary.
 
 ## Names and payloads
 
-upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time.
+upbrr resolves upload and search names before duplicate checking. Review the projected name for every selected tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. Manual naming controls are presentation choices and do not grant upload eligibility or replace required factual evidence.
 
-Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or the rendered TV season/episode segment. Missing or unknown resolution stays absent. Complete manual names and tracker policies that use exact source names or separate display titles retain their existing behavior.
+Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or TV season/episode segment. Missing or unknown resolution stays absent, and complete manual names remain unchanged.
 
-Tracker-specific categories, source/type mappings, descriptions, media selection, questionnaires, and auth flows remain owned by the tracker adapter. A successful mapping does not prove the upload complies with every current site rule.
+Categories, source/type mappings, descriptions, media selection, questionnaires and authentication requirements can vary. Review the displayed requirements and consult the tracker's current rules. A successful local preparation does not prove that a remote upload will be accepted.
+
+### Editions and commentary
+
+A solitary Theatrical cut or edition is ignored. Compound editions retain their constituent cuts and multi-edition marker. Presentation and technical-feature annotations do not establish another edition. Actual additional editions and multi-cut sets remain intact; opaque manual Edition compounds retain their existing wording.
+
+Review detected labels and inspected tracks before approval. Missing track languages cannot be borrowed from another report without a reliable identity match; correct missing languages explicitly when needed. Consult the tracker's current rules when interpreting any eligibility finding.
+
+To override commentary detection, set **Commentary** to **Yes** or **No** and refresh metadata, or use `--commentary=true` / `--commentary=false` (`--mc` is an alias). Explicit No survives re-preparation and removes `With Commentary`. No extra commentary prompt is introduced, including in unattended mode. Older prepared generations must be refreshed to use the new evidence and classification.
 
 ### Disc region and distributor IDs
 
-For Unit3D disc uploads, upbrr translates known country codes and publisher names to the standard UNIT3D numeric IDs. Matching is case-insensitive; explicit positive numeric IDs remain usable for site-specific entries. Tracker taxonomy implementations can add or override names without changing the shared defaults. Disc playback zones such as A/B/C are not country codes.
+Region and distributor fields accept supported suggestions or explicit numeric IDs where applicable. Disc playback zones such as A/B/C are not country codes. If a required value cannot be resolved, correct it on **Input** and refresh metadata before retrying. Check the destination's current requirements rather than guessing an ID.
 
-Unknown optional values are omitted with a debug diagnostic rather than assigned a guessed ID. ACM and SHRI retain their stricter validation, and SHRI still requires a valid region for DVD and HD DVD uploads. ULCX requires a resolvable country region for Blu-ray discs (including UHD); a missing or unsupported region strictly blocks upload, even in debug mode or with rule authorization. Set the Region correction to a recognized country code or a positive tracker region ID, then refresh metadata before retrying. Playback zones A/B/C do not satisfy this country field.
+### Diagnostics
 
-Site-specific catalogs and live upload acceptance still need verification when a site changes its list.
-
-### ACM diagnostics
-
-ACM duplicate searches gather the full TMDB work within the movie or TV category. They do not narrow by release name, season, type, or resolution; the duplicate evaluator compares the returned content scopes and variants. This preserves work matching on ACM's legacy API.
-
-For an ACM report, enable `--log-level trace` for the affected run. Search diagnostics include the work query and pagination decisions. Payload diagnostics include numeric classification IDs and evidence byte counts, without copying descriptions or MediaInfo into these messages. Review all logs before sharing and remove credentials, private URLs, and identifying release details. A successful local preparation does not confirm that ACM accepted an upload.
+For a tracker defect, follow [troubleshooting guidance](../troubleshooting/index.md) and collect only the relevant sanitized excerpt. upbrr is intended to redact credentials automatically, but inspect every log and remove any remaining credentials, cookies, tokens, private URLs and unrelated personal information before sharing.
 
 ## Image hosts and clients
 

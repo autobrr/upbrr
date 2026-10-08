@@ -7,23 +7,23 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 )
 
-// Rules returns AITHER's strict unique-ID requirement and waivable non-disc
-// English audio-or-subtitle requirement, accepting original-language audio
-// when English subtitles are present.
+// Rules returns AITHER's strict unique-ID requirement. Its validation policy
+// separately assesses non-disc language requirements and staff-only exceptions.
 func Rules() *trackers.RuleSet {
-	return &trackers.RuleSet{RequireUniqueID: true, Language: englishNonDisc()}
+	return &trackers.RuleSet{RequireUniqueID: true}
 }
 
 // AudioPolicy allows English as an additional audio language.
 func AudioPolicy() *trackers.AudioPolicy {
 	return &trackers.AudioPolicy{AllowedLanguages: []string{"english"}}
 }
-func englishNonDisc() *trackers.LanguageRule {
-	return &trackers.LanguageRule{
-		Languages:      []string{"english", "en", "eng"},
-		RequireAudio:   true,
-		RequireSubs:    true,
-		AllowOriginal:  true,
-		ApplyIfNonDisc: true,
+
+func languagePolicy() trackers.LanguagePolicy {
+	return trackers.LanguagePolicy{
+		OriginalPrimary:  true,
+		OriginalAudio:    trackers.LanguageStaffException,
+		ExtraDubs:        trackers.LanguageStaffException,
+		EnglishSubtitles: "foreign_without_dub",
+		MissingSubtitles: trackers.LanguageStaffException,
 	}
 }

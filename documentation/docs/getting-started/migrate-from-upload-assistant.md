@@ -25,7 +25,7 @@ Read every warning. Unknown legacy keys, unsupported tracker fields, and unsuppo
 
 Python imports accept both `config = {...}` and type-annotated assignments such as `config: dict = {...}`. The importer reads supported literal values; it does not execute the Python file.
 
-Unused incomplete torrent-client examples are skipped with a warning. A client referenced by default, search, injection, or tracker settings is retained for validation instead of silently discarded. Complete or remove those references before retrying a rejected import. THR and its retired Pronfo settings are no longer imported.
+Unused incomplete torrent-client examples are skipped with a warning. A client referenced by default, search, injection, or tracker settings is retained for validation instead of silently discarded. Complete or remove those references before retrying a rejected import.
 
 The Web UI also provides config import in **Settings**.
 
@@ -45,9 +45,11 @@ Review the generated file, then import it:
 
 ## Migrate tracker cookies
 
-Copy legacy `.txt` or `.json` cookie files into a `cookies` directory beside the active `db.sqlite`, then restart upbrr. Successfully migrated legacy files are removed.
+Follow the [cookie export and import walkthrough](../web-ui/settings/tracker-auth.md#export-and-import-cookies) to export a current browser session and choose Web UI or cookie-folder import. Web UI import uploads the file contents directly, without a server-side copy or restart.
 
-Verify tracker authentication from **Settings** before preparing a live upload.
+For folder migration, place Netscape `<tracker-id>.txt` files or supported cookie-map `<tracker-id>.json` files directly in `cookies` beside the active `db.sqlite`, then restart upbrr. The walkthrough covers tracker IDs, active state paths, Docker mounts, and accepted JSON formats. Source-file cleanup runs only after at least one cookie is stored encrypted and the whole batch has no parse or storage failures. If any file fails, all source files remain, including files whose cookies were stored.
+
+[Verify tracker authentication](../web-ui/settings/tracker-auth.md#verify-authentication) before preparing a live upload; successful import alone does not prove the session is valid.
 
 ## Restore Web UI browse access
 
@@ -60,6 +62,12 @@ If no browse policy exists, the first authenticated Web UI setup can establish i
 ```
 
 Existing browse roots remain unchanged when application config is imported.
+
+## Review imported torrent clients
+
+A qBittorrent entry with a URL is retained even when its username or password is empty. This supports servers that allow local authentication bypass; it does not change the server's authentication settings. See [Torrent Clients settings](../web-ui/settings/torrent-clients.md).
+
+Remove unused URL-only example entries before importing, or remove them in Settings afterward. They are now valid clients rather than incomplete templates. Retaining extra clients can change implicit selection: search can include all configured qBittorrent clients, and ordinary injection chooses the only configured client only when exactly one exists. URL-only tracker results may fall back to configured URL-capable clients that allow fallback. Set explicit **Searching clients** and **Injected clients** to the intended qBittorrent entries under [Client Handling](../web-ui/settings/client-handling.md) and review tracker overrides before uploading.
 
 ## Validate the migration
 

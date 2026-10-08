@@ -13,7 +13,7 @@ Use **Settings → Trackers** to enable supported tracker entries and configure 
 2. Open its card and enter the required activation credential, such as an API key, passkey, announce URL, or account credentials.
 3. Configure only the upload options you understand.
 4. Select **Save**.
-5. If the tracker uses managed cookies or login, continue under [Tracker Auth](./tracker-auth.md).
+5. If the tracker uses managed cookies or login, continue under [Tracker Auth](./tracker-auth.md). For browser cookies, follow the [Firefox export and import walkthrough](./tracker-auth.md#export-and-import-cookies).
 
 Adding an empty card does not make an unusable tracker ready. upbrr determines configured state from tracker-owned activation fields supplied by the backend catalog.
 
@@ -54,25 +54,20 @@ Every tracker card provides three independent comma-separated release-group list
 | **Personal release groups** | Selects the tracker API's personal-release option when that API supports one. An explicit Personal Release choice on the upload overrides this configured default, including an explicit **false**. |
 | **Internal groups**         | Selects the tracker API's internal option when supported and applies the same-group duplicate behavior described above.                                                                             |
 
-Enter tags without the conventional leading `-`, for example `NTb, GRP`. upbrr trims whitespace, removes one accidental leading hyphen, and removes repeated entries case-insensitively. Matching uses the complete group tag; wildcards and partial matches are not supported.
+Enter tags without the conventional leading `-`, for example `GRP, OTHER`. upbrr trims whitespace, removes one accidental leading hyphen, and removes repeated entries case-insensitively. Matching uses the complete group tag; wildcards and partial matches are not supported.
 
 YAML accepts either a comma-separated value or a sequence:
 
 ```yaml
 trackers:
-  NBL:
-    dupe_bypass_groups: NTb, GRP
+  "<tracker-id>":
+    dupe_bypass_groups: GRP, OTHER
     personal_release_groups:
       - GRP
-  BTN:
-    internal_groups: NTb
+    internal_groups: GRP
 ```
 
 JSON uses arrays with the catalog field names `DupeBypassGroups`, `PersonalReleaseGroups`, and `InternalGroups`.
-
-For BTN/HDB, configured internal groups can bypass claimed show blocking, allowing these groups to upload their claimed releases to BTN/HDB.
-
-With debug logging enabled, `reason=legacy_format` identifies an automatic cache migration attempt. A blocked claim warning includes `release_group`, `internal_group`, `fresh_structured`, `own_claim`, and `matched_claims` so you can see which bypass prerequisite was missing.
 
 The older per-tracker **Internal** boolean is retained only so existing configuration can be read and exported. It no longer enables internal handling. Add the relevant tags to **Internal groups**; a list match works even when the legacy value is `false`.
 

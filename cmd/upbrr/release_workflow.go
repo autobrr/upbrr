@@ -1089,6 +1089,14 @@ func collectCLIWorkflowQuestionnaires(
 			if strings.TrimSpace(answer) == "" {
 				return false, fmt.Errorf("upbrr: tracker input %s for %s is required", field.Key, projection.TrackerID)
 			}
+			if field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no") {
+				switch strings.ToLower(strings.TrimSpace(answer)) {
+				case "y", "yes":
+					answer = "yes"
+				case "n", "no":
+					answer = "no"
+				}
+			}
 			if field.Kind == "multiselect" {
 				selected := make([]string, 0)
 				for item := range strings.SplitSeq(answer, ",") {
@@ -1150,6 +1158,9 @@ func printCLIWorkflowProjections(
 		for _, decision := range projection.PolicyDecisions {
 			if strings.HasPrefix(decision.Code, "release_name_override") && decision.Message != "" {
 				fmt.Fprintf(output, "  %s naming: %s\n", projection.DisplayName, decision.Message)
+			}
+			if !includePolicyDetails && !decision.Blocking && decision.Disposition == api.RuleDispositionAdvisory && decision.Message != "" {
+				fmt.Fprintf(output, "  %s warning: %s\n", projection.DisplayName, decision.Message)
 			}
 		}
 		if !includePolicyDetails && (readiness == api.ReadinessStatusBlocked || readiness == api.ReadinessStatusIneligible) {

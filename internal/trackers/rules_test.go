@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -58,11 +60,19 @@ func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta a
 		meta.ProviderMetadata.TVmaze.Name = "Example Series"
 	}
 	meta = withConstructibleTrackerFactsForTest(meta)
+	if slices.Contains([]string{"BHD", "AITHER", "HHD", "ULCX", "LST", "LUME"}, tracker) {
+		meta = withFinalizedLanguageFactsForTest(meta)
+	}
 	registry, err := impl.NewRegistry()
 	if err != nil {
 		panic(err)
 	}
-	failures, err := trackers.EvaluateRulesWithRegistry(ctx, registry, tracker, meta, nil)
+	var failures []api.RuleFailure
+	if tracker == "BHD" {
+		failures, err = trackers.EvaluateTrackerValidationWithRegistry(ctx, registry, tracker, newBHDReleaseForTest(meta), nil)
+	} else {
+		failures, err = trackers.EvaluateRulesWithRegistry(ctx, registry, tracker, meta, nil)
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -71,11 +81,12 @@ func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta a
 
 func evaluateBHDRulesWithRegistryForTest(ctx context.Context, meta api.RuleSubject) []api.RuleFailure {
 	meta = withConstructibleTrackerFactsForTest(meta)
+	meta = withFinalizedLanguageFactsForTest(meta)
 	registry, err := impl.NewRegistry()
 	if err != nil {
 		panic(err)
 	}
-	failures, err := trackers.EvaluateRulesWithRegistry(ctx, registry, "BHD", meta, nil)
+	failures, err := trackers.EvaluateTrackerValidationWithRegistry(ctx, registry, "BHD", newBHDReleaseForTest(meta), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -247,7 +258,29 @@ func TestGPWConstructibilityPolicyDocumentsTaxonomyFallbacks(t *testing.T) {
 func TestPTPConstructibilityPolicyDocumentsTaxonomyFallbacks(t *testing.T) {
 	t.Parallel()
 
-	subject := api.TrackerValidationSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie}}
+	subject := api.TrackerValidationSubject{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		LanguageFacts: api.LanguageFacts{
+			OriginalLanguages:      []string{"English"},
+			OriginalLanguagesKnown: true,
+			ProgrammeLanguages:     []string{"English"},
+			ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+			SubtitleLanguages:      []string{"English"},
+			SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+			PrimaryAudioTrackID:    "primary",
+			Tracks: []api.MediaTrackFacts{{
+				ID:        "primary",
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"English"},
+				Default:   true,
+			}, {
+				Kind:      api.MediaTrackSubtitle,
+				Languages: []string{"English"},
+				Forced:    true,
+			}},
+		},
+	}
 	if failures := validationPolicyFailuresForTest(t, "PTP", subject); len(failures) != 0 {
 		t.Fatalf("PTP explicit taxonomy fallbacks must remain constructible: %#v", failures)
 	}
@@ -493,14 +526,11 @@ func TestEvaluateRulesPTPRejectsTVPacks(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesANTRequiresMovie(t *testing.T) {
+func TestEvaluateRulesANTDoesNotBlanketRejectTV(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure, got %#v", failures)
-	}
-	if failures[0].Rule != "require_movie_only" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	if len(failures) != 0 {
+		t.Fatalf("supported ANT content types must decide TV eligibility: %#v", failures)
 	}
 }
 
@@ -520,11 +550,6 @@ func TestEvaluateRulesRequestedStrictCategoryTrackers(t *testing.T) {
 		category     api.CanonicalCategory
 		expectedRule string
 	}{
-		{
-			tracker:      "ANT",
-			category:     api.CanonicalCategoryTV,
-			expectedRule: "require_movie_only",
-		},
 		{
 			tracker:      "PTP",
 			category:     api.CanonicalCategoryTV,
@@ -569,7 +594,7 @@ func TestEvaluateRulesStrictCategoryTrackersRejectMissingCategory(t *testing.T) 
 	t.Parallel()
 
 	for tracker, expectedRule := range map[string]string{
-		"ANT": "require_movie_only",
+		"ANT": "require_metadata_category",
 		"BTN": "require_tv_only",
 		"PTP": "require_movie_only",
 		"RF":  "require_movie_only",
@@ -903,58 +928,220 @@ func TestEvaluateRulesBLUContainerRules(t *testing.T) {
 }
 
 func TestEvaluateRulesNBLRequiresTV(t *testing.T) {
-	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}}
+	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}, LanguageFacts: api.LanguageFacts{ProgrammeLanguages: []string{"English"}, ProgrammeStatus: api.MetadataEvidenceStatusComplete}}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
 	blocking := nonAdvisoryFailures(failures)
-	if len(blocking) != 2 {
-		t.Fatalf("expected 2 blocking failures, got %#v", failures)
-	}
-	if blocking[0].Rule != "require_tv_only" {
-		t.Fatalf("unexpected first rule key: %s", blocking[0].Rule)
+	if len(blocking) != 1 || blocking[0].Rule != "require_tv_only" {
+		t.Fatalf("expected independent TV category block, got %#v", failures)
 	}
 }
 
-func TestEvaluateRulesNBLAllowsTV(t *testing.T) {
+func TestEvaluateRulesNBLMissingLanguageIsUnresolved(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
 	blocking := nonAdvisoryFailures(failures)
-	if len(blocking) != 1 {
-		t.Fatalf("expected 1 blocking failure because language data is missing, got %#v", failures)
+	if len(blocking) != 2 || !hasRuleFailure(blocking, "language_evidence") || !hasRuleFailure(blocking, "language_subtitles") {
+		t.Fatalf("expected explicit missing language evidence, got %#v", failures)
 	}
-	if blocking[0].Rule != "language_rule" {
-		t.Fatalf("unexpected rule key: %s", blocking[0].Rule)
+	for _, failure := range blocking {
+		if failure.EvidenceStatus != api.MetadataEvidenceStatusPartial || failure.Disposition != api.RuleDispositionStrict {
+			t.Fatalf("missing facts were not unresolved: %#v", failure)
+		}
 	}
 }
 
 func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
-	meta := api.RuleSubject{
+	meta := withFinalizedLanguageFactsForTest(api.RuleSubject{
 		Identity:          api.ExternalIdentity{Category: "tv"},
-		DiscType:          "",
 		AudioLanguages:    []string{"Japanese"},
 		SubtitleLanguages: []string{"English"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
-		},
-	}
+		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}},
+	})
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
 	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
 		t.Fatalf("expected no blocking failures, got %#v", failures)
 	}
 }
 
-func TestEvaluateRulesNBLSkipsLanguageRuleForBDMVOnly(t *testing.T) {
+func TestEvaluateRulesNBLPreservesFullDiscLanguages(t *testing.T) {
 	t.Parallel()
-
-	bdmv := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, DiscType: "BDMV"}
-	if failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", bdmv); hasRuleFailure(failures, "language_rule") {
-		t.Fatalf("BDMV applied NBL language rule: %#v", failures)
+	for _, test := range []struct {
+		name             string
+		disc             string
+		audio, subtitles []string
+		original         string
+		wantReason       string
+	}{
+		{name: "BDMV missing data is exempt", disc: "BDMV"},
+		{
+			name:  "BDMV foreign data is exempt",
+			disc:  " bdmv ",
+			audio: []string{"Japanese"},
+		},
+		{
+			name:       "DVD missing data",
+			disc:       "DVD",
+			wantReason: "missing disc language data",
+		},
+		{
+			name:       "DVD blank data",
+			disc:       " dvd ",
+			audio:      []string{" "},
+			subtitles:  []string{""},
+			wantReason: "missing disc language data",
+		},
+		{
+			name:  "DVD English audio",
+			disc:  "DVD",
+			audio: []string{"English", "Japanese"},
+		},
+		{
+			name:      "DVD English subtitles",
+			disc:      "DVD",
+			audio:     []string{"Japanese"},
+			subtitles: []string{" eNg "},
+		},
+		{
+			name:       "DVD foreign only",
+			disc:       "DVD",
+			audio:      []string{"Japanese"},
+			subtitles:  []string{"German"},
+			wantReason: "disc requires audio or subtitles in english, en, eng",
+		},
+		{
+			name:       "HDDVD missing data",
+			disc:       "HDDVD",
+			wantReason: "missing disc language data",
+		},
+		{
+			name:  "HDDVD English audio",
+			disc:  "HDDVD",
+			audio: []string{"EN"},
+		},
+		{
+			name:      "HDDVD English subtitles",
+			disc:      "HD-DVD",
+			audio:     []string{"Japanese"},
+			subtitles: []string{"English"},
+		},
+		{
+			name:       "HDDVD alias foreign only",
+			disc:       "HD DVD",
+			audio:      []string{"Japanese"},
+			wantReason: "disc requires audio or subtitles in english, en, eng",
+		},
+		{
+			name:       "Blu-ray alias preserves old check",
+			disc:       "Blu-Ray",
+			audio:      []string{"Japanese"},
+			wantReason: "disc requires audio or subtitles in english, en, eng",
+		},
+		{name: "canonical disc missing label", wantReason: "missing language data"},
+		{
+			name:       "canonical disc unknown label",
+			disc:       "unknown",
+			wantReason: "missing language data",
+		},
+		{name: "canonical disc English audio", audio: []string{"English"}},
+		{
+			name:      "canonical disc English subtitles",
+			disc:      "unknown",
+			audio:     []string{"Japanese"},
+			subtitles: []string{"English"},
+		},
+		{
+			name:       "canonical disc original needs subtitles",
+			audio:      []string{"Japanese"},
+			original:   "ja",
+			wantReason: "requires subtitles in english, en, eng with original audio",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			meta := api.RuleSubject{
+				Identity:          api.ExternalIdentity{Category: "tv"},
+				DiscType:          test.disc,
+				Type:              "DISC",
+				AudioLanguages:    test.audio,
+				SubtitleLanguages: test.subtitles,
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: test.original}},
+				LanguageFacts:     api.LanguageFacts{ProgrammeStatus: api.MetadataEvidenceStatusPartial},
+			}
+			failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
+			blocking := nonAdvisoryFailures(failures)
+			if test.wantReason == "" {
+				if len(blocking) != 0 {
+					t.Fatalf("unexpected full-disc failures: %+v", failures)
+				}
+				return
+			}
+			if len(blocking) != 1 || blocking[0] != trackers.NewRuleFailure("language_rule", test.wantReason, api.RuleDispositionWaivable) {
+				t.Fatalf("full-disc failures = %+v, want original waivable reason %q", failures, test.wantReason)
+			}
+		})
 	}
+}
 
-	dvd := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, DiscType: "DVD"}
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", dvd)
-	blocking := nonAdvisoryFailures(failures)
-	if len(blocking) != 1 || blocking[0].Rule != "language_rule" {
-		t.Fatalf("DVD missing-language failures = %#v", failures)
+func TestEvaluateRulesNBLIncludesDiscSourcedRemuxes(t *testing.T) {
+	t.Parallel()
+	for _, disc := range []string{"BDMV", "DVD", "HDDVD"} {
+		meta := api.RuleSubject{
+			Identity:       api.ExternalIdentity{Category: "tv"},
+			DiscType:       disc,
+			Type:           "REMUX",
+			AudioLanguages: []string{"English"},
+		}
+		failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
+		blocking := nonAdvisoryFailures(failures)
+		if len(blocking) != 2 || !hasRuleFailure(blocking, "language_evidence") || !hasRuleFailure(blocking, "language_subtitles") {
+			t.Fatalf("%s sourced remux escaped finalized assessment: %+v", disc, failures)
+		}
+		for _, failure := range blocking {
+			if failure.Disposition != api.RuleDispositionStrict {
+				t.Fatalf("remux language failure became waivable: %+v", failure)
+			}
+		}
+	}
+}
+
+func TestNBLFullDiscLanguagePreservesWaiverAndDebug(t *testing.T) {
+	t.Parallel()
+	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", api.RuleSubject{
+		Identity: api.ExternalIdentity{Category: "tv"},
+		DiscType: "DVD",
+		Type:     "DISC",
+	})
+	fingerprint, err := trackers.WaivableRuleFailureFingerprint("NBL", failures)
+	if err != nil || fingerprint == "" {
+		t.Fatalf("missing legacy waiver fingerprint: %q %v", fingerprint, err)
+	}
+	for _, test := range []struct {
+		name       string
+		mode       api.WorkflowExecutionMode
+		projection *api.TrackerReleaseProjection
+		wantBlock  bool
+	}{
+		{
+			name:      "normal requires waiver",
+			mode:      api.WorkflowExecutionModeNormal,
+			wantBlock: true,
+		},
+		{name: "debug bypasses waiver", mode: api.WorkflowExecutionModeDebug},
+		{
+			name: "ordinary waiver permits upload",
+			mode: api.WorkflowExecutionModeNormal,
+			projection: &api.TrackerReleaseProjection{
+				WaivableRuleFingerprint:      fingerprint,
+				RuleAuthorizationFingerprint: fingerprint,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			failure, err := trackers.FirstBlockingRuleFailure("NBL", failures, test.mode, test.projection)
+			if err != nil || (failure != nil) != test.wantBlock {
+				t.Fatalf("blocking failure = %+v %v, want block %v", failure, err, test.wantBlock)
+			}
+		})
 	}
 }
 
@@ -1107,15 +1294,9 @@ func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
 		},
 	}
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "AITHER", meta)
-	if len(failures) == 0 {
-		t.Fatalf("expected language failure")
-	}
-	if failures[0].Rule != "language_rule" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
-	}
-	if failures[0].Disposition != api.RuleDispositionWaivable {
-		t.Fatalf("language disposition = %q, want waivable", failures[0].Disposition)
+	failures := nonAdvisoryFailures(evaluateNonMetadataRulesForTest(context.Background(), "AITHER", meta))
+	if len(failures) != 1 || failures[0].Rule != "language_subtitles" || failures[0].Disposition != api.RuleDispositionStrict || !strings.HasPrefix(failures[0].Reason, "Staff approval required") {
+		t.Fatalf("expected strict staff-exception subtitle finding, got %#v", failures)
 	}
 }
 
@@ -1493,4 +1674,59 @@ func TestRuleEvaluationCancellationReturnsError(t *testing.T) {
 	if err == nil || len(failures) != 0 {
 		t.Fatalf("canceled evaluation failures=%#v err=%v", failures, err)
 	}
+}
+
+// newBHDReleaseForTest supplies source history for unrelated rule fixtures.
+func newBHDReleaseForTest(meta api.RuleSubject) api.TrackerValidationSubject {
+	subject := api.NewTrackerValidationSubjectFromRuleSubject(meta, "BHD")
+	subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "existing_release"): "unchanged_or_new"}
+	return subject
+}
+
+// withFinalizedLanguageFactsForTest supplies the prepared projection omitted by
+// legacy tests focused on unrelated constructibility predicates.
+func withFinalizedLanguageFactsForTest(meta api.RuleSubject) api.RuleSubject {
+	if meta.LanguageFacts.AudioStatus != "" {
+		return meta
+	}
+	original := meta.EffectiveMetadata.OriginalLanguage
+	if original == "" && !meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		original = "English"
+		if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.OriginalLanguage != "" {
+			original = meta.ProviderMetadata.TMDB.OriginalLanguage
+		}
+	}
+	audio := meta.AudioLanguages
+	subtitles := meta.SubtitleLanguages
+	if audio == nil {
+		audio = []string{"English"}
+	}
+	if subtitles == nil {
+		subtitles = []string{"English"}
+	}
+	media := api.MediaFacts{
+		OriginalLanguage:      original,
+		TrackCoverageComplete: true,
+		SubtitleLanguages:     subtitles,
+		PrimaryAudioTrackID:   "programme",
+	}
+	for i, language := range languageutil.NormalizeLanguageList(audio) {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			ID:        "programme",
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Codec:     "FLAC",
+			Languages: []string{language},
+			Default:   i == 0,
+		})
+	}
+	for _, language := range languageutil.NormalizeLanguageList(subtitles) {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{language},
+			Default:   true,
+		})
+	}
+	meta.LanguageFacts = mediafacts.ResolveLanguages(media)
+	return meta
 }
