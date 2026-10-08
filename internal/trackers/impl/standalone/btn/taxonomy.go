@@ -34,7 +34,61 @@ func btnPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
 
 func btnPrimaryCountryID(subject api.TrackerValidationSubject) string {
 	key := trackers.LanguageQuestionKey(subject, "primary_audio_country")
-	return btnCountryMap[normalizeBTNCountryAlias(subject.QuestionnaireAnswers[key])]
+	if answer, supplied := subject.QuestionnaireAnswers[key]; supplied {
+		return btnCountryMap[normalizeBTNCountryAlias(answer)]
+	}
+	return btnOriginalAudioCountryID(subject)
+}
+
+// btnOriginalAudioCountryID uses current work-origin evidence only for an
+// identified original-language primary track, never to locate a dub.
+func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
+	facts := subject.LanguageFacts
+	language := btnPrimaryProgrammeLanguage(facts)
+	metadata := subject.ProviderMetadata
+	if language == "" || !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) != 1 ||
+		language != facts.OriginalLanguages[0] || !metadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
+		return ""
+	}
+	var countries []string
+	if metadata.TVDB != nil {
+		if subject.Identity.TVDBID > 0 && metadata.TVDB.TVDBID != subject.Identity.TVDBID {
+			return ""
+		}
+		countries = append(countries, metadata.TVDB.OriginalCountry)
+	}
+	if metadata.TMDB != nil {
+		if subject.Identity.TMDBID > 0 && metadata.TMDB.TMDBID != subject.Identity.TMDBID {
+			return ""
+		}
+		countries = append(countries, metadata.TMDB.OriginCountry...)
+	}
+	if metadata.IMDB != nil {
+		if subject.Identity.IMDBID > 0 && metadata.IMDB.IMDBID != subject.Identity.IMDBID {
+			return ""
+		}
+		value := strings.TrimSpace(metadata.IMDB.CountryList)
+		if value == "" {
+			value = metadata.IMDB.Country
+		}
+		if btnCountryMap[normalizeBTNCountryAlias(value)] != "" {
+			countries = append(countries, value)
+		} else {
+			countries = append(countries, strings.Split(value, ",")...)
+		}
+	}
+	countryID := ""
+	for _, country := range countries {
+		if strings.TrimSpace(country) == "" {
+			continue
+		}
+		id := btnCountryMap[normalizeBTNCountryAlias(country)]
+		if id == "" || countryID != "" && id != countryID {
+			return ""
+		}
+		countryID = id
+	}
+	return countryID
 }
 
 // btnLanguagePayload preserves full-disc behavior and uses reviewed primary

@@ -4846,6 +4846,9 @@ func (m *Module) preflightTrackers(
 	if err := validatePreflightBuild(initial, assessment, finalized); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build tracker preflight: %w", err)
 	}
+	if err := mergePreflightActions(&assessment, finalized); err != nil {
+		return CommandResult{}, err
+	}
 	applyPreflightInteractionPolicy(command.Interaction, &assessment, finalized)
 	if command.InputFingerprint != "" {
 		assessment.InputFingerprint = command.InputFingerprint
@@ -4863,6 +4866,15 @@ func (m *Module) preflightTrackers(
 	assessment.CreatedAt = now
 	if err := m.stampPreflightActions(&assessment, nextRevision, now); err != nil {
 		return CommandResult{}, err
+	}
+	// Both published views must carry the same action authority. Builders return
+	// detached action slices, and preflight may introduce new tracker questions.
+	actionsByTracker := make(map[api.TrackerID][]api.RequiredAction, len(assessment.Results))
+	for _, result := range assessment.Results {
+		actionsByTracker[result.TrackerID] = result.RequiredActions
+	}
+	for index := range finalized {
+		finalized[index].RequiredActions = slices.Clone(actionsByTracker[finalized[index].TrackerID])
 	}
 	assessment.Status = preflightStageStatus(assessment.Results)
 	if err := assessment.Validate(); err != nil {
@@ -4903,6 +4915,39 @@ func (m *Module) preflightTrackers(
 		Projections: &finalSet,
 		Dupes:       reused,
 	}, nil
+}
+
+// mergePreflightActions retains finalized projection prerequisites omitted from
+// the assessment, while giving its live result precedence for shared identities.
+// New actions are deduplicated before the workflow assigns their IDs.
+func mergePreflightActions(assessment *api.TrackerPreflightAssessment, finalized []api.TrackerReleaseProjection) error {
+	projectionActions := make(map[api.TrackerID][]api.RequiredAction, len(finalized))
+	for _, projection := range finalized {
+		projectionActions[projection.TrackerID] = projection.RequiredActions
+	}
+	for index := range assessment.Results {
+		result := &assessment.Results[index]
+		seen := make(map[string]struct{})
+		actions := make([]api.RequiredAction, 0, len(result.RequiredActions)+len(projectionActions[result.TrackerID]))
+		for _, action := range slices.Concat(result.RequiredActions, projectionActions[result.TrackerID]) {
+			action.TrackerID = result.TrackerID
+			key := "id:" + string(action.ID)
+			if action.ID == "" {
+				fingerprint, err := api.CanonicalWorkflowFingerprint(action)
+				if err != nil {
+					return fmt.Errorf("release workflow fingerprint preflight action: %w", err)
+				}
+				key = "new:" + string(fingerprint)
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			actions = append(actions, action)
+		}
+		result.RequiredActions = actions
+	}
+	return nil
 }
 
 func applyPreflightInteractionPolicy(

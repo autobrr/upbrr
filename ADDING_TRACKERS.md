@@ -1106,7 +1106,10 @@ include display defaults; they do not become answers automatically. The projecti
 `QuestionnaireAnswers` map owns accepted answers for descriptions and upload. An allocated empty
 map clears earlier answers; an omitted legacy map has no new answer authority. The
 projector emits a tracker-scoped questionnaire action even alongside an unrelated strict failure;
-answering the questionnaire never waives that failure. Do not turn an upload review into a global
+answering the questionnaire never waives that failure. Preflight publication must use the same
+stamped action IDs, workflow revision and expiry in the aggregate assessment and each tracker
+projection; tracker lanes must not retain stale or duplicate unstamped questions.
+Do not turn an upload review into a global
 Input prerequisite. Legacy explicit CLI answer staging validates against these pure schemas by default,
 but does not publish them as Input controls or block canonical Input readiness. A tracker whose
 accepted CLI fields exceed its visible questions may implement `TrackerAnswerSchemaProvider` on
@@ -1155,6 +1158,11 @@ exception to independent measured constraints. Use inspected languages, titles, 
 flags and container order before asking for genuinely missing upload input. Use an advisory
 `guidance_` rule code for non-language guidance that should appear in the collapsed WebUI
 Guidance panel; language guidance retains its existing `language_` codes.
+
+Origin-country defaults must use current, source-bound provider evidence and the inspected primary
+original-language audio. Normalize supported country codes and names, retain all co-production
+countries when checking agreement, and never use the work’s origin to infer a dub’s country.
+Explicit answers and finalized language corrections retain precedence.
 
 Retained factual choices and tracker acknowledgements must bind to the tracker, prepared
 generation, finalized track evidence, source, release type and disc type. Use `LanguageQuestionKey`

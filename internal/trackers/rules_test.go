@@ -526,14 +526,11 @@ func TestEvaluateRulesPTPRejectsTVPacks(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesANTRequiresMovie(t *testing.T) {
+func TestEvaluateRulesANTDoesNotBlanketRejectTV(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure, got %#v", failures)
-	}
-	if failures[0].Rule != "require_movie_only" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	if len(failures) != 0 {
+		t.Fatalf("supported ANT content types must decide TV eligibility: %#v", failures)
 	}
 }
 
@@ -553,11 +550,6 @@ func TestEvaluateRulesRequestedStrictCategoryTrackers(t *testing.T) {
 		category     api.CanonicalCategory
 		expectedRule string
 	}{
-		{
-			tracker:      "ANT",
-			category:     api.CanonicalCategoryTV,
-			expectedRule: "require_movie_only",
-		},
 		{
 			tracker:      "PTP",
 			category:     api.CanonicalCategoryTV,
@@ -602,7 +594,7 @@ func TestEvaluateRulesStrictCategoryTrackersRejectMissingCategory(t *testing.T) 
 	t.Parallel()
 
 	for tracker, expectedRule := range map[string]string{
-		"ANT": "require_movie_only",
+		"ANT": "require_metadata_category",
 		"BTN": "require_tv_only",
 		"PTP": "require_movie_only",
 		"RF":  "require_movie_only",

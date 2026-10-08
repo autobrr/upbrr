@@ -148,8 +148,8 @@
     "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1"
   },
   "internal/trackers/impl/standalone/ant/validation.go:validationPolicy": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "00b852a3c7ee0a0e018391a078116d5d8dc644d6d19ac7a9319f48a906b9075d"
+    "reason": "Versioned ANT type validation retains explicit type answers before provider mappings and strict unsupported-type/media checks; permitted television types no longer encounter the unrelated movie-only rule.",
+    "sha256": "382fb55bee2b5116eba6f67344a651d4cd09483bae6a1af7d1f3bffae7a902e2"
   },
   "internal/trackers/impl/standalone/ar/definition.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -692,8 +692,8 @@
     "sha256": "0e189171965d8c9d9829c69fe557a9698721b33b82956837f18bfb7c06f5dd68"
   },
   "internal/trackers/impl/standalone/btn/questionnaire.go:languageQuestionnaire": {
-    "sha256": "ea178b10ba4e9a2e02c628db3beabc5dc88f6b610f6661c922702d8f6a9e1168",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "4f28f2bb7db460b918bdc55682b0a9d289800e06d51d3d811459844220a708e8",
+    "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence."
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -764,8 +764,8 @@
     "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e"
   },
   "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
-    "sha256": "9354d4d846b712aec50d9b9da75d04476dbbe4259ae7e45676cf02dd5089bcd0",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "c78e3af860edac2826204c014b273c39ccca2bfff4d6f5f081837789e4eafd5a",
+    "reason": "Policy version invalidates old projections after original-audio country autofill; existing provider-aware constructibility checks and manual precedence are unchanged."
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
     "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request.",
@@ -1570,5 +1570,13 @@
   "internal/trackers/impl/standalone/gpw/questionnaire.go:resolveDirectorFields": {
     "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1",
     "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged."
+  },
+  "internal/trackers/impl/standalone/btn/taxonomy.go:btnPrimaryCountryID": {
+    "sha256": "348f649ee711c24c033ca0e3a7ba1d1f4b4d5aff4aefaaad90564b231fe5ed4e",
+    "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced."
+  },
+  "internal/trackers/impl/standalone/btn/taxonomy.go:btnOriginalAudioCountryID": {
+    "sha256": "feebf612c84b3c2894fc45354e8c3d2e4b2dd7c1fb153efbd0cf92ff9a38b8ce",
+    "reason": "Country inference requires the inspected primary language to equal the sole finalized original language, current source/generation and matching known provider IDs. All populated country values must agree, including the complete IMDb list; dubs, conflicts and unknown values remain unresolved."
   }
 }

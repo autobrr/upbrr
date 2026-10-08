@@ -19,7 +19,10 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		return nil
 	}
 	key := trackers.LanguageQuestionKey(subject, "primary_audio_country")
-	value := subject.QuestionnaireAnswers[key]
+	value, supplied := subject.QuestionnaireAnswers[key]
+	if !supplied && btnPrimaryCountryID(subject) != "" {
+		return nil
+	}
 	if btnPrimaryCountryID(subject) == "" {
 		value = ""
 	}
