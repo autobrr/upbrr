@@ -22,7 +22,7 @@ var oeLinkedScreenshotPattern = regexp.MustCompile(
 // ValidationPolicy enforces OE's upload-guide and description requirements.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-oe-policy-v2",
+		ID:    "unit3d-oe-policy-v3",
 		Check: checkRules,
 	}
 }
@@ -54,7 +54,7 @@ func checkRules(ctx context.Context, meta api.TrackerValidationSubject, logger a
 	if meta.TVPack || len(meta.PackageFacts.DetectedSeasons) > 1 {
 		failures = append(failures, trackers.ValidateMultiSeasonPackage(meta.PackageFacts, oeEvidencePolicy("oe_multi_season_pack"))...)
 	}
-	if meta.TVPack && len(meta.PackageFacts.DetectedSeasons) <= 1 {
+	if meta.Identity.Category == api.CanonicalCategoryTV && meta.TVPack && len(meta.PackageFacts.DetectedSeasons) <= 1 {
 		failures = append(failures, trackers.NewRuleFailure(
 			"oe_season_finished_airing",
 			"OE permits full season packs only after the season has finished airing in your country; confirm it has finished.",

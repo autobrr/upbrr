@@ -25,7 +25,7 @@ Read every warning. Unknown legacy keys, unsupported tracker fields, and unsuppo
 
 Python imports accept both `config = {...}` and type-annotated assignments such as `config: dict = {...}`. The importer reads supported literal values; it does not execute the Python file.
 
-Unused incomplete torrent-client examples are skipped with a warning. A client referenced by default, search, injection, or tracker settings is retained for validation instead of silently discarded. Complete or remove those references before retrying a rejected import. THR and its retired Pronfo settings are no longer imported.
+Unused incomplete torrent-client examples are skipped with a warning. A client referenced by default, search, injection, or tracker settings is retained for validation instead of silently discarded. Complete or remove those references before retrying a rejected import.
 
 The Web UI also provides config import in **Settings**.
 

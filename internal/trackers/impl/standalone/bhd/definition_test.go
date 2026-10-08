@@ -65,6 +65,7 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
+			LanguageFacts:     bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
@@ -151,11 +152,12 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 			req: trackers.PreparationInput{
 				Tracker: "BHD",
 				Meta: api.UploadSubject{
-					ReleaseName: "Example.Release.2026.1080p-GRP",
-					Identity:    api.ExternalIdentity{TMDBID: 123},
-					Type:        "ENCODE",
-					Source:      "BLURAY",
-					Container:   "mkv",
+					LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+					ReleaseName:   "Example.Release.2026.1080p-GRP",
+					Identity:      api.ExternalIdentity{TMDBID: 123},
+					Type:          "ENCODE",
+					Source:        "BLURAY",
+					Container:     "mkv",
 				},
 				Logger: api.NopLogger{},
 			},
@@ -168,11 +170,12 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 				Tracker:       "BHD",
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
 				Meta: api.UploadSubject{
-					ReleaseName: "Example.Release.2026.1080p-GRP",
-					Identity:    api.ExternalIdentity{IMDBID: 1234567},
-					Type:        "ENCODE",
-					Source:      "BLURAY",
-					Container:   "mkv",
+					LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+					ReleaseName:   "Example.Release.2026.1080p-GRP",
+					Identity:      api.ExternalIdentity{IMDBID: 1234567},
+					Type:          "ENCODE",
+					Source:        "BLURAY",
+					Container:     "mkv",
 				},
 				Logger: api.NopLogger{},
 			},
@@ -185,11 +188,12 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 				Tracker:       "BHD",
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
 				Meta: api.UploadSubject{
-					ReleaseName: "Example.Release.2026.1080p-GRP",
-					Identity:    api.ExternalIdentity{TMDBID: 987650001},
-					Type:        "ENCODE",
-					Source:      "BLURAY",
-					Container:   "mkv",
+					LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+					ReleaseName:   "Example.Release.2026.1080p-GRP",
+					Identity:      api.ExternalIdentity{TMDBID: 987650001},
+					Type:          "ENCODE",
+					Source:        "BLURAY",
+					Container:     "mkv",
 				},
 				Logger: api.NopLogger{},
 			},
@@ -202,11 +206,12 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 				Tracker:       "BHD",
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
 				Meta: api.UploadSubject{
-					ReleaseName: "Example.Release.2026.1080p-GRP",
-					Identity:    api.ExternalIdentity{TMDBID: 987650001, IMDBID: 1234567},
-					Type:        "ENCODE",
-					Source:      "BLURAY",
-					Container:   "mkv",
+					LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+					ReleaseName:   "Example.Release.2026.1080p-GRP",
+					Identity:      api.ExternalIdentity{TMDBID: 987650001, IMDBID: 1234567},
+					Type:          "ENCODE",
+					Source:        "BLURAY",
+					Container:     "mkv",
 				},
 				Logger: api.NopLogger{},
 			},
@@ -250,6 +255,7 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 	_, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
+			LanguageFacts:     bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
 			SourcePath:        filepath.Join(tmp, "Movie.avi"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
@@ -309,6 +315,7 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidSource(t *testing.T) {
 	_, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
+			LanguageFacts:     bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
 			SourcePath:        filepath.Join(tmp, "Example.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
@@ -390,6 +397,7 @@ func TestUploadDoesNotRetryInvalidIMDb(t *testing.T) {
 	_, err := New().submit(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
+			LanguageFacts:     bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
@@ -597,7 +605,8 @@ func TestWriteFailureArtifactPreservesRepeatedFailures(t *testing.T) {
 	tmp := t.TempDir()
 	req := trackers.PreparationInput{
 		Meta: api.UploadSubject{
-			SourcePath: filepath.Join(tmp, "Example.Release.2026.1080p-GRP.mkv"),
+			LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+			SourcePath:    filepath.Join(tmp, "Example.Release.2026.1080p-GRP.mkv"),
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")},
@@ -643,7 +652,8 @@ func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	result, err := prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
-			Options: api.UploadOptions{Screens: 4},
+			LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+			Options:       api.UploadOptions{Screens: 4},
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:  api.NopLogger{},
@@ -788,7 +798,8 @@ func TestDefinitionBuildDescriptionStripsLegacyCreatedFooter(t *testing.T) {
 	result, err := prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
-			Options: api.UploadOptions{Screens: 4},
+			LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+			Options:       api.UploadOptions{Screens: 4},
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:  api.NopLogger{},
@@ -817,7 +828,8 @@ func TestDefinitionBuildDescriptionDoesNotRestoreRawImagesOnlyBody(t *testing.T)
 	result, err := prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
-			Options: api.UploadOptions{Screens: 4},
+			LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+			Options:       api.UploadOptions{Screens: 4},
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:  api.NopLogger{},
@@ -846,7 +858,8 @@ func TestDefinitionBuildDescriptionStripsRightFormUpbrrFooter(t *testing.T) {
 	result, err := prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
-			Options: api.UploadOptions{Screens: 4},
+			LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+			Options:       api.UploadOptions{Screens: 4},
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:  api.NopLogger{},
@@ -875,7 +888,8 @@ func TestDefinitionBuildDescriptionDoesNotRestoreBotOnlyBody(t *testing.T) {
 	result, err := prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
-			Options: api.UploadOptions{Screens: 4},
+			LanguageFacts: bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+			Options:       api.UploadOptions{Screens: 4},
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:  api.NopLogger{},

@@ -165,6 +165,7 @@ func TestValidateDupePolicyRequiresEvidenceIDForAutomaticRules(t *testing.T) {
 	t.Parallel()
 
 	for _, policy := range []DupePolicy{
+		{ID: "example/duplicate/v1", PackContainmentRequiresReview: true},
 		{
 			ID:             "example/duplicate/v2",
 			SlotDimensions: []DupeDimension{DupeDimensionResolution},

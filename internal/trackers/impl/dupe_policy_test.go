@@ -451,7 +451,7 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			relation: api.DupeRelationProposedTrumps,
 		},
 		{
-			name:    "SP season pack direction",
+			name:    "SP season pack comparison requires evidence review",
 			tracker: "SP",
 			target: api.TrackerDuplicateTarget{
 				Type:       "WEB-DL",
@@ -467,7 +467,7 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 				Pack:       true,
 				HDR:        completeSDR,
 			},
-			relation: api.DupeRelationExistingPreferred,
+			relation: api.DupeRelationManualReview,
 		},
 		{
 			name:    "ULCX WEB and encode slots",

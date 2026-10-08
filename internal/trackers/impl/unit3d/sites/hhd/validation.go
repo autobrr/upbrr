@@ -14,10 +14,10 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-hhd-deterministic-v1",
+	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{
+		ID:    "unit3d-hhd-deterministic-v3",
 		Check: checkRequirements,
-	}
+	}, languageAssessment)
 }
 
 // checkRequirements enforces single-file layout, prohibited extras,

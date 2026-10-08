@@ -42,3 +42,43 @@ func TestNewGroupPosterDefaultMatchesQuestionnaireWithoutPromotingAnswers(t *tes
 		t.Fatalf("poster default=%q payload=%q", schema.Fields[0].Value, fields["image"])
 	}
 }
+
+func TestNewGroupDirectorIDMatchesSelectedName(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		directors []api.IMDBPerson
+		answers   map[string]string
+		want      string
+	}{
+		{
+			name:      "matching second director",
+			directors: []api.IMDBPerson{{ID: "nm0000001", Name: "Other Director"}, {ID: "nm0000002", Name: "Selected Director"}},
+			want:      "nm0000002",
+		},
+		{name: "different director", directors: []api.IMDBPerson{{ID: "nm0000001", Name: "Other Director"}}},
+		{name: "ambiguous name", directors: []api.IMDBPerson{{ID: "nm0000001", Name: "Selected Director"}, {ID: "nm0000002", Name: "Selected Director"}}},
+		{
+			name:      "manual name",
+			directors: []api.IMDBPerson{{ID: "nm0000001", Name: "Other Director"}},
+			answers:   map[string]string{"director_name": "Other Director"},
+			want:      "nm0000001",
+		},
+		{
+			name:    "explicit id",
+			answers: map[string]string{"director_imdb": "nm0000003"},
+			want:    "nm0000003",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
+				TMDB: &api.TMDBMetadata{Directors: []string{"Selected Director"}},
+				IMDB: &api.IMDBMetadata{Directors: test.directors},
+			}}
+			schema := buildQuestionnaire(meta, "", test.answers)
+			fields := buildFields(trackers.PreparationInput{Meta: meta}, config.TrackerConfig{}, "description", "", test.answers)
+			if schema.Fields[1].Value != test.want || fields["artist_ids[]"] != test.want || schema.Fields[2].Value != fields["artists[]"] {
+				t.Fatalf("director schema=%+v payload=%q/%q", schema.Fields[1:3], fields["artists[]"], fields["artist_ids[]"])
+			}
+		})
+	}
+}

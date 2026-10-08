@@ -5,6 +5,8 @@ package ulcx
 
 import (
 	"context"
+	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"math"
 	"strconv"
 	"testing"
@@ -64,7 +66,7 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v6" {
+	if policy.ID != "unit3d-ulcx-policy-v10/languages-v1" {
 		t.Fatalf("validation policy = %q, want upload rules policy v6", policy.ID)
 	}
 	tests := []struct {
@@ -88,13 +90,14 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			},
 		},
 		{
-			name: "SD broadcast requires availability confirmation",
+			name: "SD broadcast has release-history guidance",
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.Type = "HDTV"
 				subject.Release.Resolution = "576i"
 			},
-			wantRule:        "ulcx_sdtv_availability",
-			wantDisposition: api.RuleDispositionWaivable,
+			wantRule:        "guidance_sdtv_availability",
+			wantDisposition: api.RuleDispositionAdvisory,
+			wantStatus:      api.MetadataEvidenceStatusPartial,
 		},
 		{
 			name: "HD broadcast remains allowed",
@@ -403,6 +406,14 @@ func TestMissingResolutionDoesNotRejectLosslessAudio(t *testing.T) {
 	subject := ulcxValidationSubject()
 	subject.Type = "ENCODE"
 	subject.Audio = "TrueHD 5.1"
+	subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
+	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+		ID:        "compatibility",
+		Kind:      api.MediaTrackAudio,
+		Role:      api.AudioRoleCompatibility,
+		Languages: []string{"English"},
+		Codec:     "AC-3",
+	})
 	subject.Channels = "5.1"
 	subject.Release.Resolution = ""
 	subject.MediaFileFacts.TechnicalStatus = api.MetadataEvidenceStatusPartial
@@ -426,10 +437,12 @@ func TestRulesRequireEncodeSettings(t *testing.T) {
 
 func ulcxValidationSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
-		Type:       "WEBDL",
-		Container:  "mkv",
-		VideoCodec: "HEVC",
-		Release:    api.ReleaseInfo{Resolution: "1080p"},
+		Tracker:       "ULCX",
+		LanguageFacts: ulcxTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+		Type:          "WEBDL",
+		Container:     "mkv",
+		VideoCodec:    "HEVC",
+		Release:       api.ReleaseInfo{Resolution: "1080p"},
 		PackageFacts: api.PackageFacts{
 			Status:         api.MetadataEvidenceStatusComplete,
 			KnownFileCount: 1,
@@ -482,4 +495,118 @@ func requireULCXValidationFailure(
 		}
 	}
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
+}
+
+// ulcxTestLanguageFacts models inspected, identified programme streams and full
+// embedded subtitles with explicit inspected defaults so unrelated fixtures
+// satisfy the current facts contract.
+func ulcxTestLanguageFacts(original string, programme, subtitles []string) api.LanguageFacts {
+	media := api.MediaFacts{
+		OriginalLanguage:      original,
+		SubtitleLanguages:     subtitles,
+		TrackCoverageComplete: true,
+		PrimaryAudioTrackID:   "audio-0",
+	}
+	for index, language := range programme {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			ID:        "audio-" + strconv.Itoa(index),
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Languages: []string{language},
+			Codec:     "AC-3",
+			Default:   index == 0,
+		})
+	}
+	for index, language := range subtitles {
+		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			ID:           "subtitle-" + strconv.Itoa(index),
+			Kind:         api.MediaTrackSubtitle,
+			Languages:    []string{language},
+			Default:      index == 0 && original != "English" && original != "ZXX",
+			DefaultKnown: true,
+		})
+	}
+	return mediafacts.ResolveLanguages(media)
+}
+
+func TestULCXPersonalOriginalAndSubtitleDefaults(t *testing.T) {
+	t.Parallel()
+	subject := ulcxValidationSubject()
+	subject.LanguageFacts = ulcxTestLanguageFacts("Japanese", []string{"English"}, nil)
+	for _, failure := range languageAssessment(subject) {
+		if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+			t.Fatalf("non-personal English-dub exception blocked: %+v", failure)
+		}
+	}
+	subject.PersonalRelease = true
+	requireULCXValidationFailure(t, languageAssessment(subject), "language_original", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	subject.LanguageFacts = ulcxTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English"})
+	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+		ID:        "forced",
+		Kind:      api.MediaTrackSubtitle,
+		Languages: []string{"English"},
+		Forced:    true,
+	})
+	if failures := languageAssessment(subject); len(failures) != 0 {
+		t.Fatalf("additional non-default English subtitles invalidated valid default: %+v", failures)
+	}
+}
+
+func TestULCXForcedAndNonForeignSubtitleDefaults(t *testing.T) {
+	subject := api.TrackerValidationSubject{
+		Tracker:         "ULCX",
+		Type:            "WEBDL",
+		PersonalRelease: true,
+		LanguageFacts:   ulcxTestLanguageFacts("English", []string{"English"}, []string{"English"}),
+	}
+	subject.LanguageFacts.Tracks[1].Default = true
+	failures := languageAssessment(subject)
+	found := false
+	for _, failure := range failures {
+		if failure.Rule == "language_subtitle_default" && failure.Disposition == api.RuleDispositionStrict {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("personal non-foreign subtitle default was accepted: %#v", failures)
+	}
+	subject.PersonalRelease = false
+	subject.LanguageFacts = ulcxTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English", "German"})
+	for i := range subject.LanguageFacts.Tracks {
+		track := &subject.LanguageFacts.Tracks[i]
+		if track.Kind == api.MediaTrackSubtitle && len(track.Languages) > 0 && track.Languages[0] == "German" {
+			track.Forced = true
+		}
+	}
+	failures = languageAssessment(subject)
+	found = false
+	for _, failure := range failures {
+		if failure.Rule == "language_forced_subtitle_language" && failure.Disposition == api.RuleDispositionStrict {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("forced German subtitle accepted: %#v", failures)
+	}
+}
+
+func TestULCXRetailSourceRemainsUnverifiedGuidance(t *testing.T) {
+	t.Parallel()
+	for _, role := range []api.AudioTrackRole{api.AudioRoleCommentary, api.AudioRoleIsolatedScore} {
+		meta := api.UploadSubject{Type: "WEBDL", LanguageFacts: ulcxTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English"})}
+		meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
+			ID:        "secondary",
+			Kind:      api.MediaTrackAudio,
+			Role:      role,
+			Languages: []string{"English"},
+		})
+		if question := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); question != nil {
+			t.Fatalf("retail reassurance question: %+v", question)
+		}
+		for _, answer := range []string{"", "yes", "no"} {
+			subject := api.NewTrackerValidationSubject(meta, "ULCX")
+			subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "language_secondary_retail"): answer}
+			requireULCXValidationFailure(t, languageAssessment(subject), "language_secondary_source", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+		}
+	}
 }

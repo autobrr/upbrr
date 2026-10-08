@@ -72,7 +72,7 @@ func TestOTWEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestOTWValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-otw-policy-v3" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-otw-policy-v5" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -180,6 +180,13 @@ func otwPassingSubject() api.TrackerValidationSubject {
 			Resolution: "1080p",
 		},
 		Type: "WEBDL",
+		LanguageFacts: api.LanguageFacts{
+			AudioStatus:            api.MetadataEvidenceStatusComplete,
+			OriginalLanguages:      []string{"English"},
+			OriginalLanguagesKnown: true,
+			ProgrammeLanguages:     []string{"English"},
+			ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+		},
 		PackageFacts: api.PackageFacts{
 			Status:         api.MetadataEvidenceStatusComplete,
 			KnownFileCount: 1,

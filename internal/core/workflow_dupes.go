@@ -241,6 +241,13 @@ func (b workflowDupeBuilder) build(
 		if !result.CheckedAt.IsZero() {
 			trackerResult.CheckedAt = result.CheckedAt
 		}
+		if evidence := projection.TitleSearchEvidence; result.Search.Scope == "title_preflight" && evidence != nil &&
+			evidence.FreshUntil.Before(trackerResult.FreshUntil) {
+			trackerResult.FreshUntil = evidence.FreshUntil
+			if evidence.FreshUntil.Before(expiresAt) {
+				expiresAt = evidence.FreshUntil
+			}
+		}
 		setWorkflowDupeOutcome(&trackerResult, result)
 		results = append(results, trackerResult)
 	}

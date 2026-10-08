@@ -74,7 +74,7 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	preview := buildUploadPreview(state, req.Meta)
+	preview := buildUploadPreview(state, req.Meta, req.ExecutionMode)
 	if req.Intent != trackers.PreparationIntentUpload {
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
@@ -166,7 +166,7 @@ func submitPreparedUpload(
 	)
 }
 
-func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDryRunEntry {
+func buildUploadPreview(state uploadState, meta api.UploadSubject, mode api.WorkflowExecutionMode) api.TrackerDryRunEntry {
 	message := "dry-run payload generated"
 	if state.groupID != "" {
 		message += " for existing group"
@@ -195,7 +195,7 @@ func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDr
 			Path:    state.torrentPath,
 			Present: strings.TrimSpace(state.torrentPath) != "",
 		}},
-		Questionnaire: buildQuestionnaire(meta, state.groupID),
+		Questionnaire: buildQuestionnaire(meta, state.groupID, mode),
 	})
 	preview.EditionFeatures = editionFeatures(meta)
 	return preview
@@ -240,7 +240,7 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 	}
 	fields, err := buildUploadFields(req.Meta, description, groupID, answers, poster)
 	if err != nil {
-		questionnaire := buildQuestionnaire(req.Meta, groupID)
+		questionnaire := buildQuestionnaire(req.Meta, groupID, req.ExecutionMode)
 		if questionnaire != nil && slices.ContainsFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool {
 			return field.Required && strings.TrimSpace(field.Value) == ""
 		}) {

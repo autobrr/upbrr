@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -30,6 +31,7 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 	bdInfoAudio := len(tracks) > 0
 	ordinals := map[api.MediaTrackKind]int{}
 	nativeCounts := make(map[string]int)
+	streamOrderCounts := make(map[int]int)
 	_, _, audioTracks := splitMediaInfoTracks(doc)
 	primaryAudioIndex := selectPrimaryAudioTrackIndex(audioTracks)
 	primaryAudioTrackID := ""
@@ -40,6 +42,9 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		}
 	}
 	for _, track := range doc.Media.Track {
+		if order, known := mediaTrackStreamOrder(track); known {
+			streamOrderCounts[order]++
+		}
 		if kind, ok := mediaTrackKind(track); ok {
 			nativeCounts[string(kind)+":"+trackString(track, "StreamOrder", "ID", "UniqueID")]++
 		}
@@ -64,6 +69,21 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		}
 		title := trackString(track, "Title", "Title_String", "Title_String2", "Title_String3")
 		detected := languageutil.NormalizeLanguageList([]string{trackString(track, "Language", "Language_String", "Language_String2", "Language_String3")})
+
+		role := mediafacts.AudioRole(title)
+		if kind == api.MediaTrackAudio && role == "" &&
+			(len(audioTracks) == 1 || mediaTrackDefault(track) || strings.EqualFold(trackString(track, "ServiceKind", "ServiceKind/String"), "Complete Main") || strings.EqualFold(trackString(track, "ServiceKind"), "CM")) {
+			role = api.AudioRoleProgramme
+		}
+		trackAudioLabel := ""
+		if kind == api.MediaTrackAudio {
+			var single mediaInfoDoc
+			single.Media.Track = []map[string]any{track}
+			trackAudioLabel, _, _ = audioFromMedia(preparationstate.State{}, single, nil)
+		}
+		streamOrder, streamOrderKnown := mediaTrackStreamOrder(track)
+		streamOrderKnown = streamOrderKnown && streamOrderCounts[streamOrder] == 1
+		defaultValue := strings.ToLower(trackString(track, "Default", "Default/String"))
 		facts := api.MediaTrackFacts{
 			ID:                  opaqueMediaTrackID(resourceID, kind, trackKey),
 			Kind:                kind,
@@ -71,8 +91,11 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			ManifestFingerprint: manifest,
 			NativeID:            nativeID,
 			Ordinal:             ordinal,
+			StreamOrder:         streamOrder,
+			StreamOrderKnown:    streamOrderKnown,
 			Title:               strings.TrimSpace(title),
 			Codec:               strings.TrimSpace(normalizeAudioFormat(track)),
+			AudioLabel:          trackAudioLabel,
 			ChannelLayout:       trackString(track, "ChannelLayout", "ChannelLayout_Original", "ChannelPositions", "ChannelPositions_Original"),
 			Channels:            mediaTrackPositiveInt(track, "Channels_Original", "Channels", "Channel_s_", "Channel_s__Original"),
 			SampleRate:          mediaTrackPositiveInt(track, "SamplingRate", "SamplingRate_String"),
@@ -80,7 +103,14 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			Languages:           append([]string(nil), detected...),
 			LanguageProvenance:  api.FactProvenanceAutomatic,
 			Default:             mediaTrackDefault(track),
-			Commentary:          isCommentaryOrCompatibilityAudioValue(title),
+			DefaultKnown:        defaultValue == "yes" || defaultValue == "no",
+			Forced:              mediaTrackYes(track, "Forced", "Forced/String"),
+			Role:                role,
+			EmbeddedCompatibility: strings.Contains(
+				strings.ToUpper(trackString(track, "Format_AdditionalFeatures", "Format_AdditionalFeatures_String")),
+				"AC-3",
+			),
+			Commentary: isCommentaryOrCompatibilityAudioValue(title),
 		}
 		tracks = append(tracks, facts)
 		if kind == api.MediaTrackAudio && ordinal-1 == primaryAudioIndex {
@@ -88,6 +118,16 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		}
 	}
 	return tracks, primaryAudioTrackID, aggregateTrackLanguages(tracks, api.MediaTrackAudio), aggregateTrackLanguages(tracks, api.MediaTrackSubtitle), nil
+}
+
+// mediaTrackStreamOrder rejects partial numbers and compound stream identifiers;
+// native IDs and document positions do not establish container order.
+func mediaTrackStreamOrder(track map[string]any) (int, bool) {
+	order, err := strconv.Atoi(trackString(track, "StreamOrder"))
+	if err != nil || order < 0 {
+		return 0, false
+	}
+	return order, true
 }
 
 // bdInfoAudioTrackFacts keeps every reported stream distinct within its disc and
@@ -171,7 +211,11 @@ func mediaTrackKind(track map[string]any) (api.MediaTrackKind, bool) {
 }
 
 func mediaTrackDefault(track map[string]any) bool {
-	value := strings.ToLower(trackString(track, "Default", "Default/String"))
+	return mediaTrackYes(track, "Default", "Default/String")
+}
+
+func mediaTrackYes(track map[string]any, keys ...string) bool {
+	value := strings.ToLower(trackString(track, keys...))
 	return value == "yes" || value == "true" || value == "1"
 }
 

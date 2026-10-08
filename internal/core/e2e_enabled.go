@@ -311,31 +311,39 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			Resolution:   resolution,
 			EpisodeTitle: episodeTitle,
 		},
+		EffectiveMetadata: api.EffectiveMetadata{
+			OriginalLanguage:           "English",
+			OriginalLanguageProvenance: api.FactProvenanceAutomatic,
+		},
 		DescriptionTemplate: "E2E description fixture.",
 	}
+	const (
+		audioResourceID = "e2e-audio-resource"
+		audioTrackID    = "e2e-audio-track-primary"
+	)
+	meta.MediaTracks = []api.MediaTrackFacts{{
+		ID:                  audioTrackID,
+		Kind:                api.MediaTrackAudio,
+		ResourceID:          audioResourceID,
+		ManifestFingerprint: "e2e-audio-manifest-v1",
+		Ordinal:             1,
+		Codec:               "AC-3",
+		ChannelLayout:       "L R C LFE Ls Rs",
+		Channels:            6,
+		SampleRate:          48_000,
+		DetectedLanguages:   []string{"English"},
+		Languages:           []string{"English"},
+		LanguageProvenance:  api.FactProvenanceAutomatic,
+		Default:             true,
+		Role:                api.AudioRoleProgramme,
+	}}
+	meta.PrimaryAudioTrackID = audioTrackID
+	meta.TrackCoverageComplete = true
 	if value := strings.TrimSpace(os.Getenv(e2eAudioAnalysisEnv)); value == "1" || strings.EqualFold(value, "true") {
-		const (
-			audioResourceID = "e2e-audio-resource"
-			audioTrackID    = "e2e-audio-track-primary"
-		)
 		meta.VideoPath = sourcePath
-		meta.MediaTracks = []api.MediaTrackFacts{{
-			ID:                  audioTrackID,
-			Kind:                api.MediaTrackAudio,
-			ResourceID:          audioResourceID,
-			ManifestFingerprint: "e2e-audio-manifest-v1",
-			Ordinal:             1,
-			Codec:               "PCM",
-			ChannelLayout:       "stereo",
-			Channels:            2,
-			SampleRate:          48_000,
-			DetectedLanguages:   []string{"English"},
-			Languages:           []string{"English"},
-			LanguageProvenance:  api.FactProvenanceAutomatic,
-			Default:             true,
-		}}
-		meta.PrimaryAudioTrackID = audioTrackID
-		meta.TrackCoverageComplete = true
+		meta.MediaTracks[0].Codec = "PCM"
+		meta.MediaTracks[0].ChannelLayout = "stereo"
+		meta.MediaTracks[0].Channels = 2
 	}
 	if namingFixture {
 		meta.Edition = "Uncut"

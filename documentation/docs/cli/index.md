@@ -15,7 +15,7 @@ upbrr live-test <init|cleanup> [options]
 
 On Windows, examples use `upbrr.exe`. Put options before input paths for consistent behavior across commands. Use `--` to end option parsing when a path begins with a hyphen or could be mistaken for an option value.
 
-Upload, `serve`, `auth`, and `api-token` options accept either one or two leading hyphens, including the aliases below. The exception is `--console-log-level`, which requires two hyphens for its full name; `-cll` and `--cll` also work. Boolean options can use `=true` or `=false`; use the equals sign instead of a separate value. The `-hc` language shorthand has additional forms described under [PTP subtitle review](#ptp-subtitle-review).
+Upload, `serve`, `auth`, and `api-token` options accept either one or two leading hyphens, including the aliases below. The exception is `--console-log-level`, which requires two hyphens for its full name; `-cll` and `--cll` also work. Boolean options can use `=true` or `=false`; use the equals sign instead of a separate value. The `-hc` language shorthand has additional forms described under [Subtitle review](#subtitle-review).
 
 Omitted correction flags preserve saved values, and omitted configuration overrides use the active configuration. Workflow switches such as `--debug`, `--no-seed`, and `--unattended` are off unless enabled. Numeric and audio-selection defaults are noted below.
 
@@ -45,7 +45,7 @@ Prepare without tracker submission or client injection:
 Run duplicate and site checks without uploading:
 
 ```powershell
-.\upbrr.exe --site-check --trackers BLU,OE "D:\releases\Example.Release.2026.1080p-GRP"
+.\upbrr.exe --site-check "D:\releases\Example.Release.2026.1080p-GRP"
 ```
 
 Process at most five entries from a queue folder:
@@ -148,7 +148,7 @@ Omitting `--trackers` uses the configured default trackers. `--site-upload` repl
 
 Explicit corrections take precedence over saved history and provider metadata. Omitting a correction flag preserves the saved value. Resetting a field removes its manual value and restores automatic detection. A boolean value such as `--commentary=false` is an explicit correction, not a reset.
 
-Metadata review always prints the effective `Commentary: true` or `Commentary: false` before confirmation. Answer No and enter `--commentary=false` to disable automatic commentary detection, then review the refreshed value. PTP's existing post-duplicate tracker approval also prints the selected edition/feature tags, or `none`. These displays add no prompts to `--unattended`. See [PTP editions and features](../trackers/index.md#ptp-editions-and-features) for detection and manual labels.
+Metadata review always prints the effective `Commentary: true` or `Commentary: false` before confirmation. Answer No and enter `--commentary=false` to disable automatic commentary detection, then review the refreshed value. These displays add no prompts to `--unattended`. See [editions and commentary](../trackers/index.md#editions-and-commentary) for manual corrections.
 
 ### Review Input without advancing the workflow
 
@@ -176,7 +176,7 @@ Exit code `0` means Input is ready. Exit code `2` means required input prevents 
 | `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                           |
 | `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                               |
 | `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                              |
-| `--tracker-input "PTP:no_english_subtitles=yes"`  | Answer a tracker-specific field; `no` and `auto` are also supported.                                   |
+| `--tracker-input "<tracker-id>:<field>=<answer>"` | Answer a field shown by the current tracker questionnaire.                                             |
 
 Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages.
 
@@ -195,19 +195,15 @@ Generated descriptions include manually supplied audio, subtitle, and hardcoded 
 
 Saved corrections use a newer database format. Older binaries do not support writing this correction state.
 
-### PTP subtitle review
+### Subtitle review
 
-Supply known hardcoded languages directly: `-hc English Forced`, `-hc "English Full"`, or `-hc Spanish`. Coverage is retained as `English (Forced)` or `English (Full)`. Explicit hardcoded languages enable hardcoded handling and let PTP derive the correct subtitle/trumpable fields without asking again. `--hardcoded-subtitle-languages "English (Forced), Spanish"` also accepts a language list.
+Supply known hardcoded languages directly: `-hc English Forced`, `-hc "English Full"`, or `-hc Spanish`. Coverage is retained as `English (Forced)` or `English (Full)`. Explicit hardcoded languages enable hardcoded handling and supply known evidence to the workflow. `--hardcoded-subtitle-languages "English (Forced), Spanish"` also accepts a language list.
 
 Custom names are allowed: use the attached form `-hc="Custom Dialect"` (quote multiword names). Unknown space-separated values remain source paths, so bare `-hc` never consumes a custom-named source folder. If a source name could be confused with a language, end the options explicitly, for example `-hc -- "Spanish"`. Put other options before `--`. For unlisted custom names, a trailing bare `Full` or `Forced` stays part of the name; use `(Full)`/`(Forced)` or `- Full`/`- Forced` to specify coverage.
 
-Bare `-hc` or `-hc=""` explicitly marks unknown hardcoded languages, clearing saved language choices and requiring PTP's additional review. Legacy boolean forms such as `-hc=true`, `-hc=false`, and `--hardcoded-subs=false` remain supported; explicit false disables hardcoded handling.
+Bare `-hc` or `-hc=""` explicitly marks unknown hardcoded languages, clearing saved language choices and leaving that evidence unresolved. Legacy boolean forms such as `-hc=true`, `-hc=false`, and `--hardcoded-subs=false` remain supported; explicit false disables hardcoded handling.
 
-PTP also asks for a decision when English subtitles or a first English audio track are not established. Select all applicable review choices by comma-separated numbers or labels. A hardcoded choice is explicit PTP-local intent even when hardcoded subtitles were not detected automatically; full English uses subtitle 3, forced English uses subtitle 50, and either uses the hardcoded trumpable tag. Non-English hardcoded choices require their language names when missing. Contradictory English/no-English claims cannot proceed.
-
-The review is tracker-specific. Strict `--unattended` never prompts and skips PTP when its required review is unanswered; other eligible trackers remain available. `--unattended_confirm` permits the required questions. Existing global tracker-approval requirements still apply.
-
-The PTP `no_english_subtitles=yes/no` tracker answer remains an explicit override for non-hardcoded releases. Correct mislabeled media tracks using the language corrections above; a tracker tagging answer does not rewrite the source media or canonical track languages.
+The review is tracker-specific. Strict `--unattended` never prompts and skips a tracker when its required review is unanswered; other eligible trackers remain available. `--unattended_confirm` permits the required questions. Existing global tracker-approval requirements still apply.
 
 ### Naming fields
 
@@ -287,10 +283,6 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 | `--skip-dupe-check`   | `-skip-dupe-check`, `-sdc`   | Skip remote tracker duplicate searches.                                 |
 | `--skip-dupe-asking`  | `-skip-dupe-asking`, `-sda`  | Choose upload when duplicate evidence needs a decision.                 |
 | `--double-dupe-check` | `-double-dupe-check`, `-ddc` | Request two duplicate checks instead of one.                            |
-| `--foreign`           | `-foreign`                   | Mark a TIK release as foreign.                                          |
-| `--opera`             | `-opera`                     | Mark a TIK release as opera or musical.                                 |
-| `--asian`             | `-asian`                     | Mark a TIK release as Asian.                                            |
-| `--disctype <value>`  | `-disctype`                  | Override TIK disc type.                                                 |
 | `--commentary`        | `-commentary`, `-mc`         | Mark release as containing commentary.                                  |
 | `--personalrelease`   | `-personalrelease`, `-pr`    | Explicitly set personal-release handling.                               |
 | `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.                                       |
@@ -300,7 +292,6 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 | `--anon`              | `-anon`, `-a`                | Upload anonymously.                                                     |
 | `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.                                         |
 | `--modq`              | `-modq`, `-mq`               | Opt into mod queue where supported.                                     |
-| `--channel <value>`   | `-channel`, `-ch`            | Override SPD channel.                                                   |
 
 `--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omit the option to leave **Personal Release** on **Auto**, where each tracker's configured personal-release groups can supply the default.
 

@@ -72,6 +72,8 @@ func NewEvidenceRuleFailure(
 // NormalizeRuleFailure preserves evidence while normalizing legacy fields.
 func NormalizeRuleFailure(failure api.RuleFailure) api.RuleFailure {
 	normalized := NewRuleFailure(failure.Rule, failure.Reason, failure.Disposition)
+	normalized.DebugBypass = failure.DebugBypass
+	normalized.EvidenceFingerprint = failure.EvidenceFingerprint
 	if failure.EvidenceStatus != "" {
 		normalized.EvidenceStatus = normalizeRuleEvidenceStatus(failure.EvidenceStatus)
 	}
@@ -91,11 +93,14 @@ func normalizeRuleEvidenceStatus(status api.MetadataEvidenceStatus) api.Metadata
 }
 
 // RuleFailureBlocksExecution reports whether a validation failure blocks the
-// selected workflow execution mode. Strict failures always block, advisory
-// failures never block, and authorized waivable failures do not block. Debug
-// mode also bypasses unauthorized waivable failures.
+// selected workflow execution mode. Strict failures block unless explicitly
+// bypassed in debug mode; advisory and authorized waivable failures never block.
+// Debug mode also bypasses unauthorized waivable failures.
 func RuleFailureBlocksExecution(failure api.RuleFailure, mode api.WorkflowExecutionMode, authorized bool) bool {
 	disposition := api.NormalizeRuleDisposition(failure.Disposition)
+	if failure.DebugBypass && api.NormalizeWorkflowExecutionMode(mode) == api.WorkflowExecutionModeDebug {
+		return false
+	}
 	if disposition == api.RuleDispositionAdvisory {
 		return false
 	}
@@ -106,10 +111,11 @@ func RuleFailureBlocksExecution(failure api.RuleFailure, mode api.WorkflowExecut
 }
 
 type waivableRuleIdentity struct {
-	Rule           string
-	Reason         string
-	Disposition    api.RuleDisposition
-	EvidenceStatus api.MetadataEvidenceStatus
+	EvidenceFingerprint api.WorkflowFingerprint
+	Rule                string
+	Reason              string
+	Disposition         api.RuleDisposition
+	EvidenceStatus      api.MetadataEvidenceStatus
 }
 
 // WaivableRuleFailureFingerprint identifies the normalized tracker-local
@@ -123,10 +129,11 @@ func WaivableRuleFailureFingerprint(tracker string, failures []api.RuleFailure) 
 			continue
 		}
 		identities = append(identities, waivableRuleIdentity{
-			Rule:           failure.Rule,
-			Reason:         failure.Reason,
-			Disposition:    failure.Disposition,
-			EvidenceStatus: failure.EvidenceStatus,
+			EvidenceFingerprint: failure.EvidenceFingerprint,
+			Rule:                failure.Rule,
+			Reason:              failure.Reason,
+			Disposition:         failure.Disposition,
+			EvidenceStatus:      failure.EvidenceStatus,
 		})
 	}
 	if len(identities) == 0 {
@@ -137,6 +144,7 @@ func WaivableRuleFailureFingerprint(tracker string, failures []api.RuleFailure) 
 			cmp.Compare(left.Rule, right.Rule),
 			cmp.Compare(left.Reason, right.Reason),
 			cmp.Compare(left.EvidenceStatus, right.EvidenceStatus),
+			cmp.Compare(left.EvidenceFingerprint, right.EvidenceFingerprint),
 		)
 	})
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
@@ -152,6 +160,49 @@ func WaivableRuleFailureFingerprint(tracker string, failures []api.RuleFailure) 
 		return "", fmt.Errorf("fingerprint waivable tracker rules: %w", err)
 	}
 	return fingerprint, nil
+}
+
+// EvaluatePreparationRules reevaluates the complete registered rule set for a
+// service-created preparation. Legacy direct callers retain their supplied
+// site policy; no subset of a reviewed warning set grants authorization.
+func EvaluatePreparationRules(
+	ctx context.Context,
+	input PreparationInput,
+	subject api.TrackerValidationSubject,
+	fallback ValidationPolicyBinding,
+) ([]api.RuleFailure, error) {
+	if input.validationRegistry == nil {
+		if fallback.Check == nil {
+			return nil, nil
+		}
+		return fallback.Check(ctx, subject, input.Logger)
+	}
+	failures, err := EvaluateTrackerValidationWithRegistry(ctx, input.validationRegistry, input.Tracker, subject, input.Logger)
+	if err != nil {
+		return nil, err
+	}
+	if descriptor, ok := input.validationRegistry.LookupDescriptor(input.Tracker); ok {
+		failures = append(failures, inputReadinessRuleFailures(input.Meta, descriptor.Definition)...)
+	}
+	return failures, nil
+}
+
+func inputReadinessRuleFailures(subject api.UploadSubject, definition Definition) []api.RuleFailure {
+	provider, ok := definition.(InputReadinessProvider)
+	if !ok {
+		return nil
+	}
+	var failures []api.RuleFailure
+	for _, outcome := range provider.InputReadiness(subject) {
+		if outcome.Status == api.InputReadinessFieldMissing || outcome.Status == api.InputReadinessFieldInvalid {
+			failures = append(failures, api.RuleFailure{
+				Rule:        "input." + outcome.Key,
+				Reason:      outcome.Message,
+				Disposition: outcome.Disposition,
+			})
+		}
+	}
+	return failures
 }
 
 // FirstBlockingRuleFailure returns the first input failure that blocks tracker

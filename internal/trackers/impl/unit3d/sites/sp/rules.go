@@ -5,8 +5,6 @@ package sp
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
-// Rules leaves evidence-backed content and resolution exceptions to the
+// Rules leaves evidence-backed release checks to the
 // versioned validation policy.
-func Rules() *trackers.RuleSet {
-	return &trackers.RuleSet{}
-}
+func Rules() *trackers.RuleSet { return &trackers.RuleSet{} }

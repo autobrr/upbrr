@@ -24,7 +24,8 @@ func Profile() unit3d.Profile {
 		ReleaseNamePolicy:       namePolicy(),
 		SourceOnlyImageReusable: sourceOnlyImageReusable,
 		Site: unit3d.SiteProfile{
-			ApplyAdditionalPayload: additionalPayload,
+			ApplyAdditionalPayload:  additionalPayload,
+			ProjectionQuestionnaire: languageQuestionnaire,
 		},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "aither/duplicate/v2",

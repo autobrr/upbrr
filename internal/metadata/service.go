@@ -578,6 +578,28 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	default:
 	}
 
+	if s.tagsPath != "" {
+		if tag, override, err := ApplyTagOverrides(primary, meta.Tag, s.tagsPath); err == nil {
+			meta.Tag = tag
+			meta.TagOverride = override
+			if override != nil {
+				logger.Debugf("metadata: tag override applied")
+				if strings.TrimSpace(override.Source) != "" {
+					meta.Release.Source = override.Source
+				}
+				if strings.TrimSpace(override.Type) != "" {
+					meta.Release.Type = override.Type
+				}
+				if strings.TrimSpace(override.Template) != "" {
+					meta.DescriptionTemplate = override.Template
+				}
+				if override.PersonalRelease {
+					meta.PersonalRelease = true
+				}
+			}
+		}
+	}
+
 	if s.mi != nil && discType == "" {
 		tmpRoot, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 		if err != nil {
@@ -612,27 +634,6 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 			dvdDetails.UpdatedAt = time.Now().UTC()
 			if err := s.repo.SaveDVDMediaInfo(ctx, dvdDetails); err != nil {
 				return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo: %w", err)
-			}
-		}
-	}
-	if s.tagsPath != "" {
-		if tag, override, err := ApplyTagOverrides(primary, meta.Tag, s.tagsPath); err == nil {
-			meta.Tag = tag
-			meta.TagOverride = override
-			if override != nil {
-				logger.Debugf("metadata: tag override applied")
-				if strings.TrimSpace(override.Source) != "" {
-					meta.Release.Source = override.Source
-				}
-				if strings.TrimSpace(override.Type) != "" {
-					meta.Release.Type = override.Type
-				}
-				if strings.TrimSpace(override.Template) != "" {
-					meta.DescriptionTemplate = override.Template
-				}
-				if override.PersonalRelease {
-					meta.PersonalRelease = true
-				}
 			}
 		}
 	}

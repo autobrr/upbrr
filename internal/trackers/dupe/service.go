@@ -522,6 +522,10 @@ func (s *Service) checkTracker(
 		}
 	}
 
+	if retained, ok := s.reusableEmptyTitleSearch(meta, tracker, checkedAt); ok {
+		result, entry = s.projectAdapterResult(tracker, meta, retained, meta.Projection.TitleSearchEvidence.CheckedAt)
+		return result, entry, false
+	}
 	adapter, ok := s.adapters[tracker]
 	if !ok || adapter == nil {
 		result = failedPublicResult(tracker, FailureInternal, "duplicate adapter unavailable", checkedAt)

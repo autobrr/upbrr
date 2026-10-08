@@ -286,9 +286,8 @@ func buildFields(
 		} else {
 			fields["year"] = ""
 		}
-		fields["artists[]"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["director_name"]), resolveDirectorName(meta))
+		fields["artists[]"], fields["artist_ids[]"] = resolveDirectorFields(meta, answers)
 		fields["importance[]"] = "1"
-		fields["artist_ids[]"] = strings.TrimSpace(answers["director_imdb"])
 		fields["artist_subs[]"] = strings.TrimSpace(answers["director_chinese"])
 		fields["characters[]"] = ""
 		fields["main_artist_number"] = "1"

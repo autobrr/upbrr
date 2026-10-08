@@ -72,7 +72,7 @@ func TestYUSStructuredName(t *testing.T) {
 }
 func TestYUSPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/yus/v5" || p.Structured == nil {
+	if p.ID != "unit3d/yus/v7" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }
@@ -146,7 +146,20 @@ func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 	if err != nil {
 		t.Fatalf("normalize category %q: %v", r.Category, err)
 	}
+	audio, _ := n.GeneratedName.Component(api.NameRoleAudio)
+	facts := api.LanguageFacts{AudioAbsent: audio.Value == ""}
+	if audio.Value != "" {
+		facts.Tracks = []api.MediaTrackFacts{{
+			Kind:         api.MediaTrackAudio,
+			Role:         api.AudioRoleProgramme,
+			Default:      true,
+			DefaultKnown: true,
+			Codec:        strings.Fields(audio.Value)[0],
+			AudioLabel:   audio.Value,
+		}}
+	}
 	return api.UploadSubject{
+		LanguageFacts:    facts,
 		SourcePath:       "yus",
 		ReleaseName:      n.Name,
 		ReleaseNameNoTag: n.NameNoTag,
@@ -395,6 +408,90 @@ func TestYUSReleaseVersionKeepsEditionSetAtomic(t *testing.T) {
 				if strings.Contains(got, hidden) {
 					t.Fatalf("set exposed hidden detail %q: %q", hidden, got)
 				}
+			}
+		})
+	}
+}
+
+func TestYUSProgrammeLanguageAndDefaultAudioNaming(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name                  string
+		languages             []string
+		status                api.MetadataEvidenceStatus
+		discType, releaseType string
+		wantMulti             bool
+	}{
+		{
+			name:      "two unrelated languages",
+			languages: []string{"German", "French"},
+			wantMulti: true,
+		},
+		{
+			name:      "three languages",
+			languages: []string{"Japanese", "English", "German"},
+			wantMulti: true,
+		},
+		{name: "one language", languages: []string{"Japanese"}},
+		{
+			name:      "unknown second label",
+			languages: []string{"English", "unknown-label"},
+			status:    api.MetadataEvidenceStatusPartial,
+		},
+		{
+			name:      "contradictory",
+			languages: []string{"Japanese", "English"},
+			status:    api.MetadataEvidenceStatusContradictory,
+		},
+		{
+			name:        "canonical full disc",
+			languages:   []string{"Japanese", "English"},
+			releaseType: "DISC",
+		},
+		{
+			name:        "disc sourced remux",
+			languages:   []string{"Japanese", "English"},
+			discType:    "BDMV",
+			releaseType: "REMUX",
+			wantMulti:   true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := yusSubject(t, api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "WEBDL",
+				Source:      "WEB",
+				Resolution:  "1080p",
+				VideoEncode: "H.265",
+				Tag:         "-GRP",
+				Title:       "Example",
+				Year:        2026,
+				Audio:       "AAC 2.0",
+			})
+			s.Type = test.releaseType
+			s.DiscType = test.discType
+			s.LanguageFacts = api.LanguageFacts{
+				ProgrammeLanguages: test.languages,
+				ProgrammeStatus:    test.status,
+				Tracks: []api.MediaTrackFacts{{
+					Kind:         api.MediaTrackAudio,
+					Role:         api.AudioRoleProgramme,
+					Default:      true,
+					DefaultKnown: true,
+					Codec:        "DD+",
+					AudioLabel:   "DD+ 5.1",
+				}},
+			}
+			got := yusName(t, s, nil)
+			if strings.Contains(got, "Multi-Audio") != test.wantMulti {
+				t.Fatalf("marker mismatch: %s", got)
+			}
+			wantAudio := "DD+ 5.1"
+			if test.releaseType == "DISC" {
+				wantAudio = "AAC 2.0"
+			}
+			if !strings.Contains(got, wantAudio) {
+				t.Fatalf("default audio missing: %s", got)
 			}
 		})
 	}

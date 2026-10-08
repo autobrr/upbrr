@@ -14,6 +14,7 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/externalidentity"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -175,7 +176,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			})
 		}
 	}
-	return CollectedFacts{
+	facts := CollectedFacts{
 		NamingCategory: resolved.Category,
 		Naming: api.NamingFacts{
 			Filename:                 meta.Filename,
@@ -244,6 +245,8 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			DateMatched:       meta.TMDBDateMatch,
 		},
 		Media: api.MediaFacts{
+			MediaFileFacts:                       meta.MediaFileFacts.Clone(),
+			AudioAbsent:                          meta.AudioAbsent,
 			AudioLanguages:                       append([]string(nil), meta.AudioLanguages...),
 			SubtitleLanguages:                    append([]string(nil), meta.SubtitleLanguages...),
 			TrackAudioLanguages:                  append([]string(nil), meta.TrackAudioLanguages...),
@@ -301,6 +304,9 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		Diagnostics: diagnostics,
 		Resources:   collectedResources(meta),
 	}
+	facts.Media.LanguageFacts = mediafacts.ResolveLanguages(facts.Media)
+	facts.Media.MediaFileFacts = mediafacts.ResolveFiles(facts.Media, facts.Naming.Resolution)
+	return facts
 }
 
 func cloneCollectedMediaTracks(value []api.MediaTrackFacts) []api.MediaTrackFacts {

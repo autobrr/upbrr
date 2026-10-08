@@ -653,10 +653,11 @@ func (s *Service) preparationInput(
 	logger := logging.FromContext(ctx, s.logger)
 	meta, groupPolicy := ApplyGroupPolicy(trackerCfg, meta)
 	input := PreparationInput{
-		Intent:        intent,
-		Tracker:       tracker,
-		Meta:          meta,
-		TrackerConfig: trackerCfg,
+		validationRegistry: s.registry,
+		Intent:             intent,
+		Tracker:            tracker,
+		Meta:               meta,
+		TrackerConfig:      trackerCfg,
 		Runtime: PreparationRuntime{
 			DBPath:      s.cfg.MainSettings.DBPath,
 			Description: s.cfg.Description,

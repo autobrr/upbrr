@@ -12,6 +12,7 @@ import (
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:              "HHD",
+		Site:              unit3d.SiteProfile{ProjectionQuestionnaire: languageQuestionnaire},
 		BaseURL:           "https://homiehelpdesk.net",
 		Rules:             Rules(),
 		ValidationPolicy:  validationPolicy(),
