@@ -313,6 +313,11 @@ func renameTorrentInfoContent(info *metainfo.Info, rename func(string) string) (
 		return renamed, nil
 	}
 	renameParts := func(parts []string) ([]string, error) {
+		// An absent path.utf-8 must stay absent: an empty list would be encoded
+		// as an empty UTF-8 path, which clients and trackers prefer over path.
+		if len(parts) == 0 {
+			return parts, nil
+		}
 		out := make([]string, len(parts))
 		for i, part := range parts {
 			renamed, err := renameComponent(part)

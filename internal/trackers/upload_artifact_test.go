@@ -752,3 +752,41 @@ func testMetaInfoInfo(t *testing.T, meta metainfo.MetaInfo) metainfo.Info {
 	}
 	return info
 }
+
+func TestWritePersonalizedTorrentKeepsAbsentUTF8PathsAbsent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "base.torrent")
+	private := true
+	infoBytes, err := bencode.Marshal(metainfo.Info{
+		PieceLength: 16 * 1024,
+		Pieces:      make([]byte, 20),
+		Name:        "Season 03",
+		Private:     &private,
+		Files: []metainfo.FileInfo{
+			{Length: 2, Path: []string{"Show.S03E01.1080p.WEB-DL.H.264-GRP.mkv"}},
+			{Length: 2, Path: []string{"Show.S03E02.1080p.WEB-DL.H.264-GRP.mkv"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal info: %v", err)
+	}
+	writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{InfoBytes: infoBytes})
+	outputPath := filepath.Join(dir, "out.torrent")
+	rename := func(name string) string { return strings.Replace(name, "H.264", "DDP5.1.H.264", 1) }
+	if err := writePersonalizedTorrent(sourcePath, outputPath, "", "ASC", rename); err != nil {
+		t.Fatalf("write renamed torrent: %v", err)
+	}
+
+	out := readTestMetaInfo(t, outputPath)
+	if bytes.Contains(out.InfoBytes, []byte("path.utf-8")) {
+		t.Fatalf("an absent path.utf-8 was written as an empty list: %q", out.InfoBytes)
+	}
+	info := testMetaInfoInfo(t, out)
+	for _, file := range info.Files {
+		if len(file.BestPath()) != 1 || !strings.Contains(file.BestPath()[0], "DDP5.1") {
+			t.Fatalf("file path = %v", file.BestPath())
+		}
+	}
+}
