@@ -1528,11 +1528,11 @@
     "sha256": "a7e142c2b75f4ad8fdd12212054410c83904539d2e3e8c2363eaf466aa8ffaea"
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ulcxEncodeFailures": {
-    "reason": "SDTV exception uses finalized type/resolution and manual release-availability confirmation. Existing source-bound animation checks remain unchanged; no provider values replace manual media facts.",
-    "sha256": "b0ca152d8cd761b869f7cb87f07b19e8a70b244414942791117825ebacf43de9"
+    "reason": "SDTV guidance uses finalized type/resolution and preserves unknown release history as partial evidence without confirmation. Existing strict resolution, codec/source and source-bound animation checks remain unchanged; no provider values replace manual media facts.",
+    "sha256": "c749e22235850b73d39f33dc467bc3acfdf832bc4f646db4de3e80730d775af9"
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:validationPolicy": {
-    "sha256": "0c733414ce5cd03abed804fafd33967909f197981c8c7b3b7d091653adbc0fe2",
+    "sha256": "b870c4b866a24a245e3b33773c43b6a9be517e0fa0dc38788d6349d9919439c9",
     "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {

@@ -66,7 +66,7 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v9/languages-v1" {
+	if policy.ID != "unit3d-ulcx-policy-v10/languages-v1" {
 		t.Fatalf("validation policy = %q, want upload rules policy v6", policy.ID)
 	}
 	tests := []struct {
@@ -90,13 +90,14 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			},
 		},
 		{
-			name: "SD broadcast requires availability confirmation",
+			name: "SD broadcast has release-history guidance",
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.Type = "HDTV"
 				subject.Release.Resolution = "576i"
 			},
-			wantRule:        "ulcx_sdtv_availability",
-			wantDisposition: api.RuleDispositionWaivable,
+			wantRule:        "guidance_sdtv_availability",
+			wantDisposition: api.RuleDispositionAdvisory,
+			wantStatus:      api.MetadataEvidenceStatusPartial,
 		},
 		{
 			name: "HD broadcast remains allowed",
@@ -594,11 +595,11 @@ func TestULCXRetailSourceRemainsUnverifiedGuidance(t *testing.T) {
 	for _, role := range []api.AudioTrackRole{api.AudioRoleCommentary, api.AudioRoleIsolatedScore} {
 		meta := api.UploadSubject{Type: "WEBDL", LanguageFacts: ulcxTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English"})}
 		meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
-ID: "secondary",
- Kind: api.MediaTrackAudio,
- Role: role,
- Languages: []string{"English"},
-})
+			ID:        "secondary",
+			Kind:      api.MediaTrackAudio,
+			Role:      role,
+			Languages: []string{"English"},
+		})
 		if question := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); question != nil {
 			t.Fatalf("retail reassurance question: %+v", question)
 		}

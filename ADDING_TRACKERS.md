@@ -1152,7 +1152,9 @@ Source-history, retention, provenance, quality and hypothetical subtitle concern
 advisories, not questionnaires or unresolved answer gates. Keep unknown facts unknown; warnings
 must not assert source compliance or grant staff permission, replacement qualification, or an
 exception to independent measured constraints. Use inspected languages, titles, default/forced
-flags and container order before asking for genuinely missing upload input.
+flags and container order before asking for genuinely missing upload input. Use an advisory
+`guidance_` rule code for non-language guidance that should appear in the collapsed WebUI
+Guidance panel; language guidance retains its existing `language_` codes.
 
 Retained factual choices and tracker acknowledgements must bind to the tracker, prepared
 generation, finalized track evidence, source, release type and disc type. Use `LanguageQuestionKey`

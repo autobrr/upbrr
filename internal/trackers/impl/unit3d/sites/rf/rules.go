@@ -28,26 +28,20 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	}
 	facts := subject.LanguageFacts
 	var failures []api.RuleFailure
+	unknown := func(reason string) []api.RuleFailure {
+		failure := trackers.LanguageRuleFailure(subject, "subtitle_evidence", reason, trackers.LanguageAdvisory)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		return []api.RuleFailure{failure}
+	}
 	if !facts.OriginalLanguagesKnown {
-		return []api.RuleFailure{
-			trackers.LanguageRuleFailure(
-				subject,
-				"subtitle_evidence",
-				"original-language evidence is required for the subtitle/intertitle assessment",
-				trackers.LanguageUnresolved,
-			),
-		}
+		return unknown("original-language evidence is incomplete; review the subtitle/intertitle guidance")
 	}
 	if facts.SubtitleStatus != api.MetadataEvidenceStatusComplete {
-		return []api.RuleFailure{
-			trackers.LanguageRuleFailure(subject, "subtitle_evidence", "complete subtitle presentation evidence is required", trackers.LanguageUnresolved),
-		}
+		return unknown("subtitle presentation evidence is incomplete; review the tracker's subtitle guidance")
 	}
 	if len(facts.SubtitleLanguages) == 0 &&
 		slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool { return track.Kind == api.MediaTrackSubtitle }) {
-		return []api.RuleFailure{
-			trackers.LanguageRuleFailure(subject, "subtitle_evidence", "embedded subtitle languages were cleared and need review", trackers.LanguageUnresolved),
-		}
+		return unknown("embedded subtitle languages were cleared; review the tracker's subtitle guidance")
 	}
 	englishOriginal := slices.Contains(facts.OriginalLanguages, "English")
 	if !englishOriginal && !slices.Contains(facts.SubtitleLanguages, "English") {
@@ -61,23 +55,6 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		failures = append(failures, failure)
 	}
 	predominantlyEnglish := englishOriginal && len(facts.OriginalLanguages) == 1
-	if rfNeedsPredominanceEvidence(subject) {
-		switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "predominantly_english")] {
-		case "yes":
-			predominantlyEnglish = true
-		case "no":
-		default:
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"predominance_evidence",
-					"confirm whether the film is predominantly English before applying the forced-English subtitle exception",
-					trackers.LanguageUnresolved,
-				),
-			)
-		}
-	}
 	presentationDefect := false
 	for _, track := range facts.Tracks {
 		if track.Kind == api.MediaTrackSubtitle &&
@@ -99,7 +76,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 				subject,
 				"subtitle_presentation",
 				"hardcoded or embedded subtitles are trumpable except forced English for foreign dialogue in a predominantly English film",
-				trackers.LanguageTrumpable,
+				trackers.LanguageAdvisory,
 			),
 		)
 	}
@@ -117,18 +94,4 @@ func rfForcedEnglishTrack(track api.MediaTrackFacts) bool {
 		}
 	}
 	return true
-}
-
-func rfNeedsPredominanceEvidence(subject api.TrackerValidationSubject) bool {
-	facts := subject.LanguageFacts
-	if !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) < 2 || !slices.Contains(facts.OriginalLanguages, "English") {
-		return false
-	}
-	if slices.Contains(facts.SubtitleLanguages, "English") && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
-		return track.Kind == api.MediaTrackSubtitle && rfForcedEnglishTrack(track)
-	}) {
-		return true
-	}
-	return subject.HardcodedSubs && len(subject.HardcodedSubtitleCoverage) == 1 && subject.HardcodedSubtitleCoverage[0].Language == "English" &&
-		subject.HardcodedSubtitleCoverage[0].Coverage == api.SubtitleCoverageForced
 }

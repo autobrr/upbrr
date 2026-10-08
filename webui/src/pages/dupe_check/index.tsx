@@ -291,7 +291,7 @@ function WorkflowDupeAssessmentView({
               (decision) =>
                 !decision.blocking &&
                 decision.disposition === "advisory" &&
-                decision.code.startsWith("language_") &&
+                (decision.code.startsWith("language_") || decision.code.startsWith("guidance_")) &&
                 decision.decision !== "bypassed",
             )
             .map((decision) => decision.message || decision.code.replaceAll("_", " ")),

@@ -925,6 +925,14 @@ describe("DupeCheckPage", () => {
                   message: "Guidance — review missing track titles.",
                 },
                 {
+                  code: "guidance_release_history",
+                  decision: "advisory",
+                  blocking: false,
+                  disposition: "advisory",
+                  evidenceStatus: "partial",
+                  message: "Guidance — review release history.",
+                },
+                {
                   code: "language_original",
                   decision: "ineligible",
                   blocking: true,
@@ -946,7 +954,7 @@ describe("DupeCheckPage", () => {
     );
 
     const guidance = screen.getByLabelText("EXAMPLE guidance warnings");
-    const summary = within(guidance).getByText("Guidance (1)", { selector: "summary" });
+    const summary = within(guidance).getByText("Guidance (2)", { selector: "summary" });
     const warning = within(guidance).getByText("Warning: Guidance — review missing track titles.");
     expect(guidance).not.toHaveAttribute("open");
     expect(warning).not.toBeVisible();
@@ -960,6 +968,7 @@ describe("DupeCheckPage", () => {
     fireEvent.click(summary);
     expect(guidance).toHaveAttribute("open");
     expect(warning).toBeVisible();
+    expect(within(guidance).getByText("Warning: Guidance — review release history.")).toBeVisible();
     fireEvent.click(summary);
     expect(guidance).not.toHaveAttribute("open");
     expect(warning).not.toBeVisible();

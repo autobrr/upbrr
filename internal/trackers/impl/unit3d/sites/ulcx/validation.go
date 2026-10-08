@@ -23,7 +23,7 @@ func ValidationPolicy() trackers.ValidationPolicyBinding {
 
 func validationPolicy(regionID func(string) string) trackers.ValidationPolicyBinding {
 	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{
-		ID: "unit3d-ulcx-policy-v9",
+		ID: "unit3d-ulcx-policy-v10",
 		Check: func(ctx context.Context, meta api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error) {
 			return checkRules(ctx, meta, logger, regionID)
 		},
@@ -136,10 +136,11 @@ func ulcxEncodeFailures(meta api.TrackerValidationSubject, ruleSubject api.RuleS
 	// Upload rules v1.0.1 allow SDTV only when no HD, disc, or WEB release
 	// exists. Prepared facts cannot establish that release-history condition.
 	if typeValue == "SDTV" || typeValue == "HDTV" && unit3d.IsSDResolution(resolution) {
-		failures = append(failures, trackers.NewRuleFailure(
-			"ulcx_sdtv_availability",
-			"SDTV requires confirmation that the content was never released in HD or on SD disc/WEB.",
-			api.RuleDispositionWaivable,
+		failures = append(failures, trackers.NewEvidenceRuleFailure(
+			"guidance_sdtv_availability",
+			"Guidance — SDTV is allowed only if the content was never released in HD or on SD disc/WEB; prepared files cannot establish that release history.",
+			api.RuleDispositionAdvisory,
+			api.MetadataEvidenceStatusPartial,
 		))
 	}
 	if typeValue == "ENCODE" && ulcxX265Encode(meta) {

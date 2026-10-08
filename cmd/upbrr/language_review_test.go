@@ -30,6 +30,11 @@ func TestCLILanguageReviewUsesBackendDecisions(t *testing.T) {
 		{name: "prohibited", outcome: trackers.LanguageProhibited},
 		{name: "staff exception", outcome: trackers.LanguageStaffException},
 		{
+			name:      "guidance does not ask for acknowledgement",
+			outcome:   trackers.LanguageAdvisory,
+			wantReady: true,
+		},
+		{
 			name:       "trumpable",
 			outcome:    trackers.LanguageTrumpable,
 			wantWaiver: true,
