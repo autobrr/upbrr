@@ -15,7 +15,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "standalone-ant-constructibility-v2",
+		ID: "standalone-ant-constructibility-v3",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
