@@ -266,7 +266,7 @@ func TestRegisterDescriptorRejectsContentRenamerWithoutUploadArtifactPolicy(t *t
 	err := registry.RegisterDescriptor(Descriptor{
 		Name:           "REN",
 		Definition:     stubDefinition{name: "REN"},
-		ContentRenamer: func(_ api.UploadSubject, name string) string { return name },
+		ContentRenamer: func(_ api.UploadSubject, name string, _ ContentNameKind) string { return name },
 	})
 	if err == nil || !strings.Contains(err.Error(), "without an upload artifact policy") {
 		t.Fatalf("expected renamer registration error, got %v", err)

@@ -173,3 +173,30 @@ func complianceFileNameWithReason(meta api.UploadSubject, name string) (string, 
 	separator := stem[resolution[0]+video[2] : insertAt]
 	return stem[:insertAt] + token + separator + stem[insertAt:] + ext, complianceApplied
 }
+
+// renameContent is the ASC content renamer. Files and subfolders get the audio
+// token through complianceFileName. A root folder that carries no release
+// information (a pack folder such as "Season 03") is replaced by the release
+// name in dotted form, because clients show the root as the torrent name and
+// link staging uses it as the seeding folder: a generic name is unreadable and
+// collides with other packs of the same season.
+func renameContent(meta api.UploadSubject, name string, kind trackers.ContentNameKind) string {
+	if kind == trackers.ContentRootFolderName && fileNameResolutionPattern.FindStringIndex(name) == nil {
+		if folder := releaseFolderName(meta.ReleaseName); folder != "" {
+			name = folder
+		}
+	}
+	return complianceFileName(meta, name)
+}
+
+// releaseFolderName turns a release name into a dotted folder name, dropping
+// characters that are not allowed in file names on common systems.
+func releaseFolderName(releaseName string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`/\:*?"<>|`, r) || r < 0x20 {
+			return -1
+		}
+		return r
+	}, releaseName)
+	return strings.Trim(strings.Join(strings.Fields(cleaned), "."), ".")
+}

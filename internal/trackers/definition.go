@@ -509,13 +509,25 @@ type UploadArtifactPolicy struct {
 	RequireAnnounce bool
 }
 
-// ContentRenamer maps one torrent path component (the root name, or a file or
-// folder name) to the name a tracker requires, given the exact upload subject.
-// It is called once per component, so it cannot tell a root from a file and must
-// recognise what it should change from the name itself. It must be
+// ContentNameKind tells a ContentRenamer which part of the torrent a name is.
+type ContentNameKind int
+
+const (
+	// ContentFileName is a file: a path's last component, or the root name of a
+	// single-file torrent.
+	ContentFileName ContentNameKind = iota
+	// ContentRootFolderName is the root folder of a multi-file torrent, which a
+	// client shows as the torrent name and uses as the folder it seeds from.
+	ContentRootFolderName
+	// ContentSubfolderName is a folder below the root.
+	ContentSubfolderName
+)
+
+// ContentRenamer maps one torrent path component to the name a tracker
+// requires, given the exact upload subject and the component's kind. It must be
 // deterministic and side-effect free, return name unchanged when no rename
 // applies, and return a single legal path component (no separator, never empty).
-type ContentRenamer func(meta api.UploadSubject, name string) string
+type ContentRenamer func(meta api.UploadSubject, name string, kind ContentNameKind) string
 
 // ContentRenamerProvider declares tracker-owned content naming for the
 // tracker's own upload torrent artifact. It requires an upload artifact policy,

@@ -312,8 +312,8 @@
     "sha256": "3262a761092f75ef76cb9d4761052f368b4ad6abd2e6f194b19bb61e3c74cb69"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. ContentRenamer (complianceFileName) reads only finalized Audio/Channels media facts, no provider metadata.",
-    "sha256": "792515c902ad56de29fa397767b1fb7ef154386d93459bed6d4d5c9adcf0f49c"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. ContentRenamer (renameContent) reads only finalized Audio/Channels media facts and the finalized release name, no provider metadata.",
+    "sha256": "94a0960a8f73998667f4a7db5bfc1eafbc5475078c2cba702134d20165afbb67"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
