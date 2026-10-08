@@ -63,6 +63,7 @@ func TestCompositeUploadHydrationRestoresDurableDemandForPreparedRelease(t *test
 	}
 	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "durable-composite-hydration")
 	request.Source.Path = sourcePath
+	request.Duplicates.AllowUpload = []api.TrackerID{"beta"}
 	session, instructions, err := normalizeCompositeUploadRequest(request)
 	if err != nil {
 		_ = repoA.Close()
@@ -126,6 +127,10 @@ func TestCompositeUploadHydrationRestoresDurableDemandForPreparedRelease(t *test
 	}
 	if err := moduleB.hydrateCompositePreparedRelease(t.Context(), testOwnerID, current, state.Composite, state.PreparationDemand); err != nil {
 		t.Fatalf("hydrate compatible prepared release: %v", err)
+	}
+
+	if !reflect.DeepEqual(state.Composite.DuplicateAllowUpload, []api.TrackerID{"BETA"}) {
+		t.Fatalf("restored duplicate policy = %#v", state.Composite.DuplicateAllowUpload)
 	}
 
 	forced := *state.Composite.Intent.Preparation
