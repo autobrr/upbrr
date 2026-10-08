@@ -15,8 +15,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 	"time"
 
 	"github.com/autobrr/go-torrent/bencode"
@@ -184,6 +186,11 @@ type submitResult struct {
 
 func testSubmit(t *testing.T, site *fakeSite, sessionValue string, trackerCfg config.TrackerConfig) submitResult {
 	t.Helper()
+	return testSubmitWithLogger(t, site, sessionValue, trackerCfg, api.NopLogger{})
+}
+
+func testSubmitWithLogger(t *testing.T, site *fakeSite, sessionValue string, trackerCfg config.TrackerConfig, logger api.Logger) submitResult {
+	t.Helper()
 
 	uploaded := testTorrentPayload(t, "https://tracker.example/announce")
 	registered := testTorrentPayload(t, testAnnounceURL)
@@ -240,7 +247,7 @@ func testSubmit(t *testing.T, site *fakeSite, sessionValue string, trackerCfg co
 		Meta:          api.UploadSubject{SourcePath: filepath.Join(tmp, "Example.Movie.2026.mkv")},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		TrackerConfig: trackerCfg,
-		Logger:        api.NopLogger{},
+		Logger:        logger,
 	}
 	summary, err := submitPreparedUpload(t.Context(), req, client, submission)
 	return submitResult{
@@ -600,5 +607,66 @@ func TestResolveAuthSessionWithoutCookiesRequiresAuth(t *testing.T) {
 	resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
 	if !ok || !resolution.AuthRequired || resolution.ConfirmedInvalid {
 		t.Fatalf("resolveAuthSession without cookies = %v", err)
+	}
+}
+
+type warnCaptureLogger struct {
+	api.NopLogger
+	mu       sync.Mutex
+	warnings []string
+}
+
+func (l *warnCaptureLogger) Warnf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
+}
+
+func TestSubmitPreparedUploadLogsRejectionDetail(t *testing.T) {
+	t.Parallel()
+
+	logger := &warnCaptureLogger{}
+	result := testSubmitWithLogger(t, &fakeSite{uploadStatus: http.StatusUnprocessableEntity}, "valid", config.TrackerConfig{}, logger)
+	if result.err == nil {
+		t.Fatal("expected a rejected upload")
+	}
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	joined := strings.Join(logger.warnings, "\n")
+	for _, want := range []string{"ASC upload not accepted", "status=422", "Informe o ano"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("warning log missing %q: %s", want, joined)
+		}
+	}
+}
+
+func TestResponseSummaryStripsMarkupAndTruncates(t *testing.T) {
+	t.Parallel()
+
+	if got := responseSummary([]byte("<html><body>\n  <p>Torrent   already exists</p>\n</body></html>")); got != "Torrent already exists" {
+		t.Fatalf("summary = %q", got)
+	}
+	if got := responseSummary([]byte(strings.Repeat("x", 1000))); len(got) != responseSummaryLimit+3 {
+		t.Fatalf("summary length = %d", len(got))
+	}
+}
+
+func TestResponseSummaryIsRuneSafeAndDropsScripts(t *testing.T) {
+	t.Parallel()
+
+	accented := strings.Repeat("é", responseSummaryLimit+10)
+	got := responseSummary([]byte(accented))
+	if !utf8.ValidString(got) || utf8.RuneCountInString(got) != responseSummaryLimit+3 {
+		t.Fatalf("summary is not rune-safe: %d runes, valid=%t", utf8.RuneCountInString(got), utf8.ValidString(got))
+	}
+	html := "<html><head><style>body{color:red}</style><script>var x = 1;</script></head><body>Este torrent já foi enviado.</body></html>"
+	if got := responseSummary([]byte("Falhou. <script>var secret = 1; window.state = {")); got != "Falhou." {
+		t.Fatalf("unclosed script leaked into the summary: %q", got)
+	}
+	if got := responseSummary([]byte("Falhou. <div cla")); got != "Falhou." {
+		t.Fatalf("truncated tag leaked into the summary: %q", got)
+	}
+	if got := responseSummary([]byte(html)); got != "Este torrent já foi enviado." {
+		t.Fatalf("summary = %q", got)
 	}
 }

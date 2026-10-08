@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/autobrr/go-torrent/metainfo"
 
@@ -161,6 +162,7 @@ func submitPreparedUpload(
 	setXHRHeaders(httpReq, writer)
 	result, err := commonhttp.ExecuteUpload(writer, httpReq, commonhttp.UploadExecutionOptions{Tracker: "ASC"})
 	if err != nil {
+		req.Logger.Warnf("trackers: ASC upload request failed tracker=ASC state=failed reason=%s", redaction.RedactValue(err.Error(), nil))
 		return api.UploadSummary{}, fmt.Errorf("trackers: ASC upload: %w", err)
 	}
 
@@ -172,8 +174,15 @@ func submitPreparedUpload(
 		return completeUpload(ctx, req, client, submission, torrentID), nil
 	}
 	if strings.HasPrefix(location, "/login") {
+		req.Logger.Warnf("trackers: ASC upload rejected tracker=ASC state=failed status=%d reason=session_expired", result.StatusCode)
 		return api.UploadSummary{}, fmt.Errorf("trackers: %w", errSessionExpired)
 	}
+	req.Logger.Warnf(
+		"trackers: ASC upload not accepted tracker=ASC state=failed status=%d redirect=%q response=%q",
+		result.StatusCode,
+		redaction.RedactValue(location, nil),
+		responseSummary(result.Preview),
+	)
 
 	if _, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "ASC", "upload_failure", result.Preview, ".html"); artifactErr != nil {
 		req.Logger.Warnf("trackers: ASC failure artifact write failed: %v", artifactErr)
@@ -462,9 +471,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, hasC
 		return uploadState{}, fmt.Errorf("trackers: ASC release name: %w", err)
 	}
 	mediaInfo, mediaInfoErr := resolveMediaInfoReport(req.Meta, req.Runtime.DBPath)
-	if name := torrentContentName(torrentFile); name != "" {
-		req.Logger.Infof("trackers: ASC torrent content name tracker=ASC name=%q", name)
-	}
+	logTorrentContentName(req, torrentFile, mediaInfo)
 	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets, req.Logger)
 	state := uploadState{
 		torrentPath:     torrentFile,
@@ -503,16 +510,63 @@ func parseUploadID(location string) string {
 	return ""
 }
 
-// torrentContentName returns the root name stored in the tracker torrent, or ""
-// when it cannot be read; it only feeds operator logging.
-func torrentContentName(path string) string {
+// logTorrentContentName reports the name stored in the ASC torrent and warns
+// when it still lacks the audio token the site requires or no longer matches the
+// MediaInfo report, the two cases that make the site reject an upload.
+func logTorrentContentName(req trackers.PreparationInput, torrentFile string, mediaInfo string) {
+	name, err := torrentContentName(torrentFile)
+	if err != nil {
+		req.Logger.Warnf("trackers: ASC torrent content name unreadable tracker=ASC state=failed reason=%s", redaction.RedactValue(err.Error(), nil))
+		return
+	}
+	req.Logger.Infof("trackers: ASC torrent content name tracker=ASC name=%q", name)
+	if _, skip := complianceFileNameWithReason(req.Meta, name); skip.unresolved() {
+		req.Logger.Warnf("trackers: ASC torrent name lacks the audio token tracker=ASC state=non_compliant name=%q reason=%s", name, skip)
+	}
+	if strings.Contains(mediaInfo, "Complete name") && !strings.Contains(mediaInfo, name) && hasVideoExtension(name) {
+		req.Logger.Warnf("trackers: ASC MediaInfo file name differs from the torrent tracker=ASC state=mismatch name=%q", name)
+	}
+}
+
+// hasVideoExtension reports whether name ends in a container extension, i.e. it
+// is a single-file torrent whose root name is the file name.
+func hasVideoExtension(name string) bool {
+	_, ok := fileNameExtensions[strings.ToLower(filepath.Ext(name))]
+	return ok
+}
+
+// torrentContentName returns the root name stored in the tracker torrent.
+func torrentContentName(path string) (string, error) {
 	torrentMeta, err := metainfo.LoadFromFile(path)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("load torrent: %w", err)
 	}
 	info, err := torrentMeta.UnmarshalInfo()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("decode torrent info: %w", err)
 	}
-	return info.BestName()
+	return info.BestName(), nil
 }
+
+const responseSummaryLimit = 300
+
+// responseSummary reduces a response preview, already redacted by
+// commonhttp.ExecuteUpload, to a short single-line excerpt for the operator log.
+// Script and style bodies and markup are dropped, and the excerpt is cut on a
+// rune boundary so accented text never becomes invalid UTF-8. The full body
+// stays in the upload_failure artifact.
+func responseSummary(preview []byte) string {
+	text := htmlNoisePattern.ReplaceAllString(string(preview), " ")
+	text = strings.Join(strings.Fields(htmlTagPattern.ReplaceAllString(text, " ")), " ")
+	if utf8.RuneCountInString(text) <= responseSummaryLimit {
+		return text
+	}
+	return string([]rune(text)[:responseSummaryLimit]) + "..."
+}
+
+var (
+	// Both patterns also match a construct cut off by the preview limit, so an
+	// unclosed script body or half a tag never reaches the log.
+	htmlTagPattern   = regexp.MustCompile(`<[^>]*(?:>|$)`)
+	htmlNoisePattern = regexp.MustCompile(`(?is)<(?:script|style)\b.*?(?:</(?:script|style)>|$)`)
+)

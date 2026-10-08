@@ -633,10 +633,7 @@ Length: 2,
 				t.Fatalf("write renamed torrent: %v", err)
 			}
 			out := readTestMetaInfo(t, outputPath)
-			info, err := out.UnmarshalInfo()
-			if err != nil {
-				t.Fatalf("unmarshal info: %v", err)
-			}
+			info := testMetaInfoInfo(t, out)
 			tt.check(t, info)
 			if !bytes.Equal(info.Pieces, pieces) || info.PieceLength != tt.info.PieceLength {
 				t.Fatal("renaming must not change piece layout")
@@ -647,35 +644,60 @@ Length: 2,
 			assertInfoSource(t, out, "ASC")
 
 			// The shared base torrent used by other trackers keeps its original names.
-			base := readTestMetaInfo(t, sourcePath)
-			baseInfo, err := base.UnmarshalInfo()
-			if err != nil {
-				t.Fatalf("unmarshal base info: %v", err)
-			}
-			if baseInfo.Name != tt.info.Name {
+			if baseInfo := testMetaInfoInfo(t, readTestMetaInfo(t, sourcePath)); baseInfo.Name != tt.info.Name {
 				t.Fatalf("base torrent name changed to %q", baseInfo.Name)
 			}
 		})
 	}
 }
 
-func TestWritePersonalizedTorrentRejectsRenameOfV2Torrent(t *testing.T) {
+func TestWritePersonalizedTorrentRenameOfHybridTorrent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "base.torrent")
 	infoBytes, err := bencode.Marshal(metainfo.Info{
 PieceLength: 16 * 1024,
- Name: "x.mkv",
+ Name: "Show.H.264-GRP.mkv",
+ Length: 4,
  MetaVersion: 2,
 })
 	if err != nil {
 		t.Fatalf("marshal info: %v", err)
 	}
 	writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{InfoBytes: infoBytes})
-	err = writePersonalizedTorrent(sourcePath, filepath.Join(dir, "out.torrent"), "", "ASC", func(s string) string { return s })
-	if err == nil || !strings.Contains(err.Error(), "v2") {
-		t.Fatalf("expected v2 rejection, got %v", err)
+
+	changing := func(name string) string { return strings.Replace(name, "H.264", "DDP5.1.H.264", 1) }
+	if err := writePersonalizedTorrent(sourcePath, filepath.Join(dir, "changed.torrent"), "", "ASC", changing); err == nil || !strings.Contains(err.Error(), "v2") {
+		t.Fatalf("expected v2 rejection when the rename changes a name, got %v", err)
+	}
+	// An already-compliant hybrid torrent is accepted unchanged.
+	unchanged := func(name string) string { return name }
+	if err := writePersonalizedTorrent(sourcePath, filepath.Join(dir, "same.torrent"), "", "ASC", unchanged); err != nil {
+		t.Fatalf("hybrid torrent with nothing to rename must still be accepted: %v", err)
+	}
+}
+
+func TestWritePersonalizedTorrentRejectsInvalidRenamerOutput(t *testing.T) {
+	t.Parallel()
+
+	for name, renamed := range map[string]string{
+		"empty":     "",
+		"dot":       ".",
+		"dotdot":    "..",
+		"slash":     "a/b.mkv",
+		"backslash": `a\b.mkv`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			sourcePath := filepath.Join(dir, "base.torrent")
+			writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, "")})
+			err := writePersonalizedTorrent(sourcePath, filepath.Join(dir, "out.torrent"), "", "ASC", func(string) string { return renamed })
+			if err == nil || !strings.Contains(err.Error(), "invalid renamed path component") {
+				t.Fatalf("expected invalid component error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -712,20 +734,21 @@ func TestPrepareTrackerUploadTorrentAppliesTrackerRename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare tracker torrent: %v", err)
 	}
-	artifact := readTestMetaInfo(t, meta.TorrentPath)
-	info, err := artifact.UnmarshalInfo()
-	if err != nil {
-		t.Fatalf("unmarshal info: %v", err)
-	}
+	info := testMetaInfoInfo(t, readTestMetaInfo(t, meta.TorrentPath))
 	if info.Name != "Renamed.DD+ 5.1.mkv" || seenSubject.Audio != "DD+ 5.1" {
 		t.Fatalf("renamed torrent name = %q", info.Name)
 	}
-	baseMeta := readTestMetaInfo(t, baseTorrentPath)
-	baseInfo, err := baseMeta.UnmarshalInfo()
-	if err != nil {
-		t.Fatalf("unmarshal base info: %v", err)
-	}
-	if baseInfo.Name != "Release.mkv" {
+	if baseInfo := testMetaInfoInfo(t, readTestMetaInfo(t, baseTorrentPath)); baseInfo.Name != "Release.mkv" {
 		t.Fatalf("base torrent name changed to %q", baseInfo.Name)
 	}
+}
+
+// testMetaInfoInfo decodes the info dictionary of a test torrent.
+func testMetaInfoInfo(t *testing.T, meta metainfo.MetaInfo) metainfo.Info {
+	t.Helper()
+	info, err := meta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("unmarshal info: %v", err)
+	}
+	return info
 }

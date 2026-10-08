@@ -285,3 +285,17 @@ func TestConditionalDupePolicyClonesAndValidates(t *testing.T) {
 		t.Fatal("conditional automatic policy accepted without evidence")
 	}
 }
+
+func TestRegisterDescriptorRejectsContentRenamerWithoutUploadArtifactPolicy(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	err := registry.RegisterDescriptor(Descriptor{
+		Name:           "REN",
+		Definition:     stubDefinition{name: "REN"},
+		ContentRenamer: func(_ api.UploadSubject, name string) string { return name },
+	})
+	if err == nil || !strings.Contains(err.Error(), "without an upload artifact policy") {
+		t.Fatalf("expected renamer registration error, got %v", err)
+	}
+}

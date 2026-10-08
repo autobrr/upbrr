@@ -243,3 +243,152 @@ func TestAudioFileNameTokenIsStableForDDPAtmos(t *testing.T) {
 		t.Fatalf("token with unknown channels = %q", got)
 	}
 }
+
+func TestComplianceFileNameRecognisesExistingAudioSpellings(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}
+	for _, name := range []string{
+		"M.2020.1080p.WEB-DL.DDP51.H.264-GRP.mkv",
+		"M.2020.1080p.WEB-DL.DDPA5.1.H.264-GRP.mkv",
+		"M.2020.1080p.WEB-DL.DD5.1.H.264-GRP.mkv",
+		"M.2020.1080p.WEB-DL.AC-3.H.264-GRP.mkv",
+		"M.2020.1080p.WEB-DL.E-AC-3.H.264-GRP.mkv",
+		"M.2020.1080p.BluRay.TrueHD.Atmos.7.1.H.264-GRP.mkv",
+		"M.2020.1080p.BluRay.DTS-HD.MA.5.1.H.264-GRP.mkv",
+		"M.2020.1080p.WEB-DL.AAC2.0.H.264-GRP.mkv",
+	} {
+		if got := complianceFileName(meta, name); got != name {
+			t.Errorf("complianceFileName(%q) added a second audio token: %q", name, got)
+		}
+	}
+}
+
+func TestComplianceFileNameWithReason(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}
+	tests := []struct {
+		name string
+		meta api.UploadSubject
+		in   string
+		want complianceSkip
+		fix  bool
+	}{
+		{
+name: "applied",
+ meta: meta,
+ in: "M.2020.1080p.WEB-DL.H.264-GRP.mkv",
+ want: complianceApplied,
+},
+		{
+name: "already present",
+ meta: meta,
+ in: "M.2020.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
+ want: complianceHasAudio,
+},
+		{
+name: "no audio facts",
+ meta: api.UploadSubject{},
+ in: "M.2020.1080p.WEB-DL.H.264-GRP.mkv",
+ want: complianceNoAudioFacts,
+ fix: true,
+},
+		{
+name: "no resolution",
+ meta: meta,
+ in: "M.2020.WEB-DL.H.264-GRP.mkv",
+ want: complianceNoResolution,
+ fix: true,
+},
+		{
+name: "no codec",
+ meta: meta,
+ in: "M.2020.1080p.WEB-DL-GRP.mkv",
+ want: complianceNoVideoCodec,
+ fix: true,
+},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, got := complianceFileNameWithReason(tt.meta, tt.in)
+			if got != tt.want || got.unresolved() != (tt.fix) {
+				t.Fatalf("reason = %q unresolved=%t, want %q unresolved=%t", got, got.unresolved(), tt.want, tt.fix)
+			}
+		})
+	}
+}
+
+func TestAudioFileNameTokenVariants(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		audio    string
+		channels string
+		want     string
+	}{
+		{"DTS-HD MA 7.1", "7.1", "DTS-HD.MA.7.1"},
+		{"DTS-HD 5.1", "5.1", "DTS-HD.5.1"},
+		{"DTS:X 7.1", "7.1", "DTS-X.7.1"},
+		{"DTS 5.1", "5.1", "DTS5.1"},
+		{"TrueHD 7.1", "7.1", "TrueHD.7.1"},
+		{"TrueHD 7.1 Atmos", "7.1", "TrueHD.Atmos.7.1"},
+		{"DD 5.1", "5.1", "DD5.1"},
+		{"FLAC 2.0", "2.0", "FLAC2.0"},
+		{"LPCM 2.0", "2.0", "LPCM.2.0"},
+		{"PCM 2.0", "2.0", "PCM.2.0"},
+		{"Opus 2.0", "2.0", "OPUS2.0"},
+		{"MP3 2.0", "2.0", "", },
+		{"Vorbis 2.0", "2.0", ""},
+		{"AAC 2.0", "6 channels", "AAC2.0"},
+		{"AAC", "", ""},
+	}
+	for _, tt := range tests {
+		if got := audioFileNameToken(api.UploadSubject{Audio: tt.audio, Channels: tt.channels}); got != tt.want {
+			t.Errorf("audioFileNameToken(%q, %q) = %q, want %q", tt.audio, tt.channels, got, tt.want)
+		}
+	}
+}
+
+func TestComplianceFileNameIgnoresAudioLookingReleaseGroup(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Audio: "DD+ 5.1", Channels: "5.1"}
+	for group, want := range map[string]string{
+		"DTS":  "M.2020.1080p.WEB-DL.DDP5.1.H.264-DTS.mkv",
+		"AAC":  "M.2020.1080p.WEB-DL.DDP5.1.H.264-AAC.mkv",
+		"FLAC": "M.2020.1080p.WEB-DL.DDP5.1.H.264-FLAC.mkv",
+	} {
+		in := "M.2020.1080p.WEB-DL.H.264-" + group + ".mkv"
+		if got := complianceFileName(meta, in); got != want {
+			t.Errorf("complianceFileName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// A real audio token before the group is still recognised.
+	has := "M.2020.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv"
+	if got := complianceFileName(api.UploadSubject{Audio: "DTS-HD MA 5.1", Channels: "5.1"}, has); got != has {
+		t.Errorf("complianceFileName(%q) = %q", has, got)
+	}
+}
+
+func TestResolveSearchTitlePrefersFinalizedTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		ReleaseName:       "Example Show AKA Ekusanpuru S03 1080p Dual-Audio AAC 2.0 AVC",
+		SourcePath:        "/data/Example Show/Season 03",
+		EffectiveMetadata: api.EffectiveMetadata{Title: "Example Show"},
+	}
+	if got := resolveSearchTitle(meta); got != "Example Show" {
+		t.Fatalf("search title = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{}
+	if got := resolveSearchTitle(meta); got != meta.ReleaseName {
+		t.Fatalf("search title without a finalized title = %q", got)
+	}
+	meta.ReleaseName = ""
+	if got := resolveSearchTitle(meta); got != "" {
+		t.Fatalf("source path must never become a search title, got %q", got)
+	}
+}

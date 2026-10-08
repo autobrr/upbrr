@@ -183,8 +183,7 @@ func resolveVideoCodecID(meta api.UploadSubject) string {
 	}
 }
 
-// audioCodec identifies the primary audio format family shared by the codec
-// attribute and the audio token the site requires in file names.
+// audioCodec identifies the primary audio format family.
 type audioCodec int
 
 const (
@@ -244,9 +243,10 @@ func classifyAudioCodec(audio string) audioCodec {
 }
 
 // resolveAudioCodecID maps the primary audio format. The site has no Atmos
-// option, so Atmos resolves through its TrueHD or E-AC-3 carrier.
+// option, so Atmos resolves through its TrueHD or E-AC-3 carrier. Unknown
+// formats fall back to the site's generic "other" id.
 func resolveAudioCodecID(meta api.UploadSubject) string {
-	switch classifyAudioCodec(meta.Audio) {
+	switch classifyAudioCodec(meta.Audio) { //nolint:exhaustive // unrecognised formats share the generic id below
 	case audioCodecDTSX:
 		return "160"
 	case audioCodecDTSHDMA:
@@ -275,29 +275,33 @@ func resolveAudioCodecID(meta api.UploadSubject) string {
 		return "152"
 	case audioCodecVorbis:
 		return "165"
-	case audioCodecUnknown:
-		return "155"
 	default:
 		return "155"
 	}
 }
 
-var audioChannelsPattern = regexp.MustCompile(`\b\d\.\d\b`)
+var (
+	audioChannelsPattern      = regexp.MustCompile(`\b\d\.\d\b`)
+	audioChannelsExactPattern = regexp.MustCompile(`^\d\.\d$`)
+)
 
-// audioFileNameToken renders the primary audio as the dotted file-name token
-// the site requires (DDP5.1, AAC2.0, DTS-HD.MA.5.1, TrueHD.Atmos.7.1). It
-// returns "" when the codec family or channel layout is unknown or the site
-// has no naming convention for it, so callers never invent a token.
+// audioFileNameToken renders the primary audio as the file-name token the site
+// requires (DDP5.1, AAC2.0, DTS-HD.MA.5.1, TrueHD.Atmos.7.1). Atmos is a suffix
+// on DD+ (DDP5.1.Atmos) but part of the codec for TrueHD. The channel layout is
+// taken from meta.Channels only when it is exactly N.N, otherwise from the first
+// N.N in meta.Audio. It returns "" when the codec family or channel layout is
+// unknown or the site has no naming convention for it, so callers never invent
+// a token.
 func audioFileNameToken(meta api.UploadSubject) string {
 	channels := strings.TrimSpace(meta.Channels)
-	if !audioChannelsPattern.MatchString(channels) || len(channels) != 3 {
+	if !audioChannelsExactPattern.MatchString(channels) {
 		channels = audioChannelsPattern.FindString(meta.Audio)
 	}
 	if channels == "" {
 		return ""
 	}
 	atmos := strings.Contains(strings.ToUpper(meta.Audio), "ATMOS")
-	switch classifyAudioCodec(meta.Audio) {
+	switch classifyAudioCodec(meta.Audio) { //nolint:exhaustive // MP3, Vorbis and unknown formats have no site naming convention
 	case audioCodecDTSX:
 		return "DTS-X." + channels
 	case audioCodecDTSHDMA:
@@ -328,8 +332,6 @@ func audioFileNameToken(meta api.UploadSubject) string {
 		return "AAC" + channels
 	case audioCodecOpus:
 		return "OPUS" + channels
-	case audioCodecMP3, audioCodecVorbis, audioCodecUnknown:
-		return ""
 	default:
 		return ""
 	}

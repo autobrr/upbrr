@@ -139,3 +139,21 @@ func TestProfileDeclaresContentRenamer(t *testing.T) {
 		t.Fatalf("renamer = %q, want %q", got, want)
 	}
 }
+
+func TestContentRenamerIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	renamer := New().ContentRenamer()
+	meta := api.UploadSubject{Audio: "DTS-HD MA 5.1", Channels: "5.1"}
+	for _, name := range []string{
+		"Example.Movie.2020.1080p.BluRay.x264-GRP.mkv",
+		"Example.Show.S01.1080p.WEB-DL.H.264-GRP",
+		"Example.Movie.2020.WEB-DL.H.264-GRP.mkv",
+		"Cover.jpg",
+	} {
+		once := renamer(meta, name)
+		if twice := renamer(meta, once); twice != once {
+			t.Errorf("renamer is not idempotent for %q: %q then %q", name, once, twice)
+		}
+	}
+}
