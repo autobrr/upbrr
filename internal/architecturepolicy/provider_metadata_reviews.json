@@ -256,8 +256,8 @@
     "sha256": "578a3b70b7b611a9a135b9fc49a91ea1e91adee987dd956d3a0b9d9607dbf953"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:dupeSearcher.Search": {
-    "reason": "ASC Laravel migration: provider-ID query priority unchanged; anime title fallback uses manual-aware resolveASCTitle and never the local source path.",
-    "sha256": "80692968bb005ca5ce0e4203be336f919abd3d937b96c773ba35f73ecc6c97fe"
+    "reason": "ASC Laravel migration: provider-ID query priority unchanged; anime title fallback uses manual-aware resolveASCTitle and never the local source path. Upstream sync: operation-local logger binding leaves the title and IMDb selectors unchanged.",
+    "sha256": "2669d1ab80a513b73e22fdb951a55411545fbeab4d8cf001f15d519a81f73c9c"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
     "reason": "Manual title (including manual-empty) wins; then the finalized title before projection or parsed release names, so a pack folder or built release name cannot become the anime search term. Missing titles never fall back to the local source path.",
@@ -312,12 +312,12 @@
     "sha256": "3262a761092f75ef76cb9d4761052f368b4ad6abd2e6f194b19bb61e3c74cb69"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. ContentRenamer (renameContent) reads only finalized Audio/Channels media facts and the finalized release name, no provider metadata.",
-    "sha256": "94a0960a8f73998667f4a7db5bfc1eafbc5475078c2cba702134d20165afbb67"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. ContentRenamer (renameContent) reads only finalized Audio/Channels media facts and the finalized release name, no provider metadata. Upstream sync: combined with upstream profile hooks; provider selectors unchanged.",
+    "sha256": "0bcfc4c775d6b6ecbee190960c2d110d3d241cc19eb8e0fde51dabe558021a6d"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
-    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
-    "sha256": "8a9bca095344b2c21e1edd088d4e4dd367627278e3fac3a3c1a56bf24c071408"
+    "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers. Upstream sync: answered fields stay editable with manual answers taking precedence; the genre field also appears when no answer or provider genre maps to an ASC genre ID.",
+    "sha256": "165ed2f0aa8c6cd4adfd3b79ff524be5a7cd006a60a73a4641864141605d1037"
   },
   "internal/trackers/impl/standalone/asc/upload.go:prepareUpload": {
     "reason": "ASC Laravel migration: calls reviewed provider consumers; audited together with its provider-value helpers.",
