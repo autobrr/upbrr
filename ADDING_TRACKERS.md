@@ -1158,6 +1158,15 @@ original-language audio. Normalize supported country codes and names, retain all
 countries when checking agreement, and never use the work’s origin to infer a dub’s country.
 Explicit answers and finalized language corrections retain precedence.
 
+Compatibility-audio inference stays tracker-local and uses the shared measured-relationship
+helpers. A distinct same-resource stream with fully known matching languages may accompany one
+unambiguous suitable mix; track order is not a requirement. Keep every plausible mix in the
+candidate set, including unidentified evidence, so filtering cannot manufacture uniqueness.
+Preserve current explicit answer-key presence before inference, including blank, unresolved and
+negative choices. Do not rewrite canonical roles or borrow another site's codec, embedded-core,
+count or disposition policy. Accepted companions must also be excluded from that site's
+redundant-programme checks without suppressing genuine distinct mixes.
+
 Retained factual choices and tracker acknowledgements must bind to the tracker, prepared
 generation, finalized track evidence, source, release type and disc type. Use `LanguageQuestionKey`
 for that shared contract; include additional evidence separately when it is not part of

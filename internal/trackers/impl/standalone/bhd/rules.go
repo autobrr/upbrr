@@ -82,7 +82,8 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 func needsProgrammeMixReview(facts api.LanguageFacts) bool {
 	seen := make(map[string][]string)
 	for _, track := range facts.Tracks {
-		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
+		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) ||
+			trackers.AutomaticDolbyCompatibilityMix(facts, track) != "" {
 			continue
 		}
 		for _, language := range track.Languages {

@@ -17,16 +17,26 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 	}
 	var fields []api.TrackerQuestionnaireField
 	for _, track := range subject.LanguageFacts.Tracks {
-		if track.Kind != api.MediaTrackAudio || track.Role != api.AudioRoleCompatibility {
+		if track.Kind != api.MediaTrackAudio || track.ID == "" {
 			continue
 		}
-		candidates := compatibilityMixes(subject.LanguageFacts, track)
-		if len(candidates) <= 1 {
+		candidates := compatibilityMixes(subject, track)
+		if track.Role != api.AudioRoleCompatibility &&
+			(!trackers.StandaloneDolbyAudio(track) || !slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.Codec != "" })) {
 			continue
 		}
-		options := []string{"unresolved"}
-		details := ""
+		key := trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)
+		if _, answered := subject.QuestionnaireAnswers[key]; !answered && trackers.AutomaticCompatibilityMix(track, candidates) != "" {
+			continue
+		}
+		options, details := []string{"unresolved"}, ""
+		if track.Role != api.AudioRoleCompatibility {
+			options = append(options, "not_compatibility")
+		}
 		for _, candidate := range candidates {
+			if candidate.ID == "" || candidate.Codec == "" {
+				continue
+			}
 			options = append(options, candidate.ID)
 			if details != "" {
 				details += "; "
@@ -34,12 +44,12 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			details += candidate.ID + " (" + candidate.Codec + ", " + string(candidate.Role) + ", " + candidate.Title + ")"
 		}
 		fields = append(fields, api.TrackerQuestionnaireField{
-			Key:      trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID),
+			Key:      key,
 			Label:    "HHD source mix for compatibility track " + track.ID,
 			Kind:     "select",
-			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Options:  options,
-			Help:     "Use source evidence to select this track's corresponding mix: " + details + ". Matching languages or codec counts alone do not establish association. At most one compatibility track is allowed per mix; every TrueHD mix still needs standalone AC-3.",
+			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
+			Help:     "A single same-resource mix with the same fully known language set is matched automatically. Review ambiguous mixes using source evidence: " + details + ". At most one compatibility track is allowed per mix; every TrueHD mix still needs standalone AC-3, including WEB releases.",
 		})
 	}
 	for i := range fields {

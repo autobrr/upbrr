@@ -381,7 +381,7 @@ func aitherTVDBEvidence() *api.TVDBMetadata {
 func TestAitherProfileUsesStructuredPolicy(t *testing.T) {
 	t.Parallel()
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/aither/v5" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/aither/v6" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("AITHER policy = %#v", policy)
 	}
 }

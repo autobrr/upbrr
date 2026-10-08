@@ -20,10 +20,10 @@ import (
 func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	version := "constructibility-v2"
 	if d.site.Name == "AZ" {
-		version = "policy-v4"
+		version = "policy-v5"
 	}
 	if d.site.Name == "CZ" {
-		version = "policy-v5"
+		version = "policy-v6"
 	}
 	return trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,
@@ -696,6 +696,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 		originalCount := 0
 		for _, track := range facts.Tracks {
 			if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) &&
+				trackers.AutomaticDolbyCompatibilityMix(facts, track) == "" &&
 				slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) }) {
 				originalCount++
 			}
@@ -716,7 +717,8 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 	if site.Name == "AZ" && strings.EqualFold(subject.Type, "REMUX") {
 		seen := map[string]bool{}
 		for _, track := range facts.Tracks {
-			if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
+			if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) ||
+				trackers.AutomaticDolbyCompatibilityMix(facts, track) != "" {
 				continue
 			}
 			for _, language := range track.Languages {

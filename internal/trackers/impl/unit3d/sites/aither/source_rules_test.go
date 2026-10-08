@@ -21,7 +21,7 @@ func TestAitherAdditionalOriginalAudioIsSourceGuidance(t *testing.T) {
 	}
 }
 
-func TestAitherCompatibilityRequiresSourceAssociation(t *testing.T) {
+func TestAitherCompatibilityInfersUnambiguousSourceAssociation(t *testing.T) {
 	subject := aitherPassingSubject()
 	subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
@@ -31,7 +31,9 @@ func TestAitherCompatibilityRequiresSourceAssociation(t *testing.T) {
 		Codec:     "AC-3",
 		Languages: []string{"Japanese"},
 	})
-	assertAitherFailure(t, evaluateAitherEvidence(t, subject), "language_compatibility_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	if failures := evaluateAitherEvidence(t, subject); len(failures) != 0 {
+		t.Fatalf("unambiguous companion still requires source review: %+v", failures)
+	}
 }
 
 func TestAitherMusicVideoGuidanceDoesNotWaiveExtraDubs(t *testing.T) {
@@ -167,5 +169,50 @@ func TestAitherMultilingualSourceAnswerReachesStructuredName(t *testing.T) {
 	subject.Identity.Generation++
 	if got := aitherReviewedName(t, subject, nil); strings.Contains(got, "MULTIPLE LANGUAGES") || strings.Contains(got, "JAPANESE") {
 		t.Fatalf("stale source answer guessed a language marker: %q", got)
+	}
+}
+
+func TestAitherCompanionPreservesMultilingualBalanceReview(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{Type: "REMUX", LanguageFacts: aitherTestLanguageFacts("Japanese", []string{"Japanese"}, []string{"English"})}
+	meta.LanguageFacts.Tracks[0].Codec = "TrueHD"
+	meta.LanguageFacts.Tracks[0].Languages = []string{"Japanese", "Korean"}
+	meta.LanguageFacts.OriginalLanguages = []string{"Japanese", "Korean"}
+	meta.LanguageFacts.ProgrammeLanguages = []string{"Japanese", "Korean"}
+	meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
+		ID:        "standalone-dd",
+		Kind:      api.MediaTrackAudio,
+		Role:      api.AudioRoleProgramme,
+		Codec:     "DD",
+		Languages: []string{"Korean", "Japanese"},
+	})
+	validation := api.NewTrackerValidationSubject(meta, "AITHER")
+	balanceKey := trackers.LanguageQuestionKey(validation, "multilingual_balance_audio-0")
+	companionKey := trackers.LanguageQuestionKey(validation, "compatibility_mix_standalone-dd")
+	if got := aitherLanguage(meta); got != "" {
+		t.Fatalf("companion suppressed unresolved balance and guessed %q", got)
+	}
+	assertAitherFailure(t, languageAssessment(validation), "language_multilingual_balance", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	question := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
+	if question == nil || len(question.Fields) != 1 || question.Fields[0].Key != balanceKey {
+		t.Fatalf("automatic association lost independent balance review: %+v", question)
+	}
+	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"AITHER": {balanceKey: "evenly_split"}}
+	if got := aitherLanguage(meta); got != "MULTIPLE LANGUAGES" {
+		t.Fatalf("resolved language balance lost its marker: %q", got)
+	}
+	if failures := languageAssessment(api.NewTrackerValidationSubject(meta, "AITHER")); len(failures) != 0 {
+		t.Fatalf("resolved multilingual mix and companion: %+v", failures)
+	}
+
+	meta.TrackerQuestionnaireAnswers["AITHER"][companionKey] = "audio-0"
+	if got := aitherLanguage(meta); got != "MULTIPLE LANGUAGES" {
+		t.Fatalf("current explicit association changed the language marker: %q", got)
+	}
+	for _, answer := range []string{"not_compatibility", "unresolved", "", "invalid-mix"} {
+		meta.TrackerQuestionnaireAnswers["AITHER"][companionKey] = answer
+		if _, ok := multilingualProgrammeTrack(api.NewTrackerValidationSubject(meta, "AITHER")); ok {
+			t.Fatalf("manual %q choice was still counted as an accepted companion", answer)
+		}
 	}
 }
