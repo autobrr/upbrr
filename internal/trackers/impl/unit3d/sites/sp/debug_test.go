@@ -16,7 +16,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
+func TestSPPackGuidanceProjectionAndLatePreparation(t *testing.T) {
 	definition := unit3d.NewWithProfile(Profile())
 	registry := trackers.NewRegistry()
 	if err := registry.Register(definition); err != nil {
@@ -34,43 +34,55 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 		}
 	}
 	for _, test := range []struct {
-		name       string
-		mutate     func(*api.UploadSubject)
-		debugReady bool
+		name           string
+		mutate         func(*api.UploadSubject)
+		blockedRule    string
+		projectionOnly bool
 	}{
-		{name: "unresolved source", debugReady: true},
+		{name: "unresolved source"},
+		{name: "no per-file inspection", mutate: func(meta *api.UploadSubject) { meta.MediaFileFacts = api.MediaFileFacts{} }},
 		{
 			name: "language variance",
 			mutate: func(meta *api.UploadSubject) {
 				meta.MediaFileFacts.Files[1].AudioLanguages = []string{"German"}
 			},
-			debugReady: true,
 		},
 		{
 			name: "subtitle variance",
 			mutate: func(meta *api.UploadSubject) {
 				meta.MediaFileFacts.Files[1].SubtitleLanguages = []string{"English"}
 			},
-			debugReady: true,
 		},
 		{
 			name: "failed probe",
 			mutate: func(meta *api.UploadSubject) {
 				meta.MediaFileFacts.Files[1] = api.MediaFileFact{FileName: meta.FileList[1]}
 			},
-			debugReady: true,
 		},
 		{name: "known technical variance", mutate: func(meta *api.UploadSubject) { meta.MediaFileFacts.Files[1].Resolution = "720p" }},
 		{name: "missing language with technical variance", mutate: func(meta *api.UploadSubject) {
 			meta.MediaFileFacts.Files[1].Resolution = "720p"
 			meta.MediaFileFacts.Files[1].AudioStatus = api.MetadataEvidenceStatusPartial
 		}},
-		{name: "independent required settings", mutate: func(meta *api.UploadSubject) {
-			meta.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusMissing
-		}},
+		{
+			name: "independent required settings",
+			mutate: func(meta *api.UploadSubject) {
+				meta.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusMissing
+			},
+			blockedRule: "require_valid_mi_setting",
+		},
+		{
+			name: "independent required TMDB",
+			mutate: func(meta *api.UploadSubject) {
+				meta.Identity.TMDBID = 0
+				meta.ProviderMetadata.TMDB = nil
+			},
+			blockedRule:    "require_metadata_id",
+			projectionOnly: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			meta := collectedPackSubject()
+			meta := spPackUploadSubject()
 			meta.Scene, meta.Source, meta.Container = true, "WEB", "mkv"
 			meta.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusNotApplicable
 			meta.VideoCodec, meta.VideoEncode, meta.Tag = "AVC", "H.264", "-GRP"
@@ -91,7 +103,7 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 				test.mutate(&meta)
 			}
 			for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
-				wantReady := test.name == "unresolved source" || mode == api.WorkflowExecutionModeDebug && test.debugReady
+				wantReady := test.blockedRule == ""
 				_, _, _, projections, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, meta, []api.TrackerID{"SP"}, nil, nil, mode)
 				if err != nil {
 					t.Fatal(err)
@@ -100,10 +112,19 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 				if got := projection.Readiness == api.ReadinessStatusReady && projection.DupeReady; got != wantReady {
 					t.Fatalf("mode=%s: projection readiness=%s wantReady=%t decisions=%#v", mode, projection.Readiness, wantReady, projection.PolicyDecisions)
 				}
-				if wantReady && test.name != "unresolved source" && (len(projection.Questionnaire) != 0 || !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
-					return decision.Code == "sp_pack_uniformity" && decision.Decision == "bypassed" && !decision.Blocking
-				})) {
-					t.Fatalf("debug lost its bypass notice or retained required pack questions: %#v", projection)
+				if test.blockedRule != "" && !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+					return decision.Code == test.blockedRule && decision.Disposition == api.RuleDispositionStrict && decision.Blocking
+				}) {
+					t.Fatalf("mode=%s: missing strict %s rejection: %#v", mode, test.blockedRule, projection.PolicyDecisions)
+				}
+				if len(projection.Questionnaire) != 0 || !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+					return decision.Code == "guidance_sp_pack_consistency" && decision.Decision == "advisory" && !decision.Blocking
+				}) {
+					t.Fatalf("mode=%s: pack guidance was missing or retained required questions: %#v", mode, projection)
+				}
+				if test.projectionOnly {
+					// Metadata demands belong to the registry; direct adapter preparation uses only its site/family fallback.
+					continue
 				}
 				plan, failure := definition.Prepare(t.Context(), trackers.PreparationInput{
 					Intent:              trackers.PreparationIntentDryRun,
@@ -116,7 +137,10 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 					Meta:                meta,
 				})
 				if (failure == nil) != wantReady {
-					t.Fatalf("mode=%s: late preparation failure=%v wantReady=%t", mode, failure, wantReady)
+					t.Fatalf("mode=%s: late preparation failure=%#v wantReady=%t", mode, failure, wantReady)
+				}
+				if failure != nil && (failure.Code() != "dry_run" || failure.Message() != "trackers: SP mediainfo missing required fields") {
+					t.Fatalf("mode=%s: expected missing encode-settings rejection, got %#v", mode, failure)
 				}
 				if failure == nil {
 					if _, err := plan.Submit(t.Context()); !errors.Is(err, trackers.ErrPlanNotSubmittable) {
@@ -131,7 +155,7 @@ func TestSPPackDebugProjectionAndLatePreparation(t *testing.T) {
 	}
 }
 
-func TestSPDebugLanguageBypassPreservesCompletePackFailure(t *testing.T) {
+func TestSPDebugPackGuidancePreservesCompletePackFailure(t *testing.T) {
 	subject := spPassingSubject()
 	subject.MediaFileFacts.Files[1].AudioLanguages = []string{"German"}
 	subject.PackageFacts.DetectedEpisodes[0].Episodes = []int{1, 3}
@@ -141,7 +165,7 @@ func TestSPDebugLanguageBypassPreservesCompletePackFailure(t *testing.T) {
 	}
 	blocking, err := trackers.FirstBlockingRuleFailure("SP", failures, api.WorkflowExecutionModeDebug, nil)
 	if err != nil || blocking == nil || blocking.Rule != "sp_pack_completeness" {
-		t.Fatalf("debug language bypass hid independent pack completeness: blocking=%#v err=%v", blocking, err)
+		t.Fatalf("debug pack guidance hid independent pack completeness: blocking=%#v err=%v", blocking, err)
 	}
 	projection := api.TrackerReleaseProjection{
 		TrackerID:   "SP",
@@ -156,8 +180,44 @@ func TestSPDebugLanguageBypassPreservesCompletePackFailure(t *testing.T) {
 		t.Fatalf("debug projection waived independent pack completeness: %#v", projection)
 	}
 	if !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
-		return decision.Code == "sp_pack_uniformity" && decision.Decision == "bypassed" && !decision.Blocking
+		return decision.Code == "guidance_sp_pack_consistency" && decision.Decision == "advisory" && !decision.Blocking
 	}) {
-		t.Fatalf("language-only debug finding lost its bypass notice: %#v", projection.PolicyDecisions)
+		t.Fatalf("debug lost passive pack guidance: %#v", projection.PolicyDecisions)
 	}
+}
+
+func spPackUploadSubject() api.UploadSubject {
+	files := []string{"Example.Show.S01E01.mkv", "Example.Show.S01E02.mkv"}
+	meta := api.UploadSubject{
+		SourcePath: "Example.Show.S01",
+		TVPack:     true,
+		SeasonInt:  1,
+		Type:       "WEBDL",
+		FileList:   files,
+		Identity: api.ExternalIdentity{
+			SourcePath: "Example.Show.S01",
+			Generation: 1,
+			Category:   api.CanonicalCategoryTV,
+		},
+		MediaFileFacts: api.MediaFileFacts{
+			ExpectedFileCount: 2,
+			Status:            api.MetadataEvidenceStatusPartial,
+			TechnicalStatus:   api.MetadataEvidenceStatusPartial,
+			LanguageStatus:    api.MetadataEvidenceStatusComplete,
+		},
+	}
+	for _, file := range files {
+		meta.MediaFileFacts.Files = append(meta.MediaFileFacts.Files, api.MediaFileFact{
+			FileName:        file,
+			Container:       "mkv",
+			Resolution:      "1080p",
+			VideoCodec:      "AVC",
+			BitDepth:        "8",
+			VideoTrackCount: 1,
+			AudioLanguages:  []string{"Japanese"},
+			AudioStatus:     api.MetadataEvidenceStatusComplete,
+			SubtitleStatus:  api.MetadataEvidenceStatusComplete,
+		})
+	}
+	return meta
 }

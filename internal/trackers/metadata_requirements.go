@@ -15,8 +15,6 @@ import (
 type MetadataField string
 
 const (
-	// MetadataFieldNonDiscTVPackMedia requests all-file pack media collection.
-	MetadataFieldNonDiscTVPackMedia MetadataField = MetadataField(api.MetadataRequirementNonDiscTVPackMedia)
 	// MetadataFieldTMDBIDOnly represents a positive TMDB identifier without requiring fetched metadata.
 	MetadataFieldTMDBIDOnly MetadataField = "tmdb_id_only"
 	// MetadataFieldIMDBIDOnly represents a positive IMDb identifier without requiring fetched metadata.
@@ -154,8 +152,6 @@ func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string
 
 func metadataRequirementRule(fields []MetadataField) string {
 	switch {
-	case slices.Contains(fields, MetadataFieldNonDiscTVPackMedia):
-		return "require_pack_media_evidence"
 	case slices.Contains(fields, MetadataFieldPoster):
 		return "require_metadata_poster"
 	case slices.Contains(fields, MetadataFieldTVDBDisambiguation):
@@ -218,13 +214,6 @@ func MetadataFieldPresent(field MetadataField, meta api.RuleSubject) bool {
 func metadataFieldPresent(field MetadataField, meta api.RuleSubject) bool {
 	idsCurrent := sourceMatches(meta.Identity.SourcePath, meta.SourcePath)
 	switch field {
-	case MetadataFieldNonDiscTVPackMedia:
-		if !meta.TVPack || IsFullDiscUpload(meta.DiscType, meta.Type) {
-			return true
-		}
-		facts := meta.MediaFileFacts
-		return facts.ExpectedFileCount > 0 && len(facts.Files) == facts.ExpectedFileCount &&
-			!slices.ContainsFunc(facts.Files, func(file api.MediaFileFact) bool { return file.VideoTrackCount <= 0 })
 	case MetadataFieldTMDBIDOnly:
 		return idsCurrent && meta.Identity.TMDBID > 0
 	case MetadataFieldIMDBIDOnly:
@@ -410,8 +399,6 @@ func metadataFieldList(fields []MetadataField) string {
 	labels := make([]string, 0, len(fields))
 	for _, field := range fields {
 		switch field {
-		case MetadataFieldNonDiscTVPackMedia:
-			labels = append(labels, "per-file non-disc TV pack media evidence")
 		case MetadataFieldTMDBIDOnly:
 			labels = append(labels, "TMDB ID")
 		case MetadataFieldIMDBIDOnly:

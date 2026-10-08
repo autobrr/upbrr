@@ -30,6 +30,15 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
+			name: "software is strict",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "SOFTWARE"
+			},
+			wantRule:        "sp_block_software",
+			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
 			name: "missing package evidence is advisory",
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.PackageFacts.Status = api.MetadataEvidenceStatusUnavailable
@@ -115,7 +124,7 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 				t.Fatalf("validate SP subject: %v", err)
 			}
 			if test.wantRule == "" {
-				if len(failures) != 0 {
+				if len(failures) != 1 || failures[0].Rule != "guidance_sp_pack_consistency" || failures[0].Disposition != api.RuleDispositionAdvisory {
 					t.Fatalf("unexpected failures: %#v", failures)
 				}
 				return
@@ -127,7 +136,7 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestSPValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v7" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v8" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -209,52 +218,6 @@ func requireSPValidationFailure(
 		}
 	}
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
-}
-
-func TestSPPackLanguageEvidenceBoundaries(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		change  func(*api.TrackerValidationSubject)
-		blocked bool
-	}{
-		{"known mismatch is strict", func(subject *api.TrackerValidationSubject) {
-			subject.MediaFileFacts.Files[1].AudioLanguages = []string{"Japanese"}
-		}, true},
-		{"inspected absent subtitles agree", func(subject *api.TrackerValidationSubject) {
-			for index := range subject.MediaFileFacts.Files {
-				subject.MediaFileFacts.Files[index].SubtitleLanguages = nil
-			}
-		}, false},
-		{"unknown language is unresolved", func(subject *api.TrackerValidationSubject) {
-			subject.MediaFileFacts.Files[1].AudioStatus = api.MetadataEvidenceStatusPartial
-			subject.MediaFileFacts.Files[1].AudioLanguages = nil
-		}, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			subject := spPassingSubject()
-			for index := range subject.MediaFileFacts.Files {
-				subject.MediaFileFacts.Files[index].AudioStatus = api.MetadataEvidenceStatusComplete
-				subject.MediaFileFacts.Files[index].SubtitleStatus = api.MetadataEvidenceStatusComplete
-			}
-			test.change(&subject)
-			failures, err := ValidationPolicy().Check(context.Background(), subject, api.NopLogger{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !test.blocked {
-				if len(failures) != 0 {
-					t.Fatalf("inspected absence became missing evidence: %#v", failures)
-				}
-				return
-			}
-			for _, failure := range failures {
-				if failure.Rule == "sp_pack_uniformity" && failure.Disposition == api.RuleDispositionStrict {
-					return
-				}
-			}
-			t.Fatalf("pack evidence was not strictly assessed: %#v", failures)
-		})
-	}
 }
 
 func TestSPFullDiscPackUniformityRetainsBaseline(t *testing.T) {

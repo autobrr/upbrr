@@ -890,7 +890,7 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByText("Tracker upload:")).not.toBeInTheDocument();
   });
 
-  it.each(["guidance_release_history", "guidance_sp_pack_source_history"])(
+  it.each(["guidance_release_history", "guidance_sp_pack_consistency"])(
     "collapses language guidance and %s while keeping safety notices visible",
     (guidanceCode) => {
       const evidenceWarnings = [

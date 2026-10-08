@@ -600,11 +600,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		}
 	}
 
-	if requiresPackMediaEvidence(meta) {
-		if err := s.collectPackMediaEvidence(ctx, &meta); err != nil {
-			return preparationstate.State{}, err
-		}
-	} else if s.mi != nil && discType == "" {
+	if s.mi != nil && discType == "" {
 		tmpRoot, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: tmp dir: %w", err)

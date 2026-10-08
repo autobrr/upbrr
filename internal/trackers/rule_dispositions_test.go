@@ -182,11 +182,6 @@ func TestProductionMetadataTargetMatrix(t *testing.T) {
 			tracker: "SP",
 			requirements: []trackers.MetadataRequirement{
 				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly}},
-				{
-					Scope:       trackers.MetadataScopeTV,
-					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldNonDiscTVPackMedia},
-					Disposition: api.RuleDispositionAdvisory,
-				},
 			},
 		},
 	}
@@ -249,8 +244,7 @@ func containsMetadataIdentityField(fields []trackers.MetadataField) bool {
 			trackers.MetadataFieldSubtitleLanguages,
 			trackers.MetadataFieldHardcodedSubs,
 			trackers.MetadataFieldHardcodedSubtitleLanguages,
-			trackers.MetadataFieldTMDBLocalizedPTBR,
-			trackers.MetadataFieldNonDiscTVPackMedia:
+			trackers.MetadataFieldTMDBLocalizedPTBR:
 			continue
 		}
 	}

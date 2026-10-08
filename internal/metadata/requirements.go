@@ -102,10 +102,6 @@ func metadataRequirementFieldPresentForCollection(
 	tvmazeCurrent := metadata.TVmaze != nil && identity.TVmazeID > 0 && metadata.TVmaze.TVmazeID == identity.TVmazeID
 
 	switch field {
-	case api.MetadataRequirementNonDiscTVPackMedia:
-		facts := meta.MediaFileFacts
-		return facts.ExpectedFileCount > 0 && len(facts.Files) == facts.ExpectedFileCount &&
-			!slices.ContainsFunc(facts.Files, func(file api.MediaFileFact) bool { return file.VideoTrackCount <= 0 })
 	case "tmdb_id_only":
 		return identity.TMDBID > 0
 	case "imdb_id_only":
@@ -195,29 +191,21 @@ func providerSuppliesMetadataRequirement(
 	switch provider {
 	case api.IdentityProviderTMDB:
 		switch field {
-		case api.MetadataRequirementNonDiscTVPackMedia:
-			return false
 		case "tmdb", "tmdb_title", "tmdb_origin_countries", "poster", "title", "original_title", "year", "genres", "original_language":
 			return true
 		}
 	case api.IdentityProviderIMDB:
 		switch field {
-		case api.MetadataRequirementNonDiscTVPackMedia:
-			return false
 		case "imdb", "imdb_title", "poster", "title", "year", "genres", "original_language":
 			return true
 		}
 	case api.IdentityProviderTVDB:
 		switch field {
-		case api.MetadataRequirementNonDiscTVPackMedia:
-			return false
 		case "tvdb", "tvdb_title", "tvdb_year", "tvdb_disambiguation", "poster", "title", "original_title", "year", "genres", "original_language":
 			return true
 		}
 	case api.IdentityProviderTVmaze:
 		switch field {
-		case api.MetadataRequirementNonDiscTVPackMedia:
-			return false
 		case "tvmaze", "poster", "title", "genres", "original_language":
 			return true
 		}
@@ -229,8 +217,6 @@ func providerSuppliesMetadataRequirement(
 
 func metadataRequirementOverrideBlocksProvider(field api.MetadataRequirementField, overrides api.MetadataOverrides) bool {
 	switch field {
-	case api.MetadataRequirementNonDiscTVPackMedia:
-		return false
 	case "genres":
 		return overrides.Genres != nil
 	case "original_language":

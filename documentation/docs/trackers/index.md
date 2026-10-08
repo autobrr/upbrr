@@ -68,7 +68,7 @@ Correct language and other factual evidence on **Input**. Naming overrides and w
 
 ### Media analysis
 
-Preparation may inspect every selected media file when the current requirements need per-file evidence. The first analysis can therefore take longer for larger inputs; unchanged evidence can reuse cached reports. Cancellation is checked between input-file reads; an operating-system read already in progress may delay stopping. Inspected languages, track titles, default/forced flags and container order inform the assessment. Source-history and hypothetical subtitle concerns remain warnings rather than requests to guess missing facts.
+Non-disc pack preparation uses the selected primary video’s MediaInfo report. A pack-consistency reminder is passive Guidance: it does not scan every episode, establish pack-wide consistency, or require an answer or acknowledgement. Check the pack against the tracker’s current rules. Cancellation is checked between input-file reads; an operating-system read already in progress may delay stopping. Inspected languages, track titles, default/forced flags and container order inform the assessment. Source-history and hypothetical subtitle concerns remain warnings rather than requests to guess missing facts.
 
 ## Tracker questions
 

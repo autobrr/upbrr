@@ -12,60 +12,19 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestSPPackMediaDemandIsSelectedAndTVScoped(t *testing.T) {
+func TestSPMetadataDemandRetainsOnlyRequiredTMDB(t *testing.T) {
 	registry := trackers.NewRegistry()
-	profile := Profile()
-	definition := unit3d.NewWithProfile(profile)
-	if err := registry.RegisterDescriptor(trackers.Descriptor{
-		Name:       "SP",
-		Definition: definition,
-		Metadata:   definition.MetadataPolicy(),
-	}); err != nil {
+	definition := unit3d.NewWithProfile(Profile())
+	if err := registry.Register(definition); err != nil {
 		t.Fatal(err)
 	}
 	selected, err := trackers.CollectMetadataRequirements(registry, []api.TrackerID{"SP"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.ContainsFunc(selected.Requirements, func(requirement api.MetadataRequirement) bool {
-		return requirement.Scope == api.MetadataRequirementScopeTV && slices.Contains(requirement.AnyOf, api.MetadataRequirementNonDiscTVPackMedia)
-	}) {
-		t.Fatalf("selected demand=%+v", selected)
-	}
-	unselected, err := trackers.CollectMetadataRequirements(registry, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(unselected.Requirements) != 0 {
-		t.Fatalf("unselected demand=%+v", unselected)
-	}
-	for _, test := range []struct {
-		name    string
-		subject api.RuleSubject
-		want    bool
-	}{
-		{name: "single episode", want: true},
-		{
-			name:    "disc pack",
-			subject: api.RuleSubject{TVPack: true, DiscType: "BDMV"},
-			want:    true,
-		},
-		{name: "missing probes", subject: api.RuleSubject{TVPack: true}},
-		{name: "failed file", subject: api.RuleSubject{TVPack: true, MediaFileFacts: api.MediaFileFacts{ExpectedFileCount: 2, Files: []api.MediaFileFact{{VideoTrackCount: 1}, {}}}}},
-		{
-			name: "collected source unresolved",
-			subject: api.RuleSubject{TVPack: true, MediaFileFacts: api.MediaFileFacts{
-				Status:            api.MetadataEvidenceStatusPartial,
-				ExpectedFileCount: 2,
-				Files:             []api.MediaFileFact{{VideoTrackCount: 1}, {VideoTrackCount: 1}},
-			}},
-			want: true,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := trackers.MetadataFieldPresent(trackers.MetadataFieldNonDiscTVPackMedia, test.subject); got != test.want {
-				t.Fatalf("collected=%t, want %t", got, test.want)
-			}
-		})
+	if len(selected.Requirements) != 1 || selected.Requirements[0].Scope != api.MetadataRequirementScopeAny ||
+		!slices.Equal(selected.Requirements[0].AnyOf, []api.MetadataRequirementField{api.MetadataRequirementField(trackers.MetadataFieldTMDBIDOnly)}) ||
+		selected.Requirements[0].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("SP metadata demand must retain strict TMDB without requesting extra file probes: %+v", selected)
 	}
 }

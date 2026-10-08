@@ -18,7 +18,7 @@ import (
 // and resolution checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-sp-policy-v7",
+		ID:    "unit3d-sp-policy-v8",
 		Check: checkRequirements,
 	}
 }
@@ -76,7 +76,11 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 				},
 			)...)
 		} else {
-			failures = append(failures, packUniformityFailures(subject)...)
+			failures = append(failures, trackers.NewRuleFailure(
+				"guidance_sp_pack_consistency",
+				"Guidance — Check this TV pack against SP's rules for consistent sources, encoding characteristics, and audio/subtitle languages. Explain any genuine source variation in the description.",
+				api.RuleDispositionAdvisory,
+			))
 		}
 	}
 	failures = append(failures, spSoftwareFailures(subject)...)
