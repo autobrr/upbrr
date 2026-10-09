@@ -928,16 +928,16 @@ func TestDefinitionDVDRipDryRunIncludesResolution(t *testing.T) {
 					request.Season = "S01"
 				}
 				subject := bhdGeneratedSubject(t, request)
-				subject.Identity = api.ExternalIdentity{
-					Category: api.CanonicalCategory(category),
-					TMDBID:   123,
-					IMDBID:   456,
-				}
+				subject.Identity.TMDBID, subject.Identity.IMDBID = 123, 456
+				subject.ProviderMetadata.IMDB.IMDBID = subject.Identity.IMDBID
+				subject.ProviderMetadata.IMDB.Title = "IMDb Release"
 				subject.Type, subject.Source = request.Type, request.Source
 				subject.Audio, subject.VideoEncode = request.Audio, request.VideoEncode
 				subject.Container = "mkv"
 				dir := t.TempDir()
 				subject.SourcePath = filepath.Join(dir, "Example.mkv")
+				subject.Identity.SourcePath = subject.SourcePath
+				subject.ProviderMetadata.SourcePath = subject.SourcePath
 				subject.TorrentPath = filepath.Join(dir, "Example.torrent")
 				subject.MediaInfoTextPath = filepath.Join(dir, "MEDIAINFO.txt")
 				for _, path := range []string{subject.TorrentPath, subject.MediaInfoTextPath} {
@@ -958,7 +958,7 @@ func TestDefinitionDVDRipDryRunIncludesResolution(t *testing.T) {
 				if entry.Payload["type"] != resolution {
 					t.Fatalf("lost resolution fact: %q", entry.Payload["type"])
 				}
-				prefix := "Example Release 2026 "
+				prefix := "IMDb Release 2026 "
 				if category == "TV" {
 					prefix += "S01 "
 				}

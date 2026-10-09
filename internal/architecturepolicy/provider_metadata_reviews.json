@@ -359,33 +359,17 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "8d953776c596653d565c1d63db730f819fcf2b03df0afb02ab0e0ff46361a2a5"
   },
-  "internal/trackers/impl/standalone/bhd/name.go:applyBHDMovieTitleDefaults": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "788a0e85ecb529a8fddcfd3bd5935e54a6f96f7cea981d3c5235add331adfe52"
-  },
-  "internal/trackers/impl/standalone/bhd/name.go:applyBHDTVTitleDefaults": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "83ef88e8824faa2a814122d2c6972ba2062e86a96db935da15b276cc6912a739"
+  "internal/trackers/impl/standalone/bhd/name.go:applyBHDNameQualifiers": {
+    "reason": "Preserves manual alternate titles, title components and year authority. TV year decisions use current source/generation-bound matching TVDB disambiguation independently of centrally selected IMDb titles and movie years.",
+    "sha256": "831b9ab3194bf37018dbaeb2302bd441d8999d3676d03390cd0f297ba2c38adf"
   },
   "internal/trackers/impl/standalone/bhd/name.go:bhdAlternateTitle": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
     "sha256": "fd11af9de2fb77db136a7fcaff830b30d5bff684b96b612cea0c1ee12926db79"
   },
-  "internal/trackers/impl/standalone/bhd/name.go:bhdIMDBTitle": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "7359316e3174a7288b14035f2ec5b27a1fef291aba4b5070afe5d0de01e13935"
-  },
-  "internal/trackers/impl/standalone/bhd/name.go:bhdMovieTitles": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "fe7625c2f1a2b79367d5c683464a87b573acb45880f34c165e072481d4211523"
-  },
-  "internal/trackers/impl/standalone/bhd/name.go:bhdTMDBTitle": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "49bb64aec7a7e86d23aa5c739ba8ffaf3c08a9e18cbef5798042f336c1dbd7a9"
-  },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "sha256": "67540bbe262b8fd19278f0aa8e6183ac76dc6974dc2d89083c12455017e49fcc",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "379328612fbf3820991d43805f2ccf1e773b502795ff58f4dbf542f1094e9235",
+    "reason": "Binds centrally validated current matching IMDb primary titles and movie years. Manual component/name authority, independent TVDB year qualifiers and both required IMDb/TMDB identities remain intact; v8 invalidates old reviewed projections."
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
     "sha256": "b1d2b31864cc4eebdb98a66022464106db026c60f8f2471dba3460b7219d17c4",

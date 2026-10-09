@@ -28,6 +28,11 @@ func TestBHDTVTitlePolicyPrefersManualTitle(t *testing.T) {
 	}
 	meta.EffectiveMetadata.Title = ""
 	meta.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
+	for index := range meta.GeneratedName.Components {
+		if meta.GeneratedName.Components[index].Role == api.NameRoleTitle {
+			meta.GeneratedName.Components[index].Manual = true
+		}
+	}
 	if got := bhdReviewedName(t, meta, nil); got != "Provider Series S01 1080p WEB-DL-GRP" {
 		t.Fatalf("manual-empty title name = %q", got)
 	}
