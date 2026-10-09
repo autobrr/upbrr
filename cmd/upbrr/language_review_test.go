@@ -11,10 +11,75 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestCLIDubRemediationIsVisibleWithoutWaiver(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+		languages  []string
+		personal   bool
+	}{
+		{
+			name:      "personal extra dub",
+			languages: []string{"Japanese", "German"},
+			want:      "separate remux",
+			personal:  true,
+		},
+		{
+			name:      "personal sole dub",
+			languages: []string{"German"},
+			want:      "compliant source",
+			personal:  true,
+		},
+		{
+			name:      "other group extra dub",
+			languages: []string{"Japanese", "German"},
+			want:      "Do not modify another group's release",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			media := api.MediaFacts{OriginalLanguage: "Japanese", TrackCoverageComplete: true}
+			for _, language := range test.languages {
+				media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleProgramme,
+					Languages: []string{language},
+				})
+			}
+			subject := api.TrackerValidationSubject{
+				Tracker:         "EXAMPLE",
+				LanguageFacts:   mediafacts.ResolveLanguages(media),
+				PersonalRelease: test.personal,
+			}
+			failures := trackers.EvaluateLanguagePolicy(subject, trackers.LanguagePolicy{ExtraDubs: trackers.LanguageProhibited})
+			projection := api.TrackerReleaseProjection{
+				TrackerID:   "EXAMPLE",
+				DisplayName: "EXAMPLE",
+				DupeReady:   true,
+				UploadReady: true,
+			}
+			if err := trackers.ApplyProjectionRuleFailures(&projection, failures, api.WorkflowExecutionModeNormal, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			printed := captureWriter(func(output io.Writer) {
+				printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{projection}}, nil, true)
+			})
+			if !strings.Contains(printed, test.want) || !strings.Contains(printed, "fresh metadata and tracker checks") {
+				t.Fatalf("CLI omitted remediation: %s", printed)
+			}
+			if projection.DupeReady || projection.UploadReady || len(projection.RequiredActions) != 0 {
+				t.Fatal("remediation changed strict block or introduced an acknowledgement")
+			}
+			if !test.personal && strings.Contains(printed, "separate remux") {
+				t.Fatal("CLI recommends modifying another group's release")
+			}
+		})
+	}
+}
 
 func TestCLILanguageReviewUsesBackendDecisions(t *testing.T) {
 	t.Parallel()

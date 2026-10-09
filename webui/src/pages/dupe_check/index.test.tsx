@@ -1175,56 +1175,73 @@ describe("DupeCheckPage", () => {
   });
 
   it.each([
-    ["BHD", "Prohibited — non-original, non-English programme dub"],
-    ["AITHER", "Staff approval required — programme-audio exception"],
-    ["LST", "Unresolved — complete title-wide search is required"],
-  ])("keeps %s language blocks separate from warning acknowledgement", (tracker, label) => {
-    const acknowledgeRules = vi.fn(async () => true);
-    const reason = `${label} (${tracker}). Original: Japanese; programme audio: Japanese, English, German.`;
-    renderPage(
-      facetFor(
-        {
-          selectedTrackers: [tracker],
-          projections: {
-            projections: [
-              {
-                trackerId: tracker,
-                displayName: tracker,
-                readiness: "ineligible",
-                // Even an independently acknowledged warning cannot remove this block.
-                waivableRuleFingerprint: "acknowledged-warning",
-                ruleAuthorizationFingerprint: "acknowledged-warning",
-                policyDecisions: [
-                  {
-                    code: "language_extra_dub",
-                    decision: "ineligible",
-                    disposition: "strict",
-                    blocking: true,
-                    message: reason,
-                  },
-                  {
-                    code: "language_subtitles",
-                    decision: "authorized",
-                    disposition: "waivable",
-                    blocking: false,
-                  },
-                ],
-                requiredActions: [],
-              },
-            ],
-          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
-        },
-        { acknowledgeRules },
-      ),
-      [tracker],
-    );
-    expect(screen.getByText(reason)).toBeInTheDocument();
-    expect(screen.getByText("Blocked")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("switch", { name: `Acknowledge warnings for ${tracker}` }),
-    ).not.toBeInTheDocument();
-    expect(acknowledgeRules).not.toHaveBeenCalled();
-  });
+    [
+      "BHD",
+      "Prohibited — non-original, non-English programme dub",
+      "For your personal release, create a separate remux without the prohibited extra programme track(s), retaining original and permitted secondary audio. Then prepare the new file again for fresh metadata and tracker checks.",
+    ],
+    [
+      "BHD",
+      "Prohibited — non-original, non-English programme dub",
+      "Do not modify another group's release. Use a compliant source instead, then prepare that source again for fresh metadata and tracker checks.",
+    ],
+    [
+      "AITHER",
+      "Staff approval required — programme-audio exception",
+      "Use a compliant source with the required programme audio; do not remove original or sole programme audio. Then prepare the new source again for fresh metadata and tracker checks.",
+    ],
+    ["LST", "Unresolved — complete title-wide search is required", ""],
+  ])(
+    "keeps %s language blocks separate from warning acknowledgement",
+    (tracker, label, remediation) => {
+      const acknowledgeRules = vi.fn(async () => true);
+      const reason =
+        `${label} (${tracker}). Original: Japanese; programme audio: Japanese, English, German. ${remediation}`.trim();
+      renderPage(
+        facetFor(
+          {
+            selectedTrackers: [tracker],
+            projections: {
+              projections: [
+                {
+                  trackerId: tracker,
+                  displayName: tracker,
+                  readiness: "ineligible",
+                  // Even an independently acknowledged warning cannot remove this block.
+                  waivableRuleFingerprint: "acknowledged-warning",
+                  ruleAuthorizationFingerprint: "acknowledged-warning",
+                  policyDecisions: [
+                    {
+                      code: "language_extra_dub",
+                      decision: "ineligible",
+                      disposition: "strict",
+                      blocking: true,
+                      message: reason,
+                    },
+                    {
+                      code: "language_subtitles",
+                      decision: "authorized",
+                      disposition: "waivable",
+                      blocking: false,
+                    },
+                  ],
+                  requiredActions: [],
+                },
+              ],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+          },
+          { acknowledgeRules },
+        ),
+        [tracker],
+      );
+      expect(screen.getByText(reason)).toBeInTheDocument();
+      expect(screen.getByText("Blocked")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("switch", { name: `Acknowledge warnings for ${tracker}` }),
+      ).not.toBeInTheDocument();
+      expect(acknowledgeRules).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not invent a language acknowledgement for exempt full-disc backend results", () => {
     renderPage(
