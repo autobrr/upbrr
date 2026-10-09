@@ -81,36 +81,35 @@ func printMetadataDatabaseInfo(output io.Writer, external api.ProviderDisplay) {
 }
 
 func printMetadataExternalIdentity(output io.Writer, preview api.MetadataPreview) {
-	identity := preview.Identity
-	printedHeader := false
-	printHeader := func() {
-		if printedHeader {
-			return
-		}
-		fmt.Fprintln(output)
-		fmt.Fprintln(output, "External IDs")
-		printedHeader = true
+	labels := metadataExternalIDLabels(preview.Identity)
+	if len(labels) == 0 {
+		return
 	}
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "External IDs")
+	for _, label := range labels {
+		fmt.Fprintln(output, label)
+	}
+}
+
+func metadataExternalIDLabels(identity api.ExternalIdentity) []string {
+	var labels []string
 	if identity.TMDBID != 0 {
-		printHeader()
-		fmt.Fprintf(output, "TMDB: %d\n", identity.TMDBID)
+		labels = append(labels, fmt.Sprintf("TMDB: %d", identity.TMDBID))
 	}
 	if identity.IMDBID != 0 {
-		printHeader()
-		fmt.Fprintf(output, "IMDb: %s\n", providerid.IMDb(identity.IMDBID).Prefixed())
+		labels = append(labels, "IMDb: "+providerid.IMDb(identity.IMDBID).Prefixed())
 	}
 	if identity.TVDBID != 0 {
-		printHeader()
-		fmt.Fprintf(output, "TVDB: %d\n", identity.TVDBID)
+		labels = append(labels, fmt.Sprintf("TVDB: %d", identity.TVDBID))
 	}
 	if identity.TVmazeID != 0 {
-		printHeader()
-		fmt.Fprintf(output, "TVmaze: %d\n", identity.TVmazeID)
+		labels = append(labels, fmt.Sprintf("TVmaze: %d", identity.TVmazeID))
 	}
 	if identity.MALID != 0 {
-		printHeader()
-		fmt.Fprintf(output, "MAL: %d\n", identity.MALID)
+		labels = append(labels, fmt.Sprintf("MAL: %d", identity.MALID))
 	}
+	return labels
 }
 
 func primaryMetadataPreview(preview api.MetadataPreview) *api.ProviderDisplay {

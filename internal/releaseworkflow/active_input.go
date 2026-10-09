@@ -357,7 +357,6 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow reserve input: %w", err)
 	}
 	ctx = api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: pending.Fence})
-	m.startActiveInputHeartbeat(ctx, pending.Fence)
 	committed := false
 	defer func() {
 		if committed {
@@ -373,6 +372,9 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			logging.FromContext(ctx, m.logger).Warnf("active input: rollback failed state=recovery_required")
 		}
 	}()
+	if err := m.startActiveInputHeartbeat(ctx, pending.Fence); err != nil {
+		return api.ActiveInputRecord{}, err
+	}
 	if err := m.cancelPriorInputWork(ctx, owner, prior.WorkflowID); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -570,7 +572,9 @@ func (m *Module) recoverActiveInput(
 	if err := m.activeInputs.CompareAndSwapActiveInput(ctx, prior, recovering, now); err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow claim input recovery: %w", err)
 	}
-	m.startActiveInputHeartbeat(ctx, recovering.Fence)
+	if err := m.startActiveInputHeartbeat(ctx, recovering.Fence); err != nil {
+		return api.ActiveInputRecord{}, err
+	}
 	return m.finishActiveInputRecovery(ctx, recovering, requestedOwner, discardInterrupted)
 }
 
@@ -693,6 +697,7 @@ func (m *Module) ReleaseInput(ctx context.Context, owner string, revision uint64
 // Shutdown stops local workflow work, then relinquishes only this
 // coordinator's active-input lease. It is for process shutdown, never runtime
 // replacement, and retains the committed input for recovery.
+// If joining workers fails, shutdown does not relinquish the lease and can be retried.
 func (m *Module) Shutdown(ctx context.Context) error {
 	if m == nil {
 		return nil
@@ -722,9 +727,26 @@ func (m *Module) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (m *Module) startActiveInputHeartbeat(ctx context.Context, fence uint64) {
+// startActiveInputHeartbeat requires activeMu and joins the previous heartbeat
+// before replacing it. The new heartbeat outlives ctx; failed joins retain the
+// previous handle for shutdown retry and never admit an untracked replacement.
+func (m *Module) startActiveInputHeartbeat(ctx context.Context, fence uint64) error {
+	if m.shuttingDown.Load() {
+		return errors.New("release workflow coordinator is shutting down")
+	}
 	if m.activeCancel != nil {
 		m.activeCancel()
+	}
+	// Admission is serialized by activeMu. Bound the join even when a repository
+	// ignores cancellation, and retain its handle on failure for shutdown retry.
+	if m.activeDone != nil {
+		joinCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		select {
+		case <-m.activeDone:
+		case <-joinCtx.Done():
+			return fmt.Errorf("release workflow replace input heartbeat: %w", joinCtx.Err())
+		}
 	}
 	// The coordinator retains the slot after the opening request completes.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -746,6 +768,7 @@ func (m *Module) startActiveInputHeartbeat(ctx context.Context, fence uint64) {
 			}
 		}
 	}()
+	return nil
 }
 
 func (m *Module) activeMutationContext(ctx context.Context, owner string, workflow api.WorkflowID) (context.Context, error) {

@@ -39,6 +39,7 @@ func (s *cliWorkflowSession) completeComposite(
 	if err != nil {
 		return 0, err
 	}
+	s.submissionSuppressed = request.Execution.Mode == api.ReleaseWorkflowUploadModeDebug || s.core.LiveTestEnabled()
 	if s.current.Workflow.ID != "" {
 		request.Authority = &api.WorkflowAuthority{WorkflowID: s.current.Workflow.ID, ExpectedRevision: s.current.Workflow.Revision}
 		// The CLI prepared this exact workflow before starting the composite
@@ -53,6 +54,7 @@ func (s *cliWorkflowSession) completeComposite(
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
 		printCLIWorkflowDupeProgress(s.streams.out, update)
 	})
+	ctx = s.presentationProgressContext(ctx)
 	startUpload := s.core.StartReleaseWorkflowUpload
 	if s.core.LiveTestEnabled() {
 		startUpload = s.core.StartLiveTestReleaseWorkflowUpload
@@ -62,11 +64,13 @@ func (s *cliWorkflowSession) completeComposite(
 		return 0, fmt.Errorf("upbrr: start composite upload: %w", err)
 	}
 	s.current = current
+	s.publishPresentation(ctx)
 	current, err = s.waitForCompositeUpload(ctx, current)
 	if err != nil {
 		return 0, err
 	}
 	s.current = current
+	s.publishPresentation(ctx)
 
 	printProjections := cliWorkflowProjectionOutputEnabled(
 		cfg.Logging.Level,
@@ -79,11 +83,11 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, nil
 		}
 		s.printCompositeProjectionsOnce(printProjections)
-		if (debug || s.core.LiveTestEnabled()) && s.current.DryRun != nil {
+		if s.submissionSuppressed && s.current.DryRun != nil {
 			printCLIWorkflowDryRun(s.streams.out, *s.current.DryRun, s.intent.noSeed, s.current.Projections, s.core.LiveTestEnabled())
 			return 0, nil
 		}
-		if !debug && s.current.UploadResult != nil {
+		if !s.submissionSuppressed && s.current.UploadResult != nil {
 			return printCLIWorkflowUploadResult(s.streams.out, s.current.UploadResult)
 		}
 		if s.current.Selection != nil && len(s.current.Selection.TrackerIDs) == 0 {
@@ -100,6 +104,7 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, feedbackErr
 		}
 		if declined {
+			s.publishDeclinedAction(*action)
 			return 0, nil
 		}
 		next, submitErr := s.core.SubmitReleaseWorkflowUploadFeedback(
@@ -116,6 +121,7 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, err
 		}
 		s.current = next
+		s.publishPresentation(ctx)
 	}
 	return 0, errors.New("upbrr: composite upload exceeded the transition limit")
 }
@@ -183,7 +189,7 @@ func firstPendingCLICompositeAction(actions []api.RequiredAction) *api.RequiredA
 }
 
 func (s *cliWorkflowSession) collectCompositeUploadFeedback(
-	_ context.Context,
+	ctx context.Context,
 	reader *bufio.Reader,
 	cfg config.Config,
 	logger api.Logger,
@@ -205,6 +211,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation {
 		return feedback, false, fmt.Errorf("upbrr: strict unattended upload requires global action %s: %s", action.Kind, action.Prompt)
 	}
+	s.bindAction(ctx, action, action.Prompt)
 
 	switch action.Kind {
 	case api.RequiredActionConfirmCorrections:
@@ -405,8 +412,12 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			tracker = string(trackerID)
 		}
 		dupe := dupeByTracker[trackerID]
-		fmt.Fprintf(s.streams.out, "Tracker: %s (%s)\n", tracker, trackerID)
+		var evidence strings.Builder
+		// Capture evidence before console output, which may fail independently.
+		output := io.MultiWriter(&evidence, s.streams.out)
+		fmt.Fprintf(output, "Tracker: %s (%s)\n", tracker, trackerID)
 		fmt.Fprintf(s.streams.out, "Upload name: %q\n", projection.UploadReleaseName)
+		fmt.Fprintf(&evidence, "Upload name: %s\n", projection.UploadReleaseName)
 		if len(projection.EditionFeatures) > 0 {
 			selected := make([]string, 0, len(projection.EditionFeatures))
 			for _, feature := range projection.EditionFeatures {
@@ -414,10 +425,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 					selected = append(selected, "["+feature.Label+"]")
 				}
 			}
-			fmt.Fprintf(s.streams.out, "%s edition/features: %s\n", trackerID, emptyCLIValue(strings.Join(selected, " ")))
+			fmt.Fprintf(output, "%s edition/features: %s\n", trackerID, emptyCLIValue(strings.Join(selected, " ")))
 		}
 		fmt.Fprintf(
-			s.streams.out,
+			output,
 			"Duplicate check: decision=%s candidates=%d search_complete=%t policy=%s\n",
 			dupe.Decision,
 			len(dupe.Matches),
@@ -425,14 +436,17 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			emptyCLIValue(dupe.PolicyID),
 		)
 		fmt.Fprintf(
-			s.streams.out,
+			output,
 			"Requirements: screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t\n",
 			projection.Artifacts.ScreenshotCount,
 			projection.Artifacts.DVDMenuCount,
 			projection.Artifacts.ImageHosting,
 			projection.Artifacts.Description,
 		)
-		printCLICompositeDupeMatches(s.streams.out, dupe.Matches)
+		printCLICompositeDupeMatches(output, dupe.Matches)
+		if writer, ok := s.streams.out.(*cliPresentationWriter); ok {
+			writer.question.Evidence = safeTerminalText(evidence.String())
+		}
 		if logger != nil {
 			logger.Debugf(
 				"tracker approval: tracker=%s screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t",
@@ -450,6 +464,8 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		}
 		if confirmed {
 			approved = append(approved, trackerID)
+		} else {
+			publishCLITrackerDecline(s.streams, trackerID)
 		}
 	}
 	if len(action.Options) == 0 {
@@ -485,7 +501,17 @@ func selectCLICompositeOption(
 	for index, option := range action.Options {
 		fmt.Fprintf(output, "%d. %s\n", index+1, option.Label)
 	}
-	answer, err := promptLine(reader, output, label+" number: ")
+	options := make([]cliPromptOption, len(action.Options))
+	for index, option := range action.Options {
+		options[index] = cliPromptOption{Label: option.Label, Value: option.Value}
+	}
+	answer, err := askCLIField(reader, output, cliPrompt{
+		Kind:     cliPromptSelect,
+		Question: label + " number: ",
+		Evidence: action.Prompt,
+		Options:  options,
+		Required: true,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -627,6 +653,24 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		emptyCLIValue(result.PolicyID),
 	)
 	printCLICompositeDupeMatches(s.streams.out, result.Matches)
+	var evidence strings.Builder
+	fmt.Fprintf(
+		&evidence,
+		"Tracker: %s\nUpload name: %s\nDecision: %s\nCandidates: %d\nSearch complete: %t\nPolicy: %s\n",
+		result.TrackerID,
+		result.UploadReleaseName,
+		result.Decision,
+		len(result.Matches),
+		result.Search.Complete,
+		emptyCLIValue(result.PolicyID),
+	)
+	printCLICompositeDupeMatches(&evidence, result.Matches)
+	if cliDupeRequiresRiskAcknowledgement(result) {
+		evidence.WriteString("Risk acknowledgement required: incomplete or manual evidence.\n")
+	}
+	if writer, ok := s.streams.out.(*cliPresentationWriter); ok {
+		writer.question.Evidence = safeTerminalText(evidence.String())
+	}
 	fmt.Fprintln(s.streams.out)
 	prompt := fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID)
 	if cliDupeRequiresRiskAcknowledgement(result) {
@@ -660,8 +704,7 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 		fmt.Fprintf(output, "  %d. %s\n", index+1, strings.TrimSpace(match.Name))
 		fmt.Fprintf(
 			output,
-			"     Relation: %s  Evidence: %s/%s\n",
-			emptyCLIValue(string(match.Relation)),
+			"     Evidence: %s/%s\n",
 			emptyCLIValue(string(match.EvidenceStatus)),
 			emptyCLIValue(string(match.HDR.Origin)),
 		)
@@ -682,13 +725,6 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 			}
 		} else if reason := strings.TrimSpace(match.Reason); reason != "" {
 			fmt.Fprintf(output, "     Reason: %s\n", reason)
-		}
-		if len(match.HDR.Formats) > 0 {
-			formats := make([]string, len(match.HDR.Formats))
-			for index, format := range match.HDR.Formats {
-				formats[index] = string(format)
-			}
-			fmt.Fprintf(output, "     HDR: %s\n", strings.Join(formats, "+"))
 		}
 		if link := strings.TrimSpace(logging.SanitizeMessage(match.Link)); link != "" {
 			fmt.Fprintf(output, "     Link: %s\n", link)

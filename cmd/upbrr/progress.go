@@ -254,6 +254,9 @@ func printCLIWorkflowDupeProgress(output io.Writer, update api.DupeProgressUpdat
 		return
 	}
 	lineEnd := "\r"
+	if !isCLITerminal(output) {
+		lineEnd = "\n"
+	}
 	if update.Completed >= update.Total {
 		lineEnd = "\n"
 	}
