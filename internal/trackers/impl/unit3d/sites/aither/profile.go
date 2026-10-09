@@ -27,20 +27,7 @@ func Profile() unit3d.Profile {
 			ApplyAdditionalPayload:  additionalPayload,
 			ProjectionQuestionnaire: languageQuestionnaire,
 		},
-		DupePolicy: &trackers.DupePolicy{
-			ID:         "aither/duplicate/v2",
-			EvidenceID: "aither-slots-trumping",
-			SearchScope: trackers.DupeSearchScope{
-				MaxPages: 100,
-			},
-			SlotDimensions: []trackers.DupeDimension{
-				trackers.DupeDimensionType,
-				trackers.DupeDimensionResolution,
-				trackers.DupeDimensionHDR,
-			},
-			PrecedenceRules:     trackers.DirectionalMediaKindRules("aither-slots-trumping", "web_dl", "web_rip"),
-			SizeVariancePercent: 20,
-		},
+		DupePolicy: duplicatePolicy(),
 		BannedPolicy: &trackers.BannedGroupPolicy{
 			EndpointPath:  "/api/blacklists/releasegroups",
 			RequireAPIKey: true,

@@ -1348,8 +1348,8 @@
     "sha256": "f80e3cdfd8b20d9c2552dbf635dcf130b434d04bf76cab0de282925cdb001c20"
   },
   "internal/trackers/impl/unit3d/sites/aither/profile.go:Profile": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "25152c36a6afd1f97d4a70ab80061da985b0782c121474bf0f0ae482199c589a"
+    "reason": "Duplicate-slot policy wiring review: existing namePolicy, prepared-source/generation provider evidence, and manual title/component precedence are unchanged; profile only binds the versioned duplicate policy.",
+    "sha256": "70a06824732224e94af445f9acac1d7b34c439163aa7ffeb94a36798edee3f74"
   },
   "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
     "reason": "Adds a canonical category-family catalog for broad duplicate gathering. The catalog reads no provider metadata; existing localized naming and upload taxonomy retain their prepared-provider and manual-precedence paths.",

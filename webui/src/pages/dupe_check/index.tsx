@@ -155,6 +155,16 @@ const trackerSummary = (
   if (!result) return "Not checked";
   if (result.status === "failed") return "Check failed";
   const count = actionMatches(result).length;
+  if (!count && result.reviewReasons?.length) {
+    switch (result.decision) {
+      case "accepted":
+        return "Policy review · blocked";
+      case "ignored":
+        return "Policy review · acknowledged";
+      case "pending":
+        return "Policy review needed";
+    }
+  }
   switch (result.decision) {
     case "accepted":
       return `${count} potential dupe${count === 1 ? "" : "s"} · blocked`;
@@ -311,7 +321,8 @@ function WorkflowDupeAssessmentView({
           namesModified || (uploadName && releaseNameNotices.length),
         );
         const blockReasons = trackerBlockReasons(projection, readiness, result);
-        const riskAcknowledgement = requiresRiskAcknowledgement(result);
+        const riskAcknowledgement =
+          Boolean(result?.reviewReasons?.length) || requiresRiskAcknowledgement(result);
         const canOverride = Boolean(
           result &&
           !inClient &&
@@ -429,6 +440,19 @@ function WorkflowDupeAssessmentView({
                     ))}
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+
+            {result?.reviewReasons?.length ? (
+              <div
+                aria-label={`${trackerID} duplicate policy review`}
+                className="grid gap-1 text-sm"
+              >
+                {uniqueMessages(
+                  result.reviewReasons.map((reason) => reason.message || reason.code),
+                ).map((message) => (
+                  <p key={message}>{message}</p>
+                ))}
               </div>
             ) : null}
 

@@ -381,6 +381,14 @@ func cloneDupePolicy(policy DupePolicy) DupePolicy {
 	policy.PrecedenceRules = cloneDupeRules(policy.PrecedenceRules)
 	policy.ManualReviewRules = cloneDupeRules(policy.ManualReviewRules)
 	policy.SetRules = cloneDupeSetRules(policy.SetRules)
+	policy.Slots = append([]DupeSlot(nil), policy.Slots...)
+	for index := range policy.Slots {
+		policy.Slots[index].Predicates = cloneDupeSetPredicates(policy.Slots[index].Predicates)
+	}
+	policy.TargetReviewRules = append([]DupeTargetReview(nil), policy.TargetReviewRules...)
+	for index := range policy.TargetReviewRules {
+		policy.TargetReviewRules[index].Predicates = cloneDupeSetPredicates(policy.TargetReviewRules[index].Predicates)
+	}
 	policy.SizeVarianceResolutions = append([]string(nil), policy.SizeVarianceResolutions...)
 	policy.SizeVarianceTypes = append([]string(nil), policy.SizeVarianceTypes...)
 	return policy
@@ -406,6 +414,7 @@ func cloneDupeSetPredicates(predicates []DupeSetPredicate) []DupeSetPredicate {
 	result := make([]DupeSetPredicate, len(predicates))
 	for index, predicate := range predicates {
 		predicate.Values = append([]string(nil), predicate.Values...)
+		predicate.ValueTokens = append([]string(nil), predicate.ValueTokens...)
 		predicate.ExcludedValues = append([]string(nil), predicate.ExcludedValues...)
 		result[index] = predicate
 	}
@@ -686,9 +695,19 @@ func validateDupePolicy(policy DupePolicy) error {
 	if policy.ExactMatchOnly || policy.PackContainmentRequiresReview ||
 		!isCompatibility && (len(policy.SlotDimensions) > 0 || len(policy.OptionalSlotDimensions) > 0 || len(policy.CompleteSlotDimensions) > 0 ||
 			len(policy.RequiredDimensions) > 0 || len(policy.SuppressGeneralCoexistence) > 0 || len(policy.CoexistenceRules) > 0 ||
-			len(policy.PrecedenceRules) > 0 || len(policy.SetRules) > 0 || policy.SizeVariancePercent > 0) {
+			len(policy.PrecedenceRules) > 0 || len(policy.SetRules) > 0 || len(policy.Slots) > 0 || len(policy.TargetReviewRules) > 0 || policy.SizeVariancePercent > 0) {
 		if strings.TrimSpace(policy.EvidenceID) == "" {
 			return errors.New("automatic policy has no evidence ID")
+		}
+	}
+	for _, slot := range policy.Slots {
+		if strings.TrimSpace(slot.ID) == "" || len(slot.Predicates) == 0 {
+			return errors.New("slot has no ID or predicates")
+		}
+	}
+	for _, review := range policy.TargetReviewRules {
+		if strings.TrimSpace(review.ID) == "" || strings.TrimSpace(review.Reason) == "" || len(review.Predicates) == 0 {
+			return errors.New("target review has no ID, reason, or predicates")
 		}
 	}
 	seenRuleIDs := make(map[string]struct{})

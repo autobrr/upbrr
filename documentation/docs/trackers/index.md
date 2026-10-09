@@ -42,6 +42,8 @@ Warnings that permit an override can block a live upload while allowing debug pr
 
 Tracker settings can restrict duplicate competition by incoming release group. When a tag matches that tracker's **Duplicate bypass groups** or **Internal groups**, confirmed candidates from other groups coexist and are omitted from slot-capacity decisions. Exact duplicates, same-group candidates, conflicting evidence, and unknown groups keep their normal duplicate result. See [tracker group policy lists](../web-ui/settings/trackers.md#group-policy-lists).
 
+A completed search with no matches can still require duplicate-policy review when ordinary-slot eligibility, source availability, or staff-owned decisions are unresolved. Review these reasons alongside potential duplicates. Acknowledgement records your decision for the current evidence; it does not establish tracker staff approval or missing source evidence. Changing the reviewed name, relevant facts, or review reasons requires a new decision.
+
 `--skip-dupe-check` and similar bypasses remove safeguards. Use them only when you have manually completed the equivalent tracker checks.
 
 ### Approve tracker warnings

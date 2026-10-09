@@ -278,6 +278,10 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 		),
 	}
+	if target.VideoEncode != "" && target.VideoCodec != "" && canonicalCodec(target.VideoEncode) != canonicalCodec(target.VideoCodec) {
+		facts.Codec.Status = FactContradictory
+		facts.Codec.Contradictions = append(facts.Codec.Contradictions, canonicalCodec(target.VideoCodec))
+	}
 	if target.SizeBytes > 0 {
 		facts.Size = Fact{
 			Value:        strconv.FormatInt(target.SizeBytes, 10),
@@ -299,11 +303,7 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 		facts.Files = missingFact()
 	}
 	facts.MediaKind, facts.MediaClass, facts.SourceFamily = deriveMediaFacts(
-		facts.Type.Value,
-		facts.Source.Value,
-		facts.Container.Value,
-		target.VideoEncode,
-		title.MediaKind,
+		facts.Type.Value, facts.Source.Value, facts.Container.Value, target.VideoEncode, title.MediaKind,
 	)
 	facts.HDR = mergeHDRWithTitle(facts.HDR, title.HDR)
 	return facts
@@ -406,6 +406,11 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 		),
 	}
+	// Coordinate enrichment remains useful for scope comparison, but a title
+	// cannot prove complete collection membership for an automatic vacant slot.
+	if candidate.contentFromTitle {
+		facts.Content.Origin = FactOriginTrackerTitle
+	}
 	if candidate.SizeKnown && candidate.SizeBytes > 0 {
 		facts.Size = Fact{
 			Value:        strconv.FormatInt(candidate.SizeBytes, 10),
@@ -435,11 +440,7 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 		facts.Files = missingFact()
 	}
 	facts.MediaKind, facts.MediaClass, facts.SourceFamily = deriveMediaFacts(
-		facts.Type.Value,
-		facts.Source.Value,
-		facts.Container.Value,
-		"",
-		title.MediaKind,
+		facts.Type.Value, facts.Source.Value, facts.Container.Value, "", title.MediaKind,
 	)
 	facts.HDR = mergeHDRWithTitle(facts.HDR, title.HDR)
 	return facts
@@ -1330,11 +1331,11 @@ func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) F
 	case trackerspkg.DupeDimensionSource:
 		return facts.Source
 	case trackerspkg.DupeDimensionMediaKind:
-		return canonicalFact(string(facts.MediaKind))
+		return derivedMediaFact(facts, dimension, string(facts.MediaKind))
 	case trackerspkg.DupeDimensionMediaClass:
-		return canonicalFact(string(facts.MediaClass))
+		return derivedMediaFact(facts, dimension, string(facts.MediaClass))
 	case trackerspkg.DupeDimensionSourceFamily:
-		return canonicalFact(string(facts.SourceFamily))
+		return derivedMediaFact(facts, dimension, string(facts.SourceFamily))
 	case trackerspkg.DupeDimensionResolution:
 		return facts.Resolution
 	case trackerspkg.DupeDimensionCodec:
@@ -1380,4 +1381,41 @@ func canonicalFact(value string) Fact {
 		Status: FactComplete,
 		Origin: FactOriginTrackerPolicy,
 	}
+}
+
+// derivedMediaFact retains partial provenance when classification depends on a
+// title. Only independently sufficient structured facts establish completeness.
+func derivedMediaFact(facts normalizedFacts, dimension trackerspkg.DupeDimension, value string) Fact {
+	result := canonicalFact(value)
+	if result.Status == FactMissing {
+		return result
+	}
+	for _, fact := range []Fact{facts.Type, facts.Source, facts.Container} {
+		if fact.Status == FactContradictory {
+			result.Status = FactContradictory
+			return result
+		}
+	}
+	structured := func(fact Fact) string {
+		if fact.Status == FactComplete {
+			return fact.Value
+		}
+		return ""
+	}
+	kind, class, family := deriveMediaFacts(structured(facts.Type), structured(facts.Source), structured(facts.Container), "", mediaKindUnknown)
+	var authoritative string
+	if dimension == trackerspkg.DupeDimensionMediaKind {
+		authoritative = string(kind)
+	}
+	if dimension == trackerspkg.DupeDimensionMediaClass {
+		authoritative = string(class)
+	}
+	if dimension == trackerspkg.DupeDimensionSourceFamily {
+		authoritative = string(family)
+	}
+	if authoritative != value {
+		result.Status = FactPartial
+		result.Origin = FactOriginTrackerTitle
+	}
+	return result
 }

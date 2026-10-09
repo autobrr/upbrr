@@ -23,36 +23,37 @@ var (
 
 // TrackerCandidate is protocol-independent private candidate evidence.
 type TrackerCandidate struct {
-	ID              string
-	Name            string
-	Files           []string
-	FileCount       int
-	SizeBytes       int64
-	SizeKnown       bool
-	Category        string
-	Type            string
-	CanonicalType   string
-	Source          string
-	Resolution      string
-	Codec           string
-	Container       string
-	Provider        string
-	Group           string
-	ReleaseOrigin   string
-	Edition         string
-	Region          string
-	ThreeD          string
-	Repack          string
-	Season          int
-	Episode         int
-	Date            string
-	Pack            bool
-	Internal        bool
-	Trumpable       bool
-	Flags           []string
-	HDR             api.HDRFacts
-	DetailsLink     string
-	privateDownload string
+	ID               string
+	Name             string
+	Files            []string
+	FileCount        int
+	SizeBytes        int64
+	SizeKnown        bool
+	Category         string
+	Type             string
+	CanonicalType    string
+	Source           string
+	Resolution       string
+	Codec            string
+	Container        string
+	Provider         string
+	Group            string
+	ReleaseOrigin    string
+	Edition          string
+	Region           string
+	ThreeD           string
+	Repack           string
+	Season           int
+	Episode          int
+	Date             string
+	Pack             bool
+	Internal         bool
+	Trumpable        bool
+	Flags            []string
+	HDR              api.HDRFacts
+	DetailsLink      string
+	privateDownload  string
+	contentFromTitle bool
 }
 
 // NormalizeCandidate converts one adapter entry without exposing private
@@ -96,6 +97,7 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 		candidate.HDR = NormalizeTrackerHDRFlags(entry.Flags, entry.FlagsPresent, entry.FlagsComplete)
 	}
 	enrichCandidateCoordinatesFromTitle(&candidate)
+	candidate.contentFromTitle = candidate.Season != entry.Season || candidate.Episode != entry.Episode || candidate.Pack != entry.Pack || candidate.Date != ""
 	if candidate.HDR.Status == api.HDREvidenceMissing {
 		if titleHDR := hdrFactsFromCandidateTitle(candidate.Name); titleHDR.Status != api.HDREvidenceMissing {
 			candidate.HDR = titleHDR

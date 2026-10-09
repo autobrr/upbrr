@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v8"
+const GeneralDuplicatePolicyID = "general/duplicate/v9"
 
 // DuplicateSearchContractID versions authoritative search scope and completion semantics.
 // Projection/catalog fingerprints and persisted private evidence carry this ID so older
@@ -550,6 +550,11 @@ type DupePolicy struct {
 	DefaultTitleEdition string
 	// SearchScope declares how many pages may be consumed before search becomes incomplete.
 	SearchScope DupeSearchScope
+	// Slots lists the ordinary conditional slots. An unlisted or unproven
+	// combination requires review, including when a search returns no candidates.
+	Slots []DupeSlot `json:",omitempty"`
+	// TargetReviewRules retain source or staff decisions that search cannot prove.
+	TargetReviewRules []DupeTargetReview `json:",omitempty"`
 	// SlotDimensions are compared to establish tracker slot membership.
 	SlotDimensions []DupeDimension
 	// OptionalSlotDimensions establish distinct slots when either side carries
@@ -678,6 +683,8 @@ const (
 // are ANDed so policies can express compound tracker slots without custom
 // evaluator branches.
 type DupeCondition struct {
+	// Optional treats two absent variant facts as the same default presentation.
+	Optional         bool `json:",omitempty"`
 	Dimension        DupeDimension
 	TargetValues     []string
 	CandidateValues  []string
@@ -706,12 +713,36 @@ type DupeRule struct {
 
 // DupeSetPredicate is one declarative target or candidate fact predicate.
 type DupeSetPredicate struct {
+	// ValueTokens matches any exact token in a normalized '+'-separated signature.
+	// It never parses raw release titles.
+	ValueTokens      []string `json:",omitempty"`
 	Dimension        DupeDimension
 	Values           []string
 	ExcludedValues   []string
 	RequiresComplete bool
 	MatchTarget      bool
 	Optional         bool
+}
+
+// DupeSlot groups complete normalized facts into one permitted ordinary slot.
+// Repeated IDs permit alternative presentations in the same compatibility slot.
+type DupeSlot struct {
+	ID         string
+	Predicates []DupeSetPredicate
+	// ReviewReason describes external evidence required even with no existing release.
+	ReviewReason string
+}
+
+// DupeTargetReview describes a source or staff decision independently of occupancy.
+// Predicates select known review conditions; ordinary-slot evidence handles
+// missing eligibility facts. Partial facts may require review but never authorize it.
+type DupeTargetReview struct {
+	// IncludeIndeterminate retains review when known prerequisites match but
+	// the remaining condition lacks evidence. Known mismatches still skip it.
+	IncludeIndeterminate bool `json:",omitempty"`
+	ID                   string
+	Predicates           []DupeSetPredicate
+	Reason               string
 }
 
 // DupeSetCapacityOverride lowers a rule's capacity when any candidate matches
@@ -723,6 +754,9 @@ type DupeSetCapacityOverride struct {
 
 // DupeSetRule declares one collection-level capacity policy.
 type DupeSetRule struct {
+	// RequireSameContent excludes disjoint scopes and withholds capacity when
+	// complete same-scope evidence is unavailable.
+	RequireSameContent           bool `json:",omitempty"`
 	ID                           string
 	EvidenceID                   string
 	TargetPredicates             []DupeSetPredicate

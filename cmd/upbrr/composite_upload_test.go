@@ -1033,3 +1033,23 @@ func TestCLICompositeEditionFeaturesDoNotPromptInUnattendedMode(t *testing.T) {
 		t.Fatalf("unattended review: error=%v declined=%t output=%q", err, declined, output.String())
 	}
 }
+
+func TestCLICompositeTargetReviewWithoutCandidates(t *testing.T) {
+	var output strings.Builder
+	session := &cliWorkflowSession{streams: cliIO{out: &output}, current: releaseworkflow.CommandResult{Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+		TrackerID:     "EXAMPLE",
+		Decision:      api.DupeDecisionPending,
+		Search:        api.DupeSearchEvidence{Complete: true},
+		ReviewReasons: []api.DupeReason{{Code: "source_review", Message: "Verify source eligibility."}},
+	}}}}}
+	feedback, declined, err := session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader("y\n")), api.RequiredAction{TrackerID: "EXAMPLE"}, api.ReleaseWorkflowUploadFeedback{})
+	if err != nil || declined {
+		t.Fatalf("collect target review: %v", err)
+	}
+	if feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionIgnored {
+		t.Fatalf("missing bound duplicate feedback: %#v", feedback)
+	}
+	if !strings.Contains(output.String(), "Policy review: Verify source eligibility.") || !strings.Contains(output.String(), "Acknowledge incomplete/manual policy evidence") || strings.Contains(output.String(), "Duplicate candidates:") {
+		t.Fatalf("target review output: %s", output.String())
+	}
+}

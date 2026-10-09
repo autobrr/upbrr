@@ -132,6 +132,43 @@ describe("DupeCheckPage", () => {
     expect(setIgnored).toHaveBeenCalledWith("SP", true);
   });
 
+  it.each(["pending", "ignored"])(
+    "shows target policy review without candidates (%s)",
+    (decision) => {
+      const setIgnored = vi.fn();
+      renderPage(
+        facetFor(
+          {
+            status: "ready",
+            assessment: {
+              results: [
+                {
+                  trackerId: "EXAMPLE",
+                  decision,
+                  status: "blocked",
+                  search: { complete: true, pages: 1, candidateCount: 0 },
+                  reviewReasons: [{ code: "source_review", message: "Verify source eligibility." }],
+                },
+              ],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+            projections: {
+              projections: [{ trackerId: "EXAMPLE", readiness: "ready" }],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+          },
+          { setIgnored },
+        ),
+      );
+      expect(screen.getByText("Verify source eligibility.")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Potential duplicates")).not.toBeInTheDocument();
+      const control = screen.getByRole("switch", {
+        name: "Acknowledge dupe risk for EXAMPLE",
+      });
+      expect(control).toHaveAttribute("aria-checked", String(decision === "ignored"));
+      fireEvent.click(control);
+      expect(setIgnored).toHaveBeenCalledWith("EXAMPLE", decision !== "ignored");
+    },
+  );
+
   it("loads questions for initially selected trackers and starts their disclosures closed", () => {
     const facet = facetFor({
       questionnaires: [
