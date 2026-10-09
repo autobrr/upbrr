@@ -946,3 +946,28 @@ func TestDuplicateTargetWithoutProjectionRetainsEditionParts(t *testing.T) {
 		t.Fatalf("structured target edition = %q, legacy = %q", structured.Edition, legacy.Edition)
 	}
 }
+
+func TestDupeProgressMessageDistinguishesPolicyReview(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		candidates []api.DupeCandidateEvaluation
+		want       string
+	}{
+		{"no candidates", nil, "duplicate policy review required"},
+		{"coexisting candidates", []api.DupeCandidateEvaluation{{Relation: api.DupeRelationCoexists}}, "duplicate policy review required"},
+		{"actionable candidate", []api.DupeCandidateEvaluation{{Relation: api.DupeRelationSameSlot}}, "1 candidates require attention"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := api.DupeCheckResult{
+				Search:        api.DupeSearchEvidence{Complete: true},
+				Evaluations:   test.candidates,
+				ReviewReasons: []api.DupeReason{{Code: "slot_source_review", Message: "Source review required"}},
+				HasDupes:      true,
+			}
+			if got := dupeProgressMessage(result); got != test.want {
+				t.Fatalf("progress = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

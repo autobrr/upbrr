@@ -1142,7 +1142,11 @@ func dupeProgressMessage(result api.DupeCheckResult) string {
 			return "search incomplete; review required"
 		}
 		if result.HasDupes {
-			return fmt.Sprintf("%d candidates require attention", actionableCandidateCount(result.Evaluations))
+			count := actionableCandidateCount(result.Evaluations)
+			if count == 0 && len(result.ReviewReasons) > 0 {
+				return "duplicate policy review required"
+			}
+			return fmt.Sprintf("%d candidates require attention", count)
 		}
 		return "no dupes found"
 	}
