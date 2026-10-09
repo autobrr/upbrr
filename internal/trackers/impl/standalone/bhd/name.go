@@ -16,17 +16,13 @@ import (
 
 var bhdAudioChannelPattern = regexp.MustCompile(`^(.+?)(\d+(?:\.\d+){1,2})$`)
 
-// applyBHDNameDefaults projects BHD's title, media, and group conventions onto
+// applyBHDNameDefaults projects BHD's qualifiers, media, and group conventions onto
 // a generated document. It never interprets an already-rendered release name.
 func applyBHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
 	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
 		return fmt.Errorf("apply BHD language markers: %w", err)
 	}
-	if isBHDTV(meta) {
-		if err := applyBHDTVTitleDefaults(editor, meta); err != nil {
-			return err
-		}
-	} else if err := applyBHDMovieTitleDefaults(editor, meta); err != nil {
+	if err := applyBHDNameQualifiers(editor, meta); err != nil {
 		return err
 	}
 	if component, exists := editor.Component(api.NameRoleAudio); exists && component.Present {
@@ -65,55 +61,30 @@ func applyBHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 	return applyBHDGroupDefaults(editor, meta)
 }
 
-func applyBHDMovieTitleDefaults(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	title, alternate, year := bhdMovieTitles(meta)
-	if title != "" {
-		if err := editor.Set(api.NameRoleTitle, title); err != nil {
-			return bhdNameEditorError("set movie title", err)
-		}
-	}
-	if alternate == "" {
-		if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
-			return bhdNameEditorError("omit movie alternate title", err)
-		}
-	} else if err := editor.Set(api.NameRoleAlternateTitle, "AKA "+alternate); err != nil {
-		return bhdNameEditorError("set movie alternate title", err)
-	}
-	if year <= 0 {
-		return nil
-	}
-	if err := editor.Set(api.NameRoleYear, strconv.Itoa(year)); err != nil {
-		return bhdNameEditorError("set movie year", err)
-	}
-	if err := editor.Include(api.NameRoleYear); err != nil {
-		return bhdNameEditorError("include movie year", err)
-	}
-	return nil
-}
-
-func applyBHDTVTitleDefaults(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
-		return nil
-	}
-	tvdb := meta.ProviderMetadata.TVDB
-	title := trackers.PreferredTitle(meta, firstBHDTitle(tvdb.NameEnglish, tvdb.NameDisambiguation.CanonicalName))
-	if title != "" {
-		if err := editor.Set(api.NameRoleTitle, title); err != nil {
-			return bhdNameEditorError("set TV title", err)
-		}
-	}
+// applyBHDNameQualifiers keeps IMDb title and movie-year selection in the central
+// policy and uses current TVDB evidence only for automatic TV year inclusion.
+func applyBHDNameQualifiers(editor *trackers.NameEditor, meta api.UploadSubject) error {
 	if alternate := bhdAlternateTitle(meta); alternate == "" {
 		if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
-			return bhdNameEditorError("omit TV alternate title", err)
+			return bhdNameEditorError("omit alternate title", err)
 		}
 	} else if err := editor.Set(api.NameRoleAlternateTitle, "AKA "+alternate); err != nil {
-		return bhdNameEditorError("set TV alternate title", err)
+		return bhdNameEditorError("set alternate title", err)
 	}
-	evidence := tvdb.NameDisambiguation
-	if meta.EffectiveMetadata.YearProvenance.IsManual() {
-		evidence.SeriesYear = meta.EffectiveMetadata.Year
+	if !isBHDTV(meta) || meta.EffectiveMetadata.YearProvenance.IsManual() {
+		return nil
 	}
-	if !evidence.IncludeYear || evidence.SeriesYear <= 0 {
+	evidence, ok := trackers.CurrentTVDBNameDisambiguation(editor, meta)
+	if !ok {
+		return nil
+	}
+	if !evidence.IncludeYear {
+		if err := editor.Omit(api.NameRoleYear); err != nil {
+			return bhdNameEditorError("omit TV year", err)
+		}
+		return nil
+	}
+	if evidence.SeriesYear <= 0 {
 		return nil
 	}
 	if err := editor.Set(api.NameRoleYear, strconv.Itoa(evidence.SeriesYear)); err != nil {
@@ -123,35 +94,6 @@ func applyBHDTVTitleDefaults(editor *trackers.NameEditor, meta api.UploadSubject
 		return bhdNameEditorError("include TV year", err)
 	}
 	return nil
-}
-
-func firstBHDTitle(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-// bhdMovieTitles preserves finalized manual title facts while preferring the
-// provider title selected by BHD.
-func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
-	providerTitle := ""
-	providerYear := 0
-	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
-		providerTitle = firstBHDTitle(
-			bhdTMDBTitle(meta.ProviderMetadata.TMDB),
-			bhdIMDBTitle(meta.ProviderMetadata.IMDB),
-		)
-		if meta.ProviderMetadata.TMDB != nil {
-			providerYear = meta.ProviderMetadata.TMDB.Year
-		}
-		if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-			providerYear = meta.ProviderMetadata.IMDB.Year
-		}
-	}
-	return trackers.PreferredTitle(meta, providerTitle), bhdAlternateTitle(meta), trackers.PreferredYear(meta, providerYear)
 }
 
 func bhdAlternateTitle(meta api.UploadSubject) string {
@@ -251,20 +193,6 @@ func applyBHDGroupDefaults(editor *trackers.NameEditor, meta api.UploadSubject) 
 		return bhdNameEditorError("include group", err)
 	}
 	return nil
-}
-
-func bhdTMDBTitle(metadata *api.TMDBMetadata) string {
-	if metadata == nil {
-		return ""
-	}
-	return metadata.Title
-}
-
-func bhdIMDBTitle(metadata *api.IMDBMetadata) string {
-	if metadata == nil {
-		return ""
-	}
-	return metadata.Title
 }
 
 func bhdNameEditorError(action string, err error) error {

@@ -150,11 +150,8 @@ func TestBHDSourceHistoryDoesNotGateProjection(t *testing.T) {
 		Tag:        "GRP",
 	})
 	subject.Source, subject.Type, subject.Container = "WEB", "WEBDL", "mkv"
-	subject.Identity = api.ExternalIdentity{
-		Category: api.CanonicalCategoryMovie,
-		TMDBID:   1234567,
-		IMDBID:   1234567,
-	}
+	subject.Identity.TMDBID, subject.Identity.IMDBID = 1234567, 1234567
+	subject.ProviderMetadata.IMDB.IMDBID = subject.Identity.IMDBID
 	subject.EffectiveMetadata.Title, subject.EffectiveMetadata.Year = "Example Release", 2026
 	subject.Release.Category = "MOVIE"
 	subject.Audio, subject.VideoCodec = "DD 2.0", "H.264"
