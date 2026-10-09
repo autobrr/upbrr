@@ -484,11 +484,30 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		return strings.TrimSpace(metadata.TMDB.Logo) == "" && !metadata.TMDB.LogoLookupAttempted && !tmdbLogoFetchAttempted
 	}
+	imdbSpecialSeason, imdbSpecialEpisode := meta.HasExplicitSeasonZero(), meta.EpisodeInt
+	manualSeason, manualEpisode, manualSeasonSet := manualSeasonEpisodeInstructionValues(meta.ReleaseNameOverrides)
+	if meta.ReleaseNameOverrides.Season != nil {
+		imdbSpecialSeason = manualSeasonSet && manualSeason == 0
+	}
+	if meta.ReleaseNameOverrides.Episode != nil {
+		imdbSpecialEpisode = manualEpisode
+	}
+	imdbSeasonReplayID := 0
 	shouldFetchIMDBMetadata := func() bool {
-		if imdbClient == nil || ids.IMDBID == 0 || refreshProviders && imdbMetadataFetchedID == ids.IMDBID {
+		if imdbClient == nil || ids.IMDBID == 0 ||
+			(refreshProviders || imdbSeasonReplayID == ids.IMDBID) && imdbMetadataFetchedID == ids.IMDBID {
 			return false
 		}
 		if refreshProviders {
+			return true
+		}
+		// Replay raw evidence once when a normalized snapshot cannot prove the
+		// requested special's season. Reuse still suppresses empty/failed queries.
+		if imdbSpecialSeason && imdbSpecialEpisode > 0 && !meta.TVPack && metadata.IMDB != nil &&
+			slices.ContainsFunc(metadata.IMDB.Episodes, func(episode api.IMDBEpisode) bool {
+				return !episode.SeasonKnown && episode.Season == 0 && parseIMDBEpisodeNumber(episode.EpisodeText) == imdbSpecialEpisode
+			}) {
+			imdbSeasonReplayID = ids.IMDBID
 			return true
 		}
 		return !usableIMDBMetadata(metadata.IMDB, ids.IMDBID) ||

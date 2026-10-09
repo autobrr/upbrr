@@ -416,3 +416,56 @@ func TestRankCandidates(t *testing.T) {
 		t.Fatalf("expected IMDbID 1, got %d", candidates[0].IMDbID)
 	}
 }
+
+func TestEpisodeSeasonKnown(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value any
+		known bool
+	}{
+		{
+			name:  "int zero",
+			value: 0,
+			known: true,
+		},
+		{
+			name:  "int64 zero",
+			value: int64(0),
+			known: true,
+		},
+		{
+			name:  "float zero",
+			value: float64(0),
+			known: true,
+		},
+		{
+			name:  "JSON number zero",
+			value: json.Number("0"),
+			known: true,
+		},
+		{
+			name:  "string zero",
+			value: "0",
+			known: true,
+		},
+		{
+			name:  "positive string",
+			value: "2",
+			known: true,
+		},
+		{name: "missing"},
+		{name: "unknown string", value: "unknown"},
+		{name: "empty string", value: ""},
+		{name: "fractional float", value: 0.5},
+		{name: "fractional JSON number", value: json.Number("0.5")},
+		{name: "fractional string", value: "0.5"},
+		{name: "boolean", value: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := episodeSeasonKnown(test.value, toInt(test.value)); got != test.known {
+				t.Fatalf("season presence=%t want %t", got, test.known)
+			}
+		})
+	}
+}

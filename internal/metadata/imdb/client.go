@@ -211,7 +211,6 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 			seasonInfo := getMapFromMap(series, "displayableSeason")
 			episodeInfo := getMapFromMap(series, "episodeNumber")
 			season := getIntFromMap(seasonInfo, "season")
-			seasonValue, seasonKnown := seasonInfo["season"].(float64)
 			releaseYear := getIntFromMap(node, "releaseYear", "year")
 			releaseDate := ReleaseDate{
 				Year:  getIntFromMap(node, "releaseDate", "year"),
@@ -224,7 +223,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 				ReleaseYear: releaseYear,
 				ReleaseDate: releaseDate,
 				Season:      season,
-				SeasonKnown: seasonKnown && seasonValue == float64(season),
+				SeasonKnown: episodeSeasonKnown(seasonInfo["season"], season),
 				EpisodeText: getStringFromMap(episodeInfo, "text"),
 			})
 		}
@@ -1020,6 +1019,26 @@ func getStringSlice(root map[string]any, key string) []string {
 		}
 	}
 	return items
+}
+
+// episodeSeasonKnown distinguishes exact provider integers, including zero,
+// from missing or malformed season values that also normalize to zero.
+func episodeSeasonKnown(value any, season int) bool {
+	switch value := value.(type) {
+	case int:
+		return value == season
+	case int64:
+		return value == int64(season)
+	case float64:
+		return value == float64(season)
+	case json.Number:
+		parsed, err := value.Int64()
+		return err == nil && parsed == int64(season)
+	case string:
+		parsed, err := strconv.Atoi(value)
+		return err == nil && parsed == season
+	}
+	return false
 }
 
 func toInt(value any) int {

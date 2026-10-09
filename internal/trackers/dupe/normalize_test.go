@@ -127,31 +127,33 @@ func TestCandidateEpisodeRangesRetainMembership(t *testing.T) {
 			want:          api.DupeRelationCoexists,
 		},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			candidate := NormalizeCandidate(api.DupeEntry{
-				Name:          "Example.Series." + test.coordinates + "." + test.date + "1080p.WEB-DL-GRP",
-				Season:        test.season,
-				Episode:       test.episode,
-				CanonicalType: "WEB-DL",
-				Source:        "WEB",
-				Res:           "1080p",
-			}, "AITHER")
-			result := Evaluate(api.TrackerDuplicateTarget{
-				Season:     test.targetSeason,
-				Episode:    test.targetEpisode,
-				Type:       "WEB-DL",
-				Source:     "WEB",
-				Resolution: "1080p",
-			}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
-			got := result.Candidates[0]
-			if got.Relation != test.want {
-				t.Fatalf("range relation=%s reasons=%v, want %s", got.Relation, got.Reasons, test.want)
-			}
-			if test.want == api.DupeRelationCoexists && (result.RequiresAction || result.Blocks) {
-				t.Fatalf("disjoint range remains actionable: action=%t blocks=%t", result.RequiresAction, result.Blocks)
-			}
-		})
+		for _, separator := range []string{".", "_"} {
+			t.Run(test.name+separator, func(t *testing.T) {
+				t.Parallel()
+				candidate := NormalizeCandidate(api.DupeEntry{
+					Name:          "Example.Series." + test.coordinates + separator + test.date + "1080p.WEB-DL-GRP",
+					Season:        test.season,
+					Episode:       test.episode,
+					CanonicalType: "WEB-DL",
+					Source:        "WEB",
+					Res:           "1080p",
+				}, "AITHER")
+				result := Evaluate(api.TrackerDuplicateTarget{
+					Season:     test.targetSeason,
+					Episode:    test.targetEpisode,
+					Type:       "WEB-DL",
+					Source:     "WEB",
+					Resolution: "1080p",
+				}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+				got := result.Candidates[0]
+				if got.Relation != test.want {
+					t.Fatalf("range relation=%s reasons=%v, want %s", got.Relation, got.Reasons, test.want)
+				}
+				if test.want == api.DupeRelationCoexists && (result.RequiresAction || result.Blocks) {
+					t.Fatalf("disjoint range remains actionable: action=%t blocks=%t", result.RequiresAction, result.Blocks)
+				}
+			})
+		}
 	}
 }
 
@@ -178,6 +180,7 @@ func TestUnsupportedCandidateEpisodeExpressionsRemainActionable(t *testing.T) {
 		{coordinates: "S00E01-E02E03", targetEpisode: 3},
 		{coordinates: "S00E01E02", targetEpisode: 2},
 		{coordinates: "S00E01.S00E02", targetEpisode: 2},
+		{coordinates: "S00E01,S00E02", targetEpisode: 2},
 		{coordinates: "S00E01,E02", targetEpisode: 2},
 		{coordinates: "S00E01;E02", targetEpisode: 2},
 		{coordinates: "S00E01/E02", targetEpisode: 2},
@@ -193,31 +196,33 @@ func TestUnsupportedCandidateEpisodeExpressionsRemainActionable(t *testing.T) {
 		{coordinates: "S00E01-S10000E02", targetEpisode: 2},
 		{coordinates: "S00E01-S999999999999999999999999E01", targetEpisode: 2},
 	} {
-		t.Run(test.coordinates, func(t *testing.T) {
-			t.Parallel()
-			for _, date := range []string{"", "2026-01-01."} {
-				// Unit3D approved and pending entries supply titles without episode coordinates.
-				candidate := NormalizeCandidate(api.DupeEntry{
-					Name:          "Example.Series." + test.coordinates + "." + date + "1080p.WEB-DL-GRP",
-					CanonicalType: "WEB-DL",
-					Source:        "WEB",
-					Res:           "1080p",
-				}, "AITHER")
-				for _, exactOnly := range []bool{false, true} {
-					result := Evaluate(api.TrackerDuplicateTarget{
-						Season:     test.targetSeason,
-						Episode:    test.targetEpisode,
-						Type:       "WEB-DL",
-						Source:     "WEB",
-						Resolution: "1080p",
-					}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{ExactMatchOnly: exactOnly},
-						SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
-					if result.Candidates[0].Relation == api.DupeRelationCoexists || !result.RequiresAction {
-						t.Errorf("unsupported membership became safe: date=%q exactOnly=%t result=%+v", date, exactOnly, result)
+		for _, separator := range []string{".", "_"} {
+			t.Run(test.coordinates+separator, func(t *testing.T) {
+				t.Parallel()
+				for _, date := range []string{"", "2026-01-01."} {
+					// Unit3D approved and pending entries supply titles without episode coordinates.
+					candidate := NormalizeCandidate(api.DupeEntry{
+						Name:          "Example.Series." + test.coordinates + separator + date + "1080p.WEB-DL-GRP",
+						CanonicalType: "WEB-DL",
+						Source:        "WEB",
+						Res:           "1080p",
+					}, "AITHER")
+					for _, exactOnly := range []bool{false, true} {
+						result := Evaluate(api.TrackerDuplicateTarget{
+							Season:     test.targetSeason,
+							Episode:    test.targetEpisode,
+							Type:       "WEB-DL",
+							Source:     "WEB",
+							Resolution: "1080p",
+						}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{ExactMatchOnly: exactOnly},
+							SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+						if result.Candidates[0].Relation == api.DupeRelationCoexists || !result.RequiresAction {
+							t.Errorf("unsupported membership became safe: date=%q exactOnly=%t result=%+v", date, exactOnly, result)
+						}
 					}
 				}
-			}
-		})
+			})
+		}
 	}
 }
 

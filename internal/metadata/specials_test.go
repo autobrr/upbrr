@@ -28,16 +28,62 @@ func TestSpecialProviderSeasonPresence(t *testing.T) {
 		for _, test := range []struct {
 			name, season string
 			matched      bool
+			imdbOnly     bool
+			seasonKnown  bool
+			seasonNumber int
 		}{
 			{name: "absent season"},
 			{name: "null season", season: "null"},
 			{
-				name:    "explicit zero",
-				season:  "0",
-				matched: true,
+				name:        "explicit zero",
+				season:      "0",
+				matched:     true,
+				seasonKnown: true,
 			},
-			{name: "positive season", season: "1"},
+			{
+				name:         "positive season",
+				season:       "1",
+				seasonKnown:  true,
+				seasonNumber: 1,
+			},
+			{
+				name:        "string zero",
+				season:      `"0"`,
+				matched:     true,
+				imdbOnly:    true,
+				seasonKnown: true,
+			},
+			{
+				name:         "string positive",
+				season:       `"1"`,
+				imdbOnly:     true,
+				seasonKnown:  true,
+				seasonNumber: 1,
+			},
+			{
+				name:     "string unknown",
+				season:   `"unknown"`,
+				imdbOnly: true,
+			},
+			{
+				name:     "string empty",
+				season:   `""`,
+				imdbOnly: true,
+			},
+			{
+				name:     "string fractional",
+				season:   `"0.5"`,
+				imdbOnly: true,
+			},
+			{
+				name:     "numeric fractional",
+				season:   "0.5",
+				imdbOnly: true,
+			},
 		} {
+			if test.imdbOnly && provider != "IMDb" {
+				continue
+			}
 			t.Run(provider+"/"+test.name, func(t *testing.T) {
 				t.Parallel()
 				seasonProperty := ""
@@ -96,6 +142,10 @@ func TestSpecialProviderSeasonPresence(t *testing.T) {
 					external = api.SourceScopedMetadata{}
 					if err := json.Unmarshal(encoded, &external); err != nil {
 						t.Fatal(err)
+					}
+					if len(external.IMDB.Episodes) != 1 || external.IMDB.Episodes[0].SeasonKnown != test.seasonKnown ||
+						external.IMDB.Episodes[0].Season != test.seasonNumber {
+						t.Fatalf("provider season did not survive snapshot: %+v", external.IMDB.Episodes)
 					}
 				case "TMDB":
 					ids.TMDBID = 555001

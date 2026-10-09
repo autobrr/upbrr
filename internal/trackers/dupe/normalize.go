@@ -640,7 +640,10 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 
 func contentScopeFromTitle(name string, origin FactOrigin) contentScope {
 	upper := strings.ToUpper(name)
-	episodeMatches := titleEpisodeRangePattern.FindAllStringSubmatch(name, 2)
+	// Underscores delimit release tokens but are word characters to the regexp.
+	// Normalize only the episode view so complete range endpoints remain visible.
+	episodeName := strings.ReplaceAll(name, "_", ".")
+	episodeMatches := titleEpisodeRangePattern.FindAllStringSubmatch(episodeName, 2)
 	var episodeMatch []string
 	season, start := 0, 0
 	ambiguousEpisodes := len(episodeMatches) > 1
@@ -655,10 +658,10 @@ func contentScopeFromTitle(name string, origin FactOrigin) contentScope {
 		ambiguousEpisodes = ambiguousEpisodes || episodeMatch[5] != ""
 		// Bare episode tokens outside this expression also retain membership,
 		// regardless of their delimiter or an endpoint's version suffix.
-		matchStart := strings.Index(name, episodeMatch[0])
+		matchStart := strings.Index(episodeName, episodeMatch[0])
 		matchEnd := matchStart + len(episodeMatch[0])
-		ambiguousEpisodes = ambiguousEpisodes || titleAdditionalEpisodePattern.MatchString(name[:matchStart]) ||
-			titleAdditionalEpisodePattern.MatchString(name[matchEnd:])
+		ambiguousEpisodes = ambiguousEpisodes || titleAdditionalEpisodePattern.MatchString(episodeName[:matchStart]) ||
+			titleAdditionalEpisodePattern.MatchString(episodeName[matchEnd:])
 		if episodeMatch[3] != "" {
 			endSeason, _ := strconv.Atoi(episodeMatch[3])
 			ambiguousEpisodes = ambiguousEpisodes || endSeason != season
