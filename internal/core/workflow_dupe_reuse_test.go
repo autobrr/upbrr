@@ -362,6 +362,8 @@ func TestWorkflowDupeReuseRejectsChangedOrStaleEvidence(t *testing.T) {
 		{name: "source", change: func(f *workflowDupeReuseFixture) { f.projections.ReleaseRef.SourcePath += ".changed" }},
 		{name: "generation", change: func(f *workflowDupeReuseFixture) { f.projections.ReleaseRef.Generation++ }},
 		{name: "configuration", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].ConfigFingerprint = "changed" }},
+		{name: "reviewed upload name", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].UploadReleaseName += ".changed" }},
+		{name: "target identity", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicateTargetFingerprint = "changed" }},
 		{name: "criteria", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicateCriteria.Name += ".changed" }},
 		{name: "policy", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicatePolicyFingerprint = "changed" }},
 		{name: "warning fingerprint", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].WaivableRuleFingerprint = "changed" }},

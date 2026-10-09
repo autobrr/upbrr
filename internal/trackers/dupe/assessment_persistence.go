@@ -28,6 +28,7 @@ type persistedAssessmentEntry struct {
 	Authorization AuthorizationKind `json:"authorization,omitempty"`
 	Match         api.DupeMatch     `json:"match"`
 	PrivateRaw    []api.DupeEntry   `json:"privateRaw,omitempty"`
+	ReviewReasons []api.DupeReason  `json:"reviewReasons,omitempty"`
 }
 
 // MarshalBinary serializes private duplicate decision authority for the scoped artifact vault.
@@ -49,6 +50,7 @@ func (a Assessment) MarshalBinary() ([]byte, error) {
 			Authorization: entry.authorization,
 			Match:         clonePrivateMatch(entry.match),
 			PrivateRaw:    cloneEntries(entry.privateRaw),
+			ReviewReasons: append([]api.DupeReason(nil), entry.reviewReasons...),
 		})
 	}
 	payload, err := json.Marshal(persisted)
@@ -101,6 +103,7 @@ func UnmarshalAssessment(payload []byte) (Assessment, error) {
 			authorization: persistedEntry.Authorization,
 			match:         clonePrivateMatch(persistedEntry.Match),
 			privateRaw:    cloneEntries(persistedEntry.PrivateRaw),
+			reviewReasons: append([]api.DupeReason(nil), persistedEntry.ReviewReasons...),
 		}
 	}
 	if len(assessment.entries) == 0 && !assessment.assessed {

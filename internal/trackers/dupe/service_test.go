@@ -129,7 +129,7 @@ func TestProjectAdapterResultDebugLogsEveryCandidateEvaluation(t *testing.T) {
 		t.Fatalf("candidate debug logs = %d, want 2", len(candidateLogs))
 	}
 	if !strings.Contains(candidateLogs[0], `tracker=BHD candidate_id="candidate-1" relation=same_slot`) ||
-		!strings.Contains(candidateLogs[0], `winning_rule=general/duplicate/v8/same_slot`) ||
+		!strings.Contains(candidateLogs[0], `winning_rule=general/duplicate/v9/same_slot`) ||
 		!strings.Contains(candidateLogs[0], `kind=web_dl class=web source_family=web`) ||
 		!strings.Contains(candidateLogs[0], `name="Example.Release.2026.1080p.WEB-DL-GRP"`) ||
 		!strings.Contains(candidateLogs[0], `facts="WEB-DL · EXAMPLE · 1080p"`) ||
@@ -340,7 +340,7 @@ func TestCandidateLogIncludesOnlyDecisiveDeduplicatedEvidence(t *testing.T) {
 	for _, value := range []string{
 		`compared="media_class | resolution"`,
 		`missing=""`,
-		`matched="general/duplicate/v8/media_class"`,
+		`matched="general/duplicate/v9/media_class"`,
 	} {
 		if !strings.Contains(logLine, value) {
 			t.Fatalf("candidate log missing %q: %q", value, logLine)
@@ -944,5 +944,30 @@ func TestDuplicateTargetWithoutProjectionRetainsEditionParts(t *testing.T) {
 	}})
 	if structured.Edition != legacy.Edition || structured.Edition == "" {
 		t.Fatalf("structured target edition = %q, legacy = %q", structured.Edition, legacy.Edition)
+	}
+}
+
+func TestDupeProgressMessageDistinguishesPolicyReview(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		candidates []api.DupeCandidateEvaluation
+		want       string
+	}{
+		{"no candidates", nil, "duplicate policy review required"},
+		{"coexisting candidates", []api.DupeCandidateEvaluation{{Relation: api.DupeRelationCoexists}}, "duplicate policy review required"},
+		{"actionable candidate", []api.DupeCandidateEvaluation{{Relation: api.DupeRelationSameSlot}}, "1 candidates require attention"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := api.DupeCheckResult{
+				Search:        api.DupeSearchEvidence{Complete: true},
+				Evaluations:   test.candidates,
+				ReviewReasons: []api.DupeReason{{Code: "slot_source_review", Message: "Source review required"}},
+				HasDupes:      true,
+			}
+			if got := dupeProgressMessage(result); got != test.want {
+				t.Fatalf("progress = %q, want %q", got, test.want)
+			}
+		})
 	}
 }

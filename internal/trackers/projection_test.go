@@ -245,6 +245,21 @@ func TestNilPolicyProjectionInvalidatesPreTitleInferenceContract(t *testing.T) {
 	if projection.DuplicatePolicyFingerprint == legacy || projection.DuplicatePolicyFingerprint == "" {
 		t.Fatalf("nil-policy projection retained the pre-title-inference fingerprint: %q", projection.DuplicatePolicyFingerprint)
 	}
+	previousNormalization, err := api.CanonicalWorkflowFingerprint(struct {
+		GeneralPolicyID  string
+		ID               string
+		Policy           *DupePolicy
+		GroupRestriction DupeGroupRestriction
+	}{
+		GeneralPolicyID: "general/duplicate/v8",
+		ID:              projection.DuplicatePolicyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.DuplicatePolicyFingerprint == previousNormalization {
+		t.Fatal("changed normalization retained previously accepted duplicate authority")
+	}
 }
 
 func TestDuplicatePolicyFingerprintTracksSameGroupRestriction(t *testing.T) {

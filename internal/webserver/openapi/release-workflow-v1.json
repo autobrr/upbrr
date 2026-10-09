@@ -9853,6 +9853,12 @@
               "$ref": "#/components/schemas/RequiredAction"
             }
           },
+          "reviewReasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DupeReason"
+            }
+          },
           "search": {
             "$ref": "#/components/schemas/DupeSearchEvidence"
           },

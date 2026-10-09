@@ -465,14 +465,16 @@ type TrackerDupeAssessment struct {
 	// EvidenceFingerprint identifies the retained search/evaluation evidence.
 	EvidenceFingerprint WorkflowFingerprint `json:"evidenceFingerprint,omitempty"`
 	// Search records safe completion and warning state for the tracker search.
-	Search          DupeSearchEvidence    `json:"search"`
-	Matches         []DupeMatchProjection `json:"matches,omitempty"`
-	Decision        DupeDecision          `json:"decision"`
-	Status          StageStatus           `json:"status"`
-	RequiredActions []RequiredAction      `json:"requiredActions,omitempty"`
-	Failures        []WorkflowFailure     `json:"failures,omitempty"`
-	CheckedAt       time.Time             `json:"checkedAt" ts_type:"string"`
-	FreshUntil      time.Time             `json:"freshUntil" ts_type:"string"`
+	Search  DupeSearchEvidence    `json:"search"`
+	Matches []DupeMatchProjection `json:"matches,omitempty"`
+	// ReviewReasons describe target-level policy risks bound to this assessment.
+	ReviewReasons   []DupeReason      `json:"reviewReasons,omitempty"`
+	Decision        DupeDecision      `json:"decision"`
+	Status          StageStatus       `json:"status"`
+	RequiredActions []RequiredAction  `json:"requiredActions,omitempty"`
+	Failures        []WorkflowFailure `json:"failures,omitempty"`
+	CheckedAt       time.Time         `json:"checkedAt" ts_type:"string"`
+	FreshUntil      time.Time         `json:"freshUntil" ts_type:"string"`
 }
 
 // DupeAssessment retains duplicate results for exact projection and preflight revisions.

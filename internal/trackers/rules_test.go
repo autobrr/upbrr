@@ -1730,3 +1730,17 @@ func withFinalizedLanguageFactsForTest(meta api.RuleSubject) api.RuleSubject {
 	meta.LanguageFacts = mediafacts.ResolveLanguages(media)
 	return meta
 }
+
+func TestAitherDuplicateSlotsDoNotWaiveEncodeSettings(t *testing.T) {
+	t.Parallel()
+	for _, status := range []api.EncodeSettingsStatus{api.EncodeSettingsStatusMissing, api.EncodeSettingsStatusPresent} {
+		meta := api.RuleSubject{
+			Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			Assessments: encodeAssessments(status),
+		}
+		failures := evaluateNonMetadataRulesForTest(t.Context(), "AITHER", meta)
+		if hasMISettingsFailure(failures) != (status == api.EncodeSettingsStatusMissing) {
+			t.Fatalf("encode-settings status %s: %#v", status, failures)
+		}
+	}
+}

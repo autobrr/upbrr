@@ -99,6 +99,9 @@ func collectCandidateFindings(
 		findings = append(findings, collectExactOnlyFinding(target, targetFacts, candidate, candidateFacts, policy))
 	}
 	findings = append(findings, collectTrackerRules(target, targetFacts, candidate, candidateFacts, policy)...)
+	if len(policy.Slots) > 0 {
+		findings = append(findings, collectConditionalSlotFinding(targetFacts, candidateFacts, policy))
+	}
 	if finding, ok := collectTrackerSlotFinding(target, targetFacts, candidate, candidateFacts, policy); ok {
 		findings = append(findings, finding)
 	}
@@ -281,7 +284,9 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 		findings = append(findings, generalFinding("resolution", "resolution_differs", findingPriorityGeneral))
 	}
 	if !generalDimensionSuppressed(policy, trackerspkg.DupeDimensionMediaClass) && target.MediaClass != mediaClassUnknown &&
-		candidate.MediaClass != mediaClassUnknown && target.MediaClass != candidate.MediaClass {
+		candidate.MediaClass != mediaClassUnknown && target.MediaClass != candidate.MediaClass &&
+		dimensionFact(target, trackerspkg.DupeDimensionMediaClass).Status == FactComplete &&
+		dimensionFact(candidate, trackerspkg.DupeDimensionMediaClass).Status == FactComplete {
 		findings = append(findings, generalFinding("media_class", "media_class_differs", findingPriorityGeneral))
 	}
 	for _, dimension := range []struct {
@@ -468,6 +473,9 @@ func evaluateTrackerRule(
 			candidateFacts,
 			condition.Dimension,
 		)
+		if condition.Optional && targetFact.Status == FactMissing && candidateFact.Status == FactMissing {
+			continue
+		}
 		comparison := compareDimensionFacts(condition.Dimension, targetFact, candidateFact)
 		finding.comparisons = append(finding.comparisons, factComparison{
 			Dimension: condition.Dimension,
@@ -475,6 +483,13 @@ func evaluateTrackerRule(
 			Candidate: candidateFact,
 			Result:    comparison,
 		})
+		// A known operand can disprove a directional rule independently of the
+		// other operand's completeness; an unrelated rule must not veto capacity.
+		if targetFact.Status == FactComplete && len(condition.TargetValues) > 0 && !containsFold(condition.TargetValues, targetFact.Value) ||
+			candidateFact.Status == FactComplete && len(condition.CandidateValues) > 0 && !containsFold(condition.CandidateValues, candidateFact.Value) {
+			disproved = true
+			continue
+		}
 		if targetFact.Status == FactContradictory || candidateFact.Status == FactContradictory {
 			finding.Contradictions = append(finding.Contradictions, string(condition.Dimension))
 			continue

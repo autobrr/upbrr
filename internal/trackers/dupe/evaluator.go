@@ -17,6 +17,7 @@ import (
 type Evaluation struct {
 	Candidates     []CandidateEvaluation
 	SetFindings    []SetFinding
+	ReviewReasons  []api.DupeReason
 	RequiresAction bool
 	Blocks         bool
 	Complete       bool
@@ -50,7 +51,11 @@ func Evaluate(
 	}
 	targetFacts.Edition = editionFromNamingContract(targetFacts.Edition, target.Names, targetFacts.Resolution, policy.DefaultTitleEdition)
 	effectiveComplete := search.EffectiveComplete()
-	evaluation := Evaluation{Complete: effectiveComplete, TargetFacts: targetFacts}
+	evaluation := Evaluation{
+		Complete:      effectiveComplete,
+		TargetFacts:   targetFacts,
+		ReviewReasons: targetReviewReasons(targetFacts, policy),
+	}
 	setCandidates := make([]TrackerCandidate, 0, len(candidates))
 	setCandidateFacts := make([]normalizedFacts, 0, len(candidates))
 	setCandidateIndexes := make([]int, 0, len(candidates))
@@ -97,7 +102,7 @@ func Evaluate(
 		case api.DupeRelationCoexists:
 		}
 	}
-	if !effectiveComplete {
+	if !effectiveComplete || len(evaluation.ReviewReasons) > 0 {
 		evaluation.RequiresAction = true
 	}
 	if evaluation.Blocks {
@@ -378,6 +383,12 @@ func winningRuleID(findings []RuleFinding, relation api.DupeRelation, reason str
 
 func dupeReasonMessage(reason string, relation api.DupeRelation) string {
 	switch strings.TrimSpace(reason) {
+	case "ordinary_slot_unproven":
+		return "The required ordinary-slot eligibility is unproven; review technical evidence and tracker justification."
+	case "ordinary_slot_contradictory":
+		return "Technical evidence conflicts and cannot establish an ordinary slot."
+	case "distinct_ordinary_slot":
+		return "Complete technical evidence establishes distinct ordinary tracker slots."
 	case "exact_identity":
 		return "Candidate has identical release or file identity."
 	case "configured_other_group":

@@ -432,6 +432,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			projection.Artifacts.ImageHosting,
 			projection.Artifacts.Description,
 		)
+		printCLICompositeDupeReviewReasons(s.streams.out, dupe.ReviewReasons)
 		printCLICompositeDupeMatches(s.streams.out, dupe.Matches)
 		if logger != nil {
 			logger.Debugf(
@@ -626,6 +627,7 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		result.Search.Pages,
 		emptyCLIValue(result.PolicyID),
 	)
+	printCLICompositeDupeReviewReasons(s.streams.out, result.ReviewReasons)
 	printCLICompositeDupeMatches(s.streams.out, result.Matches)
 	fmt.Fprintln(s.streams.out)
 	prompt := fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID)
@@ -649,6 +651,16 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		},
 	}
 	return feedback, false, nil
+}
+
+func printCLICompositeDupeReviewReasons(output io.Writer, reasons []api.DupeReason) {
+	for _, reason := range reasons {
+		message := strings.TrimSpace(reason.Message)
+		if message == "" {
+			message = reason.Code
+		}
+		fmt.Fprintf(output, "Policy review: %s\n", logging.SanitizeMessage(message))
+	}
 }
 
 func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProjection) {
@@ -697,7 +709,7 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 }
 
 func cliDupeRequiresRiskAcknowledgement(result api.TrackerDupeAssessment) bool {
-	if result.Search.Pages > 0 && !result.Search.Complete {
+	if len(result.ReviewReasons) > 0 || (result.Search.Pages > 0 && !result.Search.Complete) {
 		return true
 	}
 	return slices.ContainsFunc(result.Matches, func(match api.DupeMatchProjection) bool {

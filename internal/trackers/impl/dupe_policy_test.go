@@ -48,8 +48,20 @@ func TestBuiltIn2160pDVHDRSlots(t *testing.T) {
 				}, tracker)
 				result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy,
 					dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
-				if result.Candidates[0].Relation != api.DupeRelationCoexists || result.RequiresAction {
+				want := api.DupeRelationCoexists
+				if tracker == "AITHER" && format == api.HDRFormatHDR10 {
+					want = api.DupeRelationProposedTrumps
+				}
+				if result.Candidates[0].Relation != want || result.RequiresAction != (want == api.DupeRelationProposedTrumps) {
 					t.Fatalf("DV+HDR versus %s: %#v", format, result)
+				}
+				if tracker == "AITHER" && format == api.HDRFormatHDR10 {
+					target.HDR, candidate.HDR = candidate.HDR, target.HDR
+					reverse := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy,
+						dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+					if reverse.Candidates[0].Relation != api.DupeRelationExistingPreferred || !reverse.Blocks {
+						t.Fatalf("plain HDR versus DV+HDR: %#v", reverse)
+					}
 				}
 			}
 		})
@@ -357,11 +369,17 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			tracker: "AITHER",
 			target: api.TrackerDuplicateTarget{
 				Type:       "WEB-DL",
+				Source:     "WEB",
+				Provider:   "AMZN",
+				VideoCodec: "H.264",
 				Resolution: "1080p",
 				HDR:        completeSDR,
 			},
 			candidate: dupe.TrackerCandidate{
 				Type:       "WEBRip",
+				Source:     "WEB",
+				Provider:   "AMZN",
+				Codec:      "H.264",
 				Resolution: "1080p",
 				HDR:        completeSDR,
 			},

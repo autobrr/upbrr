@@ -53,6 +53,7 @@ type assessmentEntry struct {
 	authorization AuthorizationKind
 	match         api.DupeMatch
 	privateRaw    []api.DupeEntry
+	reviewReasons []api.DupeReason
 }
 
 // Assessment is immutable reusable duplicate decision state. Full public outcomes are not retained.
@@ -87,8 +88,10 @@ type AssessmentEvidence struct {
 	Disposition Disposition
 	// Code is the stable structural reason code.
 	Code string
-	// HasDupes reports whether evaluation found a blocking or review candidate.
+	// HasDupes reports whether evaluation found a blocking candidate or policy review.
 	HasDupes bool
+	// ReviewReasons bind target-level policy reviews independently of candidates.
+	ReviewReasons []api.DupeReason
 	// Match contains the selected candidate evidence.
 	Match api.DupeMatch
 	// Raw contains private adapter evidence defensively copied into the assessment.
@@ -110,7 +113,7 @@ func NewAssessment(meta api.DuplicateSubject, cfg config.Config, evidence []Asse
 		if disposition != DispositionResolved && disposition != DispositionNotRun && disposition != DispositionFailed {
 			disposition = DispositionFailed
 		}
-		assessment.entries[tracker] = newAssessmentEntry(meta, cfg, tracker, disposition, item.Code, item.HasDupes, item.Match, item.Raw)
+		assessment.entries[tracker] = newAssessmentEntry(meta, cfg, tracker, disposition, item.Code, item.HasDupes, item.Match, item.Raw, item.ReviewReasons...)
 	}
 	return assessment
 }
@@ -261,14 +264,16 @@ func newAssessmentEntry(
 	hasDupes bool,
 	match api.DupeMatch,
 	raw []api.DupeEntry,
+	reviewReasons ...api.DupeReason,
 ) assessmentEntry {
 	entry := assessmentEntry{
-		tracker:     normalizeTracker(tracker),
-		disposition: disposition,
-		code:        strings.TrimSpace(code),
-		hasDupes:    hasDupes,
-		match:       clonePrivateMatch(match),
-		privateRaw:  cloneEntries(raw),
+		tracker:       normalizeTracker(tracker),
+		disposition:   disposition,
+		code:          strings.TrimSpace(code),
+		hasDupes:      hasDupes,
+		match:         clonePrivateMatch(match),
+		privateRaw:    cloneEntries(raw),
+		reviewReasons: append([]api.DupeReason(nil), reviewReasons...),
 	}
 	entry.binding = assessmentBinding(meta, entry.tracker, effectiveTrackerConfig(cfg, entry.tracker))
 	entry.outcomeID = outcomeIdentity(entry)
@@ -277,7 +282,7 @@ func newAssessmentEntry(
 }
 
 func defaultVerdict(entry assessmentEntry) Verdict {
-	if entry.disposition == DispositionResolved && !entry.hasDupes && strings.TrimSpace(entry.match.MatchedReason) == "" {
+	if entry.disposition == DispositionResolved && !entry.hasDupes && len(entry.reviewReasons) == 0 && strings.TrimSpace(entry.match.MatchedReason) == "" {
 		return VerdictClear
 	}
 	return VerdictBlocked
@@ -387,12 +392,13 @@ func trackerRuleFailures(meta api.DuplicateSubject, tracker string) []api.RuleFa
 
 func outcomeIdentity(entry assessmentEntry) string {
 	bound := struct {
-		Disposition Disposition
-		Code        string
-		HasDupes    bool
-		Match       api.DupeMatch
-		Raw         []api.DupeEntry
-	}{entry.disposition, entry.code, entry.hasDupes, entry.match, entry.privateRaw}
+		Disposition   Disposition
+		Code          string
+		HasDupes      bool
+		Match         api.DupeMatch
+		Raw           []api.DupeEntry
+		ReviewReasons []api.DupeReason `json:",omitempty"`
+	}{entry.disposition, entry.code, entry.hasDupes, entry.match, entry.privateRaw, entry.reviewReasons}
 	encoded, err := json.Marshal(bound)
 	if err != nil {
 		return ""
@@ -404,6 +410,7 @@ func outcomeIdentity(entry assessmentEntry) string {
 func cloneAssessmentEntry(entry assessmentEntry) assessmentEntry {
 	entry.match = clonePrivateMatch(entry.match)
 	entry.privateRaw = cloneEntries(entry.privateRaw)
+	entry.reviewReasons = append([]api.DupeReason(nil), entry.reviewReasons...)
 	return entry
 }
 

@@ -1091,6 +1091,20 @@ The adapter's `Search` must return one structural result:
 Use only the dependency snapshot supplied to the factory. Do not read unrelated global config.
 Bound response bodies, sanitize remote diagnostics, and normalize entries into `api.DupeEntry`.
 
+Use `DupePolicy.Slots` for conditional ordinary-slot matrices, with complete normalized
+predicates and shared IDs only for presentations that compete in the same slot. Unlisted or
+unproven combinations retain review. `SetRules` handles collection-wide capacity; use
+`RequireSameContent` when title-only or overlapping scopes cannot establish occupancy. A
+slot's `ReviewReason` or a `TargetReviewRules` entry retains source/staff prerequisites that
+an empty search cannot prove. Keep these declarations in the tracker-owned policy and version
+behavior changes; never introduce tracker-name dispatch into the evaluator.
+
+Target-level duplicate policy reviews use `DupeCheckResult.ReviewReasons` and
+`TrackerDupeAssessment.reviewReasons`, including when a complete search has no candidates.
+Keep these reasons separate from candidate matches. They enter the existing fingerprint-bound
+duplicate-review decision; acknowledging them does not establish source quality, staff approval,
+or trump eligibility. Empty reasons preserve existing evidence fingerprints.
+
 #### TRACE request logging
 
 Use `logging.FromContext(ctx, deps.Logger())`, or resolve the same operation-local view from

@@ -561,15 +561,16 @@ func (s *Service) projectAdapterResult(
 		evaluation := Evaluate(duplicateTargetForEvaluation(meta), candidates, policy, search)
 		effectiveComplete := search.EffectiveComplete()
 		match := evaluationMatch(evaluation)
-		hasDupes := evaluation.Blocks || hasActionableCandidateEvaluations(evaluation.Candidates)
+		hasDupes := evaluation.Blocks || hasActionableCandidateEvaluations(evaluation.Candidates) || len(evaluation.ReviewReasons) > 0
 		result := api.DupeCheckResult{
-			Tracker:     tracker,
-			HasDupes:    hasDupes,
-			Notes:       cloneNotes(adapterResult.Notes()),
-			Status:      "completed",
-			CheckedAt:   checkedAt,
-			PolicyID:    policy.ID,
-			Evaluations: publicCandidateEvaluations(evaluation),
+			Tracker:       tracker,
+			HasDupes:      hasDupes,
+			Notes:         cloneNotes(adapterResult.Notes()),
+			Status:        "completed",
+			CheckedAt:     checkedAt,
+			PolicyID:      policy.ID,
+			Evaluations:   publicCandidateEvaluations(evaluation),
+			ReviewReasons: append([]api.DupeReason(nil), evaluation.ReviewReasons...),
 			Search: api.DupeSearchEvidence{
 				Complete:       effectiveComplete,
 				Pages:          search.Pages,
@@ -610,7 +611,7 @@ func (s *Service) projectAdapterResult(
 		for _, candidate := range evaluation.Candidates {
 			s.logCandidateEvaluation(tracker, candidate)
 		}
-		entry := newAssessmentEntry(meta, s.cfg, tracker, DispositionResolved, "", result.HasDupes, match, raw)
+		entry := newAssessmentEntry(meta, s.cfg, tracker, DispositionResolved, "", result.HasDupes, match, raw, evaluation.ReviewReasons...)
 		return result, entry
 	case DispositionNotRun:
 		code := adapterResult.Code()
@@ -1141,7 +1142,11 @@ func dupeProgressMessage(result api.DupeCheckResult) string {
 			return "search incomplete; review required"
 		}
 		if result.HasDupes {
-			return fmt.Sprintf("%d candidates require attention", actionableCandidateCount(result.Evaluations))
+			count := actionableCandidateCount(result.Evaluations)
+			if count == 0 && len(result.ReviewReasons) > 0 {
+				return "duplicate policy review required"
+			}
+			return fmt.Sprintf("%d candidates require attention", count)
 		}
 		return "no dupes found"
 	}

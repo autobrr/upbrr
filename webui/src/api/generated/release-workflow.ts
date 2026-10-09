@@ -2361,6 +2361,7 @@ export type TrackerDupeAssessment = Readonly<{
   policyId: string;
   projectionFingerprint: WorkflowFingerprint;
   requiredActions?: readonly RequiredAction[];
+  reviewReasons?: readonly DupeReason[];
   search: DupeSearchEvidence;
   searchFingerprint: WorkflowFingerprint;
   status: StageStatus;
