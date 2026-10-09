@@ -14,12 +14,25 @@ import (
 
 func TestProgrammeDubRemediationPreservesDecisions(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		subject api.TrackerValidationSubject
-		mutate  func(*api.TrackerValidationSubject)
-		outcome trackers.LanguageOutcome
-		want    string
+		name        string
+		subject     api.TrackerValidationSubject
+		mutate      func(*api.TrackerValidationSubject)
+		outcome     trackers.LanguageOutcome
+		want        string
+		nonPersonal bool
 	}{
+		{
+			name:        "other group retains original audio",
+			subject:     languageSubject("Japanese", "Japanese", "English", "German"),
+			want:        "Do not modify another group's release",
+			nonPersonal: true,
+		},
+		{
+			name:        "other group sole dub",
+			subject:     languageSubject("Japanese", "German"),
+			want:        "Do not modify another group's release",
+			nonPersonal: true,
+		},
 		{
 			name:    "original and English remain",
 			subject: languageSubject("Japanese", "Japanese", "English", "German"),
@@ -114,6 +127,7 @@ func TestProgrammeDubRemediationPreservesDecisions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			subject := test.subject
 			subject.Tracker = "EXAMPLE"
+			subject.PersonalRelease = !test.nonPersonal
 			if test.mutate != nil {
 				test.mutate(&subject)
 			}
@@ -138,7 +152,7 @@ func TestProgrammeDubRemediationPreservesDecisions(t *testing.T) {
 					if !strings.Contains(failure.Reason, test.want) || !strings.Contains(failure.Reason, "prepare") || !strings.Contains(failure.Reason, "fresh") {
 						t.Fatalf("missing safe remediation %q: %s", test.want, failure.Reason)
 					}
-					if test.want == "compliant source" && strings.Contains(failure.Reason, "separate remux") {
+					if test.want != "separate remux" && strings.Contains(failure.Reason, "separate remux") {
 						t.Fatalf("unsafe track removal advice: %s", failure.Reason)
 					}
 					failure.Reason = original.Reason

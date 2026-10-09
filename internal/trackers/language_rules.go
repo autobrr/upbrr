@@ -133,7 +133,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 			}
 			add("extra_dub", "non-original, non-English programme dub: "+language, policy.ExtraDubs)
 			if policy.ExtraDubs == LanguageProhibited || policy.ExtraDubs == LanguageStaffException {
-				failures[len(failures)-1].Reason += programmeDubRemediation(facts, language)
+				failures[len(failures)-1].Reason += programmeDubRemediation(facts, language, subject.PersonalRelease)
 			}
 		}
 	}
@@ -274,12 +274,16 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	return failures
 }
 
-// programmeDubRemediation recommends removal only when every affected resource
-// retains separate original programme audio and no original/English audio is lost.
+// programmeDubRemediation recommends removal only for personal releases when each
+// affected resource retains original audio and no original/English audio is lost.
 // Incomplete evidence remains unchanged; this advice never establishes eligibility.
-func programmeDubRemediation(facts api.LanguageFacts, language string) string {
+func programmeDubRemediation(facts api.LanguageFacts, language string, personalRelease bool) string {
 	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
 		return ""
+	}
+	if !personalRelease {
+		return " Do not modify another group's release. Use a compliant source instead, " +
+			"then prepare that source again for fresh metadata and tracker checks."
 	}
 	programme := func(track api.MediaTrackFacts) bool {
 		return track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix)
@@ -306,7 +310,8 @@ func programmeDubRemediation(facts api.LanguageFacts, language string) string {
 	if !found {
 		return ""
 	}
-	return " Create a separate remux without the prohibited extra programme track(s), retaining original and permitted secondary audio. " +
+	return " For your personal release, create a separate remux without the prohibited extra programme track(s), " +
+		"retaining original and permitted secondary audio. " +
 		"Then prepare the new file again for fresh metadata and tracker checks."
 }
 

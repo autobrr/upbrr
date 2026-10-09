@@ -1178,7 +1178,12 @@ describe("DupeCheckPage", () => {
     [
       "BHD",
       "Prohibited — non-original, non-English programme dub",
-      "Create a separate remux without the prohibited extra programme track(s), retaining original and permitted secondary audio. Then prepare the new file again for fresh metadata and tracker checks.",
+      "For your personal release, create a separate remux without the prohibited extra programme track(s), retaining original and permitted secondary audio. Then prepare the new file again for fresh metadata and tracker checks.",
+    ],
+    [
+      "BHD",
+      "Prohibited — non-original, non-English programme dub",
+      "Do not modify another group's release. Use a compliant source instead, then prepare that source again for fresh metadata and tracker checks.",
     ],
     [
       "AITHER",

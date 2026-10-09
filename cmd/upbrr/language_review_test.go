@@ -21,16 +21,24 @@ func TestCLIDubRemediationIsVisibleWithoutWaiver(t *testing.T) {
 	for _, test := range []struct {
 		name, want string
 		languages  []string
+		personal   bool
 	}{
 		{
-			name:      "extra dub",
+			name:      "personal extra dub",
 			languages: []string{"Japanese", "German"},
 			want:      "separate remux",
+			personal:  true,
 		},
 		{
-			name:      "sole dub",
+			name:      "personal sole dub",
 			languages: []string{"German"},
 			want:      "compliant source",
+			personal:  true,
+		},
+		{
+			name:      "other group extra dub",
+			languages: []string{"Japanese", "German"},
+			want:      "Do not modify another group's release",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -42,9 +50,18 @@ func TestCLIDubRemediationIsVisibleWithoutWaiver(t *testing.T) {
 					Languages: []string{language},
 				})
 			}
-			subject := api.TrackerValidationSubject{Tracker: "EXAMPLE", LanguageFacts: mediafacts.ResolveLanguages(media)}
+			subject := api.TrackerValidationSubject{
+				Tracker:         "EXAMPLE",
+				LanguageFacts:   mediafacts.ResolveLanguages(media),
+				PersonalRelease: test.personal,
+			}
 			failures := trackers.EvaluateLanguagePolicy(subject, trackers.LanguagePolicy{ExtraDubs: trackers.LanguageProhibited})
-			projection := api.TrackerReleaseProjection{TrackerID: "EXAMPLE", DisplayName: "EXAMPLE"}
+			projection := api.TrackerReleaseProjection{
+				TrackerID:   "EXAMPLE",
+				DisplayName: "EXAMPLE",
+				DupeReady:   true,
+				UploadReady: true,
+			}
 			if err := trackers.ApplyProjectionRuleFailures(&projection, failures, api.WorkflowExecutionModeNormal, "", nil); err != nil {
 				t.Fatal(err)
 			}
@@ -56,6 +73,9 @@ func TestCLIDubRemediationIsVisibleWithoutWaiver(t *testing.T) {
 			}
 			if projection.DupeReady || projection.UploadReady || len(projection.RequiredActions) != 0 {
 				t.Fatal("remediation changed strict block or introduced an acknowledgement")
+			}
+			if !test.personal && strings.Contains(printed, "separate remux") {
+				t.Fatal("CLI recommends modifying another group's release")
 			}
 		})
 	}
