@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/rls"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -597,7 +598,7 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 		Source:     canonicalSource(release.Source),
 		Codec:      canonicalCodec(firstNonEmpty(release.Codec...)),
 		Container:  canonicalContainer(firstNonEmpty(release.Container, release.Ext)),
-		Provider:   canonicalProvider(release.Collection),
+		Provider:   titleProvider(release),
 		Group:      canonicalGroup(release.Group),
 		Edition:    edition,
 		Metadata:   metadata,
@@ -883,6 +884,31 @@ func canonicalContainer(value string) string {
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
+}
+
+var titleServiceCodes = metautil.ServiceCodeMap()
+
+// titleProvider accepts only recognized service collections from parsed title tags.
+// Other collections, including IMAX, remain available as presentation evidence.
+func titleProvider(release rls.Release) string {
+	for _, tag := range release.Tags() {
+		if tag.Is(rls.TagTypeGroup) {
+			break
+		}
+		if !tag.Is(rls.TagTypeCollection) {
+			continue
+		}
+		info := tag.Info()
+		if info == nil {
+			continue
+		}
+		for alias, service := range titleServiceCodes {
+			if info.Match(alias) || info.Match(service) {
+				return canonicalProvider(tag.Normalize())
+			}
+		}
+	}
+	return ""
 }
 
 func canonicalProvider(value string) string {

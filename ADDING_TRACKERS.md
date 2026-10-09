@@ -1109,6 +1109,11 @@ The adapter's `Search` must return one structural result:
 Use only the dependency snapshot supplied to the factory. Do not read unrelated global config.
 Bound response bodies, sanitize remote diagnostics, and normalize entries into `api.DupeEntry`.
 
+Title-derived providers use the shared service-alias dictionary and retain partial title
+provenance. A parser collection marker such as IMAX is not a service; retain its separate
+presentation evidence. Structured API and prepared provider values remain authoritative,
+including custom provider codes, and genuine title conflicts remain contradictory.
+
 Use `DupePolicy.Slots` for conditional ordinary-slot matrices, with complete normalized
 predicates and shared IDs only for presentations that compete in the same slot. Unlisted or
 unproven combinations retain review. `SetRules` handles collection-wide capacity; use
