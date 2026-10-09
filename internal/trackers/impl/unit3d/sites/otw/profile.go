@@ -10,6 +10,7 @@ import (
 // resolution-mismatch rejection, rules, and banned groups.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
+		NameProviders:    &unit3d.NameProviders{MovieYear: api.IdentityProviderTMDB},
 		Name:             "OTW",
 		BaseURL:          "https://oldtoons.world",
 		ValidationPolicy: ValidationPolicy(),

@@ -61,6 +61,13 @@ func WithMovieYearProvider(binding ReleaseNamePolicyBinding, provider api.Identi
 	return binding
 }
 
+// WithTitleProvider selects the required provider for automatic primary titles,
+// independently of movie-year policy and without changing canonical facts.
+func WithTitleProvider(binding ReleaseNamePolicyBinding, provider api.IdentityProvider) ReleaseNamePolicyBinding {
+	binding.TitleProvider = provider
+	return binding
+}
+
 // SubjectReleaseNamePolicy adapts a subject/config naming function to the
 // central contract. Requested names replace automatic base-name candidates
 // before tracker-required normalization is applied.
@@ -231,7 +238,12 @@ func validateReleaseNamePolicy(binding ReleaseNamePolicyBinding) error {
 	case api.IdentityProviderTVDB, api.IdentityProviderTVmaze, api.IdentityProviderMAL:
 		return fmt.Errorf("release-name policy %q has unsupported movie-year provider %q", binding.ID, binding.MovieYearProvider)
 	}
-	return nil
+	switch binding.TitleProvider {
+	case "", api.IdentityProviderTMDB, api.IdentityProviderIMDB:
+		return nil
+	case api.IdentityProviderTVDB, api.IdentityProviderTVmaze, api.IdentityProviderMAL:
+	}
+	return fmt.Errorf("release-name policy %q has unsupported title provider %q", binding.ID, binding.TitleProvider)
 }
 
 func releaseNameConfirmationRequired(input PreparationInput, binding ReleaseNamePolicyBinding, resolvedUploadName string) bool {
@@ -272,6 +284,10 @@ func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBindin
 	}
 	subject := input.Meta
 	if binding.Structured == nil {
+		subject, err = applyLegacyTitleProvider(subject, input.RequestedUploadName, binding)
+		if err != nil {
+			return ResolvedReleaseNames{}, err
+		}
 		subject = applyReleaseNamePresentation(subject, input.RequestedUploadName)
 		subject = applyReleaseNameElementPolicy(subject, input.RequestedUploadName, elementPolicy)
 	}
@@ -289,6 +305,12 @@ func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBindin
 	}
 	if err != nil {
 		return ResolvedReleaseNames{}, fmt.Errorf("resolve release names with %s: %w", binding.ID, err)
+	}
+	if binding.TitleProvider != "" {
+		resolved.Decisions = append(resolved.Decisions, api.TrackerPolicyDecision{
+			Code:     "release_name_title_provider",
+			Decision: string(binding.TitleProvider) + "/v1",
+		})
 	}
 	if input.RequestedUploadName == nil && binding.Structured == nil {
 		resolved = applyProviderMovieYear(resolved, subject, binding.MovieYearProvider)
@@ -725,7 +747,8 @@ func releaseNamesMatchProjection(
 func structuredNamingDecisions(decisions []api.TrackerPolicyDecision) []api.TrackerPolicyDecision {
 	var result []api.TrackerPolicyDecision
 	for _, decision := range decisions {
-		if decision.Code == "release_name_structure" || strings.HasPrefix(decision.Code, "release_name_override") {
+		if decision.Code == "release_name_structure" || decision.Code == "release_name_title_provider" ||
+			strings.HasPrefix(decision.Code, "release_name_override") {
 			result = append(result, decision)
 		}
 	}

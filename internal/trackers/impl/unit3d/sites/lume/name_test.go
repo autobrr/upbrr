@@ -222,7 +222,7 @@ func TestLumeOmitsExactHi10PWithoutOverwritingManualComponent(t *testing.T) {
 }
 func TestLumePolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/lume/v4" || p.Structured == nil {
+	if p.ID != "unit3d/lume/v5" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }
@@ -244,7 +244,16 @@ func TestLumeTVDBRejectsStaleMetadata(t *testing.T) {
 	s.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: s.SourcePath,
 		Generation: 1,
-		TVDB:       &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{CanonicalName: "Series", IncludeYear: true}},
+		TVDB: &api.TVDBMetadata{
+			TVDBID:      1,
+			NameEnglish: "TVDB Series",
+			NameDisambiguation: api.TVDBNameDisambiguation{
+				CanonicalName: "TVDB Series",
+				Status:        api.MetadataEvidenceStatusComplete,
+				Source:        "tvdb-name/v1",
+				IncludeYear:   true,
+			},
+		},
 	}
 	if got, want := lumeName(t, s, nil), "Series CA AKA Alt 2026 S01E02 1080p WEB-DL H.265-GRP"; got != want {
 		t.Fatalf("TVDB name = %q, want %q", got, want)
@@ -268,6 +277,7 @@ func lumeSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 		Identity: api.ExternalIdentity{
 			SourcePath: "lume",
 			Generation: 1,
+			TVDBID:     1,
 			Category:   api.CanonicalCategory(r.Category),
 		},
 		Release: api.ReleaseInfo{
@@ -290,7 +300,7 @@ func lumeName(t *testing.T, s api.UploadSubject, o *string) string {
 		Tracker:             "LUME",
 		Meta:                s,
 		RequestedUploadName: o,
-	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
+	}, namePolicy())
 	if f != nil {
 		t.Fatal(f)
 	}

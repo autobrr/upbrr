@@ -179,6 +179,10 @@ type ReleaseNamePolicyBinding struct {
 	ID           string
 	Elements     api.ReleaseNameElementPolicy
 	Confirmation ReleaseNameConfirmationMode
+	// TitleProvider selects current matching metadata for automatic primary titles.
+	// Empty preserves the existing resolver. Manual metadata, components and opaque
+	// names retain their authority; missing required automatic title evidence fails.
+	TitleProvider api.IdentityProvider
 	// MovieYearProvider selects authoritative current metadata for automatic movie-name years.
 	// Empty preserves the finalized year. Structured defaults respect manual year
 	// authority; opaque names are preserved unless the policy requires rebuilding.

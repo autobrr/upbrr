@@ -35,6 +35,9 @@ type Profile struct {
 	Site SiteProfile
 	// ReleaseNamePolicy overrides the generic site BuildName policy.
 	ReleaseNamePolicy trackers.ReleaseNamePolicyBinding
+	// NameProviders overrides the automatic TMDB title/movie-year defaults.
+	// An empty policy preserves source names or site-owned provider selection.
+	NameProviders *NameProviders
 	// OmitEpisodeTitle removes generated single-episode titles before site naming.
 	OmitEpisodeTitle bool
 	// Rules contains site-specific release validation requirements.
@@ -66,20 +69,31 @@ type Profile struct {
 	DescriptionGroup string
 }
 
+// NameProviders keeps a site's primary-title and movie-year authorities separate.
+// Empty fields leave that part of the site's existing naming policy unchanged.
+type NameProviders struct {
+	Title     api.IdentityProvider
+	MovieYear api.IdentityProvider
+}
+
 // New returns a Unit3D definition for the requested registered profile name.
 func New(name string) *Definition {
 	return NewWithProfile(Profile{Name: name})
 }
 
-// NewWithProfile normalizes profile identity, copies static banned groups and
-// metadata requirements, and retains the remaining site callbacks and policy
-// pointers as immutable compiled configuration.
+// NewWithProfile normalizes profile identity, copies static banned groups,
+// metadata requirements and naming providers, and retains the remaining site
+// callbacks and policy pointers as immutable compiled configuration.
 func NewWithProfile(profile Profile) *Definition {
 	profile.Name = strings.ToUpper(strings.TrimSpace(profile.Name))
 	profile.BaseURL = strings.TrimSpace(profile.BaseURL)
 	profile.DescriptionGroup = strings.ToLower(strings.TrimSpace(profile.DescriptionGroup))
 	profile.BannedGroups = append([]string(nil), profile.BannedGroups...)
 	profile.MetadataPolicy = cloneMetadataPolicy(profile.MetadataPolicy)
+	if profile.NameProviders != nil {
+		providers := *profile.NameProviders
+		profile.NameProviders = &providers
+	}
 	return &Definition{profile: profile}
 }
 
@@ -255,7 +269,8 @@ func (d *Definition) SourceOnlyImageReusable(rawURL string, records []api.Tracke
 	return d.profile.SourceOnlyImageReusable != nil && d.profile.SourceOnlyImageReusable(rawURL, records)
 }
 
-// ReleaseNamePolicy returns the versioned Unit3D site naming policy with TMDB-authoritative movie years.
+// ReleaseNamePolicy composes site formatting with separate automatic title and
+// movie-year providers. Sites without an explicit exception use TMDB for both.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	var binding trackers.ReleaseNamePolicyBinding
 	switch {
@@ -274,12 +289,17 @@ func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 			},
 		)
 	default:
-		binding = trackers.StructuredReleaseNamePolicy("unit3d/canonical/v2", trackers.StructuredNamePolicy{})
+		binding = trackers.StructuredReleaseNamePolicy("unit3d/canonical/v3", trackers.StructuredNamePolicy{})
 	}
 	if d.profile.OmitEpisodeTitle {
 		binding = trackers.WithEpisodeTitleMode(binding, api.EpisodeTitleModeOmit)
 	}
-	return trackers.WithMovieYearProvider(binding, api.IdentityProviderTMDB)
+	providers := NameProviders{Title: api.IdentityProviderTMDB, MovieYear: api.IdentityProviderTMDB}
+	if d.profile.NameProviders != nil {
+		providers = *d.profile.NameProviders
+	}
+	binding = trackers.WithTitleProvider(binding, providers.Title)
+	return trackers.WithMovieYearProvider(binding, providers.MovieYear)
 }
 
 // UploadContentMode declares the aggregate description workflow shared by Unit3D sites.

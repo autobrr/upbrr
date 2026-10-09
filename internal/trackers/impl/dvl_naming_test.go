@@ -4,6 +4,7 @@
 package impl
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -31,7 +32,19 @@ func TestRegistryProjectsDVLStructuredName(t *testing.T) {
 		VideoEncode: "x264",
 		Tag:         "-GRP",
 	}, nil)
+	sourcePath := filepath.Join(t.TempDir(), "Example.mkv")
 	subject := api.UploadSubject{
+		SourcePath: sourcePath,
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			Generation: 1,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   4242,
+				Category: "MOVIE",
+				Title:    "Uncut JAPANESE 480p DVD Tales",
+				Year:     2001,
+			},
+		},
 		ReleaseName:      generated.Name,
 		ReleaseNameNoTag: generated.NameNoTag,
 		GeneratedName:    generated.GeneratedName,
@@ -41,7 +54,12 @@ func TestRegistryProjectsDVLStructuredName(t *testing.T) {
 		Audio:            "DD 2.0",
 		VideoEncode:      "x264",
 		AudioLanguages:   []string{"Japanese"},
-		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 4242},
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			Generation: 1,
+			Category:   api.CanonicalCategoryMovie,
+			TMDBID:     4242,
+		},
 		Release: api.ReleaseInfo{
 			Title:      "Uncut JAPANESE 480p DVD Tales",
 			Year:       2001,

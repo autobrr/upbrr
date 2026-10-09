@@ -27,6 +27,23 @@ func TestRFStructuredReleaseNamePolicyIsCanonical(t *testing.T) {
 		ReleaseName:      result.Name,
 		ReleaseNameNoTag: result.NameNoTag,
 		GeneratedName:    result.GeneratedName,
+		SourcePath:       "rf-source",
+		Identity: api.ExternalIdentity{
+			SourcePath: "rf-source",
+			Generation: 1,
+			TMDBID:     1,
+			Category:   api.CanonicalCategoryMovie,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "rf-source",
+			Generation: 1,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   1,
+				Category: "MOVIE",
+				Title:    "Example Release",
+				Year:     2026,
+			},
+		},
 	}
 	if got := rfReviewedName(t, subject, nil); got != result.Name {
 		t.Fatalf("canonical name = %q, want %q", got, result.Name)

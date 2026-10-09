@@ -14,13 +14,14 @@ import (
 // Profile returns SP's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
+		NameProviders:    &unit3d.NameProviders{},
 		Name:             "SP",
 		DescriptionGroup: "sp",
 		BaseURL:          "https://seedpool.org",
 		Rules:            Rules(),
 		ValidationPolicy: ValidationPolicy(),
 		ReleaseNamePolicy: trackers.WithNonSceneReleaseNameConfirmation(
-			trackers.NewReleaseNamePolicy("unit3d/sp/v4", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			trackers.NewReleaseNamePolicy("unit3d/sp/v5", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 				name := buildName(input.Subject, input.TrackerConfig)
 				if !input.Subject.Scene && input.RequestedName != nil {
 					name = strings.TrimSpace(*input.RequestedName)
@@ -30,7 +31,7 @@ func Profile() unit3d.Profile {
 		),
 		Site: unit3d.SiteProfile{
 			BuildName:        buildName,
-			BuildNameVersion: "v4",
+			BuildNameVersion: "v5",
 		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			Requirements: []trackers.MetadataRequirement{{

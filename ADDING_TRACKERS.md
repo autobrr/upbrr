@@ -242,6 +242,24 @@ with a reprepare instruction rather than silently searching for the opaque uploa
 
 #### Preserve manual choices unless the tracker explicitly requires otherwise
 
+Automatic primary titles use `ReleaseNamePolicyBinding.TitleProvider`, independently of
+`MovieYearProvider`. Unit3D defaults both to TMDB; declare an evidenced exception in
+`Profile.NameProviders`. An empty `NameProviders` policy disables both defaults for a
+source-preserving resolver. A site that already selects its title can leave `Title` empty
+while choosing its movie-year provider. These are compiled tracker policies, not user settings.
+
+Provider selection edits only a projection copy, before site defaults. It requires a matching
+positive provider ID and exact nonblank source/current generation; TMDB must also match the
+movie/TV category. Missing automatic title evidence fails with a refresh/reprepare instruction.
+Manual metadata, manual title components and opaque names retain their authority. Existing
+provider collection supplies the title snapshots; naming callbacks perform no I/O. Reviewed
+naming fingerprints include the selected provider, so changing it requires renewed review.
+
+Use `CurrentTVDBNameDisambiguation` for identity-bound TV qualifiers when the primary title
+comes from another provider. It rejects stale or mismatched evidence and manual titles;
+tracker-local callbacks still own qualifier placement and manual-year preservation. Do not
+require rendered title text to equal TVDB's spelling.
+
 `StructuredNamePolicy.Defaults` applies optional presentation preferences. Its editor leaves
 manual components unchanged and skips unavailable targets. `Mandatory` runs after defaults and
 has absolute authority over the role/aspect pairs declared in `Authority`, including conflicting

@@ -169,14 +169,20 @@ func yusNamingEvidenceSubject(t *testing.T, languages ...string) (api.UploadSubj
 		Tag:         "-GRP",
 	})
 	meta.Identity.TMDBID = 1234567
+	meta.Identity.IMDBID = 1234567
 	meta.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusNotApplicable
 	meta.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: meta.SourcePath,
 		Generation: meta.Identity.Generation,
 		TMDB: &api.TMDBMetadata{
-			TMDBID: 1234567,
+			TMDBID:   1234567,
+			Category: string(meta.Identity.Category),
+			Title:    "Example",
+			Year:     2026,
+		},
+		IMDB: &api.IMDBMetadata{
+			IMDBID: 1234567,
 			Title:  "Example",
-			Year:   2026,
 		},
 	}
 	media := api.MediaFacts{TrackCoverageComplete: true}

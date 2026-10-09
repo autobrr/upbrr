@@ -84,6 +84,8 @@ Questions remain for genuine upload inputs, naming choices and ambiguous track a
 
 upbrr resolves upload and search names before duplicate checking. Review the projected name for every selected tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. Manual naming controls are presentation choices and do not grant upload eligibility or replace required factual evidence.
 
+Automatic title and year sources can differ by destination. A required title must come from matching metadata for the current release; missing or outdated evidence blocks that name instead of silently substituting another provider. Refresh metadata and prepare the release again when requested. Explicit manual titles and complete name overrides remain authoritative, while an automatic duplicate-search name can still require its own provider evidence. These naming choices do not change the shared release facts or another destination's name.
+
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or TV season/episode segment. Missing or unknown resolution stays absent, and complete manual names remain unchanged.
 
 Categories, source/type mappings, descriptions, media selection, questionnaires and authentication requirements can vary. Review the displayed requirements and consult the tracker's current rules. A successful local preparation does not prove that a remote upload will be accepted.

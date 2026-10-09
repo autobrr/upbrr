@@ -26,12 +26,18 @@ func TestYUSStructuredName(t *testing.T) {
 	s.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: s.SourcePath,
 		Generation: 1,
-		TVDB: &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-			CanonicalName: "Series",
-			IncludeYear:   true,
-			IncludeLocale: true,
-			Locale:        "US",
-		}},
+		TVDB: &api.TVDBMetadata{
+			TVDBID:      1,
+			NameEnglish: "TVDB Series",
+			NameDisambiguation: api.TVDBNameDisambiguation{
+				CanonicalName: "TVDB Series",
+				Status:        api.MetadataEvidenceStatusComplete,
+				Source:        "tvdb-name/v1",
+				IncludeYear:   true,
+				IncludeLocale: true,
+				Locale:        "US",
+			},
+		},
 	}
 	if got, want := yusName(t, s, nil), "Series AKA Alt US 2026 S01E02 1080p WEB-DL H.265-GRP"; got != want {
 		t.Fatalf("%q want %q", got, want)
@@ -60,11 +66,17 @@ func TestYUSStructuredName(t *testing.T) {
 	manualEmptyYear.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: manualEmptyYear.SourcePath,
 		Generation: 1,
-		TVDB: &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-			CanonicalName: "Series",
-			IncludeLocale: true,
-			Locale:        "US",
-		}},
+		TVDB: &api.TVDBMetadata{
+			TVDBID:      1,
+			NameEnglish: "TVDB Series",
+			NameDisambiguation: api.TVDBNameDisambiguation{
+				CanonicalName: "TVDB Series",
+				Status:        api.MetadataEvidenceStatusComplete,
+				Source:        "tvdb-name/v1",
+				IncludeLocale: true,
+				Locale:        "US",
+			},
+		},
 	}
 	if got, want := yusName(t, manualEmptyYear, nil), "Series US S01E02 1080p WEB-DL H.265-GRP"; got != want {
 		t.Fatalf("manual-empty year locale name = %q, want %q", got, want)
@@ -72,7 +84,7 @@ func TestYUSStructuredName(t *testing.T) {
 }
 func TestYUSPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/yus/v7" || p.Structured == nil {
+	if p.ID != "unit3d/yus/v8" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }
@@ -167,6 +179,7 @@ func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 		Identity: api.ExternalIdentity{
 			SourcePath: "yus",
 			Generation: 1,
+			TVDBID:     1,
 			Category:   category,
 		},
 		Release: api.ReleaseInfo{
@@ -192,7 +205,7 @@ func yusName(t *testing.T, s api.UploadSubject, o *string) string {
 		Tracker:             "YUS",
 		Meta:                s,
 		RequestedUploadName: o,
-	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
+	}, namePolicy())
 	if f != nil {
 		t.Fatal(f)
 	}

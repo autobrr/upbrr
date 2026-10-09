@@ -232,3 +232,18 @@ func longestCommonSubstring(a, b []rune) (int, int, int) {
 
 	return endA - longest, endB - longest, longest
 }
+
+// TrimTrailingParentheticalYear removes an exact trailing parenthesized year
+// only when that year is known. It trims outer whitespace and leaves other
+// parenthetical text and different years unchanged.
+func TrimTrailingParentheticalYear(title string, year int) string {
+	trimmed := strings.TrimSpace(title)
+	if year <= 0 {
+		return trimmed
+	}
+	suffix := "(" + strconv.Itoa(year) + ")"
+	if !strings.HasSuffix(trimmed, suffix) {
+		return trimmed
+	}
+	return strings.TrimSpace(strings.TrimSuffix(trimmed, suffix))
+}

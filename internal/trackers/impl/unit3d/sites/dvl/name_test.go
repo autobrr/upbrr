@@ -535,7 +535,28 @@ func dvlGeneratedSubject(t *testing.T, request api.ReleaseNameRequest, languages
 	if result.GeneratedName == nil {
 		t.Fatal("BuildReleaseName did not produce a structured document")
 	}
+	category, err := api.NormalizeCanonicalCategory(request.Category)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return api.UploadSubject{
+		SourcePath: "dvl-source",
+		Identity: api.ExternalIdentity{
+			SourcePath: "dvl-source",
+			Generation: 1,
+			TMDBID:     1,
+			Category:   category,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "dvl-source",
+			Generation: 1,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   1,
+				Category: request.Category,
+				Title:    request.Title,
+				Year:     request.Year,
+			},
+		},
 		ReleaseName:      result.Name,
 		ReleaseNameNoTag: result.NameNoTag,
 		GeneratedName:    result.GeneratedName,
