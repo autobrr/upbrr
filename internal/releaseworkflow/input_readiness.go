@@ -30,7 +30,7 @@ func (m *Module) evaluateInputReadiness(
 		return CommandResult{}, err
 	}
 	command.TrackerInputAnswers = trackerInputAnswers
-	trackerIDs := normalizeContinuationTrackerIDs(command.TrackerIDs)
+	trackerIDs := normalizeContinuationTrackerIDs(workflowTrackerScope(state, command.TrackerIDs))
 	trackerNames := make([]string, len(trackerIDs))
 	for index := range trackerIDs {
 		trackerNames[index] = string(trackerIDs[index])
@@ -93,6 +93,7 @@ func (m *Module) evaluateInputReadiness(
 		return CommandResult{}, fmt.Errorf("release workflow publish input readiness: %w", err)
 	}
 	state.InputReadiness[snapshot.ID] = snapshot
+	state.TrackerScope = slices.Clone(trackerIDs)
 	state.Workflow.InputReadiness = &api.InputReadinessSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, snapshot.RequiredActions, nil)
 	return CommandResult{InputReadiness: &snapshot}, nil

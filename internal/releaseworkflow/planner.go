@@ -147,6 +147,7 @@ func (m *Module) Continue(
 	if err := m.acceptContinuationIntent(ctx, ownerID, authority.WorkflowID, request); err != nil {
 		return CommandResult{}, err
 	}
+	request.Intent.TrackerIDs = workflowTrackerScope(&state, request.Intent.TrackerIDs)
 	if request.Approval != nil { //nolint:staticcheck // Reject retained v1 authority explicitly.
 		return CommandResult{}, fmt.Errorf("%w: final upload approval is no longer accepted", ErrInvalidTransition)
 	}
@@ -283,6 +284,23 @@ func (m *Module) Continue(
 		return CommandResult{}, fmt.Errorf("release workflow continue %s: %w", stage, err)
 	}
 	return m.Current(ctx, ownerID, operation.WorkflowID)
+}
+
+// workflowTrackerScope resolves omitted IDs without reviving invalidated evidence.
+// Older persisted workflows recover their scope from the current selection.
+func workflowTrackerScope(state *State, requested []api.TrackerID) []api.TrackerID {
+	if len(requested) > 0 {
+		return slices.Clone(requested)
+	}
+	if len(state.TrackerScope) > 0 {
+		return slices.Clone(state.TrackerScope)
+	}
+	if ref := state.Workflow.Selection; ref != nil {
+		if selection, ok := state.Selections[ref.ID]; ok && selection.Revision == ref.Revision {
+			return slices.Clone(selection.TrackerIDs)
+		}
+	}
+	return nil
 }
 
 func (m *Module) planSelectionDemandRefresh(

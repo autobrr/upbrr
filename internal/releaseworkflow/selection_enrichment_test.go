@@ -88,6 +88,11 @@ func TestContinueRefreshesPreparationForChangedSelectedMetadataDemand(t *testing
 		len(current.InputReadiness.SelectedTrackerIDs) != 1 || current.InputReadiness.SelectedTrackerIDs[0] != "GAMMA" {
 		t.Fatalf("same demand union = prepares %d, readiness %#v", prepareCalls.Load(), current.InputReadiness)
 	}
+	current = continueForSelectionEnrichment(t, module, current, nil)
+	if prepareCalls.Load() != 2 || current.InputReadiness == nil ||
+		len(current.InputReadiness.SelectedTrackerIDs) != 1 || current.InputReadiness.SelectedTrackerIDs[0] != "GAMMA" {
+		t.Fatalf("omitted accepted scope = prepares %d, readiness %#v", prepareCalls.Load(), current.InputReadiness)
+	}
 }
 
 func continueForSelectionEnrichment(

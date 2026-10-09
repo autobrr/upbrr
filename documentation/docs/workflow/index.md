@@ -82,6 +82,8 @@ Tracker rules and constructibility checks can mark a lane ready, blocked, skippe
 
 For warnings that permit an override, turn on **Acknowledge tracker warnings** on the tracker's **Dupe Check** card or answer the CLI prompt. Approval covers the current warnings. Turn the toggle off to withdraw approval. Changed warnings or a new prepared generation require renewed approval. Strict failures cannot be overridden. See [tracker warning approval](../trackers/index.md#approve-tracker-warnings) for unattended and debug behavior.
 
+Continuing after an acknowledgement keeps your selected trackers, including when changed metadata requirements refresh preparation. If refreshed facts need another decision, review the new action before continuing.
+
 ## 4. Review duplicate evidence
 
 Duplicate search results are evidence, not an automatic upload decision. Review candidate names, metadata, and tracker warnings. Where approval is required, select an explicit non-empty tracker subset after the duplicate stage.
