@@ -4,6 +4,7 @@
 package lst
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -15,17 +16,37 @@ func TestLSTPresentationTitleProviderHDRPrecedence(t *testing.T) {
 	for _, test := range []struct {
 		presentation string
 		edition      string
+		provider     string
 	}{
-		{presentation: "IMAX", edition: "IMAX"},
-		{presentation: "Hybrid"},
-		{presentation: "IMAX Hybrid", edition: "IMAX"},
+		{
+			presentation: "IMAX",
+			edition:      "IMAX",
+			provider:     "DSNP",
+		},
+		{presentation: "Hybrid", provider: "DSNP"},
+		{
+			presentation: "IMAX Hybrid",
+			edition:      "IMAX",
+			provider:     "DSNP",
+		},
+		{
+			presentation: "IMAX",
+			edition:      "IMAX",
+			provider:     "YT",
+		},
+		{presentation: "Hybrid", provider: "YT"},
+		{
+			presentation: "IMAX Hybrid",
+			edition:      "IMAX",
+			provider:     "YT",
+		},
 	} {
 		for _, proposedDV := range []bool{false, true} {
-			t.Run(test.presentation+"/"+map[bool]string{false: "existing_dv", true: "proposed_dv"}[proposedDV], func(t *testing.T) {
+			t.Run(test.provider+"/"+test.presentation+"/"+map[bool]string{false: "existing_dv", true: "proposed_dv"}[proposedDV], func(t *testing.T) {
 				t.Parallel()
-				target := lstTarget("Example Movie 2026 "+test.presentation+" 2160p DSNP WEB-DL HEVC-TARGET",
-					"WEBDL", "2160p", "DSNP", "HEVC", api.HDRFormatHDR10)
-				candidate := lstCandidate("Example Movie 2026 "+test.presentation+" REPACK 2160p DSNP WEB-DL HEVC-GRP",
+				target := lstTarget("Example Movie 2026 "+test.presentation+" 2160p "+test.provider+" WEB-DL HEVC-TARGET",
+					"WEBDL", "2160p", test.provider, "HEVC", api.HDRFormatHDR10)
+				candidate := lstCandidate("Example Movie 2026 "+test.presentation+" REPACK 2160p "+test.provider+" WEB-DL HEVC-GRP",
 					"WEBDL", "2160p", api.HDRFormatHDR10)
 				// Structured presentation and media facts establish the same slot.
 				target.Edition, candidate.Edition = test.edition, test.edition
@@ -43,7 +64,7 @@ func TestLSTPresentationTitleProviderHDRPrecedence(t *testing.T) {
 				if got.Relation != want || len(got.Reasons) == 0 || got.Reasons[0].Code != reason || result.Blocks == proposedDV {
 					t.Fatalf("relation=%s reasons=%v blocks=%t; want %s/%s", got.Relation, got.Reasons, result.Blocks, want, reason)
 				}
-				if got.Facts.Provider.Value != "dsnp" || got.Facts.Provider.Status != dupe.FactPartial ||
+				if got.Facts.Provider.Value != strings.ToLower(test.provider) || got.Facts.Provider.Status != dupe.FactPartial ||
 					got.Facts.Provider.Origin != dupe.FactOriginTrackerTitle || result.TargetFacts.Provider.Status != dupe.FactComplete {
 					t.Fatalf("candidate provider=%#v target provider=%#v", got.Facts.Provider, result.TargetFacts.Provider)
 				}

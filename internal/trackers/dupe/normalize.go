@@ -886,9 +886,9 @@ func canonicalContainer(value string) string {
 	}
 }
 
-var titleServiceCodes = metautil.ServiceCodeMap()
+var providerServiceCodes = metautil.ServiceCodeMap()
 
-// titleProvider accepts only recognized service collections from parsed title tags.
+// titleProvider accepts only recognized services from parsed collection tags.
 // Other collections, including IMAX, remain available as presentation evidence.
 func titleProvider(release rls.Release) string {
 	for _, tag := range release.Tags() {
@@ -898,11 +898,15 @@ func titleProvider(release rls.Release) string {
 		if !tag.Is(rls.TagTypeCollection) {
 			continue
 		}
+		// Preserve explicit service codes before the parser rewrites aliases.
+		if service := providerService(fmt.Sprintf("%o", tag)); service != "" {
+			return canonicalProvider(service)
+		}
 		info := tag.Info()
 		if info == nil {
 			continue
 		}
-		for alias, service := range titleServiceCodes {
+		for alias, service := range providerServiceCodes {
 			if info.Match(alias) || info.Match(service) {
 				return canonicalProvider(tag.Normalize())
 			}
@@ -911,7 +915,41 @@ func titleProvider(release rls.Release) string {
 	return ""
 }
 
+// providerService resolves known services without discarding meaningful punctuation.
+// Canonical codes take precedence over case-insensitive aliases; unknown values are empty.
+func providerService(value string) string {
+	value = strings.TrimSpace(value)
+	for _, service := range providerServiceCodes {
+		if strings.EqualFold(value, service) {
+			return service
+		}
+	}
+	for alias, service := range providerServiceCodes {
+		if strings.EqualFold(value, alias) {
+			return service
+		}
+	}
+	// These rls collection spellings are absent from the service dictionary.
+	switch strings.ToLower(value) {
+	case "bravo":
+		return "BRAV"
+	case "iplayer":
+		return "iP"
+	case "youtube":
+		return "YT"
+	case "criterion.collection":
+		return "CRIT"
+	default:
+		return ""
+	}
+}
+
+// canonicalProvider gives title and structured aliases one identity while preserving
+// custom structured codes that are absent from the service dictionary.
 func canonicalProvider(value string) string {
+	if service := providerService(value); service != "" {
+		value = service
+	}
 	normalized := compactAlphaNumeric(value)
 	switch normalized {
 	//nolint:misspell // ADN is the Animation Digital Network provider code.

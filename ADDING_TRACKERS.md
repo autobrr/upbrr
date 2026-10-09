@@ -1112,7 +1112,9 @@ Bound response bodies, sanitize remote diagnostics, and normalize entries into `
 Title-derived providers use the shared service-alias dictionary and retain partial title
 provenance. A parser collection marker such as IMAX is not a service; retain its separate
 presentation evidence. Structured API and prepared provider values remain authoritative,
-including custom provider codes, and genuine title conflicts remain contradictory.
+including custom provider codes, and genuine title conflicts remain contradictory. Known service
+aliases normalize to the same identity in both sources; punctuation in service names remains
+significant (for example, Disney and Disney+).
 
 Use `DupePolicy.Slots` for conditional ordinary-slot matrices, with complete normalized
 predicates and shared IDs only for presentations that compete in the same slot. Unlisted or

@@ -48,12 +48,12 @@ func TestNormalizeTitleProviderSeparatesPresentation(t *testing.T) {
 		{name: "Example.Movie.2026.IMAX.Hybrid.2160p.BluRay.REMUX.HEVC-GRP", edition: "imax"},
 		{name: "Example.Movie.2026.2160p.WEB-DL.DSNP.H.265-GRP", provider: "dsnp"},
 		{name: "The.Amazon.2026.2160p.WEB-DL.H.265-GRP"},
-		{name: "Example.Movie.2026.1080p.iP.WEB-DL.H.264-GRP", provider: "iplayer"},
-		{name: "Example.Movie.2026.1080p.iPlayer.WEB-DL.H.264-GRP", provider: "iplayer"},
-		{name: "Example.Movie.2026.1080p.BRAV.WEB-DL.H.264-GRP", provider: "bravo"},
-		{name: "Example.Movie.2026.1080p.BRAVO.WEB-DL.H.264-GRP", provider: "bravo"},
-		{name: "Example.Movie.2026.1080p.YT.WEB-DL.H.264-GRP", provider: "youtube"},
-		{name: "Example.Movie.2026.1080p.YOUTUBE.WEB-DL.H.264-GRP", provider: "youtube"},
+		{name: "Example.Movie.2026.1080p.iP.WEB-DL.H.264-GRP", provider: "ip"},
+		{name: "Example.Movie.2026.1080p.iPlayer.WEB-DL.H.264-GRP", provider: "ip"},
+		{name: "Example.Movie.2026.1080p.BRAV.WEB-DL.H.264-GRP", provider: "brav"},
+		{name: "Example.Movie.2026.1080p.BRAVO.WEB-DL.H.264-GRP", provider: "brav"},
+		{name: "Example.Movie.2026.1080p.YT.WEB-DL.H.264-GRP", provider: "yt"},
+		{name: "Example.Movie.2026.1080p.YOUTUBE.WEB-DL.H.264-GRP", provider: "yt"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -93,6 +93,84 @@ func TestNormalizeStructuredProviderWithPresentationTitle(t *testing.T) {
 			status:   FactComplete,
 		},
 		{
+			name:     "Example.Movie.2026.IMAX.2160p.YT.WEB-DL.HEVC-GRP",
+			provider: "YT",
+			want:     "yt",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.YOUTUBE.WEB-DL.H.264-GRP",
+			provider: "YT",
+			want:     "yt",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.YT.WEB-DL.H.264-GRP",
+			provider: "YOUTUBE",
+			want:     "yt",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.iPlayer.WEB-DL.H.264-GRP",
+			provider: "iP",
+			want:     "ip",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.iP.WEB-DL.H.264-GRP",
+			provider: "iPlayer",
+			want:     "ip",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.BRAVO.WEB-DL.H.264-GRP",
+			provider: "BRAV",
+			want:     "brav",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.BRAV.WEB-DL.H.264-GRP",
+			provider: "BRAVO",
+			want:     "brav",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.iTunes.WEB-DL.H.264-GRP",
+			provider: "iT",
+			want:     "it",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.ABC.WEB-DL.H.264-GRP",
+			provider: "AMBC",
+			want:     "ambc",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.STARZ.WEB-DL.H.264-GRP",
+			provider: "STARZ",
+			want:     "starz",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.STZ.WEB-DL.H.264-GRP",
+			provider: "STZ",
+			want:     "stz",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.VMEO.WEB-DL.H.264-GRP",
+			provider: "VMEO",
+			want:     "vmeo",
+			status:   FactComplete,
+		},
+		{
+			name:     "Example.Movie.2026.IMAX.1080p.Criterion.Collection.WEB-DL.H.264-GRP",
+			provider: "CRIT",
+			want:     "crit",
+			status:   FactComplete,
+		},
+		{
 			name:     "Example.Movie.2026.IMAX.Hybrid.2160p.WEB-DL.HEVC-GRP",
 			provider: "PROVIDER_A",
 			want:     "providera",
@@ -107,13 +185,13 @@ func TestNormalizeStructuredProviderWithPresentationTitle(t *testing.T) {
 		{
 			name:     "Example.Movie.2026.1080p.iTunes.WEB-DL.H.264-GRP",
 			provider: "iTunes",
-			want:     "itunes",
+			want:     "it",
 			status:   FactComplete,
 		},
 		{
 			name:     "Example.Movie.2026.1080p.ABC.WEB-DL.H.264-GRP",
 			provider: "ABC",
-			want:     "abc",
+			want:     "ambc",
 			status:   FactComplete,
 		},
 	} {
@@ -131,6 +209,47 @@ func TestNormalizeStructuredProviderWithPresentationTitle(t *testing.T) {
 			}
 			if candidate.Provider.Origin != FactOriginTrackerAPI || target.Provider.Origin != FactOriginTargetMedia {
 				t.Fatalf("candidate origin=%s target origin=%s", candidate.Provider.Origin, target.Provider.Origin)
+			}
+		})
+	}
+}
+
+func TestCanonicalProviderServiceIdentity(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{value: " Disney ", want: "dsny"},
+		{value: "Disney+", want: "dsnp"},
+		{value: "Apple TV", want: "atv"},
+		{value: "Apple TV+", want: "atvp"},
+		{value: "STARZ", want: "starz"},
+		{value: "Starz", want: "starz"},
+		{value: "STZ", want: "stz"},
+		{value: "VIMEO", want: "vimeo"},
+		{value: "Vimeo", want: "vimeo"},
+		{value: "VMEO", want: "vmeo"},
+		{value: "YT", want: "yt"},
+		{value: "YouTube", want: "yt"},
+		{value: "BBC iPlayer", want: "ip"},
+		{value: "iPlayer", want: "ip"},
+		{value: "BRAVO", want: "brav"},
+		{value: "BravoTV", want: "brav"},
+		{value: "iTunes", want: "it"},
+		{value: "ABC", want: "ambc"},
+		{value: "Criterion.Collection", want: "crit"},
+		{value: "PROVIDER_A", want: "providera"},
+		{value: "PROVIDER_B", want: "providerb"},
+		{},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			t.Parallel()
+			if got := canonicalProvider(test.value); got != test.want {
+				t.Fatalf("canonicalProvider(%q) = %q, want %q", test.value, got, test.want)
+			}
+			if got := canonicalProvider(test.want); got != test.want {
+				t.Fatalf("canonicalProvider(%q) = %q; want stable identity", test.want, got)
 			}
 		})
 	}
