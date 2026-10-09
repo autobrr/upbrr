@@ -11,6 +11,29 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// PreparedRequirementsSatisfied reports whether exact prepared facts already
+// cover every applicable collection demand using collection's correction
+// precedence. Instructions must belong to that generation.
+// Unknown fields remain unsatisfied; this does not authorize tracker rules.
+func PreparedRequirementsSatisfied(set api.MetadataRequirementSet, release api.PreparedRelease, instructions api.ReleaseFactInstructions) bool {
+	meta := preparationstate.State{
+		Release:              api.ReleaseInfo{Title: release.Naming.Title, Year: release.Naming.Year},
+		SeasonInt:            release.Episode.Season,
+		ReleaseNameOverrides: instructions.ReleaseName,
+		MetadataOverrides:    instructions.Metadata,
+	}
+	for _, requirement := range set.Requirements {
+		if requirement.Scope != "" && requirement.Scope != api.MetadataRequirementScopeAny &&
+			!strings.EqualFold(string(requirement.Scope), string(release.Identity.Category)) {
+			continue
+		}
+		if !metadataRequirementPresentForCollection(requirement.AnyOf, meta, release.Identity, release.ProviderMetadata) {
+			return false
+		}
+	}
+	return true
+}
+
 // requiresMetadataField selects one collection demand from the normalized
 // demand union without carrying selected tracker identities into release facts.
 func requiresMetadataField(set api.MetadataRequirementSet, category api.CanonicalCategory, field api.MetadataRequirementField) bool {

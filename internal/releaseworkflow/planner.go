@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -147,6 +148,7 @@ func (m *Module) Continue(
 	if err := m.acceptContinuationIntent(ctx, ownerID, authority.WorkflowID, request); err != nil {
 		return CommandResult{}, err
 	}
+	request.Intent.TrackerIDs = workflowTrackerScope(&state, request.Intent.TrackerIDs)
 	if request.Approval != nil { //nolint:staticcheck // Reject retained v1 authority explicitly.
 		return CommandResult{}, fmt.Errorf("%w: final upload approval is no longer accepted", ErrInvalidTransition)
 	}
@@ -285,6 +287,23 @@ func (m *Module) Continue(
 	return m.Current(ctx, ownerID, operation.WorkflowID)
 }
 
+// workflowTrackerScope resolves omitted IDs without reviving invalidated evidence.
+// Older persisted workflows recover their scope from the current selection.
+func workflowTrackerScope(state *State, requested []api.TrackerID) []api.TrackerID {
+	if len(requested) > 0 {
+		return slices.Clone(requested)
+	}
+	if len(state.TrackerScope) > 0 {
+		return slices.Clone(state.TrackerScope)
+	}
+	if ref := state.Workflow.Selection; ref != nil {
+		if selection, ok := state.Selections[ref.ID]; ok && selection.Revision == ref.Revision {
+			return slices.Clone(selection.TrackerIDs)
+		}
+	}
+	return nil
+}
+
 func (m *Module) planSelectionDemandRefresh(
 	ctx context.Context,
 	state State,
@@ -314,6 +333,11 @@ func (m *Module) planSelectionDemandRefresh(
 		slices.EqualFunc(state.PreparationDemand.Requirements, normalized.Requirements, func(left, right api.MetadataRequirement) bool {
 			return left.Scope == right.Scope && left.Disposition == right.Disposition && slices.Equal(left.AnyOf, right.AnyOf)
 		}) {
+		return PrepareReleaseCommand{}, "", false, nil
+	}
+	if current.FactInstructions != nil && metadata.PreparedRequirementsSatisfied(normalized, current.Release.Release, current.FactInstructions.Instructions) {
+		// Keep the original demand for exact-generation hydration. A selection
+		// change alone must not replace sufficient facts or their rule authority.
 		return PrepareReleaseCommand{}, "", false, nil
 	}
 	input := request.Intent.Preparation

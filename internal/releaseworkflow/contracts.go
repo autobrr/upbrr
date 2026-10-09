@@ -611,6 +611,9 @@ type State struct {
 	// authority until canonical preparation completes.
 	PendingCorrectionConfirmation *api.CorrectionConfirmation
 	PreparationInput              *api.PrepareInput
+	// TrackerScope retains selected IDs while evidence snapshots are invalidated.
+	// It grants no tracker-rule or upload authority.
+	TrackerScope []api.TrackerID
 	// PreparationDemand retains normalized metadata requirements separately because
 	// PrepareInput omits its internal-only requirements from persisted JSON used for hydration.
 	PreparationDemand      api.MetadataRequirementSet

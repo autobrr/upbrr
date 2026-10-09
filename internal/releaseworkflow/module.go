@@ -3896,6 +3896,7 @@ func (m *Module) prepareRelease(
 	now time.Time,
 	command PrepareReleaseCommand,
 ) (CommandResult, error) {
+	command.TrackerIDs = workflowTrackerScope(state, command.TrackerIDs)
 	if err := m.attachVerifiedInput(ctx, ownerID, state.Workflow.ID, &command.Input); err != nil {
 		return CommandResult{}, err
 	}
@@ -3914,6 +3915,7 @@ func (m *Module) prepareRelease(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow normalize input requirements: %w", err)
 	}
+	state.TrackerScope = slices.Clone(command.TrackerIDs)
 	facts, ok := state.FactInstructions[state.Workflow.FactInstructions.ID]
 	if !ok || facts.Revision != state.Workflow.FactInstructions.Revision {
 		return CommandResult{}, fmt.Errorf("%w: fact instructions unavailable", ErrInvalidTransition)
@@ -4544,6 +4546,7 @@ func (m *Module) setTrackerContext(
 	state.Catalogs[catalog.ID] = catalog
 	state.Runtimes[runtime.ID] = runtime
 	state.Selections[selection.ID] = selection
+	state.TrackerScope = slices.Clone(selection.TrackerIDs)
 	state.Workflow.TrackerCatalog = &api.TrackerCatalogSnapshotRef{ID: catalog.ID, Revision: catalog.Revision}
 	state.Workflow.TrackerRuntime = &api.TrackerRuntimeSnapshotRef{ID: runtime.ID, Revision: runtime.Revision}
 	state.Workflow.Selection = &api.TrackerSelectionRef{ID: selection.ID, Revision: selection.Revision}
