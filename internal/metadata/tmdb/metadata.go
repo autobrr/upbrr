@@ -397,7 +397,7 @@ func (c *Client) GetDirectors(ctx context.Context, tmdbID int, category string) 
 }
 
 func (c *Client) GetEpisodeDetails(ctx context.Context, tmdbID, season, episode int) (EpisodeDetails, error) {
-	if tmdbID == 0 || season == 0 || episode == 0 {
+	if tmdbID == 0 || season < 0 || episode == 0 {
 		return EpisodeDetails{}, errNotFound
 	}
 	path := fmt.Sprintf("/tv/%d/season/%d/episode/%d", tmdbID, season, episode)
@@ -409,6 +409,10 @@ func (c *Client) GetEpisodeDetails(ctx context.Context, tmdbID, season, episode 
 	if err := c.getJSON(ctx, path, params, &resp); err != nil {
 		return EpisodeDetails{}, err
 	}
+	seasonNumber := 0
+	if resp.SeasonNumber != nil {
+		seasonNumber = *resp.SeasonNumber
+	}
 	details := EpisodeDetails{
 		Name:          resp.Name,
 		Overview:      resp.Overview,
@@ -416,7 +420,8 @@ func (c *Client) GetEpisodeDetails(ctx context.Context, tmdbID, season, episode 
 		StillPath:     resp.StillPath,
 		VoteAverage:   resp.VoteAverage,
 		EpisodeNumber: resp.EpisodeNumber,
-		SeasonNumber:  resp.SeasonNumber,
+		SeasonNumber:  seasonNumber,
+		SeasonKnown:   resp.SeasonNumber != nil,
 		Runtime:       resp.Runtime,
 		IMDbID:        resp.Identity.IMDbID,
 	}
@@ -1000,7 +1005,7 @@ type episodeDetailsResponse struct {
 	StillPath     string  `json:"still_path"`
 	VoteAverage   float64 `json:"vote_average"`
 	EpisodeNumber int     `json:"episode_number"`
-	SeasonNumber  int     `json:"season_number"`
+	SeasonNumber  *int    `json:"season_number"`
 	Runtime       int     `json:"runtime"`
 	Identity      struct {
 		IMDbID string `json:"imdb_id"`

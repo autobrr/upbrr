@@ -165,8 +165,10 @@ type NamingFacts struct {
 // EpisodeFacts contains canonical reusable episodic identity and schedule
 // facts, independent of tracker policy.
 type EpisodeFacts struct {
-	Season            int
-	Episode           int
+	Season  int
+	Episode int
+	// MultipleEpisodes retains known combined or conflicting source episode membership.
+	MultipleEpisodes  bool
 	SeasonLabel       string
 	EpisodeLabel      string
 	DailyDate         string

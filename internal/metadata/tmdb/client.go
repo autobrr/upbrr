@@ -622,9 +622,14 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 	if !evidence.Enabled(ctx) {
 		return c.uncachedJSON(ctx, path, params, target)
 	}
+	domain := "tmdb.response.v1"
+	if _, episode := target.(*episodeDetailsResponse); episode {
+		// Older typed evidence erased absent seasons into zero.
+		domain = "tmdb.episode-response.v2"
+	}
 	err := evidence.JSON(
 		ctx,
-		"tmdb.response.v1",
+		domain,
 		[]any{c.baseURL, c.apiKey, path, params},
 		target,
 		errNotFound,

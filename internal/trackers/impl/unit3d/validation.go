@@ -39,7 +39,7 @@ func validateUnit3DConstructibility(
 		))
 	}
 	if strings.EqualFold(resolveUnit3DCategory(meta), "TV") &&
-		(subject.SeasonInt <= 0 || subject.EpisodeInt <= 0 && !subject.TVPack) {
+		(!validUnit3DSeason(meta, profile) || subject.EpisodeInt <= 0 && !subject.TVPack) {
 		failures = append(failures, trackers.NewRuleFailure(
 			"canonical_tv_metadata",
 			"Canonical TV season/episode metadata is required for this tracker.",
@@ -47,6 +47,13 @@ func validateUnit3DConstructibility(
 		))
 	}
 	return failures
+}
+
+// validUnit3DSeason preserves the positive-season default and permits only a
+// site's explicit opt-in to canonical, individually identified specials.
+func validUnit3DSeason(meta api.UploadSubject, profile SiteProfile) bool {
+	return meta.SeasonInt > 0 || profile.AllowSeasonZeroEpisodes && meta.SeasonInt == 0 &&
+		meta.SeasonStr == "S00" && meta.EpisodeInt > 0 && !meta.TVPack && !meta.MultipleEpisodes
 }
 
 func unit3DUploadSubject(subject api.TrackerValidationSubject) api.UploadSubject {
@@ -62,6 +69,8 @@ func unit3DUploadSubject(subject api.TrackerValidationSubject) api.UploadSubject
 		EffectiveMetadata:      subject.EffectiveMetadata,
 		SeasonInt:              subject.SeasonInt,
 		EpisodeInt:             subject.EpisodeInt,
+		SeasonStr:              subject.SeasonStr,
+		MultipleEpisodes:       subject.MultipleEpisodes,
 		TVPack:                 subject.TVPack,
 		DailyEpisodeDate:       subject.DailyEpisodeDate,
 		Anime:                  subject.Anime,

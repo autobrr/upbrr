@@ -12,10 +12,74 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestSpecialSeasonPresenceRefetchesLegacyCaches(t *testing.T) {
+	t.Parallel()
+	for _, season := range []string{"null", "0"} {
+		t.Run(season, func(t *testing.T) {
+			t.Parallel()
+			var episodeRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/login":
+					_, _ = w.Write([]byte(`{"data":{"token":"synthetic-token"}}`))
+				case "/series/555001/episodes/default":
+					episodeRequests.Add(1)
+					_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":555002,"seasonNumber":` + season + `,"number":1,"name":"The Special Signal"}]}}`))
+				case "/series/555001/extended":
+					_, _ = w.Write([]byte(`{"data":{"id":555001,"name":"Example Series"}}`))
+				default:
+					_, _ = w.Write([]byte(`{"data":{}}`))
+				}
+			}))
+			t.Cleanup(server.Close)
+			repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "metadata.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			ctx, scope := evidence.WithScope(t.Context(), repo, filepath.Join(t.TempDir(), "source.mkv"), "fingerprint", api.ExternalFreshnessReuse, api.NopLogger{})
+			client := NewClient(server.Client(), api.NopLogger{}, "synthetic-key", t.TempDir())
+			client.baseURL = server.URL
+			query := EpisodeQuery{SeasonKnown: true, Episode: 1}
+			cachePath := client.cachePath("", 555001, "eng")
+			if err := os.WriteFile(cachePath, []byte(`{"SeriesTitle":"Example Series","Episodes":[{"ID":555002,"SeasonNumber":0,"Number":1,"Name":"Legacy episode"}]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			// Seed the old typed response namespace as well as the disk cache.
+			legacy := episodesResponse{Data: episodesDataResponse{Episodes: []episodeResponse{{
+				ID:           555002,
+				SeasonNumber: new(0),
+				Number:       1,
+			}}}}
+			params := client.languageParamsFor(map[string]string{"page": "0"}, "eng")
+			if err := evidence.JSON(ctx, "tvdb.response.v1", []any{client.baseURL, client.apiKey, "/series/555001/episodes/default", params}, &legacy, errNotFound, nil, func() error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			data, _, err := client.GetEpisodesWithLanguage(ctx, 555001, query, "eng")
+			if err != nil || episodeRequests.Load() != 1 {
+				t.Fatalf("legacy cache was not recollected: requests=%d error=%v", episodeRequests.Load(), err)
+			}
+			_, matched := GetSpecificEpisodeData(data, query)
+			if matched != (season == "0") {
+				t.Fatalf("provider season presence was lost: episodes=%+v matched=%t", data.Episodes, matched)
+			}
+			if err := scope.Err(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestBuildNameDisambiguationFixtures(t *testing.T) {
 	tests := []struct {
@@ -501,6 +565,48 @@ func TestFindEpisodeMatch(t *testing.T) {
 
 	if !episodeIsPresent(episodes, EpisodeQuery{Episode: 2}) {
 		t.Fatal("expected cached absolute episode to satisfy seasonless query")
+	}
+}
+
+func TestExplicitSpecialEpisodeCachePresenceRequiresExactCoordinates(t *testing.T) {
+	t.Parallel()
+	ordinary := Episode{
+		SeasonNumber:   2,
+		Number:         1,
+		AbsoluteNumber: 1,
+		Aired:          "2026-01-01",
+	}
+	special := Episode{
+		SeasonNumber: 0,
+		SeasonKnown:  true,
+		Number:       1,
+	}
+	query := EpisodeQuery{
+		SeasonKnown: true,
+		Episode:     1,
+		Absolute:    1,
+		AiredDate:   ordinary.Aired,
+	}
+	if episodeIsPresent([]Episode{ordinary}, query) {
+		t.Fatal("ordinary episode sharing date and absolute number satisfied an explicit special query")
+	}
+	if episodeIsPresent([]Episode{{SeasonNumber: 0, Number: 1}}, query) {
+		t.Fatal("legacy zero without provider presence satisfied an explicit special query")
+	}
+	if !episodeIsPresent([]Episode{ordinary, special}, query) {
+		t.Fatal("exact special episode did not satisfy the cache query")
+	}
+	match, ok := GetSpecificEpisodeData(EpisodesData{Episodes: []Episode{ordinary, special}}, query)
+	if !ok || match.SeasonNumber != 0 || match.EpisodeNumber != 1 {
+		t.Fatalf("explicit special remapped to ordinary episode: %+v", match)
+	}
+	query.SeasonKnown = false
+	if !episodeIsPresent([]Episode{ordinary}, query) {
+		t.Fatal("unknown season lost its existing date/absolute cache match")
+	}
+	match, ok = GetSpecificEpisodeData(EpisodesData{Episodes: []Episode{ordinary}}, query)
+	if !ok || match.SeasonNumber != 2 {
+		t.Fatalf("unknown season lost its existing date/absolute match: %+v", match)
 	}
 }
 

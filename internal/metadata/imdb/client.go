@@ -211,6 +211,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 			seasonInfo := getMapFromMap(series, "displayableSeason")
 			episodeInfo := getMapFromMap(series, "episodeNumber")
 			season := getIntFromMap(seasonInfo, "season")
+			seasonValue, seasonKnown := seasonInfo["season"].(float64)
 			releaseYear := getIntFromMap(node, "releaseYear", "year")
 			releaseDate := ReleaseDate{
 				Year:  getIntFromMap(node, "releaseDate", "year"),
@@ -223,6 +224,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 				ReleaseYear: releaseYear,
 				ReleaseDate: releaseDate,
 				Season:      season,
+				SeasonKnown: seasonKnown && seasonValue == float64(season),
 				EpisodeText: getStringFromMap(episodeInfo, "text"),
 			})
 		}

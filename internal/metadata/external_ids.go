@@ -2329,6 +2329,7 @@ func mapIMDBEpisodes(values []imdb.Episode) []api.IMDBEpisode {
 				Day:   value.ReleaseDate.Day,
 			},
 			Season:      value.Season,
+			SeasonKnown: value.SeasonKnown,
 			EpisodeText: value.EpisodeText,
 		})
 	}
@@ -2672,8 +2673,10 @@ func (s *Service) applyTVEpisodeMetadata(
 	season, episode := meta.CanonicalSeasonEpisode()
 	// Explicit season/episode instructions seed the provider lookups below so
 	// episode titles, overviews, and air dates match the corrected values.
-	manualSeason, manualEpisode := manualSeasonEpisodeInstructionValues(meta.ReleaseNameOverrides)
-	if manualSeason > 0 {
+	manualSeason, manualEpisode, manualSeasonSet := manualSeasonEpisodeInstructionValues(meta.ReleaseNameOverrides)
+	explicitZero := meta.HasExplicitSeasonZero()
+	if manualSeasonSet {
+		explicitZero = manualSeason == 0
 		season = manualSeason
 	}
 	if manualEpisode > 0 {
@@ -2693,7 +2696,8 @@ func (s *Service) applyTVEpisodeMetadata(
 	hasManualSeasonEpisode := hasManualSeasonEpisodeOverrides(meta.ReleaseNameOverrides)
 	tmdbDateMatch := false
 
-	if tmdbClient != nil && dailyDate != "" && ids.TMDBID != 0 && ((season == 0 || episode == 0) || (wantsSeasonEpisode && !hasManualSeasonEpisode)) {
+	if !explicitZero && tmdbClient != nil && dailyDate != "" && ids.TMDBID != 0 &&
+		((season == 0 || episode == 0) || (wantsSeasonEpisode && !hasManualSeasonEpisode)) {
 		if parsedDate, err := time.Parse("2006-01-02", dailyDate); err == nil {
 			if mappedSeason, mappedEpisode, mapErr := tmdbClient.DailyToSeasonEpisode(ctx, ids.TMDBID, parsedDate); mapErr == nil {
 				if mappedSeason > 0 && mappedEpisode > 0 {
@@ -2714,7 +2718,7 @@ func (s *Service) applyTVEpisodeMetadata(
 		}
 	}
 
-	if meta.Anime && !meta.TVPack && ids.TVDBID != 0 {
+	if !explicitZero && meta.Anime && !meta.TVPack && ids.TVDBID != 0 {
 		extracted := seasonep.Extract(meta.SourcePath, meta)
 		absoluteEpisode := extracted.AbsoluteEpisode
 		if absoluteEpisode > 0 {
@@ -2744,7 +2748,7 @@ func (s *Service) applyTVEpisodeMetadata(
 	// Explicit instructions stay authoritative over daily-date and
 	// absolute-episode remapping; the provider episode lookups below consume
 	// the manual values.
-	if manualSeason > 0 {
+	if manualSeasonSet {
 		season = manualSeason
 	}
 	if manualEpisode > 0 {
@@ -2754,6 +2758,9 @@ func (s *Service) applyTVEpisodeMetadata(
 	meta.SeasonInt = season
 	meta.EpisodeInt = episode
 	meta.SeasonStr = seasonep.FormatSeason(season)
+	if explicitZero {
+		meta.SeasonStr = "S00"
+	}
 	meta.EpisodeStr = seasonep.FormatEpisode(episode)
 	meta.TMDBDateMatch = tmdbDateMatch
 	if dailyDate != "" {
@@ -2775,14 +2782,18 @@ func (s *Service) applyTVEpisodeMetadata(
 
 	if ids.TVDBID != 0 {
 		querySeason := metautil.FirstInt(season, fallbackSeason)
+		if explicitZero {
+			querySeason = 0
+		}
 		queryEpisode := metautil.FirstInt(episode, fallbackEpisode)
 		query := tvdb.EpisodeQuery{
-			Season:    querySeason,
-			Episode:   queryEpisode,
-			AiredDate: dailyDate,
-			Debug:     false,
+			Season:      querySeason,
+			SeasonKnown: explicitZero,
+			Episode:     queryEpisode,
+			AiredDate:   dailyDate,
+			Debug:       false,
 		}
-		if meta.Anime {
+		if meta.Anime && !explicitZero {
 			query.Absolute = seasonep.Extract(meta.SourcePath, meta).AbsoluteEpisode
 		}
 		if episodes, specificAlias, err := tvdbClient.GetEpisodesWithLanguage(ctx, ids.TVDBID, query, ""); err == nil {
@@ -2821,7 +2832,11 @@ func (s *Service) applyTVEpisodeMetadata(
 				}
 			}
 			if !meta.TVPack {
-				if match, ok := tvdb.GetSpecificEpisodeData(episodes, query); ok {
+				if match, ok := tvdb.GetSpecificEpisodeData(
+					episodes,
+					query,
+				); ok &&
+					(!explicitZero || match.SeasonNumber == 0 && match.EpisodeNumber == episode) {
 					tvdbEpisodeMatched = true
 					meta.TVDBAiredDate = strings.TrimSpace(match.Aired)
 					preferredTVDBEpisodeTitle := strings.TrimSpace(match.EpisodeName)
@@ -2836,7 +2851,13 @@ func (s *Service) applyTVEpisodeMetadata(
 						if strings.TrimSpace(external.TVDB.OriginalLanguage) != "" && !isEnglishLanguage(external.TVDB.OriginalLanguage) {
 							allowOriginalTVDBEpisodeText = false
 						}
+						if explicitZero && (!external.TVDB.EpisodeSeasonKnown || external.TVDB.EpisodeSeason != match.SeasonNumber ||
+							external.TVDB.EpisodeNumber != match.EpisodeNumber) {
+							external.TVDB.EpisodeNameEnglish = ""
+							external.TVDB.EpisodeOverviewEnglish = ""
+						}
 						external.TVDB.EpisodeSeason = match.SeasonNumber
+						external.TVDB.EpisodeSeasonKnown = match.SeasonKnown
 						external.TVDB.EpisodeNumber = match.EpisodeNumber
 						external.TVDB.EpisodeName = strings.TrimSpace(match.EpisodeName)
 						external.TVDB.EpisodeOverview = strings.TrimSpace(match.Overview)
@@ -2887,7 +2908,14 @@ func (s *Service) applyTVEpisodeMetadata(
 	}
 
 	if !meta.TVPack && !tvdbEpisodeMatched && external != nil && external.IMDB != nil {
-		if match, ok := findIMDBEpisode(external.IMDB.Episodes, season, episode, dailyDate); ok {
+		var match api.IMDBEpisode
+		var ok bool
+		if explicitZero {
+			match, ok = findIMDBSpecialEpisode(external.IMDB.Episodes, episode)
+		} else {
+			match, ok = findIMDBEpisode(external.IMDB.Episodes, season, episode, dailyDate)
+		}
+		if ok {
 			imdbEpisodeTitle = strings.TrimSpace(match.Title)
 			if match.Season > 0 {
 				season = match.Season
@@ -2901,7 +2929,7 @@ func (s *Service) applyTVEpisodeMetadata(
 		}
 	}
 
-	if !meta.TVPack && ids.TVmazeID != 0 {
+	if !explicitZero && !meta.TVPack && ids.TVmazeID != 0 {
 		var epData *tvmaze.EpisodeData
 		var err error
 		if dailyDate != "" {
@@ -2934,9 +2962,13 @@ func (s *Service) applyTVEpisodeMetadata(
 
 	if tmdbClient != nil && ids.TMDBID != 0 {
 		lookupSeason := metautil.FirstInt(season, fallbackSeason)
+		if explicitZero {
+			lookupSeason = 0
+		}
 		lookupEpisode := metautil.FirstInt(episode, fallbackEpisode)
-		if !meta.TVPack && lookupSeason > 0 && lookupEpisode > 0 {
-			if details, err := tmdbClient.GetEpisodeDetails(ctx, ids.TMDBID, lookupSeason, lookupEpisode); err == nil {
+		if !meta.TVPack && (lookupSeason > 0 || explicitZero) && lookupEpisode > 0 {
+			if details, err := tmdbClient.GetEpisodeDetails(ctx, ids.TMDBID, lookupSeason, lookupEpisode); err == nil &&
+				(!explicitZero || details.SeasonKnown && details.SeasonNumber == 0 && details.EpisodeNumber == episode) {
 				tmdbEpisodeTitle = strings.TrimSpace(details.Name)
 				tmdbEpisodeOverview = strings.TrimSpace(details.Overview)
 				if details.SeasonNumber > 0 {
@@ -2950,7 +2982,7 @@ func (s *Service) applyTVEpisodeMetadata(
 						episodeYear = parsedYear
 					}
 				}
-			} else {
+			} else if err != nil {
 				logger.Debugf("metadata: tmdb episode details lookup failed: %v", err)
 			}
 		}
@@ -2970,7 +3002,7 @@ func (s *Service) applyTVEpisodeMetadata(
 			}
 		}
 	}
-	if manualSeason > 0 {
+	if manualSeasonSet {
 		season = manualSeason
 	}
 	if manualEpisode > 0 {
@@ -2980,6 +3012,9 @@ func (s *Service) applyTVEpisodeMetadata(
 	meta.SeasonInt = season
 	meta.EpisodeInt = episode
 	meta.SeasonStr = seasonep.FormatSeason(season)
+	if explicitZero {
+		meta.SeasonStr = "S00"
+	}
 	meta.EpisodeStr = seasonep.FormatEpisode(episode)
 	meta.EpisodeYear = metautil.FirstInt(episodeYear, meta.EpisodeYear)
 	meta.EpisodeTitle = sanitizeEpisodeTitle(
@@ -2999,7 +3034,8 @@ func (s *Service) applyTVEpisodeMetadata(
 		)
 	}
 
-	if tmdbClient != nil && wantsSeasonEpisode && !hasManualSeasonEpisode && !tmdbDateMatch && strings.TrimSpace(meta.DailyEpisodeDate) != "" &&
+	if !explicitZero && tmdbClient != nil && wantsSeasonEpisode && !hasManualSeasonEpisode && !tmdbDateMatch &&
+		strings.TrimSpace(meta.DailyEpisodeDate) != "" &&
 		ids.TMDBID != 0 {
 		logger.Warnf(
 			"metadata: season/episode naming requested but TMDB season/episode lookup failed for daily_date=%q tmdb_id=%d",
@@ -3009,6 +3045,16 @@ func (s *Service) applyTVEpisodeMetadata(
 	}
 
 	return meta
+}
+
+// findIMDBSpecialEpisode excludes date and absolute fallbacks for explicit S00.
+func findIMDBSpecialEpisode(episodes []api.IMDBEpisode, episode int) (api.IMDBEpisode, bool) {
+	for _, candidate := range episodes {
+		if candidate.SeasonKnown && candidate.Season == 0 && episode > 0 && parseIMDBEpisodeNumber(candidate.EpisodeText) == episode {
+			return candidate, true
+		}
+	}
+	return api.IMDBEpisode{}, false
 }
 
 // findIMDBEpisode matches by air date, then canonical season/episode. When the

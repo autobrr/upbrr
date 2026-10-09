@@ -62,6 +62,8 @@ type Episode struct {
 	ReleaseYear int
 	ReleaseDate ReleaseDate
 	Season      int
+	// SeasonKnown distinguishes a provider season number, including zero, from missing evidence.
+	SeasonKnown bool
 	EpisodeText string
 }
 
