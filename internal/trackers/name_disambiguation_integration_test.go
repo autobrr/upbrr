@@ -8,6 +8,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/aither"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/dp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/hhd"
@@ -20,16 +21,16 @@ import (
 func TestTVDBQualifiersPreserveManualYear(t *testing.T) {
 	for _, site := range []struct {
 		name       string
-		policy     trackers.ReleaseNamePolicyBinding
+		profile    unit3d.Profile
 		manualYear string
 		automatic  string
 	}{
-		{"AITHER", aither.Profile().ReleaseNamePolicy, "Selected Series 2026 AKA Original US", "Selected Series AKA Original US"},
-		{"DP", dp.Profile().ReleaseNamePolicy, "Selected Series 2026 AKA Original US", "Selected Series AKA Original US"},
-		{"HHD", hhd.Profile().ReleaseNamePolicy, "Selected Series AKA Original US 2026", "Selected Series AKA Original US"},
-		{"ULCX", ulcx.Profile().ReleaseNamePolicy, "Selected Series AKA Original US 2026", "Selected Series AKA Original US"},
-		{"YUS", yus.Profile().ReleaseNamePolicy, "Selected Series AKA Original US 2026", "Selected Series AKA Original US"},
-		{"LUME", lume.Profile().ReleaseNamePolicy, "Selected Series AKA Original 2026", "Selected Series AKA Original"},
+		{"AITHER", aither.Profile(), "TMDB Series 2026 AKA Original US", "TMDB Series AKA Original US"},
+		{"DP", dp.Profile(), "TMDB Series 2026 AKA Original US", "TMDB Series AKA Original US"},
+		{"HHD", hhd.Profile(), "IMDb Series AKA Original US 2026", "IMDb Series AKA Original US"},
+		{"ULCX", ulcx.Profile(), "IMDb Series AKA Original US 2026", "IMDb Series AKA Original US"},
+		{"YUS", yus.Profile(), "IMDb Series AKA Original US 2026", "IMDb Series AKA Original US"},
+		{"LUME", lume.Profile(), "TMDB Series AKA Original 2026", "TMDB Series AKA Original"},
 	} {
 		t.Run(site.name, func(t *testing.T) {
 			for _, authority := range []string{"automatic", "manual metadata", "manual component", "manual empty metadata"} {
@@ -60,10 +61,18 @@ func TestTVDBQualifiersPreserveManualYear(t *testing.T) {
 							Generation: 1,
 							Category:   api.CanonicalCategoryTV,
 							TVDBID:     1,
+							TMDBID:     2,
+							IMDBID:     3,
 						},
 						ProviderMetadata: api.SourceScopedMetadata{
 							SourcePath: "source",
 							Generation: 1,
+							TMDB: &api.TMDBMetadata{
+								TMDBID:   2,
+								Category: "TV",
+								Title:    "TMDB Series",
+							},
+							IMDB: &api.IMDBMetadata{IMDBID: 3, Title: "IMDb Series"},
 							TVDB: &api.TVDBMetadata{
 								TVDBID: 1,
 								NameDisambiguation: api.TVDBNameDisambiguation{
@@ -104,7 +113,7 @@ func TestTVDBQualifiersPreserveManualYear(t *testing.T) {
 					prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
 						Tracker: site.name,
 						Meta:    subject,
-					}, site.policy)
+					}, unit3d.NewWithProfile(site.profile).ReleaseNamePolicy())
 					if failure != nil {
 						t.Fatal(failure)
 					}
