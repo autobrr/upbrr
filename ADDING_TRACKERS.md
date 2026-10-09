@@ -34,6 +34,33 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 - Upload and dry-run must share payload preparation. Dry-run must not submit the upload or repeat
   workflow-level discovery and duplicate checking.
 
+## Finalized metadata source of truth
+
+All tracker families consume the finalized subject for their operation: upload/dry-run,
+duplicate search, rules, or validation. Metadata preparation resolves parser, provider, media,
+and user-instruction precedence before publishing the exact prepared generation. Trackers must
+not reconstruct defaults or fallbacks from raw parser values or rendered release names.
+
+Choose the subject field or shared semantic accessor that matches the protocol field's meaning.
+The subject's `Release` is also a canonical projection, not raw parser output: `meta.Release.*`
+is valid when it represents the required fact. Keep naming tokens distinct from technical
+media facts; for example, use resolved `meta.VideoCodec`, `meta.Audio`, and `meta.Channels` for
+technical decisions rather than treating `meta.Release.Codec` or `meta.Release.Audio` naming
+tokens as interchangeable evidence.
+
+For an `api.UploadSubject` named `meta`, `Cut`, `Edition`, and `Presentation` are independently
+resolved categories. Both `meta.Edition` and `meta.Release.Edition` contain only the edition
+category. A payload requiring their combined wording must use `meta.EditionLabel()`, which
+joins cut, edition, and presentation. For example, a Director's Cut with Open Matte presentation
+still needs both categories even when Edition is empty. `EditionSet` controls rendered naming
+and is not included in that payload label. Naming policies continue to edit the individual
+structured components described below.
+
+Tracker-specific provider overrides remain valid, including title, year, AKA, and original or
+localized titles. Preserve the site's precedence, consume prepared provider evidence bound to
+the same source, identity, and generation, and use finalized facts for fallback. Do not recover
+missing facts from stale provider state or fetch metadata inside a pure mapping callback.
+
 ## Responsibility layout
 
 Tracker filenames are architecture boundaries:
@@ -487,7 +514,7 @@ func Profile() unit3d.Profile {
 }
 ```
 
-Put the algorithms in `taxonomy.go`:
+Put the algorithms in `taxonomy.go`, using the [finalized metadata fields and semantic accessors](#finalized-metadata-source-of-truth) for category and payload mappings:
 
 ```go
 // taxonomy.go
@@ -1004,7 +1031,7 @@ torrent as if it were tracker-registered.
 
 Map the standalone protocol's categories, types, resolutions, sources, codecs, audio/languages,
 tags, and flags in `taxonomy.go`. Keep taxonomy pure—no network, filesystem, auth, payload
-encoding, or description rendering. Consume finalized prepared contracts:
+encoding, or description rendering. Follow the [field and accessor guidance](#finalized-metadata-source-of-truth), including `EditionLabel()` for combined edition payload wording. Consume finalized prepared contracts:
 
 - `api.UploadSubject` for upload/dry-run
 - `api.DuplicateSubject` for duplicate search
