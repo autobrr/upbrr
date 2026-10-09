@@ -34,6 +34,31 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 - Upload and dry-run must share payload preparation. Dry-run must not submit the upload or repeat
   workflow-level discovery and duplicate checking.
 
+## Content filename policy
+
+Across all tracker families, tracker-specific content renaming is prohibited. Do not rename
+source files or folders, rewrite torrent content paths, or stage differently named content to
+satisfy a site's naming rules. This includes inserting or changing filename tokens and renaming
+a season-pack root folder. A site's requirement does not justify adding a shared content-renamer
+capability.
+
+MediaInfo must describe the prepared source. Do not rewrite its `Complete name` to match a
+manufactured filename or otherwise alter that evidence to make content appear compliant.
+
+Tracker validation must strictly block upload when existing names fail the site's requirements.
+Use the exact prepared source inventory and finalized facts, checking all applicable file and
+folder names in single-file and multi-file content, including individual files within season
+packs. Identify the offending files or folders and explain the failed requirement. A warning
+that permits upload, or an automatic rename-and-rewrite workaround, is insufficient.
+
+For example, if a site requires an audio token missing from
+`Example.Show.S01E01.1080p.WEB-DL.H.264-GRP.mkv`, block upload and explain the missing token.
+Do not insert `DDP5.1` into the content filename and rewrite MediaInfo to match.
+
+Ordinary tracker-specific upload/search-title resolution remains supported; changing a
+submitted title does not authorize changing content names or MediaInfo filenames. Existing
+general link staging also remains supported, but must not be used to work around this policy.
+
 ## Finalized metadata source of truth
 
 All tracker families consume the finalized subject for their operation: upload/dry-run,
