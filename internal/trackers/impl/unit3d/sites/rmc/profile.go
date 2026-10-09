@@ -13,6 +13,7 @@ import (
 // metadata from 2000 or earlier and uses a nonstandard type/resolution ID table.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
+		NameProviders:    &unit3d.NameProviders{MovieYear: api.IdentityProviderTMDB},
 		Name:             "RMC",
 		BaseURL:          "https://retro-movies.club",
 		Rules:            Rules(),

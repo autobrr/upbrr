@@ -369,11 +369,16 @@ func dpManualMarkerSubject(t *testing.T, originals []string, languages ...string
 	t.Helper()
 	meta := dpEligibilitySubject(languages...)
 	meta.SourcePath = "synthetic-source"
+	meta.Identity.SourcePath = meta.SourcePath
 	meta.Identity.Generation = 1
 	meta.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: meta.SourcePath,
 		Generation: meta.Identity.Generation,
-		TMDB:       &api.TMDBMetadata{TMDBID: meta.Identity.TMDBID},
+		TMDB: &api.TMDBMetadata{
+			TMDBID:   meta.Identity.TMDBID,
+			Category: string(meta.Identity.Category),
+			Title:    "Example",
+		},
 	}
 	meta.LanguageFacts.OriginalLanguages = slices.Clone(originals)
 	for index := range meta.LanguageFacts.Tracks {

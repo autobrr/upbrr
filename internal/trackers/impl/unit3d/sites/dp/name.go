@@ -16,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v7", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v8", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -109,27 +109,26 @@ func applyDPLegacyAudioLabel(editor *trackers.NameEditor, meta api.UploadSubject
 }
 
 func applyDPTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+	if unit3d.Category(meta) != "TV" {
 		return nil
 	}
-	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	title, ok := editor.Component(api.NameRoleTitle)
-	if !ok || !title.Present || !strings.EqualFold(strings.Join(strings.Fields(title.Value), " "), strings.Join(strings.Fields(evidence.CanonicalName), " ")) {
+	evidence, ok := trackers.CurrentTVDBNameDisambiguation(editor, meta)
+	if !ok {
 		return nil
 	}
-	if meta.EffectiveMetadata.YearProvenance.IsManual() {
-		evidence.SeriesYear = meta.EffectiveMetadata.Year
-	}
-	if !evidence.IncludeYear || evidence.SeriesYear <= 0 {
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return fmt.Errorf("omit DP TVDB year: %w", err)
-		}
-	} else {
-		if err := editor.Set(api.NameRoleYear, strconv.Itoa(evidence.SeriesYear)); err != nil {
-			return fmt.Errorf("set DP TVDB year: %w", err)
-		}
-		if err := editor.Include(api.NameRoleYear); err != nil {
-			return fmt.Errorf("include DP TVDB year: %w", err)
+	manualYear := meta.EffectiveMetadata.YearProvenance.IsManual()
+	if !manualYear {
+		if !evidence.IncludeYear || evidence.SeriesYear <= 0 {
+			if err := editor.Omit(api.NameRoleYear); err != nil {
+				return fmt.Errorf("omit DP TVDB year: %w", err)
+			}
+		} else {
+			if err := editor.Set(api.NameRoleYear, strconv.Itoa(evidence.SeriesYear)); err != nil {
+				return fmt.Errorf("set DP TVDB year: %w", err)
+			}
+			if err := editor.Include(api.NameRoleYear); err != nil {
+				return fmt.Errorf("include DP TVDB year: %w", err)
+			}
 		}
 	}
 
@@ -144,7 +143,7 @@ func applyDPTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubje
 		}
 		anchor = api.NameRoleLocale
 	}
-	if evidence.IncludeYear && evidence.SeriesYear > 0 {
+	if !manualYear && evidence.IncludeYear && evidence.SeriesYear > 0 {
 		if err := editor.MoveAfter(api.NameRoleYear, anchor); err != nil {
 			return fmt.Errorf("move DP TVDB year: %w", err)
 		}

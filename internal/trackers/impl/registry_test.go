@@ -106,7 +106,7 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	}
 }
 
-func TestMovieYearProvidersFollowTrackerMetadataAuthority(t *testing.T) {
+func TestNameProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 	t.Parallel()
 
 	registry, err := NewRegistry()
@@ -114,9 +114,21 @@ func TestMovieYearProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 		t.Fatalf("new registry: %v", err)
 	}
 	for _, name := range registry.NamesByFamily(trackers.FamilyUnit3D) {
+		wantTitle, wantYear := api.IdentityProviderTMDB, api.IdentityProviderTMDB
+		switch name {
+		case "HHD", "ULCX":
+			wantTitle, wantYear = api.IdentityProviderIMDB, api.IdentityProviderIMDB
+		case "YUS":
+			wantTitle = api.IdentityProviderIMDB
+		case "SP":
+			wantTitle, wantYear = "", ""
+		case "OTW", "RMC":
+			wantTitle = ""
+		}
 		descriptor, ok := registry.LookupDescriptor(name)
-		if !ok || descriptor.ReleaseNamePolicy.MovieYearProvider != api.IdentityProviderTMDB {
-			t.Fatalf("%s movie-year provider = %q", name, descriptor.ReleaseNamePolicy.MovieYearProvider)
+		if !ok || descriptor.ReleaseNamePolicy.TitleProvider != wantTitle || descriptor.ReleaseNamePolicy.MovieYearProvider != wantYear {
+			t.Fatalf("%s name providers = title %q year %q, want title %q year %q", name,
+				descriptor.ReleaseNamePolicy.TitleProvider, descriptor.ReleaseNamePolicy.MovieYearProvider, wantTitle, wantYear)
 		}
 	}
 	for name, provider := range map[string]api.IdentityProvider{
@@ -532,6 +544,22 @@ func TestRegistryOmitsGeneratedEpisodeTitleForBLU(t *testing.T) {
 	input, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
 		Tracker: "BLU",
 		Meta: api.UploadSubject{
+			SourcePath: "blu-source",
+			Identity: api.ExternalIdentity{
+				SourcePath: "blu-source",
+				Generation: 1,
+				TMDBID:     12345,
+				Category:   api.CanonicalCategoryTV,
+			},
+			ProviderMetadata: api.SourceScopedMetadata{
+				SourcePath: "blu-source",
+				Generation: 1,
+				TMDB: &api.TMDBMetadata{
+					TMDBID:   12345,
+					Category: "TV",
+					Title:    "Example.Show",
+				},
+			},
 			ReleaseName: included,
 			GeneratedName: &api.ReleaseNameDocument{
 				Version: api.ReleaseNameDocumentVersionV1,

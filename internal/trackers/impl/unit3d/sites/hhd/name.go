@@ -14,7 +14,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/hhd/v3", trackers.StructuredNamePolicy{Defaults: applyHHDNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/hhd/v4", trackers.StructuredNamePolicy{Defaults: applyHHDNameDefaults})
 }
 
 func applyHHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -36,17 +36,17 @@ func applyHHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 }
 
 func applyHHDTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
+	if unit3d.Category(meta) != "TV" {
 		return nil
 	}
-	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	if !hhdMatchesTVDBTitle(editor, evidence.CanonicalName) {
+	evidence, ok := trackers.CurrentTVDBNameDisambiguation(editor, meta)
+	if !ok {
 		return nil
 	}
 	if err := editor.MoveBefore(api.NameRoleAlternateTitle, api.NameRoleYear); err != nil {
 		return fmt.Errorf("move HHD alternate title before year: %w", err)
 	}
-	if !evidence.IncludeYear {
+	if !meta.EffectiveMetadata.YearProvenance.IsManual() && !evidence.IncludeYear {
 		if err := editor.Omit(api.NameRoleYear); err != nil {
 			return fmt.Errorf("omit HHD TVDB year: %w", err)
 		}
@@ -62,12 +62,6 @@ func applyHHDTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubj
 		return fmt.Errorf("insert HHD TVDB locale: %w", err)
 	}
 	return nil
-}
-
-func hhdMatchesTVDBTitle(editor *trackers.NameEditor, title string) bool {
-	component, ok := editor.Component(api.NameRoleTitle)
-	return ok && component.Present && !component.Manual && strings.TrimSpace(title) != "" &&
-		strings.EqualFold(strings.Join(strings.Fields(component.Value), " "), strings.Join(strings.Fields(title), " "))
 }
 
 func insertHHDDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubject) error {

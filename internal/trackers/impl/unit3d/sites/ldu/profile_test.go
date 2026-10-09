@@ -26,7 +26,7 @@ func TestLDUStructuredReleaseNamePolicyUsesLanguageRoles(t *testing.T) {
 	})
 	subject.AudioLanguages = []string{"", "Japanese", "English"}
 	subject.SubtitleLanguages = []string{"", "English"}
-	subject.ProviderMetadata.TMDB = &api.TMDBMetadata{OriginalLanguage: "ja"}
+	subject.ProviderMetadata.TMDB.OriginalLanguage = "ja"
 	if got, want := lduReviewedName(t, subject, nil), "Example Release 2026 1080p WEB-DL H.264-GRP [JPN] [Subs ENG]"; got != want {
 		t.Fatalf("LDU name = %q, want %q", got, want)
 	}
@@ -96,11 +96,19 @@ func TestLDUIgnoresStaleProviderOriginalLanguage(t *testing.T) {
 	subject.SourcePath = "current-source"
 	subject.Identity.SourcePath = subject.SourcePath
 	subject.AudioLanguages = []string{"English"}
-	subject.ProviderMetadata = api.SourceScopedMetadata{SourcePath: subject.SourcePath, TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}}
+	subject.ProviderMetadata.SourcePath = subject.SourcePath
+	subject.ProviderMetadata.TMDB.OriginalLanguage = "ja"
 	if got, want := lduReviewedName(t, subject, nil), "Provider Language 2026 1080p WEB-DL H.264-GRP [ENG]"; got != want {
 		t.Fatalf("current provider language name = %q, want %q", got, want)
 	}
 	stale := subject
+	// Keep title authority independent while testing stale original-language evidence.
+	stale.GeneratedName = subject.GeneratedName.Clone()
+	for index := range stale.GeneratedName.Components {
+		if stale.GeneratedName.Components[index].Role == api.NameRoleTitle {
+			stale.GeneratedName.Components[index].Manual = true
+		}
+	}
 	stale.ProviderMetadata.SourcePath = "stale-source"
 	if got, want := lduReviewedName(t, stale, nil), subject.ReleaseName; got != want {
 		t.Fatalf("stale provider language name = %q, want %q", got, want)
@@ -122,7 +130,23 @@ func lduGeneratedSubject(t *testing.T, request api.ReleaseNameRequest) api.Uploa
 		ReleaseName:      result.Name,
 		ReleaseNameNoTag: result.NameNoTag,
 		GeneratedName:    result.GeneratedName,
-		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		SourcePath:       "ldu-source",
+		Identity: api.ExternalIdentity{
+			SourcePath: "ldu-source",
+			Generation: 1,
+			TMDBID:     1,
+			Category:   api.CanonicalCategoryMovie,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "ldu-source",
+			Generation: 1,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   1,
+				Category: request.Category,
+				Title:    request.Title,
+				Year:     request.Year,
+			},
+		},
 		Release: api.ReleaseInfo{
 			Category: request.Category,
 			Title:    request.Title,

@@ -1344,8 +1344,8 @@
     "sha256": "34d03ec0062a5d36e5b90a1552303a4818cd117e12b1d2dbb5cf36e585a46676"
   },
   "internal/trackers/impl/unit3d/sites/aither/name.go:applyAitherTVDBDisambiguation": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "f80e3cdfd8b20d9c2552dbf635dcf130b434d04bf76cab0de282925cdb001c20"
+    "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
+    "sha256": "ebb5c3a7782c66bb91a7a98fef3215afc86a9e37d50ba4cc5613b6c3659c1d15"
   },
   "internal/trackers/impl/unit3d/sites/aither/profile.go:Profile": {
     "reason": "Duplicate-slot policy wiring review: existing namePolicy, prepared-source/generation provider evidence, and manual title/component precedence are unchanged; profile only binds the versioned duplicate policy.",
@@ -1356,8 +1356,8 @@
     "sha256": "2bd391d7b8d645bb56e5b600ede58a6eefb21cf615726709da234b70f85a6326"
   },
   "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "67b7400f6d66a8d55f1b84880d5ec9af04766463495bcc0c9cd66245ad253c8e"
+    "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
+    "sha256": "c0de5aa1e939fe09967165e368607ce3adb9fbadced810292e52af551f3678d7"
   },
   "internal/trackers/impl/unit3d/sites/dp/profile.go:Profile": {
     "reason": "Issue 606 DP completion review: the profile binds local language validation and an evidence-bound naming questionnaire; both consume finalized language facts and preserve existing current-source TVDB/manual naming precedence.",
@@ -1372,16 +1372,16 @@
     "sha256": "3cbfb44250cad8ac2dac79c4e87a0bd9efdb589114163f31d72fb5be32c3634c"
   },
   "internal/trackers/impl/unit3d/sites/hhd/name.go:applyHHDTVDBDisambiguation": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "da3c4f62666b2f40800519fb580200b12f9d69a91f763e3eaab14796ce4410d8"
+    "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
+    "sha256": "7484db35a0bb9fe36b5f35e18e7d243eb1fc90021c4e030e26e61d5493b3e750"
   },
   "internal/trackers/impl/unit3d/sites/hhd/name.go:insertHHDDiscDistributor": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
     "sha256": "717c19d2617349a151c2d426b4d52a1deb2c8beb2da5cb9dfac0f0cb6eaebc54"
   },
   "internal/trackers/impl/unit3d/sites/hhd/profile.go:Profile": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "77373ecf9d592ea5918b98b356579fe4373f78e99dcae17d8b0ed91800a06388"
+    "reason": "Provider-title projection review: binds the approved title/movie-year providers independently. Shared projection respects manual metadata/components and opaque names; missing required title evidence fails on exact source/generation/ID, with TMDB category matching. Existing local formatting and explicit OTW/RMC title selection remain unchanged.",
+    "sha256": "c7a16266c9118fae644b5015f823e77edc191646809043ccb41d1a8e41ff1614"
   },
   "internal/trackers/impl/unit3d/sites/lcd/profile.go:Profile": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1404,8 +1404,8 @@
     "sha256": "575f25eae2122199087f1dcecdbf31ffc4ef964348bf315add1d80a2fb04d4f3"
   },
   "internal/trackers/impl/unit3d/sites/lume/name.go:applyLumeTVDBDisambiguation": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "9fc5459c16d185a0d9085354724c506b506cacc15a74389b8d754fbd103cb9d9"
+    "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
+    "sha256": "cf686903ca0b5719509707e74c44830ed34e9445d4b041f3d10e0bdb6c3fb0f4"
   },
   "internal/trackers/impl/unit3d/sites/lume/profile.go:Profile": {
     "reason": "Composes the site-owned language assessment using exact prepared facts. Existing provider-aware taxonomy, region and naming callbacks retain their precedence; the composition adds no direct provider read or fallback.",
@@ -1432,8 +1432,8 @@
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
-    "reason": "Updates the OTW naming version for finalized programme-language markers only. Current source/generation provider title selection and explicit manual title/year precedence remain unchanged and are covered by the existing naming and validation regressions.",
-    "sha256": "1a7435669f41d062a994a911c86fae6282d462f251000d1e9eeb426e5a3f3873"
+    "reason": "Provider-title projection review: binds the approved title/movie-year providers independently. Shared projection respects manual metadata/components and opaque names; missing required title evidence fails on exact source/generation/ID, with TMDB category matching. Existing local formatting and explicit OTW/RMC title selection remain unchanged.",
+    "sha256": "e990e2ab990c190f7119184fb1394fc285f3511a25c543f842a4e84e23d8b0e8"
   },
   "internal/trackers/impl/unit3d/sites/otw/rules.go:ValidationPolicy": {
     "sha256": "c4455eb5269938836b82b4f2f1d00dcf90540e472d823ba67cfc7641685c5fe7",
@@ -1476,8 +1476,8 @@
     "sha256": "43f99b8b2d70fb004ff5debfe6caad501c6aa565aa5123c37e3022ad18d3317a"
   },
   "internal/trackers/impl/unit3d/sites/rmc/profile.go:Profile": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "e7cf7d2c0dee815f93dc0c541c0c63b2255bc0eb4096fbdec866dd7dae93e966"
+    "reason": "Provider-title projection review: binds the approved title/movie-year providers independently. Shared projection respects manual metadata/components and opaque names; missing required title evidence fails on exact source/generation/ID, with TMDB category matching. Existing local formatting and explicit OTW/RMC title selection remain unchanged.",
+    "sha256": "2772aa55303f695639161aa3b72a10411c9ba9b6d22213bae11ec0255507ff31"
   },
   "internal/trackers/impl/unit3d/sites/rmc/rules.go:ValidationPolicy": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1512,8 +1512,8 @@
     "sha256": "27fd3d3afb663df89578f692fabfc9ea6233007df6163827fd5cb7d9950e09e3"
   },
   "internal/trackers/impl/unit3d/sites/ulcx/name.go:applyULCXTVDBDisambiguation": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "0b3049eca03877b18c65597e5ff0cda8b5b0690ef722efd824a132c01b41ccd5"
+    "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
+    "sha256": "b94af45a6fd7198173702f34b7d0b0e5bd07849496cc1fd851ee0306677fc063"
   },
   "internal/trackers/impl/unit3d/sites/ulcx/name.go:insertULCXDiscDistributor": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1540,16 +1540,16 @@
     "reason": "Advances the validation version for compatibility assessment over finalized LanguageFacts. Region resolution, checkRules wiring, finalized technical facts, and existing provider-aware animation paths are unchanged; no provider fallback is added."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "18a67755983cfe6442a72da78c35f0fd824a5e08007573af4b214cf4091272d6"
+    "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
+    "sha256": "84a11b93359f28c1cd2b061b8baae4360aeef92fc2962f8cd54638591be3d10f"
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:insertYUSDiscDistributor": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
     "sha256": "280086d2412e28ae814734e5593072cdfb937ac57ee6e0baecb7c6ade728b299"
   },
   "internal/trackers/impl/unit3d/sites/yus/profile.go:Profile": {
-    "sha256": "3b8d96596da690d0a596bf3cb3bb5833815a2b20f4316e3538fa57dd4c96d09f",
-    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
+    "reason": "Provider-title projection review: binds the approved title/movie-year providers independently. Shared projection respects manual metadata/components and opaque names; missing required title evidence fails on exact source/generation/ID, with TMDB category matching. Existing local formatting and explicit OTW/RMC title selection remain unchanged.",
+    "sha256": "49cb33cd5abba61d9444989da2e922c043b831b638f348168e494f8f7b67dd6f"
   },
   "internal/trackers/impl/unit3d/taxonomy.go:resolveKeywords": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

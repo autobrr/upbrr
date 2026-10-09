@@ -392,8 +392,9 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 		Opaque              OpaqueNameMode
 		Separator           string
 		YearProvider        api.IdentityProvider
+		TitleProvider       api.IdentityProvider
 		SearchGeneratedName bool
-	}{binding.ID, api.ReleaseNameDocumentVersionV1, policy.Authority, policy.Opaque, policy.Separator, binding.MovieYearProvider, policy.SearchGeneratedName})
+	}{binding.ID, api.ReleaseNameDocumentVersionV1, policy.Authority, policy.Opaque, policy.Separator, binding.MovieYearProvider, binding.TitleProvider, policy.SearchGeneratedName})
 	if err != nil {
 		return ResolvedReleaseNames{}, fmt.Errorf("structured name policy fingerprint: %w", err)
 	}
@@ -472,6 +473,9 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 		rule:      binding.ID,
 		authority: policy.Authority,
 	}
+	if err := applyTitleProvider(editor, subject, binding.TitleProvider); err != nil {
+		return ResolvedReleaseNames{}, err
+	}
 	applyStructuredMovieYear(editor.document, subject, binding.MovieYearProvider)
 	if input.ElementPolicy.EpisodeTitleMode == api.EpisodeTitleModeOmit {
 		if err := editor.Omit(api.NameRoleEpisodeTitle); err != nil {
@@ -482,6 +486,9 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 		if err := policy.Defaults(editor, subject, input.TrackerConfig); err != nil {
 			return ResolvedReleaseNames{}, err
 		}
+	}
+	if err := normalizeProviderName(editor, subject, binding.TitleProvider); err != nil {
+		return ResolvedReleaseNames{}, err
 	}
 	editor.mandatory = true
 	if policy.Mandatory != nil {

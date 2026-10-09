@@ -15,7 +15,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v4", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v5", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
 }
 
 func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -49,28 +49,22 @@ func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, 
 }
 
 func applyLumeTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
+	if unit3d.Category(meta) != "TV" {
 		return nil
 	}
-	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	if !lumeMatchesTVDBTitle(editor, evidence.CanonicalName) {
+	evidence, ok := trackers.CurrentTVDBNameDisambiguation(editor, meta)
+	if !ok {
 		return nil
 	}
 	if err := editor.MoveBefore(api.NameRoleAlternateTitle, api.NameRoleYear); err != nil {
 		return fmt.Errorf("move LUME alternate title before year: %w", err)
 	}
-	if !evidence.IncludeYear {
+	if !meta.EffectiveMetadata.YearProvenance.IsManual() && !evidence.IncludeYear {
 		if err := editor.Omit(api.NameRoleYear); err != nil {
 			return fmt.Errorf("omit LUME TVDB year: %w", err)
 		}
 	}
 	return nil
-}
-
-func lumeMatchesTVDBTitle(editor *trackers.NameEditor, title string) bool {
-	component, ok := editor.Component(api.NameRoleTitle)
-	return ok && component.Present && !component.Manual && strings.TrimSpace(title) != "" &&
-		strings.EqualFold(strings.Join(strings.Fields(component.Value), " "), strings.Join(strings.Fields(title), " "))
 }
 
 func applyLumeHDR(editor *trackers.NameEditor, facts api.HDRFacts) error {

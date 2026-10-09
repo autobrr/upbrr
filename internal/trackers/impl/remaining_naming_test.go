@@ -5,6 +5,7 @@ package impl
 
 import (
 	"context"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,7 +37,9 @@ func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *
 				VideoEncode: "x264",
 				Tag:         "-GRP",
 			}, nil)
+			sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")
 			subject := api.UploadSubject{
+				SourcePath:            sourcePath,
 				ReleaseName:           generated.Name,
 				ReleaseNameNoTag:      generated.NameNoTag,
 				GeneratedName:         generated.GeneratedName,
@@ -55,11 +58,15 @@ func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *
 				VideoEncode: "x264",
 				Tag:         "-GRP",
 				Identity: api.ExternalIdentity{
-					Category: api.CanonicalCategoryMovie,
-					IMDBID:   4242,
-					TMDBID:   4242,
+					SourcePath: sourcePath,
+					Generation: 1,
+					Category:   api.CanonicalCategoryMovie,
+					IMDBID:     4242,
+					TMDBID:     4242,
 				},
 				ProviderMetadata: api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					Generation: 1,
 					IMDB: &api.IMDBMetadata{
 						IMDBID: 4242,
 						Title:  "Example Movie",
@@ -67,9 +74,10 @@ func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *
 						Year:   2026,
 					},
 					TMDB: &api.TMDBMetadata{
-						TMDBID: 4242,
-						Title:  "Example Movie",
-						Year:   2026,
+						Category: "MOVIE",
+						TMDBID:   4242,
+						Title:    "Example Movie",
+						Year:     2026,
 					},
 				},
 				Release: api.ReleaseInfo{

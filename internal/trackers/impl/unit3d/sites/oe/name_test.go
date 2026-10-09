@@ -56,7 +56,24 @@ func oeGeneratedSubject(t *testing.T, tag string) api.UploadSubject {
 		ReleaseName:      result.Name,
 		ReleaseNameNoTag: result.NameNoTag,
 		GeneratedName:    result.GeneratedName,
-		Tag:              tag,
+		SourcePath:       "oe-source",
+		Identity: api.ExternalIdentity{
+			SourcePath: "oe-source",
+			Generation: 1,
+			TMDBID:     1,
+			Category:   api.CanonicalCategoryMovie,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "oe-source",
+			Generation: 1,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   1,
+				Category: "MOVIE",
+				Title:    "Example Movie",
+				Year:     2026,
+			},
+		},
+		Tag: tag,
 	}
 }
 

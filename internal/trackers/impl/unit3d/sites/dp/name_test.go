@@ -32,13 +32,19 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		VideoEncode:  "H.265",
 		Tag:          "-GRP",
 	})
-	subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-		CanonicalName: "Dual-Audio Series",
-		SeriesYear:    2026,
-		Locale:        "US",
-		IncludeLocale: true,
-		IncludeYear:   true,
-	}}
+	subject.ProviderMetadata.TVDB = &api.TVDBMetadata{
+		TVDBID:      1,
+		NameEnglish: "TVDB Series",
+		NameDisambiguation: api.TVDBNameDisambiguation{
+			CanonicalName: "TVDB Series",
+			Status:        api.MetadataEvidenceStatusComplete,
+			Source:        "tvdb-name/v1",
+			SeriesYear:    2026,
+			Locale:        "US",
+			IncludeLocale: true,
+			IncludeYear:   true,
+		},
+	}
 	subject.AudioLanguages = []string{"English", "Japanese", "French"}
 	subject.LanguageFacts = api.LanguageFacts{
 		Tracks:                 subject.LanguageFacts.Tracks,
@@ -66,7 +72,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v7" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v8" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -92,33 +98,51 @@ func TestDPStructuredReleaseNamePolicyRequiresCurrentMatchingTVDBEvidence(t *tes
 		{"missing disambiguation", func(subject *api.UploadSubject) { subject.ProviderMetadata.TVDB = &api.TVDBMetadata{} }},
 		{"stale snapshot", func(subject *api.UploadSubject) {
 			subject.SourcePath, subject.Identity.SourcePath, subject.ProviderMetadata.SourcePath = "current", "current", "stale"
-			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-				CanonicalName: "Example Series",
-				SeriesYear:    2030,
-				IncludeYear:   true,
-				IncludeLocale: true,
-				Locale:        "US",
-			}}
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{
+				TVDBID:      1,
+				NameEnglish: "TVDB Series",
+				NameDisambiguation: api.TVDBNameDisambiguation{
+					CanonicalName: "TVDB Series",
+					Status:        api.MetadataEvidenceStatusComplete,
+					Source:        "tvdb-name/v1",
+					SeriesYear:    2030,
+					IncludeYear:   true,
+					IncludeLocale: true,
+					Locale:        "US",
+				},
+			}
 		}},
-		{"conflicting canonical title", func(subject *api.UploadSubject) {
-			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-				CanonicalName: "Other Series",
-				SeriesYear:    2030,
-				IncludeYear:   true,
-				IncludeLocale: true,
-				Locale:        "US",
-			}}
+		{"conflicting TVDB identity", func(subject *api.UploadSubject) {
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{
+				TVDBID:      2,
+				NameEnglish: "TVDB Series",
+				NameDisambiguation: api.TVDBNameDisambiguation{
+					CanonicalName: "Other Series",
+					Status:        api.MetadataEvidenceStatusComplete,
+					Source:        "tvdb-name/v1",
+					SeriesYear:    2030,
+					IncludeYear:   true,
+					IncludeLocale: true,
+					Locale:        "US",
+				},
+			}
 		}},
 		{"manual title", func(subject *api.UploadSubject) {
 			markDPComponent(t, subject.GeneratedName, api.NameRoleTitle, "Manual Series")
 			subject.ReleaseName = subject.GeneratedName.Render().Name
-			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-				CanonicalName: "Example Series",
-				SeriesYear:    2030,
-				IncludeYear:   true,
-				IncludeLocale: true,
-				Locale:        "US",
-			}}
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{
+				TVDBID:      1,
+				NameEnglish: "TVDB Series",
+				NameDisambiguation: api.TVDBNameDisambiguation{
+					CanonicalName: "TVDB Series",
+					Status:        api.MetadataEvidenceStatusComplete,
+					Source:        "tvdb-name/v1",
+					SeriesYear:    2030,
+					IncludeYear:   true,
+					IncludeLocale: true,
+					Locale:        "US",
+				},
+			}
 		}},
 	}
 	for _, test := range cases {
@@ -156,7 +180,14 @@ func dpGeneratedSubject(t *testing.T, request api.ReleaseNameRequest) api.Upload
 		ReleaseName:      result.Name,
 		ReleaseNameNoTag: result.NameNoTag,
 		GeneratedName:    result.GeneratedName,
-		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		SourcePath:       "dp",
+		ProviderMetadata: api.SourceScopedMetadata{SourcePath: "dp", Generation: 1},
+		Identity: api.ExternalIdentity{
+			SourcePath: "dp",
+			Generation: 1,
+			TVDBID:     1,
+			Category:   api.CanonicalCategoryTV,
+		},
 		Release: api.ReleaseInfo{
 			Category:   request.Category,
 			Title:      request.Title,
@@ -172,7 +203,7 @@ func dpReviewedName(t *testing.T, subject api.UploadSubject, requested *string) 
 		Tracker:             "DP",
 		Meta:                subject,
 		RequestedUploadName: requested,
-	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
+	}, namePolicy())
 	if failure != nil {
 		t.Fatal(failure)
 	}

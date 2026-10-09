@@ -6,11 +6,13 @@ package hhd
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns HHD's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
+		NameProviders:     &unit3d.NameProviders{Title: api.IdentityProviderIMDB, MovieYear: api.IdentityProviderIMDB},
 		Name:              "HHD",
 		Site:              unit3d.SiteProfile{ProjectionQuestionnaire: languageQuestionnaire},
 		BaseURL:           "https://homiehelpdesk.net",
