@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -332,6 +333,11 @@ func (m *Module) planSelectionDemandRefresh(
 		slices.EqualFunc(state.PreparationDemand.Requirements, normalized.Requirements, func(left, right api.MetadataRequirement) bool {
 			return left.Scope == right.Scope && left.Disposition == right.Disposition && slices.Equal(left.AnyOf, right.AnyOf)
 		}) {
+		return PrepareReleaseCommand{}, "", false, nil
+	}
+	if current.FactInstructions != nil && metadata.PreparedRequirementsSatisfied(normalized, current.Release.Release, current.FactInstructions.Instructions) {
+		// Keep the original demand for exact-generation hydration. A selection
+		// change alone must not replace sufficient facts or their rule authority.
 		return PrepareReleaseCommand{}, "", false, nil
 	}
 	input := request.Intent.Preparation
