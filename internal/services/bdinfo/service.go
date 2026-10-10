@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	bdrunner "github.com/autobrr/go-bdinfo/pkg/bdinfo"
 
@@ -22,7 +23,7 @@ type runRequest struct {
 	BDMVPath     string
 	PlaylistName string
 	ReportPath   string
-	Reporter     ProgressReporter
+	OnProgress   func(bdrunner.ProgressEvent)
 	SummaryOnly  bool
 }
 
@@ -35,18 +36,59 @@ var runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, erro
 	settings.PlaylistOnly = req.PlaylistName
 	settings.SummaryOnly = req.SummaryOnly
 
-	var reporter func(bdrunner.ProgressEvent)
-	if req.Reporter != nil {
-		reporter = func(event bdrunner.ProgressEvent) {
-			emitProgressEvent(req.Reporter, event)
-		}
-	}
 	return bdrunner.Run(ctx, bdrunner.Options{
 		Path:       req.BDMVPath,
 		ReportPath: req.ReportPath,
 		Settings:   settings,
-		OnProgress: reporter,
+		OnProgress: req.OnProgress,
 	})
+}
+
+// scanProgress logs stage-local thresholds. Only execute logs 100%, after the
+// scanner and report persistence succeed; scanner completion events are earlier.
+type scanProgress struct {
+	logger       api.Logger
+	bdmvPath     string
+	playlistName string
+	mu           sync.Mutex
+	stage        bdrunner.Stage
+	lastPercent  int
+}
+
+func (p *scanProgress) emit(event bdrunner.ProgressEvent) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if event.Stage != p.stage {
+		p.stage = event.Stage
+		p.lastPercent = 0
+	}
+
+	//nolint:exhaustive // Only measured scan stages have meaningful percentages.
+	switch event.Stage {
+	case bdrunner.StageClipInfo, bdrunner.StagePlaylist, bdrunner.StageStream, bdrunner.StageInitialize:
+	default:
+		return
+	}
+
+	var percent float64
+	switch {
+	case event.TotalBytes > 0:
+		percent = float64(event.ProcessedBytes) / float64(event.TotalBytes) * 100
+	case event.Total > 0:
+		percent = float64(event.Completed) / float64(event.Total) * 100
+	default:
+		return
+	}
+
+	for next := p.lastPercent + 5; next <= 95 && float64(next) <= percent; next += 5 {
+		p.log(event.Stage, next)
+		p.lastPercent = next
+	}
+}
+
+func (p *scanProgress) log(stage bdrunner.Stage, percent int) {
+	p.logger.Debugf("bdinfo: progress stage=%s percent=%d%% bdmvPath=%s playlist=%s", stage, percent, p.bdmvPath, p.playlistName)
 }
 
 func emitProgressEvent(reporter ProgressReporter, event bdrunner.ProgressEvent) {
@@ -178,6 +220,11 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 		return ScanResult{}, fmt.Errorf("bdinfo: scan canceled: %w", err)
 	}
 	reporter := progressReporterFromContext(ctx)
+	progress := scanProgress{
+		logger:       logger,
+		bdmvPath:     bdmvPath,
+		playlistName: playlistName,
+	}
 	outputDir := filepath.Dir(outputPath)
 
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -195,12 +242,18 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 		BDMVPath:     bdmvPath,
 		PlaylistName: playlistName,
 		ReportPath:   outputPath,
-		Reporter:     reporter,
-		SummaryOnly:  summaryOnly,
+		OnProgress: func(event bdrunner.ProgressEvent) {
+			progress.emit(event)
+			emitProgressEvent(reporter, event)
+		},
+		SummaryOnly: summaryOnly,
 	})
 	if err != nil {
 		logger.Debugf("bdinfo: in-process execution failed: %v", err)
 		return ScanResult{}, fmt.Errorf("bdinfo: execution failed: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return ScanResult{}, fmt.Errorf("bdinfo: scan canceled: %w", err)
 	}
 	if strings.TrimSpace(result.ReportPath) != "" {
 		outputPath = result.ReportPath
@@ -215,16 +268,21 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 		return ScanResult{}, fmt.Errorf("bdinfo: write output: %w", err)
 	}
 
+	if _, err := os.Stat(outputPath); err != nil {
+		return ScanResult{}, fmt.Errorf("bdinfo: output not found: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return ScanResult{}, fmt.Errorf("bdinfo: scan canceled: %w", err)
+	}
+
+	if result.Scan.ScanError == "" && len(result.Scan.FileErrors) == 0 {
+		progress.log(bdrunner.StageDone, 100)
+	}
 	if playlistName != "" {
 		logger.Debugf("bdinfo: successfully completed for playlist %s", playlistName)
 	} else {
 		logger.Debugf("bdinfo: successfully completed full-disc scan")
 	}
-
-	if _, err := os.Stat(outputPath); err != nil {
-		return ScanResult{}, fmt.Errorf("bdinfo: output not found: %w", err)
-	}
-
 	logger.Debugf("bdinfo: output file found at %s", outputPath)
 	return ScanResult{
 		ReportPath: outputPath,

@@ -72,6 +72,12 @@ Sources with more than eight channels per selected track are unsupported. Malfor
 
 FFmpeg streams decoded float PCM directly to upbrr; no full decoded-audio file is saved. Selected tracks needing the same image types normally share one pass over the source at their native sample rate and channel layout, without normalization, resampling, or downmixing. Missing or inaccurate duration metadata can require another decode for exact spectrogram timing. If the audio changes between passes, upbrr rejects the result; re-prepare Input before trying again.
 
+## A Blu-ray scan appears stalled
+
+Enable `debug` logging to see BDInfo progress for full-disc and selected-playlist scans. In the CLI, use `--log-level debug`; in the Web UI, set the runtime level on [Logging](../web-ui/logging.md). The `--debug` upload option controls workflow behavior and is separate from log verbosity.
+
+BDInfo logs each crossed 5% threshold through 95%, with the scan stage, source path, and selected playlist (empty for a full-disc scan). Percentages restart for each stage and scan; stream scanning uses processed bytes, while other measured stages use completed item counts. These are stage percentages, not an estimate of total elapsed time. A jump can produce several threshold entries at once, but repeated callbacks within the same interval do not repeat them. The final `stage=done percent=100%` entry appears only after processing and report persistence succeed. Failed or canceled scans, including reports with recorded scanner errors, do not emit it. Progress logging also works when no CLI or Web UI progress display is attached.
+
 ## A multi-disc source is rejected
 
 Multi-disc support accepts extracted, homogeneous DVD or BDMV directory collections. Select the collection parent and use one marker type under every disc folder:
