@@ -5,9 +5,11 @@ package metadata
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	bridge "github.com/Audionut/go-hdr10-plus/integration/bdinfo"
@@ -102,6 +104,45 @@ func TestUncachedCombinedReportRetainsActualNativeCaptureFailure(t *testing.T) {
 	); err != nil || !scanned ||
 		reads != 2 {
 		t.Fatalf("explicit HDR check skipped cached report scan: scanned=%v reads=%d err=%v", scanned, reads, err)
+	}
+}
+
+func TestCombinedBDInfoScanReportsProgress(t *testing.T) {
+	for _, withReporter := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reporter=%t", withReporter), func(t *testing.T) {
+			root := hdrDiscFixture(t, 0x1b, nil)
+			var logger captureLogger
+			service := bdinfo.New(&logger)
+			service.SetHDRService(hdranalysis.New(hdranalysis.NewAdmission(), api.NopLogger{}))
+			captured := false
+			ctx := bdinfo.WithHDRCapture(t.Context(), func(outcome *bridge.Outcome) error {
+				captured = outcome != nil && outcome.Report != nil && len(outcome.Report.Timelines) == 1
+				return nil
+			})
+			var lines []string
+			if withReporter {
+				ctx = bdinfo.WithProgressReporter(ctx, func(line string) { lines = append(lines, line) })
+			}
+			output := filepath.Join(t.TempDir(), "report.txt")
+			path, err := service.ExecuteForPlaylist(ctx, root, "00001.MPLS", output, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !captured {
+				t.Fatal("combined scan did not retain the HDR capture timeline")
+			}
+			if content, err := os.ReadFile(path); err != nil || len(content) == 0 {
+				t.Fatalf("combined scan did not persist its report: %v", err)
+			}
+			for _, message := range []string{"stage=playlist percent=5%", "stage=done percent=100%"} {
+				if !logger.contains("bdinfo: progress " + message) {
+					t.Fatalf("combined scan progress missing %q: %v", message, logger.lines)
+				}
+			}
+			if withReporter && !slices.Contains(lines, "Scan phase complete") {
+				t.Fatalf("combined scan lost user-facing progress: %v", lines)
+			}
+		})
 	}
 }
 
