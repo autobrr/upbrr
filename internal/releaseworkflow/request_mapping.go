@@ -76,10 +76,11 @@ func CommandFromRequest(request any) (Command, error) {
 		}, nil
 	case api.DecideReleaseWorkflowDuplicatesRequest:
 		return DecideDuplicatesCommand{
-			WorkflowID:       request.WorkflowID,
-			ExpectedRevision: request.ExpectedRevision,
-			Decisions:        request.Decisions,
-			IdempotencyKey:   request.IdempotencyKey,
+			WorkflowID:              request.WorkflowID,
+			ExpectedRevision:        request.ExpectedRevision,
+			Decisions:               request.Decisions,
+			StaffTokenConfirmations: request.StaffTokenConfirmations,
+			IdempotencyKey:          request.IdempotencyKey,
 		}, nil
 	case api.CaptureReleaseWorkflowMediaRequest:
 		return CaptureMediaCommand{

@@ -16,6 +16,21 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestStaffTokenDownstreamGate(t *testing.T) {
+	projection := api.TrackerReleaseProjection{Readiness: api.ReadinessStatusReady, UploadReady: true}
+	for _, confirmed := range []bool{false, true} {
+		dupe := api.TrackerDupeAssessment{
+			Decision:            api.DupeDecisionIgnored,
+			Status:              api.StageStatusCompleted,
+			RequiresStaffToken:  true,
+			StaffTokenConfirmed: confirmed,
+		}
+		if got := ProjectionEligibleForDownstream(projection, dupe, true); got != confirmed {
+			t.Fatalf("confirmed=%t: downstream eligible=%t", confirmed, got)
+		}
+	}
+}
+
 func TestWorkflowModuleDoesNotReadRawTrackerSelectionDownstream(t *testing.T) {
 	t.Parallel()
 

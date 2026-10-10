@@ -8,9 +8,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/rls"
+
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestTrackerTitleMetadataKeepsSourceAndExcludesFlagNamedGroup(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"Example.2026.1080p.BluRay.x264-IMAX.mkv", ".1080p.BluRay.x264"},
+		{"Example.2026.1080p.BluRay.x264-IMAX.MKV", ".1080p.BluRay.x264"},
+		{"Example.2026.1080p.BluRay.x264-IMAX.MP4", ".1080p.BluRay.x264"},
+		{"Example.2026.1080p.BluRay.x264-IMAX.m2ts", ".1080p.BluRay.x264"},
+		{"Example.2026.1080p.BluRay.x264-IMAX", ".1080p.BluRay.x264"},
+		{"Example.2026.IMAX.1080p.BluRay.x264-GRP.mkv", ".IMAX.1080p.BluRay.x264-"},
+		{"Example.2026.1080p.WEB-DL", ".1080p.WEB-DL"},
+		{"Example.2026-Blu-ray-3D", "-Blu-ray-3D"},
+	} {
+		got, bounded := TrackerTitleMetadata(rls.ParseString(tc.name))
+		if !bounded || got != tc.want {
+			t.Fatalf("%q metadata = %q, bounded=%t, want %q", tc.name, got, bounded, tc.want)
+		}
+	}
+}
 
 func TestNormalizeDiscEncodeFromStructuredTypeAndTitleSource(t *testing.T) {
 	t.Parallel()

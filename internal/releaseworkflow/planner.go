@@ -923,10 +923,11 @@ func planContinuationCommandWithReadiness(
 	}
 	if len(decisions) > 0 {
 		return DecideDuplicatesCommand{
-			WorkflowID:       workflowID,
-			ExpectedRevision: revision,
-			Decisions:        decisions,
-			IdempotencyKey:   key("decide-duplicates"),
+			StaffTokenConfirmations: request.Intent.StaffTokenConfirmations,
+			WorkflowID:              workflowID,
+			ExpectedRevision:        revision,
+			Decisions:               decisions,
+			IdempotencyKey:          key("decide-duplicates"),
 		}, "decide-duplicates"
 	}
 	if !duplicateDecisionsComplete(current.Dupes) {

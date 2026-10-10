@@ -60,8 +60,8 @@ func TestDefinitionBuildUploadDryRunIncludesQuestionnaire(t *testing.T) {
 	if entry.Questionnaire == nil {
 		t.Fatal("expected questionnaire")
 	}
-	if got := len(entry.Questionnaire.Fields); got != 2 {
-		t.Fatalf("expected 2 questionnaire fields, got %d", got)
+	if got := len(entry.Questionnaire.Fields); got != 3 {
+		t.Fatalf("expected 3 questionnaire fields, got %d", got)
 	}
 	if entry.Questionnaire.Fields[0].Key != "tags" {
 		t.Fatalf("expected tags field first, got %q", entry.Questionnaire.Fields[0].Key)
@@ -82,8 +82,8 @@ func TestBuildQuestionnaireIncludesTypeOptionsWhenTypeIsUnresolved(t *testing.T)
 	if field.Key != "type" || field.Kind != "select" {
 		t.Fatalf("unexpected type field: %#v", field)
 	}
-	if got := len(field.Options); got != 4 {
-		t.Fatalf("expected 4 type options, got %d", got)
+	if got := len(field.Options); got != 2 {
+		t.Fatalf("expected 2 type options, got %d", got)
 	}
 }
 
@@ -144,8 +144,9 @@ func TestDefinitionBuildUploadDryRunUsesBDInfoForBDMV(t *testing.T) {
 		SourcePath:            sourcePath,
 		TorrentPath:           torrentPath,
 		DiscType:              "BDMV",
+		Source:                "Blu-ray",
 		SelectedBDMVPlaylists: []api.PlaylistInfo{{File: "00001.MPLS"}},
-		Identity:              api.ExternalIdentity{TMDBID: 123},
+		Identity:              api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{Genres: "Action"},
 		},
@@ -181,8 +182,8 @@ func TestDefinitionBuildUploadDryRunUsesBDInfoForBDMV(t *testing.T) {
 	if _, ok := entry.Payload["mediainfo"]; ok {
 		t.Fatalf("expected BDMV upload to omit mediainfo, got %#v", entry.Payload)
 	}
-	if _, ok := entry.Payload["media"]; ok {
-		t.Fatalf("expected BDMV upload to omit media field, got %#v", entry.Payload)
+	if got := entry.Payload["media"]; got != "BluRay" {
+		t.Fatalf("media = %q, want BluRay", got)
 	}
 }
 

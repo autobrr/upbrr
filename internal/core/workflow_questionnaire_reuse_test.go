@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -24,18 +25,22 @@ import (
 )
 
 func TestContinuePTPQuestionnaireRebindsOnlyCompatibleDuplicateEvidence(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "PTP", "")
+	testContinueQuestionnaireReuse(t, "PTP", "", false)
 }
 
 func TestContinueANTQuestionnaireRebindsOnlyCompatibleDuplicateEvidence(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "ANT", "")
+	testContinueQuestionnaireReuse(t, "ANT", "", false)
+}
+
+func TestContinueANTQuestionnaireRequiresFreshStaffTokenConfirmation(t *testing.T) {
+	testContinueQuestionnaireReuse(t, "ANT", "", true)
 }
 
 func TestContinueQuestionnaireReusesEvidenceWithConfirmedSibling(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "PTP", "ANT")
+	testContinueQuestionnaireReuse(t, "PTP", "ANT", false)
 }
 
-func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker api.TrackerID) {
+func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker api.TrackerID, staffToken bool) {
 	t.Helper()
 	registry := trackerimpl.MustNewRegistry()
 	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}, Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{string(trackerID): {
@@ -149,10 +154,18 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 	}
 	authCalls := 0
 	dupes := &workflowDupeServiceFake{results: []api.DupeCheckResult{{
-		Tracker: string(trackerID),
-		Status:  "completed",
-		Search:  api.DupeSearchEvidence{Complete: true},
+		Tracker:            string(trackerID),
+		Status:             "completed",
+		Search:             api.DupeSearchEvidence{Complete: true},
+		RequiresStaffToken: staffToken,
 	}}}
+	if staffToken {
+		dupes.results[0].HasDupes = true
+		dupes.results[0].Evaluations = []api.DupeCandidateEvaluation{{
+			Name:     "Example.Movie.2026.1080p.BluRay.x264-GRP",
+			Relation: api.DupeRelationExactDuplicate,
+		}}
+	}
 	repository := releaseworkflow.NewMemoryRepository()
 	module, err := releaseworkflow.New(repository, releaseworkflow.NewMemoryPrivateResourceStore(), preparer,
 		releaseworkflow.WithSubmissionHistoryFilter(workflowSubmissionHistoryFilter{fences: fences, registry: registry}),
@@ -236,6 +249,9 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 	}
 	setAnswers := func(review string, tags *string) {
 		answers := map[string]*string{answerKey: new(review)}
+		if staffToken {
+			answers["requestid"] = new(strconv.Itoa(attempt + 1))
+		}
 		if trackerID == "PTP" {
 			answers["subtitle_tags"] = tags
 			languageSubject := api.TrackerValidationSubject{
@@ -270,6 +286,18 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 	settle(api.WorkflowGoalDuplicatesDecided)
 	if current.Dupes == nil || len(dupes.projections) != 1 {
 		t.Fatalf("initial duplicates = %#v calls=%d", current.Dupes, len(dupes.projections))
+	}
+	confirmStaffToken := func() {
+		t.Helper()
+		intent.DuplicateDecisions = map[api.TrackerID]api.DupeDecision{trackerID: api.DupeDecisionIgnored}
+		intent.StaffTokenConfirmations = map[api.TrackerID]api.DupeAssessmentID{trackerID: current.Dupes.ID}
+		settle(api.WorkflowGoalDuplicatesDecided)
+		if !current.Dupes.Results[0].StaffTokenConfirmed {
+			t.Fatal("explicit staff-token confirmation did not authorize current assessment")
+		}
+	}
+	if staffToken {
+		confirmStaffToken()
 	}
 	baseline := *current.Dupes
 	type questionnaireEdit struct {
@@ -327,6 +355,14 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 		}
 		if got := current.Projections.Projections[0].QuestionnaireAnswers[answerKey]; got != step.review {
 			t.Fatalf("Continue short-circuited with old answer %q", got)
+		}
+		if staffToken {
+			result := current.Dupes.Results[0]
+			if result.StaffTokenConfirmed || result.Decision != api.DupeDecisionPending || len(result.RequiredActions) != 1 ||
+				releaseworkflow.ProjectionEligibleForDownstream(current.Projections.Projections[0], result, true) {
+				t.Fatalf("questionnaire rebind retained old confirmation: %+v", result)
+			}
+			confirmStaffToken()
 		}
 	}
 	// Non-answer settings cannot carry old authority through the questionnaire seam.

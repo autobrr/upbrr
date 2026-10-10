@@ -13,6 +13,7 @@ import (
 	"maps"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -26,8 +27,6 @@ import (
 )
 
 const antUploadURL = "https://anthelion.me/api.php"
-
-var antTorrentIDPattern = regexp.MustCompile(`id=(\d+)`)
 
 var antDefaultSignaturePattern = regexp.MustCompile(
 	`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`,
@@ -90,7 +89,14 @@ func submitPreparedUpload(
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
 
-	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(httpReq)
+	client := httpclient.New(httpclient.DefaultTimeout)
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 || req.URL.Scheme != "https" || req.URL.Host != "anthelion.me" {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: ANT upload request: %w", err)
 	}
@@ -113,18 +119,41 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, antUploadError(resp.StatusCode, payload, bodyBytes)
 	}
 
-	viewURL := strings.TrimSpace(stringValue(payload["view"]))
+	viewURL := antString(payload["view"])
 	if viewURL == "" {
 		viewURL = strings.TrimSpace(stringValue(payload["link"]))
 	}
 	torrentID := ""
-	if matches := antTorrentIDPattern.FindStringSubmatch(viewURL); len(matches) > 1 {
-		torrentID = strings.TrimSpace(matches[1])
+	if parsed, parseErr := url.Parse(viewURL); parseErr == nil {
+		torrentID = parsed.Query().Get("torrentid")
 	}
 
-	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		logger, "ANT", state.torrentPath, artifactPath, announceURL, "ANT",
-	)
+	registeredPath := ""
+	downloadURL := antString(payload["download"])
+	switch {
+	case downloadURL != "":
+		// Only retrieve ANT-hosted download links; API credentials must not leave ANT.
+		download, parseErr := url.Parse(downloadURL)
+		if parseErr == nil && download.Scheme == "https" && download.Host == "anthelion.me" && artifactPath != "" {
+			downloadReq, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+			if requestErr == nil {
+				downloadReq.Header.Set("User-Agent", "upbrr")
+				downloadReq.Header.Set("X-Api-Key", state.fields["api_key"])
+				if trackers.DownloadRegisteredTorrent(ctx, client, downloadReq, artifactPath) == nil {
+					registeredPath = artifactPath
+				}
+			}
+		}
+		if registeredPath == "" {
+			trackers.LogRegisteredTorrentUnavailable(logger, "ANT")
+		}
+	case antString(payload["message"]) != "":
+		// ANT reports a modified torrent through message/download. Without the
+		// registered bytes, reconstruction cannot establish the server's infohash.
+		trackers.LogRegisteredTorrentUnavailable(logger, "ANT")
+	default:
+		registeredPath = trackers.PersistReconstructedRegisteredTorrent(logger, "ANT", state.torrentPath, artifactPath, announceURL, "ANT")
+	}
 
 	return api.UploadSummary{
 		Uploaded: 1,
@@ -185,7 +214,6 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 
 	answers := standalone.QuestionnaireAnswers(req.Meta, "ANT")
 	typeName, typeID := resolveType(req.Meta, answers)
-	audio := resolveAudioFormat(req.Meta)
 	flags := resolveFlags(req.Meta)
 	tags, manualTags := resolveTags(req.Meta, answers)
 	adultContent := detectAdult(req.Meta)
@@ -201,16 +229,31 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		"action":       "upload",
 		"tmdbid":       strconv.Itoa(req.Meta.Identity.TMDBID),
 		"type":         strconv.Itoa(typeID),
-		"audioformat":  audio,
+		"media":        resolveMediaSource(req.Meta.Source),
 		"release_desc": description,
 		"screenshots":  screenshots,
 	}
 	maps.Copy(fields, mediaFields)
+	if req.TrackerConfig.Anon {
+		fields["anonymous"] = "1"
+	}
 	if len(flags) > 0 {
 		fields["flags[]"] = strings.Join(flags, ",")
 	}
 	if req.Meta.Scene {
-		fields["censored"] = "1"
+		fields["scene"] = "1"
+	}
+	if fullDisc(req.Meta) {
+		if country := discCountry(req.Meta.Region); country != "" {
+			fields["disc_country"] = country
+		}
+	}
+	id, err := requestID(answers)
+	if err != nil {
+		return uploadState{}, err
+	}
+	if id != "" {
+		fields["requestid"] = id
 	}
 	if tags != "" {
 		fields["tags"] = tags
@@ -357,6 +400,9 @@ func compactJSON(payload map[string]any) string {
 }
 
 func stringValue(value any) string {
+	if value == nil {
+		return ""
+	}
 	switch typed := value.(type) {
 	case string:
 		return strings.TrimSpace(typed)

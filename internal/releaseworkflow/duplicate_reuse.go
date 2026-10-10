@@ -14,6 +14,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// RequireStaffTokenReview clears retained attestation and blocks a staff-required
+// lane until the owner confirms possession for the current upload assessment.
+func RequireStaffTokenReview(result *api.TrackerDupeAssessment) {
+	result.StaffTokenConfirmed = false
+	result.Decision = api.DupeDecisionPending
+	result.Status = api.StageStatusBlocked
+	result.RequiredActions = []api.RequiredAction{{
+		Kind:      api.RequiredActionReviewDuplicates,
+		Status:    api.RequiredActionStatusPending,
+		TrackerID: result.TrackerID,
+		Prompt:    "Confirm you have the appropriate staff-issued token for this upload. Without confirmation, the upload is blocked.",
+		Options: []api.RequiredActionOption{
+			{Value: string(api.DupeDecisionAccepted), Label: "No staff token; block upload"},
+			{Value: string(api.DupeDecisionIgnored), Label: "I have the appropriate staff-issued token"},
+		},
+	}}
+}
+
 func (m *Module) pendingDuplicateReuse(
 	ownerID string,
 	state *State,

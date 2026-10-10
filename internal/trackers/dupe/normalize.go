@@ -520,10 +520,17 @@ func parseBestTitle(names []string) parsedTitleFacts {
 // spelling so resolution, HDR10+, and HDR profile evidence are not synthesized or lost.
 func TrackerTitleMetadata(release rls.Release) (string, bool) {
 	var metadata strings.Builder
+	name := release.String()
+	groupSeparator := -1
+	rawGroupSeparator := -1
+	rawOffset := 0
 	bounded := false
 	yearPrefix := false
 	seriesPrefix := false
 	for _, tag := range release.Tags() {
+		original := fmt.Sprintf("%o", tag)
+		tagOffset := rawOffset
+		rawOffset += len(original)
 		if tag.Is(rls.TagTypeDate) || tag.Is(rls.TagTypeSeries) {
 			bounded = true
 			if tag.Is(rls.TagTypeSeries) {
@@ -534,8 +541,12 @@ func TrackerTitleMetadata(release rls.Release) (string, bool) {
 		if tag.Is(rls.TagTypeGroup) {
 			break
 		}
+		if tag.Is(rls.TagTypeExt) {
+			name = strings.TrimSuffix(name, original)
+		} else if tag.Is(rls.TagTypeContainer) {
+			name = strings.TrimSuffix(name, "."+original)
+		}
 		if !bounded {
-			original := fmt.Sprintf("%o", tag)
 			if tag.Is(rls.TagTypeText) && len(original) == 4 {
 				if _, err := strconv.Atoi(original); err == nil {
 					yearPrefix = true
@@ -553,13 +564,23 @@ func TrackerTitleMetadata(release rls.Release) (string, bool) {
 				return "", false
 			}
 		}
+		if tag.Is(rls.TagTypeDelim) && tag.Delim() == "-" {
+			groupSeparator = metadata.Len()
+			rawGroupSeparator = tagOffset
+		}
 		if tag.Is(rls.TagTypeCut) {
 			metadata.WriteString(tag.Normalize())
 		} else {
-			fmt.Fprintf(&metadata, "%o", tag)
+			metadata.WriteString(original)
 		}
 	}
-	return metadata.String(), bounded
+	text := metadata.String()
+	// Known tag words can obscure a final group from the parser. Use the same
+	// explicit suffix fallback as group normalization, only at a delimiter tag.
+	if release.Group == "" && groupSeparator >= 0 && rawGroupSeparator == strings.LastIndex(name, "-") && groupFromTitle(name) != "" {
+		text = text[:groupSeparator]
+	}
+	return text, bounded
 }
 
 // TrackerTitleHasSourceAndCodec reports whether bounded release metadata has

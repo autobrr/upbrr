@@ -17,6 +17,22 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestWorkflowStaffTokenRequiredForRemoteExactDuplicates(t *testing.T) {
+	result := api.DupeCheckResult{
+		Status:             "completed",
+		RequiresStaffToken: true,
+		HasDupes:           true,
+		Search:             api.DupeSearchEvidence{Complete: true},
+		Evaluations:        []api.DupeCandidateEvaluation{{Relation: api.DupeRelationExactDuplicate}},
+	}
+	target := api.TrackerDupeAssessment{TrackerID: "EXAMPLE"}
+	setWorkflowDupeOutcome(&target, result)
+	if target.Decision != api.DupeDecisionPending || target.Status != api.StageStatusBlocked || len(target.RequiredActions) != 1 ||
+		!strings.Contains(target.RequiredActions[0].Prompt, "staff-issued token") {
+		t.Fatalf("exact duplicate did not require token confirmation: %+v", target)
+	}
+}
+
 func TestWorkflowPackWarningUsesExistingBoundDuplicateReview(t *testing.T) {
 	evaluation := dupechecking.Evaluate(
 		api.TrackerDuplicateTarget{

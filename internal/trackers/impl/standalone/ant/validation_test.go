@@ -22,21 +22,28 @@ func TestANTTVUsesSupportedContentType(t *testing.T) {
 		wantType                   string
 	}{
 		{
-			name:     "selected miniseries",
-			answer:   "Miniseries",
-			wantType: "Miniseries",
+			name:   "selected miniseries",
+			answer: "Miniseries",
 		},
 		{
 			name:         "known miniseries",
 			providerType: "tv mini series",
-			wantType:     "Miniseries",
 		},
 		{
 			name:         "known television movie",
 			providerType: "tv movie",
 			wantType:     "Feature Film",
 		},
-		{name: "ordinary series still needs a supported type", providerType: "tv series"},
+		{
+			name:         "known television short",
+			providerType: "tv short",
+			wantType:     "Short Film",
+		},
+		{
+			name:         "ordinary series cannot be relabeled",
+			providerType: "tv series",
+			answer:       "Feature Film",
+		},
 		{name: "unanswered type"},
 		{name: "unsupported answer", answer: "ordinary series"},
 	} {

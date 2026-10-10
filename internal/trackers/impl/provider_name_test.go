@@ -6,15 +6,65 @@ package impl
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestNameReviewTrackersKeepDuplicateEvidenceAcrossUploadNameEdits(t *testing.T) {
+	registry := MustNewRegistry()
+	subject := providerNameSubject(api.CanonicalCategoryMovie)
+	mi := filepath.Join(t.TempDir(), "MEDIAINFO.txt")
+	if err := os.WriteFile(mi, []byte("General\nVideo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subject.MediaInfoTextPath = mi
+	subject.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusPresent
+	subject.ProviderMetadata.TMDB.Poster = "https://example.invalid/poster.jpg"
+	for _, tracker := range []string{"AR", "SP"} {
+		t.Run(tracker, func(t *testing.T) {
+			input := trackers.PreparationInput{
+				Tracker:       tracker,
+				Meta:          subject,
+				TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
+			}
+			automatic, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+			if failure != nil || !automatic.DupeReady || automatic.UploadReady {
+				t.Fatalf("automatic name review projection: %+v, %v", automatic, failure)
+			}
+			sameName := automatic.UploadReleaseName
+			input.RequestedUploadName = &sameName
+			confirmed, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+			if failure != nil || !confirmed.UploadReady || confirmed.DuplicateTargetFingerprint != automatic.DuplicateTargetFingerprint {
+				t.Fatalf("same-name confirmation changed retained duplicate evidence: %+v, %v", confirmed, failure)
+			}
+			requested := strings.Replace(automatic.UploadReleaseName, "GRP", "OTHER", 1)
+			input.RequestedUploadName = &requested
+			reviewed, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+			if failure != nil || !reviewed.DupeReady || !reviewed.UploadReady || reviewed.UploadReleaseName != requested {
+				t.Fatalf("edited name review projection: %+v, %v", reviewed, failure)
+			}
+			if automatic.DuplicateTargetFingerprint != reviewed.DuplicateTargetFingerprint ||
+				automatic.CriteriaFingerprint != reviewed.CriteriaFingerprint ||
+				automatic.DuplicateSearchFingerprint != reviewed.DuplicateSearchFingerprint ||
+				!slices.Equal(automatic.DuplicateTarget.Names, reviewed.DuplicateTarget.Names) {
+				t.Fatal("upload-name edit changed retained duplicate evidence")
+			}
+			input.RequestedUploadName = nil
+			unconfirmed, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+			if failure != nil || unconfirmed.UploadReady || unconfirmed.DuplicateTargetFingerprint != reviewed.DuplicateTargetFingerprint {
+				t.Fatalf("unconfirm changed retained duplicate evidence: %+v, %v", unconfirmed, failure)
+			}
+		})
+	}
+}
 
 func TestUnit3DProviderNamesUseTrackerAuthority(t *testing.T) {
 	registry := MustNewRegistry()

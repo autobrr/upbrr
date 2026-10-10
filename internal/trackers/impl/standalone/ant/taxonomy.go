@@ -6,11 +6,17 @@ package ant
 import (
 	"strings"
 
+	"golang.org/x/text/language"
+
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func resolveType(meta api.UploadSubject, answers map[string]string) (string, int) {
+	if !movieContent(meta) {
+		return "", 0
+	}
 	if text := normalizeTypeName(answers["type"]); text != "" {
 		return text, antTypeID(text)
 	}
@@ -23,36 +29,31 @@ func resolveType(meta api.UploadSubject, answers map[string]string) (string, int
 				return "Feature Film", 0
 			}
 			return "Short Film", 1
-		case "short":
+		case "short", "tv short", "tvshort":
 			return "Short Film", 1
-		case "tv mini series":
-			return "Miniseries", 2
-		case "comedy":
-			return "Other", 3
 		}
 	}
-	keywords := strings.ToLower(strings.TrimSpace(resolveKeywords(meta)))
-	category := strings.ToLower(strings.TrimSpace(string(meta.Identity.Category)))
-	if category == "movie" {
-		runtime := 0
-		if meta.ProviderMetadata.TMDB != nil {
-			runtime = meta.ProviderMetadata.TMDB.Runtime
+	runtime := 0
+	if meta.ProviderMetadata.TMDB != nil {
+		runtime = meta.ProviderMetadata.TMDB.Runtime
+	}
+	if runtime >= 45 || runtime == 0 {
+		return "Feature Film", 0
+	}
+	return "Short Film", 1
+}
+
+func movieContent(meta api.UploadSubject) bool {
+	if meta.ProviderMetadata.IMDB != nil {
+		switch strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type)) {
+		case "movie", "tv movie", "tvmovie", "short", "tv short", "tvshort":
+			return true
+		case "":
+		default:
+			return false
 		}
-		if runtime >= 45 || runtime == 0 {
-			return "Feature Film", 0
-		}
-		return "Short Film", 1
 	}
-	if strings.Contains(keywords, "miniseries") {
-		return "Miniseries", 2
-	}
-	if strings.Contains(keywords, "short") || strings.Contains(keywords, "short film") {
-		return "Short Film", 1
-	}
-	if strings.Contains(keywords, "stand-up comedy") {
-		return "Other", 3
-	}
-	return "", 0
+	return meta.Identity.Category == api.CanonicalCategoryMovie
 }
 
 func normalizeTypeName(value string) string {
@@ -61,57 +62,21 @@ func normalizeTypeName(value string) string {
 		return "Feature Film"
 	case "short film", "short":
 		return "Short Film"
-	case "miniseries", "mini series", "mini-series":
-		return "Miniseries"
-	case "other", "comedy":
-		return "Other"
 	default:
 		return ""
 	}
 }
 
-func resolveAudioFormat(meta api.UploadSubject) string {
-	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
-	switch {
-	case audio == "":
-		return "NoAudio"
-	case strings.Contains(audio, "DD+"), strings.Contains(audio, "EAC3"):
-		return "EAC3"
-	case strings.Contains(audio, " DD "), strings.HasPrefix(audio, "DD"), strings.Contains(audio, "AC3"):
-		return "AC3"
-	case strings.Contains(audio, "DTS-HD MA"), strings.Contains(audio, "DTS MA"), strings.Contains(audio, "DTS:X"), strings.Contains(audio, "DTS-HD HRA"):
-		return "DTSMA"
-	case strings.Contains(audio, "DTS"):
-		return "DTS"
-	case strings.Contains(audio, "TRUEHD"):
-		return "TrueHD"
-	case strings.Contains(audio, "FLAC"):
-		return "FLAC"
-	case strings.Contains(audio, "PCM"):
-		return "PCM"
-	case strings.Contains(audio, "OPUS"):
-		return "Opus"
-	case strings.Contains(audio, "AAC"):
-		return "AAC"
-	case strings.Contains(audio, "MP3"):
-		return "MP3"
-	case strings.Contains(audio, "MP2"):
-		return "MP2"
-	default:
-		return "Other"
-	}
-}
-
 func resolveFlags(meta api.UploadSubject) []string {
 	flags := make([]string, 0, 12)
-	edition := strings.ReplaceAll(meta.EditionLabel(), "'", "")
+	edition := strings.ToUpper(strings.NewReplacer("'", "", " ", "").Replace(meta.EditionLabel()))
 	for _, candidate := range []string{"Directors", "Extended", "Uncut", "Unrated", "4KRemaster", "IMAX"} {
-		if strings.Contains(edition, candidate) {
+		if strings.Contains(edition, strings.ToUpper(candidate)) {
 			flags = append(flags, candidate)
 		}
 	}
-	if strings.Contains(meta.Audio, "Dual-Audio") {
-		flags = append(flags, "DualAudio")
+	if !fullDisc(meta) && meta.LanguageFacts.HasEnglishDub() && meta.LanguageFacts.HasOriginalAudio() {
+		flags = append(flags, "EnglishDub")
 	}
 	if strings.Contains(meta.Audio, "Atmos") {
 		flags = append(flags, "Atmos")
@@ -232,13 +197,63 @@ func antTypeID(value string) int {
 	switch normalizeTypeName(value) {
 	case "Short Film":
 		return 1
-	case "Miniseries":
-		return 2
-	case "Other":
-		return 3
 	default:
 		return 0
 	}
+}
+
+func fullDisc(meta api.UploadSubject) bool {
+	return mediafacts.IsFullDisc(meta.DiscType, meta.Type)
+}
+
+func resolveMediaSource(source string) string {
+	switch strings.NewReplacer("-", "", " ", "", "_", "").Replace(strings.ToUpper(strings.TrimSpace(source))) {
+	case "BLURAY", "BLURAY3D", "BD", "BDMV":
+		return "BluRay"
+	case "WEB", "WEBDL", "WEBRIP":
+		return "WEB"
+	case "DVD", "PAL", "NTSC", "PALDVD", "NTSCDVD":
+		return "DVD"
+	case "HDDVD":
+		return "HDDVD"
+	case "LASERDISC":
+		return "LaserDisc"
+	case "HDTV", "UHDTV":
+		return "HDTV"
+	case "TV":
+		return "TV"
+	case "VHS":
+		return "VHS"
+	case "", "UNKNOWN":
+		return "Unknown"
+	default:
+		return "Other"
+	}
+}
+
+// discCountry maps the prepared release Region country code to ANT's ISO alpha-2 field.
+func discCountry(region string) string {
+	code := strings.ToUpper(strings.TrimSpace(region))
+	// These release-name codes differ from ISO alpha-3.
+	aliases := map[string]string{
+		"GER": "DEU",
+		"CHI": "CHL",
+		"DEN": "DNK",
+		"GRE": "GRC",
+		"SIN": "SGP",
+		"SUI": "CHE",
+		"UAE": "ARE",
+		"VIE": "VNM",
+		"UK":  "GB",
+	}
+	if iso := aliases[code]; iso != "" {
+		code = iso
+	}
+	r, err := language.ParseRegion(code)
+	if err != nil || !r.IsCountry() {
+		return ""
+	}
+	return r.String()
 }
 
 func normalizeTags(value string) string {

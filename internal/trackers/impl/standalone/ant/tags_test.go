@@ -222,12 +222,12 @@ func TestGenreTagResolutionAndQuestionnaire(t *testing.T) {
 				t.Fatalf("projection and dry-run questionnaires differ: %#v / %#v", projected, entry.Questionnaire)
 			}
 			if !test.question {
-				if projected != nil {
+				if projected == nil || len(projected.Fields) != 1 || projected.Fields[0].Key != "requestid" || projected.Fields[0].Required {
 					t.Fatalf("usable genres should need no question: %#v", projected)
 				}
 				return
 			}
-			if projected == nil || len(projected.Fields) != 1 {
+			if projected == nil || len(projected.Fields) != 2 {
 				t.Fatalf("expected one tags field, got %#v", projected)
 			}
 			field := projected.Fields[0]

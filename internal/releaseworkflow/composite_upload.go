@@ -1383,6 +1383,9 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		}
 		switch onEvidence {
 		case api.ReleaseWorkflowDuplicateUpload:
+			if result.RequiresStaffToken {
+				continue
+			}
 			decisions[result.TrackerID] = api.DupeDecisionIgnored
 		case api.ReleaseWorkflowDuplicateBlock:
 			decisions[result.TrackerID] = api.DupeDecisionAccepted
@@ -1865,6 +1868,7 @@ func normalizedCompositeFeedback(feedback api.ReleaseWorkflowUploadFeedback) com
 	case api.ReleaseWorkflowUploadFeedbackDuplicateReview:
 		response.TrackerID = normalizeCompositeTrackerID(feedback.Response.DuplicateReview.TrackerID)
 		response.DuplicateDecision = feedback.Response.DuplicateReview.Decision
+		response.Confirmed = feedback.Response.DuplicateReview.StaffTokenConfirmed
 	case api.ReleaseWorkflowUploadFeedbackTrackerApproval:
 		response.Confirmed = feedback.Response.TrackerApproval.Confirmed
 		response.TrackerIDs = normalizeContinuationTrackerIDs(feedback.Response.TrackerApproval.TrackerIDs)
@@ -2189,6 +2193,13 @@ func (m *Module) applyCompositeUploadFeedback(
 			trackerID = action.TrackerID
 		}
 		state.Composite.Intent.DuplicateDecisions[trackerID] = command.Response.DuplicateDecision
+		if state.Composite.Intent.StaffTokenConfirmations == nil {
+			state.Composite.Intent.StaffTokenConfirmations = make(map[api.TrackerID]api.DupeAssessmentID)
+		}
+		delete(state.Composite.Intent.StaffTokenConfirmations, trackerID)
+		if command.Response.Confirmed && state.Workflow.Dupes != nil {
+			state.Composite.Intent.StaffTokenConfirmations[trackerID] = state.Workflow.Dupes.ID
+		}
 	case api.ReleaseWorkflowUploadFeedbackTrackerApproval:
 		if state.Workflow.Dupes == nil {
 			return CommandResult{}, fmt.Errorf("%w: duplicate assessment is unavailable", ErrRevisionConflict)
@@ -2277,6 +2288,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		// acknowledgements. Its duplicate and upload authority is invalidated.
 		projections := state.Projections[state.Workflow.TrackerProjections.ID]
 		state.PendingDuplicateReuse = nil
+		state.Composite.Intent.StaffTokenConfirmations = nil
 		state.Composite.Intent.DuplicateDecisions = make(map[api.TrackerID]api.DupeDecision, len(state.Composite.DuplicateAllowUpload))
 		for _, trackerID := range state.Composite.DuplicateAllowUpload {
 			state.Composite.Intent.DuplicateDecisions[trackerID] = api.DupeDecisionIgnored

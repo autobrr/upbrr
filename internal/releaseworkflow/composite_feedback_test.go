@@ -20,16 +20,22 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 			duplicateTracker api.TrackerID
 			priorDecision    api.DupeDecision
 			allowUpload      bool
+			staffToken       bool
 		}{
 			{duplicateTracker: "ALPHA"},
 			{duplicateTracker: "BETA"},
 			{duplicateTracker: "BETA", priorDecision: api.DupeDecisionIgnored},
+			{
+				duplicateTracker: "BETA",
+				priorDecision:    api.DupeDecisionIgnored,
+				staffToken:       true,
+			},
 			{duplicateTracker: "BETA", priorDecision: api.DupeDecisionAccepted},
 			{duplicateTracker: "BETA", allowUpload: true},
 		} {
 			duplicateTracker, priorDecision := test.duplicateTracker, test.priorDecision
-			t.Run(fmt.Sprintf("%s/%s/%s/allow=%t", kind, duplicateTracker, priorDecision, test.allowUpload), func(t *testing.T) {
-				module, _, uploads := newCompositeUploadTestModule(t)
+			t.Run(fmt.Sprintf("%s/%s/%s/allow=%t/token=%t", kind, duplicateTracker, priorDecision, test.allowUpload, test.staffToken), func(t *testing.T) {
+				module, repository, uploads := newCompositeUploadTestModule(t)
 				duplicateBase := compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, duplicateTracker, "similar_release")
 				checks := 0
 				module.dupeBuilder = dupeAssessmentBuilderFunc(func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet, preflight api.TrackerPreflightAssessment, now time.Time, skip bool) (api.DupeAssessment, any, error) {
@@ -41,6 +47,7 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 					for i := range assessment.Results {
 						if assessment.Results[i].TrackerID == duplicateTracker {
 							assessment.Results[i].Decision = api.DupeDecisionPending
+							assessment.Results[i].RequiresStaffToken = test.staffToken
 							assessment.Results[i].Status = api.StageStatusBlocked
 							assessment.Results[i].RequiredActions = []api.RequiredAction{{
 								Kind:      api.RequiredActionReviewDuplicates,
@@ -61,7 +68,8 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 						})
 					}
 					return assessment, evidence, nil
-				})
+				},
+				)
 				request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "feedback-recheck")
 				request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateAsk
 				if test.allowUpload {
@@ -86,16 +94,32 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 				}
 				if priorDecision != "" {
 					current = submitCompositeFeedbackForTest(t, module, current, oldReview, api.ReleaseWorkflowUploadFeedbackResponse{
-						Kind:            api.ReleaseWorkflowUploadFeedbackDuplicateReview,
-						DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{TrackerID: duplicateTracker, Decision: priorDecision},
+						Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
+						DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
+							TrackerID:           duplicateTracker,
+							Decision:            priorDecision,
+							StaffTokenConfirmed: test.staffToken,
+						},
 					}, "review-prior-duplicates")
+					if test.staffToken {
+						state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+						if err != nil || state.Composite.Intent.StaffTokenConfirmations[duplicateTracker] == "" {
+							t.Fatalf("confirmation was not retained: state=%#v error=%v", state.Composite, err)
+						}
+					}
 				}
 				prior := current.Dupes.ID
 				response := api.ReleaseWorkflowUploadFeedbackResponse{Kind: kind}
 				if kind == api.ReleaseWorkflowUploadFeedbackQuestionnaire {
-					response.Questionnaire = &api.ReleaseWorkflowUploadQuestionnaire{TrackerID: "ALPHA", Answers: map[string]*string{"trumpable_review": new("yes")}}
+					response.Questionnaire = &api.ReleaseWorkflowUploadQuestionnaire{
+						TrackerID: "ALPHA",
+						Answers:   map[string]*string{"trumpable_review": new("yes")},
+					}
 				} else {
-					response.TrackerInput = &api.ReleaseWorkflowUploadTrackerInput{TrackerID: "ALPHA", Projection: api.ReleaseWorkflowUploadTrackerProjection{AdditionalNames: map[string]*string{"alternate": new("Example Alternate")}}}
+					response.TrackerInput = &api.ReleaseWorkflowUploadTrackerInput{
+						TrackerID:  "ALPHA",
+						Projection: api.ReleaseWorkflowUploadTrackerProjection{AdditionalNames: map[string]*string{"alternate": new("Example Alternate")}},
+					}
 				}
 				resumed, err := module.SubmitUploadFeedback(t.Context(), testOwnerID, current.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
 					Action:         api.ReleaseWorkflowUploadActionIdentity{ID: action.ID, WorkflowRevision: current.Workflow.Revision},
@@ -108,6 +132,12 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 				current = waitCompositeUploadTestOperation(t, module, resumed)
 				if current.Dupes == nil || current.Dupes.ID == prior || checks < 2 {
 					t.Fatalf("feedback did not refresh duplicate evidence: dupes=%#v checks=%d operation=%#v", current.Dupes, checks, current.Operation)
+				}
+				if test.staffToken {
+					state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+					if err != nil || len(state.Composite.Intent.StaffTokenConfirmations) != 0 {
+						t.Fatalf("obsolete confirmation survived feedback: state=%#v error=%v", state.Composite, err)
+					}
 				}
 				if test.allowUpload {
 					pendingCompositeTrackerApproval(t, current)
@@ -129,11 +159,26 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 					t.Fatal("feedback granted downstream upload authority")
 				}
 				duplicateFeedback := api.ReleaseWorkflowUploadFeedback{
-					Action:         api.ReleaseWorkflowUploadActionIdentity{ID: oldReview.ID, WorkflowRevision: current.Workflow.Revision},
-					Response:       api.ReleaseWorkflowUploadFeedbackResponse{Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview, DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{TrackerID: duplicateTracker, Decision: api.DupeDecisionIgnored}},
+					Action: api.ReleaseWorkflowUploadActionIdentity{ID: oldReview.ID, WorkflowRevision: current.Workflow.Revision},
+					Response: api.ReleaseWorkflowUploadFeedbackResponse{
+						Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
+						DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
+							TrackerID:           duplicateTracker,
+							Decision:            api.DupeDecisionIgnored,
+							StaffTokenConfirmed: test.staffToken,
+						},
+					},
 					IdempotencyKey: "review-refreshed-duplicates",
 				}
-				if _, err := module.SubmitUploadFeedback(t.Context(), testOwnerID, current.Workflow.ID, duplicateFeedback); !errors.Is(err, ErrRevisionConflict) {
+				if _, err := module.SubmitUploadFeedback(
+					t.Context(),
+					testOwnerID,
+					current.Workflow.ID,
+					duplicateFeedback,
+				); !errors.Is(
+					err,
+					ErrRevisionConflict,
+				) {
 					t.Fatalf("obsolete review error = %v", err)
 				}
 				duplicateFeedback.Action.ID = review.ID

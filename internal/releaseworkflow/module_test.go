@@ -2145,7 +2145,12 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 				FreshUntil:            now.Add(time.Hour),
 			}
 			if index == 0 {
-				result.Matches = []api.DupeMatchProjection{{ID: "123", Name: "Example.Release.2026.ALPHA-GRP"}}
+				result.RequiresStaffToken = true
+				result.Matches = []api.DupeMatchProjection{{
+					ID:       "123",
+					Name:     "Example.Release.2026.ALPHA-GRP",
+					Relation: api.DupeRelationExactDuplicate,
+				}}
 				result.Decision = api.DupeDecisionAccepted
 			} else {
 				result.Matches = []api.DupeMatchProjection{{
@@ -2235,14 +2240,47 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	if repeated.Dupes == nil || repeated.Dupes.ID != checked.Dupes.ID || checks != 1 {
 		t.Fatalf("repeated dupes = %#v checks=%d", repeated, checks)
 	}
-	decided := executeCommand(t, module, DecideDuplicatesCommand{
-		WorkflowID:       checked.Workflow.ID,
-		ExpectedRevision: checked.Workflow.Revision,
-		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
-	})
+
+	for _, confirmation := range []api.DupeAssessmentID{"", "stale-assessment"} {
+		_, err := module.Execute(t.Context(), testOwnerID, DecideDuplicatesCommand{
+			WorkflowID:              checked.Workflow.ID,
+			ExpectedRevision:        checked.Workflow.Revision,
+			Decisions:               map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+			StaffTokenConfirmations: map[api.TrackerID]api.DupeAssessmentID{"ALPHA": confirmation},
+		})
+		if !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("unconfirmed staff-token override = %v", err)
+		}
+	}
+	decisionCommand := DecideDuplicatesCommand{
+		WorkflowID:              checked.Workflow.ID,
+		ExpectedRevision:        checked.Workflow.Revision,
+		Decisions:               map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+		StaffTokenConfirmations: map[api.TrackerID]api.DupeAssessmentID{"ALPHA": checked.Dupes.ID},
+		IdempotencyKey:          "confirm-staff-token",
+	}
+	decided := executeCommand(t, module, decisionCommand)
 	if decided.Dupes == nil || decided.Dupes.Status != api.StageStatusCompleted ||
-		decided.Dupes.Results[0].Decision != api.DupeDecisionIgnored || checks != 1 {
+		decided.Dupes.Results[0].Decision != api.DupeDecisionIgnored || !decided.Dupes.Results[0].StaffTokenConfirmed || checks != 1 {
 		t.Fatalf("decided dupes = %#v checks=%d", decided, checks)
+	}
+	if replay := executeCommand(t, module, decisionCommand); replay.Dupes.ID != decided.Dupes.ID {
+		t.Fatal("unchanged confirmed decision replay did not retain its receipt")
+	}
+	for _, confirmations := range []map[api.TrackerID]api.DupeAssessmentID{nil, {"ALPHA": ""}, {"ALPHA": "stale-assessment"}} {
+		replay := decisionCommand
+		replay.StaffTokenConfirmations = confirmations
+		if _, err := module.Execute(t.Context(), testOwnerID, replay); !errors.Is(err, ErrIdempotencyConflict) {
+			t.Fatalf("changed confirmation replay = %v, want idempotency conflict", err)
+		}
+	}
+	decided = executeCommand(t, module, DecideDuplicatesCommand{
+		WorkflowID:       decided.Workflow.ID,
+		ExpectedRevision: decided.Workflow.Revision,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"BETA": api.DupeDecisionAccepted},
+	})
+	if !decided.Dupes.Results[0].StaffTokenConfirmed {
+		t.Fatal("decision-only sibling publication discarded a valid confirmation")
 	}
 	_, err := module.Execute(context.Background(), testOwnerID, DecideDuplicatesCommand{
 		WorkflowID:       decided.Workflow.ID,
@@ -2417,6 +2455,27 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	})
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("repeat direct upload error = %v, want %v", err, ErrInvalidTransition)
+	}
+}
+
+func TestDuplicateDecisionFingerprintPreservesLegacyNoConfirmation(t *testing.T) {
+	command := DecideDuplicatesCommand{
+		ExpectedRevision: 7,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+	}
+	legacy, err := canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Decisions        map[api.TrackerID]api.DupeDecision
+	}{command.ExpectedRevision, command.Decisions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, confirmations := range []map[api.TrackerID]api.DupeAssessmentID{nil, {}} {
+		command.StaffTokenConfirmations = confirmations
+		got, err := command.commandFingerprint()
+		if err != nil || got != legacy {
+			t.Fatalf("absent confirmation changed durable legacy receipt: %s != %s (%v)", got, legacy, err)
+		}
 	}
 }
 

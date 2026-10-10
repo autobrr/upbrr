@@ -34,10 +34,10 @@ func TestDupeSearcherSendsAPIKeyHeader(t *testing.T) {
 			t.Fatal("apikey should not be sent as a query parameter")
 		}
 		for key, want := range map[string]string{
-			"t":     "search",
-			"o":     "json",
-			"imdb":  "0000456",
-			"limit": "100",
+			"t":      "search",
+			"o":      "json",
+			"imdbid": "0000456",
+			"limit":  "100",
 		} {
 			if got := query.Get(key); got != want {
 				t.Fatalf("query %s = %q, want %q", key, got, want)
@@ -188,18 +188,20 @@ func TestDupeSearcherMissingCredentialsSkips(t *testing.T) {
 	}
 }
 
-func TestANTFullDiscEvidenceUsesIdentityThenSingleDiscRule(t *testing.T) {
+func TestANTFullDiscCountriesAndSlots(t *testing.T) {
 	t.Parallel()
 
 	target := api.TrackerDuplicateTarget{
-		Type:       "DISC",
-		Source:     "Blu-ray",
-		Resolution: "1080p",
-		VideoCodec: "AVC",
-		Group:      "GRP",
-		SizeBytes:  1000,
+		TrackerSlot: "FullDisc/1080//JP/",
+		Type:        "DISC",
+		Source:      "Blu-ray",
+		Resolution:  "1080p",
+		VideoCodec:  "AVC",
+		Group:       "GRP",
+		SizeBytes:   1000,
 	}
 	entry := api.DupeEntry{
+		TrackerSlot:   "FullDisc/1080//JP/",
 		Name:          "Example.Release.2026.1080p.Blu-ray.AVC-GRP",
 		CanonicalType: "DISC",
 		Source:        "Blu-ray",
@@ -212,14 +214,14 @@ func TestANTFullDiscEvidenceUsesIdentityThenSingleDiscRule(t *testing.T) {
 	}
 	policy := *Profile().DupePolicy
 	result := dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "ANT")}, policy, dupe.SearchEvidence{Complete: true})
-	if got := result.Candidates[0].Relation; got != api.DupeRelationExactDuplicate {
+	if got := result.Candidates[0].Relation; got != api.DupeRelationSameSlot {
 		t.Fatalf("same ANT full disc relation = %q", got)
 	}
 
 	entry.Group = "OTHER"
 	entry.SizeBytes = 900
 	result = dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "ANT")}, policy, dupe.SearchEvidence{Complete: true})
-	if got := result.Candidates[0].Relation; got != api.DupeRelationExistingPreferred {
+	if got := result.Candidates[0].Relation; got != api.DupeRelationSameSlot {
 		t.Fatalf("second ANT full disc relation = %q", got)
 	}
 }
@@ -269,6 +271,12 @@ func TestANTListedWEBFileCoexistsWithDisc(t *testing.T) {
 		VideoCodec: "AVC",
 		Group:      "GRP",
 	}
+	target.TrackerSlot = resolveTargetSlot(api.UploadSubject{
+		Type: target.Type,
+ Source: target.Source,
+ VideoCodec: target.VideoCodec,
+		Release: api.ReleaseInfo{Resolution: target.Resolution},
+	})
 	result := dupe.Evaluate(
 		target,
 		[]dupe.TrackerCandidate{dupe.NormalizeCandidate(entries[0], "ANT")},

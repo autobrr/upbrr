@@ -193,6 +193,8 @@ type TrackerDuplicateCriteria struct {
 // TrackerDuplicateTarget is the projection-bound proposed release used only
 // for local duplicate policy evaluation.
 type TrackerDuplicateTarget struct {
+	// TrackerSlot is opaque native slot evidence resolved from this prepared generation.
+	TrackerSlot   string   `json:"trackerSlot,omitempty"`
 	Names         []string `json:"names,omitempty"`
 	Category      string   `json:"category,omitempty"`
 	Type          string   `json:"type,omitempty"`
@@ -449,6 +451,11 @@ type DupeMatchProjection struct {
 
 // TrackerDupeAssessment is one retained projection-bound duplicate result.
 type TrackerDupeAssessment struct {
+	// RequiresStaffToken blocks overrides until the owner explicitly attests possession.
+	RequiresStaffToken bool `json:"requiresStaffToken,omitempty"`
+	// StaffTokenConfirmed retains attestation for this projection; reprojecting clears it.
+	// The tracker validates the actual token.
+	StaffTokenConfirmed   bool                     `json:"staffTokenConfirmed,omitempty"`
 	TrackerID             TrackerID                `json:"trackerId"`
 	UploadReleaseName     string                   `json:"uploadReleaseName"`
 	ProjectionFingerprint WorkflowFingerprint      `json:"projectionFingerprint"`

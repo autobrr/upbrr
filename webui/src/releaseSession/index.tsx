@@ -2961,6 +2961,10 @@ export function ReleaseSessionProvider({
               duplicateDecisions: {
                 [normalizedTracker]: ignored ? "ignored" : "accepted",
               },
+              staffTokenConfirmations:
+                ignored && result.requiresStaffToken && workflowDupeAssessment
+                  ? { [normalizedTracker]: workflowDupeAssessment.id }
+                  : undefined,
             },
             commandID,
             signal,

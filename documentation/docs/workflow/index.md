@@ -88,6 +88,8 @@ Continuing after an acknowledgement keeps your selected trackers. If their metad
 
 Duplicate search results are evidence, not an automatic upload decision. Review candidate names, metadata, and tracker warnings. Where approval is required, select an explicit non-empty tracker subset after the duplicate stage.
 
+Some duplicate overrides require a staff-issued token. Confirm that you have the appropriate token for the current upload; without confirmation, upbrr blocks the upload even when automatic duplicate overrides are enabled. Reprojecting upload inputs or refreshing duplicate evidence requires a new confirmation. Check the tracker's current rules for token conditions.
+
 Before searching, upbrr excludes trackers with a confirmed upload of the same verified submitted content. These appear as **Already uploaded**. Remaining trackers receive fresh duplicate checks; if every selected tracker is excluded, the operation completes successfully without another approval or upload. Changing metadata or a screenshot playlist does not make a full-disc upload new content. A different actual file subset can be different submitted content.
 
 A complete structured group is preferred for group-policy decisions. When a tracker omits that field, only one unambiguous normalized release-name suffix can prove different-group ownership; conflicting, missing, or multi-group text keeps the normal duplicate review.
