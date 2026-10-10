@@ -1282,8 +1282,20 @@ func compositeUploadPendingAction(
 			}
 		}
 		if action.Kind == api.RequiredActionReviewDuplicates {
-			if _, decided := session.Intent.DuplicateDecisions[action.TrackerID]; decided {
+			decision, decided := session.Intent.DuplicateDecisions[action.TrackerID]
+			if !decided && session.DuplicateDisposition == api.ReleaseWorkflowDuplicateBlock {
 				continue
+			}
+			if decided {
+				// An ignored intent cannot replace a confirmation for the current assessment.
+				requiresConfirmation := decision == api.DupeDecisionIgnored && current.Dupes != nil &&
+					session.Intent.StaffTokenConfirmations[action.TrackerID] != current.Dupes.ID &&
+					slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
+						return result.TrackerID == action.TrackerID && result.RequiresStaffToken && !result.StaffTokenConfirmed
+					})
+				if !requiresConfirmation {
+					continue
+				}
 			}
 		}
 		if action.TrackerID != "" &&

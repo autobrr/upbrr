@@ -1117,6 +1117,17 @@ slot's `ReviewReason` or a `TargetReviewRules` entry retains source/staff prereq
 an empty search cannot prove. Keep these declarations in the tracker-owned policy and version
 behavior changes; never introduce tracker-name dispatch into the evaluator.
 
+For tracker-native slots, `TargetSlot` projects the proposed upload's resolved facts and
+`CompareSlots` compares them with the adapter's `DupeEntry.TrackerSlot` evidence. Keep both
+callbacks tracker-local and advance the duplicate policy version when their behavior changes.
+Do not infer equality or coexistence from missing facts, and preserve contradictory-evidence review.
+
+`StaffTokenOverride` requires explicit possession confirmation before overriding remote
+duplicates or incomplete search evidence. The confirmation is bound to the current assessment;
+automatic upload decisions cannot supply it, and refreshed evidence requires confirmation again.
+Blocking a duplicate needs no token. In-client matches remain non-overridable. The tracker, not
+this attestation, validates any staff token at submission.
+
 Target-level duplicate policy reviews use `DupeCheckResult.ReviewReasons` and
 `TrackerDupeAssessment.reviewReasons`, including when a complete search has no candidates.
 Keep these reasons separate from candidate matches. They enter the existing fingerprint-bound

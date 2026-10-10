@@ -133,6 +133,11 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			pageOffset = pagination.Offset
 		}
 		if pagination.TotalPresent {
+			if pageTotals && itemCount == 0 && pagination.Total == expectedTotal && pageOffset == expectedTotal {
+				// A full first page can advertise either a page count or an exact cumulative total.
+				complete = true
+				break
+			}
 			if expectedTotal < 0 {
 				expectedTotal = pagination.Total
 				pageTotals = pagination.Total == itemCount

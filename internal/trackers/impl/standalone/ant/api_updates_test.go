@@ -6,6 +6,7 @@ package ant
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -24,10 +25,6 @@ func TestANTRegisteredDownloadAndMissingView(t *testing.T) {
 	previous := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = previous })
 	torrent := []byte("d4:infod6:lengthi1e4:name7:Example12:piece lengthi16384e6:pieces20:abcdefghijklmnopqrstee")
-	fixture := filepath.Join(t.TempDir(), "fixture.torrent")
-	if err := trackers.PersistRegisteredTorrent(fixture, torrent); err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		name, response string
 		downloadStatus int
@@ -43,7 +40,8 @@ func TestANTRegisteredDownloadAndMissingView(t *testing.T) {
 				body, status := tc.response, http.StatusOK
 				if req.Method == http.MethodGet {
 					if req.URL.Host != "anthelion.me" || req.Header.Get("X-Api-Key") != "test-key" {
-						t.Fatal("unsafe registered download")
+						t.Error("unsafe registered download")
+						return nil, errors.New("unsafe registered download")
 					}
 					body, status = string(torrent), tc.downloadStatus
 				}
@@ -334,7 +332,8 @@ func TestANTSearchUsesPageTotalsAndTMDBID(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requests++
 		if req.URL.Query().Get("tmdbid") != "123" || req.URL.Query().Get("tmdb") != "" {
-			t.Fatal("incorrect TMDB query parameter")
+			t.Error("incorrect TMDB query parameter")
+			return nil, errors.New("incorrect TMDB query parameter")
 		}
 		count, offset := 100, 0
 		if requests == 2 {

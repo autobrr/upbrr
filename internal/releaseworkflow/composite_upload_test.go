@@ -1107,103 +1107,158 @@ func TestCompositeUploadStrictExcludesAuthBlockedSibling(t *testing.T) {
 
 func TestCompositeUploadStrictExcludesDuplicateBlockedSibling(t *testing.T) {
 	t.Parallel()
+	for _, staffToken := range []bool{false, true} {
+		t.Run(fmt.Sprintf("staff_token_%t", staffToken), func(t *testing.T) {
+			module, _, uploads := newCompositeUploadTestModule(t)
+			module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", "same release")
+			if staffToken {
+				base := module.dupeBuilder
+				module.dupeBuilder = dupeAssessmentBuilderFunc(func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet, preflight api.TrackerPreflightAssessment, now time.Time, skip bool) (api.DupeAssessment, any, error) {
+					assessment, private, err := base.Build(ctx, subject, projections, preflight, now, skip)
+					if err != nil {
+						return assessment, private, fmt.Errorf("build staff-token blocked assessment: %w", err)
+					}
+					for index := range assessment.Results {
+						if assessment.Results[index].TrackerID == "BETA" {
+							assessment.Results[index].RequiresStaffToken = true
+							RequireStaffTokenReview(&assessment.Results[index])
+						}
+					}
+					return assessment, private, nil
+				})
+			}
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-dupe-sibling")
 
-	module, _, uploads := newCompositeUploadTestModule(t)
-	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", "same release")
-	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-dupe-sibling")
-
-	started, err := module.StartUpload(context.Background(), testOwnerID, request)
-	if err != nil {
-		t.Fatalf("start duplicate-blocked composite upload: %v", err)
-	}
-	blocked := waitCompositeUploadTestOperation(t, module, started)
-	current := approveCompositeUploadTrackers(
-		t,
-		module,
-		blocked,
-		[]api.TrackerID{"ALPHA"},
-		"approve-dupe-filtered-trackers",
-	)
-	if current.Operation == nil || current.Operation.Status != api.StageStatusExecuted ||
-		current.UploadResult == nil || uploads.execution == nil ||
-		!slices.Equal(uploads.execution.selected, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf(
-			"duplicate-blocked composite result: status=%v upload=%t execution=%#v",
-			current.Operation,
-			current.UploadResult != nil,
-			uploads.execution,
-		)
-	}
-	if current.TrackerApproval == nil ||
-		!slices.Equal(current.TrackerApproval.ApprovedTrackerIDs, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf("duplicate-blocked tracker authority = %#v", current.TrackerApproval)
+			started, err := module.StartUpload(context.Background(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("start duplicate-blocked composite upload: %v", err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			if slices.ContainsFunc(blocked.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+				return action.TrackerID == "BETA" && action.Kind == api.RequiredActionReviewDuplicates
+			}) {
+				t.Fatal("blocked tracker must not ask for staff confirmation")
+			}
+			if staffToken && (blocked.Dupes == nil || slices.ContainsFunc(blocked.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
+				return result.TrackerID == "BETA" && (result.Decision != api.DupeDecisionAccepted || result.StaffTokenConfirmed)
+			})) {
+				t.Fatal("blocked tracker gained override authority")
+			}
+			current := approveCompositeUploadTrackers(
+				t,
+				module,
+				blocked,
+				[]api.TrackerID{"ALPHA"},
+				"approve-dupe-filtered-trackers",
+			)
+			if current.Operation == nil || current.Operation.Status != api.StageStatusExecuted ||
+				current.UploadResult == nil || uploads.execution == nil ||
+				!slices.Equal(uploads.execution.selected, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf(
+					"duplicate-blocked composite result: status=%v upload=%t execution=%#v",
+					current.Operation,
+					current.UploadResult != nil,
+					uploads.execution,
+				)
+			}
+			if current.TrackerApproval == nil ||
+				!slices.Equal(current.TrackerApproval.ApprovedTrackerIDs, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf("duplicate-blocked tracker authority = %#v", current.TrackerApproval)
+			}
+		})
 	}
 }
 
 func TestCompositeUploadRequiresStaffTokenDespiteAutomaticUploadDisposition(t *testing.T) {
-	module, _, uploads := newCompositeUploadTestModule(t)
-	base := module.dupeBuilder
-	module.dupeBuilder = dupeAssessmentBuilderFunc(
-		func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet, preflight api.TrackerPreflightAssessment, now time.Time, skip bool) (api.DupeAssessment, any, error) {
-			assessment, private, err := base.Build(ctx, subject, projections, preflight, now, skip)
-			if err != nil {
-				return assessment, private, fmt.Errorf("build staff-token duplicate assessment: %w", err)
+	for _, tc := range []struct {
+		name        string
+		allowUpload bool
+		checkCount  int
+	}{
+		{name: "automatic upload disposition", checkCount: 1},
+		{
+			name:        "explicit allowUpload",
+			allowUpload: true,
+			checkCount:  1,
+		},
+		{name: "renewed duplicate check", checkCount: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			module, _, uploads := newCompositeUploadTestModule(t)
+			base := module.dupeBuilder
+			module.dupeBuilder = dupeAssessmentBuilderFunc(
+				func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet, preflight api.TrackerPreflightAssessment, now time.Time, skip bool) (api.DupeAssessment, any, error) {
+					assessment, private, err := base.Build(ctx, subject, projections, preflight, now, skip)
+					if err != nil {
+						return assessment, private, fmt.Errorf("build staff-token duplicate assessment: %w", err)
+					}
+					result := &assessment.Results[0]
+					result.RequiresStaffToken = true
+					result.Decision = api.DupeDecisionPending
+					result.Status = api.StageStatusBlocked
+					result.Matches = []api.DupeMatchProjection{{Name: "Example.Movie.2026.1080p-GRP", Relation: api.DupeRelationExactDuplicate}}
+					result.RequiredActions = []api.RequiredAction{{
+						Kind:      api.RequiredActionReviewDuplicates,
+						Status:    api.RequiredActionStatusPending,
+						TrackerID: result.TrackerID,
+						Prompt:    "Confirm staff-issued token",
+					}}
+					return assessment, private, nil
+				},
+			)
+			request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "staff-token-auto-upload")
+			request.Trackers.Include = []api.TrackerID{"ALPHA"}
+			request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateUpload
+			request.Duplicates.CheckCount = &tc.checkCount
+			if tc.allowUpload {
+				request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateAsk
+				request.Duplicates.AllowUpload = []api.TrackerID{"ALPHA"}
 			}
-			result := &assessment.Results[0]
-			result.RequiresStaffToken = true
-			result.Decision = api.DupeDecisionPending
-			result.Status = api.StageStatusBlocked
-			result.Matches = []api.DupeMatchProjection{{Name: "Example.Movie.2026.1080p-GRP", Relation: api.DupeRelationExactDuplicate}}
-			result.RequiredActions = []api.RequiredAction{{
-				Kind:      api.RequiredActionReviewDuplicates,
-				Status:    api.RequiredActionStatusPending,
-				TrackerID: result.TrackerID,
-				Prompt:    "Confirm staff-issued token",
-			}}
-			return assessment, private, nil
-		},
-	)
-	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "staff-token-auto-upload")
-	request.Trackers.Include = []api.TrackerID{"ALPHA"}
-	request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateUpload
-	started, err := module.StartUpload(t.Context(), testOwnerID, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blocked := waitCompositeUploadTestOperation(t, module, started)
-	if blocked.Dupes == nil || blocked.Dupes.Results[0].Decision != api.DupeDecisionPending || uploads.execution != nil {
-		t.Fatal("automatic disposition bypassed staff confirmation")
-	}
-	actionIndex := slices.IndexFunc(
-		blocked.Workflow.RequiredActions,
-		func(action api.RequiredAction) bool { return action.Kind == api.RequiredActionReviewDuplicates },
-	)
-	if actionIndex < 0 {
-		t.Fatal("missing explicit duplicate review")
-	}
-	action := blocked.Workflow.RequiredActions[actionIndex]
-	resumed, err := module.SubmitUploadFeedback(t.Context(), testOwnerID, blocked.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
-		Action: api.ReleaseWorkflowUploadActionIdentity{ID: action.ID, WorkflowRevision: blocked.Workflow.Revision},
-		Response: api.ReleaseWorkflowUploadFeedbackResponse{
-			Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
-			DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
-				TrackerID:           "ALPHA",
-				Decision:            api.DupeDecisionIgnored,
-				StaffTokenConfirmed: true,
-			},
-		},
-		IdempotencyKey: "staff-token-confirmed",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	decided := waitCompositeUploadTestOperation(t, module, resumed)
-	if decided.Dupes == nil || !decided.Dupes.Results[0].StaffTokenConfirmed {
-		t.Fatal("confirmation was not retained")
-	}
-	completed := approveCompositeUploadTrackers(t, module, decided, []api.TrackerID{"ALPHA"}, "approve-token-upload")
-	if completed.UploadResult == nil || uploads.execution == nil {
-		t.Fatal("confirmed staff token did not allow upload")
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			for ordinal := 1; ordinal <= tc.checkCount; ordinal++ {
+				if blocked.Operation == nil || blocked.Operation.Status != api.StageStatusBlocked {
+					t.Fatalf("staff confirmation must pause without failing: operation=%+v", blocked.Operation)
+				}
+				if blocked.Dupes == nil || blocked.Dupes.Results[0].Decision != api.DupeDecisionPending || uploads.execution != nil {
+					t.Fatal("automatic disposition bypassed staff confirmation")
+				}
+				actionIndex := slices.IndexFunc(
+					blocked.Workflow.RequiredActions,
+					func(action api.RequiredAction) bool { return action.Kind == api.RequiredActionReviewDuplicates },
+				)
+				if actionIndex < 0 {
+					t.Fatal("missing explicit duplicate review")
+				}
+				action := blocked.Workflow.RequiredActions[actionIndex]
+				resumed, err := module.SubmitUploadFeedback(t.Context(), testOwnerID, blocked.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+					Action: api.ReleaseWorkflowUploadActionIdentity{ID: action.ID, WorkflowRevision: blocked.Workflow.Revision},
+					Response: api.ReleaseWorkflowUploadFeedbackResponse{
+						Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
+						DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
+							TrackerID:           "ALPHA",
+							Decision:            api.DupeDecisionIgnored,
+							StaffTokenConfirmed: true,
+						},
+					},
+					IdempotencyKey: fmt.Sprintf("staff-token-confirmed-%d", ordinal),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				blocked = waitCompositeUploadTestOperation(t, module, resumed)
+			}
+			if blocked.Dupes == nil || !blocked.Dupes.Results[0].StaffTokenConfirmed {
+				t.Fatal("confirmation was not retained")
+			}
+			completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA"}, "approve-token-upload")
+			if completed.UploadResult == nil || uploads.execution == nil {
+				t.Fatal("confirmed staff token did not allow upload")
+			}
+		})
 	}
 }
 

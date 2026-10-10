@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -120,6 +121,80 @@ func TestDupeSearcherConsumesANTOffsetPages(t *testing.T) {
 			}
 			if len(offsets) != 2 || offsets[0] != "" || offsets[1] != "100" {
 				t.Fatalf("requested offsets = %#v", offsets)
+			}
+		})
+	}
+}
+
+func TestANTExactPageTotalRetainsStaffTokenBoundary(t *testing.T) {
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	for _, tc := range []struct {
+		name          string
+		total, offset int
+		complete      bool
+	}{
+		{
+			name:     "exact cumulative total",
+			total:    100,
+			offset:   100,
+			complete: true,
+		},
+		{
+			name:     "empty page total",
+			total:    0,
+			offset:   100,
+			complete: true,
+		},
+		{
+			name:   "decreased total",
+			total:  99,
+			offset: 100,
+		},
+		{
+			name:   "unseen result",
+			total:  101,
+			offset: 100,
+		},
+		{
+			name:   "incorrect offset",
+			total:  100,
+			offset: 99,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first := antSearchPageJSON(t, 0, 100, 100, true)
+			last := antSearchPageJSON(t, tc.offset, tc.total, 0, true)
+			requests := 0
+			http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+				requests++
+				body := first
+				if requests > 1 {
+					body = last
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+				}, nil
+			})
+			service := dupe.NewServiceWithRegistry(antDupeTestConfig(), api.NopLogger{}, registry)
+			summary, err := service.Check(t.Context(), api.DuplicateSubject{
+				SourcePath: "proposed.mkv",
+				Identity:   api.ExternalIdentity{TMDBID: 123},
+				Projection: &api.TrackerReleaseProjection{
+					DuplicateTarget: api.TrackerDuplicateTarget{TrackerSlot: "Encode/1080/SDR//", Resolution: "1080p"},
+				},
+			}, []string{"ANT"})
+			if err != nil || len(summary.Results) != 1 {
+				t.Fatalf("search failed: summary=%+v err=%v", summary, err)
+			}
+			result := summary.Results[0]
+			if requests != 2 || result.Search.CandidateCount != 100 || result.Search.Complete != tc.complete || result.RequiresStaffToken != !tc.complete {
+				t.Fatalf("wrong exact-page result: requests=%d result=%+v", requests, result)
 			}
 		})
 	}
@@ -272,10 +347,10 @@ func TestANTListedWEBFileCoexistsWithDisc(t *testing.T) {
 		Group:      "GRP",
 	}
 	target.TrackerSlot = resolveTargetSlot(api.UploadSubject{
-		Type: target.Type,
- Source: target.Source,
- VideoCodec: target.VideoCodec,
-		Release: api.ReleaseInfo{Resolution: target.Resolution},
+		Type:       target.Type,
+		Source:     target.Source,
+		VideoCodec: target.VideoCodec,
+		Release:    api.ReleaseInfo{Resolution: target.Resolution},
 	})
 	result := dupe.Evaluate(
 		target,
