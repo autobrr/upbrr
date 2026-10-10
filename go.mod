@@ -1,6 +1,6 @@
 module github.com/autobrr/upbrr
 
-go 1.27.1
+go 1.27.2
 
 require (
 	github.com/autobrr/go-bdinfo v0.4.2

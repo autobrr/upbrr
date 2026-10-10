@@ -1122,6 +1122,12 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 		return cache, fmt.Errorf("read tmp dir: %w", err)
 	}
 
+	// Sidecars are optional; an unavailable root leaves their payloads empty.
+	root, _ := os.OpenRoot(tmpDir)
+	if root != nil {
+		defer root.Close()
+	}
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -1152,30 +1158,18 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 		}
 		extPath := paths.BDMVExtSummaryPath(tmpDir, playlist)
 		extPayload := ""
-		if extPath != "" {
-			cleanTmpDir := filepath.Clean(tmpDir)
-			cleanExtPath := filepath.Clean(extPath)
-			if relPath, err := filepath.Rel(
-				cleanTmpDir,
-				cleanExtPath,
-			); err == nil && relPath != ".." &&
-				!strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-				if rawExt, err := os.ReadFile(cleanExtPath); err == nil {
+		if extPath != "" && root != nil {
+			if name, err := filepath.Rel(filepath.Clean(tmpDir), filepath.Clean(extPath)); err == nil {
+				if rawExt, err := root.ReadFile(name); err == nil {
 					extPayload = string(rawExt)
 				}
 			}
 		}
 		fullPath := paths.BDMVFullSummaryPath(tmpDir, playlist)
 		fullPayload := ""
-		if fullPath != "" {
-			cleanTmpDir := filepath.Clean(tmpDir)
-			cleanFullPath := filepath.Clean(fullPath)
-			if relPath, err := filepath.Rel(
-				cleanTmpDir,
-				cleanFullPath,
-			); err == nil && relPath != ".." &&
-				!strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-				if rawFull, err := os.ReadFile(cleanFullPath); err == nil {
+		if fullPath != "" && root != nil {
+			if name, err := filepath.Rel(filepath.Clean(tmpDir), filepath.Clean(fullPath)); err == nil {
+				if rawFull, err := root.ReadFile(name); err == nil {
 					fullPayload = string(rawFull)
 				}
 			}
