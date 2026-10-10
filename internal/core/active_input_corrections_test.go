@@ -235,8 +235,8 @@ func newActiveCorrectionFixture(t *testing.T) *activeCorrectionFixture {
 
 func (f *activeCorrectionFixture) open(t *testing.T, patch *api.ReleaseCorrectionPatch, key string) (api.ActiveInputSnapshot, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
+	// The suite timeout bounds this behavior test; SQLite transitions have no five-second completion contract.
+	ctx := t.Context()
 	before, err := f.core.GetActiveInput(ctx, "input-owner")
 	if err != nil {
 		return api.ActiveInputSnapshot{}, err

@@ -78,8 +78,10 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Collection inspects the primary report, then each selected file for HDR eligibility.
+			wantProbes := append([]string{selected.VideoPath}, selected.FileList...)
 			if !selected.TVPack || len(selected.FileList) != 12 || slices.Contains(selected.FileList, extra) ||
-				len(analyzer.targets) != 1 || analyzer.targets[0] != selected.VideoPath {
+				!slices.Equal(analyzer.targets, wantProbes) {
 				t.Fatalf("pack selection changed: pack=%t files=%v video=%q probes=%v", selected.TVPack, selected.FileList, selected.VideoPath, analyzer.targets)
 			}
 			if numbered && selected.VideoPath != firstEpisode {
@@ -128,7 +130,7 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 					}
 				})
 			}
-			if len(analyzer.targets) != 1 || derived.VideoPath != selected.VideoPath {
+			if !slices.Equal(analyzer.targets, wantProbes) || derived.VideoPath != selected.VideoPath {
 				t.Fatalf("language eligibility inspected extra files or changed selection: video=%q probes=%v", derived.VideoPath, analyzer.targets)
 			}
 		})
