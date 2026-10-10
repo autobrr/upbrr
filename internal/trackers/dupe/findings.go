@@ -82,8 +82,7 @@ func collectCandidateFindings(
 	findings = append(findings, collectExactFindings(target, candidate)...)
 	targetTitleScope := parseBestTitle(target.Names).Content
 	candidateTitleScope := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content
-	if contentScopesContradict(exactOnlyContentScope(targetFacts.Content, targetTitleScope), targetTitleScope) ||
-		contentScopesContradict(exactOnlyContentScope(candidateFacts.Content, candidateTitleScope), candidateTitleScope) {
+	if contentScopesContradict(targetFacts.Content, targetTitleScope) || contentScopesContradict(candidateFacts.Content, candidateTitleScope) {
 		findings = append(findings, RuleFinding{
 			RuleID:         GeneralPolicyID + "/content_scope",
 			Source:         "general",
@@ -194,18 +193,6 @@ func collectExactOnlyFinding(
 		finding.Priority = findingPrioritySlotMissing
 	}
 	return finding
-}
-
-// The prepared target and candidate adapters retain only the first episode.
-// Recover a matching title range before comparing scopes, without changing
-// the default policy or accepting a conflicting season or first episode.
-func exactOnlyContentScope(structured contentScope, title contentScope) contentScope {
-	if structured.Kind == contentScopeEpisode && title.Kind == contentScopeEpisodeRange &&
-		structured.Season > 0 && structured.Season == title.Season &&
-		structured.EpisodeStart == title.EpisodeStart && title.EpisodeEnd >= title.EpisodeStart {
-		return title
-	}
-	return structured
 }
 
 func contentScopesContradict(structured contentScope, title contentScope) bool {

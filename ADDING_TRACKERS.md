@@ -746,6 +746,12 @@ Change its version when validation semantics change. Unit3D composes the site bi
 family constructibility; a site without custom validation omits the field and still receives the
 family policy.
 
+`SiteProfile.AllowSeasonZeroEpisodes` is false by default. Enable it only when the site
+accepts individual specials, and bump the site validation policy version. The shared
+preflight and payload predicate requires canonical `SeasonStr == "S00"`, season zero,
+a positive episode, no pack, and no known `MultipleEpisodes` source membership.
+Do not infer specials from a release name or relax other sites' season requirements.
+
 Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;

@@ -1332,8 +1332,8 @@
     "sha256": "ebb5c3a7782c66bb91a7a98fef3215afc86a9e37d50ba4cc5613b6c3659c1d15"
   },
   "internal/trackers/impl/unit3d/sites/aither/profile.go:Profile": {
-    "reason": "Duplicate-slot policy wiring review: existing namePolicy, prepared-source/generation provider evidence, and manual title/component precedence are unchanged; profile only binds the versioned duplicate policy.",
-    "sha256": "70a06824732224e94af445f9acac1d7b34c439163aa7ffeb94a36798edee3f74"
+    "reason": "Enables only canonical single season-zero validation. Existing name/provider policies and manual title/component precedence are unchanged; no provider lookup or fallback is added.",
+    "sha256": "19a7fe328e8cc8af238d8a318893ba397821cacb3a3a78932664de01dfeab103"
   },
   "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
     "reason": "Adds a canonical category-family catalog for broad duplicate gathering. The catalog reads no provider metadata; existing localized naming and upload taxonomy retain their prepared-provider and manual-precedence paths.",
@@ -1548,12 +1548,12 @@
     "sha256": "d16217030214b6c4aa2e910e149e01616fa657eef98619b605115378ecaccfec"
   },
   "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "0652c9602f94ef5ed53352241d29430d558e6a46171e008fd848a681fad4c494"
+    "reason": "Carries the immutable site capability into the shared late TV metadata guard. Existing reviewed names, finalized metadata, manual precedence and payload construction are unchanged.",
+    "sha256": "315e91b6685a8bbfabd749913abc7d5a55b90773acb9f3cfdd08b2e58c5bf2c3"
   },
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
-    "reason": "Clones finalized exact-generation language facts into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced.",
-    "sha256": "ec18c6cefd71057373831866ff74b2d183a810410101be2286693ad6bc4f3c11"
+    "reason": "Preserves canonical SeasonStr and known source multiplicity in the detached validation mapping. Existing exact-generation provider metadata, explicit values and manual clears remain unchanged; no raw parser/provider fallback is added.",
+    "sha256": "1013c59ec20ce43159542a7556ab040e980f0198d52d0b0237cbd2b902a1e760"
   },
   "internal/trackers/impl/standalone/gpw/questionnaire.go:resolveDirectorFields": {
     "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1",

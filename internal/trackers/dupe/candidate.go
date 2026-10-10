@@ -164,8 +164,8 @@ func enrichCandidateCoordinatesFromTitle(candidate *TrackerCandidate) {
 		}
 	}
 	if candidate.Date == "" {
-		if match := candidateDailyDatePattern.FindStringSubmatch(candidate.Name); len(match) == 4 {
-			candidate.Date = strings.Join(match[1:], "-")
+		if scope := contentScopeFromTitle(candidate.Name, FactOriginTrackerTitle); scope.Kind == contentScopeDaily {
+			candidate.Date = scope.Date
 		}
 	}
 }

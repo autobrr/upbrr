@@ -24,6 +24,7 @@ func Profile() unit3d.Profile {
 		ReleaseNamePolicy:       namePolicy(),
 		SourceOnlyImageReusable: sourceOnlyImageReusable,
 		Site: unit3d.SiteProfile{
+			AllowSeasonZeroEpisodes: true,
 			ApplyAdditionalPayload:  additionalPayload,
 			ProjectionQuestionnaire: languageQuestionnaire,
 		},

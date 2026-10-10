@@ -1274,6 +1274,9 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	)
 
 	dailyDate := strings.TrimSpace(meta.DailyEpisodeDate)
+	if meta.HasExplicitSeasonZero() {
+		dailyDate = ""
+	}
 	manualDate := strings.EqualFold(category, "TV") && dailyDate != "" && !meta.TVPack
 	episodeTitle := preferredGeneratedEpisodeTitle(meta)
 	if meta.TVPack || strings.TrimSpace(meta.EpisodeStr) == "" {
@@ -1326,6 +1329,10 @@ func preferredGeneratedEpisodeTitle(meta preparationstate.State) string {
 	parsed := strings.TrimSpace(meta.EpisodeTitle)
 	tvdb := meta.ProviderMetadata.TVDB
 	if !namingProviderMetadataCurrent(meta) || tvdb == nil || meta.Identity.TVDBID <= 0 || tvdb.TVDBID != meta.Identity.TVDBID {
+		return parsed
+	}
+	if meta.HasExplicitSeasonZero() && (!tvdb.EpisodeSeasonKnown || tvdb.EpisodeSeason != 0 ||
+		tvdb.EpisodeNumber != meta.EpisodeInt || meta.EpisodeInt <= 0) {
 		return parsed
 	}
 	if tvdb.EpisodeSeason > 0 && meta.SeasonInt > 0 && tvdb.EpisodeSeason != meta.SeasonInt {

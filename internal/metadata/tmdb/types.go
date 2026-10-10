@@ -216,12 +216,14 @@ type EpisodeDetails struct {
 	VoteAverage   float64
 	EpisodeNumber int
 	SeasonNumber  int
-	Runtime       int
-	Crew          []CrewMember
-	GuestStars    []GuestStar
-	Director      string
-	Writer        string
-	IMDbID        string
+	// SeasonKnown distinguishes an explicit season number, including zero, from an absent/null response field.
+	SeasonKnown bool
+	Runtime     int
+	Crew        []CrewMember
+	GuestStars  []GuestStar
+	Director    string
+	Writer      string
+	IMDbID      string
 }
 
 type CrewMember struct {

@@ -12,6 +12,271 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestCandidateEpisodeRangesRetainMembership(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name          string
+		coordinates   string
+		date          string
+		season        int
+		episode       int
+		targetSeason  int
+		targetEpisode int
+		want          api.DupeRelation
+	}{
+		{
+			name:          "disjoint special range",
+			coordinates:   "S00E01-E02",
+			episode:       1,
+			targetEpisode: 3,
+			want:          api.DupeRelationCoexists,
+		},
+		{
+			name:          "overlapping special range",
+			coordinates:   "S00E01-E02",
+			episode:       1,
+			targetEpisode: 2,
+			want:          api.DupeRelationSameSlot,
+		},
+		{
+			name:          "dated disjoint special range",
+			coordinates:   "S00E01-E02",
+			date:          "2026-01-01.",
+			episode:       1,
+			targetEpisode: 3,
+			want:          api.DupeRelationCoexists,
+		},
+		{
+			name:          "dated overlapping special range",
+			coordinates:   "S00E01-E02",
+			date:          "2026-01-01.",
+			episode:       1,
+			targetEpisode: 2,
+			want:          api.DupeRelationSameSlot,
+		},
+		{
+			name:          "conflicting season",
+			coordinates:   "S00E01-E02",
+			season:        1,
+			episode:       1,
+			targetEpisode: 3,
+			want:          api.DupeRelationManualReview,
+		},
+		{
+			name:          "conflicting first episode",
+			coordinates:   "S00E01-E02",
+			episode:       3,
+			targetEpisode: 3,
+			want:          api.DupeRelationManualReview,
+		},
+		{
+			name:          "reversed range",
+			coordinates:   "S00E02-E01",
+			episode:       2,
+			targetEpisode: 3,
+			want:          api.DupeRelationManualReview,
+		},
+		{
+			name:          "positive season overlapping range",
+			coordinates:   "S01E01-E02",
+			season:        1,
+			episode:       1,
+			targetSeason:  1,
+			targetEpisode: 2,
+			want:          api.DupeRelationSameSlot,
+		},
+		{
+			name:          "positive season disjoint range",
+			coordinates:   "S01E01-E02",
+			season:        1,
+			episode:       1,
+			targetSeason:  1,
+			targetEpisode: 3,
+			want:          api.DupeRelationCoexists,
+		},
+		{
+			name:          "repeated same season overlapping range",
+			coordinates:   "S00E01-S00E02",
+			targetEpisode: 2,
+			want:          api.DupeRelationSameSlot,
+		},
+		{
+			name:          "repeated same season disjoint range",
+			coordinates:   "S00E01-S00E02",
+			targetEpisode: 3,
+			want:          api.DupeRelationCoexists,
+		},
+		{
+			name:          "omitted episode prefix overlapping range",
+			coordinates:   "S00E01-02",
+			targetEpisode: 2,
+			want:          api.DupeRelationSameSlot,
+		},
+		{
+			name:          "versioned special is disjoint",
+			coordinates:   "S00E01v2",
+			date:          "2026-01-01.",
+			targetEpisode: 2,
+			want:          api.DupeRelationCoexists,
+		},
+		{
+			name:          "versioned range is disjoint",
+			coordinates:   "S00E01-E02v2",
+			date:          "2026-01-01.",
+			targetEpisode: 3,
+			want:          api.DupeRelationCoexists,
+		},
+	} {
+		for _, separator := range []string{".", "_"} {
+			t.Run(test.name+separator, func(t *testing.T) {
+				t.Parallel()
+				candidate := NormalizeCandidate(api.DupeEntry{
+					Name:          "Example.Series." + test.coordinates + separator + test.date + "1080p.WEB-DL-GRP",
+					Season:        test.season,
+					Episode:       test.episode,
+					CanonicalType: "WEB-DL",
+					Source:        "WEB",
+					Res:           "1080p",
+				}, "AITHER")
+				result := Evaluate(api.TrackerDuplicateTarget{
+					Season:     test.targetSeason,
+					Episode:    test.targetEpisode,
+					Type:       "WEB-DL",
+					Source:     "WEB",
+					Resolution: "1080p",
+				}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+				got := result.Candidates[0]
+				if got.Relation != test.want {
+					t.Fatalf("range relation=%s reasons=%v, want %s", got.Relation, got.Reasons, test.want)
+				}
+				if test.want == api.DupeRelationCoexists && (result.RequiresAction || result.Blocks) {
+					t.Fatalf("disjoint range remains actionable: action=%t blocks=%t", result.RequiresAction, result.Blocks)
+				}
+			})
+		}
+	}
+}
+
+func TestUnsupportedCandidateEpisodeExpressionsRemainActionable(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		coordinates   string
+		targetSeason  int
+		targetEpisode int
+	}{
+		{
+			coordinates:   "S00E01-S01E02",
+			targetSeason:  1,
+			targetEpisode: 2,
+		},
+		{
+			coordinates:   "S01E01-S02E02",
+			targetSeason:  2,
+			targetEpisode: 2,
+		},
+		{coordinates: "S00E01+E02", targetEpisode: 2},
+		{coordinates: "S00E01&E02", targetEpisode: 2},
+		{coordinates: "S00E01-E02-E03", targetEpisode: 3},
+		{coordinates: "S00E01-E02E03", targetEpisode: 3},
+		{coordinates: "S00E01E02", targetEpisode: 2},
+		{coordinates: "S00E01.S00E02", targetEpisode: 2},
+		{coordinates: "S00E01,S00E02", targetEpisode: 2},
+		{coordinates: "S00E01,E02", targetEpisode: 2},
+		{coordinates: "S00E01;E02", targetEpisode: 2},
+		{coordinates: "S00E01/E02", targetEpisode: 2},
+		{coordinates: "S00E01-E02,E03", targetEpisode: 3},
+		{coordinates: "S00E01-E02v2", targetEpisode: 2},
+		{coordinates: "S00E01-02v2", targetEpisode: 2},
+		{coordinates: "S00E01v2-02", targetEpisode: 2},
+		{coordinates: "S00E01v2E02v3", targetEpisode: 2},
+		{coordinates: "S00E01-10000", targetEpisode: 2},
+		{coordinates: "S00E01+10001v2", targetEpisode: 2},
+		{coordinates: "S00E01&00000", targetEpisode: 2},
+		{coordinates: "S00E10000-10001", targetEpisode: 2},
+		{coordinates: "S00E01-S10000E02", targetEpisode: 2},
+		{coordinates: "S00E01-S999999999999999999999999E01", targetEpisode: 2},
+	} {
+		for _, separator := range []string{".", "_"} {
+			t.Run(test.coordinates+separator, func(t *testing.T) {
+				t.Parallel()
+				for _, date := range []string{"", "2026-01-01."} {
+					// Unit3D approved and pending entries supply titles without episode coordinates.
+					candidate := NormalizeCandidate(api.DupeEntry{
+						Name:          "Example.Series." + test.coordinates + separator + date + "1080p.WEB-DL-GRP",
+						CanonicalType: "WEB-DL",
+						Source:        "WEB",
+						Res:           "1080p",
+					}, "AITHER")
+					for _, exactOnly := range []bool{false, true} {
+						result := Evaluate(api.TrackerDuplicateTarget{
+							Season:     test.targetSeason,
+							Episode:    test.targetEpisode,
+							Type:       "WEB-DL",
+							Source:     "WEB",
+							Resolution: "1080p",
+						}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{ExactMatchOnly: exactOnly},
+							SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+						if result.Candidates[0].Relation == api.DupeRelationCoexists || !result.RequiresAction {
+							t.Errorf("unsupported membership became safe: date=%q exactOnly=%t result=%+v", date, exactOnly, result)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestDatedTitleContentScope(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		coordinates string
+		kind        contentScopeKind
+		date        string
+	}{
+		{coordinates: "S00E02", kind: contentScopeEpisode},
+		{coordinates: "S00E01-E02", kind: contentScopeEpisodeRange},
+		{coordinates: "S00E01-1080p", kind: contentScopeEpisode},
+		{coordinates: "S00E01-2160p", kind: contentScopeEpisode},
+		{coordinates: "S00E01-10bit", kind: contentScopeEpisode},
+		{
+			coordinates: "S00E01-2026-01-01",
+			kind:        contentScopeDaily,
+			date:        "2026-01-01",
+		},
+		{
+			coordinates: "S01E02",
+			kind:        contentScopeDaily,
+			date:        "2026-01-01",
+		},
+		{
+			coordinates: "S01E02v2",
+			kind:        contentScopeDaily,
+			date:        "2026-01-01",
+		},
+		{
+			coordinates: "S00E00",
+			kind:        contentScopeDaily,
+			date:        "2026-01-01",
+		},
+		{
+			coordinates: "S00",
+			kind:        contentScopeDaily,
+			date:        "2026-01-01",
+		},
+		{kind: contentScopeDaily, date: "2026-01-01"},
+	} {
+		t.Run(test.coordinates, func(t *testing.T) {
+			t.Parallel()
+			name := "Example.Series." + test.coordinates + ".2026-01-01.1080p.WEB-DL-GRP"
+			candidate := NormalizeCandidate(api.DupeEntry{Name: name}, "AITHER")
+			parsed := parseReleaseTitle(name, FactOriginTrackerTitle)
+			if candidate.Date != test.date || parsed.Content.Kind != test.kind || parsed.Content.Date != test.date {
+				t.Fatalf("dated title scope: candidate=%+v parsed=%+v", candidate, parsed.Content)
+			}
+		})
+	}
+}
+
 func TestNormalizeDiscEncodeFromStructuredTypeAndTitleSource(t *testing.T) {
 	t.Parallel()
 

@@ -211,6 +211,10 @@ The review is tracker-specific. Strict `--unattended` never prompts and skips a 
 
 Season tokens require exactly two or four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized; use `S01E05` instead.
 
+Specials can use `S00E01` in a source name or `--season S00 --episode 01`. An explicit season zero is distinct from an unknown season; episode zero is invalid. Use `--season=` to clear the season or `--reset-input release_name.season` to restore automatic detection. Tracker eligibility still determines whether a special or a pack can be uploaded. Changing the episode coordinates does not remove known multi-episode source membership.
+
+Existing prepared releases are rebuilt after this update. Older binaries do not support saved season-zero corrections.
+
 | Option                        | Aliases                                           | Purpose                                                                                     |
 | ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `--category <value>`          | `-category`, `-c`                                 | Override category.                                                                          |

@@ -8,11 +8,55 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
+	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestEpisodeSeasonPresenceDoesNotTrustLegacyEvidence(t *testing.T) {
+	t.Parallel()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"name":"Unproven episode","season_number":null,"episode_number":1}`))
+	}))
+	t.Cleanup(server.Close)
+	repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "metadata.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, scope := evidence.WithScope(t.Context(), repo, filepath.Join(t.TempDir(), "source.mkv"), "fingerprint", api.ExternalFreshnessReuse, api.NopLogger{})
+	client := NewClient(server.Client(), api.NopLogger{}, "synthetic-key")
+	client.baseURL = server.URL
+	path := "/tv/555001/season/0/episode/1"
+	params := map[string]string{"api_key": client.apiKey, "append_to_response": "images,credits,external_ids"}
+	// v1 serialized a missing season as numeric zero in the decoded target.
+	legacy := episodeDetailsResponse{
+		Name:          "Legacy episode",
+		SeasonNumber:  new(0),
+		EpisodeNumber: 1,
+	}
+	if err := evidence.JSON(ctx, "tmdb.response.v1", []any{client.baseURL, client.apiKey, path, params}, &legacy, errNotFound, nil, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.GetEpisodeDetails(ctx, 555001, 0, 1)
+	if err != nil || requests.Load() != 1 || result.SeasonKnown {
+		t.Fatalf("legacy zero was trusted: result=%+v requests=%d error=%v", result, requests.Load(), err)
+	}
+	if err := scope.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestFetchMetadataUsesGermanDetailFallbackWhenTranslationsFail(t *testing.T) {
 	var translationsRequested atomic.Bool

@@ -104,8 +104,10 @@ type EpisodesData struct {
 }
 
 type Episode struct {
-	ID             int
-	SeasonNumber   int
+	ID           int
+	SeasonNumber int
+	// SeasonKnown retains explicit provider season presence, including zero, across episode caching.
+	SeasonKnown    bool
 	Number         int
 	AbsoluteNumber int
 	SeasonName     string
@@ -121,7 +123,9 @@ type Episode struct {
 // to validate cache completeness and select a match. CacheBasePath is a host
 // filesystem directory override.
 type EpisodeQuery struct {
-	Season        int
+	Season int
+	// SeasonKnown requires exact season-zero membership instead of absolute fallback.
+	SeasonKnown   bool
 	Episode       int
 	Absolute      int
 	AiredDate     string
@@ -130,10 +134,12 @@ type EpisodeQuery struct {
 }
 
 type EpisodeMatch struct {
-	SeasonName    string
-	EpisodeName   string
-	Overview      string
-	SeasonNumber  int
+	SeasonName   string
+	EpisodeName  string
+	Overview     string
+	SeasonNumber int
+	// SeasonKnown retains provider season presence for selected-episode snapshots.
+	SeasonKnown   bool
 	EpisodeNumber int
 	Year          int
 	EpisodeID     int

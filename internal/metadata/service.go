@@ -1397,9 +1397,12 @@ func applySeasonEpisodeMetadata(meta *preparationstate.State, result seasonep.Re
 		return
 	}
 
-	if result.Season > 0 {
+	if result.Season > 0 || result.SeasonKnown {
 		meta.SeasonInt = result.Season
 		meta.SeasonStr = seasonep.FormatSeason(result.Season)
+		if result.Season == 0 {
+			meta.SeasonStr = "S00"
+		}
 		if meta.Release.Season == 0 {
 			meta.Release.Season = result.Season
 		}
@@ -1415,6 +1418,7 @@ func applySeasonEpisodeMetadata(meta *preparationstate.State, result seasonep.Re
 		meta.DailyEpisodeDate = result.DailyDate
 	}
 	meta.TVPack = result.TVPack
+	meta.MultipleEpisodes = result.MultipleEpisodes
 
 	if logger != nil && (meta.SeasonStr != "" || meta.EpisodeStr != "" || meta.DailyEpisodeDate != "" || meta.TVPack) {
 		logger.Debugf(

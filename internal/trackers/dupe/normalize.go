@@ -183,8 +183,11 @@ type parsedTitleFacts struct {
 }
 
 var (
-	titleEpisodeRangePattern = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:-(?:S\d{1,3})?E?(\d{1,4}))?\b`)
-	titleSeasonPackPattern   = regexp.MustCompile(`(?i)\bS(\d{1,3})(?:[.\-_ ]|$)`)
+	titleEpisodeRangePattern = regexp.MustCompile(
+		`(?i)\bS(\d+)E(\d+)(?:v\d+)?(?:-(?:S(\d+))?E?(\d+)(?:v\d+)?)?((?:[ ._-]*(?:S\d+)?E\d+(?:v\d+)?|\s*[-+&]\s*(?:S\d+)?E?\d+(?:v\d+)?)*)\b`,
+	)
+	titleAdditionalEpisodePattern = regexp.MustCompile(`(?i)\bE\d{1,4}`)
+	titleSeasonPackPattern        = regexp.MustCompile(`(?i)\bS(\d{1,3})(?:[.\-_ ]|$)`)
 )
 
 func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
@@ -602,7 +605,7 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 		Edition:    edition,
 		Metadata:   metadata,
 		Region:     canonicalRegion(release.Region),
-		Content:    contentScope{Kind: contentScopeWork, Origin: origin},
+		Content:    contentScopeFromTitle(name, origin),
 		HDR:        hdrFactsFromCandidateTitle(name),
 	}
 	if parsed.Source == "" {
@@ -632,45 +635,80 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 	if tokenPresent(upper, "3D") {
 		parsed.ThreeD = "3d"
 	}
-	if match := candidateDailyDatePattern.FindStringSubmatch(name); len(match) == 4 {
-		parsed.Content = contentScope{
+	return parsed
+}
+
+func contentScopeFromTitle(name string, origin FactOrigin) contentScope {
+	upper := strings.ToUpper(name)
+	// Underscores delimit release tokens but are word characters to the regexp.
+	// Normalize only the episode view so complete range endpoints remain visible.
+	episodeName := strings.ReplaceAll(name, "_", ".")
+	episodeMatches := titleEpisodeRangePattern.FindAllStringSubmatch(episodeName, 2)
+	var episodeMatch []string
+	season, start := 0, 0
+	ambiguousEpisodes := len(episodeMatches) > 1
+	if len(episodeMatches) > 0 {
+		episodeMatch = episodeMatches[0]
+		// Consume the whole raw expression before applying supported coordinate
+		// widths; unsupported members cannot prove a disjoint matching prefix.
+		ambiguousEpisodes = ambiguousEpisodes || len(episodeMatch[1]) > 3 || len(episodeMatch[2]) > 4 ||
+			len(episodeMatch[3]) > 3 || len(episodeMatch[4]) > 4
+		season, _ = strconv.Atoi(episodeMatch[1])
+		start, _ = strconv.Atoi(episodeMatch[2])
+		ambiguousEpisodes = ambiguousEpisodes || episodeMatch[5] != ""
+		// Bare episode tokens outside this expression also retain membership,
+		// regardless of their delimiter or an endpoint's version suffix.
+		matchStart := strings.Index(episodeName, episodeMatch[0])
+		matchEnd := matchStart + len(episodeMatch[0])
+		ambiguousEpisodes = ambiguousEpisodes || titleAdditionalEpisodePattern.MatchString(episodeName[:matchStart]) ||
+			titleAdditionalEpisodePattern.MatchString(episodeName[matchEnd:])
+		if episodeMatch[3] != "" {
+			endSeason, _ := strconv.Atoi(episodeMatch[3])
+			ambiguousEpisodes = ambiguousEpisodes || endSeason != season
+		}
+	}
+	// Canonical S00 episodes use coordinates; their dates are annotations.
+	// Other dated titles retain daily scope, including unresolved season packs.
+	special := len(episodeMatch) > 0 && episodeMatch[1] == "00" && start > 0 && !ambiguousEpisodes
+	if match := candidateDailyDatePattern.FindStringSubmatch(name); len(match) == 4 && !special {
+		return contentScope{
 			Kind:   contentScopeDaily,
 			Date:   strings.Join(match[1:], "-"),
 			Origin: origin,
 		}
-		return parsed
 	}
 	if strings.Contains(upper, "COMPLETE") && strings.Contains(upper, "SERIES") {
-		parsed.Content = contentScope{Kind: contentScopeCompleteSeries, Origin: origin}
-		return parsed
+		return contentScope{Kind: contentScopeCompleteSeries, Origin: origin}
 	}
-	if match := titleEpisodeRangePattern.FindStringSubmatch(name); len(match) >= 3 {
-		season, _ := strconv.Atoi(match[1])
-		start, _ := strconv.Atoi(match[2])
+	// One season and one contiguous range cannot represent mixed seasons or
+	// additional members. Do not use a matching prefix to prove disjointness.
+	if ambiguousEpisodes {
+		return contentScope{Kind: contentScopeUnknownTV, Origin: origin}
+	}
+	if match := episodeMatch; len(match) > 0 {
 		end := start
 		kind := contentScopeEpisode
-		if len(match) > 3 && match[3] != "" {
-			end, _ = strconv.Atoi(match[3])
+		if match[4] != "" {
+			end, _ = strconv.Atoi(match[4])
 			kind = contentScopeEpisodeRange
 		}
-		parsed.Content = contentScope{
+		return contentScope{
 			Kind:         kind,
 			Season:       season,
 			EpisodeStart: start,
 			EpisodeEnd:   end,
 			Origin:       origin,
 		}
-		return parsed
 	}
 	if match := titleSeasonPackPattern.FindStringSubmatch(name); len(match) == 2 {
 		season, _ := strconv.Atoi(match[1])
-		parsed.Content = contentScope{
+		return contentScope{
 			Kind:   contentScopeSeasonPack,
 			Season: season,
 			Origin: origin,
 		}
 	}
-	return parsed
+	return contentScope{Kind: contentScopeWork, Origin: origin}
 }
 
 func (facts parsedTitleFacts) hasEvidence() bool {
@@ -1083,6 +1121,11 @@ func contentScopeFromValues(
 			Origin: origin,
 		}
 	}
+	// Title-only adapters may enrich just the first episode. That coordinate
+	// cannot resolve membership the title parser explicitly left unknown.
+	if fallback.Kind == contentScopeUnknownTV {
+		return fallback
+	}
 	switch {
 	case pack && season > 0:
 		return contentScope{
@@ -1095,6 +1138,12 @@ func contentScopeFromValues(
 	case pack:
 		return contentScope{Kind: contentScopeUnknownTV, Origin: origin}
 	case episode > 0:
+		// Adapters retain the first episode. A matching title range supplies
+		// membership without overriding a conflicting season or first episode.
+		if fallback.Kind == contentScopeEpisodeRange && season == fallback.Season &&
+			episode == fallback.EpisodeStart && fallback.EpisodeEnd >= episode {
+			return fallback
+		}
 		return contentScope{
 			Kind:         contentScopeEpisode,
 			Season:       season,
