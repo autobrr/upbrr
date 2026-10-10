@@ -106,6 +106,12 @@ Region and distributor fields accept supported suggestions or explicit numeric I
 
 For a tracker defect, follow [troubleshooting guidance](../troubleshooting/index.md) and collect only the relevant sanitized excerpt. upbrr is intended to redact credentials automatically, but inspect every log and remove any remaining credentials, cookies, tokens, private URLs and unrelated personal information before sharing.
 
+### BHD NFOs
+
+BHD sends an available local scene NFO through the dedicated `nfo` upload field without changing the reviewed description. NFO content is captured during upload preparation; an unreadable supplied NFO or content larger than 8 MiB blocks preparation. Uploads without NFO content omit the optional field.
+
+Scene NFOs must stay within the database-adjacent `nfo` storage, including any symlink targets. Safe nested paths and links within that storage remain usable; a supplied NFO outside it blocks BHD preparation.
+
 ## Image hosts and clients
 
 Trackers can restrict usable image hosts or select tracker-specific image/client overrides. Configure a compatible host before media preparation. Confirm the final hosted links and client injection settings per tracker.
