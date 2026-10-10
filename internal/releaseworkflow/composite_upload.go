@@ -439,6 +439,7 @@ func normalizeCompositeUploadRequest(
 		DuplicateDecisions:     decisions,
 		Media:                  &media,
 		MediaSelection:         selection,
+		SkipImageHostUpload:    optionalBool(request.ImageHosting.SkipUpload),
 		Descriptions:           &descriptions,
 		NoSeed:                 optionalBool(request.Client.NoSeed),
 	}

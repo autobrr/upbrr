@@ -5700,6 +5700,12 @@ func (m *Module) captureMedia(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build media artifacts: %w", err)
 	}
+	// Stale prep flags from priorMedia would skip UploadMediaImages / MediaSelection.
+	// Fresh builds keep any ImageRequirementsPrepared set by the builder.
+	if priorMedia != nil {
+		snapshot.ImageRequirementsPrepared = false
+		snapshot.ImageHostUploadSkipped = false
+	}
 	requirementsFingerprint, err := mediaRequirementsFingerprint(eligibleProjections.Projections)
 	if err != nil {
 		return CommandResult{}, err
@@ -5906,6 +5912,7 @@ func (m *Module) setMediaSelection(
 		}
 	}
 	snapshot.ImageRequirementsPrepared = false
+	snapshot.ImageHostUploadSkipped = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
 }
 
@@ -5998,6 +6005,7 @@ func (m *Module) attachMediaArtifacts(
 	}
 	refreshMutatedMediaStatus(&updated, eligible.Projections, projections.Projections)
 	updated.ImageRequirementsPrepared = false
+	updated.ImageHostUploadSkipped = false
 	return m.publishMediaReplacement(ownerID, state, nextRevision, now, updated, retained)
 }
 
@@ -6009,10 +6017,6 @@ func (m *Module) uploadMediaImages(
 	now time.Time,
 	command UploadMediaImagesCommand,
 ) (CommandResult, error) {
-	mutator, ok := m.mediaBuilder.(MediaArtifactMutator)
-	if !ok {
-		return CommandResult{}, fmt.Errorf("%w: workflow image hosting is unavailable", ErrInvalidTransition)
-	}
 	artifactIDs := append([]api.PublicResourceID(nil), command.ArtifactIDs...)
 	if len(artifactIDs) == 0 {
 		selectedArtifactIDs, selectionErr := selectedLocalMediaArtifactIDs(state, command.Media)
@@ -6026,18 +6030,18 @@ func (m *Module) uploadMediaImages(
 		return CommandResult{}, err
 	}
 	if strings.TrimSpace(command.Host) == "" && len(command.ArtifactIDs) > 0 {
-		selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
-		for _, artifactID := range artifactIDs {
-			selected[artifactID] = struct{}{}
-		}
-		for index := range snapshot.Artifacts {
-			if snapshot.Artifacts[index].Kind != api.MediaArtifactScreenshot &&
-				snapshot.Artifacts[index].Kind != api.MediaArtifactDVDMenu {
-				continue
-			}
-			_, snapshot.Artifacts[index].Selected = selected[snapshot.Artifacts[index].ID]
-		}
+		selectExplicitMediaArtifacts(&snapshot, artifactIDs)
 	}
+	if command.SkipUpload {
+		snapshot.ImageRequirementsPrepared = true
+		snapshot.ImageHostUploadSkipped = true
+		return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, retained)
+	}
+	mutator, ok := m.mediaBuilder.(MediaArtifactMutator)
+	if !ok {
+		return CommandResult{}, fmt.Errorf("%w: workflow image hosting is unavailable", ErrInvalidTransition)
+	}
+	snapshot.ImageHostUploadSkipped = false
 	release, _, eligible, _, _, err := m.mediaExtensionContext(ctx, ownerID, state, &command.Media, now)
 	if err != nil {
 		return CommandResult{}, err
@@ -6120,6 +6124,19 @@ func selectedLocalMediaArtifactIDs(state *State, mediaRef api.MediaArtifactSetRe
 	return artifactIDs, nil
 }
 
+func selectExplicitMediaArtifacts(snapshot *api.MediaArtifactSet, artifactIDs []api.PublicResourceID) {
+	selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
+	for _, artifactID := range artifactIDs {
+		selected[artifactID] = struct{}{}
+	}
+	for index := range snapshot.Artifacts {
+		if snapshot.Artifacts[index].Kind != api.MediaArtifactScreenshot && snapshot.Artifacts[index].Kind != api.MediaArtifactDVDMenu {
+			continue
+		}
+		_, snapshot.Artifacts[index].Selected = selected[snapshot.Artifacts[index].ID]
+	}
+}
+
 func (m *Module) removeHostedImages(
 	ctx context.Context,
 	ownerID string,
@@ -6145,6 +6162,7 @@ func (m *Module) removeHostedImages(
 		return CommandResult{}, fmt.Errorf("release workflow remove hosted images: %w", err)
 	}
 	updated.ImageRequirementsPrepared = false
+	updated.ImageHostUploadSkipped = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, updated, nextRetained)
 }
 
@@ -6254,6 +6272,7 @@ func (m *Module) deleteMediaArtifacts(
 	}
 	snapshot.Artifacts = artifacts
 	snapshot.ImageRequirementsPrepared = false
+	snapshot.ImageHostUploadSkipped = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
 }
 
@@ -6336,12 +6355,14 @@ func (m *Module) publishMediaMutation(
 		HostAttempts              []api.HostedImageAttempt
 		FailedHosts               []string
 		ImageRequirementsPrepared bool
+		ImageHostUploadSkipped    bool
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
 		snapshot.HostAttempts,
 		snapshot.FailedHosts,
 		snapshot.ImageRequirementsPrepared,
+		snapshot.ImageHostUploadSkipped,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media mutation: %w", err)
@@ -6385,12 +6406,14 @@ func (m *Module) publishMediaReplacement(
 		HostAttempts              []api.HostedImageAttempt
 		FailedHosts               []string
 		ImageRequirementsPrepared bool
+		ImageHostUploadSkipped    bool
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
 		snapshot.HostAttempts,
 		snapshot.FailedHosts,
 		snapshot.ImageRequirementsPrepared,
+		snapshot.ImageHostUploadSkipped,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media replacement: %w", err)
@@ -6457,7 +6480,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	readinessProjections := projections
 	allTrackerHostsFailed := false
 	unmatchedTrackerHostFailure := false
-	if snapshot.ImageRequirementsPrepared {
+	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
 		unmatchedTrackerHostFailure = mediaHasUnscopedOrUnknownImageHostFailure(*snapshot, knownProjections)
 		readinessProjections = slices.DeleteFunc(
 			append([]api.TrackerReleaseProjection(nil), projections...),
@@ -6494,7 +6517,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	snapshot.Failures = hostFailures
 	snapshot.RequiredActions = reconcileActions
 	screenshotsReady := selectedScreenshots >= requiredScreenshots
-	if snapshot.ImageRequirementsPrepared {
+	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
 		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
 			hostedScreenshotRequirementsMet(*snapshot, readinessProjections)
 	}

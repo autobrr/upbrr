@@ -2425,3 +2425,29 @@ func TestCompositeUploadFactInstructionsReleaseVersion(t *testing.T) {
 		t.Fatalf("automatic=%#v error=%v", got.ReleaseName, err)
 	}
 }
+
+func TestNormalizeCompositeUploadRequestPropagatesSkipImageHostUpload(t *testing.T) {
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "skip-image-host-upload")
+	request.ImageHosting.SkipUpload = new(true)
+
+	session, _, err := normalizeCompositeUploadRequest(request)
+	if err != nil {
+		t.Fatalf("normalize composite upload request: %v", err)
+	}
+	if !session.Intent.SkipImageHostUpload {
+		t.Fatalf("skip image-host upload was not retained in workflow intent: %#v", session.Intent)
+	}
+}
+
+func TestNormalizeCompositeUploadRequestPreservesImageHostingWhenNotSkipped(t *testing.T) {
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "host-images")
+	request.ImageHosting.SkipUpload = new(false)
+
+	session, _, err := normalizeCompositeUploadRequest(request)
+	if err != nil {
+		t.Fatalf("normalize composite upload request: %v", err)
+	}
+	if session.Intent.SkipImageHostUpload {
+		t.Fatalf("image-host upload was skipped for an explicit false request: %#v", session.Intent)
+	}
+}

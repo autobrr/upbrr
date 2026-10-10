@@ -3678,7 +3678,7 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 				ID:       "artifact-1",
 				Kind:     api.MediaArtifactScreenshot,
 				Purpose:  api.ScreenshotPurposeFinal,
-				Selected: true,
+				Selected: false,
 			}},
 			Status: api.StageStatusCompleted,
 		}, privateMedia, nil
@@ -3761,9 +3761,21 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 		Instructions:     api.MediaCaptureInstructions{ScreenshotCount: 1, Purpose: api.ScreenshotPurposeFinal},
 	})
 	mediaRef := *result.Workflow.Media
+	result = executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            mediaRef,
+		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
+		SkipUpload:       true,
+	})
+	if result.Media == nil || !result.Media.ImageRequirementsPrepared || !result.Media.ImageHostUploadSkipped || !result.Media.Artifacts[0].Selected {
+		t.Fatalf("skipped image hosting did not satisfy the media barrier: %#v", result.Media)
+	}
+	mediaRef = *result.Workflow.Media
 	result = executeCommand(t, module, GenerateDescriptionsCommand{
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
+		Instructions:     api.DescriptionInstructions{ImageHost: api.ImageHostOverrides{SkipUpload: new(true)}},
 	})
 	result = executeCommand(t, module, DryRunUploadsCommand{
 		WorkflowID:       result.Workflow.ID,
@@ -3879,6 +3891,20 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	replayed := executeCommand(t, module, retry)
 	if replayed.Media == nil || replayed.Media.ID != deleted.Media.ID || privateMedia.stats.deletions != 2 {
 		t.Fatalf("idempotent delete = %#v deletions=%d", replayed.Media, privateMedia.stats.deletions)
+	}
+}
+
+func TestSelectExplicitMediaArtifactsSelectsOnlyRequestedLocalMedia(t *testing.T) {
+	snapshot := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{
+		{ID: "screen", Kind: api.MediaArtifactScreenshot},
+		{ID: "menu", Kind: api.MediaArtifactDVDMenu},
+		{ID: "other", Kind: api.MediaArtifactHostedImage},
+	}}
+
+	selectExplicitMediaArtifacts(&snapshot, []api.PublicResourceID{"screen"})
+
+	if !snapshot.Artifacts[0].Selected || snapshot.Artifacts[1].Selected || snapshot.Artifacts[2].Selected {
+		t.Fatalf("explicit artifact selection: %#v", snapshot.Artifacts)
 	}
 }
 
