@@ -25,6 +25,21 @@ func (r *SQLiteRepository) CloneAudioAnalysisUploads(
 	binding api.PreparedMediaBinding,
 	paths map[string]string,
 ) error {
+	return r.cloneAnalysisUploads(ctx, prior, binding, paths, api.ScreenshotPurposeAudioAnalysis)
+}
+
+// CloneHDRAnalysisUploads preserves HDR provenance independently of audio and screenshots.
+func (r *SQLiteRepository) CloneHDRAnalysisUploads(ctx context.Context, prior api.ReleaseRef, binding api.PreparedMediaBinding, paths map[string]string) error {
+	return r.cloneAnalysisUploads(ctx, prior, binding, paths, api.ScreenshotPurposeHDRAnalysis)
+}
+
+func (r *SQLiteRepository) cloneAnalysisUploads(
+	ctx context.Context,
+	prior api.ReleaseRef,
+	binding api.PreparedMediaBinding,
+	paths map[string]string,
+	purpose api.ScreenshotPurpose,
+) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -54,7 +69,7 @@ func (r *SQLiteRepository) CloneAudioAnalysisUploads(
     FROM uploaded_images WHERE source_path = ? AND prepared_generation = ? AND image_path = ? AND purpose = ?
     ON CONFLICT(source_path, usage_scope, host, image_path) DO NOTHING`,
 				bound.PreparedMediaFingerprint, bound.PreparedGeneration, to, bound.SourcePath, prior.Generation, from,
-				api.ScreenshotPurposeAudioAnalysis)
+				purpose)
 			if err != nil {
 				return fmt.Errorf("db clone audio uploads: %w", err)
 			}

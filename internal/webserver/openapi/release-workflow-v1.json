@@ -1679,6 +1679,9 @@
       "DiscReportFacts": {
         "type": "object",
         "properties": {
+          "HDR10PlusConfirmed": {
+            "type": "boolean"
+          },
           "Playlist": {
             "$ref": "#/components/schemas/PlaylistInfo"
           },
@@ -1687,6 +1690,7 @@
           }
         },
         "required": [
+          "HDR10PlusConfirmed",
           "Playlist",
           "Summary"
         ]
@@ -2301,6 +2305,38 @@
         "required": [
           "available",
           "goal"
+        ]
+      },
+      "HDRAnalysisFailureCode": {
+        "type": "string"
+      },
+      "HDRAnalysisTarget": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "playlist": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "selectionPolicy": {
+            "type": "string"
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "selectionPolicy",
+          "supported"
         ]
       },
       "HDREvidenceOrigin": {
@@ -4490,6 +4526,9 @@
           "Code": {
             "$ref": "#/components/schemas/OperationFailureCode"
           },
+          "HDRAnalysisCode": {
+            "$ref": "#/components/schemas/HDRAnalysisFailureCode"
+          },
           "Message": {
             "type": "string"
           },
@@ -4627,6 +4666,9 @@
       "PreparationControls": {
         "type": "object",
         "properties": {
+          "CaptureHDRMetadata": {
+            "type": "boolean"
+          },
           "ConfirmBDMVRescan": {
             "type": "boolean"
           },
@@ -4816,6 +4858,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TrackerPreview"
+            }
+          },
+          "hdrTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRAnalysisTarget"
             }
           }
         },

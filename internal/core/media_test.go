@@ -824,7 +824,7 @@ func TestAudioAnalysisIncompleteHostBatchReportsFailedProgress(t *testing.T) {
 		UsageScope: "global",
 		Trackers:   []string{"ONE"},
 	}, images, nil, nil, false)
-	if err == nil || !strings.Contains(err.Error(), "audio analysis image upload is incomplete") || len(links) != 1 {
+	if err == nil || !strings.Contains(err.Error(), "analysis image upload is incomplete") || len(links) != 1 {
 		t.Fatalf("incomplete audio upload: links=%#v err=%v", links, err)
 	}
 	if len(updates) == 0 {

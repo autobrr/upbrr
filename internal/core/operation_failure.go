@@ -28,6 +28,20 @@ func classifyOperationError(operation api.OperationKind, err error) error {
 		Message:   "The operation could not be completed.",
 		Recovery:  api.OperationRecoveryRetry,
 	}
+	if hdrFailure, ok := api.AsHDRAnalysisFailure(err); ok {
+		failure.Code, failure.Message, failure.HDRAnalysisCode = api.OperationFailureHDRAnalysis, hdrFailure.Message, hdrFailure.Code
+		switch hdrFailure.Code {
+		case api.HDRAnalysisFailureInvalidSelection:
+			failure.Recovery = api.OperationRecoveryEditInput
+		case api.HDRAnalysisFailureStaleSource, api.HDRAnalysisFailureAmbiguousBinding:
+			failure.Recovery = api.OperationRecoveryRefreshRelease
+		case api.HDRAnalysisFailureAbsent, api.HDRAnalysisFailureUnsupportedInput, api.HDRAnalysisFailureUnsupportedMetadata,
+			api.HDRAnalysisFailureInvalidBitstream, api.HDRAnalysisFailureIncomplete, api.HDRAnalysisFailureResourceLimit,
+			api.HDRAnalysisFailureRead, api.HDRAnalysisFailureOutput, api.HDRAnalysisFailureCanceled, api.HDRAnalysisFailureInterrupted,
+			api.HDRAnalysisFailureResourceUnavailable:
+		}
+		return api.NewOperationError(failure, err)
+	}
 	if operation == api.OperationKindAudioAnalysis {
 		failure.Code = api.OperationFailureAudioAnalysis
 		failure.Message = "Audio analysis could not be completed."

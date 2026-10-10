@@ -66,12 +66,22 @@ func (m *Module) OwnsActiveInput(slot api.ActiveInputRecord) bool {
 	return m != nil && slot.State != api.ActiveInputEmpty && slot.Fence != 0 && slot.CoordinatorID == m.processEpoch
 }
 
-// InputSourcePath reads the canonical source for an already authorized input ID.
+// InputSourcePath reads the verified source path for an already authorized input ID.
 // Callers must enforce input ownership before projecting the path to a client.
 func (m *Module) InputSourcePath(ctx context.Context, inputID string) (string, error) {
 	record, err := m.activeInputs.LoadInputRecordByID(ctx, inputID)
 	if err != nil {
 		return "", fmt.Errorf("release workflow read input source: %w", err)
+	}
+	var verified api.VerifiedInputSource
+	if err := json.Unmarshal(record.Manifest, &verified); err != nil {
+		return "", fmt.Errorf("release workflow decode input source: %w", err)
+	}
+	if verified.Manifest.SourcePath != "" {
+		if verified.Identity.Digest != record.SourceVersion || !pathing.SamePath(verified.Manifest.SourcePath, record.CanonicalPath) {
+			return "", api.ErrActiveInputChanged
+		}
+		return verified.Manifest.SourcePath, nil
 	}
 	return record.CanonicalPath, nil
 }

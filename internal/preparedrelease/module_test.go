@@ -281,6 +281,33 @@ func TestInvalidateDropsOnlyPublishedPreparedGeneration(t *testing.T) {
 	}
 }
 
+func TestExplicitHDRCheckBypassesCompatiblePreparedCacheOnce(t *testing.T) {
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	collector := &recordingCollector{}
+	module := newTestModule(t, newMemoryStore(), collector)
+	input := api.PrepareInput{SourcePath: path}
+	first, err := module.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Controls.CaptureHDRMetadata = true
+	checked, err := module.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked.Release.Generation <= first.Release.Generation || collector.callCount() != 2 {
+		t.Fatalf("explicit check reused generation: generation=%d calls=%d", checked.Release.Generation, collector.callCount())
+	}
+	input.Controls.CaptureHDRMetadata = false
+	reused, err := module.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.Release.Generation != checked.Release.Generation || collector.callCount() != 2 {
+		t.Fatalf("consumed check was replayed: generation=%d calls=%d", reused.Release.Generation, collector.callCount())
+	}
+}
+
 func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing.T) {
 	t.Parallel()
 	path := writePreparedTestFile(t, "source.mkv", "first")
@@ -741,7 +768,12 @@ func TestPrepareDoesNotCacheImplicitBDMVPlaylistSelection(t *testing.T) {
 		t.Fatalf("Prepare() second error = %v", err)
 	}
 	if second.Release.Generation != first.Release.Generation+1 || collector.callCount() != 2 {
-		t.Fatalf("implicit BDMV reuse generation=%d calls=%d, want generation=%d calls=2", second.Release.Generation, collector.callCount(), first.Release.Generation+1)
+		t.Fatalf(
+			"implicit BDMV reuse generation=%d calls=%d, want generation=%d calls=2",
+			second.Release.Generation,
+			collector.callCount(),
+			first.Release.Generation+1,
+		)
 	}
 
 	input.Instructions.Playlist = api.PlaylistInstruction{Set: true, Selected: []string{"00001.MPLS"}}
@@ -754,7 +786,12 @@ func TestPrepareDoesNotCacheImplicitBDMVPlaylistSelection(t *testing.T) {
 		t.Fatalf("Prepare() direct instruction reuse error = %v", err)
 	}
 	if fourth.Release.Generation != third.Release.Generation || collector.callCount() != 3 {
-		t.Fatalf("direct BDMV reuse generation=%d calls=%d, want generation=%d calls=3", fourth.Release.Generation, collector.callCount(), third.Release.Generation)
+		t.Fatalf(
+			"direct BDMV reuse generation=%d calls=%d, want generation=%d calls=3",
+			fourth.Release.Generation,
+			collector.callCount(),
+			third.Release.Generation,
+		)
 	}
 }
 
@@ -906,8 +943,14 @@ func TestAnimeCorrectionReachesPreparedAndOperationSubjects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if prepared.EffectiveInstructions.Metadata.Anime == nil || *prepared.EffectiveInstructions.Metadata.Anime != anime || prepared.Release.Media.Anime != anime {
-				t.Fatalf("effective anime = %v, prepared anime = %t, want %t", prepared.EffectiveInstructions.Metadata.Anime, prepared.Release.Media.Anime, anime)
+			if prepared.EffectiveInstructions.Metadata.Anime == nil || *prepared.EffectiveInstructions.Metadata.Anime != anime ||
+				prepared.Release.Media.Anime != anime {
+				t.Fatalf(
+					"effective anime = %v, prepared anime = %t, want %t",
+					prepared.EffectiveInstructions.Metadata.Anime,
+					prepared.Release.Media.Anime,
+					anime,
+				)
 			}
 			persisted, err := store.LoadPreparedRelease(t.Context(), path)
 			if err != nil || persisted.Media.Anime != anime {
@@ -1140,7 +1183,10 @@ func TestPreparedISSearchPreservesNamingPresentation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			subject, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}})
+			subject, err := module.ResolveUploadSubject(
+				t.Context(),
+				api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1869,7 +1915,8 @@ func TestPreparationEnrichmentReusesOnlyCompatibleClientEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if second.Release.Generation != first.Release.Generation+1 || len(collector.retained) != 2 || collector.retained[0] || collector.retained[1] != scenario.retained {
+			if second.Release.Generation != first.Release.Generation+1 || len(collector.retained) != 2 || collector.retained[0] ||
+				collector.retained[1] != scenario.retained {
 				t.Fatalf("enrichment generation=%d retained=%v, want retained=%t", second.Release.Generation, collector.retained, scenario.retained)
 			}
 		})
@@ -1900,7 +1947,12 @@ func TestPrepareRecomputesV19YearSeasonAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	if collector.callCount() != 1 || result.Release.Generation != old.Generation+1 || result.Release.Episode.Season != 2026 {
-		t.Fatalf("stale year-season generation reused: generation=%d calls=%d episode=%#v", result.Release.Generation, collector.callCount(), result.Release.Episode)
+		t.Fatalf(
+			"stale year-season generation reused: generation=%d calls=%d episode=%#v",
+			result.Release.Generation,
+			collector.callCount(),
+			result.Release.Episode,
+		)
 	}
 	reused, err := restarted.Prepare(t.Context(), input)
 	if err != nil || reused.Release.Generation != result.Release.Generation || collector.callCount() != 1 {
@@ -1953,7 +2005,12 @@ func TestPrepareRecomputesOldVideoEncodeAfterRestart(t *testing.T) {
 					}
 					if result.Release.Naming.ReleaseName != wantName || result.Release.Media.VideoEncode != codec.encode ||
 						result.Release.Media.VideoCodec != codec.format {
-						t.Fatalf("regenerated name=%q codec=%q encode=%q", result.Release.Naming.ReleaseName, result.Release.Media.VideoCodec, result.Release.Media.VideoEncode)
+						t.Fatalf(
+							"regenerated name=%q codec=%q encode=%q",
+							result.Release.Naming.ReleaseName,
+							result.Release.Media.VideoCodec,
+							result.Release.Media.VideoEncode,
+						)
 					}
 					reused, err := restarted.Prepare(t.Context(), input)
 					if err != nil || reused.Release.Generation != result.Release.Generation || collector.collectCount() != 1 {
@@ -2027,7 +2084,8 @@ func TestPrepareRecomputesPreCommentaryContractFacts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if current.Release.Generation != previous.Release.Generation+1 || !current.Release.Media.Commentary || len(current.Release.Media.Tracks) != 1 || current.Release.Compatibility.ContractVersion != ContractVersion {
+			if current.Release.Generation != previous.Release.Generation+1 || !current.Release.Media.Commentary || len(current.Release.Media.Tracks) != 1 ||
+				current.Release.Compatibility.ContractVersion != ContractVersion {
 				t.Fatalf("stale commentary facts reused: %#v", current.Release)
 			}
 		})
@@ -2056,7 +2114,10 @@ func TestPreparedReleaseFeaturesRemainDistinctAndDetached(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(subject.ReleaseFeatures, []api.ReleaseFeature{api.ReleaseFeature4KRestoration}) || subject.Release.Collection != "Criterion.Collection" || subject.Edition != "Collector's" || subject.Presentation != "Open Matte" {
+		if !slices.Equal(subject.ReleaseFeatures, []api.ReleaseFeature{api.ReleaseFeature4KRestoration}) ||
+			subject.Release.Collection != "Criterion.Collection" ||
+			subject.Edition != "Collector's" ||
+			subject.Presentation != "Open Matte" {
 			t.Fatalf("feature/edition contracts lost: %#v", subject)
 		}
 		subject.ReleaseFeatures[0] = api.ReleaseFeatureExtras

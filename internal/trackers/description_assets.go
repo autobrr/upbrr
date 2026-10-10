@@ -276,6 +276,14 @@ func resolveDescriptionAssets(
 		})
 		description = strings.TrimSpace(strings.Join([]string{description, audioBlock}, "\n\n"))
 	}
+	if !final && meta.ExactMedia != nil {
+		hdrBlock, hdrErr := exactHDRDescriptionBlock(tracker, meta.ExactMedia)
+		if hdrErr != nil {
+			return DescriptionAssets{}, hdrErr
+		}
+		description = comparison.MapOutsideBlocks(description, func(fragment string) string { return sourceHDRBlockPattern.ReplaceAllString(fragment, "") })
+		description = strings.TrimSpace(strings.Join([]string{description, hdrBlock}, "\n\n"))
+	}
 	hasDescription := strings.TrimSpace(description) != ""
 	return DescriptionAssets{
 		Description: description,
@@ -1114,7 +1122,7 @@ func uploadedImagesFromSource(
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return slices.DeleteFunc(uploads, func(upload api.UploadedImageLink) bool {
-		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis || sourceOnlyUploadedImage(upload)
+		return upload.Purpose.IsAnalysis() || sourceOnlyUploadedImage(upload)
 	}), nil
 }
 

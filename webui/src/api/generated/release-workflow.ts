@@ -417,6 +417,7 @@ export type DiscItemFacts = Readonly<{
 }>;
 
 export type DiscReportFacts = Readonly<{
+  HDR10PlusConfirmed: boolean;
   Playlist: PlaylistInfo;
   Summary: string;
 }>;
@@ -595,6 +596,17 @@ export type GoalAvailability = Readonly<{
   goal: WorkflowGoal;
   reason?: string;
   reasonCode?: string;
+}>;
+
+export type HDRAnalysisFailureCode = string;
+
+export type HDRAnalysisTarget = Readonly<{
+  id: string;
+  label: string;
+  playlist?: string;
+  reason?: string;
+  selectionPolicy: string;
+  supported: boolean;
 }>;
 
 export type HDREvidenceOrigin = string;
@@ -1138,6 +1150,7 @@ export type Operation = Readonly<{
 export type OperationFailure = Readonly<{
   AudioAnalysisCode?: AudioAnalysisFailureCode;
   Code: OperationFailureCode;
+  HDRAnalysisCode?: HDRAnalysisFailureCode;
   Message: string;
   Operation: OperationKind;
   Recovery: OperationRecovery;
@@ -1183,6 +1196,7 @@ export type PreparationCompatibility = Readonly<{
 }>;
 
 export type PreparationControls = Readonly<{
+  CaptureHDRMetadata?: boolean;
   ConfirmBDMVRescan: boolean;
   ForceRecheck?: boolean | null;
   Interaction: InteractionMode;
@@ -1237,6 +1251,7 @@ export type PreparedReleaseDisplay = Readonly<{
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
   TrackerData: readonly TrackerPreview[];
+  hdrTargets?: readonly HDRAnalysisTarget[];
 }>;
 
 export type PreviewReleaseWorkflowFrameRequest = Readonly<{

@@ -5636,8 +5636,8 @@ func (m *Module) captureMedia(
 	case "", api.ScreenshotPurposeFinal, api.ScreenshotPurposeMenu:
 	case api.ScreenshotPurposePreview:
 		return CommandResult{}, fmt.Errorf("%w: preview images cannot satisfy retained media requirements", ErrInvalidTransition)
-	case api.ScreenshotPurposeAudioAnalysis:
-		return CommandResult{}, fmt.Errorf("%w: audio analysis images cannot satisfy retained media requirements", ErrInvalidTransition)
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
+		return CommandResult{}, fmt.Errorf("%w: analysis images cannot satisfy retained media requirements", ErrInvalidTransition)
 	default:
 		return CommandResult{}, fmt.Errorf("%w: invalid media capture purpose", ErrInvalidTransition)
 	}

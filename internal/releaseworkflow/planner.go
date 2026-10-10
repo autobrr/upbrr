@@ -1114,7 +1114,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return stageSucceeded(current.Media.Status)
 	case api.ScreenshotPurposePreview:
 		return false
-	case api.ScreenshotPurposeAudioAnalysis:
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
 		return false
 	}
 	return false

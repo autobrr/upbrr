@@ -54,7 +54,7 @@ func NewEvidenceCollector(pipeline EvidencePipeline) (*EvidenceCollector, error)
 func (c *EvidenceCollector) Collect(
 	ctx context.Context,
 	request preparationstate.Request,
-) (CollectedFacts, error) {
+) (result CollectedFacts, resultErr error) {
 	if c == nil || c.pipeline == nil {
 		return CollectedFacts{}, errors.New("prepared release: evidence collector is not initialized")
 	}
@@ -62,6 +62,13 @@ func (c *EvidenceCollector) Collect(
 	if err != nil {
 		return CollectedFacts{}, fmt.Errorf("prepared release: collect preparation evidence: %w", err)
 	}
+	defer func() {
+		if resultErr != nil {
+			for _, disc := range meta.Discs {
+				preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
+			}
+		}
+	}()
 	if canonicalSourceKey(meta.SourcePath) != canonicalSourceKey(request.Manifest.SourcePath) {
 		return CollectedFacts{}, fmt.Errorf("prepared release: collected source differs from manifest: %w", internalerrors.ErrInvalidInput)
 	}
@@ -81,7 +88,20 @@ func (c *EvidenceCollector) Collect(
 	c.pending[canonicalSourceKey(request.Manifest.SourcePath)] = candidate
 	c.mu.Unlock()
 
-	return mapCollectedFacts(meta), nil
+	facts := mapCollectedFacts(meta)
+	for discIndex, disc := range meta.Discs {
+		for reportIndex, playlist := range disc.SelectedPlaylists {
+			name, normalizeErr := api.NormalizeHDRPlaylist(playlist.File)
+			if normalizeErr != nil {
+				continue
+			}
+			capture := disc.HDRCaptures[name]
+			facts.Disc.Items[discIndex].Reports[reportIndex].HDR10PlusConfirmed = request.SourceFingerprint != "" &&
+				capture.SourceFingerprint == request.SourceFingerprint && capture.Path != "" && capture.TrackID > 0 &&
+				!capture.Absent && capture.Failure == nil
+		}
+	}
+	return facts, nil
 }
 
 // HydratePrivateResources delegates restart-only reconstruction of local
@@ -89,7 +109,7 @@ func (c *EvidenceCollector) Collect(
 func (c *EvidenceCollector) HydratePrivateResources(
 	ctx context.Context,
 	request preparationstate.Request,
-) (CollectedResources, error) {
+) (result CollectedResources, resultErr error) {
 	if c == nil || c.pipeline == nil {
 		return CollectedResources{}, errors.New("prepared release: evidence collector is not initialized")
 	}
@@ -101,6 +121,13 @@ func (c *EvidenceCollector) HydratePrivateResources(
 	if err != nil {
 		return CollectedResources{}, fmt.Errorf("prepared release: hydrate private resources: %w", err)
 	}
+	defer func() {
+		if resultErr != nil {
+			for _, disc := range state.Discs {
+				preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
+			}
+		}
+	}()
 	if canonicalSourceKey(state.SourcePath) != canonicalSourceKey(request.Manifest.SourcePath) {
 		return CollectedResources{}, fmt.Errorf("prepared release: hydrated source differs from manifest: %w", internalerrors.ErrInvalidInput)
 	}
@@ -328,11 +355,16 @@ func singletonFact(value string) []string {
 }
 
 func collectedResources(meta preparationstate.State) CollectedResources {
+	hdrFiles := make(map[string]bool, len(meta.HDRFileEligibility))
+	for path, eligible := range meta.HDRFileEligibility {
+		hdrFiles[canonicalSourceKey(path)] = eligible
+	}
 	return CollectedResources{
 		SourcePath:            firstCollectedSourcePath(meta.Paths),
 		VideoPath:             meta.VideoPath,
 		FileList:              append([]string(nil), meta.FileList...),
 		MediaInfoJSONPath:     meta.MediaInfoJSONPath,
+		HDRFileEligibility:    hdrFiles,
 		MediaInfoTextPath:     meta.MediaInfoTextPath,
 		DVDIFOPath:            meta.DVDIFOPath,
 		DVDVOBPath:            meta.DVDVOBPath,
@@ -425,6 +457,14 @@ func cloneDiscResources(value []preparationstate.DiscResource) []preparationstat
 	cloned, err := cloneWithJSON(value)
 	if err != nil {
 		panic(err)
+	}
+	// A process-owned lease cannot be serialized; only mutable resource data is detached.
+	for index := range cloned {
+		for name, capture := range cloned[index].HDRCaptures {
+			// #nosec G602 -- successful JSON cloning preserves the source slice length.
+			capture.Lease = value[index].HDRCaptures[name].Lease
+			cloned[index].HDRCaptures[name] = capture
+		}
 	}
 	return cloned
 }

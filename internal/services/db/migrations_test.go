@@ -645,3 +645,27 @@ func assertSQLiteObjectExists(t *testing.T, db *sql.DB, objectType, name string)
 		t.Fatalf("expected %s %s to exist", objectType, name)
 	}
 }
+
+func TestHDRMigrationUpgradesBeforeWorkflowRetention(t *testing.T) {
+	t.Parallel()
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	prior := slices.DeleteFunc(slices.Clone(migrationRegistry), func(step migrationStep) bool {
+		return step.id != baselineMigrationID && step.id != "2026_09_add_active_input"
+	})
+	if err := migrateContextWithRegistry(t.Context(), rawDB, prior); err != nil {
+		t.Fatalf("create prior active-input database: %v", err)
+	}
+	for range 2 {
+		if err := Migrate(rawDB); err != nil {
+			t.Fatalf("upgrade prior active-input database: %v", err)
+		}
+	}
+	exists, err := tableColumnExists(t.Context(), rawDB, "input_workflow_associations", "hdr_analysis_id")
+	if err != nil || !exists {
+		t.Fatalf("upgraded HDR association column exists=%t err=%v", exists, err)
+	}
+}
