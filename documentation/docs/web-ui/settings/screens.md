@@ -17,6 +17,8 @@ Use **Settings → Screens** for generated screenshots, automatic DVD menu captu
 | **Tone map**                     | On      | Tone maps HDR captures for display.                                                             |
 | **Use libplacebo**               | Off     | Tries Vulkan/libplacebo tone mapping when tone mapping is on and frame overlay is off.          |
 
+Frame type reports FFmpeg's picture type (I, P, or B), or **Unknown** when that information is unavailable. Enabling the overlay does not change which frame is selected.
+
 ## Advanced fields
 
 | Field                      | Default  | Effect                                                                        |
