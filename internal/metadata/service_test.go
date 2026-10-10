@@ -1166,6 +1166,121 @@ func TestDiscoverBDMVSummaryCache(t *testing.T) {
 	}
 }
 
+func TestDiscoverBDMVSummaryCacheSidecarConfinement(t *testing.T) {
+	for _, kind := range []string{"regular", "missing", "directory", "relative-in-root", "relative-outside", "absolute-in-root", "absolute-outside"} {
+		t.Run(kind, func(t *testing.T) {
+			base := t.TempDir()
+			tmpDir := filepath.Join(base, "cache")
+			if err := os.Mkdir(tmpDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeBDMVSummaryFixture(t, tmpDir, "00001.MPLS", "original")
+			for _, filename := range []string{paths.BDMVExtSummaryFilename("00001.MPLS"), paths.BDMVFullSummaryFilename("00001.MPLS")} {
+				sidecar := filepath.Join(tmpDir, filename)
+				if err := os.Remove(sidecar); err != nil {
+					t.Fatal(err)
+				}
+				switch kind {
+				case "missing":
+					continue
+				case "directory":
+					if err := os.Mkdir(sidecar, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				case "regular":
+					if err := os.WriteFile(sidecar, []byte("sidecar payload"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				default:
+					targetDir := tmpDir
+					if strings.HasSuffix(kind, "outside") {
+						targetDir = base
+					}
+					target := filepath.Join(targetDir, "target-"+filename)
+					if err := os.WriteFile(target, []byte("sidecar payload"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if strings.HasPrefix(kind, "relative") {
+						var err error
+						target, err = filepath.Rel(tmpDir, target)
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := os.Symlink(target, sidecar); err != nil {
+						t.Skipf("symlinks unavailable: %v", err)
+					}
+				}
+			}
+			cache, err := discoverBDMVSummaryCache(tmpDir)
+			if err != nil {
+				t.Fatalf("discover cache: %v", err)
+			}
+			entry, ok := cache.Entries["00001.MPLS"]
+			if !ok || len(cache.Entries) != 1 || entry.Summary == "" {
+				t.Fatal("primary summary must remain available")
+			}
+			want := ""
+			if kind == "regular" || kind == "relative-in-root" {
+				want = "sidecar payload"
+			}
+			if entry.ExtSummary != want || entry.FullSummary != want {
+				t.Fatalf("sidecars = (%q, %q), want %q", entry.ExtSummary, entry.FullSummary, want)
+			}
+			if entry.ExtPath != paths.BDMVExtSummaryPath(tmpDir, "00001.MPLS") || entry.FullPath != paths.BDMVFullSummaryPath(tmpDir, "00001.MPLS") {
+				t.Fatal("sidecar paths must remain unchanged")
+			}
+		})
+	}
+}
+
+func TestDiscoverBDMVSummaryCachePreservesWhitespaceRootGuard(t *testing.T) {
+	base := t.TempDir()
+	trimmedRoot := filepath.Join(base, "cache")
+	actualRoot := filepath.Join(base, "cache ")
+	for _, dir := range []string{trimmedRoot, actualRoot} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	trimmedInfo, err := os.Stat(trimmedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualInfo, err := os.Stat(actualRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(trimmedInfo, actualInfo) {
+		t.Skip("filesystem does not preserve trailing directory whitespace")
+	}
+	writeBDMVSummaryFixture(t, trimmedRoot, "00001.MPLS", "outside payload")
+	for _, filename := range []string{
+		paths.BDMVSummaryFilename("00001.MPLS"),
+		paths.BDMVExtSummaryFilename("00001.MPLS"),
+		paths.BDMVFullSummaryFilename("00001.MPLS"),
+	} {
+		if err := os.WriteFile(filepath.Join(actualRoot, filename), []byte("Playlist: 00001.MPLS\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache, err := discoverBDMVSummaryCache(actualRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := cache.Entries["00001.MPLS"]
+	if !ok || entry.ExtSummary != "" || entry.FullSummary != "" {
+		t.Fatal("sidecars outside the untrimmed cache root must remain unread")
+	}
+}
+
+func TestDiscoverBDMVSummaryCacheMissingDirectory(t *testing.T) {
+	cache, err := discoverBDMVSummaryCache(filepath.Join(t.TempDir(), "missing"))
+	if err != nil || len(cache.Entries) != 0 {
+		t.Fatalf("missing directory must yield an empty cache, got %d entries and error %v", len(cache.Entries), err)
+	}
+}
+
 func TestDiscoverBDMVSummaryCacheIgnoresMalformedSummary(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := os.WriteFile(paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), []byte("Disc Label: BROKEN\n"), 0o600); err != nil {
@@ -1178,6 +1293,16 @@ func TestDiscoverBDMVSummaryCacheIgnoresMalformedSummary(t *testing.T) {
 	}
 	if len(cache.Entries) != 0 {
 		t.Fatalf("expected malformed summary to be ignored, got %#v", cache.Entries)
+	}
+}
+
+func TestDiscoverBDMVSummaryCacheRejectsPlaylistMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), []byte("Playlist: 00002.MPLS\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverBDMVSummaryCache(tmpDir); err == nil || !strings.Contains(err.Error(), "does not match playlist") {
+		t.Fatalf("expected filename/playlist mismatch error, got %v", err)
 	}
 }
 

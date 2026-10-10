@@ -1,6 +1,6 @@
 module github.com/autobrr/upbrr
 
-go 1.27.1
+go 1.27.2
 
 require (
 	github.com/Audionut/go-hdr10-plus v0.0.0
