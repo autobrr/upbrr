@@ -66,6 +66,8 @@ Review the assessment displayed for each selected tracker:
 
 Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
 
+Track order and the default flag are separate facts. An original-language track can be present without being first or default. Ordering recommendations appear as non-blocking **Guidance**, including for personal releases, and require no answer or acknowledgement. Independent requirements for original audio, default flags, permitted dubs, subtitles and compatibility tracks still apply.
+
 Correct language and other factual evidence on **Input**. Naming overrides and warning acknowledgements do not change media facts. An acknowledgement applies only to its tracker and current prepared generation; it cannot clear an independent strict finding. Changed evidence requires renewed review.
 
 Do not modify another group's release to address a prohibited extra programme dub; use a compliant source instead. Track-removal advice applies only to your own **personal release**. For a personal release, the finding may recommend creating a separate remux when original programme audio can safely remain. Keep original audio and permitted secondary tracks; do not strip complete retail discs or remove a release's only programme audio. If safe removal is not established, use a compliant source instead. Prepare the new file or source again so metadata and tracker checks use fresh evidence. Other tracker requirements still apply. upbrr does not remove or remux tracks automatically.

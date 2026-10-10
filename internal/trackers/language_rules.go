@@ -29,9 +29,8 @@ const (
 // LanguagePolicy contains common predicates only. Sites own conditional rules
 // and choose outcomes before invoking these shared checks.
 type LanguagePolicy struct {
-	OriginalAudio   LanguageOutcome
-	OriginalPrimary bool
-	ExtraDubs       LanguageOutcome
+	OriginalAudio LanguageOutcome
+	ExtraDubs     LanguageOutcome
 	// EnglishSubtitles is foreign, foreign_without_dub, without_english, or spoken.
 	EnglishSubtitles             string
 	MissingSubtitles             LanguageOutcome
@@ -117,14 +116,6 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	}
 	if originalKnown && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !facts.HasOriginalAudio() {
 		add("original", "missing mandatory original-language programme audio", policy.OriginalAudio)
-	}
-	if originalKnown && policy.OriginalPrimary {
-		primary := slices.IndexFunc(facts.Tracks, func(track api.MediaTrackFacts) bool { return track.ID != "" && track.ID == facts.PrimaryAudioTrackID })
-		if primary < 0 || (facts.Tracks[primary].Role != api.AudioRoleProgramme && facts.Tracks[primary].Role != api.AudioRoleAlternateMix) {
-			add("primary_evidence", "primary programme track identity is unresolved", LanguageUnresolved)
-		} else if !slices.ContainsFunc(facts.Tracks[primary].Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) }) {
-			add("original_primary", "primary programme audio must be in the original language", policy.OriginalAudio)
-		}
 	}
 	if originalKnown {
 		for _, language := range facts.ProgrammeLanguages {

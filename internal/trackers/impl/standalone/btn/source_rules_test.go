@@ -145,13 +145,13 @@ func TestBTNSourceReviewDoesNotWaiveMeasuredRules(t *testing.T) {
 	btnSourceAnswer(&subject, "source_audio", "best_original_retained")
 	btnSourceAnswer(&subject, "source_extras", "retained_or_unavailable")
 	btnSourceAnswer(&subject, "broadcast_soundtrack", "missing")
-	for _, key := range []string{"language_staff_dub", "language_original", "language_original_primary"} {
+	for _, key := range []string{"language_staff_dub", "language_original"} {
 		requireBTNSourceFailure(t, subject, key, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	}
 	requireBTNSourceFailure(t, subject, "language_broadcast_soundtrack", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.Source = "WEB"
 	btnSourceAnswer(&subject, "primary_audio_country", "Germany")
-	for _, key := range []string{"language_staff_dub", "language_original", "language_original_primary"} {
+	for _, key := range []string{"language_staff_dub", "language_original"} {
 		requireBTNSourceFailure(t, subject, key, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	}
 	subject.LanguageFacts = btnLanguageFacts("Japanese", "Japanese")

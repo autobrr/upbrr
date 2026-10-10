@@ -22,7 +22,6 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	policy := trackers.LanguagePolicy{}
 	if remux {
 		policy.OriginalAudio = trackers.LanguageProhibited
-		policy.OriginalPrimary = true
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
@@ -82,7 +81,7 @@ func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFail
 	}
 	remux := strings.EqualFold(subject.Type, "REMUX")
 	if remux {
-		add("source_audio", "remuxes must retain the best available original-language primary audio; track metadata does not establish best-source retention")
+		add("source_audio", "remuxes must retain the best available original-language audio; track metadata does not establish best-source retention")
 	}
 	if discSourceVideo(subject) {
 		add(

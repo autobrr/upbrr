@@ -64,7 +64,7 @@ func TestDebugQuestionnairesPreservePayloadRequirements(t *testing.T) {
 		AudioLanguages: []string{"Japanese"},
 	}
 	schemas := []*api.TrackerQuestionnaire{
-		buildQuestionnaire(meta, "", api.WorkflowExecutionModeDebug),
+		buildQuestionnaire(meta, ""),
 		New().TrackerAnswerSchema(trackers.PreparationInput{Meta: meta, ExecutionMode: api.WorkflowExecutionModeDebug}),
 		projectionQuestionnaire(trackers.PreparationInput{Meta: meta, ExecutionMode: api.WorkflowExecutionModeDebug}),
 	}

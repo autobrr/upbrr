@@ -376,8 +376,8 @@
     "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/bhd/validation.go:validationPolicy": {
-    "sha256": "371c77187d121902436f5a26cb61c5d157489ae65358868279b78cbbe12d461c",
-    "reason": "Advances the validation version for compatibility assessment over finalized LanguageFacts. checkRequirements and languageAssessment wiring are unchanged; canonical identity, finalized genres, and manual metadata remain authoritative."
+    "sha256": "577aec7eb56db1dca14edd13d1de5be802485ef62dfc897d4642c4b2ea1b54d6",
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -684,8 +684,8 @@
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence."
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
-    "sha256": "74df8838e024864b148a4ac2c74abda64d2f79ea553c4dc349c67693f3e58d76"
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
+    "sha256": "01651aa91e785f32e17be93d9551029988f06e9208297b8d78b46332eb39e163"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -696,8 +696,8 @@
     "sha256": "0d5cc2df81eef7c436e3bebbedebad5782d6d08b5cf45711c72f35403f08b99a"
   },
   "internal/trackers/impl/standalone/btn/rules.go:sourceLanguageFailures": {
-    "sha256": "13ddaeeb9db132a0c4622b70f93f98515e63944a606fd5f9a831f43d771c21a9",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "fd1223bd95a910c9441d2bc825567cc7d78c3dadbd4152d221bd847870810e17",
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnLanguagePayload": {
     "reason": "Non-disc Foreign and country values come only from finalized primary programme evidence and its facts-bound country answer. Full discs retain resolveBTNOriginalLanguage manual precedence and existing provider country selection; conflicting provider, changed-primary and full-disc regression cases verify both paths.",
@@ -752,8 +752,8 @@
     "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e"
   },
   "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
-    "sha256": "c78e3af860edac2826204c014b273c39ccca2bfff4d6f5f081837789e4eafd5a",
-    "reason": "Policy version invalidates old projections after original-audio country autofill; existing provider-aware constructibility checks and manual precedence are unchanged."
+    "sha256": "563303aa549e4333ebfff571a9273bbaf57ad83b4b08defd00e9ce0fa65d1c97",
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
     "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request.",
@@ -884,8 +884,8 @@
     "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "sha256": "f89a8a54c33774642c63192eeb0ad2d9fe5224c35e7449d6eb298a69cb21d63d",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "fff8af5b1063bd43108625944172a4a021b6b1e4a661cbf365c1d5451866a18a",
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -924,8 +924,8 @@
     "sha256": "81567f861b320e76b0817ee0f08fbce8ae0e0cdb1a5515305d9ab43f9e58ffb7"
   },
   "internal/trackers/impl/standalone/hdb/validation.go:validationPolicy": {
-    "sha256": "30bfe8201f7af660fe671e4551d8778ac0759eed66f23a880a20be7a942c8cf8",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "7afba659c90e577b4b7d11ebe82c4ecde330dbbc228b4752459831dfc27d97b6",
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1076,8 +1076,8 @@
     "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced."
   },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
-    "reason": "Issue 606 debug questionnaire review: execution mode changes only eligibility-field requirements; existing finalized provider values, current-source checks and manual title/year/genre precedence are unchanged.",
-    "sha256": "43a65951fa063a10ab7b19b0a2c023cf8fb349e054bb5e48cf7b19b1b61e45af"
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
+    "sha256": "e62b2547dbb023be8c4bfa8e89aa03e908ef2e830218d56eb631c1d8d0cfd205"
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:editionFeatures": {
     "sha256": "ef51a421e89b5f808369de1872adff03e447e7be77aa0822fe32878ce6a63757",
@@ -1100,20 +1100,20 @@
     "sha256": "cfbaa57633d908124b719b6db045a6c5e7bf8a58970b379d4bc001c24f2279ac"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:buildUploadPreview": {
-    "sha256": "3feecd88e7432f5814fa5916b9facc5bdd587e4a95d61b3a4863e67ff22acf3e",
-    "reason": "Merged PTP edition/feature review with issue 606 mode-aware questionnaire: both consume the exact prepared generation. Explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. Execution mode changes only eligibility-question requirements; finalized provider facts, title/year/genre precedence and reviewed names are unchanged."
+    "sha256": "529fc165a5f125ccb2154a762a22b4f1830a41320c58dc8ef83f5d62b64ed3eb",
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
   },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
-    "reason": "Issue 606 debug questionnaire review: execution mode changes only eligibility-field requirements; existing finalized provider values, current-source checks and manual title/year/genre precedence are unchanged.",
-    "sha256": "cb79a06cd12d5adf93b13bfc4982de4abad8e54bdf1818bd1e8bd51e6d024a1d"
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
+    "sha256": "1d4e2479e064e2e86bd7b816cff1f511410f7866280d144236da0069afcb0e1a"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:resolveGroupTitleYear": {
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged.",
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "sha256": "480186e81400179249751d070c3adec8c201a55d49316eea30f1bdc5c36ae2a4",
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections."
+    "sha256": "d351f8153efcdedd25c138899336587eb9127ab8094524f1f7cc37acb0ad8c9f",
+    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

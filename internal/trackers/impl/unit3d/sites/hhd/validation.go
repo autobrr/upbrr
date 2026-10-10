@@ -15,7 +15,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{
-		ID:    "unit3d-hhd-deterministic-v4",
+		ID:    "unit3d-hhd-deterministic-v5",
 		Check: checkRequirements,
 	}, languageAssessment)
 }

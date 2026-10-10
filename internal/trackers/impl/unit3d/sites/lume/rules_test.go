@@ -177,8 +177,10 @@ func TestLumePersonalRecommendationExemptions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			subject := lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("Japanese", api.AudioRoleProgramme), lumeAudio("English", api.AudioRoleProgramme), lumeAudio("Japanese", api.AudioRoleAlternateMix)})
 			subject.PersonalRelease, subject.Anime = test.personal, test.anime
+			subject.LanguageFacts.Tracks[0].Title = ""
 			setLumeAnswer(&subject, "language_personal_exemption", test.answer)
-			requireLUMEValidationFailure(t, languageAssessment(subject), "language_original_order", test.want, test.status)
+			requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_titles", test.want, test.status)
+			requireLUMEValidationFailure(t, languageAssessment(subject), "language_original_order", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
 		})
 	}
 }
@@ -571,7 +573,7 @@ func TestLumeOrderAttestationCannotOverrideMeasuredViolations(t *testing.T) {
 		setLumeAnswer(&subject, "language_personal_exemption", "none")
 		setLumeAnswer(&subject, "language_track_metadata", "appropriate")
 		subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "language_track_order_none")] = "ordered"
-		requireLUMEValidationFailure(t, languageAssessment(subject), "language_original_order", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+		requireLUMEValidationFailure(t, languageAssessment(subject), "language_original_order", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
 	}
 }
 
@@ -590,5 +592,31 @@ func TestLumeUnknownOrderNeverRequiresQuestionnaire(t *testing.T) {
 		if q := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); q != nil {
 			t.Fatalf("unknown order alone required a questionnaire: %+v", q)
 		}
+	}
+}
+
+func TestLumeKnownOrderNeverRequiresExemptionQuestion(t *testing.T) {
+	t.Parallel()
+	subject := lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("English", api.AudioRoleProgramme), lumeAudio("Japanese", api.AudioRoleProgramme)})
+	meta := api.UploadSubject{
+		LanguageFacts:   subject.LanguageFacts,
+		Type:            "WEBDL",
+		PersonalRelease: true,
+	}
+	for _, answer := range []string{"", "none", "previously_uploaded"} {
+		subject = api.NewTrackerValidationSubject(meta, "LUME")
+		meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"LUME": {trackers.LanguageQuestionKey(subject, "language_personal_exemption"): answer}}
+		if q := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); q != nil {
+			t.Fatalf("track ordering required an exemption answer: %+v", q)
+		}
+		for _, failure := range languageAssessment(api.NewTrackerValidationSubject(meta, "LUME")) {
+			if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+				t.Fatalf("ordering-only release cannot proceed without acknowledgement: %+v", failure)
+			}
+		}
+	}
+	meta.LanguageFacts.Tracks[0].Title = ""
+	if q := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); q == nil || len(q.Fields) != 1 || !q.Fields[0].Required {
+		t.Fatalf("independent metadata question lost: %+v", q)
 	}
 }

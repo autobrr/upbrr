@@ -70,6 +70,9 @@ func TestLanguageEligibilityQuestionsPreserveDebugBypass(t *testing.T) {
 			if normal == nil || debug == nil || len(normal.Fields) != len(debug.Fields) {
 				t.Fatal("debug lost visible review evidence")
 			}
+			if name == "PTP" && (len(normal.Fields) != 1 || normal.Fields[0].Key != "trumpable_review" || !normal.Fields[0].Required) {
+				t.Fatal("PTP order relaxation must retain only the subtitle payload review")
+			}
 			changed := 0
 			for i, field := range normal.Fields {
 				actual := debug.Fields[i]
@@ -88,7 +91,7 @@ func TestLanguageEligibilityQuestionsPreserveDebugBypass(t *testing.T) {
 					}
 				}
 			}
-			if changed == 0 && name != "BTN" {
+			if changed == 0 && name != "BTN" && name != "PTP" {
 				t.Fatal("fixture did not exercise required eligibility evidence")
 			}
 		})
