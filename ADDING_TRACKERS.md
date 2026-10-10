@@ -1233,6 +1233,9 @@ order, per-kind ordinals, or opaque native IDs. They remain advisory for ordinar
 releases; missing order evidence must not become an upload or questionnaire gate. Keep original-audio
 presence, default flags, permitted dubs, subtitles and compatibility requirements independent of
 track order. Do not change canonical primary-track selection or naming to relax an ordering check.
+Ordinary MediaInfo audio tracks contribute their inspected languages without a recognized title
+or an original/default flag. Explicit secondary roles remain excluded from programme languages;
+missing or contradictory language evidence and incomplete inspected coverage remain unresolved.
 
 Source-history, retention, provenance, quality and hypothetical subtitle concerns are passive
 advisories, not questionnaires or unresolved answer gates. Keep unknown facts unknown; warnings
