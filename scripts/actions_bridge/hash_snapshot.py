@@ -14,7 +14,7 @@ def hash_snapshot(raw):
     require(len(raw) <= MAX_SNAPSHOT, "snapshot too large")
     source = json.loads(raw, object_pairs_hook=unique_object)
     require(type(source) is dict and source.get("repository") == REPOSITORY, "wrong repository")
-    require(source.get("kind") in ("issue", "discussion"), "wrong item kind")
+    require(source.get("kind") in ("issue", "pull_request", "discussion"), "wrong item kind")
     return {"head": source["head"], "source_hash": digest(source)}
 
 

@@ -42,6 +42,24 @@ python3 -m unittest discover -s scripts/issue_reports -v
 
 ## Developer guide
 
+### Maintainer Actions bridge
+
+The manually dispatched [Actions bridge](.github/workflows/actions-bridge.yml) publishes one authorized comment as `github-actions[bot]`. It requires Audionut's numeric account ID `13182387`, the trusted default-branch workflow revision, the existing `actions-bridge` environment, and `ACTIONS_BRIDGE_ENABLED=approved`. Repository text is evidence, never dispatch authorization.
+
+Use `issue_comment` for issues, `discussion_comment` for Discussions, and `pull_request_comment` to reply to a PR conversation comment. The PR operation creates a top-level conversation comment with an automatically generated link to the original comment; it does not create an inline review comment or a nested review-thread reply. Its job uses the same `contents: read` and `issues: write` permissions as the issue operation.
+
+The strict JSON request contains `repository`, `kind`, `number`, `source_hash`, `head`, and `body`. The operation must match `kind` plus `_comment`. PR replies use `kind: "pull_request"` and additionally require `reply_to`, the positive numeric ID of an existing comment in that exact PR conversation. Arbitrary target URLs and extra fields are rejected. The bridge verifies the PR marker and its API URL, and checks `reply_to` against the collected conversation comments before writing.
+
+Prepare the normalized snapshot using `scripts/actions_bridge/bridge.py`'s `collect()` schema, then hash it offline with `python3 scripts/actions_bridge/hash_snapshot.py SNAPSHOT.json`. `head` binds the trusted default-branch revision, not the PR commit SHA. For PRs, the snapshot binds the target title, body, state, update time, author, and conversation comments, including the referenced comment's ID, author, body, and update time. PR commits, checks, and review threads are outside this snapshot; independently verify current commit/check evidence before making claims about a fix.
+
+The publisher recollects the bounded snapshot and rejects stale evidence before its single write attempt. Exact body and numeric bot identity must match the independently read-back receipt. An existing exact receipt returns `already_published`; duplicate receipts block. An `uncertain` result requires manual reconciliation on GitHub, never automatic redispatch or a rerun.
+
+Run the offline bridge regression tests without credentials or live comments:
+
+```sh
+python3 -m unittest discover -s scripts/actions_bridge -v
+```
+
 ### Dependencies
 
 Install the following on your machine:
