@@ -71,6 +71,9 @@ func reusableWorkflowDupes(
 		}
 		if previousFingerprint == currentFingerprint {
 			result.RequiredActions = slices.Clone(result.RequiredActions)
+			if result.RequiresStaffToken {
+				releaseworkflow.RequireStaffTokenReview(&result)
+			}
 			retained[projection.TrackerID] = result
 		}
 	}

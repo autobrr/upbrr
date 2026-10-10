@@ -65,6 +65,9 @@ func ProjectionDownstreamEligibility(
 	if dupe.Decision == api.DupeDecisionAccepted {
 		return api.UploadEligibilitySkipped, api.UploadSkipReasonDuplicateFound
 	}
+	if dupe.RequiresStaffToken && (dupe.Decision != api.DupeDecisionIgnored || !dupe.StaffTokenConfirmed) {
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonDuplicateFound
+	}
 	return api.UploadEligibilityEligible, ""
 }
 

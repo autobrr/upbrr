@@ -124,8 +124,8 @@
     "sha256": "cd7742d81e9e5bcc1a499cfdd4b26eea685b53cec75d86b7ca5ad61d351523f4"
   },
   "internal/trackers/impl/standalone/ant/questionnaire.go:buildQuestionnaire": {
-    "reason": "Uses resolved tag values without repopulating explicit tag or genre clears. Exact-subject TMDB genres determine only whether an omitted optional tag payload needs manual input; questionnaire and payload share genre normalization. Existing type and adult-screen precedence is unchanged.",
-    "sha256": "078ad2606a8f6164cc5b10a0d194f31f933cce4f2bc0bd2f29aa686ab2bbf5f0"
+    "reason": "Adds optional request ID and limits type choices to films. Uses resolved tags without repopulating explicit tag or genre clears; exact-subject TMDB genres determine optional-tag requiredness. Type resolution and content eligibility share the reviewed movie gate; adult-screen answer precedence is unchanged.",
+    "sha256": "5df574f1c6705c037f6ec7dbff210a123229bf7f34b6977986e639a2390c59d2"
   },
   "internal/trackers/impl/standalone/ant/questionnaire.go:projectionQuestionnaire": {
     "reason": "Projection reuses upload resolvers: normalized questionnaire type and tags take precedence; manual genres remain ahead of TMDB defaults. IMDb/TMDB type and adult evidence retain their existing order on the exact operation subject.",
@@ -135,25 +135,29 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
     "sha256": "241c618ed9924a3390983d0eddfda979e6d08dd8f81e59125c365f277c31876d"
   },
+  "internal/trackers/impl/standalone/ant/taxonomy.go:movieContent": {
+    "reason": "Movie eligibility uses the exact prepared IMDb type, including provider overrides, before canonical identity category fallback when type is absent. Programme type is policy evidence; a questionnaire label cannot relabel series as a supported film. No title, genre or naming fallback is introduced.",
+    "sha256": "1c22156a99782d65e52a02f1dbe62c3bf4537156da83f885ce82d228b6258985"
+  },
   "internal/trackers/impl/standalone/ant/taxonomy.go:resolveTags": {
     "reason": "Explicit tag answers, including empty values, precede manual genre corrections, including manual-empty. Only automatic resolution falls back from unusable normalized TMDB genres to IMDb genres on the exact prepared subject. Provider alias normalization and comma whitespace handling are shared with questionnaire requiredness.",
     "sha256": "15b412cb2c3f3d6089c2d3428376b3e1f61b00c1779db41cc4e992da3ac1cac2"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:resolveType": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "1423c902d1ac46f983ebf90c63a26d12041b434f5462c1855537ea69200d1a30"
+    "reason": "The reviewed movie-content gate prevents questionnaire relabeling of unsupported series. Eligible films use explicit Feature/Short answers, then exact-subject IMDb type/runtime, then TMDB runtime. The prior keyword/category fallback was unreachable after the gate. Provider overrides remain authoritative inputs; removed Miniseries/Other mappings do not change title, genre or naming precedence.",
+    "sha256": "468ecd0f576304a1d33dba1b2efefdaa2c2ef10f8c511b79e5f4655866a5f617"
   },
   "internal/trackers/impl/standalone/ant/upload.go:prepareUploadState": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "2b8aa907a686e5443c0bd448655415195866f11a146d2f8d338c9d0b5b5d76c5"
+    "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence. Description composition consumes the same prepared subject and preserves final user-reviewed text; composition errors now propagate without changing metadata selectors.",
+    "sha256": "07318f8fa7802a00e72af3a05363eafb9bb690585964361d3b0d5454f6e9abb8"
   },
   "internal/trackers/impl/standalone/ant/upload.go:resolveKeywords": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1"
   },
   "internal/trackers/impl/standalone/ant/validation.go:validationPolicy": {
-    "reason": "Tracker-local constructibility contract advances to invalidate retained required-empty tag questionnaires after normalization, fallback and optionality changes. Validation checks and finalized/manual metadata precedence are otherwise unchanged.",
-    "sha256": "77e4f719d737f1948c4d9778769dfb5e9aa42417a227c38d62fc9150a43b70ff"
+    "reason": "Constructibility advances for movie-only eligibility and positive optional request IDs. Validation uses the same reviewed type/movie gate and exact questionnaire answers as upload preparation through the existing exact-subject adapter. Prepared media requirements and provider/manual metadata precedence remain unchanged.",
+    "sha256": "368b0c2419443c198786b7e6e7c77254b84f95df21a0406f9f61f9f87c4d0ff9"
   },
   "internal/trackers/impl/standalone/ar/definition.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",

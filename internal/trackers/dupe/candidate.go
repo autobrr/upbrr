@@ -23,6 +23,7 @@ var (
 
 // TrackerCandidate is protocol-independent private candidate evidence.
 type TrackerCandidate struct {
+	TrackerSlot      string
 	ID               string
 	Name             string
 	Files            []string
@@ -60,6 +61,7 @@ type TrackerCandidate struct {
 // download evidence to public evaluation projections.
 func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 	candidate := TrackerCandidate{
+		TrackerSlot:     entry.TrackerSlot,
 		ID:              strings.TrimSpace(entry.ID),
 		Name:            strings.TrimSpace(entry.Name),
 		Files:           append([]string(nil), entry.Files...),

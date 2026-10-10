@@ -46,6 +46,26 @@ func TestBuiltIn2160pDVHDRSlots(t *testing.T) {
 					Codec:         "H.265",
 					HDR:           completeHDR(format),
 				}, tracker)
+				if policy.TargetSlot != nil {
+					target.TrackerSlot = policy.TargetSlot(api.UploadSubject{
+						Type:       target.Type,
+						Source:     target.Source,
+						VideoCodec: target.VideoCodec,
+						HDR:        "DV HDR10",
+						Release:    api.ReleaseInfo{Resolution: target.Resolution},
+					})
+					candidate.TrackerSlot = policy.TargetSlot(api.UploadSubject{
+						Type:       candidate.CanonicalType,
+						Source:     candidate.Source,
+						VideoCodec: candidate.Codec,
+						HDR: map[api.HDRFormat]string{
+							api.HDRFormatSDR:         "",
+							api.HDRFormatDolbyVision: "DV",
+							api.HDRFormatHDR10:       "HDR10",
+						}[format],
+						Release: api.ReleaseInfo{Resolution: candidate.Resolution},
+					})
+				}
 				result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy,
 					dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
 				want := api.DupeRelationCoexists
@@ -386,11 +406,12 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			relation: api.DupeRelationProposedTrumps,
 		},
 		{
-			name:    "ANT HDR compatibility",
+			name:    "ANT remux HDR formats share a staff-token slot",
 			tracker: "ANT",
 			target: api.TrackerDuplicateTarget{
-				Type:       "REMUX",
-				Resolution: "2160p",
+				TrackerSlot: "Remux/2160///",
+				Type:        "REMUX",
+				Resolution:  "2160p",
 				HDR: api.HDRFacts{
 					Formats: []api.HDRFormat{api.HDRFormatHDR10Plus},
 					Origin:  api.HDREvidenceTrackerAPI,
@@ -398,15 +419,16 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 				},
 			},
 			candidate: dupe.TrackerCandidate{
-				Type:       "REMUX",
-				Resolution: "2160p",
+				TrackerSlot: "Remux/2160///",
+				Type:        "REMUX",
+				Resolution:  "2160p",
 				HDR: api.HDRFacts{
 					Formats: []api.HDRFormat{api.HDRFormatHDR10},
 					Origin:  api.HDREvidenceTrackerAPI,
 					Status:  api.HDREvidenceComplete,
 				},
 			},
-			relation: api.DupeRelationProposedTrumps,
+			relation: api.DupeRelationSameSlot,
 		},
 		{
 			name:    "DVL distinct releases coexist",

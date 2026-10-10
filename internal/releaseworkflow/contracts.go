@@ -927,10 +927,11 @@ func (c CheckDuplicatesCommand) commandFingerprint() (api.WorkflowFingerprint, e
 
 // DecideDuplicatesCommand publishes owner decisions without repeating remote searches.
 type DecideDuplicatesCommand struct {
-	WorkflowID       api.WorkflowID
-	ExpectedRevision api.WorkflowRevision
-	Decisions        map[api.TrackerID]api.DupeDecision
-	IdempotencyKey   string
+	StaffTokenConfirmations map[api.TrackerID]api.DupeAssessmentID
+	WorkflowID              api.WorkflowID
+	ExpectedRevision        api.WorkflowRevision
+	Decisions               map[api.TrackerID]api.DupeDecision
+	IdempotencyKey          string
 }
 
 // ApproveTrackersCommand publishes exact post-dupe tracker authority.
@@ -953,9 +954,14 @@ func (DecideDuplicatesCommand) userIntent()                      {}
 func (DecideDuplicatesCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
 func (c DecideDuplicatesCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
 	return canonicalCommandFingerprint(struct {
-		ExpectedRevision api.WorkflowRevision
-		Decisions        map[api.TrackerID]api.DupeDecision
-	}{c.ExpectedRevision, c.Decisions})
+		ExpectedRevision        api.WorkflowRevision
+		Decisions               map[api.TrackerID]api.DupeDecision
+		StaffTokenConfirmations map[api.TrackerID]api.DupeAssessmentID `json:",omitempty"`
+	}{
+		ExpectedRevision:        c.ExpectedRevision,
+		Decisions:               c.Decisions,
+		StaffTokenConfirmations: c.StaffTokenConfirmations,
+	})
 }
 
 // mediaArtifactsPublication publishes generation-bound media and invalidates descriptions/upload plans.

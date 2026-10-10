@@ -87,12 +87,14 @@ type WorkflowIntent struct {
 	SkipRemoteDuplicates   bool                                        `json:"skipRemoteDuplicates,omitempty"`
 	DuplicateCheckCount    uint8                                       `json:"duplicateCheckCount,omitempty"`
 	DuplicateDecisions     map[TrackerID]DupeDecision                  `json:"duplicateDecisions,omitempty"`
-	HDRAnalysis            *HDRAnalysisRequest                         `json:"hdrAnalysis,omitempty"`
-	Media                  *MediaCaptureInstructions                   `json:"media,omitempty"`
-	MediaSelection         *WorkflowMediaSelection                     `json:"mediaSelection,omitempty"`
-	Descriptions           *DescriptionInstructions                    `json:"descriptions,omitempty"`
-	UploadTrackerIDs       []TrackerID                                 `json:"uploadTrackerIds,omitempty"`
-	NoSeed                 bool                                        `json:"noSeed,omitempty"`
+	// StaffTokenConfirmations attest staff-token possession for exact duplicate assessments.
+	StaffTokenConfirmations map[TrackerID]DupeAssessmentID `json:"staffTokenConfirmations,omitempty"`
+	HDRAnalysis             *HDRAnalysisRequest            `json:"hdrAnalysis,omitempty"`
+	Media                   *MediaCaptureInstructions      `json:"media,omitempty"`
+	MediaSelection          *WorkflowMediaSelection        `json:"mediaSelection,omitempty"`
+	Descriptions            *DescriptionInstructions       `json:"descriptions,omitempty"`
+	UploadTrackerIDs        []TrackerID                    `json:"uploadTrackerIds,omitempty"`
+	NoSeed                  bool                           `json:"noSeed,omitempty"`
 }
 
 // WorkflowMediaSelection distinguishes default-all selection from an explicit exact selection.

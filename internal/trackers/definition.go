@@ -521,6 +521,17 @@ type UploadArtifactPolicyProvider interface {
 
 // DupePolicy declares tracker-specific duplicate comparison semantics.
 type DupePolicy struct {
+	// TargetSlot resolves opaque native slot evidence from finalized upload facts.
+	// Together with CompareSlots it replaces generic resolution, media, HDR,
+	// edition, region and 3D comparisons. ID versions both pure callbacks.
+	// Nil preserves general comparison behavior.
+	TargetSlot func(api.UploadSubject) string `json:"-"`
+	// CompareSlots compares proposed and existing native evidence. Partial facts
+	// may prove coexistence; unavailable or unsupported comparisons require review.
+	// Resolved target names and the candidate name allow native flag contradiction checks.
+	CompareSlots func(target, candidate string, targetNames []string, candidateName string) api.DupeRelation `json:"-"`
+	// StaffTokenOverride requires owner confirmation of a staff-issued token to override evidence.
+	StaffTokenOverride bool `json:",omitempty"`
 	// ID is the stable versioned comparison-policy identifier.
 	ID string
 	// EvidenceID identifies the policy evidence backing automatic

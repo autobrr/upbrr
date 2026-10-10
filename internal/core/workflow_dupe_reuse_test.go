@@ -284,6 +284,24 @@ func TestWorkflowDupeReusePreservesSiblingsAndCurrentPrivateAuthority(t *testing
 	}
 }
 
+func TestWorkflowDupeReuseRequiresFreshStaffConfirmationForSibling(t *testing.T) {
+	f := newWorkflowDupeReuseFixture(t)
+	prior := &f.reuse.Assessment.Results[2]
+	prior.RequiresStaffToken = true
+	prior.StaffTokenConfirmed = true
+	prior.Decision = api.DupeDecisionIgnored
+	assessment, _ := f.build(t)
+	result := assessment.Results[2]
+	if result.StaffTokenConfirmed || result.Decision != api.DupeDecisionPending || len(result.RequiredActions) != 1 ||
+		releaseworkflow.ProjectionEligibleForDownstream(f.projections.Projections[2], result, true) {
+		t.Fatalf("sibling evidence reuse retained staff authorization: %+v", result)
+	}
+	if f.service.calls["GAMMA"] != 1 || !result.CheckedAt.Equal(prior.CheckedAt) || !result.FreshUntil.Equal(prior.FreshUntil) ||
+		!reflect.DeepEqual(result.Matches, prior.Matches) {
+		t.Fatal("revoking staff authorization discarded evidence or extended its freshness")
+	}
+}
+
 func assertWorkflowDupeReuseVaultRoundTrip(
 	t *testing.T,
 	evidence workflowDupePrivateEvidence,

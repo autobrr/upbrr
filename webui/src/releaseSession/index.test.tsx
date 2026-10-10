@@ -7360,6 +7360,95 @@ describe("useReleaseSession", () => {
     });
   });
 
+  it("binds explicit staff-token confirmation to the current duplicate assessment", async () => {
+    const fixture = workflowPorts();
+    const checkDuplicates = vi.fn(
+      async (
+        current: ReleaseWorkflowCurrent,
+        skipRemote: boolean,
+        idempotencyKey: string,
+        signal: AbortSignal,
+      ) => {
+        const checked = await fixture.checkDuplicates(current, skipRemote, idempotencyKey, signal);
+        return {
+          ...checked,
+          dupes: {
+            ...checked.dupes!,
+            status: "blocked",
+            id: "token-assessment",
+            results: [
+              {
+                trackerId: "AITHER",
+                requiresStaffToken: true,
+                uploadReleaseName: "Example.Release.2026.1080p-GRP",
+                matches: [],
+                search: {
+                  complete: false,
+                  pages: 2,
+                  candidateCount: 0,
+                  scope: "work_identity",
+                  warnings: ["Search pagination is incomplete."],
+                },
+                decision: "pending",
+                status: "blocked",
+              },
+            ],
+          } as unknown as NonNullable<ReleaseWorkflowCurrent["dupes"]>,
+        };
+      },
+    );
+    const decideDuplicates = vi.fn(
+      async (current: ReleaseWorkflowCurrent): Promise<ReleaseWorkflowCurrent> => ({
+        ...current,
+        dupes: {
+          ...current.dupes!,
+          status: "completed",
+          results: current.dupes!.results.map((result) => ({
+            ...result,
+            decision: "ignored",
+            status: "completed",
+          })),
+        },
+      }),
+    );
+    const workflow = workflowPorts({ checkDuplicates, decideDuplicates });
+    const continueRequest = vi.spyOn(workflow, "continue");
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow })),
+    });
+
+    act(() => result.current.input.selectSource("C:\\media\\Example Release"));
+    act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+    await act(() => result.current.input.prepare());
+    await act(() => result.current.duplicates.run());
+
+    act(() => result.current.duplicates.setIgnored("AITHER", true));
+    await waitFor(() =>
+      expect(decideDuplicates).toHaveBeenCalledWith(
+        expect.anything(),
+        { AITHER: "ignored" },
+        expect.any(String),
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() =>
+      expect(continueRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: expect.objectContaining({
+            staffTokenConfirmations: { AITHER: "token-assessment" },
+          }),
+        }),
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() => {
+      expect(result.current.workflow.view.current?.dupes?.status).toBe("completed");
+      expect(result.current.workflow.view.current?.dupes?.results[0]).toEqual(
+        expect.objectContaining({ decision: "ignored", status: "completed" }),
+      );
+    });
+  });
+
   it("checks dupes before name review and acknowledges the tracker name without rechecking", async () => {
     const fixture = workflowPorts();
     const action = {

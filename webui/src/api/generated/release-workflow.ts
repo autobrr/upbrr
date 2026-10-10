@@ -1695,6 +1695,7 @@ export type ReleaseWorkflowUploadDescriptions = Readonly<{
 
 export type ReleaseWorkflowUploadDuplicateReview = Readonly<{
   decision: DupeDecision;
+  staffTokenConfirmed?: boolean;
   trackerId?: TrackerID;
 }>;
 
@@ -2454,9 +2455,11 @@ export type TrackerDupeAssessment = Readonly<{
   policyId: string;
   projectionFingerprint: WorkflowFingerprint;
   requiredActions?: readonly RequiredAction[];
+  requiresStaffToken?: boolean;
   reviewReasons?: readonly DupeReason[];
   search: DupeSearchEvidence;
   searchFingerprint: WorkflowFingerprint;
+  staffTokenConfirmed?: boolean;
   status: StageStatus;
   targetFingerprint: WorkflowFingerprint;
   trackerId: TrackerID;
@@ -2497,6 +2500,7 @@ export type TrackerDuplicateTarget = Readonly<{
   sizeBytes?: number;
   source?: string;
   threeD?: string;
+  trackerSlot?: string;
   type?: string;
   videoCodec?: string;
   videoEncode?: string;
@@ -3002,6 +3006,7 @@ export type WorkflowIntent = Readonly<{
   preparation?: PrepareInput | null;
   projectionInstructions?: Readonly<Record<string, TrackerProjectionInstructions>>;
   skipRemoteDuplicates?: boolean;
+  staffTokenConfirmations?: Readonly<Record<string, DupeAssessmentID>>;
   trackerIds?: readonly TrackerID[];
   trackerInputAnswers?: Readonly<Record<string, Readonly<Record<string, string | null>>>>;
   uploadTrackerIds?: readonly TrackerID[];

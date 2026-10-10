@@ -8,9 +8,43 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestReviewedNameRebaseRequiresFreshStaffTokenConfirmation(t *testing.T) {
+	projections := testProjectionSet(t)
+	prior := api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+		{
+			TrackerID:           projections.Projections[0].TrackerID,
+			RequiresStaffToken:  true,
+			StaffTokenConfirmed: true,
+			Decision:            api.DupeDecisionIgnored,
+			Status:              api.StageStatusCompleted,
+			CheckedAt:           time.Now().UTC(),
+			FreshUntil:          time.Now().UTC().Add(time.Hour),
+		},
+		{
+			TrackerID: projections.Projections[1].TrackerID,
+			Decision:  api.DupeDecisionIgnored,
+			Status:    api.StageStatusCompleted,
+		},
+	}}
+	rebased, err := rebaseDupesForReviewedNames(prior, projections)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := rebased.Results[0]
+	if result.StaffTokenConfirmed || result.Decision != api.DupeDecisionPending || len(result.RequiredActions) != 1 ||
+		ProjectionEligibleForDownstream(projections.Projections[0], result, true) {
+		t.Fatalf("name review retained staff authorization: %+v", result)
+	}
+	if !result.CheckedAt.Equal(prior.Results[0].CheckedAt) || !result.FreshUntil.Equal(prior.Results[0].FreshUntil) ||
+		rebased.Results[1].Decision != api.DupeDecisionIgnored || !prior.Results[0].StaffTokenConfirmed {
+		t.Fatal("name review mutated prior evidence or generic sibling decisions")
+	}
+}
 
 func TestMergeReviewedReleaseNameProjectionsReplacesGeneratedNamingNotices(t *testing.T) {
 	t.Parallel()

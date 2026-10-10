@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/autobrr/rls"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -53,9 +56,9 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	params := url.Values{"t": {"search"}, "o": {"json"}}
 	switch {
 	case meta.Identity.TMDBID != 0:
-		params.Set("tmdb", strconv.Itoa(meta.Identity.TMDBID))
+		params.Set("tmdbid", strconv.Itoa(meta.Identity.TMDBID))
 	case meta.Identity.IMDBID != 0:
-		params.Set("imdb", providerid.IMDb(meta.Identity.IMDBID).Digits())
+		params.Set("imdbid", providerid.IMDb(meta.Identity.IMDBID).Digits())
 	default:
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing tmdb/imdb id for ANT dupe search", nil)
 	}
@@ -69,6 +72,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	entries := make([]api.DupeEntry, 0)
 	offset := 0
 	expectedTotal := -1
+	pageTotals := false
 	expectedTotalPresent := false
 	expectedOffsetPresent := false
 	complete := false
@@ -88,8 +92,8 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		dupe.TraceSearchRequest(s.logger, "ANT", req.Method, "/api.php", map[string]any{
 			"t":      pageParams.Get("t"),
 			"o":      pageParams.Get("o"),
-			"tmdb":   pageParams.Get("tmdb"),
-			"imdb":   pageParams.Get("imdb"),
+			"tmdbid": pageParams.Get("tmdbid"),
+			"imdbid": pageParams.Get("imdbid"),
 			"limit":  pageParams.Get("limit"),
 			"offset": pageParams.Get("offset"),
 		})
@@ -129,14 +133,25 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			pageOffset = pagination.Offset
 		}
 		if pagination.TotalPresent {
+			if pageTotals && itemCount == 0 && pagination.Total == expectedTotal && pageOffset == expectedTotal {
+				// A full first page can advertise either a page count or an exact cumulative total.
+				complete = true
+				break
+			}
 			if expectedTotal < 0 {
 				expectedTotal = pagination.Total
-			} else if pagination.Total != expectedTotal {
+				pageTotals = pagination.Total == itemCount
+			} else if pageTotals && pagination.Total != itemCount || !pageTotals && pagination.Total != expectedTotal {
 				break
 			}
 		}
 		nextOffset := pageOffset + itemCount
 		switch {
+		case pageTotals && itemCount < pageLimit:
+			complete = true
+		case pageTotals && nextOffset > offset:
+			offset = nextOffset
+			continue
 		case expectedTotal == 0 && itemCount == 0:
 			complete = true
 		case expectedTotal > 0 && nextOffset == expectedTotal:
@@ -199,15 +214,44 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 			entry.SizeKnown, entry.SizeBytes = true, size
 		}
 		_, entry.FlagsPresent = item["flags"]
+		flagsValid := true
 		if flags, ok := item["flags"].([]any); ok {
 			for _, rawFlag := range flags {
-				if flag := antString(rawFlag); flag != "" {
+				flag, valid := rawFlag.(string)
+				flagsValid = flagsValid && valid && strings.TrimSpace(flag) != ""
+				if flag != "" {
 					entry.Flags = append(entry.Flags, flag)
 				}
 			}
 		}
-		entry.FlagsComplete = false
-		entry.HDR = dupe.NormalizeTrackerHDRFlags(entry.Flags, entry.FlagsPresent, false)
+		// ANT omits fields with no value, so an omitted flags list is empty.
+		_, entry.FlagsComplete = slotFlags(entry.Flags)
+		entry.FlagsComplete = entry.FlagsComplete && flagsValid
+		if entry.FlagsPresent {
+			_, valid := item["flags"].([]any)
+			entry.FlagsComplete = entry.FlagsComplete && valid
+		}
+		entry.HDR = dupe.NormalizeTrackerHDRFlags(entry.Flags, true, entry.FlagsComplete)
+		if entry.FlagsComplete && entry.HDR.Status == api.HDREvidenceMissing {
+			entry.HDR = api.HDRFacts{
+				Formats:      []api.HDRFormat{api.HDRFormatSDR},
+				Origin:       api.HDREvidenceTrackerAPI,
+				Status:       api.HDREvidenceComplete,
+				SourceFields: []string{"flags"},
+			}
+		}
+		entry.Region = discCountry(rls.ParseString(entry.Name).Region)
+		if entry.CanonicalType != "DISC" {
+			switch {
+			case slices.Contains(entry.Flags, "Remux"):
+				entry.CanonicalType = "REMUX"
+			case resolveMediaSource(entry.Source) == "WEB":
+				entry.CanonicalType = "WEBDL"
+			case entry.CanonicalType == "" && entry.Source != "" && entry.Codec != "":
+				entry.CanonicalType = "ENCODE"
+			}
+		}
+		entry.TrackerSlot = antSlot(entry.CanonicalType, entry.Source, entry.Res, entry.Codec, entry.Flags, entry.Region, entry.FlagsComplete)
 		entries = append(entries, entry)
 	}
 	return entries

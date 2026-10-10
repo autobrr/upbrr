@@ -541,8 +541,10 @@ type ReleaseWorkflowUploadQuestionnaire struct {
 // ReleaseWorkflowUploadDuplicateReview records an accepted or ignored duplicate
 // decision for the action tracker or an explicitly named tracker.
 type ReleaseWorkflowUploadDuplicateReview struct {
-	TrackerID TrackerID    `json:"trackerId,omitempty"`
-	Decision  DupeDecision `json:"decision"`
+	// StaffTokenConfirmed explicitly attests possession of the appropriate staff-issued token.
+	StaffTokenConfirmed bool         `json:"staffTokenConfirmed,omitempty"`
+	TrackerID           TrackerID    `json:"trackerId,omitempty"`
+	Decision            DupeDecision `json:"decision"`
 }
 
 // ReleaseWorkflowUploadReprepare confirms forced preparation and may replace

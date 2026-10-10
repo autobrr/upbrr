@@ -60,6 +60,80 @@ const renderPage = (facet: DuplicatesFacet, trackers = ["EXAMPLE"]) =>
 
 describe("DupeCheckPage", () => {
   it.each([
+    {
+      name: "pending after reproject",
+      requiresStaffToken: true,
+      decision: "pending",
+      confirmed: false,
+      checked: false,
+    },
+    {
+      name: "ignored without confirmation",
+      requiresStaffToken: true,
+      decision: "ignored",
+      confirmed: false,
+      checked: false,
+    },
+    {
+      name: "confirmed current assessment",
+      requiresStaffToken: true,
+      decision: "ignored",
+      confirmed: true,
+      checked: true,
+    },
+    {
+      name: "ordinary optimistic ignore",
+      requiresStaffToken: false,
+      decision: "pending",
+      confirmed: false,
+      checked: true,
+    },
+  ])(
+    "uses current staff-token authority for $name",
+    ({ requiresStaffToken, decision, confirmed, checked }) => {
+      const setIgnored = vi.fn();
+      renderPage(
+        facetFor(
+          {
+            status: "ready",
+            ignoredTrackers: ["EXAMPLE"],
+            assessment: {
+              results: [
+                {
+                  trackerId: "EXAMPLE",
+                  requiresStaffToken,
+                  staffTokenConfirmed: confirmed,
+                  decision,
+                  status: "blocked",
+                  search: { complete: true, pages: 1, candidateCount: 1 },
+                  matches: [
+                    { id: "remote", name: "Example.Release.2026.1080p-GRP", relation: "same_slot" },
+                  ],
+                },
+              ],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+            projections: {
+              projections: [{ trackerId: "EXAMPLE", readiness: "ready" }],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+            preflight: {
+              results: [{ trackerId: "EXAMPLE", state: "ready" }],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+          },
+          { setIgnored },
+        ),
+      );
+      const control = screen.getByRole("switch", {
+        name: requiresStaffToken
+          ? "Confirm staff-issued token for EXAMPLE"
+          : "Acknowledge dupe risk for EXAMPLE",
+      });
+      expect(control).toHaveAttribute("aria-checked", String(checked));
+      fireEvent.click(control);
+      expect(setIgnored).toHaveBeenCalledWith("EXAMPLE", !checked);
+    },
+  );
+
+  it.each([
     { required: true, value: "", draft: undefined, label: "Required answers missing" },
     { required: true, value: "Known", draft: undefined, label: "Required fields filled" },
     { required: true, value: "Known", draft: " ", label: "Required answers missing" },
@@ -1394,6 +1468,7 @@ describe("DupeCheckPage", () => {
               },
               {
                 trackerId: "REMOTE",
+                requiresStaffToken: true,
                 uploadReleaseName: "Example.Release.S01E01.1080p-GRP",
                 matches: [
                   {
@@ -1484,7 +1559,7 @@ describe("DupeCheckPage", () => {
     expect(
       screen.queryByRole("checkbox", { name: "Ignore dupes for AITHER" }),
     ).not.toBeInTheDocument();
-    const optional = screen.getByRole("switch", { name: "Ignore dupes for REMOTE" });
+    const optional = screen.getByRole("switch", { name: "Confirm staff-issued token for REMOTE" });
     expect(optional).not.toBeChecked();
     fireEvent.click(optional);
     expect(setIgnored).toHaveBeenCalledWith("REMOTE", true);

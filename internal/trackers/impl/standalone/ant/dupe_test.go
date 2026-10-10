@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -34,10 +35,10 @@ func TestDupeSearcherSendsAPIKeyHeader(t *testing.T) {
 			t.Fatal("apikey should not be sent as a query parameter")
 		}
 		for key, want := range map[string]string{
-			"t":     "search",
-			"o":     "json",
-			"imdb":  "0000456",
-			"limit": "100",
+			"t":      "search",
+			"o":      "json",
+			"imdbid": "0000456",
+			"limit":  "100",
 		} {
 			if got := query.Get(key); got != want {
 				t.Fatalf("query %s = %q, want %q", key, got, want)
@@ -125,6 +126,80 @@ func TestDupeSearcherConsumesANTOffsetPages(t *testing.T) {
 	}
 }
 
+func TestANTExactPageTotalRetainsStaffTokenBoundary(t *testing.T) {
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	for _, tc := range []struct {
+		name          string
+		total, offset int
+		complete      bool
+	}{
+		{
+			name:     "exact cumulative total",
+			total:    100,
+			offset:   100,
+			complete: true,
+		},
+		{
+			name:     "empty page total",
+			total:    0,
+			offset:   100,
+			complete: true,
+		},
+		{
+			name:   "decreased total",
+			total:  99,
+			offset: 100,
+		},
+		{
+			name:   "unseen result",
+			total:  101,
+			offset: 100,
+		},
+		{
+			name:   "incorrect offset",
+			total:  100,
+			offset: 99,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first := antSearchPageJSON(t, 0, 100, 100, true)
+			last := antSearchPageJSON(t, tc.offset, tc.total, 0, true)
+			requests := 0
+			http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+				requests++
+				body := first
+				if requests > 1 {
+					body = last
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+				}, nil
+			})
+			service := dupe.NewServiceWithRegistry(antDupeTestConfig(), api.NopLogger{}, registry)
+			summary, err := service.Check(t.Context(), api.DuplicateSubject{
+				SourcePath: "proposed.mkv",
+				Identity:   api.ExternalIdentity{TMDBID: 123},
+				Projection: &api.TrackerReleaseProjection{
+					DuplicateTarget: api.TrackerDuplicateTarget{TrackerSlot: "Encode/1080/SDR//", Resolution: "1080p"},
+				},
+			}, []string{"ANT"})
+			if err != nil || len(summary.Results) != 1 {
+				t.Fatalf("search failed: summary=%+v err=%v", summary, err)
+			}
+			result := summary.Results[0]
+			if requests != 2 || result.Search.CandidateCount != 100 || result.Search.Complete != tc.complete || result.RequiresStaffToken != !tc.complete {
+				t.Fatalf("wrong exact-page result: requests=%d result=%+v", requests, result)
+			}
+		})
+	}
+}
+
 func TestDupeSearcherANTPaginationBoundFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -188,18 +263,20 @@ func TestDupeSearcherMissingCredentialsSkips(t *testing.T) {
 	}
 }
 
-func TestANTFullDiscEvidenceUsesIdentityThenSingleDiscRule(t *testing.T) {
+func TestANTFullDiscCountriesAndSlots(t *testing.T) {
 	t.Parallel()
 
 	target := api.TrackerDuplicateTarget{
-		Type:       "DISC",
-		Source:     "Blu-ray",
-		Resolution: "1080p",
-		VideoCodec: "AVC",
-		Group:      "GRP",
-		SizeBytes:  1000,
+		TrackerSlot: "FullDisc/1080//JP/",
+		Type:        "DISC",
+		Source:      "Blu-ray",
+		Resolution:  "1080p",
+		VideoCodec:  "AVC",
+		Group:       "GRP",
+		SizeBytes:   1000,
 	}
 	entry := api.DupeEntry{
+		TrackerSlot:   "FullDisc/1080//JP/",
 		Name:          "Example.Release.2026.1080p.Blu-ray.AVC-GRP",
 		CanonicalType: "DISC",
 		Source:        "Blu-ray",
@@ -212,14 +289,14 @@ func TestANTFullDiscEvidenceUsesIdentityThenSingleDiscRule(t *testing.T) {
 	}
 	policy := *Profile().DupePolicy
 	result := dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "ANT")}, policy, dupe.SearchEvidence{Complete: true})
-	if got := result.Candidates[0].Relation; got != api.DupeRelationExactDuplicate {
+	if got := result.Candidates[0].Relation; got != api.DupeRelationSameSlot {
 		t.Fatalf("same ANT full disc relation = %q", got)
 	}
 
 	entry.Group = "OTHER"
 	entry.SizeBytes = 900
 	result = dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "ANT")}, policy, dupe.SearchEvidence{Complete: true})
-	if got := result.Candidates[0].Relation; got != api.DupeRelationExistingPreferred {
+	if got := result.Candidates[0].Relation; got != api.DupeRelationSameSlot {
 		t.Fatalf("second ANT full disc relation = %q", got)
 	}
 }
@@ -269,6 +346,12 @@ func TestANTListedWEBFileCoexistsWithDisc(t *testing.T) {
 		VideoCodec: "AVC",
 		Group:      "GRP",
 	}
+	target.TrackerSlot = resolveTargetSlot(api.UploadSubject{
+		Type:       target.Type,
+		Source:     target.Source,
+		VideoCodec: target.VideoCodec,
+		Release:    api.ReleaseInfo{Resolution: target.Resolution},
+	})
 	result := dupe.Evaluate(
 		target,
 		[]dupe.TrackerCandidate{dupe.NormalizeCandidate(entries[0], "ANT")},

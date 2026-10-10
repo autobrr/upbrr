@@ -426,9 +426,16 @@ failure from empty text or zero selected images.
 
 All Unit3D and AvistaZ-family definitions currently declare `description` once at family level.
 Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN/NBL
-for `none`, ANT/RTF for `screenshots`, and most other standalone trackers for `description`.
+for `none`, RTF for `screenshots`, and ANT and most other standalone trackers for `description`.
 Changing a standalone tracker's workflow later should require only its profile and tracker-local
 adapter implementation; do not add tracker-name branches to core or tracker orchestration.
+
+ANT composes the full description through the shared section builder, then applies its own BBCode
+adjustments. Ordinary selected screenshots use the API screenshot field, so the description omits
+their image tags and the configured screenshot header while retaining unrelated artwork, disc menus,
+audio analysis, and release notes. Reviewed final description overrides remain authoritative.
+Automatic tonemapping notices are omitted because selected screenshots do not retain evidence of
+applied conversion; user-authored tonemapping notes are preserved.
 
 Set `standalone.Profile.UsesMenuImages` when the adapter consumes selected DVD menu images,
 so shared preparation can rehost source-only menus for that tracker. Unit3D and AvistaZ families
@@ -1116,6 +1123,17 @@ unproven combinations retain review. `SetRules` handles collection-wide capacity
 slot's `ReviewReason` or a `TargetReviewRules` entry retains source/staff prerequisites that
 an empty search cannot prove. Keep these declarations in the tracker-owned policy and version
 behavior changes; never introduce tracker-name dispatch into the evaluator.
+
+For tracker-native slots, `TargetSlot` projects the proposed upload's resolved facts and
+`CompareSlots` compares them with the adapter's `DupeEntry.TrackerSlot` evidence. Keep both
+callbacks tracker-local and advance the duplicate policy version when their behavior changes.
+Do not infer equality or coexistence from missing facts, and preserve contradictory-evidence review.
+
+`StaffTokenOverride` requires explicit possession confirmation before overriding remote
+duplicates or incomplete search evidence. The confirmation is bound to the current assessment;
+automatic upload decisions cannot supply it, and refreshed evidence requires confirmation again.
+Blocking a duplicate needs no token. In-client matches remain non-overridable. The tracker, not
+this attestation, validates any staff token at submission.
 
 Target-level duplicate policy reviews use `DupeCheckResult.ReviewReasons` and
 `TrackerDupeAssessment.reviewReasons`, including when a complete search has no candidates.
