@@ -17,7 +17,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v7", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v8", trackers.StructuredNamePolicy{
 		Defaults: applyAitherNameDefaults,
 	})
 }
@@ -29,6 +29,14 @@ func applyAitherNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject
 	if err := applyAitherTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
+	if meta.LanguageFacts.AudioAbsent {
+		if err := editor.Set(api.NameRoleAudio, "None"); err != nil {
+			return fmt.Errorf("set AITHER absent audio: %w", err)
+		}
+		if err := editor.Include(api.NameRoleAudio); err != nil {
+			return fmt.Errorf("include AITHER absent audio: %w", err)
+		}
+	}
 
 	if err := editor.Omit(api.NameRoleEdition); err != nil {
 		return fmt.Errorf("omit AITHER edition: %w", err)
@@ -37,6 +45,12 @@ func applyAitherNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject
 	nameType := strings.ToUpper(strings.TrimSpace(meta.Type))
 	source := strings.TrimSpace(meta.Source)
 	switch {
+	case nameType == "DISC" && strings.EqualFold(strings.TrimSpace(meta.DiscType), "HDDVD") && unit3d.Category(meta) == "TV":
+		for _, role := range []api.ReleaseNameRole{api.NameRoleSeason, api.NameRoleEpisode} {
+			if err := editor.Include(role); err != nil {
+				return fmt.Errorf("include AITHER HDDVD %s: %w", role, err)
+			}
+		}
 	case nameType == "DVDRIP":
 		if err := applyAitherDVDRipNameOrder(editor); err != nil {
 			return err
@@ -119,7 +133,13 @@ func applyAitherDVDRipNameOrder(editor *trackers.NameEditor) error {
 	if !hasEncode || strings.TrimSpace(encode.Value) == "" {
 		return nil
 	}
-	anchor := firstAitherPresentRole(editor.PresentRoles(), api.NameRoleDualAudio, api.NameRoleAudio)
+	// The automatic Dual-Audio marker can precede audio; keep both together.
+	var anchor api.ReleaseNameRole
+	for _, role := range editor.PresentRoles() {
+		if role == api.NameRoleAudio || role == api.NameRoleDualAudio {
+			anchor = role
+		}
+	}
 	if !anchor.Valid() {
 		if err := editor.Omit(api.NameRoleVideoEncode); err != nil {
 			return fmt.Errorf("omit AITHER DVDRip video encode without audio: %w", err)

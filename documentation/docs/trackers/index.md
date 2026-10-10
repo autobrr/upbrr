@@ -88,6 +88,8 @@ Automatic title and year sources can differ by destination. A required title mus
 
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or TV season/episode segment. Missing or unknown resolution stays absent, and complete manual names remain unchanged.
 
+Missing audio tracks and unidentified audio languages are separate facts. A tracker-specific no-audio label uses inspected evidence that audio is absent. Non-linguistic audio retains its codec and channels; an unknown language does not imply that audio is absent or non-linguistic.
+
 Categories, source/type mappings, descriptions, media selection, questionnaires and authentication requirements can vary. Review the displayed requirements and consult the tracker's current rules. A successful local preparation does not prove that a remote upload will be accepted.
 
 ### Editions and commentary
