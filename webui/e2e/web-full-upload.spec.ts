@@ -172,14 +172,14 @@ for (const scenario of [
     upload: true,
   },
   {
-    name: "screenshot trackers expose image pages without requiring descriptions",
+    name: "ANT requires descriptions before upload",
     trackers: ["ANT"],
     mediaKind: "movie",
     preparedMediaInfo: true,
     releaseDisplayName: releaseWorkflowParityFixture.releaseDisplayName,
     screenshots: true,
     descriptions: false,
-    upload: true,
+    upload: false,
   },
   {
     name: "mixed trackers expose the strictest shared content workflow",
@@ -247,9 +247,11 @@ for (const scenario of [
 
 for (const tracker of ["ANT", "BTN"] as const) {
   for (const action of ["Run dry run", "Start upload"] as const) {
-    test(`embedded web ${tracker} ${action} prepares content without the description editor`, async ({
-      page,
-    }) => {
+    const contentFlow =
+      tracker === "ANT"
+        ? "reviews saved descriptions and retains hosted screenshots"
+        : "prepares content without the description editor";
+    test(`embedded web ${tracker} ${action} ${contentFlow}`, async ({ page }) => {
       const workspace = await createE2EWorkspace({
         mediaKind: tracker === "BTN" ? "tv" : "movie",
         preparedMediaInfo: true,
@@ -275,11 +277,59 @@ for (const tracker of ["ANT", "BTN"] as const) {
         }
         await runDuplicateCheck(page);
         if (tracker === "ANT") {
+          await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
           await page.getByRole("button", { name: "Screenshots" }).click();
           await page.getByRole("button", { name: "Generate screenshots" }).click();
           await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+          await expect(page.getByRole("button", { name: "Descriptions" })).toBeEnabled();
+          await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
+          await page.getByRole("button", { name: "Upload Images" }).click();
+          await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
+          await expect(page.getByText("1 saved")).toBeVisible();
+          expect(workspace.fake.counters.imageUploads).toBe(1);
+          await page.getByRole("button", { name: "Descriptions" }).click();
+          await page.getByRole("button", { name: "Refresh descriptions" }).click();
+          await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
+          const editor = page.getByRole("textbox", { name: "Raw description for ANT" });
+          await expect(editor).toHaveValue("E2E description fixture.");
+          const editedDescription =
+            "[b]ANT release notes[/b]\n[quote]Screenshots are hosted separately.[/quote]";
+          await editor.fill(editedDescription);
+          await page.getByRole("button", { name: "Render ANT", exact: true }).click();
+          const rendered = page.locator(".tracker-description.rendered");
+          await expect(rendered.locator("b")).toHaveText("ANT release notes");
+          await expect(rendered.locator("blockquote")).toHaveText(
+            "Screenshots are hosted separately.",
+          );
+          const saved = waitForAppMethod(page, "SaveReleaseWorkflowDescriptionOverride");
+          await page.getByRole("button", { name: "Save group ANT", exact: true }).click();
+          expect((await saved).ok()).toBe(true);
+          await expect(page.getByText("Description saved.", { exact: true })).toBeVisible();
+
+          const reloaded = waitForAppMethod(page, "GetActiveInput");
+          await page.reload();
+          const current = await activeCurrentFromResponse(await reloaded);
+          expect(current.descriptions?.descriptions).toEqual([
+            expect.objectContaining({
+              groupKey: "ant",
+              trackerIds: ["ANT"],
+              source: editedDescription,
+            }),
+          ]);
+          expect(
+            current.media?.artifacts
+              .filter((artifact) => artifact.kind === "hosted_image")
+              .map((artifact) => artifact.url),
+          ).toEqual([`${workspace.fake.url}/image/1.jpg`]);
+          await page.getByRole("button", { name: "Descriptions" }).click();
+          await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
+          await expect(editor).toHaveValue(editedDescription);
+          await expect(rendered.locator("b")).toHaveText("ANT release notes");
+          await page.getByRole("button", { name: "Upload Images" }).click();
+          await expect(page.getByText("1 saved")).toBeVisible();
+        } else {
+          await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
         }
-        await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
         await page.getByRole("button", { name: "Upload", exact: true }).click();
         await page.getByRole("button", { name: action, exact: true }).click();
         if (action === "Start upload") {
@@ -296,7 +346,11 @@ for (const tracker of ["ANT", "BTN"] as const) {
           expect(workspace.fake.counters.trackerUploads).toBe(0);
           expect(workspace.fake.counters.clientInjections).toBe(0);
         }
-        await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
+        await expectEnabledState(
+          page.getByRole("button", { name: "Descriptions" }),
+          tracker === "ANT" && action === "Run dry run",
+        );
+        expect(workspace.fake.counters.imageUploads).toBe(tracker === "ANT" ? 1 : 0);
         await expect(page.getByText("Exact upload dry run is unavailable.")).toHaveCount(0);
       } finally {
         await app?.stop();

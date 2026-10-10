@@ -17,7 +17,7 @@ func Profile() standalone.Profile {
 		Name:                    "ANT",
 		BaseURL:                 "https://anthelion.me",
 		DescriptionGroup:        "ant",
-		UploadContentMode:       trackers.UploadContentModeScreenshots,
+		UploadContentMode:       trackers.UploadContentModeDescription,
 		AuthCapability:          authcontract.APIKeyCapability("ANT"),
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,

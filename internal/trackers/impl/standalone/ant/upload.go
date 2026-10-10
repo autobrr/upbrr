@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -27,11 +26,6 @@ import (
 )
 
 const antUploadURL = "https://anthelion.me/api.php"
-
-var antDefaultSignaturePattern = regexp.MustCompile(
-	`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`,
-)
-var antEmptyURLPattern = regexp.MustCompile(`(?is)\[url=[^\]]*]\s*\[/url\]`)
 
 type uploadState struct {
 	torrentPath  string
@@ -209,8 +203,10 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		descriptionAssets = trackers.DescriptionAssets{}
 	}
-	descriptionAssets.Description = trackers.StripDefaultDescriptionSignature(descriptionAssets.Description)
-	description := buildDescription(req, descriptionAssets)
+	description, err := buildDescription(ctx, req, descriptionAssets)
+	if err != nil {
+		return uploadState{}, err
+	}
 
 	answers := standalone.QuestionnaireAnswers(req.Meta, "ANT")
 	typeName, typeID := resolveType(req.Meta, answers)

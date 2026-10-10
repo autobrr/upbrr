@@ -426,9 +426,16 @@ failure from empty text or zero selected images.
 
 All Unit3D and AvistaZ-family definitions currently declare `description` once at family level.
 Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN/NBL
-for `none`, ANT/RTF for `screenshots`, and most other standalone trackers for `description`.
+for `none`, RTF for `screenshots`, and ANT and most other standalone trackers for `description`.
 Changing a standalone tracker's workflow later should require only its profile and tracker-local
 adapter implementation; do not add tracker-name branches to core or tracker orchestration.
+
+ANT composes the full description through the shared section builder, then applies its own BBCode
+adjustments. Ordinary selected screenshots use the API screenshot field, so the description omits
+their image tags and the configured screenshot header while retaining unrelated artwork, disc menus,
+audio analysis, and release notes. Reviewed final description overrides remain authoritative.
+Automatic tonemapping notices are omitted because selected screenshots do not retain evidence of
+applied conversion; user-authored tonemapping notes are preserved.
 
 Set `standalone.Profile.UsesMenuImages` when the adapter consumes selected DVD menu images,
 so shared preparation can rehost source-only menus for that tracker. Unit3D and AvistaZ families

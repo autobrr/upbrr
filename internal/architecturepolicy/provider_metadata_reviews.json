@@ -148,8 +148,8 @@
     "sha256": "468ecd0f576304a1d33dba1b2efefdaa2c2ef10f8c511b79e5f4655866a5f617"
   },
   "internal/trackers/impl/standalone/ant/upload.go:prepareUploadState": {
-    "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence.",
-    "sha256": "1de7c75493d28d0783a90e5e7063bc65619ac499ad736a39dc41aa114d6c5bf2"
+    "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence. Description composition consumes the same prepared subject and preserves final user-reviewed text; composition errors now propagate without changing metadata selectors.",
+    "sha256": "07318f8fa7802a00e72af3a05363eafb9bb690585964361d3b0d5454f6e9abb8"
   },
   "internal/trackers/impl/standalone/ant/upload.go:resolveKeywords": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

@@ -110,6 +110,10 @@ Automatic screenshot plans distribute the requested images across all prepared d
 
 With **Keep images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, review **Saved tracker images** on **Screenshots** and choose **Use saved images**. Missing, invalid, or insufficient saved images can require new captures. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
 
+Some trackers accept the full description and screenshots in separate upload fields. Their generated description omits the ordinary screenshot gallery and its configured header, while keeping release notes and other supported content. Use **Descriptions** to review and save the tracker-ready text before upload.
+
+Automatic tonemapping notices are not available for every tracker. Existing tonemapping notes remain in the description; review them for accuracy before upload.
+
 Capturing an additional frame keeps previously generated screenshots, including their selection and order, without adding those images again.
 
 Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode. Open an image to inspect it at its natural resolution in a nearly full-viewport lightbox. Scroll horizontally or vertically for larger images; **Close** and **Escape** remain available while scrolling.

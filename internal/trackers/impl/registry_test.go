@@ -710,7 +710,6 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 		t.Fatal("MANUAL must not be registered")
 	}
 	specialModes := map[string]trackers.UploadContentMode{
-		"ANT": trackers.UploadContentModeScreenshots,
 		"BTN": trackers.UploadContentModeNone,
 		"NBL": trackers.UploadContentModeNone,
 		"RTF": trackers.UploadContentModeScreenshots,
