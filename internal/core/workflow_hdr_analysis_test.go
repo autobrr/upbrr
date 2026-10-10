@@ -4,12 +4,15 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,6 +28,111 @@ import (
 type hdrResolverFixture struct {
 	subject api.HDRAnalysisSubject
 	stale   bool
+}
+
+type hdrExtractionOpenFixture func(context.Context, releaseworkflow.HDRExtractionRecord) (io.ReadCloser, error)
+
+func (f hdrExtractionOpenFixture) OpenExtraction(ctx context.Context, record releaseworkflow.HDRExtractionRecord) (io.ReadCloser, error) {
+	return f(ctx, record)
+}
+
+func TestHDRRetainedCandidatesRestoreAndCloneUsableMetadata(t *testing.T) {
+	builder, resolver, sidecar := hdrFixture(t)
+	release := resolver.subject.Release
+	complete, resource, err := builder.retainExtraction(t.Context(), release, sidecar, "z-usable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	absentSidecar := hdranalysis.Sidecar{Identity: sidecar.Identity, Absent: true}
+	absent, absentResource, err := builder.retainExtraction(t.Context(), release, absentSidecar, "00-absent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{complete.ID: complete, absent.ID: absent}
+	for _, id := range []api.HDRExtractionID{"a-missing", "b-open", "c-decode"} {
+		record := complete
+		record.ID = id
+		entries[id] = record
+	}
+	var opened []api.HDRExtractionID
+	resources := map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{
+		"b-open": hdrExtractionOpenFixture(func(context.Context, releaseworkflow.HDRExtractionRecord) (io.ReadCloser, error) {
+			opened = append(opened, "b-open")
+			return nil, errors.New("synthetic unavailable resource")
+		}),
+		"c-decode": hdrExtractionOpenFixture(func(context.Context, releaseworkflow.HDRExtractionRecord) (io.ReadCloser, error) {
+			opened = append(opened, "c-decode")
+			return io.NopCloser(bytes.NewBufferString("invalid sidecar")), nil
+		}),
+		complete.ID: hdrExtractionOpenFixture(func(ctx context.Context, record releaseworkflow.HDRExtractionRecord) (io.ReadCloser, error) {
+			opened = append(opened, complete.ID)
+			return resource.OpenExtraction(ctx, record)
+		}),
+		absent.ID: hdrExtractionOpenFixture(func(ctx context.Context, record releaseworkflow.HDRExtractionRecord) (io.ReadCloser, error) {
+			opened = append(opened, absent.ID)
+			return absentResource.OpenExtraction(ctx, record)
+		}),
+	}
+	wantOrder := []api.HDRExtractionID{"b-open", "c-decode", complete.ID}
+	for range 32 {
+		opened = nil
+		got, found, err := restoreHDRSidecar(t.Context(), release, resolver.subject.Targets[0], sidecar.Identity, entries, resources)
+		if err != nil || !found || got.Absent || got.Extraction == nil {
+			t.Fatalf("restore found=%t absent=%t opened=%v err=%v", found, got.Absent, opened, err)
+		}
+	}
+	if !slices.Equal(opened, wantOrder) {
+		t.Fatalf("candidate order=%v want=%v", opened, wantOrder)
+	}
+	opened = nil
+	nextRelease := release
+	nextRelease.Generation++
+	cloned, retained, err := builder.CloneExtractions(t.Context(), nextRelease, entries, resources, "candidate-rebind")
+	if err != nil || len(cloned) != 1 || len(retained) != 1 || !slices.Equal(opened, wantOrder) {
+		t.Fatalf("clone entries=%#v opened=%v err=%v", cloned, opened, err)
+	}
+	for _, record := range cloned {
+		if record.Absent || record.Release != nextRelease {
+			t.Fatalf("absence masked complete metadata: %#v", record)
+		}
+	}
+	opened = nil
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err = restoreHDRSidecar(ctx, release, resolver.subject.Targets[0], sidecar.Identity, entries, resources)
+	if !errors.Is(err, context.Canceled) || len(opened) != 0 {
+		t.Fatalf("canceled restore opened=%v err=%v", opened, err)
+	}
+	cloneCtx, cancelClone := context.WithCancel(t.Context())
+	defer cancelClone()
+	cancelResources := map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{
+		complete.ID: hdrExtractionOpenFixture(func(ctx context.Context, record releaseworkflow.HDRExtractionRecord) (io.ReadCloser, error) {
+			cancelClone()
+			return resource.OpenExtraction(ctx, record)
+		}),
+	}
+	_, _, err = builder.CloneExtractions(cloneCtx, nextRelease,
+		map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{complete.ID: complete}, cancelResources, "canceled-candidate-rebind")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("clone swallowed canceled metadata restore: %v", err)
+	}
+	delete(entries, complete.ID)
+	got, found, err := restoreHDRSidecar(t.Context(), release, resolver.subject.Targets[0], sidecar.Identity, entries, resources)
+	if err != nil || !found || !got.Absent || got.Extraction != nil {
+		t.Fatalf("verified absence fallback found=%t absent=%t err=%v", found, got.Absent, err)
+	}
+	delete(entries, absent.ID)
+	_, found, err = restoreHDRSidecar(t.Context(), release, resolver.subject.Targets[0], sidecar.Identity, entries, resources)
+	failure, ok := api.AsHDRAnalysisFailure(err)
+	if found || !ok || failure.Code != api.HDRAnalysisFailureResourceUnavailable {
+		t.Fatalf("all unusable candidates found=%t failure=%#v err=%v", found, failure, err)
+	}
+	staleRelease := release
+	staleRelease.Generation++
+	_, found, err = restoreHDRSidecar(t.Context(), staleRelease, resolver.subject.Targets[0], sidecar.Identity, entries, resources)
+	if found || err != nil {
+		t.Fatalf("other generation became current authority: found=%t err=%v", found, err)
+	}
 }
 
 func (f *hdrResolverFixture) ResolveHDRAnalysisSubject(_ context.Context, instructions api.HDRAnalysisInstructions) (api.HDRAnalysisSubject, error) {

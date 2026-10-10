@@ -115,7 +115,8 @@ func (b workflowHDRAnalysisBuilder) CloneExtractions(
 	resources := make(map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource)
 	err := b.service.WithSession(ctx, func(_ *hdranalysis.Session) error {
 		seen := make(map[string]bool)
-		for id, record := range entries {
+		for _, id := range hdrExtractionIDs(entries) {
+			record := entries[id]
 			if seen[record.TargetID] || retained[id] == nil {
 				continue
 			}
@@ -144,6 +145,9 @@ func (b workflowHDRAnalysisBuilder) CloneExtractions(
 				retained,
 			)
 			if err != nil || !found {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				continue
 			}
 			copyID := attempt + "-" + strconv.Itoa(len(cloned)+1)

@@ -125,6 +125,9 @@ func (m *Module) analyzeHDR(
 			m.private.Delete(ownerID, state.Workflow.ID, hdrExtractionPrivateResourceID(id))
 		}
 	}
+	if err := m.checkpointHDRAttempt(ctx, ownerID, state.Workflow.ID, releaseRef); err != nil {
+		return CommandResult{}, err
+	}
 	snapshot, resource, err := m.hdrAnalysisBuilder.Build(
 		ctx,
 		releaseRef,
@@ -293,6 +296,39 @@ func hdrStoppedResult(command mutation, result CommandResult) bool {
 	return hdr && result.HDRAnalysis != nil && (result.HDRAnalysis.Status == api.StageStatusCanceled || result.HDRAnalysis.Status == api.StageStatusInterrupted)
 }
 
+// checkpointHDRAttempt serializes cleanup authority with operation progress before allocation, without advancing workflow intent.
+func (m *Module) checkpointHDRAttempt(ctx context.Context, owner string, workflow api.WorkflowID, release api.ReleaseRef) error {
+	operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID)
+	if operationID == "" {
+		return nil
+	}
+	lock := m.operationLock(operationID)
+	lock.Lock()
+	defer lock.Unlock()
+	record, err := m.operations.LoadOperation(ctx, owner, workflow, operationID)
+	if err != nil {
+		return fmt.Errorf("load HDR attempt cleanup authority: %w", err)
+	}
+	if !workflowOperationActive(record.Status.Status) || record.ProcessEpoch != m.processEpoch {
+		return ErrOperationConflict
+	}
+	if record.HDRCleanupRelease == release {
+		return nil
+	}
+	if record.HDRCleanupRelease != (api.ReleaseRef{}) {
+		return ErrPrivateResourceIntegrity
+	}
+	record.HDRCleanupRelease = release
+	sequence := record.Status.Sequence
+	record.Status.Sequence++
+	record.Status.UpdatedAt = m.clock.Now().UTC()
+	record.Status.Events = nil
+	if err := m.operations.SaveOperation(ctx, sequence, record); err != nil {
+		return fmt.Errorf("checkpoint HDR attempt cleanup authority: %w", err)
+	}
+	return nil
+}
+
 func (m *Module) cleanupInterruptedHDR(ctx context.Context, record api.ReleaseWorkflowOperationRecord) error {
 	if record.Status.Command != "analyze_hdr" && record.Status.Command != "composite_upload" && record.Status.Command != "prepare_release" &&
 		record.Status.Command != "reset_release" &&
@@ -317,13 +353,18 @@ func (m *Module) cleanupInterruptedHDR(ctx context.Context, record api.ReleaseWo
 		}
 	}
 	m.private.Delete(record.OwnerID, record.WorkflowID, hdrAnalysisPrivateResourceID(attempt))
-	seen := make(map[api.ReleaseRef]bool)
+	refs := map[api.ReleaseRef]bool{record.HDRCleanupRelease: true}
 	for _, snapshot := range state.Releases {
 		ref := api.ReleaseRef{SourcePath: snapshot.Release.Source.SourcePath, Generation: snapshot.Release.Generation}
-		if seen[ref] || ref.Generation == 0 || ref.SourcePath == "" {
+		refs[ref] = true
+	}
+	for _, entry := range state.HDRExtractions {
+		refs[entry.Release] = true
+	}
+	for ref := range refs {
+		if ref.Generation == 0 || ref.SourcePath == "" {
 			continue
 		}
-		seen[ref] = true
 		if err := cleaner.CleanupAttempt(ref, attempt, state.HDRExtractions); err != nil {
 			return fmt.Errorf("clean interrupted HDR files: %w", err)
 		}

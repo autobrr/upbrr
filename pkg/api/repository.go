@@ -431,6 +431,9 @@ type ReleaseWorkflowOperationRecord struct {
 	CommandFingerprint WorkflowFingerprint
 	ProcessEpoch       string
 	Status             WorkflowOperationStatus
+	// HDRCleanupRelease binds unfinished HDR files to this operation's exact prepared generation.
+	// The zero value represents no HDR allocation; this authority is private to the repository.
+	HDRCleanupRelease ReleaseRef
 }
 
 // ReleaseWorkflowOperationRepository persists operation lifecycle and progress

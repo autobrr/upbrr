@@ -77,6 +77,9 @@ func (m *Module) restorePendingHDR(
 	if operationID, ok := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID); ok && operationID != "" {
 		attempt = string(operationID) + "-rebind"
 	}
+	if err := m.checkpointHDRAttempt(ctx, owner, state.Workflow.ID, release); err != nil {
+		return err
+	}
 	entries, cloned, err := restorer.CloneExtractions(ctx, release, source.HDRExtractions, resources, attempt)
 	if err != nil {
 		return fmt.Errorf("restore HDR metadata: %w", err)

@@ -4,6 +4,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"image/png"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -344,7 +346,12 @@ func (b workflowHDRAnalysisBuilder) readCaptured(
 func restoreHDRSidecar(ctx context.Context, release api.ReleaseRef, target api.HDRAnalysisTargetSubject, identity hdranalysis.ExtractionIdentity,
 	entries map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord, retained map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource,
 ) (hdranalysis.Sidecar, bool, error) {
-	for id, record := range entries {
+	var unavailable error
+	for _, id := range hdrExtractionIDs(entries) {
+		if err := ctx.Err(); err != nil {
+			return hdranalysis.Sidecar{}, false, fmt.Errorf("workflow_hdr_analysis: %w", err)
+		}
+		record := entries[id]
 		if record.Release != release || record.SourceFingerprint != identity.SourceFingerprint || record.TargetID != target.Target.ID ||
 			record.SelectionPolicy != identity.SelectionPolicy ||
 			record.Schema != api.HDRExtractionSchemaVersion ||
@@ -353,30 +360,52 @@ func restoreHDRSidecar(ctx context.Context, release api.ReleaseRef, target api.H
 		}
 		resource := retained[id]
 		if resource == nil {
-			return hdranalysis.Sidecar{}, false, fmt.Errorf("workflow_hdr_analysis: %w", api.NewHDRAnalysisError(
+			unavailable = fmt.Errorf("workflow_hdr_analysis: %w", api.NewHDRAnalysisError(
 				api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureResourceUnavailable, Message: "the retained HDR metadata is unavailable"},
 				nil,
 			))
+			continue
 		}
 		reader, err := resource.OpenExtraction(ctx, record)
 		if err != nil {
-			return hdranalysis.Sidecar{}, false, fmt.Errorf("workflow_hdr_analysis: %w", api.NewHDRAnalysisError(
+			if canceled := ctx.Err(); canceled != nil {
+				return hdranalysis.Sidecar{}, false, fmt.Errorf("workflow_hdr_analysis: %w", canceled)
+			}
+			unavailable = fmt.Errorf("workflow_hdr_analysis: %w", api.NewHDRAnalysisError(
 				api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureResourceUnavailable, Message: "the retained HDR metadata is missing or damaged"},
 				err,
 			))
+			continue
 		}
 		identity.ResolvedTrackID = record.ResolvedTrackID
 		sidecar, decodeErr := hdranalysis.ReadSidecar(ctx, reader, identity)
 		closeErr := reader.Close()
+		if err := ctx.Err(); err != nil {
+			return hdranalysis.Sidecar{}, false, fmt.Errorf("workflow_hdr_analysis: %w", err)
+		}
 		if err := errors.Join(decodeErr, closeErr); err != nil {
-			return hdranalysis.Sidecar{}, false, fmt.Errorf("workflow_hdr_analysis: %w", api.NewHDRAnalysisError(
+			unavailable = fmt.Errorf("workflow_hdr_analysis: %w", api.NewHDRAnalysisError(
 				api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureResourceUnavailable, Message: "the retained HDR metadata is invalid"},
 				err,
 			))
+			continue
 		}
 		return sidecar, true, nil
 	}
-	return hdranalysis.Sidecar{}, false, nil
+	return hdranalysis.Sidecar{}, false, unavailable
+}
+
+// hdrExtractionIDs prioritizes complete metadata over absence; opaque IDs only break ties deterministically.
+func hdrExtractionIDs(entries map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord) []api.HDRExtractionID {
+	return slices.SortedFunc(maps.Keys(entries), func(a, b api.HDRExtractionID) int {
+		if entries[a].Absent != entries[b].Absent {
+			if entries[a].Absent {
+				return 1
+			}
+			return -1
+		}
+		return cmp.Compare(a, b)
+	})
 }
 
 func (b workflowHDRAnalysisBuilder) extractTarget(

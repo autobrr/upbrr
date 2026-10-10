@@ -1076,6 +1076,9 @@ func (m *Module) runCompositeUpload(
 		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), command.ExpectedRevision+1)
 		if next == nil {
 			if stage == "hdr-selection-required" || stage == "hdr-analysis-failed" {
+				if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "hdr_requirement_unmet"); err != nil {
+					return CommandResult{}, err
+				}
 				return CommandResult{}, requestedHDRFailure(stage, current, request.Intent.HDRAnalysis)
 			}
 			if stage == "no-eligible-trackers" {
