@@ -234,6 +234,18 @@ Screenshots and Images:
       Override image host
   -skip-imagehost-upload, --skip-imagehost-upload, -siu
       Skip automatic image host uploads
+  -hdr-analysis, --hdr-analysis
+      Generate retained HDR10+ plots before upload
+  -hdr-analysis-only, --hdr-analysis-only
+      Plot one MKV or disc playlist without configuration or upload
+  -hdr-targets, --hdr-targets string
+      Ordered prepared HDR target IDs for upload
+  -hdr-playlist, --hdr-playlist string
+      Numeric MPLS playlist for standalone disc analysis
+  -hdr-peak-source, --hdr-peak-source string
+      Peak estimator: histogram, histogram99, max-scl, max-scl-luminance
+  -hdr-output-dir, --hdr-output-dir string
+      Parent directory for fresh standalone HDR artifacts
   -audio-analysis, --audio-analysis
       Generate local audio images and amplitude statistics in managed temporary storage before upload
   -audio-analysis-only, --audio-analysis-only

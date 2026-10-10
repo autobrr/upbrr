@@ -311,8 +311,9 @@ type RetainedAudioAnalysisLocalPath interface {
 }
 
 // DescriptionResources carries the current owner-scoped analysis alongside
-// retained media when a description depends on audio analysis.
+// retained media. HDR authority is resolved only for descriptions using automatic assets.
 type DescriptionResources struct {
+	HDR           func(context.Context) (api.HDRAnalysisResult, RetainedHDRAnalysisResource, error)
 	Media         any
 	AudioAnalysis api.AudioAnalysisResult
 	AudioPaths    RetainedAudioAnalysisLocalPath
@@ -527,6 +528,7 @@ type Repository interface {
 	Create(context.Context, string, string, api.WorkflowFingerprint, State) (State, bool, error)
 	Load(context.Context, string, api.WorkflowID) (State, error)
 	Save(context.Context, string, api.WorkflowRevision, State) error
+	CheckpointHDRExtractions(context.Context, string, api.WorkflowID, api.WorkflowRevision, map[api.HDRExtractionID]HDRExtractionRecord) error
 	Delete(context.Context, string, api.WorkflowID) error
 }
 
@@ -616,22 +618,26 @@ type State struct {
 	TrackerScope []api.TrackerID
 	// PreparationDemand retains normalized metadata requirements separately because
 	// PrepareInput omits its internal-only requirements from persisted JSON used for hydration.
-	PreparationDemand      api.MetadataRequirementSet
-	TrackerInputAnswers    map[api.TrackerID]map[string]string
-	FactInstructions       map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot
-	Releases               map[api.ReleaseSnapshotID]api.ReleaseSnapshot
-	InputReadiness         map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot
-	Catalogs               map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot
-	Runtimes               map[api.TrackerRuntimeSnapshotID]api.TrackerRuntimeSnapshot
-	Selections             map[api.TrackerSelectionID]api.TrackerSelection
-	ProjectionInstructions map[api.TrackerProjectionInstructionSnapshotID]api.TrackerProjectionInstructionSnapshot
-	Projections            map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet
-	Preflights             map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment
-	Dupes                  map[api.DupeAssessmentID]api.DupeAssessment
-	PendingDuplicateReuse  *PendingDuplicateReuse
-	TrackerApprovals       map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
-	Media                  map[api.MediaArtifactSetID]api.MediaArtifactSet
-	AudioAnalyses          map[api.AudioAnalysisResultID]api.AudioAnalysisResult
+	PreparationDemand            api.MetadataRequirementSet
+	TrackerInputAnswers          map[api.TrackerID]map[string]string
+	FactInstructions             map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot
+	Releases                     map[api.ReleaseSnapshotID]api.ReleaseSnapshot
+	InputReadiness               map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot
+	Catalogs                     map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot
+	Runtimes                     map[api.TrackerRuntimeSnapshotID]api.TrackerRuntimeSnapshot
+	Selections                   map[api.TrackerSelectionID]api.TrackerSelection
+	ProjectionInstructions       map[api.TrackerProjectionInstructionSnapshotID]api.TrackerProjectionInstructionSnapshot
+	Projections                  map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet
+	Preflights                   map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment
+	Dupes                        map[api.DupeAssessmentID]api.DupeAssessment
+	PendingDuplicateReuse        *PendingDuplicateReuse
+	TrackerApprovals             map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
+	Media                        map[api.MediaArtifactSetID]api.MediaArtifactSet
+	HDRAnalyses                  map[api.HDRAnalysisResultID]api.HDRAnalysisResult
+	HDRExtractions               map[api.HDRExtractionID]HDRExtractionRecord
+	PendingHDRAnalysis           *api.HDRAnalysisRef
+	PendingHDRAnalysisWorkflowID api.WorkflowID
+	AudioAnalyses                map[api.AudioAnalysisResultID]api.AudioAnalysisResult
 	// PendingAudioAnalysis retains the current result while an active input is
 	// reverified and prepared again. It is restored only for the same release.
 	PendingAudioAnalysis           *api.AudioAnalysisRef

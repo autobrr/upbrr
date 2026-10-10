@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  AnalyzeReleaseWorkflowHDRRequest,
   AnalyzeReleaseWorkflowAudioRequest,
   AttachReleaseWorkflowMediaRequest,
   CancelReleaseWorkflowRequest,
@@ -153,6 +154,22 @@ export const releaseWorkflowClient = {
       { workflowId: workflowID },
       { signal },
     ),
+  analyzeHDR: (command: AnalyzeReleaseWorkflowHDRRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("AnalyzeReleaseWorkflowHDR", command, { signal }),
+  hdrAnalysisURL: (
+    workflowID: string,
+    analysisID: string,
+    analysisRevision: number,
+    artifactID: string,
+  ) => {
+    const query = new URLSearchParams({
+      workflowId: workflowID,
+      analysisId: analysisID,
+      analysisRevision: String(analysisRevision),
+      artifactId: artifactID,
+    });
+    return withBasePath(`/api/app/release-workflow-hdr-analysis?${query.toString()}`);
+  },
   analyzeAudio: (command: AnalyzeReleaseWorkflowAudioRequest, signal?: AbortSignal) =>
     requestApp<ReleaseWorkflowCurrent>("AnalyzeReleaseWorkflowAudio", command, { signal }),
   setAudioAnalysisEnabled: (

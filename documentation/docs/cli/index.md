@@ -318,6 +318,19 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 | `--descfile <path>`          | `-descfile`, `-df`                  | Use a custom description file.                                                 |
 | `--desclink <url>`           | `-desclink`, `-pb`                  | Use a custom description link.                                                 |
 
+### HDR analysis options
+
+| Option                      | Purpose                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| `--hdr-analysis`            | Generate HDR10+ plots during upload.                                                  |
+| `--hdr-analysis-only`       | Analyze one MKV or Blu-ray content root without configuration or upload.              |
+| `--hdr-targets <id,id>`     | Select prepared opaque target IDs in source order for upload.                         |
+| `--hdr-playlist <number>`   | Select a numeric MPLS basename in standalone disc mode.                               |
+| `--hdr-peak-source <value>` | Choose `histogram` (default), `histogram99`, `max-scl`, or `max-scl-luminance`.       |
+| `--hdr-output-dir <path>`   | Required output parent for standalone mode; each run creates a fresh child directory. |
+
+Every selected target must complete for requested upload analysis. See [HDR analysis](../workflow/hdr-analysis.md) for supported inputs, local examples, retained metadata, and recovery.
+
 ### Audio analysis
 
 Use `--audio-analysis` to analyze prepared audio tracks during the upload workflow, or `--audio-analysis-only` to analyze one file without configuration or upload.

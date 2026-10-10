@@ -1246,9 +1246,19 @@ tracker-only questionnaire semantics; version the tracker projector instead.
 Non-disc TV-pack preparation uses the selected primary video's MediaInfo report. Passive pack
 consistency guidance must not request all-file collection, block on missing per-file reports,
 or ask users to establish source variation. A primary report cannot prove pack-wide consistency.
-Track ordering must use explicit measured container stream order, never MediaInfo document order,
-per-kind ordinals, or opaque native IDs. Unknown order remains evidence to resolve rather than a
-guessed violation.
+Track-order recommendations use explicit measured container stream order, never MediaInfo document
+order, per-kind ordinals, or opaque native IDs. They remain advisory for ordinary and personal
+releases; missing order evidence must not become an upload or questionnaire gate. Keep original-audio
+presence, default flags, permitted dubs, subtitles and compatibility requirements independent of
+track order. Do not change canonical primary-track selection or naming to relax an ordering check.
+Ordinary MediaInfo audio tracks contribute their inspected languages without a recognized title
+or an original/default flag. Explicit secondary roles remain excluded from programme languages;
+missing or contradictory language evidence remains unresolved. For non-disc packs, use
+`ProgrammeLanguageStatus(subject)` for programme-language eligibility against the existing
+MediaInfo-selected resource. Uninspected pack files produce passive coverage guidance, not a
+programme-language gate. Keep canonical language statuses and `TrackCoverageComplete` unchanged:
+they still describe collection-wide evidence and protect naming, source binding and independent
+requirements. Do not rewrite language facts to bypass coverage; questionnaire keys use those facts.
 
 Source-history, retention, provenance, quality and hypothetical subtitle concerns are passive
 advisories, not questionnaires or unresolved answer gates. Keep unknown facts unknown; warnings

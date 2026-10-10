@@ -188,6 +188,33 @@ func TestANTDescriptionPreservesUserTonemappingNotes(t *testing.T) {
 	}
 }
 
+func TestANTDescriptionAssetsPreserveLiteralHDRExamples(t *testing.T) {
+	t.Parallel()
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{"code", "pre"} {
+		t.Run(tag, func(t *testing.T) {
+			literal := "[" + tag + "][spoiler=source_hdr]literal example[/spoiler][/" + tag + "]"
+			assets, err := trackers.ResolveDescriptionAssets(t.Context(), "ANT", api.UploadSubject{
+				DescriptionOverride: literal + "\n\n[spoiler=source_hdr]stale plot[/spoiler]",
+				ExactMedia:          &api.ExactMediaAssets{},
+			}, nil, api.NopLogger{}, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if assets.Description != literal {
+				t.Fatalf("literal HDR example changed: got %q, want %q", assets.Description, literal)
+			}
+			result, err := prepareDescription(t.Context(), trackers.PreparationInput{Assets: &assets})
+			if err != nil || result.Description != literal {
+				t.Fatalf("prepared literal HDR example changed: description=%q err=%v", result.Description, err)
+			}
+		})
+	}
+}
+
 func TestANTScreenshotHeaderRequiresOwnedSection(t *testing.T) {
 	t.Parallel()
 	const header = "[b]Screenshots[/b]"

@@ -265,6 +265,9 @@ func (m *Module) Continue(
 	}
 	command, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), 0)
 	if command == nil {
+		if stage == "hdr-selection-required" || stage == "hdr-analysis-failed" {
+			return CommandResult{}, requestedHDRFailure(stage, current, request.Intent.HDRAnalysis)
+		}
 		return current, nil
 	}
 	if current.Release != nil && request.Intent.Preparation != nil &&
@@ -459,6 +462,7 @@ func (m *Module) hydrateContinuationPreparedRelease(
 	input.RequirePrepared = true
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
+	input.Controls.CaptureHDRMetadata = false
 	if err := m.attachVerifiedInput(ctx, ownerID, current.Workflow.ID, &input); err != nil {
 		return err
 	}
@@ -958,6 +962,23 @@ func planContinuationCommandWithReadiness(
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalMediaReady) {
 		return nil, ""
 	}
+	if request.Intent.HDRAnalysis != nil {
+		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
+		if err != nil {
+			return nil, "hdr-selection-required"
+		}
+		if !requestedHDRMatches(current, instructions) {
+			return AnalyzeHDRCommand{
+				WorkflowID:       workflowID,
+				ExpectedRevision: revision,
+				Instructions:     instructions,
+				IdempotencyKey:   key("analyze-hdr"),
+			}, "analyze-hdr"
+		}
+		if current.HDRAnalysis.Status != api.StageStatusCompleted || !current.Workflow.HDRAnalysisEnabled {
+			return nil, "hdr-analysis-failed"
+		}
+	}
 	if !mediaRequirementsPrepared(current.Media) {
 		var artifactIDs []api.PublicResourceID
 		if request.Intent.MediaSelection != nil {
@@ -1115,7 +1136,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return stageSucceeded(current.Media.Status)
 	case api.ScreenshotPurposePreview:
 		return false
-	case api.ScreenshotPurposeAudioAnalysis:
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
 		return false
 	}
 	return false
@@ -1276,6 +1297,13 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 }
 
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
+	if request.Intent.HDRAnalysis != nil && workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) {
+		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
+		if err != nil || !requestedHDRMatches(current, instructions) || current.HDRAnalysis.Status != api.StageStatusCompleted ||
+			!current.Workflow.HDRAnalysisEnabled {
+			return false
+		}
+	}
 	if current.Workflow.AllSelectedTrackersAlreadyUploaded() &&
 		len(withoutConfirmedSubmissions(request.Intent.TrackerIDs, current.Workflow.SubmissionExclusions)) == 0 {
 		return true
@@ -1370,6 +1398,7 @@ func preparationLineageFingerprint(input api.PrepareInput) (api.WorkflowFingerpr
 	input.Controls.Interaction = ""
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
+	input.Controls.CaptureHDRMetadata = false
 	if len(input.Instructions.TrackerIDs) == 0 {
 		input.Instructions.TrackerIDs = nil
 	}

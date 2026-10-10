@@ -3,6 +3,7 @@
 
 import type {
   ActiveInputSnapshot,
+  HDRAnalysisInstructions,
   AudioAnalysisInstructions,
   ContinueReleaseWorkflowRequest,
   FramePreview,
@@ -46,6 +47,20 @@ export type ReleaseWorkflowPorts = Readonly<{
   current(workflowID: string, signal: AbortSignal): Promise<ReleaseWorkflowCurrent>;
   operation(workflowID: string, operationID: string, signal: AbortSignal): Promise<Operation>;
   cancelOperation(workflowID: string, operationID: string, signal: AbortSignal): Promise<Operation>;
+  /** Submits one prepared generation and ordered HDR target selection for analysis. */
+  analyzeHDR(
+    current: ReleaseWorkflowCurrent,
+    instructions: HDRAnalysisInstructions,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  /** Addresses one artifact by its exact retained analysis revision. */
+  hdrAnalysisURL(
+    current: ReleaseWorkflowCurrent,
+    analysisID: string,
+    analysisRevision: number,
+    artifactID: string,
+  ): string;
   /** Submits one prepared generation and ordered track selection for analysis. */
   analyzeAudio(
     current: ReleaseWorkflowCurrent,

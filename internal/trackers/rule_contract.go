@@ -14,6 +14,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// ValidationContractID versions shared eligibility semantics independently of site policies.
+const ValidationContractID = "tracker-validation-primary-programme-v1"
+
 // ValidationCheck returns keyed tracker-specific constructibility or policy
 // failures without performing I/O or reading runtime secrets.
 type ValidationCheck func(ctx context.Context, subject api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error)
@@ -175,7 +178,11 @@ func EvaluatePreparationRules(
 		if fallback.Check == nil {
 			return nil, nil
 		}
-		return fallback.Check(ctx, subject, input.Logger)
+		failures, err := fallback.Check(ctx, subject, input.Logger)
+		if err != nil {
+			return nil, err
+		}
+		return append(failures, programmeCoverageGuidance(subject)...), nil
 	}
 	failures, err := EvaluateTrackerValidationWithRegistry(ctx, input.validationRegistry, input.Tracker, subject, input.Logger)
 	if err != nil {

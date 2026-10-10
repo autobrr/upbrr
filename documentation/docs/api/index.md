@@ -70,6 +70,16 @@ Submit questionnaire answers through the projection instructions defined by the 
 
 See [Tracker questions](../workflow/index.md#tracker-questions) for the equivalent browser workflow.
 
+### HDR-analysis routes
+
+| Route                                                                                 | Scope            | Purpose                                                                  |
+| ------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------ |
+| `POST /api/v1/workflows/{workflowId}/hdr-analysis`                                    | `workflow:write` | Start native analysis for ordered targets in the exact prepared release. |
+| `PUT /api/v1/workflows/{workflowId}/hdr-analysis/enabled`                             | `workflow:write` | Enable complete analysis or disable description inclusion.               |
+| `GET /api/v1/workflows/{workflowId}/hdr-analysis/{analysisId}/artifacts/{artifactId}` | `workflow:read`  | Stream one retained PNG from its exact analysis revision.                |
+
+Writes use `If-Match` and `Idempotency-Key`. Downloads require a positive `revision` query parameter and the workflow owner's authorization. Partial results remain downloadable but cannot be enabled. Composite upload requests can include `hdrAnalysis` with ordered `targetIds` and `peakSource`; all requested targets must complete. See [HDR analysis](../workflow/hdr-analysis.md) and the running OpenAPI schemas.
+
 ### Audio-analysis routes
 
 Audio analysis is a workflow-bound optional operation:

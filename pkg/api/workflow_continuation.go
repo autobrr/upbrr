@@ -89,6 +89,7 @@ type WorkflowIntent struct {
 	DuplicateDecisions     map[TrackerID]DupeDecision                  `json:"duplicateDecisions,omitempty"`
 	// StaffTokenConfirmations attest staff-token possession for exact duplicate assessments.
 	StaffTokenConfirmations map[TrackerID]DupeAssessmentID `json:"staffTokenConfirmations,omitempty"`
+	HDRAnalysis             *HDRAnalysisRequest            `json:"hdrAnalysis,omitempty"`
 	Media                   *MediaCaptureInstructions      `json:"media,omitempty"`
 	MediaSelection          *WorkflowMediaSelection        `json:"mediaSelection,omitempty"`
 	Descriptions            *DescriptionInstructions       `json:"descriptions,omitempty"`
@@ -132,6 +133,11 @@ type ContinueReleaseWorkflowRequest struct {
 
 // Validate verifies request identity and typed desired-state shape.
 func (r ContinueReleaseWorkflowRequest) Validate() error {
+	if r.Intent.HDRAnalysis != nil {
+		if _, err := r.Intent.HDRAnalysis.Normalize(); err != nil {
+			return err
+		}
+	}
 	if r.Goal == WorkflowGoalTrackersProjected {
 		if r.Authority == nil {
 			return errors.New("tracker projection requires exact workflow authority")

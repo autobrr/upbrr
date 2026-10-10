@@ -1110,6 +1110,10 @@ export default function InputPage(props: Props) {
     : [];
 
   const playlist = view.playlist;
+  const [hdrCaptureDraft, setHDRCaptureDraft] = useState({ sourcePath: "", enabled: false });
+  const playlistSource = view.selectedSource || view.sourceDraft;
+  const captureHDRMetadata =
+    hdrCaptureDraft.sourcePath === playlistSource && hdrCaptureDraft.enabled;
   const playlistGroups = playlist.candidates.reduce<
     Array<{ discID: string; discName: string; candidates: typeof playlist.candidates }>
   >((groups, candidate) => {
@@ -1160,6 +1164,14 @@ export default function InputPage(props: Props) {
       </header>
 
       {view.correctionReview ? <SavedCorrectionReview facet={facet} /> : null}
+
+      {!playlist.required &&
+      view.status === "ready" &&
+      view.release?.Source?.SelectedPlaylists?.length ? (
+        <Button type="button" onClick={() => facet.reviewPlaylists()}>
+          Review selected playlists
+        </Button>
+      ) : null}
 
       {playlist.required ? (
         <section className={`${pageStyle.panel} mx-auto grid w-full max-w-2xl gap-3`}>
@@ -1228,15 +1240,42 @@ export default function InputPage(props: Props) {
               </Button>
             </div>
           ) : null}
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={captureHDRMetadata}
+              disabled={playlist.status === "processing"}
+              onChange={(event) =>
+                setHDRCaptureDraft({
+                  sourcePath: playlistSource,
+                  enabled: event.target.checked,
+                })
+              }
+            />
+            Check for HDR10+ in the selected playlists
+          </label>
+          <p className="text-sm text-muted-foreground">
+            Scans the selected video streams and generates HDR plots, even when a Blu-ray report is
+            cached.
+          </p>
           <div className="flex justify-end gap-2">
-            <Button type="button" onClick={facet.cancelPlaylistSelection}>
+            <Button
+              type="button"
+              onClick={() => {
+                setHDRCaptureDraft({ sourcePath: "", enabled: false });
+                facet.cancelPlaylistSelection();
+              }}
+            >
               Back
             </Button>
             <Button
               type="button"
               variant="primary"
               disabled={!playlistSelectionComplete || playlist.status === "processing"}
-              onClick={() => void facet.confirmPlaylists()}
+              onClick={() => {
+                setHDRCaptureDraft({ sourcePath: "", enabled: false });
+                void facet.confirmPlaylists(captureHDRMetadata);
+              }}
             >
               Confirm Selection
             </Button>

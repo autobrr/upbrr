@@ -320,7 +320,7 @@ for (const tracker of ["ANT", "BTN"] as const) {
             current.media?.artifacts
               .filter((artifact) => artifact.kind === "hosted_image")
               .map((artifact) => artifact.url),
-          ).toEqual([`${workspace.fake.url}/image/1.jpg`]);
+          ).toEqual([`${workspace.fake.url}/image/1`]);
           await page.getByRole("button", { name: "Descriptions" }).click();
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           await expect(editor).toHaveValue(editedDescription);
@@ -1040,7 +1040,7 @@ test("embedded web recovers saved corrections before a release snapshot and pres
         const continued = waitForAppMethod(page, "OpenActiveInput");
         await apply.click();
         const continuedResponse = await continued;
-        expect(continuedResponse.ok()).toBe(true);
+        expect(continuedResponse.ok(), app!.output()).toBe(true);
         const command = workflowCommandBody(
           "OpenActiveInput",
           continuedResponse.request().postDataJSON(),
@@ -1892,6 +1892,80 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
     expect(workspace.fake.counters.imageUploads).toBe(3);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
     expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded HDR description opens a full-size lightbox without a saved preview map", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    await runDuplicateCheck(page);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await page.getByRole("button", { name: "Generate screenshots" }).click();
+    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+    await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
+    await expect(page.getByText("1 saved")).toBeVisible();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await page.getByRole("button", { name: "Refresh descriptions" }).click();
+    await page.getByRole("button", { name: "Expand" }).click();
+    const url = "https://images.example.invalid/hdr.png";
+    await page.route(url, (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="1200"><rect width="100%" height="100%" fill="#5975a9"/></svg>',
+      }),
+    );
+    await page.getByRole("textbox").fill(`[spoiler=source_hdr][img]${url}[/img][/spoiler]`);
+    await page.getByRole("button", { name: "Render HDS", exact: true }).click();
+    const preview = page
+      .getByRole("heading", { name: "Rendered Raw Preview" })
+      .locator("../..")
+      .locator(".tracker-description.rendered");
+    await preview.locator("summary").click();
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate((mode) => {
+        const next = JSON.stringify({ version: 1, theme: "minimal", mode, accents: {} });
+        localStorage.setItem("upbrr:appearance:v1", next);
+        dispatchEvent(
+          new StorageEvent("storage", {
+            key: "upbrr:appearance:v1",
+            newValue: next,
+            storageArea: localStorage,
+          }),
+        );
+      }, mode);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await preview.getByRole("img").click();
+        const dialog = page.getByRole("dialog", { name: "Description image" });
+        const image = dialog.getByRole("img");
+        await expect(image).toHaveAttribute("src", url);
+        await expect
+          .poll(() =>
+            image.evaluate((image: HTMLImageElement) => ({
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+            })),
+          )
+          .toEqual({ width: 3000, height: 1200 });
+        const box = await image.boundingBox();
+        expect(box?.width).toBe(3000);
+        expect(box?.height).toBe(1200);
+        await dialog.getByRole("button", { name: "Close image preview" }).click();
+        await expect(dialog).toHaveCount(0);
+      }
+    }
   } finally {
     await app?.stop();
     await workspace.cleanup();

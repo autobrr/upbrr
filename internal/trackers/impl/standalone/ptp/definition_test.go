@@ -298,7 +298,7 @@ func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
 		Release:       api.ReleaseInfo{Resolution: "1080p"},
 		Container:     "mkv",
 	}
-	questionnaire := buildQuestionnaire(meta, "123", api.WorkflowExecutionModeNormal)
+	questionnaire := buildQuestionnaire(meta, "123")
 	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "subtitle_tags" {
 		t.Fatalf("questionnaire=%#v", questionnaire)
 	}
@@ -398,7 +398,7 @@ func TestPTPUploadUsesPreparedHardcodedLanguages(t *testing.T) {
 		Release:                    api.ReleaseInfo{Resolution: "1080p"},
 		Container:                  "mkv",
 	}
-	if questionnaire := buildQuestionnaire(meta, "123", api.WorkflowExecutionModeNormal); questionnaire != nil {
+	if questionnaire := buildQuestionnaire(meta, "123"); questionnaire != nil {
 		t.Fatalf("explicit hardcoded languages should not prompt again: %#v", questionnaire)
 	}
 	for _, answers := range []map[string]string{nil, {"hardcoded_subtitle_languages": "French"}} {

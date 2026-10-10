@@ -15,7 +15,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildQuestionnaire(meta api.UploadSubject, groupID string, mode api.WorkflowExecutionMode) *api.TrackerQuestionnaire {
+func buildQuestionnaire(meta api.UploadSubject, groupID string) *api.TrackerQuestionnaire {
 	answers := standalone.QuestionnaireAnswers(meta, "PTP")
 	fields := make([]api.TrackerQuestionnaireField, 0, 7)
 	if strings.TrimSpace(groupID) == "" {
@@ -62,7 +62,6 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string, mode api.Workflo
 		})
 	}
 	fields = append(fields, subtitleReviewFields(meta, answers)...)
-	fields = append(fields, languageReviewFields(api.NewTrackerValidationSubject(meta, "PTP"), mode)...)
 	if len(fields) == 0 {
 		return nil
 	}
@@ -80,14 +79,13 @@ var subtitleReviewOptions = []string{
 	"Hardcoded Subs (Non-English)",
 }
 
-// projectionQuestionnaire exposes applicable subtitle choices and language evidence.
+// projectionQuestionnaire exposes applicable subtitle choices.
 // New-group requirements are discovered during remote upload preparation.
 func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
 	fields := subtitleReviewFields(input.Meta, standalone.QuestionnaireAnswers(input.Meta, "PTP"))
 	if field := legacySubtitleField(input.Meta); field.Required || field.Value != "auto" {
 		fields = append(fields, field)
 	}
-	fields = append(fields, languageReviewFields(api.NewTrackerValidationSubject(input.Meta, "PTP"), input.ExecutionMode)...)
 	if len(fields) == 0 {
 		return nil
 	}
@@ -97,31 +95,10 @@ func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuesti
 	}
 }
 
-// languageReviewFields requests container order only when inspected tracks
-// cannot establish it. Source comparisons remain passive guidance.
-func languageReviewFields(subject api.TrackerValidationSubject, mode api.WorkflowExecutionMode) []api.TrackerQuestionnaireField {
-	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) || !strings.EqualFold(strings.TrimSpace(subject.Type), "REMUX") ||
-		!ptpRemuxNeedsOrderReview(subject.LanguageFacts) {
-		return nil
-	}
-	field := api.TrackerQuestionnaireField{
-		Key:      trackers.LanguageQuestionKey(subject, "remux_track_order"),
-		Label:    "PTP remux track order",
-		Kind:     "select",
-		Required: api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug,
-		Options:  []string{"main_first", "out_of_order", "unresolved"},
-		Help:     "Inspect the container track order. Does the inspected main programme audio precede every secondary audio track and all subtitles? Choose main_first only when verified for this prepared release. The default flag is assessed separately. MediaInfo document order and per-kind track numbers do not establish container order; this answer cannot clear a default-flag finding or programme-track limits.",
-	}
-	if value := subject.QuestionnaireAnswers[field.Key]; slices.Contains(field.Options, value) {
-		field.Value = value
-	}
-	return []api.TrackerQuestionnaireField{field}
-}
-
 // TrackerAnswerSchema retains CLI staging for group fields without publishing
 // speculative new-group requirements or making them canonical Input gates.
 func (d *Definition) TrackerAnswerSchema(input trackers.PreparationInput) *api.TrackerQuestionnaire {
-	questionnaire := buildQuestionnaire(input.Meta, "", input.ExecutionMode)
+	questionnaire := buildQuestionnaire(input.Meta, "")
 	questionnaire.Fields = append(questionnaire.Fields, legacySubtitleField(input.Meta))
 	for index := range questionnaire.Fields {
 		field := &questionnaire.Fields[index]

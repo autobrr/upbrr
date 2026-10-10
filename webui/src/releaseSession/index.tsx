@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  HDRAnalysisInstructions,
   AudioAnalysisInstructions,
   DescriptionInstructions,
   ContinueReleaseWorkflowRequest,
@@ -62,6 +63,7 @@ import {
   type PendingInputUpdate,
 } from "./projections";
 import type {
+  HDRAnalysisGenerateInput,
   AudioAnalysisGenerateInput,
   PreparationIntent,
   ReleaseRoute,
@@ -216,6 +218,14 @@ export function ReleaseSessionProvider({
   children: ReactNode;
 }>) {
   const [state, dispatch] = useReducer(sessionReducer, undefined, initialSessionState);
+  const [hdrCommandFailure, setHDRCommandFailure] = useState<Readonly<{
+    workflowID: string;
+    workflowRevision: number;
+    commandID: string;
+    operationID: string;
+    operationSequence: number;
+    message: string;
+  }> | null>(null);
   const [audioCommandFailure, setAudioCommandFailure] = useState<Readonly<{
     workflowID: string;
     workflowRevision: number;
@@ -262,6 +272,7 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset";
     sourcePath: string;
     intent: PreparationIntent;
+    captureHDRMetadata?: boolean;
   } | null>(null);
   const workflowRevisions = useRef<Partial<Record<WorkflowFacet, number>>>({});
   const lastWorkflowError = useRef<unknown>(null);
@@ -422,6 +433,9 @@ export function ReleaseSessionProvider({
     if (selectedTrackers) {
       dispatch({ type: "trackers_received", trackers: selectedTrackers });
     }
+    setHDRCommandFailure((failure) =>
+      failure && commandFailureSuperseded(failure, current) ? null : failure,
+    );
     setAudioCommandFailure((failure) =>
       failure && commandFailureSuperseded(failure, current) ? null : failure,
     );
@@ -1284,7 +1298,11 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset" | "candidate",
     sourcePath: string,
     intent: PreparationIntent,
-    controls: Readonly<{ confirmBDMVRescan: boolean; acceptPendingInput?: boolean }>,
+    controls: Readonly<{
+      confirmBDMVRescan: boolean;
+      captureHDRMetadata?: boolean;
+      acceptPendingInput?: boolean;
+    }>,
     commandRevision: number,
     correlationID: string,
     controller: AbortController,
@@ -1292,7 +1310,12 @@ export function ReleaseSessionProvider({
     releaseID = "",
   ): Promise<boolean> => {
     try {
-      const input = preparationInputForWorkflow(sourcePath, intent, controls.confirmBDMVRescan);
+      const input = preparationInputForWorkflow(
+        sourcePath,
+        intent,
+        controls.confirmBDMVRescan,
+        controls.captureHDRMetadata,
+      );
       const pendingPlaylist = workflowView.current?.workflow.requiredActions?.some(
         (action) => action.kind === "select_playlist" && action.status === "pending",
       );
@@ -1437,7 +1460,11 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset",
     requestedSource: string,
     requestedIntent: PreparationIntent,
-    controls: Readonly<{ confirmBDMVRescan: boolean; acceptPendingInput?: boolean }> = {
+    controls: Readonly<{
+      confirmBDMVRescan: boolean;
+      captureHDRMetadata?: boolean;
+      acceptPendingInput?: boolean;
+    }> = {
       confirmBDMVRescan: false,
     },
   ): Promise<boolean> => {
@@ -1479,7 +1506,12 @@ export function ReleaseSessionProvider({
         ? [...normalizedDefaultTrackers]
         : [...state.selectedTrackers],
     };
-    lastPreparation.current = { operation, sourcePath, intent };
+    lastPreparation.current = {
+      operation,
+      sourcePath,
+      intent,
+      captureHDRMetadata: controls.captureHDRMetadata,
+    };
     dispatch({
       type: "preparation_started",
       sourcePath,
@@ -2174,6 +2206,7 @@ export function ReleaseSessionProvider({
       ? {
           input: { available: true, reason: "" },
           trackerData: { available: false, reason: "Resolve recovery actions first." },
+          hdrAnalysis: { available: false, reason: "Resolve recovery actions first." },
           audioAnalysis: { available: false, reason: "Resolve recovery actions first." },
           duplicates: { available: false, reason: "Resolve recovery actions first." },
           screenshots: { available: false, reason: "Resolve recovery actions first." },
@@ -2191,6 +2224,7 @@ export function ReleaseSessionProvider({
               (track) => track.Kind === "audio",
             ),
           ),
+          Boolean(workflowView.current?.release?.display.hdrTargets?.length),
         );
   const workflowMedia = workflowView.current?.media;
   const workflowMediaURL = (artifactID: string) =>
@@ -2388,6 +2422,93 @@ export function ReleaseSessionProvider({
       : "";
   const trackerInputAnswers = state.trackerInputAnswers;
 
+  const retainedHDRAnalysis = (() => {
+    const current = workflowView.current;
+    const result = current?.hdrAnalysis;
+    const reference = current?.workflow.hdrAnalysis;
+    if (
+      !current?.release ||
+      !result ||
+      !reference ||
+      reference.id !== result.id ||
+      reference.revision !== result.revision ||
+      result.release.Generation !== current.release.release.Generation ||
+      result.release.SourcePath !== current.release.release.Source.SourcePath
+    )
+      return null;
+    return result;
+  })();
+  const hdrOperation =
+    latestWorkflowOperation?.operation === "analyze_hdr" &&
+    (latestWorkflowOperationIsActive ||
+      (latestWorkflowOperation.resultRevision ?? latestWorkflowOperation.revision) >=
+        (workflowView.current?.workflow.revision ?? 0))
+      ? latestWorkflowOperation
+      : null;
+  const hdrCommandError =
+    hdrCommandFailure &&
+    workflowView.current &&
+    !commandFailureSuperseded(hdrCommandFailure, workflowView.current)
+      ? hdrCommandFailure.message
+      : "";
+  const hdrError =
+    hdrCommandError ||
+    (hdrOperation?.failures || []).map((failure) => failure.failure.Message).join(" ") ||
+    retainedHDRAnalysis?.targets
+      .map((target) => target.failure?.message)
+      .filter(Boolean)
+      .join(" ") ||
+    "";
+  const hdrStatus = isActiveWorkflowOperation(hdrOperation ?? undefined)
+    ? "running"
+    : hdrError
+      ? "error"
+      : retainedHDRAnalysis
+        ? "ready"
+        : "idle";
+  const hdrMutationBlockedReason =
+    activeWorkflowOperation && !isActiveWorkflowOperation(hdrOperation ?? undefined)
+      ? "Wait for the running workflow operation before changing HDR analysis."
+      : "";
+  const runHDRAnalysis = (input: HDRAnalysisGenerateInput): Promise<boolean> =>
+    runBackendWorkflow(
+      (current, commandID, signal) => {
+        const release = current.release?.release;
+        if (!release) throw new Error("Prepare the release before generating HDR analysis.");
+        const instructions: HDRAnalysisInstructions = {
+          release: { SourcePath: release.Source.SourcePath, Generation: release.Generation },
+          targetIds: [...input.targetIDs],
+          peakSource: input.peakSource,
+          profileVersion: "hdr-analysis-v1",
+        };
+        return activePorts.workflow.analyzeHDR(current, instructions, commandID, signal);
+      },
+      {
+        onStart: () => setHDRCommandFailure(null),
+        onError: (error, authority) => {
+          const failedCurrent = commandFailureAuthorityFromError(error)?.current;
+          const analysis = failedCurrent?.hdrAnalysis;
+          const retainedFailure =
+            analysis?.attemptId === authority.operationID &&
+            failedCurrent?.workflow.hdrAnalysis?.id === analysis.id &&
+            failedCurrent.workflow.hdrAnalysis.revision === analysis.revision
+              ? analysis.targets
+                  .map((target) => target.failure?.message)
+                  .filter(Boolean)
+                  .join(" ")
+              : "";
+          setHDRCommandFailure({
+            ...authority,
+            message:
+              operationFailureFromError(error)?.Message ||
+              retainedFailure ||
+              (failedCurrent
+                ? "HDR analysis did not complete. Retry the failed work."
+                : "HDR analysis could not start. Retry the request."),
+          });
+        },
+      },
+    );
   const runAudioAnalysis = (input: AudioAnalysisGenerateInput): Promise<boolean> =>
     runBackendWorkflow(
       (current, commandID, signal) => {
@@ -2420,6 +2541,49 @@ export function ReleaseSessionProvider({
         onStart: () => setAudioCommandFailure(null),
       },
     );
+
+  const cancelHDRAnalysis = async (): Promise<boolean> => {
+    const current = stateRef.current.workflowView.current;
+    const operation = current?.operation;
+    if (
+      !current ||
+      operation?.operation !== "analyze_hdr" ||
+      !isActiveWorkflowOperation(operation)
+    ) {
+      return false;
+    }
+    abortController("workflow");
+    setHDRCommandFailure(null);
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    dispatch({ type: "active_input_loading" });
+    const commandID = `hdr-analysis-cancel-${operation.id}`;
+    try {
+      const canceled = await activePorts.workflow.cancelOperation(
+        current.workflow.id,
+        operation.id,
+        controller.signal,
+      );
+      await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
+      const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(latest);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setHDRCommandFailure({
+          ...backendCommandAuthority(commandID, current),
+          message:
+            operationFailureFromError(error)?.Message ||
+            "HDR analysis could not be canceled. Retry the request.",
+        });
+        failBackendWorkflow(error);
+      }
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
 
   const cancelAudioAnalysis = async (): Promise<boolean> => {
     const current = stateRef.current.workflowView.current;
@@ -2708,17 +2872,30 @@ export function ReleaseSessionProvider({
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
       choosePlaylists: (playlists, useAll) =>
         dispatch({ type: "playlist_draft_changed", playlists, useAll }),
-      confirmPlaylists: () => {
+      reviewPlaylists: () => {
+        const release = workflowView.current?.release?.release;
+        if (
+          activeWorkflowOperation ||
+          state.preparation.status !== "ready" ||
+          !release?.Source.SelectedPlaylists?.length
+        )
+          return;
+        dispatch({
+          type: "playlist_reviewed",
+          candidates: release.Source.SelectedPlaylists.map((candidate) => ({
+            ...candidate,
+            items: [...candidate.items],
+          })),
+        });
+      },
+      confirmPlaylists: (captureHDRMetadata = false) => {
         if (
           !state.playlist.required ||
           !playlistSelectionComplete(state.playlist.candidates, state.playlist.selected) ||
-          !state.preparation.correlationID
+          activeWorkflowOperation
         ) {
           return Promise.resolve(false);
         }
-        abortController("preparation");
-        const controller = new AbortController();
-        controllers.current.preparation = controller;
         const intent = cloneIntent({
           ...state.preparationIntent,
           playlist: {
@@ -2727,11 +2904,21 @@ export function ReleaseSessionProvider({
             UseAll: state.playlist.useAll,
           },
         });
+        if (state.preparation.status === "ready") {
+          return runPreparationFor("prepare", state.selectedSource, intent, {
+            confirmBDMVRescan: false,
+            captureHDRMetadata,
+          });
+        }
+        if (!state.preparation.correlationID) return Promise.resolve(false);
+        abortController("preparation");
+        const controller = new AbortController();
+        controllers.current.preparation = controller;
         const sourcePath = state.preparation.sourcePath;
         const commandRevision = state.commandRevision;
         const correlationID = state.preparation.correlationID;
         const operation = lastPreparation.current?.operation || "prepare";
-        lastPreparation.current = { operation, sourcePath, intent };
+        lastPreparation.current = { operation, sourcePath, intent, captureHDRMetadata };
         dispatch({
           type: "playlist_resumed",
           sourcePath,
@@ -2743,7 +2930,7 @@ export function ReleaseSessionProvider({
           operation,
           sourcePath,
           intent,
-          { confirmBDMVRescan: false },
+          { confirmBDMVRescan: false, captureHDRMetadata },
           commandRevision,
           correlationID,
           controller,
@@ -2785,6 +2972,7 @@ export function ReleaseSessionProvider({
           return Promise.resolve(false);
         return runPreparationFor(retry.operation, retry.sourcePath, retry.intent, {
           confirmBDMVRescan: true,
+          captureHDRMetadata: retry.captureHDRMetadata,
         });
       },
       selectCandidate,
@@ -2971,6 +3159,38 @@ export function ReleaseSessionProvider({
           ),
         );
       },
+    },
+    hdrAnalysis: {
+      view: {
+        available: access.hdrAnalysis.available,
+        status: hdrStatus,
+        releaseGeneration: Number(preparedRelease?.Generation || 0),
+        targets: workflowView.current?.release?.display.hdrTargets || [],
+        result: retainedHDRAnalysis,
+        phase: hdrOperation?.phase || "",
+        message: hdrOperation?.message || "",
+        progress: hdrOperation?.progress || 0,
+        mutationBlockedReason: hdrMutationBlockedReason,
+        error: hdrError,
+      },
+      generate: runHDRAnalysis,
+      retry: () =>
+        retainedHDRAnalysis
+          ? runHDRAnalysis({
+              targetIDs: retainedHDRAnalysis.targetIds,
+              peakSource: retainedHDRAnalysis.peakSource,
+            })
+          : Promise.resolve(false),
+      cancel: cancelHDRAnalysis,
+      artifactURL: (id) =>
+        workflowView.current && retainedHDRAnalysis
+          ? activePorts.workflow.hdrAnalysisURL(
+              workflowView.current,
+              retainedHDRAnalysis.id,
+              retainedHDRAnalysis.revision,
+              id,
+            )
+          : "",
     },
     audioAnalysis: {
       view: {

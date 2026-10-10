@@ -20,7 +20,7 @@ BOT_LOGIN = "github-actions[bot]"
 MAX_INPUT = 16384
 MAX_RESPONSE = 1048576
 MAX_SNAPSHOT = 524288
-OPERATIONS = {"issue_comment", "discussion_comment"}
+OPERATIONS = {"issue_comment", "pull_request_comment", "discussion_comment"}
 
 
 class Rejected(Exception):
@@ -57,11 +57,15 @@ def parse_request(raw, operation):
         raise Rejected("invalid JSON") from exc
     require(operation in OPERATIONS, "unsupported operation")
     keys = {"repository", "kind", "number", "source_hash", "head", "body"}
+    if operation == "pull_request_comment":
+        keys.add("reply_to")
     require(type(request) is dict and set(request) == keys, "unexpected request fields")
     require(request["repository"] == REPOSITORY, "wrong repository")
-    require(request["kind"] in ("issue", "discussion"), "unsupported item kind")
+    require(request["kind"] in ("issue", "pull_request", "discussion"), "unsupported item kind")
     require(type(request["number"]) is int and 0 < request["number"] < 2**31, "invalid number")
     require(operation == request["kind"] + "_comment", "wrong publisher job")
+    if operation == "pull_request_comment":
+        require(type(request["reply_to"]) is int and 0 < request["reply_to"] < 2**63, "invalid reply comment ID")
     for key, size in (("source_hash", 64), ("head", 40)):
         require(type(request[key]) is str and re.fullmatch(f"[0-9a-f]{{{size}}}", request[key]), "invalid digest")
     body = request["body"]
@@ -163,9 +167,14 @@ def collect(api, request, branch):
     head = api.call("GET", f"/repos/{REPOSITORY}/commits/{urllib.parse.quote(branch, safe='')}")["sha"]
     number = request["number"]
     comments = []
-    if request["kind"] == "issue":
+    if request["kind"] in ("issue", "pull_request"):
         item = api.call("GET", f"/repos/{REPOSITORY}/issues/{number}")
-        require("pull_request" not in item and item.get("number") == number, "not the requested issue")
+        require(item.get("number") == number, "not the requested item")
+        if request["kind"] == "pull_request":
+            pr = item.get("pull_request")
+            require(type(pr) is dict and pr.get("url") == f"https://api.github.com/repos/{REPOSITORY}/pulls/{number}", "not the requested pull request")
+        else:
+            require("pull_request" not in item, "not the requested issue")
         for page in range(1, 4):
             batch = api.call("GET", f"/repos/{REPOSITORY}/issues/{number}/comments?per_page=100&page={page}")
             require(type(batch) is list and len(comments) + len(batch) <= 200, "too many comments")
@@ -205,18 +214,24 @@ def execute(api, request, operation, branch, workflow_sha):
     source = collect(api, request, branch)
     key = digest({"operation": operation, "request": request})
     body = request["body"] + f"\n\n<!-- upbrr-bridge:{key} -->"
+    if operation == "pull_request_comment":
+        # Conversation replies are top-level issue comments, not review replies.
+        url = f"https://github.com/{REPOSITORY}/pull/{request['number']}#issuecomment-{request['reply_to']}"
+        body = f"In reply to [this comment]({url}):\n\n" + body
     previous = receipt(source, body)
     if previous is not None:
         return {"status": "already_published", "receipt_id": previous, "request_hash": key}
     require(source["head"] == workflow_sha == request["head"], "stale repository source")
     require(digest(source) == request["source_hash"], "stale item snapshot")
+    if operation == "pull_request_comment":
+        require(sum(entry["id"] == request["reply_to"] for entry in source["comments"]) == 1, "reply comment is not unique in this PR conversation")
     # Keep room for the new receipt in the bounded readback. Concurrent edits can
     # still exhaust these bounds; they are handled as uncertain, never retried.
     require(len(source["comments"]) < 200, "no room for receipt comment")
     require(len(canonical(source).encode()) + len(canonical(body).encode()) + 8192 <= MAX_SNAPSHOT, "no room for receipt snapshot")
     # Exactly one write attempt. Even a successful response needs independent readback.
     try:
-        if operation == "issue_comment":
+        if operation in ("issue_comment", "pull_request_comment"):
             api.call("POST", f"/repos/{REPOSITORY}/issues/{request['number']}/comments", {"body": body})
         else:
             api.graphql("mutation($id:ID!, $body:String!) { addDiscussionComment(input:{discussionId:$id,body:$body}) { comment { id } } }", {"id": source["id"], "body": body})

@@ -6,7 +6,7 @@ on:
         description: One authorized operation
         required: true
         type: choice
-        options: [issue_comment, discussion_comment]
+        options: [issue_comment, pull_request_comment, discussion_comment]
       request:
         description: Strict JSON request; repository text cannot authorize this dispatch
         required: true
@@ -39,6 +39,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BRIDGE_OPERATION: issue_comment
+        run: python3 scripts/actions_bridge/bridge.py
+  pull_request_comment:
+    if: >-
+      vars.ACTIONS_BRIDGE_ENABLED == 'approved' &&
+      github.repository == 'autobrr/upbrr' && github.actor_id == '13182387' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      inputs.operation == 'pull_request_comment'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: actions-bridge
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/actions_bridge
+      - name: Publish one authorized PR conversation reply
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BRIDGE_OPERATION: pull_request_comment
         run: python3 scripts/actions_bridge/bridge.py
   discussion_comment:
     if: >-
