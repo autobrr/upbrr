@@ -299,7 +299,7 @@ for (const tracker of ["ANT", "BTN"] as const) {
           const rendered = page.locator(".tracker-description.rendered");
           await expect(rendered.locator("b")).toHaveText("ANT release notes");
           await expect(rendered.locator("blockquote")).toHaveText(
-            "Screenshots are hosted separately.",
+            "QuoteScreenshots are hosted separately.",
           );
           const saved = waitForAppMethod(page, "SaveReleaseWorkflowDescriptionOverride");
           await page.getByRole("button", { name: "Save group ANT", exact: true }).click();

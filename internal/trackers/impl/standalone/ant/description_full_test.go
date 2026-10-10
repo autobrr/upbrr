@@ -230,7 +230,7 @@ func TestANTDescriptionPreservesLiteralScreenshotExamples(t *testing.T) {
 	const signature = "[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]"
 	for _, tag := range []string{"code", "pre"} {
 		t.Run(tag, func(t *testing.T) {
-			literal := "[" + tag + "]first\n\n  indented line\n" + gallery + "\n" + signature + "[/" + tag + "]"
+			literal := "[" + tag + "]first\n\n\n  indented line\n" + gallery + "\n" + signature + "[/" + tag + "]"
 			result, err := prepareDescription(t.Context(), trackers.PreparationInput{
 				Runtime: trackers.PreparationRuntimeFromConfig(config.Config{Description: config.DescriptionSettingsConfig{ScreenshotHeader: header}}),
 				Assets: &trackers.DescriptionAssets{
