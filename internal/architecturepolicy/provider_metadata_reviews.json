@@ -684,8 +684,8 @@
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence."
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
-    "sha256": "01651aa91e785f32e17be93d9551029988f06e9208297b8d78b46332eb39e163"
+    "reason": "Selected-resource programme eligibility review: canonical facts and questionnaire keys remain unchanged. The independent Foreign/country requirement retains explicit-answer precedence and current source/identity-bound provider evidence; naming and provider selectors are unchanged.",
+    "sha256": "300e3e30e8ee6a5cccb31174ea539c0e0f9e24c0d39183bf8b492d0dcd8ac445"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",

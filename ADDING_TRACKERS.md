@@ -1235,7 +1235,12 @@ presence, default flags, permitted dubs, subtitles and compatibility requirement
 track order. Do not change canonical primary-track selection or naming to relax an ordering check.
 Ordinary MediaInfo audio tracks contribute their inspected languages without a recognized title
 or an original/default flag. Explicit secondary roles remain excluded from programme languages;
-missing or contradictory language evidence and incomplete inspected coverage remain unresolved.
+missing or contradictory language evidence remains unresolved. For non-disc packs, use
+`ProgrammeLanguageStatus(subject)` for programme-language eligibility against the existing
+MediaInfo-selected resource. Uninspected pack files produce passive coverage guidance, not a
+programme-language gate. Keep canonical language statuses and `TrackCoverageComplete` unchanged:
+they still describe collection-wide evidence and protect naming, source binding and independent
+requirements. Do not rewrite language facts to bypass coverage; questionnaire keys use those facts.
 
 Source-history, retention, provenance, quality and hypothetical subtitle concerns are passive
 advisories, not questionnaires or unresolved answer gates. Keep unknown facts unknown; warnings

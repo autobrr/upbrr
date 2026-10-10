@@ -78,6 +78,7 @@ func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint
 		UploadContentMode UploadContentMode
 		Rules             *ruleFingerprint
 		ValidationPolicy  string
+		RuleContract      string
 		Artifact          *ArtifactPolicy
 		DataPolicy        *DataLookupPolicy
 		BannedGroups      []string
@@ -107,6 +108,7 @@ func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint
 		UploadContentMode: descriptor.UploadContentMode,
 		Rules:             rules,
 		ValidationPolicy:  descriptor.Validation.ID,
+		RuleContract:      ValidationContractID,
 		Artifact:          descriptor.Artifact,
 		DataPolicy:        descriptor.DataPolicy,
 		BannedGroups:      slices.Clone(descriptor.BannedGroups),

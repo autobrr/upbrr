@@ -260,6 +260,7 @@ func evaluateValidationPolicy(
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %s validation policy %s: %w", strings.ToUpper(strings.TrimSpace(tracker)), descriptor.Validation.ID, err)
 	}
+	failures = append(failures, programmeCoverageGuidance(subject)...)
 	normalized := make([]api.RuleFailure, 0, len(failures))
 	for _, failure := range failures {
 		normalized = append(normalized, NormalizeRuleFailure(failure))

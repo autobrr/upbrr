@@ -69,11 +69,6 @@ func ResolveLanguages(media api.MediaFacts) api.LanguageFacts {
 			continue
 		}
 		audioCount++
-		if track.Role == "" || ((track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) && !knownLanguages(track.Languages)) {
-			if facts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
-				facts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
-			}
-		}
 		if track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix {
 			facts.ProgrammeLanguages = append(facts.ProgrammeLanguages, track.Languages...)
 		}
@@ -92,11 +87,7 @@ func ResolveLanguages(media api.MediaFacts) api.LanguageFacts {
 		}
 		facts.ProgrammeLanguages = corrected
 	}
-	if len(facts.ProgrammeLanguages) == 0 || !knownLanguages(facts.ProgrammeLanguages) {
-		if facts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
-			facts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
-		}
-	}
+	facts.ProgrammeStatus = InspectedProgrammeStatus(facts)
 	if !media.TrackCoverageComplete {
 		if facts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
 			facts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
@@ -115,6 +106,36 @@ func ResolveLanguages(media api.MediaFacts) api.LanguageFacts {
 		facts.AudioStatus = api.MetadataEvidenceStatusPartial
 	}
 	return facts
+}
+
+// InspectedProgrammeStatus assesses finalized languages and roles in the inspected
+// tracks, without asserting collection-wide coverage. Conflicts and clears remain unresolved.
+func InspectedProgrammeStatus(facts api.LanguageFacts) api.MetadataEvidenceStatus {
+	if facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory {
+		return facts.ProgrammeStatus
+	}
+	if !knownLanguages(facts.ProgrammeLanguages) {
+		return api.MetadataEvidenceStatusPartial
+	}
+	var languages []string
+	for _, track := range facts.Tracks {
+		if track.Kind != api.MediaTrackAudio {
+			continue
+		}
+		if track.Role == "" {
+			return api.MetadataEvidenceStatusPartial
+		}
+		if track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix {
+			if !knownLanguages(track.Languages) {
+				return api.MetadataEvidenceStatusPartial
+			}
+			languages = append(languages, track.Languages...)
+		}
+	}
+	if !sameLanguages(languageutil.NormalizeLanguageList(languages), facts.ProgrammeLanguages) {
+		return api.MetadataEvidenceStatusPartial
+	}
+	return api.MetadataEvidenceStatusComplete
 }
 
 func knownLanguages(values []string) bool {

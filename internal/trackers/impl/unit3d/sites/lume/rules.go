@@ -97,7 +97,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 // treating secondary tracks as normal dubs. Original alternate mixes belong with original audio.
 func trackOrderingFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	facts := subject.LanguageFacts
-	if facts.AudioAbsent || !facts.OriginalLanguagesKnown || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
+	if facts.AudioAbsent || !facts.OriginalLanguagesKnown || trackers.ProgrammeLanguageStatus(subject) != api.MetadataEvidenceStatusComplete {
 		return nil
 	}
 	audioTracks, orderKnown := orderedAudioTracks(facts.Tracks)

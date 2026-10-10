@@ -79,6 +79,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 		return nil
 	}
 	facts := subject.LanguageFacts
+	programmeStatus := ProgrammeLanguageStatus(subject)
 	var failures []api.RuleFailure
 	add := func(key, reason string, outcome LanguageOutcome) {
 		if outcome != "" {
@@ -107,14 +108,14 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	if needsOriginal && !originalKnown {
 		add("original_evidence", "original language evidence needs review", LanguageUnresolved)
 	}
-	hasEnglish := facts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(facts.ProgrammeLanguages, "English")
+	hasEnglish := programmeStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(facts.ProgrammeLanguages, "English")
 	englishSubs := slices.Contains(facts.SubtitleLanguages, "English")
 	needsProgramme := policy.OriginalAudio != "" || policy.ExtraDubs != "" || policy.OriginalFirst != "" || policy.OriginalDefault != "" ||
 		(policy.EnglishSubtitles == "foreign_without_dub" || policy.EnglishSubtitles == "without_english") && !englishSubs && !hasEnglish
-	if needsProgramme && facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
+	if needsProgramme && programmeStatus != api.MetadataEvidenceStatusComplete {
 		add("evidence", "programme language, track role or inspected coverage needs review", LanguageUnresolved)
 	}
-	if originalKnown && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !facts.HasOriginalAudio() {
+	if originalKnown && programmeStatus == api.MetadataEvidenceStatusComplete && !facts.HasOriginalAudio() {
 		add("original", "missing mandatory original-language programme audio", policy.OriginalAudio)
 	}
 	if originalKnown {
@@ -135,7 +136,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	if needsSubs && !englishSubs {
 		outcome := policy.MissingSubtitles
 		if facts.SubtitleStatus != api.MetadataEvidenceStatusComplete ||
-			((policy.EnglishSubtitles == "foreign_without_dub" || policy.EnglishSubtitles == "without_english") && facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete) {
+			((policy.EnglishSubtitles == "foreign_without_dub" || policy.EnglishSubtitles == "without_english") && programmeStatus != api.MetadataEvidenceStatusComplete) {
 			outcome = LanguageUnresolved
 		}
 		add("subtitles", "missing English subtitles", outcome)
@@ -186,7 +187,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 			}
 		}
 	}
-	if policy.OriginalFirst != "" && originalKnown && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete {
+	if policy.OriginalFirst != "" && originalKnown && programmeStatus == api.MetadataEvidenceStatusComplete {
 		// The first programme track must be original; later original mixes may follow dubs.
 		var originals, others []api.MediaTrackFacts
 		orders := make(map[int]int)
@@ -228,7 +229,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 		}
 	}
 	if policy.OriginalDefault != "" {
-		knownDefault, unknownDefault := false, !originalKnown || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete
+		knownDefault, unknownDefault := false, !originalKnown || programmeStatus != api.MetadataEvidenceStatusComplete
 		for _, track := range facts.Tracks {
 			if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) ||
 				!slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) }) {
