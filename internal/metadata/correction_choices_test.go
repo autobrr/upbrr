@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -27,7 +28,7 @@ func TestCorrectionChoices(t *testing.T) {
 			byField[field][choice.Value] = choice.Label
 		}
 	}
-	services := serviceCodeMap()
+	services := metautil.ServiceCodeMap()
 	serviceValues := make(map[string]bool)
 	for _, value := range services {
 		serviceValues[value] = true

@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -67,7 +68,7 @@ func CorrectionChoices() (map[string][]CorrectionChoice, error) {
 			}
 		}
 	}
-	services := serviceCodeMap()
+	services := metautil.ServiceCodeMap()
 	serviceNames := make(map[string]string)
 	for _, service := range services {
 		serviceNames[service] = serviceLongName(service, services)

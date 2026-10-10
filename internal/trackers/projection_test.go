@@ -251,7 +251,7 @@ func TestNilPolicyProjectionInvalidatesPreTitleInferenceContract(t *testing.T) {
 		Policy           *DupePolicy
 		GroupRestriction DupeGroupRestriction
 	}{
-		GeneralPolicyID: "general/duplicate/v8",
+		GeneralPolicyID: "general/duplicate/v9",
 		ID:              projection.DuplicatePolicyID,
 	})
 	if err != nil {
