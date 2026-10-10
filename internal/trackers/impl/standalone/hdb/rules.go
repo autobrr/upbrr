@@ -18,7 +18,6 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	policy := trackers.LanguagePolicy{ExtraDubs: trackers.LanguageProhibited, DisallowedRoles: []api.AudioTrackRole{api.AudioRoleDescription}}
 	if strings.EqualFold(subject.Type, "REMUX") {
 		policy.OriginalAudio = trackers.LanguageProhibited
-		policy.OriginalPrimary = true
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	if subject.LanguageFacts.HasEnglishDub() {

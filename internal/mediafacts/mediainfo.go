@@ -19,6 +19,21 @@ type MediaInfoDocument struct {
 	} `json:"media"`
 }
 
+// HDR10PlusTrackFromMediaInfo requires one HEVC video track with explicit HDR10+ evidence.
+// Container track IDs remain private to the native extractor.
+func HDR10PlusTrackFromMediaInfo(doc MediaInfoDocument) bool {
+	count := 0
+	confirmed := false
+	for _, track := range doc.Media.Track {
+		if !strings.EqualFold(mediaInfoValue(track, "@type"), "video") || !strings.EqualFold(mediaInfoValue(track, "Format"), "HEVC") {
+			continue
+		}
+		count++
+		confirmed = slices.Contains(hdrFromMediaInfoTrack(track).Formats, api.HDRFormatHDR10Plus)
+	}
+	return count == 1 && confirmed
+}
+
 var (
 	mediaInfoSectionPattern        = regexp.MustCompile(`(?i)^(general|video|audio|text)(?:\s*#\d+)?$`)
 	mediaInfoWhitespacePattern     = regexp.MustCompile(`\s+`)

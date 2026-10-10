@@ -12,10 +12,12 @@ import (
 	"strings"
 	"sync"
 
+	bridge "github.com/Audionut/go-hdr10-plus/integration/bdinfo"
 	bdrunner "github.com/autobrr/go-bdinfo/pkg/bdinfo"
 
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	"github.com/autobrr/upbrr/internal/services/hdranalysis"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -142,6 +144,7 @@ func emitDetailedProgressEvent(reporter ProgressReporter, event bdrunner.Progres
 // reports.
 type Service struct {
 	logger api.Logger
+	hdr    *hdranalysis.Service
 }
 
 // ScanResult contains the rendered report payload and its persisted location.
@@ -149,6 +152,17 @@ type ScanResult struct {
 	ReportPath string
 	ReportText string
 }
+
+type hdrCaptureKey struct{}
+type HDRCapture func(*bridge.Outcome) error
+
+// WithHDRCapture collects HDR metadata during the next report scan.
+func WithHDRCapture(ctx context.Context, capture HDRCapture) context.Context {
+	return context.WithValue(ctx, hdrCaptureKey{}, capture)
+}
+
+// SetHDRService installs the same admission owner used by workflow and standalone analysis.
+func (s *Service) SetHDRService(service *hdranalysis.Service) { s.hdr = service }
 
 type progressReporterKey struct{}
 
@@ -238,7 +252,7 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 	} else {
 		logger.Debugf("bdinfo: running in-process full-disc scan")
 	}
-	result, err := runBDInfo(ctx, runRequest{
+	req := runRequest{
 		BDMVPath:     bdmvPath,
 		PlaylistName: playlistName,
 		ReportPath:   outputPath,
@@ -247,7 +261,40 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 			emitProgressEvent(reporter, event)
 		},
 		SummaryOnly: summaryOnly,
-	})
+	}
+	var result bdrunner.Result
+	var err error
+	if capture, ok := ctx.Value(hdrCaptureKey{}).(HDRCapture); ok && capture != nil && s.hdr != nil {
+		err = s.hdr.WithSession(ctx, func(session *hdranalysis.Session) error {
+			settings := bdrunner.DefaultSettings(filepath.Dir(outputPath))
+			settings.GenerateStreamDiagnostics = false
+			settings.ExtendedStreamDiagnostics = true
+			settings.SummaryOnly = summaryOnly
+			settings.GenerateTextSummary = true
+			settings.PlaylistOnly = playlistName
+			options := bdrunner.Options{
+				Path:            bdmvPath,
+				ReportPath:      outputPath,
+				Settings:        settings,
+				OnProgress:      req.OnProgress,
+				IncludeTimeline: true,
+			}
+			outcome, scanErr := session.ScanDisc(ctx, options)
+			if scanErr != nil {
+				return fmt.Errorf("combined HDR report scan: %w", scanErr)
+			}
+			if outcome == nil || outcome.Report == nil {
+				return errors.New("bdinfo: combined scan returned no report")
+			}
+			result = *outcome.Report
+			if captureErr := capture(outcome); captureErr != nil {
+				logger.Warnf("bdinfo: HDR capture state=unavailable")
+			}
+			return nil
+		})
+	} else {
+		result, err = runBDInfo(ctx, req)
+	}
 	if err != nil {
 		logger.Debugf("bdinfo: in-process execution failed: %v", err)
 		return ScanResult{}, fmt.Errorf("bdinfo: execution failed: %w", err)

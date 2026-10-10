@@ -106,7 +106,7 @@ func TestBHDRemuxRecommendationsStayAdvisory(t *testing.T) {
 	if slices.ContainsFunc(languageAssessment(subject), func(f api.RuleFailure) bool { return f.Rule == "language_foreign_dialogue_subtitles" }) {
 		t.Fatal("absent audio acquired hypothetical subtitle guidance")
 	}
-	requireBHDValidationFailure(t, languageAssessment(subject), "language_primary_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	requireBHDValidationFailure(t, languageAssessment(subject), "language_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 }
 
 func TestBHDAnimationPreferenceAndMeasuredRestrictions(t *testing.T) {

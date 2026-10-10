@@ -56,7 +56,7 @@ func TestPTPEditionFeatureCatalogueAndPayloadAgree(t *testing.T) {
 	if fields["remaster_title"] != strings.Join(selected, " / ") || fields["remaster"] != "on" {
 		t.Fatalf("payload disagrees: %#v", fields)
 	}
-	preview := buildUploadPreview(uploadState{fields: fields}, meta, api.WorkflowExecutionModeNormal)
+	preview := buildUploadPreview(uploadState{fields: fields}, meta)
 	if !slices.Equal(preview.EditionFeatures, options) || preview.Payload["remaster_title"] != fields["remaster_title"] {
 		t.Fatalf("preview disagrees: %#v", preview)
 	}

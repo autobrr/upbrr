@@ -19,6 +19,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		return nil
 	}
 	facts := subject.LanguageFacts
+	programmeStatus := trackers.ProgrammeLanguageStatus(subject)
 	if ptpNoProgrammeDialogue(facts) {
 		return ptpRemuxLanguageFailures(subject)
 	}
@@ -27,7 +28,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
 	}
 	needsOriginal := slices.ContainsFunc(facts.ProgrammeLanguages, func(language string) bool { return language != "English" && language != "ZXX" })
-	if (needsOriginal && !facts.OriginalLanguagesKnown) || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
+	if (needsOriginal && !facts.OriginalLanguagesKnown) || programmeStatus != api.MetadataEvidenceStatusComplete {
 		add("evidence", "original/programme language and track-role evidence is unresolved", trackers.LanguageUnresolved)
 	} else if len(facts.ProgrammeLanguages) > 0 && !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
 		add("non_english_dub", "Non-English Language Dub; a replacement must resolve this defect", trackers.LanguageTrumpable)
@@ -46,7 +47,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		failures = append(failures, failure)
 	}
 	primary := ptpPrimaryProgrammeLanguage(facts)
-	if primary == "" && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.SubtitleLanguages, "English") {
+	if primary == "" && programmeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.SubtitleLanguages, "English") {
 		failure := trackers.LanguageRuleFailure(
 			subject,
 			"primary_evidence",
@@ -69,7 +70,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	return failures
 }
 
-// ptpRemuxLanguageFailures checks measured remux track/default boundaries
+// ptpRemuxLanguageFailures checks measured remux default and programme boundaries
 // independently of source-comparison guidance about additional programme audio.
 func ptpRemuxLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	if !strings.EqualFold(strings.TrimSpace(subject.Type), "REMUX") {
@@ -87,45 +88,22 @@ func ptpRemuxLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFa
 	switch {
 	case !facts.TrackCoverageComplete || !primaryKnown:
 		add(
-			"remux_track_order",
-			"the inspected main programme track and complete remux track manifest must be established before ordering can be assessed",
+			"remux_main_default",
+			"the inspected main programme track and complete remux track manifest must be established before the main audio default flag can be assessed",
 			trackers.LanguageUnresolved,
 		)
 	case !primary.DefaultKnown:
 		add(
-			"remux_track_order",
-			"default main audio is not established for track "+primary.ID+"; inspect its default flag before assessing remux order",
+			"remux_main_default",
+			"default main audio is not established for track "+primary.ID+"; inspect its default flag",
 			trackers.LanguageUnresolved,
 		)
-	default:
-		if !primary.Default {
-			add(
-				"remux_main_default",
-				"the main programme audio is explicitly not flagged default; a compliant replacement must correct its default flag",
-				trackers.LanguageTrumpable,
-			)
-		}
-		outOfOrder, complete := ptpRemuxOrderEvidence(facts)
-		if !complete {
-			switch subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "remux_track_order")] {
-			case "main_first":
-			case "out_of_order":
-				outOfOrder = true
-			default:
-				add(
-					"remux_track_order_evidence",
-					"container ordering must establish that default main audio precedes secondary audio and subtitles",
-					trackers.LanguageUnresolved,
-				)
-			}
-		}
-		if outOfOrder {
-			add(
-				"remux_track_order",
-				"default main audio does not precede every secondary audio track and subtitle; a compliant replacement must correct the remux order",
-				trackers.LanguageTrumpable,
-			)
-		}
+	case !primary.Default:
+		add(
+			"remux_main_default",
+			"the main programme audio is explicitly not flagged default; a compliant replacement must correct its default flag",
+			trackers.LanguageTrumpable,
+		)
 	}
 	if subject.Anime && !ptpNoProgrammeDialogue(facts) && facts.TrackCoverageComplete && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete {
 		if reason, outcome := ptpAnimeRemuxProgrammeIssue(facts); reason != "" {
@@ -133,46 +111,6 @@ func ptpRemuxLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFa
 		}
 	}
 	return failures
-}
-
-// ptpRemuxOrderEvidence uses measured cross-kind container order only. A known
-// inversion remains a defect even when another track's position is unknown.
-func ptpRemuxOrderEvidence(facts api.LanguageFacts) (outOfOrder, complete bool) {
-	primary, ok := ptpPrimaryProgrammeTrack(facts)
-	if !ok {
-		return false, false
-	}
-	complete = true
-	seen := map[int]bool{}
-	for _, track := range facts.Tracks {
-		if track.Kind != api.MediaTrackAudio && track.Kind != api.MediaTrackSubtitle {
-			continue
-		}
-		if !track.StreamOrderKnown || track.StreamOrder < 0 || seen[track.StreamOrder] {
-			complete = false
-		} else {
-			seen[track.StreamOrder] = true
-		}
-		if track.ID != primary.ID && primary.StreamOrderKnown && track.StreamOrderKnown && track.StreamOrder >= 0 && track.StreamOrder < primary.StreamOrder {
-			outOfOrder = true
-		}
-	}
-	// No relative order needs establishing when there is only the main track.
-	if !slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
-		return (track.Kind == api.MediaTrackAudio || track.Kind == api.MediaTrackSubtitle) && track.ID != primary.ID
-	}) {
-		return false, true
-	}
-	return outOfOrder, complete
-}
-
-func ptpRemuxNeedsOrderReview(facts api.LanguageFacts) bool {
-	primary, ok := ptpPrimaryProgrammeTrack(facts)
-	if !ok || !primary.DefaultKnown || !facts.TrackCoverageComplete {
-		return false
-	}
-	_, complete := ptpRemuxOrderEvidence(facts)
-	return !complete
 }
 
 func ptpAnimeRemuxProgrammeIssue(facts api.LanguageFacts) (string, trackers.LanguageOutcome) {

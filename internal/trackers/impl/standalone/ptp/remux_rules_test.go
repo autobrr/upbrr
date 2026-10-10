@@ -12,9 +12,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func ptpReviewedRemux(subject api.TrackerValidationSubject) api.TrackerValidationSubject {
+func ptpRemuxSubject(subject api.TrackerValidationSubject) api.TrackerValidationSubject {
 	subject.Type, subject.DiscType = "REMUX", "BDMV"
-	ptpLanguageAnswer(&subject, "remux_track_order", "main_first")
 	return subject
 }
 
@@ -76,7 +75,7 @@ func TestPTPAnimeRemuxProgrammeBoundary(t *testing.T) {
 			if test.role != "" {
 				subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].Role = test.role
 			}
-			subject = ptpReviewedRemux(subject)
+			subject = ptpRemuxSubject(subject)
 			failures := ptpNonAdvisoryFailures(subject)
 			found := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_anime_remux_programme" })
 			if found != test.wantIssue {
@@ -86,47 +85,6 @@ func TestPTPAnimeRemuxProgrammeBoundary(t *testing.T) {
 				t.Fatalf("permitted programme set blocked: %#v", failures)
 			}
 		})
-	}
-}
-
-func TestPTPRemuxOrderingRequiresCurrentEvidence(t *testing.T) {
-	subject := ptpReviewedRemux(ptpLanguageSubject("Japanese", "Japanese", "English"))
-	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-		ID:        "sub-1",
-		Kind:      api.MediaTrackSubtitle,
-		Languages: []string{"English"},
-	})
-	// Ordinals and IDs are not container-order evidence across stream kinds.
-	for i := range subject.LanguageFacts.Tracks {
-		subject.LanguageFacts.Tracks[i].NativeID = "1"
-		subject.LanguageFacts.Tracks[i].Ordinal = i + 1
-	}
-	requirePTPLanguageFailure(t, languageFailures(subject), "language_remux_track_order_evidence", api.RuleDispositionStrict)
-	fields := languageReviewFields(subject, api.WorkflowExecutionModeNormal)
-	key := trackers.LanguageQuestionKey(subject, "remux_track_order")
-	fieldIndex := slices.IndexFunc(fields, func(field api.TrackerQuestionnaireField) bool { return field.Key == key })
-	if fieldIndex < 0 || fields[fieldIndex].Value != "" || !fields[fieldIndex].Required || !strings.Contains(fields[fieldIndex].Help, "subtitles") {
-		t.Fatalf("missing current order review: %#v", fields)
-	}
-	ptpLanguageAnswer(&subject, "remux_track_order", "main_first")
-	if failures := ptpNonAdvisoryFailures(subject); len(failures) != 0 {
-		t.Fatalf("reviewed remux order blocked: %#v", failures)
-	}
-	ptpLanguageAnswer(&subject, "remux_track_order", "out_of_order")
-	if failures := ptpNonAdvisoryFailures(subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_remux_track_order" }) {
-		t.Fatalf("known bad order ignored: %#v", failures)
-	}
-	ptpLanguageAnswer(&subject, "remux_track_order", "main_first")
-	for _, change := range []func(*api.TrackerValidationSubject){
-		func(s *api.TrackerValidationSubject) { s.Identity.Generation++ },
-		func(s *api.TrackerValidationSubject) { s.LanguageFacts.Tracks[1].Default = true },
-		func(s *api.TrackerValidationSubject) { s.LanguageFacts.Tracks[1].Role = api.AudioRoleCommentary },
-		func(s *api.TrackerValidationSubject) { slices.Reverse(s.LanguageFacts.Tracks) },
-	} {
-		changed := subject
-		changed.LanguageFacts = subject.LanguageFacts.Clone()
-		change(&changed)
-		requirePTPLanguageFailure(t, languageFailures(changed), "language_remux_track_order_evidence", api.RuleDispositionStrict)
 	}
 }
 
@@ -151,13 +109,9 @@ func TestPTPRemuxMissingPrimaryDefaultAndProgrammeEvidence(t *testing.T) {
 			subject := ptpLanguageSubject("Japanese", "Japanese", "English")
 			subject.Anime = true
 			test.change(&subject)
-			subject = ptpReviewedRemux(subject)
+			subject = ptpRemuxSubject(subject)
 			failures := ptpNonAdvisoryFailures(subject)
-			if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-				return f.Disposition == api.RuleDispositionStrict && strings.Contains(f.Reason, "Unresolved")
-			}) {
-				t.Fatalf("missing measured evidence cleared by ordering/purpose answers: %#v", failures)
-			}
+			requirePTPLanguageFailure(t, failures, "language_remux_main_default", api.RuleDispositionStrict)
 		})
 	}
 }
@@ -167,7 +121,7 @@ func TestPTPRemuxBoundariesDoNotBroadenEligibility(t *testing.T) {
 		for _, releaseType := range []string{"DISC", "ENCODE", "REMUX"} {
 			subject := ptpLanguageSubject("Japanese", "Japanese", "English", "German")
 			subject.Anime = anime
-			subject = ptpReviewedRemux(subject)
+			subject = ptpRemuxSubject(subject)
 			subject.Type = releaseType
 			if releaseType == "ENCODE" {
 				subject.DiscType = ""
@@ -180,9 +134,6 @@ func TestPTPRemuxBoundariesDoNotBroadenEligibility(t *testing.T) {
 			} else if len(failures) != 0 {
 				t.Fatalf("anime=%t type=%s acquired a new whitelist: %#v", anime, releaseType, failures)
 			}
-			if releaseType == "DISC" && len(languageReviewFields(subject, api.WorkflowExecutionModeNormal)) != 0 {
-				t.Fatal("full disc acquired language questions")
-			}
 		}
 	}
 }
@@ -190,7 +141,7 @@ func TestPTPRemuxBoundariesDoNotBroadenEligibility(t *testing.T) {
 func TestPTPAnimeRemuxBoundarySurvivesSourceGuidance(t *testing.T) {
 	subject := ptpLanguageSubject("Japanese", "Japanese", "English", "German")
 	subject.Anime = true
-	subject = ptpReviewedRemux(subject)
+	subject = ptpRemuxSubject(subject)
 	ptpLanguageAnswer(&subject, "programme_track_purpose", "redundant")
 	failures := ptpNonAdvisoryFailures(subject)
 	requirePTPLanguageFailure(t, languageFailures(subject), "language_redundant_audio", api.RuleDispositionAdvisory)
@@ -207,61 +158,12 @@ func TestPTPAnimeRemuxBoundarySurvivesSourceGuidance(t *testing.T) {
 	}
 }
 
-func TestPTPSingleTrackRemuxHasNoOrderQuestion(t *testing.T) {
-	subject := ptpReviewedRemux(ptpLanguageSubject("Japanese", "Japanese"))
-	delete(subject.QuestionnaireAnswers, trackers.LanguageQuestionKey(subject, "remux_track_order"))
-	if failures := ptpNonAdvisoryFailures(subject); len(failures) != 0 {
-		t.Fatalf("single default-main track needs irrelevant order evidence: %#v", failures)
-	}
-	for _, field := range languageReviewFields(subject, api.WorkflowExecutionModeNormal) {
-		if strings.HasPrefix(field.Key, "remux_track_order_") {
-			t.Fatalf("single default-main track acquired an order question: %#v", field)
-		}
-	}
-}
-
 func TestPTPAnimeRemuxAmbiguousProgrammeLanguage(t *testing.T) {
 	subject := ptpLanguageSubject("Japanese", "Japanese", "English")
 	subject.Anime = true
 	subject.LanguageFacts.Tracks[1].Languages = []string{"English", "Japanese"}
-	subject = ptpReviewedRemux(subject)
+	subject = ptpRemuxSubject(subject)
 	requirePTPLanguageFailure(t, languageFailures(subject), "language_anime_remux_programme", api.RuleDispositionStrict)
-}
-
-func TestPTPRemuxMeasuredOrderAndMissingPositions(t *testing.T) {
-	subject := ptpReviewedRemux(ptpLanguageSubject("Japanese", "Japanese", "English"))
-	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-		ID:        "subtitle",
-		Kind:      api.MediaTrackSubtitle,
-		Languages: []string{"English"},
-	})
-	for i := range subject.LanguageFacts.Tracks {
-		subject.LanguageFacts.Tracks[i].StreamOrder = i + 1
-		subject.LanguageFacts.Tracks[i].StreamOrderKnown = true
-	}
-	if failures := ptpNonAdvisoryFailures(subject); len(failures) != 0 {
-		t.Fatalf("measured good order: %+v", failures)
-	}
-	if ptpRemuxNeedsOrderReview(subject.LanguageFacts) {
-		t.Fatal("measured order requested attestation")
-	}
-	subject.LanguageFacts.Tracks[2].StreamOrder = 0
-	ptpLanguageAnswer(&subject, "remux_track_order", "main_first")
-	failures := ptpRemuxLanguageFailures(subject)
-	requirePTPLanguageFailure(t, failures, "language_remux_track_order", api.RuleDispositionWaivable)
-	if len(failures) != 1 || !strings.Contains(failures[0].Reason, "Trumpable release") {
-		t.Fatalf("known inversion: %+v", failures)
-	}
-	subject.LanguageFacts.Tracks[1].StreamOrderKnown = false
-	delete(subject.QuestionnaireAnswers, trackers.LanguageQuestionKey(subject, "remux_track_order"))
-	failures = ptpRemuxLanguageFailures(subject)
-	requirePTPLanguageFailure(t, failures, "language_remux_track_order", api.RuleDispositionWaivable)
-	requirePTPLanguageFailure(t, failures, "language_remux_track_order_evidence", api.RuleDispositionStrict)
-	ptpLanguageAnswer(&subject, "remux_track_order", "main_first")
-	failures = ptpRemuxLanguageFailures(subject)
-	if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionWaivable {
-		t.Fatalf("attestation lost known inversion: %+v", failures)
-	}
 }
 
 func TestPTPRemuxWaiverBindingAndDebug(t *testing.T) {
@@ -271,7 +173,7 @@ func TestPTPRemuxWaiverBindingAndDebug(t *testing.T) {
 		subject.LanguageFacts.Tracks[i].StreamOrder = i + 1
 		subject.LanguageFacts.Tracks[i].StreamOrderKnown = true
 	}
-	subject = ptpReviewedRemux(subject)
+	subject = ptpRemuxSubject(subject)
 	failures := ptpRemuxLanguageFailures(subject)
 	fingerprint, err := trackers.WaivableRuleFailureFingerprint("PTP", failures)
 	if err != nil {
@@ -296,12 +198,6 @@ func TestPTPRemuxWaiverBindingAndDebug(t *testing.T) {
 	if blocking, err := trackers.FirstBlockingRuleFailure("PTP", failures, api.WorkflowExecutionModeDebug, nil); err != nil || blocking != nil {
 		t.Fatalf("debug bypass: %+v %v", blocking, err)
 	}
-	fields := languageReviewFields(subject, api.WorkflowExecutionModeDebug)
-	for _, field := range fields {
-		if field.Required {
-			t.Fatalf("debug required eligibility field: %+v", field)
-		}
-	}
 }
 
 func TestPTPAnimeRemuxAmbiguityCannotDependOnTrackOrder(t *testing.T) {
@@ -312,14 +208,14 @@ func TestPTPAnimeRemuxAmbiguityCannotDependOnTrackOrder(t *testing.T) {
 		if reverse {
 			slices.Reverse(subject.LanguageFacts.Tracks)
 		}
-		current := ptpReviewedRemux(subject)
+		current := ptpRemuxSubject(subject)
 		failures := ptpRemuxLanguageFailures(current)
 		requirePTPLanguageFailure(t, failures, "language_anime_remux_programme", api.RuleDispositionStrict)
 	}
 }
 
-func TestPTPNoDialogueRemuxStillAssessesContainerOrder(t *testing.T) {
-	subject := ptpReviewedRemux(ptpLanguageSubject("ZXX", "ZXX"))
+func TestPTPNoDialogueRemuxStillAssessesMainDefault(t *testing.T) {
+	subject := ptpRemuxSubject(ptpLanguageSubject("ZXX", "ZXX"))
 	subject.Anime = true
 	subject.LanguageFacts.Tracks[0].StreamOrder = 2
 	subject.LanguageFacts.Tracks[0].StreamOrderKnown = true
@@ -330,23 +226,13 @@ func TestPTPNoDialogueRemuxStillAssessesContainerOrder(t *testing.T) {
 		StreamOrder:      1,
 		StreamOrderKnown: true,
 	})
-	failures := ptpNonAdvisoryFailures(subject)
-	if len(failures) != 1 || failures[0].Rule != "language_remux_track_order" || failures[0].Disposition != api.RuleDispositionWaivable {
-		t.Fatalf("no-dialogue order: %+v", failures)
-	}
-	subject.LanguageFacts.Tracks[1].StreamOrderKnown = false
-	fields := languageReviewFields(subject, api.WorkflowExecutionModeNormal)
-	if len(fields) != 1 || !strings.HasPrefix(fields[0].Key, "remux_track_order_") || !fields[0].Required {
-		t.Fatalf("missing no-dialogue order evidence: %+v", fields)
-	}
-	ptpLanguageAnswer(&subject, "remux_track_order", "main_first")
 	if failures := ptpNonAdvisoryFailures(subject); len(failures) != 0 {
-		t.Fatalf("reviewed no-dialogue order: %+v", failures)
+		t.Fatalf("no-dialogue remux acquired an order requirement: %+v", failures)
 	}
-	fields = languageReviewFields(subject, api.WorkflowExecutionModeNormal)
-	if fields[0].Value != "main_first" {
-		t.Fatal("order answer not retained")
-	}
+	subject.LanguageFacts.Tracks[0].Default = false
+	requirePTPLanguageFailure(t, languageFailures(subject), "language_remux_main_default", api.RuleDispositionWaivable)
+	subject.LanguageFacts.Tracks[0].DefaultKnown = false
+	requirePTPLanguageFailure(t, languageFailures(subject), "language_remux_main_default", api.RuleDispositionStrict)
 	subject.LanguageFacts.AudioAbsent = true
 	subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[1:]
 	if failures := ptpNonAdvisoryFailures(subject); len(failures) != 0 {
@@ -372,7 +258,7 @@ func TestPTPRemuxDefaultFlagEvidenceAndWaiver(t *testing.T) {
 				subject.LanguageFacts.Tracks[i].StreamOrder = i + 1
 				subject.LanguageFacts.Tracks[i].StreamOrderKnown = true
 			}
-			subject = ptpReviewedRemux(subject)
+			subject = ptpRemuxSubject(subject)
 			failures := ptpRemuxLanguageFailures(subject)
 			if tc.outcome == "" {
 				if len(failures) != 0 {
@@ -409,32 +295,21 @@ func TestPTPRemuxDefaultFlagEvidenceAndWaiver(t *testing.T) {
 	}
 }
 
-func TestPTPKnownNonDefaultDoesNotHideOrderOrMissingPositions(t *testing.T) {
-	subject := ptpLanguageSubject("Japanese", "Japanese", "English")
+func TestPTPKnownNonDefaultSurvivesOrderRelaxation(t *testing.T) {
+	subject := ptpRemuxSubject(ptpLanguageSubject("Japanese", "Japanese", "English"))
 	subject.LanguageFacts.Tracks[0].Default = false
-	subject = ptpReviewedRemux(subject)
-	failures := ptpRemuxLanguageFailures(subject)
-	requirePTPLanguageFailure(t, failures, "language_remux_main_default", api.RuleDispositionWaivable)
-	if len(failures) != 1 {
-		t.Fatalf("reviewed order: %+v", failures)
+	for _, orderKnown := range []bool{false, true} {
+		for i := range subject.LanguageFacts.Tracks {
+			subject.LanguageFacts.Tracks[i].StreamOrder = 2 - i
+			subject.LanguageFacts.Tracks[i].StreamOrderKnown = orderKnown
+		}
+		ptpLanguageAnswer(&subject, "remux_track_order", "main_first")
+		failures := ptpRemuxLanguageFailures(subject)
+		requirePTPLanguageFailure(t, failures, "language_remux_main_default", api.RuleDispositionWaivable)
+		if len(failures) != 1 {
+			t.Fatalf("orderKnown=%t changed default finding: %+v", orderKnown, failures)
+		}
 	}
-	delete(subject.QuestionnaireAnswers, trackers.LanguageQuestionKey(subject, "remux_track_order"))
-	failures = ptpRemuxLanguageFailures(subject)
-	requirePTPLanguageFailure(t, failures, "language_remux_main_default", api.RuleDispositionWaivable)
-	requirePTPLanguageFailure(t, failures, "language_remux_track_order_evidence", api.RuleDispositionStrict)
-	fields := languageReviewFields(subject, api.WorkflowExecutionModeNormal)
-	if !slices.ContainsFunc(fields, func(f api.TrackerQuestionnaireField) bool {
-		return strings.HasPrefix(f.Key, "remux_track_order_") && f.Required
-	}) {
-		t.Fatal("known No prevented missing-order review")
-	}
-	for i := range subject.LanguageFacts.Tracks {
-		subject.LanguageFacts.Tracks[i].StreamOrder = 2 - i
-		subject.LanguageFacts.Tracks[i].StreamOrderKnown = true
-	}
-	failures = ptpRemuxLanguageFailures(subject)
-	requirePTPLanguageFailure(t, failures, "language_remux_main_default", api.RuleDispositionWaivable)
-	requirePTPLanguageFailure(t, failures, "language_remux_track_order", api.RuleDispositionWaivable)
 	subject.Type = "DISC"
 	if got := languageFailures(subject); len(got) != 0 {
 		t.Fatalf("full disc acquired flag requirement: %+v", got)

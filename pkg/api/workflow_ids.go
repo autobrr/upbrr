@@ -384,6 +384,7 @@ const (
 	WorkflowOperationResultPreflight       WorkflowOperationResultKind = "tracker_preflight"
 	WorkflowOperationResultDupes           WorkflowOperationResultKind = "dupes"
 	WorkflowOperationResultMedia           WorkflowOperationResultKind = "media"
+	WorkflowOperationResultHDRAnalysis     WorkflowOperationResultKind = "hdr_analysis"
 	WorkflowOperationResultAudioAnalysis   WorkflowOperationResultKind = "audio_analysis"
 	WorkflowOperationResultDescriptions    WorkflowOperationResultKind = "descriptions"
 	WorkflowOperationResultDryRun          WorkflowOperationResultKind = "dry_run"

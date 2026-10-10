@@ -20,7 +20,6 @@ func AudioPolicy() *trackers.AudioPolicy {
 
 func languagePolicy() trackers.LanguagePolicy {
 	return trackers.LanguagePolicy{
-		OriginalPrimary:  true,
 		OriginalAudio:    trackers.LanguageStaffException,
 		ExtraDubs:        trackers.LanguageStaffException,
 		EnglishSubtitles: "foreign_without_dub",

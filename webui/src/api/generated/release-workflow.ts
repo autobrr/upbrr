@@ -27,6 +27,13 @@ export type AnalyzeReleaseWorkflowAudioRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type AnalyzeReleaseWorkflowHDRRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  instructions: HDRAnalysisInstructions;
+  workflowId: WorkflowID;
+}>;
+
 export type AniListAiringEpisode = Readonly<{
   AiringAt: number;
   Episode: number;
@@ -320,6 +327,7 @@ export type CreateReleaseWorkflowUploadRequest = Readonly<{
   descriptions?: ReleaseWorkflowUploadDescriptions;
   duplicates?: ReleaseWorkflowUploadDuplicates;
   execution?: ReleaseWorkflowUploadExecution;
+  hdrAnalysis?: HDRAnalysisRequest | null;
   imageHosting?: ReleaseWorkflowUploadImageHosting;
   media?: ReleaseWorkflowUploadMedia;
   preparation?: ReleaseWorkflowUploadPreparation;
@@ -417,6 +425,7 @@ export type DiscItemFacts = Readonly<{
 }>;
 
 export type DiscReportFacts = Readonly<{
+  HDR10PlusConfirmed: boolean;
   Playlist: PlaylistInfo;
   Summary: string;
 }>;
@@ -597,6 +606,75 @@ export type GoalAvailability = Readonly<{
   reasonCode?: string;
 }>;
 
+export type HDRAnalysisArtifact = Readonly<{
+  height: number;
+  id: PublicResourceID;
+  width: number;
+}>;
+
+export type HDRAnalysisFailure = Readonly<{
+  code: HDRAnalysisFailureCode;
+  message: string;
+}>;
+
+export type HDRAnalysisFailureCode = string;
+
+export type HDRAnalysisInstructions = Readonly<{
+  peakSource: HDRPeakSource;
+  profileVersion: string;
+  release: ReleaseRef;
+  targetIds: readonly string[];
+}>;
+
+export type HDRAnalysisRef = Readonly<{
+  id: HDRAnalysisResultID;
+  revision: WorkflowRevision;
+}>;
+
+export type HDRAnalysisRequest = Readonly<{
+  peakSource?: HDRPeakSource;
+  targetIds?: readonly string[];
+}>;
+
+export type HDRAnalysisResult = Readonly<{
+  attemptId: string;
+  completedAt?: string;
+  createdAt: string;
+  id: HDRAnalysisResultID;
+  manifestFingerprint: string;
+  peakSource: HDRPeakSource;
+  profileVersion: string;
+  release: ReleaseRef;
+  renderFingerprint?: string;
+  revision: WorkflowRevision;
+  status: StageStatus;
+  targetIds: readonly string[];
+  targets: readonly HDRAnalysisTargetResult[];
+  workflowId: WorkflowID;
+}>;
+
+export type HDRAnalysisResultID = string;
+
+export type HDRAnalysisTarget = Readonly<{
+  id: string;
+  label: string;
+  playlist?: string;
+  reason?: string;
+  selectionPolicy: string;
+  supported: boolean;
+}>;
+
+export type HDRAnalysisTargetResult = Readonly<{
+  artifact?: HDRAnalysisArtifact | null;
+  failure?: HDRAnalysisFailure | null;
+  frames: number;
+  label: string;
+  profile?: string;
+  scenes: number;
+  status: StageStatus;
+  targetId: string;
+}>;
+
 export type HDREvidenceOrigin = string;
 
 export type HDREvidenceStatus = string;
@@ -612,6 +690,8 @@ export type HDRFacts = Readonly<{
 }>;
 
 export type HDRFormat = string;
+
+export type HDRPeakSource = string;
 
 export type HostedImageAttempt = Readonly<{
   artifactIds: readonly PublicResourceID[];
@@ -1138,6 +1218,7 @@ export type Operation = Readonly<{
 export type OperationFailure = Readonly<{
   AudioAnalysisCode?: AudioAnalysisFailureCode;
   Code: OperationFailureCode;
+  HDRAnalysisCode?: HDRAnalysisFailureCode;
   Message: string;
   Operation: OperationKind;
   Recovery: OperationRecovery;
@@ -1183,6 +1264,7 @@ export type PreparationCompatibility = Readonly<{
 }>;
 
 export type PreparationControls = Readonly<{
+  CaptureHDRMetadata?: boolean;
   ConfirmBDMVRescan: boolean;
   ForceRecheck?: boolean | null;
   Interaction: InteractionMode;
@@ -1237,6 +1319,7 @@ export type PreparedReleaseDisplay = Readonly<{
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
   TrackerData: readonly TrackerPreview[];
+  hdrTargets?: readonly HDRAnalysisTarget[];
 }>;
 
 export type PreviewReleaseWorkflowFrameRequest = Readonly<{
@@ -1470,6 +1553,8 @@ export type ReleaseWorkflow = Readonly<{
   dupes?: DupeAssessmentRef | null;
   factInstructions: ReleaseFactInstructionSnapshotRef;
   failures?: readonly WorkflowFailure[];
+  hdrAnalysis?: HDRAnalysisRef | null;
+  hdrAnalysisEnabled?: boolean;
   id: WorkflowID;
   inputReadiness?: InputReadinessSnapshotRef | null;
   media?: MediaArtifactSetRef | null;
@@ -1537,6 +1622,7 @@ export type ReleaseWorkflowCurrent = Readonly<{
   dryRun?: UploadDryRunResult | null;
   dupes?: DupeAssessment | null;
   factInstructions?: ReleaseFactInstructionSnapshot | null;
+  hdrAnalysis?: HDRAnalysisResult | null;
   inputReadiness?: InputReadinessSnapshot | null;
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
@@ -1959,6 +2045,13 @@ export type ScreenshotSelection = Readonly<{
 }>;
 
 export type SetReleaseWorkflowAudioAnalysisEnabledRequest = Readonly<{
+  enabled: boolean;
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  workflowId: WorkflowID;
+}>;
+
+export type SetReleaseWorkflowHDRAnalysisEnabledRequest = Readonly<{
   enabled: boolean;
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -2750,6 +2843,7 @@ export type UploadOptions = Readonly<{
   AudioImages: string;
   AudioTracks: string;
   CaptureDVDMenus: boolean;
+  HDRAnalysis?: HDRAnalysisRequest | null;
   InteractionMode: InteractionMode;
   KeepFolder: boolean;
   KeepImages: boolean;
@@ -2900,6 +2994,7 @@ export type WorkflowIntent = Readonly<{
   duplicateDecisions?: Readonly<Record<string, DupeDecision>>;
   executionMode?: WorkflowExecutionMode;
   factInstructions?: ReleaseFactInstructions | null;
+  hdrAnalysis?: HDRAnalysisRequest | null;
   interaction?: InteractionMode;
   media?: MediaCaptureInstructions | null;
   mediaSelection?: WorkflowMediaSelection | null;

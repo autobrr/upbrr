@@ -5,6 +5,8 @@ package metadata
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
@@ -352,7 +355,8 @@ func cloneTrackerIDs(values map[string]string) map[string]string {
 
 // collectSourceEvidence validates source resources, resolves Blu-ray selection,
 // and gathers filesystem evidence before provider and client enrichment.
-func (s *Service) collectSourceEvidence(ctx context.Context, request preparationstate.Request) (meta preparationstate.State, err error) {
+func (s *Service) collectSourceEvidence(ctx context.Context, request preparationstate.Request) (result preparationstate.State, err error) {
+	var meta preparationstate.State
 	logger := logging.FromContext(ctx, s.logger)
 
 	bdinfoActive := false
@@ -362,6 +366,9 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	}
 	defer func() {
 		if err != nil {
+			for _, disc := range meta.Discs {
+				preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
+			}
 			if bdinfoActive && !bdinfoTerminal {
 				reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
 			}
@@ -616,6 +623,36 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 			return preparationstate.State{}, fmt.Errorf("metadata: mediainfo: %w", err)
 		}
 		meta.MediaInfoJSONPath = miResult.JSONPath
+		meta.HDRFileEligibility = make(map[string]bool)
+		// Bind HDR track evidence to its file, inspected inventory and verified content.
+		hdrSourceFingerprint := request.SourceFingerprint
+		if request.Input.VerifiedSource != nil {
+			hdrSourceFingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
+		}
+		for _, file := range meta.FileList {
+			if !strings.EqualFold(filepath.Ext(file), ".mkv") {
+				continue
+			}
+			key := sha256.Sum256([]byte(file + "\x00" + hdrSourceFingerprint))
+			result, inspectErr := s.mi.Export(ctx, mediainfo.Request{
+				SourcePath:  file,
+				VideoPath:   file,
+				TempRoot:    tmpRoot,
+				ArtifactDir: filepath.Join(tmpRoot, "hdr-mediainfo", hex.EncodeToString(key[:])),
+				Release:     ParseReleaseInfo(file),
+			})
+			if inspectErr != nil {
+				if ctx.Err() != nil {
+					return preparationstate.State{}, fmt.Errorf("metadata: HDR track inspection canceled: %w", ctx.Err())
+				}
+				logger.Debugf("metadata: HDR track inspection state=unavailable")
+				continue
+			}
+			doc, inspectErr := loadMediaInfoDoc(result.JSONPath)
+			if inspectErr == nil {
+				meta.HDRFileEligibility[file] = mediafacts.HDR10PlusTrackFromMediaInfo(doc)
+			}
+		}
 		meta.MediaInfoTextPath = miResult.TextPath
 		meta.DVDIFOPath = miResult.IFOPath
 		meta.DVDVOBPath = miResult.VOBPath
@@ -697,7 +734,7 @@ func (s *Service) collectDiscEvidence(
 	request preparationstate.Request,
 	meta *preparationstate.State,
 	reportBDInfo func(api.PreparationProgressStatus, string),
-) error {
+) (resultErr error) {
 	logger := logging.FromContext(ctx, s.logger)
 
 	if meta == nil || len(request.Layout.Discs) == 0 {
@@ -741,6 +778,11 @@ func (s *Service) collectDiscEvidence(
 			Type: disc.Type,
 			Root: disc.Root,
 		}
+		defer func() {
+			if resultErr != nil {
+				preparationstate.ReleaseHDRCaptures(resource.HDRCaptures)
+			}
+		}()
 		artifactDir := ""
 		if releaseTemp != "" {
 			var err error
@@ -771,6 +813,9 @@ func (s *Service) collectDiscEvidence(
 				analysisCtx := bdinfo.WithProgressReporter(ctx, func(message string) {
 					reportBDInfo(api.PreparationProgressRunning, message)
 				})
+				if request.Input.Controls.CaptureHDRMetadata {
+					analysisCtx = bdinfo.WithHDRCapture(analysisCtx, capturePreparedHDR(analysisCtx, &resource, artifactDir, request.SourceFingerprint))
+				}
 				outputPath, _, err := s.resolveOrCreateBDMVSummaries(analysisCtx, request.Input, artifactDir, disc.Root, playlistFiles)
 				if err != nil {
 					return fmt.Errorf("metadata: analyze BDMV disc %s: %w", disc.Name, err)
@@ -1122,6 +1167,12 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 		return cache, fmt.Errorf("read tmp dir: %w", err)
 	}
 
+	// Sidecars are optional; an unavailable root leaves their payloads empty.
+	root, _ := os.OpenRoot(tmpDir)
+	if root != nil {
+		defer root.Close()
+	}
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -1152,30 +1203,18 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 		}
 		extPath := paths.BDMVExtSummaryPath(tmpDir, playlist)
 		extPayload := ""
-		if extPath != "" {
-			cleanTmpDir := filepath.Clean(tmpDir)
-			cleanExtPath := filepath.Clean(extPath)
-			if relPath, err := filepath.Rel(
-				cleanTmpDir,
-				cleanExtPath,
-			); err == nil && relPath != ".." &&
-				!strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-				if rawExt, err := os.ReadFile(cleanExtPath); err == nil {
+		if extPath != "" && root != nil {
+			if name, err := filepath.Rel(filepath.Clean(tmpDir), filepath.Clean(extPath)); err == nil {
+				if rawExt, err := root.ReadFile(name); err == nil {
 					extPayload = string(rawExt)
 				}
 			}
 		}
 		fullPath := paths.BDMVFullSummaryPath(tmpDir, playlist)
 		fullPayload := ""
-		if fullPath != "" {
-			cleanTmpDir := filepath.Clean(tmpDir)
-			cleanFullPath := filepath.Clean(fullPath)
-			if relPath, err := filepath.Rel(
-				cleanTmpDir,
-				cleanFullPath,
-			); err == nil && relPath != ".." &&
-				!strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-				if rawFull, err := os.ReadFile(cleanFullPath); err == nil {
+		if fullPath != "" && root != nil {
+			if name, err := filepath.Rel(filepath.Clean(tmpDir), filepath.Clean(fullPath)); err == nil {
+				if rawFull, err := root.ReadFile(name); err == nil {
 					fullPayload = string(rawFull)
 				}
 			}
@@ -1243,7 +1282,7 @@ func (s *Service) resolveOrCreateBDMVSummaries(
 
 	missing := missingCachedPlaylists(cache, selected)
 	switch {
-	case len(selected) > 0 && len(missing) == 0:
+	case len(selected) > 0 && len(missing) == 0 && !input.Controls.CaptureHDRMetadata:
 		outputPath, err := writeCachedSelectedPlaylistSummaries(cache, selected)
 		if err != nil {
 			return "", false, fmt.Errorf("metadata: refresh cached bdmv summaries: %w", err)

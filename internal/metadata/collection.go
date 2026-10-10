@@ -42,6 +42,14 @@ func (s *Service) CollectPreparationEvidence(ctx context.Context, request prepar
 	if err != nil {
 		return preparationstate.State{}, err
 	}
+	capturedDiscs := state.Discs
+	defer func() {
+		if resultErr != nil || scope.Err() != nil {
+			for _, disc := range capturedDiscs {
+				preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
+			}
+		}
+	}()
 	state, err = collectPreparationStage(ctx, api.PreparationPhaseClientDiscovery, func() (preparationstate.State, error) {
 		if request.RetainedClientEvidence != nil {
 			applyClientEvidenceSnapshot(&state, *request.RetainedClientEvidence)
@@ -86,11 +94,19 @@ func (s *Service) CollectPreparationEvidence(ctx context.Context, request prepar
 func (s *Service) HydratePrivateResources(
 	ctx context.Context,
 	request preparationstate.Request,
-) (preparationstate.State, error) {
+) (result preparationstate.State, resultErr error) {
 	state, err := s.collectSourceEvidence(ctx, request)
 	if err != nil {
 		return preparationstate.State{}, err
 	}
+	capturedDiscs := state.Discs
+	defer func() {
+		if resultErr != nil {
+			for _, disc := range capturedDiscs {
+				preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
+			}
+		}
+	}()
 	return s.collectClientEvidence(ctx, request.Input, state)
 }
 

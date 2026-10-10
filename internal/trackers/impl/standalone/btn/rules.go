@@ -18,17 +18,17 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		return nil
 	}
 	facts := subject.LanguageFacts
+	programmeStatus := trackers.ProgrammeLanguageStatus(subject)
 	remux := strings.EqualFold(subject.Type, "REMUX")
 	policy := trackers.LanguagePolicy{}
 	if remux {
 		policy.OriginalAudio = trackers.LanguageProhibited
-		policy.OriginalPrimary = true
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
 		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
 	}
-	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
+	if programmeStatus != api.MetadataEvidenceStatusComplete {
 		if !remux {
 			add("evidence", "programme language, track role or inspected coverage needs review", trackers.LanguageUnresolved)
 		}
@@ -56,13 +56,13 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	}
 	if subject.Anime && !english && (!slices.Contains(facts.ProgrammeLanguages, "Japanese") || !slices.Contains(facts.SubtitleLanguages, "English")) {
 		outcome := trackers.LanguageProhibited
-		if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || facts.SubtitleStatus != api.MetadataEvidenceStatusComplete {
+		if programmeStatus != api.MetadataEvidenceStatusComplete || facts.SubtitleStatus != api.MetadataEvidenceStatusComplete {
 			outcome = trackers.LanguageUnresolved
 		}
 		add("anime_audio", "anime requires Japanese audio with English subtitles or English programme audio", outcome)
 	}
 	if !subject.Anime && !remux && facts.OriginalLanguagesKnown &&
-		facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.OriginalLanguages, "English") && !facts.HasOriginalAudio() {
+		programmeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.OriginalLanguages, "English") && !facts.HasOriginalAudio() {
 		add("original_pack", "a foreign non-anime release lacking original audio can be replaced by an original-audio pack", trackers.LanguageTrumpable)
 	}
 	return append(failures, sourceLanguageFailures(subject)...)
@@ -82,7 +82,7 @@ func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFail
 	}
 	remux := strings.EqualFold(subject.Type, "REMUX")
 	if remux {
-		add("source_audio", "remuxes must retain the best available original-language primary audio; track metadata does not establish best-source retention")
+		add("source_audio", "remuxes must retain the best available original-language audio; track metadata does not establish best-source retention")
 	}
 	if discSourceVideo(subject) {
 		add(

@@ -116,6 +116,8 @@ Compatible images retain their selection and order across refresh. In the Web UI
 
 [Audio analysis](audio-analysis.md) is a separate, optional operation. It streams decoded samples from FFmpeg into Go without writing a full decoded-audio file. Its PNGs are retained for preview and download. When descriptions are generated from a completed analysis, upbrr hosts the graphs for each tracker and adds them with the statistics to the default description.
 
+[HDR analysis](hdr-analysis.md) produces HDR10+ brightness plots from supported MKV files or exact selected Blu-ray timelines. It retains complete metadata for retries and estimator changes and automatically includes completed analyses in generated descriptions. The Blu-ray playlist HDR check also renders plots during preparation.
+
 ## 6. Preview immutable tracker operations
 
 Tracker preparation captures an immutable operation. Payload preview and live submission use that captured state rather than regenerating names, rereading mutable prepared input, or uploading images again.

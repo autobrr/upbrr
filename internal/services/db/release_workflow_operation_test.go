@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -56,6 +57,7 @@ func TestReleaseWorkflowOperationPersistenceIsolationAndRetention(t *testing.T) 
 	running.Status.Progress = 25
 	running.Status.Message = "Checking trackers"
 	running.Status.UpdatedAt = now.Add(time.Minute)
+	running.HDRCleanupRelease = api.ReleaseRef{SourcePath: filepath.Join(t.TempDir(), "Synthetic.Disc"), Generation: 2}
 	if err := repo.SaveReleaseWorkflowOperation(ctx, 1, running); err != nil {
 		t.Fatalf("save running operation: %v", err)
 	}
@@ -79,8 +81,30 @@ func TestReleaseWorkflowOperationPersistenceIsolationAndRetention(t *testing.T) 
 		t.Fatalf("migrate reopened repository: %v", err)
 	}
 	loaded, err := repo.LoadLatestReleaseWorkflowOperation(ctx, workflow.OwnerID, workflow.WorkflowID)
-	if err != nil || loaded.Status.Sequence != 2 || loaded.ProcessEpoch != record.ProcessEpoch {
+	if err != nil || loaded.Status.Sequence != 2 || loaded.ProcessEpoch != record.ProcessEpoch || loaded.HDRCleanupRelease != running.HDRCleanupRelease {
 		t.Fatalf("load operation after restart = %#v, %v", loaded, err)
+	}
+	public, err := json.Marshal(loaded.Status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(public, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exposed := fields["hdr_cleanup_release"]; exposed {
+		t.Fatal("private cleanup authority exposed in operation status")
+	}
+	legacy, err := json.Marshal(record.Status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `UPDATE release_workflow_operations SET operation_json = ? WHERE operation_id = ?`, legacy, record.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	legacyRecord, err := repo.LoadReleaseWorkflowOperation(ctx, workflow.OwnerID, workflow.WorkflowID, record.OperationID)
+	if err != nil || legacyRecord.HDRCleanupRelease != (api.ReleaseRef{}) || legacyRecord.Status.ID != record.OperationID {
+		t.Fatalf("legacy status-only payload = %#v, %v", legacyRecord, err)
 	}
 
 	completedAt := now.Add(2 * time.Minute)

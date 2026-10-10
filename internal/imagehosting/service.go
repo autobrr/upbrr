@@ -117,7 +117,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 		return nil, fmt.Errorf("image hosting: %w", err)
 	}
 	uploaded = slices.DeleteFunc(uploaded, func(upload api.UploadedImageLink) bool {
-		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis
+		return upload.Purpose.IsAnalysis()
 	})
 	selections, err := s.repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {
@@ -351,13 +351,16 @@ func (s *Service) Upload(
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
-	accountScope := ""
-	if slices.ContainsFunc(images, func(image api.ScreenshotImage) bool { return image.Purpose == api.ScreenshotPurposeAudioAnalysis }) {
-		var err error
-		accountScope, err = AudioAccountScope(s.cfg, s.registry, normalizedHost)
-		if err != nil {
-			return nil, fmt.Errorf("image hosting: fingerprint audio host account: %w", err)
+	accountScopes := make(map[api.ScreenshotPurpose]string)
+	for _, image := range images {
+		if !image.Purpose.IsAnalysis() || accountScopes[image.Purpose] != "" {
+			continue
 		}
+		scope, err := AnalysisAccountScope(s.cfg, s.registry, normalizedHost, image.Purpose)
+		if err != nil {
+			return nil, fmt.Errorf("image hosting: fingerprint analysis host account: %w", err)
+		}
+		accountScopes[image.Purpose] = scope
 	}
 	logTracker := s.imageHostLogTracker(normalizedHost)
 
@@ -427,7 +430,16 @@ func (s *Service) Upload(
 		batchCount := 1
 		if normalizedHost == "hdb" {
 			normalCount, menuCount, audioCount := imagePurposeCounts(unique)
+			hdrCount := 0
+			for _, image := range unique {
+				if image.Purpose == api.ScreenshotPurposeHDRAnalysis {
+					hdrCount++
+				}
+			}
 			batchCount = 0
+			if hdrCount > 0 {
+				batchCount++
+			}
 			if normalCount > 0 {
 				batchCount++
 			}
@@ -438,12 +450,13 @@ func (s *Service) Upload(
 				batchCount++
 			}
 			logger.Infof(
-				"image hosting: HDB gallery upload plan host=%s tracker=%s normal=%d menu=%d audio=%d",
+				"image hosting: HDB gallery upload plan host=%s tracker=%s normal=%d menu=%d audio=%d hdr=%d",
 				normalizedHost,
 				logTracker,
 				normalCount,
 				menuCount,
 				audioCount,
+				hdrCount,
 			)
 		}
 		logger.Debugf("image hosting: starting batch upload host=%s tracker=%s", normalizedHost, logTracker)
@@ -514,7 +527,7 @@ func (s *Service) Upload(
 				Purpose:                  candidate.Purpose,
 				Host:                     normalizedHost,
 				UsageScope:               normalizedScope,
-				AccountScope:             accountScope,
+				AccountScope:             accountScopes[candidate.Purpose],
 				ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
 				RawURL:                   strings.TrimSpace(uploaded.RawURL),
 				WebURL:                   strings.TrimSpace(uploaded.WebURL),
@@ -711,7 +724,7 @@ dispatchLoop:
 					Purpose:                  candidate.Purpose,
 					Host:                     normalizedHost,
 					UsageScope:               normalizedScope,
-					AccountScope:             accountScope,
+					AccountScope:             accountScopes[candidate.Purpose],
 					ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
 					RawURL:                   strings.TrimSpace(uploaded.RawURL),
 					WebURL:                   strings.TrimSpace(uploaded.WebURL),
@@ -906,6 +919,7 @@ func uploadHDBBatchByPurpose(ctx context.Context, batch namedBatchUploader, meta
 	normal := make([]indexedImage, 0, len(images))
 	menus := make([]indexedImage, 0, len(images))
 	audio := make([]indexedImage, 0, len(images))
+	hdr := make([]indexedImage, 0, len(images))
 	for idx, image := range images {
 		item := indexedImage{index: idx, path: image.Path}
 		if image.Purpose == api.ScreenshotPurposeMenu {
@@ -914,6 +928,10 @@ func uploadHDBBatchByPurpose(ctx context.Context, batch namedBatchUploader, meta
 		}
 		if image.Purpose == api.ScreenshotPurposeAudioAnalysis {
 			audio = append(audio, item)
+			continue
+		}
+		if image.Purpose == api.ScreenshotPurposeHDRAnalysis {
+			hdr = append(hdr, item)
 			continue
 		}
 		normal = append(normal, item)
@@ -951,6 +969,9 @@ func uploadHDBBatchByPurpose(ctx context.Context, batch namedBatchUploader, meta
 	if err := uploadGroup(audio, galleryName+" Audio Analysis"); err != nil {
 		return nil, err
 	}
+	if err := uploadGroup(hdr, galleryName+" HDR Analysis"); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 
@@ -983,6 +1004,9 @@ func imagePurposeCounts(images []imageCandidate) (normal int, menus int, audio i
 		}
 		if image.Purpose == api.ScreenshotPurposeAudioAnalysis {
 			audio++
+			continue
+		}
+		if image.Purpose == api.ScreenshotPurposeHDRAnalysis {
 			continue
 		}
 		normal++

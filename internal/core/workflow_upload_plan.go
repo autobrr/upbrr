@@ -703,6 +703,7 @@ func workflowDryRunClientFailure(
 		api.OperationFailureClientInjection,
 		api.OperationFailureImageHostUnavailable,
 		api.OperationFailureAudioAnalysis,
+		api.OperationFailureHDRAnalysis,
 		api.OperationFailureInternal:
 	}
 	return api.WorkflowFailure{
@@ -1381,6 +1382,7 @@ func workflowClientFailureRecovery(code api.OperationFailureCode) api.OperationR
 		api.OperationFailureDryRunClientInjection,
 		api.OperationFailureImageHostUnavailable,
 		api.OperationFailureAudioAnalysis,
+		api.OperationFailureHDRAnalysis,
 		api.OperationFailureInternal,
 		"":
 		return api.OperationRecoveryNone

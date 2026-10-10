@@ -11,6 +11,32 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestHDR10PlusTrackRequiresExplicitMediaInfoEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name, tracks string
+		want         bool
+	}{
+		{"HDR10+", `{"@type":"Video","Format":"HEVC","HDR_Format":"SMPTE ST 2094 App 4","HDR_Format_Compatibility":"HDR10+"}`, true},
+		{"hybrid Dolby Vision", `{"@type":"Video","Format":"HEVC","HDR_Format":"Dolby Vision / HDR10+","HDR_Format_Compatibility":"HDR10"}`, true},
+		{"SDR", `{"@type":"Video","Format":"HEVC"}`, false},
+		{"static HDR", `{"@type":"Video","Format":"HEVC","HDR_Format":"HDR10"}`, false},
+		{"Dolby Vision only", `{"@type":"Video","Format":"HEVC","HDR_Format":"Dolby Vision"}`, false},
+		{"container claim", `{"@type":"General","Format":"HEVC","HDR_Format":"HDR10+"},{"@type":"Video","Format":"HEVC"}`, false},
+		{"wrong codec", `{"@type":"Video","Format":"AVC","HDR_Format":"HDR10+"}`, false},
+		{"ambiguous HEVC", `{"@type":"Video","Format":"HEVC","HDR_Format":"HDR10+"},{"@type":"Video","Format":"HEVC"}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var doc MediaInfoDocument
+			if err := json.Unmarshal([]byte(`{"media":{"track":[`+test.tracks+`]}}`), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if got := HDR10PlusTrackFromMediaInfo(doc); got != test.want {
+				t.Fatalf("eligible=%v want=%v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestHDRFromMediaInfoText(t *testing.T) {
 	t.Parallel()
 

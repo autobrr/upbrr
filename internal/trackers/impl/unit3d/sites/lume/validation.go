@@ -16,7 +16,7 @@ import (
 // ValidationPolicy returns LUME's tracker-specific constructibility checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-lume-constructibility-v3",
+		ID:    "unit3d-lume-constructibility-v4",
 		Check: checkRequirements,
 	}
 }

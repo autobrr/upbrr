@@ -16,7 +16,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		return nil
 	}
 	subject := api.NewTrackerValidationSubject(meta, "LUME")
-	failures := append(trackOrderingFailures(subject, trackers.LanguageProhibited), trackMetadataFailures(subject, trackers.LanguageProhibited)...)
+	failures := trackMetadataFailures(subject, trackers.LanguageProhibited)
 	if !slices.ContainsFunc(failures, func(failure api.RuleFailure) bool { return failure.Disposition == api.RuleDispositionStrict }) {
 		return nil
 	}

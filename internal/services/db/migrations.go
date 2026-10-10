@@ -59,6 +59,11 @@ type migrationExecutor interface {
 //     update legacyVersionToMigrationIDs only if the old integer user_version
 //     bridge mapping also changed historically.
 var migrationRegistry = []migrationStep{
+	{
+		id:        "2026_10_add_hdr_analysis_association",
+		dependsOn: []string{"2026_09_retain_input_workflow"},
+		apply:     migrateHDRAnalysisAssociation,
+	},
 	{id: baselineMigrationID, apply: createBaselineSchema},
 	{
 		id:        "2026_10_preserve_release_cut",
@@ -1975,6 +1980,22 @@ func migratePreserveReleaseCut(ctx context.Context, exec migrationExecutor) erro
 	}
 	if _, err := exec.ExecContext(ctx, `ALTER TABLE file_metadata ADD COLUMN release_cut TEXT NOT NULL DEFAULT '[]'`); err != nil {
 		return fmt.Errorf("db: preserve release cut: %w", err)
+	}
+	return nil
+}
+
+func migrateHDRAnalysisAssociation(ctx context.Context, exec migrationExecutor) error {
+	present, err := tableExists(ctx, exec, "input_workflow_associations")
+	if err != nil || !present {
+		return err
+	}
+	exists, err := tableColumnExists(ctx, exec, "input_workflow_associations", "hdr_analysis_id")
+	if err != nil || exists {
+		return err
+	}
+	_, err = exec.ExecContext(ctx, `ALTER TABLE input_workflow_associations ADD COLUMN hdr_analysis_id TEXT`)
+	if err != nil {
+		return fmt.Errorf("db migrate HDR association: %w", err)
 	}
 	return nil
 }

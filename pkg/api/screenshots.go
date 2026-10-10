@@ -23,12 +23,19 @@ const (
 	ScreenshotPurposeMenu ScreenshotPurpose = "menu"
 	// ScreenshotPurposeAudioAnalysis keeps audio graphs out of screenshot galleries.
 	ScreenshotPurposeAudioAnalysis ScreenshotPurpose = "audio_analysis"
+	// ScreenshotPurposeHDRAnalysis keeps brightness plots separate from screenshots and audio graphs.
+	ScreenshotPurposeHDRAnalysis ScreenshotPurpose = "hdr_analysis"
 
 	// ScreenshotSelectionSourceMenu identifies manually imported disc-menu selections.
 	ScreenshotSelectionSourceMenu = "menu"
 	// ScreenshotSelectionSourceDVDMenu identifies automatically captured DVD-menu selections.
 	ScreenshotSelectionSourceDVDMenu = "dvd_menu"
 )
+
+// IsAnalysis reports purposes that require complete upload coverage and account-bound reuse.
+func (p ScreenshotPurpose) IsAnalysis() bool {
+	return p == ScreenshotPurposeAudioAnalysis || p == ScreenshotPurposeHDRAnalysis
+}
 
 // IsDiscMenuSelectionSource reports whether a final-selection source belongs
 // to either manually imported or automatically captured disc menus.

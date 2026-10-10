@@ -88,16 +88,16 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			)
 		}
 	}
-	failures = append(failures, trackOrderingFailures(subject, recommendation)...)
+	failures = append(failures, trackOrderingFailures(subject)...)
 	failures = append(failures, trackMetadataFailures(subject, recommendation)...)
 	return failures
 }
 
-// trackOrderingFailures assesses measured container order without treating secondary
-// tracks as normal dubs. Original alternate mixes belong with original audio.
-func trackOrderingFailures(subject api.TrackerValidationSubject, outcome trackers.LanguageOutcome) []api.RuleFailure {
+// trackOrderingFailures advises on measured container order for all releases without
+// treating secondary tracks as normal dubs. Original alternate mixes belong with original audio.
+func trackOrderingFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	facts := subject.LanguageFacts
-	if facts.AudioAbsent || !facts.OriginalLanguagesKnown || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
+	if facts.AudioAbsent || !facts.OriginalLanguagesKnown || trackers.ProgrammeLanguageStatus(subject) != api.MetadataEvidenceStatusComplete {
 		return nil
 	}
 	audioTracks, orderKnown := orderedAudioTracks(facts.Tracks)
@@ -115,7 +115,12 @@ func trackOrderingFailures(subject api.TrackerValidationSubject, outcome tracker
 		if original && otherAudioSeen {
 			failures = append(
 				failures,
-				trackers.LanguageRuleFailure(subject, "original_order", "original programme track "+track.ID+" should precede other audio tracks", outcome),
+				trackers.LanguageRuleFailure(
+					subject,
+					"original_order",
+					"original programme track "+track.ID+" should precede other audio tracks",
+					trackers.LanguageAdvisory,
+				),
 			)
 		}
 		otherAudioSeen = otherAudioSeen || !original
@@ -141,7 +146,7 @@ func trackOrderingFailures(subject api.TrackerValidationSubject, outcome tracker
 					subject,
 					"dub_order",
 					"normal dub track "+track.ID+" should be grouped with normal dubs, English first and remaining languages alphabetically ordered",
-					outcome,
+					trackers.LanguageAdvisory,
 				),
 			)
 		}
