@@ -700,7 +700,7 @@ func getFrameInfo(ctx context.Context, runner Runner, cmdPath string, inputPath 
 }
 
 var (
-	showInfoType = regexp.MustCompile(`pict_type:([A-Z])`)
+	showInfoType = regexp.MustCompile(`\btype:([A-Z])\b`)
 	showInfoPTS  = regexp.MustCompile(`pts_time:([0-9.]+)`)
 )
 
