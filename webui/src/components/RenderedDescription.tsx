@@ -31,6 +31,7 @@ const handleRenderedDescriptionLinkClick = (event: ReactMouseEvent<HTMLElement>)
   }
 };
 
+/** Displays server-sanitized markup and opens valid HTTP(S) image URLs through the optional lightbox callback. */
 export default function RenderedDescription({ html, imagePreviews, onImageOpen }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -66,7 +67,8 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
         const generatedButton = image.parentElement?.closest("button[data-description-lightbox]");
         if (generatedButton) generatedButton.replaceWith(image);
         delete image.dataset.fullImage;
-        const full = fullByPreview.get(image.getAttribute("src") || "");
+        const source = image.getAttribute("src") || "";
+        const full = fullByPreview.get(source) || source;
         if (!full) return;
         let parsed: URL;
         try {

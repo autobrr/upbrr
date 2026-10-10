@@ -87,6 +87,7 @@ type WorkflowIntent struct {
 	SkipRemoteDuplicates   bool                                        `json:"skipRemoteDuplicates,omitempty"`
 	DuplicateCheckCount    uint8                                       `json:"duplicateCheckCount,omitempty"`
 	DuplicateDecisions     map[TrackerID]DupeDecision                  `json:"duplicateDecisions,omitempty"`
+	HDRAnalysis            *HDRAnalysisRequest                         `json:"hdrAnalysis,omitempty"`
 	Media                  *MediaCaptureInstructions                   `json:"media,omitempty"`
 	MediaSelection         *WorkflowMediaSelection                     `json:"mediaSelection,omitempty"`
 	Descriptions           *DescriptionInstructions                    `json:"descriptions,omitempty"`
@@ -130,6 +131,11 @@ type ContinueReleaseWorkflowRequest struct {
 
 // Validate verifies request identity and typed desired-state shape.
 func (r ContinueReleaseWorkflowRequest) Validate() error {
+	if r.Intent.HDRAnalysis != nil {
+		if _, err := r.Intent.HDRAnalysis.Normalize(); err != nil {
+			return err
+		}
+	}
 	if r.Goal == WorkflowGoalTrackersProjected {
 		if r.Authority == nil {
 			return errors.New("tracker projection requires exact workflow authority")

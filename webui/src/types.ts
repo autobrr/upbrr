@@ -343,6 +343,7 @@ export type PrepareInput = {
   Search?: { Skip: boolean; Client?: string | null };
   Controls?: {
     Interaction: "interactive" | "unattended" | "unattended_confirm";
+    CaptureHDRMetadata?: boolean;
     ConfirmBDMVRescan: boolean;
     ForceRecheck?: boolean | null;
   };
@@ -1256,7 +1257,7 @@ export type ScreenshotLinkedImage = {
 export type UploadedImageLink = {
   SourcePath: string;
   ImagePath: string;
-  Purpose?: "preview" | "final" | "menu" | "audio_analysis";
+  Purpose?: "preview" | "final" | "menu" | "audio_analysis" | "hdr_analysis";
   Host: string;
   UsageScope: string;
   ImgURL: string;

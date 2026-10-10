@@ -478,6 +478,9 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
       startedAt: "2026-07-20T00:00:00Z",
       updatedAt: "2026-07-20T00:00:01Z",
     }),
+    analyzeHDR: async (current) => current,
+    hdrAnalysisURL: (_current, analysisID, analysisRevision, artifactID) =>
+      `/api/app/release-workflow-hdr-analysis?analysisId=${analysisID}&analysisRevision=${analysisRevision}&artifactId=${artifactID}`,
     analyzeAudio: async (current) => current,
     setAudioAnalysisEnabled: async (current, enabled) => ({
       ...current,
@@ -623,6 +626,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     reorderMedia: async (...args) => remember(await configured.reorderMedia(...args)),
     deleteMedia: async (...args) => remember(await configured.deleteMedia(...args)),
     attachMedia: async (...args) => remember(await configured.attachMedia(...args)),
+    analyzeHDR: async (...args) => remember(await configured.analyzeHDR(...args)),
     analyzeAudio: async (...args) => remember(await configured.analyzeAudio(...args)),
     setAudioAnalysisEnabled: async (...args) =>
       remember(await configured.setAudioAnalysisEnabled(...args)),
@@ -1120,6 +1124,113 @@ describe("useReleaseSession", () => {
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
+
+  it.each([false, true])(
+    "retains the HDR target failure after an accepted run (typed=%s)",
+    async (typed) => {
+      const workflowID = "workflow-hdr-resource-failure";
+      const initial = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 7),
+        preview("Synthetic.HDR.mkv", 1),
+      );
+      const release = initial.release!.release;
+      const message = "HDR analysis exceeded its fixed resource limit";
+      const terminal = {
+        ...initial,
+        workflow: {
+          ...initial.workflow,
+          revision: 8,
+          hdrAnalysis: { id: "hdr-result", revision: 8 },
+        },
+        hdrAnalysis: {
+          id: "hdr-result",
+          workflowId: workflowID,
+          revision: 8,
+          release: { SourcePath: release.Source.SourcePath, Generation: release.Generation },
+          attemptId: "hdr-operation",
+          manifestFingerprint: "manifest",
+          targetIds: ["hdr-target"],
+          peakSource: "histogram",
+          profileVersion: "hdr-analysis-v1",
+          status: "failed",
+          createdAt: "2026-10-10T00:00:00Z",
+          completedAt: "2026-10-10T00:01:00Z",
+          targets: [
+            {
+              targetId: "hdr-target",
+              label: "Video 1",
+              status: "failed",
+              frames: 0,
+              scenes: 0,
+              failure: { code: "resource_limit", message },
+            },
+          ],
+        },
+        operation: {
+          id: "hdr-operation",
+          workflowId: workflowID,
+          revision: 7,
+          resultRevision: 8,
+          sequence: 2,
+          command: "analyze_hdr",
+          operation: "analyze_hdr",
+          status: "failed",
+          progress: 100,
+          completed: 1,
+          total: 1,
+          message: "Operation completed with retained failures.",
+          failures: typed
+            ? [
+                {
+                  failure: {
+                    Code: "hdr_analysis_failed",
+                    Operation: "analyze_hdr",
+                    HDRAnalysisCode: "resource_limit",
+                    Message: message,
+                    Recovery: "retry",
+                  },
+                },
+              ]
+            : [],
+          startedAt: "2026-10-10T00:00:00Z",
+          updatedAt: "2026-10-10T00:01:00Z",
+          completedAt: "2026-10-10T00:01:00Z",
+        },
+      } as ReleaseWorkflowCurrent;
+      let current = initial;
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({
+              current: async () => current,
+              operation: async () => terminal.operation!,
+              analyzeHDR: async () => {
+                current = terminal;
+                return { ...initial, operation: { ...terminal.operation!, status: "queued" } };
+              },
+            }),
+          }),
+        ),
+      });
+      await waitFor(() =>
+        expect(result.current.workflow.view.current?.workflow.id).toBe(workflowID),
+      );
+      await act(async () => {
+        expect(
+          await result.current.hdrAnalysis.generate({
+            targetIDs: ["hdr-target"],
+            peakSource: "histogram",
+          }),
+        ).toBe(false);
+      });
+      expect(result.current.hdrAnalysis.view.error).toBe(message);
+      expect(result.current.hdrAnalysis.view.result?.targets[0].failure?.code).toBe(
+        "resource_limit",
+      );
+      unmount();
+    },
+  );
 
   it("shows a newer audio operation failure instead of a stale retained result failure", async () => {
     const workflowID = "workflow-audio-newer-failure";
@@ -4385,6 +4496,80 @@ describe("useReleaseSession", () => {
     },
   );
 
+  it("reopens a restored playlist selection and sends the HDR check only for that preparation", async () => {
+    const sourcePath = "C:\\media\\Synthetic Disc";
+    const initial = workflowCurrentFromPreview(
+      workflowCurrent("workflow-restored-playlists", 2),
+      preview(sourcePath, 1),
+    );
+    const stored: ReleaseWorkflowCurrent = {
+      ...initial,
+      release: {
+        ...initial.release!,
+        release: {
+          ...initial.release!.release,
+          Source: {
+            ...initial.release!.release.Source,
+            SelectedPlaylists: [
+              {
+                id: "disc-one:00001.mpls",
+                discId: "disc-one",
+                discName: "Disc 1",
+                file: "00001.mpls",
+                duration: 120,
+                items: [],
+                score: 1,
+                edition: "",
+              },
+            ],
+          },
+        },
+      },
+    };
+    const prepare = vi.fn(async (current: ReleaseWorkflowCurrent) => ({
+      ...stored,
+      workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+    }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ prepare }),
+          activeInput: {
+            get: async () => ({
+              state: "active",
+              revision: 1,
+              inputId: "input-restored",
+              sourceVersion: "source-restored",
+              current: stored,
+            }),
+          },
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.status).toBe("ready"));
+    act(() => result.current.input.reviewPlaylists());
+    expect(result.current.input.view.playlist.required).toBe(true);
+    expect(result.current.input.view.playlist.selected).toEqual(["disc-one:00001.mpls"]);
+    await act(() => result.current.input.confirmPlaylists(true));
+    expect(prepare).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        SourcePath: sourcePath,
+        Controls: expect.objectContaining({ CaptureHDRMetadata: true }),
+      }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    await act(() => result.current.input.prepare());
+    expect(prepare).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ Controls: expect.objectContaining({ CaptureHDRMetadata: false }) }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    unmount();
+  });
+
   it("resumes the backend playlist required action with the captured draft source", async () => {
     const sourcePath = "C:\\media\\Example Disc";
     const withRelease = (
@@ -4548,7 +4733,7 @@ describe("useReleaseSession", () => {
     act(() =>
       result.current.input.choosePlaylists(["disc-one:00001.mpls", "disc-two:00001.mpls"], false),
     );
-    await act(() => result.current.input.confirmPlaylists());
+    await act(() => result.current.input.confirmPlaylists(true));
 
     expect(create).toHaveBeenCalledOnce();
     expect(replaceFacts).not.toHaveBeenCalled();
@@ -4556,6 +4741,7 @@ describe("useReleaseSession", () => {
       expect.anything(),
       expect.objectContaining({
         SourcePath: sourcePath,
+        Controls: expect.objectContaining({ CaptureHDRMetadata: true }),
         Instructions: expect.objectContaining({
           Playlist: {
             Set: true,
@@ -4933,7 +5119,11 @@ describe("useReleaseSession", () => {
     expect(prepare.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
         SourcePath: "C:\\media\\Example Disc",
-        Controls: { Interaction: "interactive", ConfirmBDMVRescan: false },
+        Controls: {
+          Interaction: "interactive",
+          ConfirmBDMVRescan: false,
+          CaptureHDRMetadata: false,
+        },
       }),
     );
     expect(result.current.identity.view.release).toEqual({

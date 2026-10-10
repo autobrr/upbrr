@@ -1705,6 +1705,9 @@ func (w ReleaseWorkflow) Validate() error {
 	if (w.Media != nil || w.Descriptions != nil) && w.TrackerProjections == nil {
 		return errors.New("media and descriptions require tracker projections")
 	}
+	if w.HDRAnalysis != nil && w.Release == nil {
+		return errors.New("HDR analysis requires a release snapshot")
+	}
 	if w.AudioAnalysis != nil && w.Release == nil {
 		return errors.New("audio analysis requires a release snapshot")
 	}

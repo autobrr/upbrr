@@ -421,7 +421,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		}
 		workflow = created.Workflow.ID
 		if lookupErr == nil && previousInput.SourceVersion == record.SourceVersion {
-			priorWorkflowID, migratedAudioID, associationErr := m.activeInputs.LoadInputWorkflowAssociation(
+			association, associationErr := m.activeInputs.LoadInputWorkflowAssociation(
 				ctx,
 				record.CanonicalPath,
 				owner,
@@ -430,6 +430,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			if associationErr != nil {
 				return api.ActiveInputRecord{}, fmt.Errorf("release workflow load input workflow association: %w", associationErr)
 			}
+			priorWorkflowID, migratedAudioID := association.WorkflowID, association.AudioAnalysisID
 			if priorWorkflowID != "" {
 				priorState, loadErr := m.repository.Load(ctx, owner, priorWorkflowID)
 				if loadErr != nil && !errors.Is(loadErr, ErrWorkflowNotFound) {
@@ -448,13 +449,25 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 							pendingWorkflow = priorState.Workflow.ID
 						}
 					}
-					if pending != nil {
+					if pending != nil || priorState.Workflow.HDRAnalysis != nil || association.HDRAnalysisID != "" || len(priorState.HDRExtractions) > 0 ||
+						priorState.PendingHDRAnalysisWorkflowID != "" {
 						state, loadErr := m.repository.Load(ctx, owner, workflow)
 						if loadErr != nil {
 							return api.ActiveInputRecord{}, fmt.Errorf("release workflow load new input workflow: %w", loadErr)
 						}
 						state.PendingAudioAnalysis = pending
 						state.PendingAudioAnalysisWorkflowID = pendingWorkflow
+						state.PendingHDRAnalysis = priorState.Workflow.HDRAnalysis
+						state.PendingHDRAnalysisWorkflowID = priorState.Workflow.ID
+						if state.PendingHDRAnalysis == nil && association.HDRAnalysisID != "" {
+							if analysis, exists := priorState.HDRAnalyses[association.HDRAnalysisID]; exists {
+								state.PendingHDRAnalysis = &api.HDRAnalysisRef{ID: analysis.ID, Revision: analysis.Revision}
+							}
+						}
+						if state.PendingHDRAnalysis == nil && priorState.PendingHDRAnalysisWorkflowID != "" {
+							state.PendingHDRAnalysis = priorState.PendingHDRAnalysis
+							state.PendingHDRAnalysisWorkflowID = priorState.PendingHDRAnalysisWorkflowID
+						}
 						state.Workflow.Revision++
 						state.Workflow.UpdatedAt = m.clock.Now()
 						encoded, encodeErr := workflowStateRecord(owner, state)
@@ -512,9 +525,18 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			state.PendingCorrectionConfirmation = nil
 			state.PendingAudioAnalysis = nil
 			state.PendingAudioAnalysisWorkflowID = ""
+			state.PendingHDRAnalysis = nil
+			state.PendingHDRAnalysisWorkflowID = ""
 		} else if state.Workflow.AudioAnalysis != nil {
 			state.PendingAudioAnalysis = state.Workflow.AudioAnalysis
 			state.PendingAudioAnalysisWorkflowID = state.Workflow.ID
+		}
+		// Prefer current results or newly owned checkpoints. Repeated verification
+		// must preserve the result already pending in this workflow after invalidation.
+		if prior.SourceVersion == record.SourceVersion && (state.Workflow.HDRAnalysis != nil ||
+			(len(state.HDRExtractions) > 0 && state.PendingHDRAnalysisWorkflowID != state.Workflow.ID)) {
+			state.PendingHDRAnalysis = state.Workflow.HDRAnalysis
+			state.PendingHDRAnalysisWorkflowID = state.Workflow.ID
 		}
 		state.PendingDuplicateReuse = nil
 		invalidatePreparedAndDownstream(&state.Workflow)

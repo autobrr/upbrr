@@ -20,45 +20,45 @@ func TestHDRCollectorConfirmationRequiresMatchingSuccessfulCapture(t *testing.T)
 		confirmed bool
 	}{
 		{
-name: "confirmed",
- capture: preparationstate.HDRCaptureResource{
-Path: "metadata.json",
- TrackID: 1,
- SourceFingerprint: "current",
-},
- confirmed: true,
-},
+			name: "confirmed",
+			capture: preparationstate.HDRCaptureResource{
+				Path:              "metadata.json",
+				TrackID:           1,
+				SourceFingerprint: "current",
+			},
+			confirmed: true,
+		},
 		{name: "old source", capture: preparationstate.HDRCaptureResource{
-Path: "metadata.json",
- TrackID: 1,
- SourceFingerprint: "old",
-}},
+			Path:              "metadata.json",
+			TrackID:           1,
+			SourceFingerprint: "old",
+		}},
 		{name: "missing track", capture: preparationstate.HDRCaptureResource{Path: "metadata.json", SourceFingerprint: "current"}},
 		{name: "missing metadata", capture: preparationstate.HDRCaptureResource{TrackID: 1, SourceFingerprint: "current"}},
 		{name: "absent", capture: preparationstate.HDRCaptureResource{
-Path: "metadata.json",
- TrackID: 1,
- SourceFingerprint: "current",
- Absent: true,
-}},
+			Path:              "metadata.json",
+			TrackID:           1,
+			SourceFingerprint: "current",
+			Absent:            true,
+		}},
 		{name: "failed", capture: preparationstate.HDRCaptureResource{
-Path: "metadata.json",
- TrackID: 1,
- SourceFingerprint: "current",
- Failure: &api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureInvalidBitstream},
-}},
+			Path:              "metadata.json",
+			TrackID:           1,
+			SourceFingerprint: "current",
+			Failure:           &api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureInvalidBitstream},
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			collector, err := NewEvidenceCollector(privateResourcePipelineFake{state: preparationstate.State{
 				SourcePath: root,
- Paths: []string{root},
- DiscType: "BDMV",
+				Paths:      []string{root},
+				DiscType:   "BDMV",
 				Discs: []preparationstate.DiscResource{{
-					ID: "disc",
- Name: "Disc 1",
- Type: "BDMV",
- Root: root,
+					ID:                "disc",
+					Name:              "Disc 1",
+					Type:              "BDMV",
+					Root:              root,
 					SelectedPlaylists: []api.PlaylistInfo{{ID: "disc:00001.MPLS", File: "00001.MPLS"}},
 					HDRCaptures:       map[string]preparationstate.HDRCaptureResource{"00001.MPLS": test.capture},
 				}},
@@ -185,25 +185,25 @@ type hdrConfirmedDiscPipeline struct {
 func (p *hdrConfirmedDiscPipeline) CollectPreparationEvidence(_ context.Context, request preparationstate.Request) (preparationstate.State, error) {
 	disc := request.Layout.Discs[0]
 	playlist := api.PlaylistInfo{
-ID: disc.ID + ":" + p.file,
- DiscID: disc.ID,
- DiscName: disc.Name,
- File: p.file,
- Duration: 120,
-}
+		ID:       disc.ID + ":" + p.file,
+		DiscID:   disc.ID,
+		DiscName: disc.Name,
+		File:     p.file,
+		Duration: 120,
+	}
 	resource := preparationstate.DiscResource{
-		ID: disc.ID,
- Name: disc.Name,
- Root: disc.Root,
- Type: disc.Type,
+		ID:                disc.ID,
+		Name:              disc.Name,
+		Root:              disc.Root,
+		Type:              disc.Type,
 		SelectedPlaylists: []api.PlaylistInfo{playlist},
 	}
 	if request.Input.Controls.CaptureHDRMetadata {
 		resource.HDRCaptures = map[string]preparationstate.HDRCaptureResource{p.file: {
-			Path: filepath.Join(disc.Root, "metadata.json"),
- TrackID: 1,
- SourceFingerprint: request.SourceFingerprint,
- Absent: p.absent,
+			Path:              filepath.Join(disc.Root, "metadata.json"),
+			TrackID:           1,
+			SourceFingerprint: request.SourceFingerprint,
+			Absent:            p.absent,
 		}}
 	}
 	return preparationstate.State{
@@ -230,8 +230,8 @@ func hdrConfirmedDiscFixture(t *testing.T) (string, *hdrConfirmedDiscPipeline, a
 		}
 	}
 	return root, &hdrConfirmedDiscPipeline{file: "00001.MPLS"}, api.PrepareInput{
-		SourcePath: root,
- Instructions: api.ReleaseFactInstructions{Playlist: api.PlaylistInstruction{Set: true, UseAll: true}},
-		Controls: api.PreparationControls{CaptureHDRMetadata: true},
+		SourcePath:   root,
+		Instructions: api.ReleaseFactInstructions{Playlist: api.PlaylistInstruction{Set: true, UseAll: true}},
+		Controls:     api.PreparationControls{CaptureHDRMetadata: true},
 	}
 }

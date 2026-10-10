@@ -11,6 +11,7 @@ export const screenPaths = {
   input: "/input",
   tracker: "/tracker-data",
   bluray: "/bluray-candidates",
+  hdr_analysis: "/hdr-analysis",
   audio_analysis: "/audio-analysis",
   dupes: "/duplicates",
   screenshots: "/screenshots",
@@ -60,6 +61,11 @@ export function createAppRouter(shell: () => ReactElement) {
       getParentRoute: () => rootRoute,
       path: screenPaths.bluray,
       component: routeComponents.bluray,
+    }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: screenPaths.hdr_analysis,
+      component: routeComponents.hdr_analysis,
     }),
     createRoute({
       getParentRoute: () => rootRoute,

@@ -1985,7 +1985,15 @@ func migratePreserveReleaseCut(ctx context.Context, exec migrationExecutor) erro
 }
 
 func migrateHDRAnalysisAssociation(ctx context.Context, exec migrationExecutor) error {
-	_, err := exec.ExecContext(ctx, `ALTER TABLE input_workflow_associations ADD COLUMN hdr_analysis_id TEXT`)
+	present, err := tableExists(ctx, exec, "input_workflow_associations")
+	if err != nil || !present {
+		return err
+	}
+	exists, err := tableColumnExists(ctx, exec, "input_workflow_associations", "hdr_analysis_id")
+	if err != nil || exists {
+		return err
+	}
+	_, err = exec.ExecContext(ctx, `ALTER TABLE input_workflow_associations ADD COLUMN hdr_analysis_id TEXT`)
 	if err != nil {
 		return fmt.Errorf("db migrate HDR association: %w", err)
 	}

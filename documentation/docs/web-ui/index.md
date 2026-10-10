@@ -36,6 +36,7 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 | **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
 | **Dupe Check**     | Answer tracker questions and review search results, rules, and names.    |
 | **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
+| **HDR Analysis**   | Generate, inspect, download, and include HDR10+ brightness plots.        |
 | **Screenshots**    | Generate, import, order, and select screenshots.                         |
 | **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
 | **Upload Images**  | Publish selected images through configured hosts.                        |
@@ -65,6 +66,8 @@ Each successful graph can be previewed, opened at full size, or downloaded as it
 **Cancel** stops the active analysis. **Disable** first waits for active work to stop, then hides the result from the current workflow; retained files have no time-based expiry but can be removed when the workflow or source changes. A compatible retry regenerates only missing or failed variants. Results belong to the exact prepared generation, so stale images are not shown after the source facts change.
 
 See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and troubleshooting details.
+
+**HDR Analysis** appears when prepared Input contains eligible targets. MKV files require MediaInfo-confirmed HDR10+ on a unique HEVC video track. For Blu-ray, check **Check for HDR10+ in the selected playlists** during playlist selection, or use **Review selected playlists** for an already prepared disc. Confirmed playlists are plotted during preparation, ready to view on **HDR Analysis**. Opening the page does not read the source. For MKV files, select targets and a peak estimator, then click **Generate**. MKV progress shows structure discovery and metadata collection. Complete retained metadata supports estimator changes without another source scan. Completed analyses are automatically included in generated descriptions; partial plots remain inspectable. Compatible saved plots and their hosted links are restored when reopening a release. See [HDR analysis](../workflow/hdr-analysis.md).
 
 ### Correct Input facts
 
