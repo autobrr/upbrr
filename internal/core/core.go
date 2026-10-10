@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/dvdmenus"
+	"github.com/autobrr/upbrr/internal/services/hdranalysis"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
 	"github.com/autobrr/upbrr/internal/torrent"
@@ -226,12 +227,21 @@ func newCoreWithHooks(
 	if deps.LiveTest != nil {
 		services.Clients = clientdiscovery.WithLiveTestPolicy(services.Clients, deps.LiveTest)
 	}
+	hdrService := hdranalysis.New(hdranalysis.ProcessAdmission(), logger)
 	clientDiscovery := clientdiscovery.New(services.Clients, logger)
 	if services.Metadata == nil {
+		count, err := metadata.CleanupProvisionalHDR(ctx, cfg.MainSettings.DBPath)
+		if err != nil {
+			return nil, fmt.Errorf("core: clean provisional HDR metadata: %w", err)
+		}
+		if count > 0 {
+			logger.Infof("metadata: provisional HDR cleanup state=complete count=%d", count)
+		}
 		if _, err := metadata.EnsureDefaultTagOverrides(cfg.MainSettings.DBPath); err != nil {
 			return nil, fmt.Errorf("core: default tag overrides: %w", err)
 		}
 		bdinfoService := bdinfo.New(logger)
+		bdinfoService.SetHDRService(hdrService)
 
 		services.Metadata = metadata.NewService(
 			metadataRepositoryView{
@@ -392,6 +402,12 @@ func newCoreWithHooks(
 		repositories.Media(),
 		audioTmpRoot,
 	)
+	workflowHDRAnalysis := workflowHDRAnalysisBuilder{
+		uploads:  repositories.Media(),
+		resolver: preparedFacts,
+		service:  hdrService,
+		root:     audioTmpRoot,
+	}
 	descriptionReuse, _ := repoOwner.(api.DescriptionReuseRepository)
 	if descriptionReuse == nil {
 		descriptionReuse = repositories.DescriptionReuse()
@@ -401,7 +417,11 @@ func newCoreWithHooks(
 	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok && strings.TrimSpace(sqliteRepo.DBPath()) != "" {
 		vault, vaultErr := releaseworkflow.NewPrivateArtifactVault(
 			workflowPrivateVaultRoot(sqliteRepo.DBPath()),
-			workflowPrivateResourceCodecs(workflowMediaArtifacts, workflowAudioAnalysis)...,
+			append(
+				workflowPrivateResourceCodecs(workflowMediaArtifacts, workflowAudioAnalysis),
+				hdrResourceCodec(audioTmpRoot, "analysis"),
+				hdrResourceCodec(audioTmpRoot, "extraction"),
+			)...,
 		)
 		if vaultErr != nil {
 			return nil, fmt.Errorf("core: release workflow private artifact vault: %w", vaultErr)
@@ -431,6 +451,7 @@ func newCoreWithHooks(
 		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes, logger: logger}),
 		releaseworkflow.WithMediaArtifactBuilder(workflowMediaArtifacts),
 		releaseworkflow.WithAudioAnalysisBuilder(workflowAudioAnalysis),
+		releaseworkflow.WithHDRAnalysisBuilder(workflowHDRAnalysis),
 		releaseworkflow.WithDescriptionBuilder(workflowDescriptionBuilder{
 			config:   cfg,
 			resolver: preparedFacts,
@@ -701,6 +722,8 @@ func releaseWorkflowOperation(command releaseworkflow.Command) api.OperationKind
 		releaseworkflow.AttachMediaArtifactsCommand,
 		releaseworkflow.RemoveHostedImagesCommand:
 		return api.OperationKindMedia
+	case releaseworkflow.AnalyzeHDRCommand:
+		return api.OperationKindHDRAnalysis
 	case releaseworkflow.AnalyzeAudioCommand:
 		return api.OperationKindAudioAnalysis
 	case releaseworkflow.UploadMediaImagesCommand:
@@ -1126,4 +1149,32 @@ func migrateLegacyCookies(ctx context.Context, sqliteDB *sql.DB, dbPath string, 
 	}
 
 	return nil
+}
+
+func (c *Core) OpenReleaseWorkflowHDRAnalysisArtifact(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysis api.HDRAnalysisRef,
+	artifactID api.PublicResourceID,
+) (releaseworkflow.MediaArtifactContent, error) {
+	content, err := c.workflow.HDRAnalysisArtifact(ctx, ownerID, workflowID, analysis, artifactID)
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, classifyOperationError(api.OperationKindHDRAnalysis, err)
+	}
+	return content, nil
+}
+
+func (c *Core) ReleaseWorkflowHDRAnalysisArtifactPath(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysis api.HDRAnalysisRef,
+	artifactID api.PublicResourceID,
+) (string, error) {
+	pathValue, err := c.workflow.HDRAnalysisArtifactPath(ctx, ownerID, workflowID, analysis, artifactID)
+	if err != nil {
+		return "", classifyOperationError(api.OperationKindHDRAnalysis, err)
+	}
+	return pathValue, nil
 }

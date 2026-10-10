@@ -27,7 +27,7 @@ func (a *packAnalyzer) Analyze(_ context.Context, target string) (string, []byte
 	return "General\nComplete name : " + target, []byte(packMediaReport), nil
 }
 
-func TestSPPackPreparationUsesOnlyPrimaryMediaAndExistingCache(t *testing.T) {
+func TestSPPackPreparationPreservesPrimaryMediaAndCachesHDRTrackChecks(t *testing.T) {
 	t.Parallel()
 	for _, releaseType := range []string{"WEB-DL", "BluRay.REMUX"} {
 		t.Run(releaseType, func(t *testing.T) {
@@ -43,14 +43,27 @@ func TestSPPackPreparationUsesOnlyPrimaryMediaAndExistingCache(t *testing.T) {
 				}
 			}
 			analyzer := &packAnalyzer{}
-			service := NewService(&stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithSceneDetector(stubSceneDetector{}), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}))
+			service := NewService(
+				&stubRepo{},
+				WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
+				WithSceneDetector(stubSceneDetector{}),
+				WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}),
+			)
 			request := testCollectionRequest(t, api.Request{SourcePath: source})
 			first, err := service.collectSourceEvidence(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !first.TVPack || len(first.FileList) != 3 || len(analyzer.targets) != 1 || analyzer.targets[0] != first.VideoPath || first.MediaInfoJSONPath == "" {
-				t.Fatalf("ordinary primary preparation: pack=%t files=%v probes=%v report=%q", first.TVPack, first.FileList, analyzer.targets, first.MediaInfoJSONPath)
+			if !first.TVPack || len(first.FileList) != 3 || len(analyzer.targets) != 4 || analyzer.targets[0] != first.VideoPath ||
+				first.MediaInfoJSONPath == "" ||
+				len(first.HDRFileEligibility) != 3 {
+				t.Fatalf(
+					"ordinary primary preparation: pack=%t files=%v probes=%v report=%q",
+					first.TVPack,
+					first.FileList,
+					analyzer.targets,
+					first.MediaInfoJSONPath,
+				)
 			}
 			registry := trackers.NewRegistry()
 			definition := unit3d.NewWithProfile(sp.Profile())
@@ -69,8 +82,13 @@ func TestSPPackPreparationUsesOnlyPrimaryMediaAndExistingCache(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(analyzer.targets) != 1 || selected.MediaInfoJSONPath != first.MediaInfoJSONPath || len(selected.MediaFileFacts.Files) != 0 {
-				t.Fatalf("SP guidance triggered extra probes or invented pack evidence: probes=%v report=%q facts=%+v", analyzer.targets, selected.MediaInfoJSONPath, selected.MediaFileFacts)
+			if len(analyzer.targets) != 4 || selected.MediaInfoJSONPath != first.MediaInfoJSONPath || len(selected.MediaFileFacts.Files) != 0 {
+				t.Fatalf(
+					"SP guidance triggered extra probes or invented pack evidence: probes=%v report=%q facts=%+v",
+					analyzer.targets,
+					selected.MediaInfoJSONPath,
+					selected.MediaFileFacts,
+				)
 			}
 		})
 	}

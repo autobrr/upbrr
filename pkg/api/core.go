@@ -55,6 +55,7 @@ type UploadOptions struct {
 	// CaptureDVDMenus requests automatic menu capture for DVD inputs before review or upload.
 	CaptureDVDMenus bool
 	// AudioAnalysis requests local waveform/spectrogram and amplitude statistics generation before any upload side effects.
+	HDRAnalysis   *HDRAnalysisRequest
 	AudioAnalysis bool
 	// AudioTracks is primary, all, or a comma-separated list of one-based audio ordinals.
 	AudioTracks string

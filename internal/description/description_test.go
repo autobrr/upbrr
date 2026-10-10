@@ -22,6 +22,15 @@ func TestSplitTrailingSourceAudioSpoilerPreservesNestedComparison(t *testing.T) 
 	if body != description || audio != generated {
 		t.Fatalf("trailing generated audio split incorrectly: body=%q audio=%q", body, audio)
 	}
+	hdr := "[spoiler=source_hdr]generated HDR[/spoiler]"
+	body, audio = SplitTrailingSourceAudioSpoiler(description + "\n\n" + hdr)
+	if body != description || audio != hdr {
+		t.Fatalf("trailing HDR mixed with comparison audio: %q %q", body, audio)
+	}
+	body, audio = SplitTrailingSourceAudioSpoiler(description + "\n\n" + generated + "\n\n" + hdr)
+	if body != description || audio != generated+"\n\n"+hdr {
+		t.Fatalf("combined analysis blocks split incorrectly: %q %q", body, audio)
+	}
 }
 
 func TestRenderBBCode(t *testing.T) {

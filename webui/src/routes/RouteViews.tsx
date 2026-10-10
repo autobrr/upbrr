@@ -12,6 +12,7 @@ import type { SourcePathHistoryEntry, SourcePathMode } from "../utils/inputHisto
 import type { ScreenId } from "../router";
 import type { ApplicationInfo } from "../types";
 
+const HDRAnalysisPage = lazy(() => import("../pages/hdr_analysis"));
 const AudioAnalysisPage = lazy(() => import("../pages/audio_analysis"));
 const BlurayCandidatesPage = lazy(() => import("../pages/bluray_candidates"));
 const DescriptionBuilderPage = lazy(() => import("../pages/description_builder"));
@@ -173,6 +174,20 @@ function BlurayRoute() {
       setLightboxImage={setLightboxImage}
       setLightboxAlt={setLightboxAlt}
     />
+  );
+}
+
+function HDRRoute() {
+  const { session, setLightboxImage, setLightboxAlt } = useRouteViews();
+  return (
+    <GuardedReleaseView route="hdrAnalysis">
+      <HDRAnalysisPage
+        key={session.hdrAnalysis.view.releaseGeneration}
+        facet={session.hdrAnalysis}
+        setLightboxImage={setLightboxImage}
+        setLightboxAlt={setLightboxAlt}
+      />
+    </GuardedReleaseView>
   );
 }
 
@@ -364,6 +379,7 @@ export const routeComponents: Record<ScreenId, () => ReactNode> = {
   input: InputRoute,
   tracker: withLoading(TrackerRoute),
   bluray: withLoading(BlurayRoute),
+  hdr_analysis: withLoading(HDRRoute),
   audio_analysis: withLoading(AudioRoute),
   dupes: withLoading(DuplicatesRoute),
   screenshots: withLoading(ScreenshotsRoute),

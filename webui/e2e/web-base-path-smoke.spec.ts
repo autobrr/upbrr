@@ -181,6 +181,39 @@ test("authenticated deep link and API remain scoped to the base path across sess
   }
 });
 
+test("HDR analysis blocks unconfirmed input after reload under a base path", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { baseURL: "/upbrr/" });
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "HDR10+ Brightness" })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: /Video 1/ })).toBeDisabled();
+    await expect(page.getByRole("checkbox", { name: /Video 1/ })).not.toBeChecked();
+    await expect(page.getByRole("checkbox", { name: /Video 1/ })).toHaveAccessibleName(
+      /MediaInfo must confirm HDR10\+ on a unique HEVC video track\./,
+    );
+    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    await expect(page.getByRole("checkbox", { name: "Include in descriptions" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeDisabled();
+    await page.reload();
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(page.getByRole("checkbox", { name: /Video 1/ })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Disable HDR inclusion", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Completed HDR plots are automatically included in generated descriptions."),
+    ).toBeVisible();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("audio analysis survives reload and serves owner-bound images and statistics under a base path", async ({
   page,
 }) => {

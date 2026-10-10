@@ -474,8 +474,14 @@ func TestCollectTVPackSelectsFirstEpisodeForMediaInfoAndScreenshots(t *testing.T
 				t.Fatal(err)
 			}
 			want := filepath.Join(source, test.want)
-			if !meta.TVPack || meta.VideoPath != want || mediaInfo.request.VideoPath != want {
-				t.Fatalf("expected pack media/screenshot source %q, got pack=%t video=%q mediainfo=%q", want, meta.TVPack, meta.VideoPath, mediaInfo.request.VideoPath)
+			if !meta.TVPack || meta.VideoPath != want || mediaInfo.requests[0].VideoPath != want || len(mediaInfo.requests) != len(test.files)+1 {
+				t.Fatalf(
+					"expected pack media/screenshot source %q, got pack=%t video=%q mediainfo=%q",
+					want,
+					meta.TVPack,
+					meta.VideoPath,
+					mediaInfo.request.VideoPath,
+				)
 			}
 		})
 	}
@@ -651,7 +657,13 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	mediaInfo := &recordingMediaInfo{}
-	service := NewService(repo, WithMediaInfoExporter(mediaInfo), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+	service := NewService(
+		repo,
+		WithMediaInfoExporter(mediaInfo),
+		WithSceneDetector(stubSceneDetector{}),
+		WithConfig(cfg),
+		WithBDInfoService(bdinfo.New(api.NopLogger{})),
+	)
 
 	originalDiscover := discoverBDMVPlaylists
 	originalParse := parseBDMVPlaylist
@@ -1205,7 +1217,13 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+	service := NewService(
+		repo,
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(stubSceneDetector{}),
+		WithConfig(cfg),
+		WithBDInfoService(bdinfo.New(api.NopLogger{})),
+	)
 
 	originalDiscover := discoverBDMVPlaylists
 	originalParse := parseBDMVPlaylist
@@ -1309,7 +1327,13 @@ func TestPrepareBDMVDirectPlaylistInvokesBDInfoForParentAndRoot(t *testing.T) {
 
 	repo := &stubRepo{}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+	service := NewService(
+		repo,
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(stubSceneDetector{}),
+		WithConfig(cfg),
+		WithBDInfoService(bdinfo.New(api.NopLogger{})),
+	)
 
 	originalDiscover := discoverBDMVPlaylists
 	originalParse := parseBDMVPlaylist
@@ -1446,7 +1470,13 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+	service := NewService(
+		repo,
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(stubSceneDetector{}),
+		WithConfig(cfg),
+		WithBDInfoService(bdinfo.New(api.NopLogger{})),
+	)
 
 	originalDiscover := discoverBDMVPlaylists
 	t.Cleanup(func() {
@@ -1500,7 +1530,13 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+	service := NewService(
+		repo,
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(stubSceneDetector{}),
+		WithConfig(cfg),
+		WithBDInfoService(bdinfo.New(api.NopLogger{})),
+	)
 
 	originalDiscover := discoverBDMVPlaylists
 	originalParse := parseBDMVPlaylist
@@ -1619,11 +1655,13 @@ func (stubMediaInfo) Export(context.Context, mediainfo.Request) (mediainfo.Resul
 }
 
 type recordingMediaInfo struct {
-	request mediainfo.Request
+	request  mediainfo.Request
+	requests []mediainfo.Request
 }
 
 func (r *recordingMediaInfo) Export(_ context.Context, req mediainfo.Request) (mediainfo.Result, error) {
 	r.request = req
+	r.requests = append(r.requests, req)
 	return mediainfo.Result{}, nil
 }
 

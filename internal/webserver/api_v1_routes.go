@@ -477,6 +477,32 @@ func (s *Server) handleAPIV1WorkflowRead(
 			audioAnalysisContentDisposition(content.ContentType),
 			"releaseworkflow: audio analysis API response interrupted",
 		)
+	case len(segments) == 5 && segments[1] == "hdr-analysis" && segments[3] == "artifacts":
+		revision, err := strconv.ParseUint(strings.TrimSpace(r.URL.Query().Get("revision")), 10, 64)
+		if err != nil || revision == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "valid HDR analysis revision is required"})
+			return
+		}
+		content, err := s.backend.openReleaseWorkflowHDRAnalysisArtifact(
+			r.Context(),
+			principal.OwnerID,
+			workflowID,
+			api.HDRAnalysisRef{
+				ID:       api.HDRAnalysisResultID(segments[2]),
+				Revision: api.WorkflowRevision(revision),
+			},
+			api.PublicResourceID(segments[4]),
+		)
+		if err != nil {
+			writeAPIV1WorkflowError(w, err)
+			return
+		}
+		s.writeReleaseWorkflowArtifact(
+			w,
+			content,
+			`inline; filename="hdr10plus.png"`,
+			"releaseworkflow: HDR analysis API response interrupted",
+		)
 	default:
 		http.NotFound(w, r)
 	}
@@ -503,8 +529,22 @@ func (s *Server) apiV1WorkflowCommand(
 		}
 		request.ReleaseWorkflowCommandContext = commandContext
 		return mapAPIV1WorkflowRequest(w, request)
+	case len(segments) == 3 && segments[1] == "hdr-analysis" && segments[2] == "enabled":
+		var request api.SetReleaseWorkflowHDRAnalysisEnabledRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return nil, false
+		}
+		request.ReleaseWorkflowCommandContext = commandContext
+		return mapAPIV1WorkflowRequest(w, request)
 	case len(segments) == 2 && segments[1] == "audio-analysis":
 		var request api.AnalyzeReleaseWorkflowAudioRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return nil, false
+		}
+		request.ReleaseWorkflowCommandContext = commandContext
+		return mapAPIV1WorkflowRequest(w, request)
+	case len(segments) == 2 && segments[1] == "hdr-analysis":
+		var request api.AnalyzeReleaseWorkflowHDRRequest
 		if !decodeAPIV1JSON(w, r, &request) {
 			return nil, false
 		}

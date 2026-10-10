@@ -458,9 +458,9 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	for owner, want := range map[string]api.WorkflowID{"owner-1": "workflow-audio", "owner-2": "workflow-other-owner"} {
-		workflowID, audioID, err := repo.LoadInputWorkflowAssociation(t.Context(), source, owner, "verified")
-		if err != nil || workflowID != want || audioID != "result" {
-			t.Fatalf("backfilled owner %s workflow = %q audio = %q, %v", owner, workflowID, audioID, err)
+		association, err := repo.LoadInputWorkflowAssociation(t.Context(), source, owner, "verified")
+		if err != nil || association.WorkflowID != want || association.AudioAnalysisID != "result" {
+			t.Fatalf("backfilled owner %s workflow = %q audio = %q, %v", owner, association.WorkflowID, association.AudioAnalysisID, err)
 		}
 	}
 	changedSource := filepath.Join(t.TempDir(), "Changed.Release.2026.mkv")
@@ -487,9 +487,9 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
 		t.Fatal(err)
 	}
-	workflowID, audioID, err := repo.LoadInputWorkflowAssociation(t.Context(), changedSource, "owner-1", "new-verified-version")
-	if err != nil || workflowID != "" || audioID != "" {
-		t.Fatalf("changed bytes backfill = %q audio = %q, %v", workflowID, audioID, err)
+	association, err := repo.LoadInputWorkflowAssociation(t.Context(), changedSource, "owner-1", "new-verified-version")
+	if err != nil || association.WorkflowID != "" || association.AudioAnalysisID != "" {
+		t.Fatalf("changed bytes backfill = %q audio = %q, %v", association.WorkflowID, association.AudioAnalysisID, err)
 	}
 	subsecondSource := filepath.Join(t.TempDir(), "Subsecond.Release.2026.mkv")
 	subsecondPayload, err := json.Marshal(map[string]any{
@@ -515,9 +515,9 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
 		t.Fatal(err)
 	}
-	workflowID, audioID, err = repo.LoadInputWorkflowAssociation(t.Context(), subsecondSource, "owner-1", "changed-within-second")
-	if err != nil || workflowID != "" || audioID != "" {
-		t.Fatalf("subsecond changed bytes backfill = %q audio = %q, %v", workflowID, audioID, err)
+	association, err = repo.LoadInputWorkflowAssociation(t.Context(), subsecondSource, "owner-1", "changed-within-second")
+	if err != nil || association.WorkflowID != "" || association.AudioAnalysisID != "" {
+		t.Fatalf("subsecond changed bytes backfill = %q audio = %q, %v", association.WorkflowID, association.AudioAnalysisID, err)
 	}
 	latestSource := filepath.Join(t.TempDir(), "Latest.Release.2026.mkv")
 	latestPayload, err := json.Marshal(map[string]any{
@@ -546,9 +546,9 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
 		t.Fatal(err)
 	}
-	workflowID, audioID, err = repo.LoadInputWorkflowAssociation(t.Context(), latestSource, "owner-1", "verified-before-analysis")
-	if err != nil || workflowID != "workflow-latest" || audioID != "newer" {
-		t.Fatalf("latest audio backfill = %q audio = %q, %v", workflowID, audioID, err)
+	association, err = repo.LoadInputWorkflowAssociation(t.Context(), latestSource, "owner-1", "verified-before-analysis")
+	if err != nil || association.WorkflowID != "workflow-latest" || association.AudioAnalysisID != "newer" {
+		t.Fatalf("latest audio backfill = %q audio = %q, %v", association.WorkflowID, association.AudioAnalysisID, err)
 	}
 	disabledSource := filepath.Join(t.TempDir(), "Disabled.Release.2026.mkv")
 	disabledPayload, err := json.Marshal(map[string]any{
@@ -581,9 +581,9 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
 		t.Fatal(err)
 	}
-	workflowID, audioID, err = repo.LoadInputWorkflowAssociation(t.Context(), disabledSource, "owner-1", "verified-disabled")
-	if err != nil || workflowID != "" || audioID != "" {
-		t.Fatalf("disabled audio backfill = %q audio = %q, %v", workflowID, audioID, err)
+	association, err = repo.LoadInputWorkflowAssociation(t.Context(), disabledSource, "owner-1", "verified-disabled")
+	if err != nil || association.WorkflowID != "" || association.AudioAnalysisID != "" {
+		t.Fatalf("disabled audio backfill = %q audio = %q, %v", association.WorkflowID, association.AudioAnalysisID, err)
 	}
 }
 

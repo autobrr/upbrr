@@ -207,6 +207,10 @@ const (
 // their hosted variants. Audio tracks, uploads, and host choices require an
 // AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
+	HDRAnalysis       *HDRAnalysisRef
+	HDRPlots          []HDRDescriptionPlot
+	HDRUploads        []UploadedImageLink
+	HDRUploadHosts    map[string]string
 	Screenshots       []ScreenshotImage
 	DVDMenus          []DVDMenuCaptureImage
 	ScreenshotUploads []UploadedImageLink
@@ -215,6 +219,12 @@ type ExactMediaAssets struct {
 	AudioTracks       []AudioDescriptionTrack
 	AudioUploads      []UploadedImageLink
 	AudioUploadHosts  map[string]string
+}
+
+type HDRDescriptionPlot struct {
+	TargetID string
+	Label    string
+	Image    ScreenshotImage
 }
 
 // AudioDescriptionTrack is a separate description channel for hosted analysis
@@ -231,6 +241,9 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		return nil
 	}
 	cloned := &ExactMediaAssets{
+		HDRPlots:          cloneOptionalSlice(a.HDRPlots),
+		HDRUploads:        cloneOptionalSlice(a.HDRUploads),
+		HDRUploadHosts:    maps.Clone(a.HDRUploadHosts),
 		Screenshots:       cloneOptionalSlice(a.Screenshots),
 		DVDMenus:          cloneOptionalSlice(a.DVDMenus),
 		ScreenshotUploads: cloneOptionalSlice(a.ScreenshotUploads),
@@ -238,6 +251,10 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		AudioTracks:       cloneOptionalSlice(a.AudioTracks),
 		AudioUploads:      cloneOptionalSlice(a.AudioUploads),
 		AudioUploadHosts:  maps.Clone(a.AudioUploadHosts),
+	}
+	if a.HDRAnalysis != nil {
+		ref := *a.HDRAnalysis
+		cloned.HDRAnalysis = &ref
 	}
 	if a.AudioAnalysis != nil {
 		ref := *a.AudioAnalysis
@@ -311,7 +328,10 @@ func (a *ExactMediaAssets) Validate() error {
 			return errors.New("exact media audio upload host mapping is invalid")
 		}
 	}
-	return validateExactMediaUploads("audio analysis", a.AudioUploads, audioPaths)
+	if err := validateExactMediaUploads("audio analysis", a.AudioUploads, audioPaths); err != nil {
+		return err
+	}
+	return a.validateHDRAssets()
 }
 
 func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allowedPaths map[string]struct{}) error {
@@ -761,7 +781,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		maps.Copy(answers, values)
 		break
 	}
-	descriptionOverride, descriptionFinal := trackerDescriptionOverride(subject, tracker)
+	descriptionOverride, descriptionFinal := subject.TrackerDescriptionOverride(tracker)
 	bdInfoEvidence := preparedBDInfoAssetEvidence(subject)
 	dvdVOBMediaInfoEvidence := preparedDVDVOBMediaInfoAssetEvidence(subject)
 	resourceFingerprint, _ := CanonicalWorkflowFingerprint(struct {
@@ -867,10 +887,10 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 	}
 }
 
-// trackerDescriptionOverride selects the editable group source and its finality
+// TrackerDescriptionOverride selects the editable group source and its finality
 // before falling back to direct content, matching prepared upload selection.
-func trackerDescriptionOverride(subject UploadSubject, tracker string) (string, bool) {
-	for _, group := range subject.DescriptionGroups {
+func (s UploadSubject) TrackerDescriptionOverride(tracker string) (string, bool) {
+	for _, group := range s.DescriptionGroups {
 		matchesTracker := false
 		for _, candidate := range group.Trackers {
 			if strings.EqualFold(strings.TrimSpace(candidate), tracker) {
@@ -882,10 +902,10 @@ func trackerDescriptionOverride(subject UploadSubject, tracker string) (string, 
 			continue
 		}
 		if description := strings.TrimSpace(group.Source()); description != "" {
-			return description, subject.DescriptionGroupsFinal || group.Final
+			return description, s.DescriptionGroupsFinal || group.Final
 		}
 	}
-	return strings.TrimSpace(subject.DescriptionOverride), subject.DescriptionGroupsFinal
+	return strings.TrimSpace(s.DescriptionOverride), s.DescriptionGroupsFinal
 }
 
 func cloneTrackerValidationValue[T any](value T) T {
@@ -1634,6 +1654,11 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		ImageHost:                   subject.ImageHostOverrides,
 		TrackerData:                 append([]TrackerMetadata(nil), subject.TrackerData...),
 		ExactMedia:                  subject.ExactMedia.Clone(),
+	}
+	if subject.DescriptionGroupsFinal {
+		for index := range projected.DescriptionGroups {
+			projected.DescriptionGroups[index].Final = true
+		}
 	}
 	cloned, err := clonePreparedValue(projected)
 	if err != nil {

@@ -54,6 +54,13 @@ type ReleaseWorkflowCapability interface {
 		api.AudioAnalysisRef,
 		api.PublicResourceID,
 	) (releaseworkflow.MediaArtifactContent, error)
+	OpenReleaseWorkflowHDRAnalysisArtifact(
+		context.Context,
+		string,
+		api.WorkflowID,
+		api.HDRAnalysisRef,
+		api.PublicResourceID,
+	) (releaseworkflow.MediaArtifactContent, error)
 }
 
 // DescriptionCapability renders raw description markup without mutating release state.

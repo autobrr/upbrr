@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -472,9 +473,17 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			maps.Copy(imagePreviews, record.ImagePreviews)
 		}
 		if trackerMeta.ExactMedia != nil {
-			for _, image := range trackerMeta.ExactMedia.AudioUploads {
-				if image.RawURL != "" && image.ImgURL != "" && image.RawURL != image.ImgURL {
-					imagePreviews[image.RawURL] = image.ImgURL
+			for _, image := range slices.Concat(trackerMeta.ExactMedia.AudioUploads, trackerMeta.ExactMedia.HDRUploads) {
+				full := strings.TrimSpace(image.RawURL)
+				if full == "" {
+					full = strings.TrimSpace(image.ImgURL)
+				}
+				if full != "" {
+					preview := strings.TrimSpace(image.ImgURL)
+					if preview == "" {
+						preview = full
+					}
+					imagePreviews[full] = preview
 				}
 			}
 		}

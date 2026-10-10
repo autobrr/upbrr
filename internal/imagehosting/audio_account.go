@@ -14,11 +14,20 @@ import (
 // AudioAccountScope fingerprints the configured host account without persisting
 // its credentials. Changes to hosting configuration conservatively prevent reuse.
 func AudioAccountScope(cfg config.Config, registry *trackers.Registry, host string) (string, error) {
+	return AnalysisAccountScope(cfg, registry, host, api.ScreenshotPurposeAudioAnalysis)
+}
+
+// AnalysisAccountScope binds hosted analysis images to their purpose and configured account.
+func AnalysisAccountScope(cfg config.Config, registry *trackers.Registry, host string, purpose api.ScreenshotPurpose) (string, error) {
+	version := "audio-host-account-v1"
+	if purpose == api.ScreenshotPurposeHDRAnalysis {
+		version = "hdr-host-account-v1"
+	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Version string
 		Host    string
 		Hosting config.ImageHostingConfig
 		Owner   config.TrackerConfig
-	}{"audio-host-account-v1", strings.ToLower(strings.TrimSpace(host)), cfg.ImageHosting, ownedHostTrackerConfig(cfg, registry, host)})
+	}{version, strings.ToLower(strings.TrimSpace(host)), cfg.ImageHosting, ownedHostTrackerConfig(cfg, registry, host)})
 	return string(fingerprint), err
 }

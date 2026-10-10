@@ -873,6 +873,7 @@ func mapCLICompositeUploadRequest(
 			OnEvidence:  onEvidence,
 			AllowUpload: normalizeCLIWorkflowTrackerIDs(request.IgnoreDupesFor),
 		},
+		HDRAnalysis: request.Options.HDRAnalysis,
 		Media: api.ReleaseWorkflowUploadMedia{
 			Screenshots: api.ReleaseWorkflowUploadScreenshots{
 				Count:                  &screenshotCount,

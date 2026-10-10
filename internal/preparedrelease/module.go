@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -73,6 +74,7 @@ type CollectedFacts struct {
 // module and are never included in PreparedRelease. Path fields are host
 // filesystem paths.
 type CollectedResources struct {
+	HDRFileEligibility    map[string]bool
 	SourcePath            string
 	VideoPath             string
 	FileList              []string
@@ -236,6 +238,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
 	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
+		!input.Controls.CaptureHDRMetadata &&
 		(input.ExternalFreshness != api.ExternalFreshnessLoad || input.RequirePrepared) &&
 		current.Compatibility == compatibility {
 		// Public prepared rows omit private byte-verification evidence. Restore
@@ -321,6 +324,32 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	})
 	if err != nil {
 		return api.PrepareResult{}, fmt.Errorf("prepared release: collect facts: %w", err)
+	}
+	capturesPublished := false
+	defer func() {
+		if !capturesPublished {
+			for _, disc := range collected.Resources.Discs {
+				preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
+			}
+		}
+	}()
+	// Confirmation survives ordinary fact refreshes for an unchanged source and
+	// exact selected timeline. An explicit native recheck replaces the old fact.
+	if hasCurrent && current.Compatibility.SourceFingerprint == sourceFingerprint && !input.Controls.CaptureHDRMetadata {
+		for discIndex, disc := range collected.Disc.Items {
+			for reportIndex, report := range disc.Reports {
+				for _, previousDisc := range current.Disc.Items {
+					if previousDisc.ID != disc.ID {
+						continue
+					}
+					for _, previousReport := range previousDisc.Reports {
+						if previousReport.Playlist.ID == report.Playlist.ID && previousReport.Playlist.File == report.Playlist.File {
+							collected.Disc.Items[discIndex].Reports[reportIndex].HDR10PlusConfirmed = previousReport.HDR10PlusConfirmed
+						}
+					}
+				}
+			}
+		}
 	}
 	manifest.SelectedPlaylists = clonePreparedPlaylists(collected.Disc.SelectedPlaylists())
 	identityIntent := collected.Identity
@@ -416,6 +445,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		resources: mergePreparationResources(resourcesFromManifest(manifest, input), resourcesFromCollected(collected.Resources)),
 	}
 	m.publish(owned)
+	capturesPublished = true
 	commitFinish(nil)
 	return cloneResult(owned.result)
 }
@@ -468,6 +498,18 @@ func (m *Module) Export(ctx context.Context, ref api.ReleaseRef) (Seed, error) {
 	cloned, err := cloneEnvelope(owned)
 	if err != nil {
 		return Seed{}, err
+	}
+	// Provisional files stay with their owner; seeds transfer only source-bound failures.
+	for index := range cloned.resources.discs {
+		for name, capture := range cloned.resources.discs[index].HDRCaptures {
+			if capture.Failure == nil {
+				delete(cloned.resources.discs[index].HDRCaptures, name)
+				continue
+			}
+			cloned.resources.discs[index].HDRCaptures[name] = preparationstate.HDRCaptureResource{
+				Failure: capture.Failure, SourceFingerprint: capture.SourceFingerprint,
+			}
+		}
 	}
 	return Seed{payload: cloned}, nil
 }
@@ -555,8 +597,12 @@ func (m *Module) Purge(ctx context.Context, sourcePath string) error {
 		return fmt.Errorf("prepared release: purge: %w", err)
 	}
 	m.mu.Lock()
+	prior := m.envelopes[key]
 	delete(m.envelopes, key)
 	m.mu.Unlock()
+	for _, disc := range prior.resources.discs {
+		preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
+	}
 	return nil
 }
 
@@ -572,8 +618,13 @@ func (m *Module) Invalidate(sourcePath string) {
 		return
 	}
 	m.mu.Lock()
-	delete(m.envelopes, canonicalSourceKey(normalized))
+	key := canonicalSourceKey(normalized)
+	prior := m.envelopes[key]
+	delete(m.envelopes, key)
 	m.mu.Unlock()
+	for _, disc := range prior.resources.discs {
+		preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
+	}
 }
 
 func (m *Module) loadCurrent(ctx context.Context, sourcePath string) (api.PreparedRelease, bool, error) {
@@ -598,8 +649,22 @@ func (m *Module) publish(owned envelope) {
 		panic(fmt.Sprintf("prepared release: clone validated generation for publication: %v", err))
 	}
 	m.mu.Lock()
+	prior := m.envelopes[key]
 	m.envelopes[key] = cloned
 	m.mu.Unlock()
+	for _, disc := range prior.resources.discs {
+		for name, capture := range disc.HDRCaptures {
+			keep := false
+			for _, current := range cloned.resources.discs {
+				if current.HDRCaptures[name].Directory == capture.Directory {
+					keep = true
+				}
+			}
+			if !keep {
+				preparationstate.ReleaseHDRCaptures(map[string]preparationstate.HDRCaptureResource{name: capture})
+			}
+		}
+	}
 }
 
 func (m *Module) hasPublishedGeneration(sourcePath string, generation api.PreparedGeneration) bool {
@@ -876,6 +941,7 @@ type preparationResources struct {
 	videoPath             string
 	fileList              []string
 	mediaInfoJSONPath     string
+	hdrFileEligibility    map[string]bool
 	mediaInfoTextPath     string
 	dvdIFOPath            string
 	dvdVOBPath            string
@@ -918,6 +984,7 @@ func mergePreparationResources(base preparationResources, collected preparationR
 	base.videoPath = collected.videoPath
 	base.fileList = append([]string(nil), collected.fileList...)
 	base.mediaInfoJSONPath = collected.mediaInfoJSONPath
+	base.hdrFileEligibility = maps.Clone(collected.hdrFileEligibility)
 	base.mediaInfoTextPath = collected.mediaInfoTextPath
 	base.dvdIFOPath = collected.dvdIFOPath
 	base.dvdVOBPath = collected.dvdVOBPath
@@ -926,7 +993,7 @@ func mergePreparationResources(base preparationResources, collected preparationR
 	base.sceneNFOPath = collected.sceneNFOPath
 	base.descriptionTemplate = collected.descriptionTemplate
 	base.selectedBDMVPlaylists = collected.selectedBDMVPlaylists
-	base.discs = clonePreparedDiscResources(collected.discs)
+	base.discs = cloneDiscResources(collected.discs)
 	base.clientEvidence = preparationstate.CloneClientEvidenceSnapshot(collected.clientEvidence)
 	return base
 }
@@ -937,6 +1004,7 @@ func resourcesFromCollected(collected CollectedResources) preparationResources {
 		videoPath:             collected.VideoPath,
 		fileList:              append([]string(nil), collected.FileList...),
 		mediaInfoJSONPath:     collected.MediaInfoJSONPath,
+		hdrFileEligibility:    maps.Clone(collected.HDRFileEligibility),
 		mediaInfoTextPath:     collected.MediaInfoTextPath,
 		dvdIFOPath:            collected.DVDIFOPath,
 		dvdVOBPath:            collected.DVDVOBPath,
@@ -945,7 +1013,7 @@ func resourcesFromCollected(collected CollectedResources) preparationResources {
 		sceneNFOPath:          collected.SceneNFOPath,
 		descriptionTemplate:   collected.DescriptionTemplate,
 		selectedBDMVPlaylists: clonePreparedPlaylists(collected.SelectedBDMVPlaylists),
-		discs:                 clonePreparedDiscResources(collected.Discs),
+		discs:                 cloneDiscResources(collected.Discs),
 		clientEvidence:        preparationstate.CloneClientEvidenceSnapshot(collected.ClientEvidence),
 	}
 }
@@ -963,6 +1031,7 @@ func cloneEnvelope(value envelope) (envelope, error) {
 			videoPath:           value.resources.videoPath,
 			fileList:            append([]string(nil), value.resources.fileList...),
 			mediaInfoJSONPath:   value.resources.mediaInfoJSONPath,
+			hdrFileEligibility:  maps.Clone(value.resources.hdrFileEligibility),
 			mediaInfoTextPath:   value.resources.mediaInfoTextPath,
 			dvdIFOPath:          value.resources.dvdIFOPath,
 			dvdVOBPath:          value.resources.dvdVOBPath,
@@ -976,7 +1045,7 @@ func cloneEnvelope(value envelope) (envelope, error) {
 				UseAll:   value.resources.playlist.UseAll,
 			},
 			selectedBDMVPlaylists: clonePreparedPlaylists(value.resources.selectedBDMVPlaylists),
-			discs:                 clonePreparedDiscResources(value.resources.discs),
+			discs:                 cloneDiscResources(value.resources.discs),
 			clientEvidence:        preparationstate.CloneClientEvidenceSnapshot(value.resources.clientEvidence),
 		},
 	}
@@ -987,14 +1056,6 @@ func clonePreparedPlaylists(value []api.PlaylistInfo) []api.PlaylistInfo {
 	cloned, err := cloneWithJSON(value)
 	if err != nil {
 		panic(fmt.Sprintf("prepared release: clone playlists: %v", err))
-	}
-	return cloned
-}
-
-func clonePreparedDiscResources(value []preparationstate.DiscResource) []preparationstate.DiscResource {
-	cloned, err := cloneWithJSON(value)
-	if err != nil {
-		panic(fmt.Sprintf("prepared release: clone disc resources: %v", err))
 	}
 	return cloned
 }

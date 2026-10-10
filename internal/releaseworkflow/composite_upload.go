@@ -396,9 +396,10 @@ func normalizeCompositeUploadRequest(
 			Client: cloneStringPointer(request.Preparation.ClientSearch.Client),
 		},
 		Controls: api.PreparationControls{
-			Interaction:       interaction,
-			ConfirmBDMVRescan: request.Preparation.ConfirmRescan,
-			ForceRecheck:      cloneBoolPointer(request.Client.ForceRecheck),
+			CaptureHDRMetadata: request.HDRAnalysis != nil,
+			Interaction:        interaction,
+			ConfirmBDMVRescan:  request.Preparation.ConfirmRescan,
+			ForceRecheck:       cloneBoolPointer(request.Client.ForceRecheck),
 		},
 		Force: request.Preparation.Force,
 	}
@@ -428,6 +429,7 @@ func normalizeCompositeUploadRequest(
 		return nil, api.ReleaseFactInstructions{}, err
 	}
 	intent := api.WorkflowIntent{
+		HDRAnalysis:            request.HDRAnalysis,
 		FactInstructions:       &instructions,
 		Preparation:            &prepareInput,
 		Interaction:            interaction,
@@ -1073,6 +1075,12 @@ func (m *Module) runCompositeUpload(
 		}
 		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), command.ExpectedRevision+1)
 		if next == nil {
+			if stage == "hdr-selection-required" || stage == "hdr-analysis-failed" {
+				if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "hdr_requirement_unmet"); err != nil {
+					return CommandResult{}, err
+				}
+				return CommandResult{}, requestedHDRFailure(stage, current, request.Intent.HDRAnalysis)
+			}
 			if stage == "no-eligible-trackers" {
 				failure := compositeNoEligibleTrackersFailure(current, command.operationKind())
 				if err := m.failCompositeSession(
@@ -1187,6 +1195,7 @@ func (m *Module) hydrateCompositePreparedRelease(
 	input.RequirePrepared = true
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
+	input.Controls.CaptureHDRMetadata = false
 	if err := m.attachVerifiedInput(ctx, ownerID, current.Workflow.ID, &input); err != nil {
 		return err
 	}
@@ -1627,6 +1636,7 @@ var compositeUploadStages = []struct {
 	{ID: "check-duplicates", Label: "Check duplicates"},
 	{ID: "decide-duplicates", Label: "Resolve duplicate decisions"},
 	{ID: "capture-media", Label: "Capture or select media"},
+	{ID: "analyze-hdr", Label: "Analyze HDR10+ when requested"},
 	{ID: "prepare-image-requirements", Label: "Host images"},
 	{ID: "generate-descriptions", Label: "Generate descriptions"},
 	{ID: "review-uploads", Label: "Prepare upload review"},
@@ -1691,10 +1701,12 @@ func compositeUploadProgressItems(
 func compositeCompletedStageCount(current CommandResult) int {
 	switch {
 	case current.UploadResult != nil || current.DryRun != nil:
-		return 10
+		return 11
 	case current.Descriptions != nil:
-		return 8
+		return 9
 	case current.Media != nil && mediaRequirementsPrepared(current.Media):
+		return 8
+	case current.HDRAnalysis != nil && current.HDRAnalysis.Status == api.StageStatusCompleted:
 		return 7
 	case current.Media != nil:
 		return 6
