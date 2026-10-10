@@ -215,6 +215,42 @@ func TestANTDescriptionAssetsPreserveLiteralHDRExamples(t *testing.T) {
 	}
 }
 
+func TestANTDescriptionAssetsPreserveLiteralAudioExamples(t *testing.T) {
+	t.Parallel()
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{"code", "pre"} {
+		t.Run(tag, func(t *testing.T) {
+			literal := "[" + tag + "][spoiler=source_audio]literal example[/spoiler][/" + tag + "]"
+			assets, err := trackers.ResolveDescriptionAssets(t.Context(), "ANT", api.UploadSubject{
+				DescriptionOverride: literal + "\n\n[spoiler=source_audio]stale stats[/spoiler]",
+				ExactMedia: &api.ExactMediaAssets{
+					AudioAnalysis: &api.AudioAnalysisRef{ID: "analysis-1", Revision: 1},
+					AudioTracks: []api.AudioDescriptionTrack{{
+						Ordinal: 1,
+						Stats:   "Peak: -1.0 dB",
+					}},
+				},
+			}, nil, api.NopLogger{}, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(assets.Description, literal) || strings.Contains(assets.Description, "stale stats") ||
+				strings.Count(assets.Description, "[spoiler=source_audio]") != 2 ||
+				!strings.Contains(assets.Description, "[code]Audio track 1\nPeak: -1.0 dB[/code]") {
+				t.Fatalf("audio replacement changed literal content or retained stale stats: %q", assets.Description)
+			}
+			result, err := prepareDescription(t.Context(), trackers.PreparationInput{Assets: &assets})
+			if err != nil || !strings.Contains(result.Description, literal) ||
+				strings.Contains(result.Description, "stale stats") || strings.Count(result.Description, "Peak: -1.0 dB") != 1 {
+				t.Fatalf("prepared audio description changed: description=%q err=%v", result.Description, err)
+			}
+		})
+	}
+}
+
 func TestANTScreenshotHeaderRequiresOwnedSection(t *testing.T) {
 	t.Parallel()
 	const header = "[b]Screenshots[/b]"
