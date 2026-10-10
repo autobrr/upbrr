@@ -1,9 +1,9 @@
 github.com/Audionut/go-bdinfo v0.2.1-0.20261010032011-6250d2b849ca h1:u9pZbqqiOPpHX5qLLSFWrnTv5gMDKTREb5nRn6cVwII=
 github.com/Audionut/go-bdinfo v0.2.1-0.20261010032011-6250d2b849ca/go.mod h1:OjpQR7TPcP7fBTo4GW1Yz1+biQG7YTo1OZH7KXX5gS0=
-github.com/Audionut/go-hdr10-plus v0.0.0-20261010030618-7cddd9fc0675 h1:HW+8GzJJaOphomWLi6qnD0EHOT1t0SF7h04Ppm8lrt8=
-github.com/Audionut/go-hdr10-plus v0.0.0-20261010030618-7cddd9fc0675/go.mod h1:ajxLEV7FFQXVnlFZgFILQp6BZON8RaNl4LICLvmNUGA=
-github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261010030618-7cddd9fc0675 h1:4t2wJMr/oPrn/CclUmEu8az6iCDXXfdpaGcUa+h1E+Q=
-github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261010030618-7cddd9fc0675/go.mod h1:SxMUHG/7N4vvztrBLSpcgVjf4p6hw4q6XqOUeq3a+WY=
+github.com/Audionut/go-hdr10-plus v0.0.0-20261010113902-de677f397791 h1:V3xm+J9hmXqnAHyPo3N/QHeqUbJGA4coHwgZKtM6AV8=
+github.com/Audionut/go-hdr10-plus v0.0.0-20261010113902-de677f397791/go.mod h1:ajxLEV7FFQXVnlFZgFILQp6BZON8RaNl4LICLvmNUGA=
+github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261010113902-de677f397791 h1:OlsPa8xqXNRYEzr6CA9Cxyd7CBNlumBtnzJPya4c/40=
+github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261010113902-de677f397791/go.mod h1:SxMUHG/7N4vvztrBLSpcgVjf4p6hw4q6XqOUeq3a+WY=
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=
 github.com/Masterminds/semver v1.5.0/go.mod h1:MB6lktGJrhw8PrUyiEoblNEGEQ+RzHPF078ddwwvV3Y=
 github.com/abema/go-mp4 v1.7.3 h1:Aap+2vZl5KQrSGD9quYhLu4pWGXelFVUeFCa8IJaRXY=

@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/Audionut/go-hdr10-plus v0.0.0
-	github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261010030618-7cddd9fc0675
+	github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261010113902-de677f397791
 	github.com/autobrr/go-bdinfo v0.4.2
 	github.com/autobrr/go-mediainfo v0.8.1-0.20260911072119-0b32d930ae1f
 	github.com/autobrr/go-qbittorrent v1.19.0
@@ -56,4 +56,4 @@ require (
 
 replace github.com/autobrr/go-bdinfo => github.com/Audionut/go-bdinfo v0.2.1-0.20261010032011-6250d2b849ca
 
-replace github.com/Audionut/go-hdr10-plus => github.com/Audionut/go-hdr10-plus v0.0.0-20261010030618-7cddd9fc0675
+replace github.com/Audionut/go-hdr10-plus => github.com/Audionut/go-hdr10-plus v0.0.0-20261010113902-de677f397791

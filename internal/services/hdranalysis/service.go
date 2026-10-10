@@ -34,7 +34,7 @@ const (
 	DiscRetainedBytes     = 2 << 30
 	DiscScanRetainedBytes = 3 << 30
 	// DependencyFingerprint identifies the pinned native readers for retained metadata reuse.
-	DependencyFingerprint = "hdr:7cddd9fc0675;bdinfo:6250d2b849ca"
+	DependencyFingerprint = "hdr:de677f397791;bdinfo:6250d2b849ca"
 )
 
 // Admission is shared by combined disc preparation, standalone analysis and workflow rendering.
