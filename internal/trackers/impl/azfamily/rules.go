@@ -642,6 +642,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	facts := subject.LanguageFacts
+	programmeStatus := trackers.ProgrammeLanguageStatus(subject)
 	if site.Name == "AZ" {
 		if !facts.OriginalLanguagesKnown {
 			failures = append(
@@ -649,7 +650,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 				trackers.LanguageRuleFailure(subject, "original_evidence", "original-language evidence needs review", trackers.LanguageUnresolved),
 			)
 		}
-		if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
+		if programmeStatus != api.MetadataEvidenceStatusComplete {
 			failures = append(
 				failures,
 				trackers.LanguageRuleFailure(
@@ -679,7 +680,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 					),
 				)
 			}
-		} else if facts.OriginalLanguagesKnown && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
+		} else if facts.OriginalLanguagesKnown && programmeStatus == api.MetadataEvidenceStatusComplete &&
 			!facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
 			failures = append(
 				failures,

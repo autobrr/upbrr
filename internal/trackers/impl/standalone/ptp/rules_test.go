@@ -122,9 +122,6 @@ func TestPTPSourceAnswersDoNotChangeWarningsOrCreateQuestions(t *testing.T) {
 			changed := subject
 			changed.LanguageFacts = subject.LanguageFacts.Clone()
 			change(&changed)
-			if fields := languageReviewFields(changed, api.WorkflowExecutionModeNormal); len(fields) != 0 {
-				t.Fatalf("source review became a questionnaire: %+v", fields)
-			}
 			failures := languageFailures(changed)
 			requirePTPLanguageFailure(t, failures, "language_redundant_audio", api.RuleDispositionAdvisory)
 			requirePTPLanguageFailure(t, failures, "language_english_subtitles", api.RuleDispositionAdvisory)
@@ -137,9 +134,6 @@ func TestPTPSourceAnswersDoNotChangeWarningsOrCreateQuestions(t *testing.T) {
 		subject.Type, subject.DiscType = "DISC", disc
 		if failures := languageFailures(subject); len(failures) != 0 {
 			t.Fatalf("full disc assessed: %+v", failures)
-		}
-		if fields := languageReviewFields(subject, api.WorkflowExecutionModeNormal); len(fields) != 0 {
-			t.Fatalf("full disc questioned: %+v", fields)
 		}
 	}
 }

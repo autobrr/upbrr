@@ -20,9 +20,8 @@ func Rules() *trackers.RuleSet {
 
 func languagePolicy() trackers.LanguagePolicy {
 	return trackers.LanguagePolicy{
-		OriginalPrimary: true,
-		OriginalAudio:   trackers.LanguageProhibited,
-		ExtraDubs:       trackers.LanguageProhibited,
+		OriginalAudio: trackers.LanguageProhibited,
+		ExtraDubs:     trackers.LanguageProhibited,
 	}
 }
 

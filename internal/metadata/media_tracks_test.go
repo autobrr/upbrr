@@ -398,7 +398,7 @@ func TestUntaggedMediaInfoTracksPreserveBDInfoLanguages(t *testing.T) {
 	}
 }
 
-func TestUnlabelledSecondaryTrackRoleRemainsUnresolved(t *testing.T) {
+func TestOrdinaryAudioLanguageDoesNotRequireRecognizedTitle(t *testing.T) {
 	var doc mediaInfoDoc
 	doc.Media.Track = []map[string]any{
 		{
@@ -424,7 +424,7 @@ func TestUnlabelledSecondaryTrackRoleRemainsUnresolved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tracks[0].Role != api.AudioRoleProgramme || tracks[1].Role != "" || tracks[2].Role != api.AudioRoleProgramme {
+	if tracks[0].Role != api.AudioRoleProgramme || tracks[1].Role != api.AudioRoleProgramme || tracks[2].Role != api.AudioRoleProgramme {
 		t.Fatalf("track roles=%#v", tracks)
 	}
 }

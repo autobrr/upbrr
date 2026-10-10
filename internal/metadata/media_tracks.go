@@ -71,8 +71,9 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		detected := languageutil.NormalizeLanguageList([]string{trackString(track, "Language", "Language_String", "Language_String2", "Language_String3")})
 
 		role := mediafacts.AudioRole(title)
-		if kind == api.MediaTrackAudio && role == "" &&
-			(len(audioTracks) == 1 || mediaTrackDefault(track) || strings.EqualFold(trackString(track, "ServiceKind", "ServiceKind/String"), "Complete Main") || strings.EqualFold(trackString(track, "ServiceKind"), "CM")) {
+		// Ordinary audio contributes its inspected language without requiring a
+		// title or original/default flag. Explicit secondary roles remain separate.
+		if kind == api.MediaTrackAudio && role == "" {
 			role = api.AudioRoleProgramme
 		}
 		trackAudioLabel := ""

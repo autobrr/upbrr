@@ -22,7 +22,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		recommendation = trackers.LanguageProhibited
 	}
 	policy := trackers.LanguagePolicy{
-		OriginalFirst:   recommendation,
+		OriginalFirst:   trackers.LanguageAdvisory,
 		OriginalDefault: recommendation,
 		SubtitleDefault: recommendation,
 	}

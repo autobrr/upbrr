@@ -66,13 +66,17 @@ Review the assessment displayed for each selected tracker:
 
 Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
 
+Track order and the default flag are separate facts. An original-language track can be present without being first or default. Ordering recommendations appear as non-blocking **Guidance**, including for personal releases, and require no answer or acknowledgement. Independent requirements for original audio, default flags, permitted dubs, subtitles and compatibility tracks still apply.
+
+Ordinary audio tracks contribute their inspected languages without needing an "Original" title or flag. Identified commentary, descriptive audio and other secondary tracks do not establish original programme audio or count as programme dubs. Missing or conflicting language evidence still needs review. Prepare the release again after updating so retained track facts are rebuilt before tracker checks.
+
 Correct language and other factual evidence on **Input**. Naming overrides and warning acknowledgements do not change media facts. An acknowledgement applies only to its tracker and current prepared generation; it cannot clear an independent strict finding. Changed evidence requires renewed review.
 
 Do not modify another group's release to address a prohibited extra programme dub; use a compliant source instead. Track-removal advice applies only to your own **personal release**. For a personal release, the finding may recommend creating a separate remux when original programme audio can safely remain. Keep original audio and permitted secondary tracks; do not strip complete retail discs or remove a release's only programme audio. If safe removal is not established, use a compliant source instead. Prepare the new file or source again so metadata and tracker checks use fresh evidence. Other tracker requirements still apply. upbrr does not remove or remux tracks automatically.
 
 ### Media analysis
 
-Non-disc pack preparation uses the selected primary video’s MediaInfo report. A pack-consistency reminder is passive Guidance: it does not scan every episode, establish pack-wide consistency, or require an answer or acknowledgement. Check the pack against the tracker’s current rules. Cancellation is checked between input-file reads; an operating-system read already in progress may delay stopping. Inspected languages, track titles, default/forced flags and container order inform the assessment. Source-history and hypothetical subtitle concerns remain warnings rather than requests to guess missing facts.
+Non-disc pack preparation uses the selected primary video’s MediaInfo report. Programme-language and permitted-dub checks use that inspected file; other uninspected pack files do not by themselves block those checks. **Inspected tracks** still reports incomplete coverage. A pack-consistency reminder is passive Guidance: it does not scan every episode, establish pack-wide consistency, or require an answer or acknowledgement. Missing or conflicting evidence in the inspected file and independent tracker requirements still need review. Check the pack against the tracker’s current rules. Cancellation is checked between input-file reads; an operating-system read already in progress may delay stopping. Inspected languages, track titles, default/forced flags and container order inform the assessment. Source-history and hypothetical subtitle concerns remain warnings rather than requests to guess missing facts.
 
 ## Tracker questions
 
