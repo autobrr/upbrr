@@ -161,7 +161,7 @@ func TestExecuteForPlaylistUsesInProcessRunner(t *testing.T) {
 	if !captured.SummaryOnly {
 		t.Fatalf("expected summary-only mode for playlist scans")
 	}
-	if captured.Reporter == nil {
+	if captured.OnProgress == nil {
 		t.Fatalf("expected reporter to be passed to runner")
 	}
 	if reported {

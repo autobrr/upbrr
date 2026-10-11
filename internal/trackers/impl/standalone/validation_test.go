@@ -5,9 +5,11 @@ package standalone
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -160,5 +162,83 @@ func TestValidationAdapterPreservesEditionCategories(t *testing.T) {
 	restored := UploadSubjectForValidation(validated)
 	if restored.EditionSet != original.EditionSet || restored.Cut != original.Cut || restored.Edition != original.Edition || restored.Presentation != original.Presentation {
 		t.Fatalf("adapter lost finalized edition categories: %#v", restored)
+	}
+}
+
+// combinedRuleDefinition exercises the real service-created input and standalone
+// defensive check, stopping before any external upload protocol.
+type combinedRuleDefinition struct {
+	policy trackers.ValidationPolicyBinding
+}
+
+func (combinedRuleDefinition) Name() string           { return "COMBINED" }
+func (combinedRuleDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+func (combinedRuleDefinition) UploadContentMode() trackers.UploadContentMode {
+	return trackers.UploadContentModeNone
+}
+func (combinedRuleDefinition) Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{RequireAudioLanguages: true, RequireUniqueID: true}
+}
+func (d combinedRuleDefinition) ValidationPolicy() trackers.ValidationPolicyBinding { return d.policy }
+func (d combinedRuleDefinition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	if err := ValidatePreparation(ctx, input, d.policy); err != nil {
+		return trackers.TrackerPlan{}, trackers.NewPreparationFailure(input.Tracker, "rules", err.Error(), err)
+	}
+	return trackers.NewUploadPlan(input.Tracker, api.TrackerDryRunEntry{Status: "ready"}, nil, nil), nil
+}
+
+func TestServicePreparationValidatesExactCombinedWarningSet(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"unchanged", "site warning changed", "generic strict added"} {
+		t.Run(change, func(t *testing.T) {
+			policy := trackers.ValidationPolicyBinding{ID: "combined-v1", Check: func(_ context.Context, s api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
+				return []api.RuleFailure{trackers.NewRuleFailure("language_test", "Trumpable release: "+s.EffectiveMetadata.Title, api.RuleDispositionWaivable)}, nil
+			}}
+			registry := trackers.NewRegistry()
+			if err := registry.Register(combinedRuleDefinition{policy: policy}); err != nil {
+				t.Fatal(err)
+			}
+			subject := api.UploadSubject{
+				SourcePath:        filepath.Join(t.TempDir(), "Example.mkv"),
+				EffectiveMetadata: api.EffectiveMetadata{Title: "original"},
+				Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+			}
+			failures, err := trackers.EvaluateTrackerValidationWithRegistry(t.Context(), registry, "COMBINED", api.NewTrackerValidationSubject(subject, "COMBINED"), api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(failures) != 2 {
+				t.Fatalf("need generic+site warning fixture: %+v", failures)
+			}
+			fingerprint, err := trackers.WaivableRuleFailureFingerprint("COMBINED", failures)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if change == "site warning changed" {
+				subject.EffectiveMetadata.Title = "changed"
+			}
+			if change == "generic strict added" {
+				subject.Assessments.MediaInfoUniqueID = api.UniqueIDStatusMissing
+			}
+			service := trackers.NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry)
+			retained, err := service.PrepareRetainedUploadPlan(t.Context(), subject, []api.TrackerReleaseProjection{{
+				TrackerID:                    "COMBINED",
+				Readiness:                    api.ReadinessStatusReady,
+				UploadReady:                  true,
+				WaivableRuleFingerprint:      fingerprint,
+				RuleAuthorizationFingerprint: fingerprint,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = retained.Release() }()
+			preparations := retained.Preparations()
+			if len(preparations) != 1 || (preparations[0].Failure == nil) != (change == "unchanged") {
+				t.Fatalf("%s preparation = %+v", change, preparations)
+			}
+			if change == "generic strict added" && !strings.Contains(preparations[0].Failure.Message, "require_unique_id") {
+				t.Fatalf("generic strict gate lost: %+v", preparations[0].Failure)
+			}
+		})
 	}
 }

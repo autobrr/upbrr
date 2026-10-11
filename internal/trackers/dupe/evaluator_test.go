@@ -824,6 +824,17 @@ func TestNormalizeTrackerTitleHDRPreservesSpecificFormats(t *testing.T) {
 			fallbackFormats: []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10},
 		},
 		{
+			name:    "HDR10P alias",
+			title:   "Example.Movie.2026.2160p.HDR10P-GRP",
+			formats: []api.HDRFormat{api.HDRFormatHDR10Plus},
+		},
+		{
+			name:            "DV and lowercase HDR10P alias",
+			title:           "Example.Movie.2026.2160p.DV.hdr10p-GRP",
+			formats:         []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus},
+			fallbackFormats: []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10},
+		},
+		{
 			name:               "existing dotted Dolby Vision profile",
 			title:              "Example.Release.2026.DOVI.P5.2160p-GRP",
 			formats:            []api.HDRFormat{api.HDRFormatDolbyVision},
@@ -851,7 +862,7 @@ func TestNormalizeTrackerTitleHDRPreservesSpecificFormats(t *testing.T) {
 
 func TestTitleHDRExcludesWorkAndGroupNames(t *testing.T) {
 	t.Parallel()
-	for _, marker := range []string{"DV", "HDR", "HDR10+", "HLG", "PQ10", "WCG", "HDR Vivid"} {
+	for _, marker := range []string{"DV", "HDR", "HDR10+", "HDR10P", "HLG", "PQ10", "WCG", "HDR Vivid"} {
 		for _, boundary := range []string{"2026", "S01E01"} {
 			t.Run(marker+" "+boundary, func(t *testing.T) {
 				t.Parallel()
@@ -862,7 +873,7 @@ func TestTitleHDRExcludesWorkAndGroupNames(t *testing.T) {
 			})
 		}
 	}
-	for _, group := range []string{"DV", "HDR", "WCG", "HDRVivid"} {
+	for _, group := range []string{"DV", "HDR", "HDR10P", "WCG", "HDRVivid"} {
 		t.Run("group "+group, func(t *testing.T) {
 			t.Parallel()
 			facts := hdrFactsFromCandidateTitle("Example Movie 2026 2160p BluRay REMUX HEVC-" + group)
@@ -873,6 +884,112 @@ func TestTitleHDRExcludesWorkAndGroupNames(t *testing.T) {
 	}
 	if facts := hdrFactsFromCandidateTitle("HDR 2160p BluRay REMUX-GRP"); facts.Status != api.HDREvidencePartial {
 		t.Fatalf("unbounded explicit HDR must remain partial: %#v", facts)
+	}
+}
+
+func TestNormalizeTrackerTitleHDRRequiresHDR10PToken(t *testing.T) {
+	t.Parallel()
+	for _, marker := range []string{"NOTHDR10P", "HDR10PRO"} {
+		t.Run(marker, func(t *testing.T) {
+			t.Parallel()
+			facts := NormalizeTrackerTitleHDR("Example.Movie.2026.2160p." + marker + "-GRP")
+			if facts.Status != api.HDREvidenceMissing || len(facts.Formats) != 0 {
+				t.Fatalf("embedded HDR10P became HDR metadata: %#v", facts)
+			}
+		})
+	}
+}
+
+func TestEvaluateCandidateHDR10PAliasPreservesEvidence(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		marker     string
+		flags      []string
+		complete   bool
+		wantStatus api.HDREvidenceStatus
+		want       api.DupeRelation
+	}{
+		{
+			name:       "HDR10P agrees with structured DV HDR10+",
+			marker:     "HDR10P",
+			flags:      []string{"DV", "HDR10+"},
+			complete:   true,
+			wantStatus: api.HDREvidenceComplete,
+			want:       api.DupeRelationCoexists,
+		},
+		{
+			name:       "HDR10+ agrees with structured DV HDR10+",
+			marker:     "HDR10+",
+			flags:      []string{"DV", "HDR10+"},
+			complete:   true,
+			wantStatus: api.HDREvidenceComplete,
+			want:       api.DupeRelationCoexists,
+		},
+		{
+			name:       "HDR10PLUS agrees with structured DV HDR10+",
+			marker:     "HDR10PLUS",
+			flags:      []string{"DV", "HDR10+"},
+			complete:   true,
+			wantStatus: api.HDREvidenceComplete,
+			want:       api.DupeRelationCoexists,
+		},
+		{
+			name:       "HDR10P contradicts structured DV only",
+			marker:     "HDR10P",
+			flags:      []string{"DV"},
+			complete:   true,
+			wantStatus: api.HDREvidenceContradictory,
+			want:       api.DupeRelationManualReview,
+		},
+		{
+			name:       "HDR10P contradicts structured SDR",
+			marker:     "HDR10P",
+			complete:   true,
+			wantStatus: api.HDREvidenceContradictory,
+			want:       api.DupeRelationManualReview,
+		},
+		{
+			name:       "title HDR10P remains partial",
+			marker:     "HDR10P",
+			wantStatus: api.HDREvidencePartial,
+			want:       api.DupeRelationSameSlot,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := NormalizeCandidate(api.DupeEntry{
+				Name:          "Example.Movie.2026.2160p.BluRay.REMUX.DV." + test.marker + ".HEVC-GRP",
+				Type:          "REMUX",
+				Res:           "2160p",
+				Flags:         test.flags,
+				FlagsPresent:  test.complete,
+				FlagsComplete: test.complete,
+			}, "TEST")
+			facts := normalizeCandidateFacts(candidate)
+			if facts.HDR.Status != test.wantStatus {
+				t.Fatalf("candidate HDR = %#v, want %s", facts.HDR, test.wantStatus)
+			}
+			if facts.MediaKind != mediaKindRemux || facts.MediaClass != mediaClassRemux {
+				t.Fatalf("candidate media classification = %s/%s, want remux", facts.MediaKind, facts.MediaClass)
+			}
+			if test.wantStatus == api.HDREvidenceContradictory && len(facts.HDR.Contradictions) == 0 {
+				t.Fatalf("candidate HDR lost contradiction: %#v", facts.HDR)
+			}
+			if !test.complete && (facts.HDR.Origin != api.HDREvidenceTrackerTitle ||
+				!slices.Equal(facts.HDR.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus}) ||
+				!slices.Equal(facts.HDR.FallbackFormats, []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10})) {
+				t.Fatalf("candidate title HDR lost provenance or formats: %#v", facts.HDR)
+			}
+			evaluation := Evaluate(api.TrackerDuplicateTarget{
+				Type:       "REMUX",
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true})
+			if got := evaluation.Candidates[0].Relation; got != test.want {
+				t.Fatalf("candidate relation = %s, want %s", got, test.want)
+			}
+		})
 	}
 }
 

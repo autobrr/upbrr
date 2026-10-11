@@ -245,6 +245,21 @@ func TestNilPolicyProjectionInvalidatesPreTitleInferenceContract(t *testing.T) {
 	if projection.DuplicatePolicyFingerprint == legacy || projection.DuplicatePolicyFingerprint == "" {
 		t.Fatalf("nil-policy projection retained the pre-title-inference fingerprint: %q", projection.DuplicatePolicyFingerprint)
 	}
+	previousNormalization, err := api.CanonicalWorkflowFingerprint(struct {
+		GeneralPolicyID  string
+		ID               string
+		Policy           *DupePolicy
+		GroupRestriction DupeGroupRestriction
+	}{
+		GeneralPolicyID: "general/duplicate/v9",
+		ID:              projection.DuplicatePolicyID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.DuplicatePolicyFingerprint == previousNormalization {
+		t.Fatal("changed normalization retained previously accepted duplicate authority")
+	}
 }
 
 func TestDuplicatePolicyFingerprintTracksSameGroupRestriction(t *testing.T) {
@@ -665,5 +680,148 @@ func TestDuplicateTargetRetainsSeparatedEditionParts(t *testing.T) {
 	})
 	if structured.Edition != legacy.Edition || structured.Edition == "" {
 		t.Fatalf("structured target edition = %q, legacy = %q", structured.Edition, legacy.Edition)
+	}
+}
+
+type reviewQuestionnaireDefinition struct{ stubDefinition }
+
+func (d reviewQuestionnaireDefinition) ProjectionQuestionnaire(input PreparationInput) *api.TrackerQuestionnaire {
+	return &api.TrackerQuestionnaire{Tracker: d.name, Fields: []api.TrackerQuestionnaireField{{
+		Key:      "review",
+		Label:    "Review",
+		Kind:     "select",
+		Options:  []string{"yes", "no"},
+		Required: true,
+		Value:    input.Meta.TrackerQuestionnaireAnswers[d.name]["review"],
+	}}}
+}
+
+func TestProjectionQuestionnaireIsTrackerScopedAndRetained(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(reviewQuestionnaireDefinition{stubDefinition{name: "ONE"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(stubDefinition{name: "TWO"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, answer := range []string{"", "yes"} {
+		input := PreparationInput{Tracker: "ONE", Meta: api.UploadSubject{ReleaseName: "Example.Movie.2026.1080p-GRP", TrackerQuestionnaireAnswers: map[string]map[string]string{"ONE": {"review": answer}}}}
+		projection, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		if len(projection.Questionnaire) != 1 || projection.Questionnaire[0].Value != answer {
+			t.Fatalf("questionnaire=%#v", projection.Questionnaire)
+		}
+		if answer == "" {
+			if len(projection.RequiredActions) != 1 || projection.RequiredActions[0].TrackerID != "ONE" || projection.RequiredActions[0].Kind != api.RequiredActionAnswerQuestionnaire || projection.UploadReady {
+				t.Fatalf("missing review=%#v", projection)
+			}
+		} else {
+			if len(projection.RequiredActions) != 0 || !projection.UploadReady {
+				t.Fatalf("reviewed=%#v", projection)
+			}
+			payloadInput := PreparationInput{Meta: api.UploadSubject{}, Projection: &projection}
+			applied := applyReviewedProjection(payloadInput)
+			if applied.Meta.TrackerQuestionnaireAnswers["ONE"]["review"] != "yes" {
+				t.Fatal("reviewed answer lost before payload")
+			}
+			if payloadInput.Meta.TrackerQuestionnaireAnswers != nil {
+				t.Fatal("mutated caller answers")
+			}
+		}
+		input.Tracker = "TWO"
+		other, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+		if failure != nil || !other.UploadReady || len(other.RequiredActions) > 0 {
+			t.Fatalf("other tracker affected: %#v %v", other, failure)
+		}
+	}
+}
+
+type blockedQuestionnaireDefinition struct{ reviewQuestionnaireDefinition }
+
+func (blockedQuestionnaireDefinition) ValidationPolicy() ValidationPolicyBinding {
+	return ValidationPolicyBinding{ID: "questionnaire-strict-test-v1", Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
+		return []api.RuleFailure{NewRuleFailure("unrelated_strict", "unsupported source", api.RuleDispositionStrict)}, nil
+	}}
+}
+
+func TestProjectionQuestionnaireRemainsActionableWithStrictFailure(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(blockedQuestionnaireDefinition{reviewQuestionnaireDefinition{stubDefinition{name: "ONE"}}}); err != nil {
+		t.Fatal(err)
+	}
+	projection, failure := registry.ProjectRelease(t.Context(), PreparationInput{
+		Tracker: "ONE", Meta: api.UploadSubject{ReleaseName: "Example.Movie.2026.1080p-GRP"},
+	}, "input", "catalog", "config")
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if !slices.ContainsFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionAnswerQuestionnaire && action.TrackerID == "ONE"
+	}) {
+		t.Fatalf("missing questionnaire action with strict failure: %+v", projection)
+	}
+	if projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady || projection.UploadReady || len(projection.Failures) == 0 {
+		t.Fatalf("questionnaire waived strict failure: %+v", projection)
+	}
+}
+
+func TestPreparedProjectionPreservesAndValidatesEditionFeatures(t *testing.T) {
+	t.Parallel()
+	catalogue := []api.TrackerEditionFeature{
+		{
+			Label:    "With Commentary",
+			Category: "Feature",
+			Selected: true,
+			Evidence: "Effective commentary",
+		},
+		{Label: "Remastered", Category: "Edition"},
+	}
+	input := PreparationInput{Tracker: "EXAMPLE", Meta: api.UploadSubject{ReleaseName: "Example.Release.2026-GRP"}}
+	preview := api.TrackerDryRunEntry{
+		Status:          "ready",
+		EditionFeatures: catalogue,
+		Payload:         map[string]string{"remaster_title": "With Commentary"},
+	}
+	projection, err := projectDryRunEntry(input, preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(projection.EditionFeatures, catalogue) || preview.Payload["remaster_title"] != "With Commentary" {
+		t.Fatal("projection did not preserve review options separately from wire payload")
+	}
+	input.Projection = &projection
+	if err := validatePreparedProjection(input, preview); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []string{"selected", "label", "category", "evidence", "missing"} {
+		t.Run(change, func(t *testing.T) {
+			changed := preview
+			changed.EditionFeatures = slices.Clone(catalogue)
+			switch change {
+			case "selected":
+				changed.EditionFeatures[0].Selected = false
+			case "label":
+				changed.EditionFeatures[0].Label = "Other"
+			case "category":
+				changed.EditionFeatures[0].Category = "Edition"
+			case "evidence":
+				changed.EditionFeatures[0].Evidence = "Changed evidence"
+			case "missing":
+				changed.EditionFeatures = nil
+			}
+			if err := validatePreparedProjection(input, changed); err == nil {
+				t.Fatal("accepted review catalogue drift")
+			}
+		})
+	}
+	preview.EditionFeatures[0].Selected = false
+	if !projection.EditionFeatures[0].Selected {
+		t.Fatal("projection aliases preview catalogue")
+	}
+	input.Projection.EditionFeatures = nil
+	if err := validatePreparedProjection(input, preview); err != nil {
+		t.Fatalf("legacy projection without catalogue failed: %v", err)
 	}
 }

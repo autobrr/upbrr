@@ -18,7 +18,7 @@ import (
 // and resolution checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-sp-policy-v4",
+		ID:    "unit3d-sp-policy-v8",
 		Check: checkRequirements,
 	}
 }
@@ -60,20 +60,28 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 				Season:   subject.SeasonInt,
 			},
 		)...)
-		failures = append(failures, trackers.ValidatePerFileUniformity(
-			subject.MediaFileFacts,
-			trackers.PerFileUniformityPolicy{
-				Evidence: spEvidencePolicy("sp_pack_uniformity"),
-				Fields: []trackers.MediaUniformityField{
-					trackers.MediaUniformityFieldSource,
-					trackers.MediaUniformityFieldResolution,
-					trackers.MediaUniformityFieldVideoCodec,
-					trackers.MediaUniformityFieldVideoEncode,
-					trackers.MediaUniformityFieldAudioLanguages,
-					trackers.MediaUniformityFieldSubtitleLanguages,
+		if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
+			failures = append(failures, trackers.ValidatePerFileUniformity(
+				subject.MediaFileFacts,
+				trackers.PerFileUniformityPolicy{
+					Evidence: spEvidencePolicy("sp_pack_uniformity"),
+					Fields: []trackers.MediaUniformityField{
+						trackers.MediaUniformityFieldSource,
+						trackers.MediaUniformityFieldResolution,
+						trackers.MediaUniformityFieldVideoCodec,
+						trackers.MediaUniformityFieldVideoEncode,
+						trackers.MediaUniformityFieldAudioLanguages,
+						trackers.MediaUniformityFieldSubtitleLanguages,
+					},
 				},
-			},
-		)...)
+			)...)
+		} else {
+			failures = append(failures, trackers.NewRuleFailure(
+				"guidance_sp_pack_consistency",
+				"Guidance — Check this TV pack against SP's rules for consistent sources, encoding characteristics, and audio/subtitle languages. Explain any genuine source variation in the description.",
+				api.RuleDispositionAdvisory,
+			))
+		}
 	}
 	failures = append(failures, spSoftwareFailures(subject)...)
 	failures = append(failures, spAdultContentFailures(subject)...)

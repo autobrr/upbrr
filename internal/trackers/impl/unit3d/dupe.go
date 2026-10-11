@@ -5,6 +5,7 @@ package unit3d
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -36,6 +37,22 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		maxPages:  deps.MaxPages(100),
 	}
 	return searcher
+}
+
+// SearchTitle uses the site's explicit whole-work contract without changing
+// the season-scoped ordinary duplicate search.
+func (s *dupeSearcher) SearchTitle(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
+	if s.profile.AdjustTitleSearchParams == nil {
+		return dupe.NotRun(dupe.NotRunNotImplemented, "title-wide search is unavailable", nil)
+	}
+	scoped := *s
+	scoped.profile.AdjustSearchParams = func(params url.Values) {
+		if s.profile.AdjustSearchParams != nil {
+			s.profile.AdjustSearchParams(params)
+		}
+		s.profile.AdjustTitleSearchParams(params)
+	}
+	return scoped.Search(ctx, meta)
 }
 
 // Search gathers same-work evidence across the site's canonical category family.

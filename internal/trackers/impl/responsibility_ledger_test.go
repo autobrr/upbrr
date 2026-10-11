@@ -35,7 +35,7 @@ type trackerResponsibilityRow struct {
 }
 
 func unit3DResponsibility(name string) trackerResponsibilityRow {
-	return unit3DResponsibilityVersion(name, "canonical", "", "v2")
+	return unit3DResponsibilityVersion(name, "canonical", "", "v3")
 }
 
 func unit3DResponsibilityVersion(name string, policy string, descriptionGroup string, version string) trackerResponsibilityRow {
@@ -50,7 +50,7 @@ func unit3DResponsibilityVersion(name string, policy string, descriptionGroup st
 		mediaOwner:        "unit3d/media.go",
 		descriptionGroup:  descriptionGroup,
 		releaseNamePolicy: "unit3d/" + policy + "/" + version,
-		projectorVersion:  "unit3d-v2",
+		projectorVersion:  "unit3d-v2-questionnaire-v2",
 		principalName:     "name",
 	}
 }
@@ -67,31 +67,36 @@ func azFamilyResponsibilityVersion(name string, version string) trackerResponsib
 		descriptionOwner:  "azfamily/description.go",
 		mediaOwner:        "azfamily/media.go",
 		releaseNamePolicy: "azfamily/" + strings.ToLower(name) + "/" + version,
-		projectorVersion:  "azfamily-v2",
+		projectorVersion:  "azfamily-v2-questionnaire-v2",
 		principalName:     "name",
 	}
 }
 
 var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("ACM", "acm", "acm", "v4"),
-	unit3DResponsibilityVersion("AITHER", "aither", "", "v4"),
+	unit3DResponsibilityVersion("AITHER", "aither", "", "v7"),
 	unit3DResponsibility("BLU"),
+<<<<<<< HEAD
 	unit3DResponsibilityVersion("CBR", "cbr", "", "v3"),
 	unit3DResponsibilityVersion("DP", "dp", "", "v3"),
+=======
+	unit3DResponsibilityVersion("CBR", "cbr", "", "v2"),
+	unit3DResponsibilityVersion("DP", "dp", "", "v8"),
+>>>>>>> origin/main
 	unit3DResponsibilityVersion("DVL", "dvl", "", "v2"),
 	unit3DResponsibility("EMUW"),
 	unit3DResponsibility("FRIKI"),
-	unit3DResponsibilityVersion("HHD", "hhd", "", "v3"),
+	unit3DResponsibilityVersion("HHD", "hhd", "", "v4"),
 	unit3DResponsibility("IHD"),
 	unit3DResponsibility("ITT"),
 	unit3DResponsibilityVersion("LCD", "lcd", "", "v2"),
 	unit3DResponsibilityVersion("LDU", "ldu", "", "v2"),
 	unit3DResponsibility("LST"),
 	unit3DResponsibility("LT"),
-	unit3DResponsibilityVersion("LUME", "lume", "", "v3"),
+	unit3DResponsibilityVersion("LUME", "lume", "", "v5"),
 	unit3DResponsibility("MNS"),
 	unit3DResponsibilityVersion("OE", "oe", "oe", "v2"),
-	unit3DResponsibilityVersion("OTW", "otw", "", "v5"),
+	unit3DResponsibilityVersion("OTW", "otw", "", "v6"),
 	unit3DResponsibility("PT"),
 	unit3DResponsibility("PTT"),
 	unit3DResponsibility("R4E"),
@@ -101,15 +106,15 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("RMC", "rmc", "", "v3"),
 	unit3DResponsibilityVersion("SAM", "sam", "", "v2"),
 	unit3DResponsibility("SHRI"),
-	unit3DResponsibilityVersion("SP", "sp", "", "v4"),
+	unit3DResponsibilityVersion("SP", "sp", "sp", "v5"),
 	unit3DResponsibility("STC"),
 	unit3DResponsibility("TIK"),
 	unit3DResponsibility("TLZ"),
 	unit3DResponsibility("TOS"),
 	unit3DResponsibility("TTR"),
-	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v4"),
+	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v5"),
 	unit3DResponsibility("UTP"),
-	unit3DResponsibilityVersion("YUS", "yus", "", "v5"),
+	unit3DResponsibilityVersion("YUS", "yus", "", "v8"),
 	unit3DResponsibilityVersion("ZNTH", "znth", "", "v2"),
 	azFamilyResponsibilityVersion("AZ", "v4"),
 	azFamilyResponsibilityVersion("CZ", "v7"),
@@ -117,7 +122,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	{
 		name:              "ANT",
 		family:            trackers.FamilyStandalone,
-		contentMode:       trackers.UploadContentModeScreenshots,
+		contentMode:       trackers.UploadContentModeDescription,
 		authMode:          "api_key",
 		authOwner:         "../auth/contract/requirements.go",
 		taxonomyOwner:     "standalone/ant/taxonomy.go",
@@ -126,7 +131,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"type", "tags", "adult_screens"},
 		descriptionGroup:  "ant",
 		releaseNamePolicy: "standalone/ant/v2",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -142,7 +147,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/ar/media.go",
 		descriptionGroup:  "ar",
 		releaseNamePolicy: "standalone/ar/v4",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -157,7 +162,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"overview", "genre"},
 		descriptionGroup:  "asc",
 		releaseNamePolicy: "standalone/asc/v2",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -170,8 +175,8 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/bhd/description.go",
 		mediaOwner:        "standalone/bhd/media.go",
 		descriptionGroup:  "bhd",
-		releaseNamePolicy: "standalone/bhd/v7",
-		projectorVersion:  "standalone-v2",
+		releaseNamePolicy: "standalone/bhd/v8",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -185,7 +190,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/bhdtv/media.go",
 		descriptionGroup:  "bhdtv",
 		releaseNamePolicy: "standalone/bhdtv/v2",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -200,7 +205,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"overview", "tags"},
 		descriptionGroup:  "bjs",
 		releaseNamePolicy: "standalone/canonical/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -215,7 +220,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"overview", "tags"},
 		descriptionGroup:  "bt",
 		releaseNamePolicy: "standalone/bt/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -232,7 +237,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/btn/media.go",
 		descriptionGroup:  "btn",
 		releaseNamePolicy: "standalone/btn/v5",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "release_name",
 	},
 	{
@@ -247,7 +252,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"category"},
 		descriptionGroup:  "czt",
 		releaseNamePolicy: "standalone/scene-first/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -261,7 +266,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/dc/media.go",
 		descriptionGroup:  "dc",
 		releaseNamePolicy: "standalone/dc/v2",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -277,7 +282,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/ff/media.go",
 		descriptionGroup:  "ff",
 		releaseNamePolicy: "standalone/ff/v2",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -294,7 +299,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"name"},
 		descriptionGroup:  "fl",
 		releaseNamePolicy: "standalone/fl/v2",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -308,7 +313,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"poster_url", "director_imdb", "director_name", "director_chinese", "tags"},
 		descriptionGroup:  "gpw",
 		releaseNamePolicy: "standalone/canonical/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2-answer-schema-v1",
 		principalName:     "name",
 	},
 	{
@@ -322,7 +327,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/hdb/description.go",
 		descriptionGroup:  "hdb",
 		releaseNamePolicy: "standalone/hdb/v6",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -336,7 +341,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/hds/media.go",
 		descriptionGroup:  "hds",
 		releaseNamePolicy: "standalone/canonical/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -351,7 +356,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/hdt/media.go",
 		descriptionGroup:  "hdt",
 		releaseNamePolicy: "standalone/hdt/v2",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -365,7 +370,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/is/media.go",
 		descriptionGroup:  "is",
 		releaseNamePolicy: "standalone/is/v3",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -378,7 +383,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/nbl/media.go",
 		descriptionGroup:  "nbl",
 		releaseNamePolicy: "standalone/nbl/v3",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -396,7 +401,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"title", "year", "poster", "tags", "trailer", "album_desc"},
 		descriptionGroup:  "ptp",
 		releaseNamePolicy: "standalone/canonical/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2-answer-schema-v1",
 		principalName:     "title",
 	},
 	{
@@ -410,7 +415,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"mandarin_override"},
 		descriptionGroup:  "pts",
 		releaseNamePolicy: "standalone/canonical/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -425,7 +430,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/rtf/description.go",
 		descriptionGroup:  "rtf",
 		releaseNamePolicy: "standalone/rtf/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -439,7 +444,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"channel"},
 		descriptionGroup:  "spd",
 		releaseNamePolicy: "standalone/spd/v2",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -452,7 +457,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/tl/description.go",
 		descriptionGroup:  "tl",
 		releaseNamePolicy: "standalone/tl/v1",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 	{
@@ -466,7 +471,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		questionnaireKeys: []string{"name_override"},
 		descriptionGroup:  "tvc",
 		releaseNamePolicy: "standalone/tvc/v3",
-		projectorVersion:  "standalone-v2",
+		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},
 }

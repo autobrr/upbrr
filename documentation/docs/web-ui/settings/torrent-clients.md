@@ -23,10 +23,12 @@ Choose one connection method per entry:
 | **Qui proxy URL**            | Base URL for a qui-backed qBittorrent proxy. A nonblank value takes precedence over direct fields. |
 | **qBit direct**              | Shows or clears the direct qBittorrent connection fields.                                          |
 | **qBit URL / port**          | Direct qBittorrent WebUI address. `http://` is added when the scheme is omitted.                   |
-| **qBit user / pass**         | Required for a direct connection.                                                                  |
+| **qBit user / pass**         | Use the credentials required by your qBittorrent server; either field may be empty.                |
 | **Verify WebUI certificate** | Verifies HTTPS certificates. Keep enabled unless a trusted self-signed setup requires otherwise.   |
 
 To switch from qui proxy to direct qBittorrent, clear **Qui proxy URL**, enable **qBit direct**, and fill the direct fields. Turning **qBit direct** off clears both direct and proxy connection fields.
+
+For a direct connection, the URL is required. Leave user and password empty only when qBittorrent permits authentication bypass for the address it sees from upbrr (for example, an explicitly allowed local subnet). A username with an empty password is also passed through to the server. Empty fields do not enable bypass in qBittorrent: authentication failures and HTTPS certificate verification still apply. Keep WebUI authentication enabled for untrusted networks.
 
 Stored proxy URLs and credentials are encrypted in configuration transport and appear as `[REDACTED]` in the Web UI.
 

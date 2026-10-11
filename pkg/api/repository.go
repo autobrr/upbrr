@@ -373,6 +373,8 @@ type MediaAssetSnapshot struct {
 type MediaAssetRepository interface {
 	// CloneAudioAnalysisUploads copies hosted links for integrity-verified audio clones within one source; callers verify compatibility and pass exact artifact paths.
 	CloneAudioAnalysisUploads(ctx context.Context, prior ReleaseRef, binding PreparedMediaBinding, paths map[string]string) error
+	// CloneHDRAnalysisUploads copies only HDR hosted provenance to integrity-verified PNG clones.
+	CloneHDRAnalysisUploads(ctx context.Context, prior ReleaseRef, binding PreparedMediaBinding, paths map[string]string) error
 	ScreenshotLifecycleRepository
 	LoadMediaAssetSnapshot(ctx context.Context, binding PreparedMediaBinding) (MediaAssetSnapshot, error)
 	SaveScreenshot(ctx context.Context, binding PreparedMediaBinding, screenshot Screenshot) error
@@ -413,6 +415,7 @@ type ReleaseWorkflowStateRepository interface {
 	CreateReleaseWorkflowState(context.Context, ReleaseWorkflowStateRecord) (ReleaseWorkflowStateRecord, bool, error)
 	LoadReleaseWorkflowState(context.Context, string, WorkflowID) (ReleaseWorkflowStateRecord, error)
 	SaveReleaseWorkflowState(context.Context, WorkflowRevision, ReleaseWorkflowStateRecord) error
+	CheckpointReleaseWorkflowResources(context.Context, ReleaseWorkflowStateRecord) error
 	DeleteReleaseWorkflowState(context.Context, string, WorkflowID) error
 	DeleteTerminalReleaseWorkflowStatesBefore(context.Context, time.Time) (int64, error)
 }
@@ -428,6 +431,9 @@ type ReleaseWorkflowOperationRecord struct {
 	CommandFingerprint WorkflowFingerprint
 	ProcessEpoch       string
 	Status             WorkflowOperationStatus
+	// HDRCleanupRelease binds unfinished HDR files to this operation's exact prepared generation.
+	// The zero value represents no HDR allocation; this authority is private to the repository.
+	HDRCleanupRelease ReleaseRef
 }
 
 // ReleaseWorkflowOperationRepository persists operation lifecycle and progress

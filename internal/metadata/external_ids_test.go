@@ -1185,7 +1185,7 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 	}
 }
 
-func TestResolveExternalIDsMovieCategoryVetoesEarlierTVCandidate(t *testing.T) {
+func TestResolveExternalIDsExplicitMovieCategoryVetoesEarlierTVCandidate(t *testing.T) {
 	repo := &fakeRepo{
 		fileMetadata: api.FileMetadata{
 			Path:     "/media/file.mkv",
@@ -1213,7 +1213,8 @@ func TestResolveExternalIDsMovieCategoryVetoesEarlierTVCandidate(t *testing.T) {
 			Title:    "Example",
 			Year:     2024,
 		},
-		TrackerData: []api.TrackerMetadata{{Category: "TV", TVDBID: 12345}},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Category: new("MOVIE")},
+		TrackerData:          []api.TrackerMetadata{{Category: "TV", TVDBID: 12345}},
 	})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -1605,7 +1606,7 @@ func TestResolveExternalIDsRefreshesCachedTVDBPosterThumbnail(t *testing.T) {
 		PosterThumbnail:                "https://artworks.thetvdb.com/thumbnail.jpg",
 		PosterThumbnailLookupAttempted: true,
 	}}
-	svc := NewService(&fakeRepo{}, WithTVDBClient(tvdbClient))
+	svc := NewService(&fakeRepo{}, WithTVDBClient(tvdbClient), WithIMDBClient(&stubIMDB{}), WithTVmazeClient(&stubTVmaze{}))
 	state := preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1654,7 +1655,7 @@ func TestResolveExternalIDsRefreshesCachedTVmazeBackdrop(t *testing.T) {
 			BackdropLookupAttempted: true,
 		}},
 	}}
-	svc := NewService(&fakeRepo{}, WithTVmazeClient(tvmazeClient))
+	svc := NewService(&fakeRepo{}, WithTVmazeClient(tvmazeClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}))
 	state := preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1781,6 +1782,7 @@ func TestResolveExternalIDsRefreshesTVDBDisambiguationWithoutRefetchingSeries(t 
 	}
 	svc := NewService(&fakeRepo{},
 		WithTVDBClient(tvdbClient),
+		WithIMDBClient(&stubIMDB{}),
 		WithTVmazeClient(&stubTVmaze{}),
 	)
 
@@ -6471,5 +6473,69 @@ func TestResolveExternalIDsLocalizedFetchUsesVariantCachePaths(t *testing.T) {
 	}
 	if tmdbClient.localizedInputs[0].AppendToResponse != "credits,videos,content_ratings" {
 		t.Fatalf("expected TV content_ratings append, got %q", tmdbClient.localizedInputs[0].AppendToResponse)
+	}
+}
+
+func TestShouldUseTVDBHonorsExplicitCategoryBeforeParsedEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name, parsed, resolved string
+		explicit               *string
+		want                   bool
+	}{
+		{
+			name:     "explicit TV overrides parsed Movie",
+			parsed:   "MOVIE",
+			resolved: "TV",
+			explicit: new("TV"),
+			want:     true,
+		},
+		{
+			name:     "explicit TV overrides retained Movie",
+			parsed:   "MOVIE",
+			resolved: "MOVIE",
+			explicit: new(" tv "),
+			want:     true,
+		},
+		{
+			name:     "explicit Movie blocks TV hints",
+			parsed:   "TV",
+			resolved: "TV",
+			explicit: new("MOVIE"),
+		},
+		{
+			name:     "uncorrected Movie still blocks TV",
+			parsed:   "MOVIE",
+			resolved: "TV",
+		},
+		{
+			name:     "uncorrected TV still permits TVDB",
+			parsed:   "TV",
+			resolved: "TV",
+			want:     true,
+		},
+		{
+			name:     "blank correction keeps existing Movie precedence",
+			parsed:   "MOVIE",
+			resolved: "TV",
+			explicit: new(""),
+		},
+		{
+			name:     "unsupported correction keeps existing TV behavior",
+			parsed:   "TV",
+			resolved: "TV",
+			explicit: new("OTHER"),
+			want:     true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := preparationstate.State{
+				Release:              api.ReleaseInfo{Category: test.parsed},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Category: test.explicit},
+			}
+			got := shouldUseTVDBForCategory(meta, api.ExternalIdentity{Category: api.CanonicalCategory(test.resolved)})
+			if got != test.want {
+				t.Fatalf("TVDB eligible = %t, want %t", got, test.want)
+			}
+		})
 	}
 }

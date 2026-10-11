@@ -27,6 +27,40 @@ const current = (workflowID: string, revision: number): ReleaseWorkflowCurrent =
   }) as unknown as ReleaseWorkflowCurrent;
 
 describe("sessionReducer upload intent", () => {
+  it("preserves selection-only edit counts with Input drafts and resets both revisions for a new source", () => {
+    const initial = initialSessionState();
+    const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+    const action = {
+      type: "active_input_applied" as const,
+      snapshot: {
+        state: "active" as const,
+        revision: 1,
+        inputId: "input-one",
+        sourceVersion: "source-one",
+        current: current("workflow-one", 3),
+      },
+      status: "ready" as const,
+      preview: preview(sourcePath, 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+      selectedTrackers: ["AITHER"],
+    };
+    let state = sessionReducer(initial, action);
+    state = sessionReducer(state, { type: "trackers_chosen", trackers: ["AITHER", "BLU"] });
+    state = sessionReducer(state, { type: "metadata_changed", value: { Genres: ["Drama"] } });
+    state = sessionReducer(state, { type: "trackers_chosen", trackers: ["AITHER"] });
+    state = sessionReducer(state, action);
+    expect(state.inputEditRevision).toBe(3);
+    expect(state.trackerSelectionEditRevision).toBe(2);
+    expect(state.preparationIntent.metadata.Genres).toEqual(["Drama"]);
+    const reset = sessionReducer(state, {
+      type: "source_selected",
+      sourcePath: "C:\\media\\Other.mkv",
+    });
+    expect(reset.inputEditRevision).toBe(0);
+    expect(reset.trackerSelectionEditRevision).toBe(0);
+  });
+
   it("retains description drafts for unchanged normalized tracker receipts", () => {
     let state = sessionReducer(initialSessionState(), {
       type: "trackers_received",

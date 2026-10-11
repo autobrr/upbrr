@@ -677,6 +677,9 @@ func appendUniqueNormalizedTracker(trackersList []string, tracker string) []stri
 	return append(trackersList, name)
 }
 
+// uploadImagesToTarget reuses compatible retained or persisted links before
+// uploading missing images. Exact-media skip returns the reusable subset without
+// uploading; analysis reuse also requires matching purpose and host account.
 func (m *mediaModule) uploadImagesToTarget(
 	ctx context.Context,
 	meta api.UploadSubject,
@@ -702,15 +705,23 @@ func (m *mediaModule) uploadImagesToTarget(
 	}
 	progressCtx := api.WithImageUploadProgressTarget(ctx, progressTarget)
 	emitCoreImageUploadProgress(progressCtx, progressTarget, api.ImageUploadProgressRunning, 0, 0, 0, "Preparing host upload.")
-	accountScope, err := imagehosting.AudioAccountScope(m.cfg, m.registry, target.Host)
-	if err != nil {
-		return nil, fmt.Errorf("core: fingerprint audio host account: %w", err)
+	accountScopes := make(map[api.ScreenshotPurpose]string)
+	for _, image := range images {
+		if !image.Purpose.IsAnalysis() || accountScopes[image.Purpose] != "" {
+			continue
+		}
+		scope, err := imagehosting.AnalysisAccountScope(m.cfg, m.registry, target.Host, image.Purpose)
+		if err != nil {
+			return nil, fmt.Errorf("core: fingerprint analysis host account: %w", err)
+		}
+		accountScopes[image.Purpose] = scope
 	}
 	compatibleLinks := func(links []api.UploadedImageLink) []api.UploadedImageLink {
 		return slices.DeleteFunc(slices.Clone(links), func(link api.UploadedImageLink) bool {
 			return slices.ContainsFunc(images, func(image api.ScreenshotImage) bool {
-				return image.Purpose == api.ScreenshotPurposeAudioAnalysis && normalizedUploadImagePath(image.Path) == normalizedUploadImagePath(link.ImagePath)
-			}) && (link.Purpose != api.ScreenshotPurposeAudioAnalysis || link.AccountScope != accountScope)
+				return image.Purpose.IsAnalysis() && normalizedUploadImagePath(image.Path) == normalizedUploadImagePath(link.ImagePath) &&
+					(link.Purpose != image.Purpose || link.AccountScope != accountScopes[image.Purpose])
+			})
 		})
 	}
 	retainedLinks = compatibleLinks(retainedLinks)
@@ -725,11 +736,11 @@ func (m *mediaModule) uploadImagesToTarget(
 		results, missing = uploadedImageLinksForTarget(append(existing, retainedLinks...), target, images)
 	}
 	progressTarget.Reused = len(results)
-	strictAudioBatch := slices.ContainsFunc(images, func(image api.ScreenshotImage) bool {
-		return image.Purpose == api.ScreenshotPurposeAudioAnalysis
+	strictAnalysisBatch := slices.ContainsFunc(images, func(image api.ScreenshotImage) bool {
+		return image.Purpose.IsAnalysis()
 	})
 	progressCtx = api.WithImageUploadProgressTarget(ctx, progressTarget)
-	if len(missing) == 0 {
+	if len(missing) == 0 || (meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped) {
 		m.logger.Tracef(
 			"core: reusing uploaded images host=%s tracker=%s scope=%s trackers=%v count=%d",
 			target.Host,
@@ -770,12 +781,12 @@ func (m *mediaModule) uploadImagesToTarget(
 	)
 	uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
 	results = mergeUploadedImageLinks(images, results, uploaded)
-	if err != nil && !strictAudioBatch && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
+	if err != nil && !strictAnalysisBatch && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
 	}
-	if err == nil && strictAudioBatch && !uploadedImageLinksCoverTarget(results, target, images) {
-		err = errors.New("audio analysis image upload is incomplete")
+	if err == nil && strictAnalysisBatch && !uploadedImageLinksCoverTarget(results, target, images) {
+		err = errors.New("analysis image upload is incomplete")
 	}
 	emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 	if err != nil {

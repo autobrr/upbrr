@@ -15,11 +15,13 @@ One input can be active per database, shared by the Web UI and CLI. Tabs in the 
 
 Switching during local preparation cancels that work and waits for cleanup. A submission or uncertain remote outcome must finish or be reconciled before switching. Closing a browser tab does not release the input.
 
-After upgrading an existing database, an earlier interrupted external effect can require reconciliation before normal input work resumes. Inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. This process never repeats a submission automatically. Resolve every listed workflow before opening a new input.
+If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. Resolve every listed workflow before opening a new input.
 
 Every explicit open, history restore, or refresh checks the source path and inventory and hashes at most the first 1 MiB of each file. File sizes and modification times are checked before and after sampling. This is a lightweight identity check, not verification of every source byte. Torrent creation still performs its required piece hashing. A plain page reload reads the current state without starting another verification.
 
-A fresh application start leaves the previous idle input closed while retaining its History and saved corrections. Open it explicitly to continue. Work waiting for API feedback or external-outcome reconciliation remains available through explicit continuation or recovery; startup does not automatically resume it.
+A fresh application start leaves the previous idle input closed while retaining its History and saved corrections. Open it explicitly to continue. Startup retains completed operation checkpoints and interrupts unfinished work rather than automatically resuming it. A workflow already waiting for API feedback remains available for explicit continuation.
+
+Once prior-process input and work leases expire, startup marks unresolved external attempts failed locally and removes their local retry blocks. This does not establish whether the remote action completed. Check the tracker and torrent client before retrying an interrupted upload or injection. Confirmed successful submissions remain recorded. See [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart).
 
 Folder handling matters. `--keep-folder` preserves a supplied folder instead of processing only a selected video file.
 
@@ -52,13 +54,15 @@ Metadata providers and local media inspection produce shared release facts. Revi
 - external IDs;
 - generated release name.
 
+Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. A `Season 1` directory is a TV-category hint without supplying a season number; canonical season tokens still require two or four digits. Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
+
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
-Refresh obtains current provider facts and withdraws earlier duplicate decisions and upload approval. It preserves compatible screenshot content and hosted links. Reset requests a new preparation of the source; source or capture changes can make earlier images incompatible. A provider failure is reported rather than presenting old provider data as fresh.
+Refresh reapplies corrections and reuses provider evidence whose lookup inputs still match; it withdraws earlier duplicate decisions and upload approval. It preserves compatible screenshot content and hosted links. Reset requests a new preparation of the source; source or capture changes can make earlier images incompatible. A provider failure is reported rather than presenting old provider data as fresh.
 
 Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
 
-Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections.
+Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year still follows eligible TVDB alias evidence.
 
 When **Saved values need review** appears on Input, review the affected fields and the source or provider identity changes shown with each saved value. Choose **Keep saved value**, edit the value where supported, or choose **Use automatic value** to discard only that field's saved correction. Provider-owned fields remain read-only. **Use automatic values for all affected fields** resets only the fields listed in that review, preserving other corrections and history. Select **Apply and continue** to resume preparation; any unresolved fields remain visible. Automatic values are derived during preparation and are not shown as known while the release snapshot is unavailable. If identity evidence changes again, review the refreshed context before confirming again.
 
@@ -78,9 +82,13 @@ Tracker rules and constructibility checks can mark a lane ready, blocked, skippe
 
 For warnings that permit an override, turn on **Acknowledge tracker warnings** on the tracker's **Dupe Check** card or answer the CLI prompt. Approval covers the current warnings. Turn the toggle off to withdraw approval. Changed warnings or a new prepared generation require renewed approval. Strict failures cannot be overridden. See [tracker warning approval](../trackers/index.md#approve-tracker-warnings) for unattended and debug behavior.
 
+Continuing after an acknowledgement keeps your selected trackers. If their metadata requirements are already covered by the prepared facts, continuation reuses that generation and its current acknowledgement. Missing metadata can require refreshed preparation; if the refreshed facts need another decision, review the new action before continuing.
+
 ## 4. Review duplicate evidence
 
 Duplicate search results are evidence, not an automatic upload decision. Review candidate names, metadata, and tracker warnings. Where approval is required, select an explicit non-empty tracker subset after the duplicate stage.
+
+Some duplicate overrides require a staff-issued token. Confirm that you have the appropriate token for the current upload; without confirmation, upbrr blocks the upload even when automatic duplicate overrides are enabled. Reprojecting upload inputs or refreshing duplicate evidence requires a new confirmation. Check the tracker's current rules for token conditions.
 
 Before searching, upbrr excludes trackers with a confirmed upload of the same verified submitted content. These appear as **Already uploaded**. Remaining trackers receive fresh duplicate checks; if every selected tracker is excluded, the operation completes successfully without another approval or upload. Changing metadata or a screenshot playlist does not make a full-disc upload new content. A different actual file subset can be different submitted content.
 
@@ -100,6 +108,12 @@ Depending on the source and trackers, upbrr can:
 
 Automatic screenshot plans distribute the requested images across all prepared discs, with at least one planned image per disc. Manual frame numbers apply to every disc. Screenshot previews, captures, and DVD menu images remain grouped by disc; DVD menu capture can warn about partial coverage when its collection-wide safety cap or the available menus leave a disc uncovered.
 
+With **Keep images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, review **Saved tracker images** on **Screenshots** and choose **Use saved images**. Missing, invalid, or insufficient saved images can require new captures. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
+
+Some trackers accept the full description and screenshots in separate upload fields. Their generated description omits the ordinary screenshot gallery and its configured header, while keeping release notes and other supported content. Use **Descriptions** to review and save the tracker-ready text before upload.
+
+Automatic tonemapping notices are not available for every tracker. Existing tonemapping notes remain in the description; review them for accuracy before upload.
+
 Capturing an additional frame keeps previously generated screenshots, including their selection and order, without adding those images again.
 
 Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode. Open an image to inspect it at its natural resolution in a nearly full-viewport lightbox. Scroll horizontally or vertically for larger images; **Close** and **Escape** remain available while scrolling.
@@ -107,6 +121,8 @@ Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCod
 Compatible images retain their selection and order across refresh. In the Web UI, the Screenshots page reloads its saved-image suggestions when preparation or tracker assessment changes, while keeping edited frame times. Deleted images stay removed. upbrr verifies local image bytes before reuse and reuses hosted links only for a compatible host account and purpose. A hosted link can remain usable when its local preview is missing. Changed capture settings or stricter tracker requirements can require additional images.
 
 [Audio analysis](audio-analysis.md) is a separate, optional operation. It streams decoded samples from FFmpeg into Go without writing a full decoded-audio file. Its PNGs are retained for preview and download. When descriptions are generated from a completed analysis, upbrr hosts the graphs for each tracker and adds them with the statistics to the default description.
+
+[HDR analysis](hdr-analysis.md) produces HDR10+ brightness plots from supported MKV files or exact selected Blu-ray timelines. It retains complete metadata for retries and estimator changes and automatically includes completed analyses in generated descriptions. The Blu-ray playlist HDR check also renders plots during preparation.
 
 ## 6. Preview immutable tracker operations
 
@@ -124,7 +140,7 @@ After confirmed tracker success, upbrr records the tracker result and attempts t
 
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
-Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. Retained unknown outcomes require reconciliation and are never treated as confirmed success.
+Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Startup recovery can clear its retry block as described above; verify the remote outcome before another attempt.
 
 ## 8. Inject into clients
 
@@ -142,6 +158,30 @@ Check save path, category, tags, automatic management, staging mode, and source-
 | `--unattended_confirm` | allowed when confirmed                    | required prompts allowed | enabled when configured    |
 
 Debug mode is not a non-mutating dry run. It can perform screenshots, image uploads, remote searches, tracker preparation, and later workflow effects. Add `--no-seed` when testing without client injection.
+
+## Tracker questions
+
+Answer tracker-specific questions on **Dupe Checking**, alongside release-name and duplicate review. Questions appear immediately for selected trackers, including defaults, using the current prepared facts. Loading these questions does not run duplicate searches, remote metadata enrichment, authentication, banned-group checks, or claim checks. If the current prepared facts are unavailable or insufficient for this review, upbrr asks you to prepare the source instead of fetching metadata in the background.
+
+Questions are omitted when finalized media and current provider metadata establish the required answer. Conflicting or incomplete evidence still requires review. A tracker with an unanswered required field cannot proceed to upload; other eligible trackers can continue.
+
+Each tracker panel starts collapsed and identifies **Required answers missing**, **Required fields filled**, or **Optional controls**. **Unapplied changes** means a local edit has not reached the assessment; filled fields are not a claim that pending changes have been accepted. Open the summary with a click, Enter, or Space to review the fields. Collapsing preserves your edits. Choose **Apply tracker answers** to refresh the assessment without uploading or starting another duplicate search. Unapplied changes block dry runs and uploads. Passive warnings require no answer; a separate **Acknowledge tracker warnings** control appears only for findings that require explicit acknowledgement.
+
+An answer-only edit retains fresh duplicate evidence when every duplicate-relevant input still matches. Changes to the source, reviewed names, selected trackers, configuration, or rules, and expired evidence, can require a new duplicate check. Follow the stages requested after applying; retained evidence keeps its original freshness window.
+
+Some new-group or channel requirements can only be confirmed during tracker preparation. When preparation reports them, late-only fields appear in a separate **Tracker preparation details** section on **Dupe Checking**. Requirements for an existing question update its normal tracker panel. Existing-group uploads do not require new-group-only details. Tracker-local source and encoding notes are answered here; canonical metadata and language corrections remain in **Input**.
+
+### Language assessments
+
+Review [blocking reasons and warnings](../trackers/index.md#blocking-reasons-and-warnings) before duplicate checking. CLI and WebUI use the same backend findings. A strict staff-exception or prohibited result cannot be acknowledged away; a **Trumpable release** requires an explicit tracker-specific acknowledgement of the replacement consequence. Unattended mode never supplies it automatically. Full-disc uploads are excluded from these assessments, while remuxes are included.
+
+### Subtitle review
+
+Set regular and hardcoded subtitle languages with the editable language dropdowns in Input. The hardcoded list offers English (Full) and English (Forced); the ordinary list suggests base-language names. Both lists accept custom text. Adding or removing a hardcoded language controls hardcoded handling; there is no separate hardcoded-subtitles toggle. Auto resets the language correction and any retained legacy boolean override.
+
+Review any required subtitle questions under **Tracker questions** on **Dupe Checking**, then choose **Apply tracker answers**. Correct mislabeled media tracks separately on **Input**; questionnaire answers do not rewrite detected track languages. Consult the tracker's current rules to understand the requested review.
+
+Changing a reviewed answer refreshes dependent tracker work, retaining compatible duplicate evidence as described above. Complete any workflow stages requested afterward. The final payload uses the accepted answers from the exact reviewed projection.
 
 ## Final review checklist
 

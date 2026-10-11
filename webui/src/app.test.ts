@@ -307,11 +307,21 @@ describe("App shell", () => {
 
   it("opens folders separately from selecting them", async () => {
     const browse = vi.fn(async (path: string) => ({
-      currentPath: path || "C:\\media",
-      parentPath: path ? "C:\\media" : "C:\\",
+      scope: path ? "directory" : "roots",
+      currentPath: path,
+      parentPath: path ? "C:\\media" : "",
       mode: "folder" as const,
-      entries:
-        path === "C:\\media\\Example"
+      entries: !path
+        ? [
+            {
+              name: "media",
+              path: "C:\\media",
+              isDir: true,
+              size: 0,
+              modifiedAt: "2026-01-01T00:00:00Z",
+            },
+          ]
+        : path === "C:\\media\\Example"
           ? []
           : [
               {
@@ -335,10 +345,12 @@ describe("App shell", () => {
 
     expect(await screen.findByRole("dialog", { name: "Host browser" })).toBeInTheDocument();
     await waitFor(() => expect(browse).toHaveBeenCalledWith(""));
+    expect(await screen.findByText("All browse roots")).toBeInTheDocument();
+    screen.getByRole("button", { name: "Open media" }).click();
     expect(await screen.findByText("C:\\media")).toBeInTheDocument();
     expect(await screen.findByText("[DIR] Example")).toBeInTheDocument();
     expect(screen.queryByText("C:\\media\\Example")).not.toBeInTheDocument();
-    expect(browse).toHaveBeenCalledOnce();
+    expect(browse).toHaveBeenCalledTimes(2);
 
     screen.getByRole("button", { name: "Open Example" }).click();
     await waitFor(() => expect(browse).toHaveBeenLastCalledWith("C:\\media\\Example"));
@@ -383,16 +395,18 @@ describe("App shell", () => {
         lifecycle: selected ? "ready" : "waiting",
         disposition: "none",
         refs: {},
-        availableGoals: [
-          "prepared",
-          "trackers_assessed",
-          "duplicates_decided",
-          "media_ready",
-          "descriptions_ready",
-          "upload_reviewed",
-          "dry_run",
-          "uploaded",
-        ].map((goal) => ({ goal, available: selected })),
+        availableGoals: (
+          [
+            "prepared",
+            "trackers_assessed",
+            "duplicates_decided",
+            "media_ready",
+            "descriptions_ready",
+            "upload_reviewed",
+            "dry_run",
+            "uploaded",
+          ] as const
+        ).map((goal) => ({ goal, available: selected })),
       },
       workflow: {
         id: workflowID,

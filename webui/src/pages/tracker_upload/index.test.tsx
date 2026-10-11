@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UploadFacet } from "../../releaseSession/types";
 import TrackerUploadPage from "./index";
@@ -17,7 +17,8 @@ const uploadFacet = (
     selectedTrackers: ["EXAMPLE"],
     projections: null,
     ignoredDupesFor: [],
-    questionnaireAnswers: {},
+    questionnaireDirty: false,
+    workflowBusy: false,
     options: { noSeed: false, runLogLevel: "info" },
     liveTest: false,
     mutationsAllowed: true,
@@ -31,7 +32,6 @@ const uploadFacet = (
     ...view,
   },
   chooseTrackers: vi.fn(),
-  answerQuestionnaire: vi.fn(),
   changeOptions: vi.fn(),
   runDryRun: vi.fn(async () => true),
   start: vi.fn(async () => true),
@@ -44,6 +44,25 @@ const uploadFacet = (
 const renderPage = (facet: UploadFacet) => render(<TrackerUploadPage facet={facet} />);
 
 describe("TrackerUploadPage", () => {
+  it("leaves tracker questions on Dupe Checking", () => {
+    renderPage(
+      uploadFacet({
+        projections: {
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              questionnaire: [{ key: "edition", label: "Edition", required: true }],
+            },
+          ],
+        } as unknown as NonNullable<UploadFacet["view"]["projections"]>,
+      }),
+    );
+    expect(screen.queryByRole("heading", { name: "Tracker questions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply tracker answers" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Edition *")).not.toBeInTheDocument();
+  });
+
   it("locks client injection and mutations while retaining the live-test dry run", () => {
     const facet = uploadFacet({
       liveTest: true,
@@ -97,6 +116,61 @@ describe("TrackerUploadPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start upload" }));
     expect(runDryRun).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("blocks initiating actions during workflow commands but keeps cancellation available", () => {
+    const facet = uploadFacet({
+      trackerOutcomes: [
+        { trackerId: "EXAMPLE", uploadEligibility: "eligible" },
+      ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+      result: {
+        results: [
+          { trackerId: "EXAMPLE", submissionStatus: "failed" },
+          {
+            trackerId: "OTHER",
+            submissionStatus: "completed",
+            clientInjectionStatus: "failed",
+            clientFailureCode: "client_injection",
+          },
+        ],
+      } as unknown as NonNullable<UploadFacet["view"]["result"]>,
+    });
+    const { rerender } = renderPage(facet);
+    const actionNames = [
+      "Run dry run",
+      "Start upload",
+      "Retry failed uploads",
+      "Retry client injection",
+    ];
+    for (const name of actionNames) expect(screen.getByRole("button", { name })).toBeEnabled();
+    rerender(
+      <TrackerUploadPage facet={{ ...facet, view: { ...facet.view, workflowBusy: true } }} />,
+    );
+    for (const name of actionNames) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    for (const method of [facet.runDryRun, facet.start, facet.retry, facet.retryClientInjection])
+      expect(method).not.toHaveBeenCalled();
+    rerender(
+      <TrackerUploadPage
+        facet={{ ...facet, view: { ...facet.view, workflowBusy: true, uploadStatus: "running" } }}
+      />,
+    );
+    const cancel = screen.getByRole("button", { name: "Cancel upload" });
+    expect(cancel).toBeEnabled();
+    fireEvent.click(cancel);
+    expect(facet.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a resumed backend dry run disabled without a local command owner", () => {
+    const facet = uploadFacet({ dryRunStatus: "running", workflowBusy: false });
+    renderPage(facet);
+    const dryRun = screen.getByRole("button", { name: "Running dry run..." });
+    expect(dryRun).toBeDisabled();
+    fireEvent.click(dryRun);
+    expect(facet.runDryRun).not.toHaveBeenCalled();
   });
 
   it("renders submission exclusions and suppresses actions when every tracker is excluded", () => {
@@ -264,49 +338,14 @@ describe("TrackerUploadPage", () => {
     expect(start).toHaveBeenCalledOnce();
   });
 
-  it("collects questionnaire answers from current workflow projections", () => {
-    const answerQuestionnaire = vi.fn();
-    const projections = {
-      projections: [
-        {
-          trackerId: "EXAMPLE",
-          displayName: "Example Tracker",
-          questionnaire: [
-            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
-            { key: "note", label: "Note", required: false },
-          ],
-        },
-      ],
-    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
-    renderPage(uploadFacet({ projections }, { answerQuestionnaire }));
-
-    fireEvent.change(screen.getByLabelText("Edition *"), { target: { value: "Extended" } });
-    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Synthetic note" } });
-    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "edition", "Extended");
-    expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "note", "Synthetic note");
-  });
-
-  it("shows a saved questionnaire answer missing from current options", () => {
-    const projections = {
-      projections: [
-        {
-          trackerId: "EXAMPLE",
-          displayName: "Example Tracker",
-          questionnaire: [
-            { key: "edition", label: "Edition", options: ["Standard", "Extended"], required: true },
-          ],
-        },
-      ],
-    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
-    renderPage(
-      uploadFacet({
-        projections,
-        questionnaireAnswers: { EXAMPLE: { edition: "Legacy" } },
-      }),
+  it("blocks preview and upload while questionnaire drafts are unapplied", () => {
+    const facet = uploadFacet({ questionnaireDirty: true });
+    renderPage(facet);
+    expect(screen.getByRole("button", { name: "Run dry run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start upload" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Apply your tracker answer changes on Dupe Checking",
     );
-
-    expect(screen.getByRole("combobox", { name: "Edition *" })).toHaveValue("Legacy");
-    expect(screen.getByRole("option", { name: "Legacy (saved)" })).toBeInTheDocument();
   });
 
   it("shows projection-backed tracker upload names before any dry run", () => {
@@ -673,4 +712,63 @@ describe("TrackerUploadPage", () => {
     expect(screen.getByText("Skipped: Tracker does not accept this genre.")).toBeInTheDocument();
     expect(screen.getByText("Skipped: tracker is not ready to upload")).toBeInTheDocument();
   });
+  it.each(["projection", "report"] as const)(
+    "renders the complete read-only %s option catalogue without changing payload fields",
+    (source) => {
+      const editionFeatures = [
+        {
+          label: "With Commentary",
+          category: "Feature",
+          selected: true,
+          evidence: "Effective commentary is true",
+        },
+        {
+          label: "Remastered",
+          category: "Edition",
+          selected: false,
+          evidence: "No prepared remaster evidence",
+        },
+      ];
+      const fields = [{ key: "remaster_title", value: "With Commentary" }];
+      const facet = uploadFacet({
+        projections: {
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              uploadReleaseName: "Example.Release.2026-GRP",
+              ...(source === "projection" ? { editionFeatures } : {}),
+            },
+          ],
+        } as unknown as NonNullable<UploadFacet["view"]["projections"]>,
+        dryRunResult: {
+          status: "completed",
+          reports: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              status: "ready",
+              fields,
+              clientInjection: {},
+              ...(source === "report" ? { editionFeatures } : {}),
+            },
+          ],
+        } as unknown as NonNullable<UploadFacet["view"]["dryRunResult"]>,
+      });
+      renderPage(facet);
+      const catalogue = screen.getByRole("region", { name: "Example Tracker edition/features" });
+      const options = within(catalogue).getAllByRole("listitem");
+      expect(options).toHaveLength(2);
+      expect(options[0]).toHaveTextContent("With Commentary · Selected · Feature");
+      expect(options[1]).toHaveTextContent("Remastered · Not selected · Edition");
+      expect(within(catalogue).getByText("Effective commentary is true")).toBeInTheDocument();
+      expect(within(catalogue).getByText("No prepared remaster evidence")).toBeInTheDocument();
+      expect(within(catalogue).queryByRole("checkbox")).not.toBeInTheDocument();
+      expect(screen.queryByText("remaster_title: With Commentary")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Expand Example Tracker" }));
+      expect(screen.getByText("remaster_title: With Commentary")).toBeInTheDocument();
+      expect(fields).toEqual([{ key: "remaster_title", value: "With Commentary" }]);
+      expect(facet.changeOptions).not.toHaveBeenCalled();
+    },
+  );
 });

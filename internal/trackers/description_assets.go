@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/bbcode/comparison"
+	descriptiontext "github.com/autobrr/upbrr/internal/description"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -270,11 +271,25 @@ func resolveDescriptionAssets(
 	}
 	if audioBlock != "" && !final {
 		// An edited generated description may already include the previous block.
-		// Replace that owned section while preserving edits to the surrounding text.
-		description = comparison.MapOutsideBlocks(description, func(fragment string) string {
-			return sourceAudioBlockPattern.ReplaceAllString(fragment, "")
+		// Replace that owned section while preserving literal examples and surrounding text.
+		description = descriptiontext.MapOutsideLiteralBlocks(description, func(value string) string {
+			return comparison.MapOutsideBlocks(value, func(fragment string) string {
+				return sourceAudioBlockPattern.ReplaceAllString(fragment, "")
+			})
 		})
 		description = strings.TrimSpace(strings.Join([]string{description, audioBlock}, "\n\n"))
+	}
+	if !final && meta.ExactMedia != nil {
+		hdrBlock, hdrErr := exactHDRDescriptionBlock(tracker, meta.ExactMedia)
+		if hdrErr != nil {
+			return DescriptionAssets{}, hdrErr
+		}
+		description = descriptiontext.MapOutsideLiteralBlocks(description, func(value string) string {
+			return comparison.MapOutsideBlocks(value, func(fragment string) string {
+				return sourceHDRBlockPattern.ReplaceAllString(fragment, "")
+			})
+		})
+		description = strings.TrimSpace(strings.Join([]string{description, hdrBlock}, "\n\n"))
 	}
 	hasDescription := strings.TrimSpace(description) != ""
 	return DescriptionAssets{
@@ -289,6 +304,9 @@ func resolveDescriptionAssets(
 
 var sourceAudioBlockPattern = regexp.MustCompile(`(?is)\[spoiler=source_audio\].*?\[/spoiler\]`)
 
+// exactAudioDescriptionBlock renders exact hosted graphs and textual statistics
+// for one tracker. Missing graph variants are errors unless hosting was explicitly
+// skipped, in which case compatible graphs and statistics are still rendered.
 func exactAudioDescriptionBlock(tracker string, exact *api.ExactMediaAssets) (string, error) {
 	if exact == nil || len(exact.AudioTracks) == 0 {
 		return "", nil
@@ -296,22 +314,31 @@ func exactAudioDescriptionBlock(tracker string, exact *api.ExactMediaAssets) (st
 	images := make([]string, 0)
 	stats := make([]string, 0)
 	selectedHost := strings.TrimSpace(exact.AudioUploadHosts[strings.ToUpper(strings.TrimSpace(tracker))])
-	if len(exact.AudioUploadHosts) > 0 && selectedHost == "" {
+	hostUnavailable := len(exact.AudioUploadHosts) > 0 && selectedHost == ""
+	if hostUnavailable && !exact.ImageHostUploadSkipped {
 		return "", fmt.Errorf("trackers: hosted audio analysis image is unavailable for %s", tracker)
 	}
 	for _, track := range exact.AudioTracks {
 		label := fmt.Sprintf("Audio track %d", track.Ordinal)
-		if len(track.Images) > 0 {
-			images = append(images, "[b]"+label+"[/b]")
-		}
+		labeled := false
 		for _, image := range track.Images {
+			if hostUnavailable {
+				continue
+			}
 			upload, ok := exactUploadedVariant(tracker, image.Path, exact.AudioUploads, selectedHost)
 			graphURL := strings.TrimSpace(upload.RawURL)
 			if graphURL == "" {
 				graphURL = strings.TrimSpace(upload.ImgURL)
 			}
 			if !ok || graphURL == "" {
+				if exact.ImageHostUploadSkipped {
+					continue
+				}
 				return "", fmt.Errorf("trackers: hosted audio analysis image is unavailable for %s", tracker)
+			}
+			if !labeled {
+				images = append(images, "[b]"+label+"[/b]")
+				labeled = true
 			}
 			images = append(images, "[img]"+graphURL+"[/img]")
 		}
@@ -1114,7 +1141,7 @@ func uploadedImagesFromSource(
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return slices.DeleteFunc(uploads, func(upload api.UploadedImageLink) bool {
-		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis || sourceOnlyUploadedImage(upload)
+		return upload.Purpose.IsAnalysis() || sourceOnlyUploadedImage(upload)
 	}), nil
 }
 

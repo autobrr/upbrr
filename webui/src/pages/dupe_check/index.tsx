@@ -1,10 +1,12 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { useEffect, useRef } from "react";
 import { pageStyle } from "../../components/ui/pageStyle";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { PillCheckbox } from "../../components/ui/checkbox";
+import { Select } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
@@ -153,6 +155,16 @@ const trackerSummary = (
   if (!result) return "Not checked";
   if (result.status === "failed") return "Check failed";
   const count = actionMatches(result).length;
+  if (!count && result.reviewReasons?.length) {
+    switch (result.decision) {
+      case "accepted":
+        return "Policy review · blocked";
+      case "ignored":
+        return "Policy review · acknowledged";
+      case "pending":
+        return "Policy review needed";
+    }
+  }
   switch (result.decision) {
     case "accepted":
       return `${count} potential dupe${count === 1 ? "" : "s"} · blocked`;
@@ -211,6 +223,13 @@ function CandidateList({ matches }: Readonly<{ matches: readonly DupeMatchProjec
             {facts.length ? (
               <span className="text-muted-foreground text-xs">{facts.join(" · ")}</span>
             ) : null}
+            {uniqueMessages((match.reasons || []).map((reason) => reason.message)).map(
+              (message) => (
+                <p key={message} className="w-full text-xs">
+                  {message}
+                </p>
+              ),
+            )}
           </div>
         );
       })}
@@ -271,6 +290,22 @@ function WorkflowDupeAssessmentView({
         const ruleAcknowledgement = !strictBlocked
           ? ruleAcknowledgementAction(projection)
           : undefined;
+        const bypassedPolicyNotices = uniqueMessages(
+          (projection?.policyDecisions || [])
+            .filter((decision) => !decision.blocking && decision.decision === "bypassed")
+            .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
+        );
+        const guidanceNotices = uniqueMessages(
+          (projection?.policyDecisions || [])
+            .filter(
+              (decision) =>
+                !decision.blocking &&
+                decision.disposition === "advisory" &&
+                (decision.code.startsWith("language_") || decision.code.startsWith("guidance_")) &&
+                decision.decision !== "bypassed",
+            )
+            .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
+        );
         const canonicalName = projection?.canonicalReleaseName?.trim() || "";
         const uploadName =
           result?.uploadReleaseName?.trim() || projection?.uploadReleaseName?.trim() || "";
@@ -286,7 +321,8 @@ function WorkflowDupeAssessmentView({
           namesModified || (uploadName && releaseNameNotices.length),
         );
         const blockReasons = trackerBlockReasons(projection, readiness, result);
-        const riskAcknowledgement = requiresRiskAcknowledgement(result);
+        const riskAcknowledgement =
+          Boolean(result?.reviewReasons?.length) || requiresRiskAcknowledgement(result);
         const canOverride = Boolean(
           result &&
           !inClient &&
@@ -329,6 +365,33 @@ function WorkflowDupeAssessmentView({
                   </p>
                 ))}
               </div>
+            ) : null}
+
+            {bypassedPolicyNotices.length ? (
+              <div
+                aria-label={`${trackerID} debug policy decisions`}
+                className="grid gap-1 text-sm text-muted-foreground"
+              >
+                {bypassedPolicyNotices.map((message) => (
+                  <p key={message}>Debug mode bypassed this rule: {message}</p>
+                ))}
+              </div>
+            ) : null}
+
+            {guidanceNotices.length ? (
+              <details
+                aria-label={`${trackerID} guidance warnings`}
+                className="rounded border border-border p-2 text-sm text-muted-foreground"
+              >
+                <summary className="cursor-pointer font-semibold focus-visible:outline focus-visible:outline-ring">
+                  Guidance ({guidanceNotices.length})
+                </summary>
+                <div className="mt-2 grid gap-1">
+                  {guidanceNotices.map((message) => (
+                    <p key={message}>Warning: {message}</p>
+                  ))}
+                </div>
+              </details>
             ) : null}
 
             {ruleAcknowledgement ? (
@@ -380,6 +443,19 @@ function WorkflowDupeAssessmentView({
               </div>
             ) : null}
 
+            {result?.reviewReasons?.length ? (
+              <div
+                aria-label={`${trackerID} duplicate policy review`}
+                className="grid gap-1 text-sm"
+              >
+                {uniqueMessages(
+                  result.reviewReasons.map((reason) => reason.message || reason.code),
+                ).map((message) => (
+                  <p key={message}>{message}</p>
+                ))}
+              </div>
+            ) : null}
+
             <CandidateList matches={matches} />
 
             {!strictBlocked && (nameConfirmation.pending || nameConfirmation.confirmed) ? (
@@ -418,17 +494,25 @@ function WorkflowDupeAssessmentView({
             {canOverride ? (
               <label className="inline-flex items-center gap-2 text-xs font-semibold">
                 <span>
-                  {riskAcknowledgement
-                    ? "Acknowledge tracker policy risk"
-                    : "Ignore duplicate match"}
+                  {result?.requiresStaffToken
+                    ? "I have the appropriate staff-issued token for this upload"
+                    : riskAcknowledgement
+                      ? "Acknowledge tracker policy risk"
+                      : "Ignore duplicate match"}
                 </span>
                 <Switch
                   aria-label={
-                    riskAcknowledgement
-                      ? `Acknowledge dupe risk for ${trackerID}`
-                      : `Ignore dupes for ${trackerID}`
+                    result?.requiresStaffToken
+                      ? `Confirm staff-issued token for ${trackerID}`
+                      : riskAcknowledgement
+                        ? `Acknowledge dupe risk for ${trackerID}`
+                        : `Ignore dupes for ${trackerID}`
                   }
-                  checked={result?.decision === "ignored" || ignoredTrackers.has(trackerID)}
+                  checked={
+                    result?.requiresStaffToken
+                      ? result.decision === "ignored" && result.staffTokenConfirmed === true
+                      : result?.decision === "ignored" || ignoredTrackers.has(trackerID)
+                  }
                   disabled={busy}
                   onChange={(event) => setIgnored(trackerID, event.target.checked)}
                 />
@@ -441,7 +525,7 @@ function WorkflowDupeAssessmentView({
   );
 }
 
-/** Presents per-tracker duplicate evidence, policy acknowledgements, and release-name review. */
+/** Presents per-tracker duplicate evidence, policy acknowledgements, tracker questions, and release-name review. */
 export default function DupeCheckPage({
   facet,
   sourcePath,
@@ -453,14 +537,37 @@ export default function DupeCheckPage({
   workflowComplete,
 }: Readonly<Props>) {
   const { view } = facet;
+  const refreshRef = useRef(facet.refreshQuestionnaires);
+  refreshRef.current = facet.refreshQuestionnaires;
+  useEffect(() => {
+    if (
+      view.questionnaireStatus === "idle" &&
+      view.status !== "running" &&
+      view.selectedTrackers.length
+    ) {
+      void refreshRef.current();
+    }
+  }, [view.questionnaireStatus, view.status, view.selectedTrackers]);
   const assessment = view.assessment || null;
   const preflight = view.preflight || null;
   const projections = view.projections || null;
   const trackerIDs = workflowTrackerIDs(assessment, preflight, projections);
   const ignoredTrackers = new Set(view.ignoredTrackers);
   const selectedTrackers = new Set(view.selectedTrackers);
+  const questionnaireProjections = view.questionnaires.filter(
+    (projection) => selectedTrackers.has(projection.trackerId) && projection.questionnaire?.length,
+  );
+  const preparationProjections = view.preparationQuestionnaires.filter(
+    (projection) => selectedTrackers.has(projection.trackerId) && projection.questionnaire?.length,
+  );
+  const questionnaireSections = [
+    { title: "Tracker questions", projections: questionnaireProjections },
+    { title: "Tracker preparation details", projections: preparationProjections },
+  ];
   const trackerSelectionRequired = selectedTrackers.size === 0;
+  const questionsLoading = view.questionnaireStatus === "running";
   const dupeLoading = view.status === "running";
+  const questionsBusy = dupeLoading || questionsLoading;
   const excludedTrackerIDs = new Set(submissionExclusions.map((exclusion) => exclusion.trackerId));
   const allSelectedTrackersAlreadyUploaded =
     workflowComplete &&
@@ -534,11 +641,185 @@ export default function DupeCheckPage({
           variant="primary"
           type="button"
           onClick={() => void facet.run()}
-          disabled={dupeLoading || !sourcePath.trim() || trackerSelectionRequired}
+          disabled={questionsBusy || !sourcePath.trim() || trackerSelectionRequired}
         >
           {dupeLoading ? `Checking ${view.completed}/${view.total || "?"}...` : "Run dupe check"}
         </Button>
       </section>
+
+      {questionsLoading ? <p role="status">Loading tracker questions…</p> : null}
+      {view.questionnaireError ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="status">{view.questionnaireError}</p>
+          <Button onClick={() => void facet.refreshQuestionnaires()} disabled={questionsBusy}>
+            Retry tracker questions
+          </Button>
+        </div>
+      ) : null}
+      {questionnaireProjections.length ||
+      preparationProjections.length ||
+      view.questionnaireDirty ? (
+        <section className={`${pageStyle.panel} grid gap-3`}>
+          {view.questionnaireDirty ? (
+            <p role="status">
+              Apply tracker answers to refresh the review. Compatible duplicate results are
+              retained.
+            </p>
+          ) : null}
+          <Button onClick={() => void facet.applyQuestionnaireAnswers()} disabled={questionsBusy}>
+            Apply tracker answers
+          </Button>
+          {questionnaireSections
+            .filter((section) => section.projections.length)
+            .map((section) => (
+              <section className="grid gap-3" key={section.title} aria-label={section.title}>
+                <h2>{section.title}</h2>
+                {section.projections.map((projection) => (
+                  <details className="rounded border border-border p-3" key={projection.trackerId}>
+                    <summary className="cursor-pointer font-semibold focus-visible:outline focus-visible:outline-ring">
+                      {projection.displayName}
+                      {projection.questionnaire?.some(
+                        (field) =>
+                          field.required &&
+                          !(
+                            view.questionnaireAnswers[projection.trackerId]?.[field.key] ??
+                            field.value ??
+                            ""
+                          ).trim(),
+                      )
+                        ? " · Required answers missing"
+                        : projection.questionnaire?.some((field) => field.required)
+                          ? " · Required fields filled"
+                          : " · Optional controls"}
+                      {projection.questionnaire?.some((field) => {
+                        const draft = view.questionnaireAnswers[projection.trackerId]?.[field.key];
+                        return (
+                          draft !== undefined &&
+                          draft.trim() !==
+                            (projection.questionnaireAnswers?.[field.key] ?? "").trim()
+                        );
+                      })
+                        ? " · Unapplied changes"
+                        : ""}
+                    </summary>
+                    <fieldset className="mt-3 grid gap-3" disabled={questionsBusy}>
+                      <legend className="sr-only">{projection.displayName}</legend>
+                      {projection.questionnaire?.map((field) => {
+                        const draft = view.questionnaireAnswers[projection.trackerId]?.[field.key];
+                        const answer = draft ?? field.value ?? "";
+                        const fieldId = `questionnaire-${projection.trackerId}-${field.key}`;
+                        const labelId = `${fieldId}-label`;
+                        const helpId = field.help ? `${fieldId}-help` : undefined;
+                        if (field.kind === "multiselect") {
+                          const selected = answer.split(",").filter(Boolean);
+                          return (
+                            <fieldset
+                              className="grid gap-2"
+                              key={field.key}
+                              aria-describedby={helpId}
+                            >
+                              <legend>
+                                {field.label || field.key}
+                                {field.required ? " *" : ""}
+                              </legend>
+                              {field.help ? (
+                                <p id={helpId} className="text-muted-foreground">
+                                  {field.help}
+                                </p>
+                              ) : null}
+                              {(field.options || []).map((option) => (
+                                <label className="flex items-center gap-2" key={option}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selected.includes(option)}
+                                    onChange={(event) =>
+                                      facet.answerQuestionnaire(
+                                        projection.trackerId,
+                                        field.key,
+                                        (event.target.checked
+                                          ? [...selected, option]
+                                          : selected.filter((value) => value !== option)
+                                        ).join(","),
+                                      )
+                                    }
+                                  />
+                                  {option}
+                                </label>
+                              ))}
+                            </fieldset>
+                          );
+                        }
+                        return (
+                          <label className="grid gap-1" key={field.key}>
+                            <span id={labelId} className={pageStyle.label}>
+                              {field.label || field.key}
+                              {field.required ? " *" : ""}
+                            </span>
+                            {field.help ? (
+                              <span id={helpId} className="text-muted-foreground text-sm">
+                                {field.help}
+                              </span>
+                            ) : null}
+                            {field.options?.length ? (
+                              <Select
+                                aria-labelledby={labelId}
+                                aria-describedby={helpId}
+                                value={answer}
+                                onChange={(event) =>
+                                  facet.answerQuestionnaire(
+                                    projection.trackerId,
+                                    field.key,
+                                    event.target.value,
+                                  )
+                                }
+                              >
+                                <option value="">Select</option>
+                                {answer && !field.options.includes(answer) ? (
+                                  <option value={answer}>{answer} (saved)</option>
+                                ) : null}
+                                {field.options.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </Select>
+                            ) : field.kind === "textarea" ? (
+                              <textarea
+                                aria-labelledby={labelId}
+                                aria-describedby={helpId}
+                                value={answer}
+                                onChange={(event) =>
+                                  facet.answerQuestionnaire(
+                                    projection.trackerId,
+                                    field.key,
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            ) : (
+                              <input
+                                aria-labelledby={labelId}
+                                aria-describedby={helpId}
+                                value={answer}
+                                onChange={(event) =>
+                                  facet.answerQuestionnaire(
+                                    projection.trackerId,
+                                    field.key,
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </fieldset>
+                  </details>
+                ))}
+              </section>
+            ))}
+        </section>
+      ) : null}
 
       {view.error ? <p className={pageStyle.error}>{view.error}</p> : null}
 
@@ -574,7 +855,7 @@ export default function DupeCheckPage({
         <WorkflowDupeAssessmentView
           acknowledgeReleaseName={facet.acknowledgeReleaseName}
           assessment={assessment}
-          busy={dupeLoading}
+          busy={questionsBusy}
           confirmReleaseName={facet.confirmReleaseName}
           ignoredTrackers={ignoredTrackers}
           acknowledgeRules={facet.acknowledgeRules}

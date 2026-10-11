@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -233,12 +234,13 @@ func TestWorkflowUploadExecutionResolveActionReprojectsResolvedPreparation(t *te
 }
 
 type workflowRetainedUploadServiceFake struct {
-	projections  []api.TrackerReleaseProjection
-	failures     map[api.TrackerID]trackers.TrackerFailure
-	actions      map[api.TrackerID][]api.RequiredAction
-	torrentPaths map[api.TrackerID]string
-	results      []trackers.RetainedTrackerResult
-	subject      api.UploadSubject
+	questionnaires map[api.TrackerID]*api.TrackerQuestionnaire
+	projections    []api.TrackerReleaseProjection
+	failures       map[api.TrackerID]trackers.TrackerFailure
+	actions        map[api.TrackerID][]api.RequiredAction
+	torrentPaths   map[api.TrackerID]string
+	results        []trackers.RetainedTrackerResult
+	subject        api.UploadSubject
 }
 
 func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
@@ -256,6 +258,8 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 				Tracker:         string(projection.TrackerID),
 				Status:          "ready",
 				RequiredActions: append([]api.RequiredAction(nil), f.actions[projection.TrackerID]...),
+				Questionnaire:   f.questionnaires[projection.TrackerID],
+				EditionFeatures: slices.Clone(projection.EditionFeatures),
 				Files: []api.TrackerDryRunFile{{
 					Field:   "file_input",
 					Path:    filepath.Join("preview", "must-not-drive-injection.torrent"),
@@ -853,9 +857,14 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 				TrackerID:         "ALPHA",
 				DisplayName:       "Alpha",
 				UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
-				Artifacts:         api.TrackerArtifactRequirements{Description: true},
-				Readiness:         api.ReadinessStatusReady,
-				UploadReady:       true,
+				EditionFeatures: []api.TrackerEditionFeature{{
+					Label:    "With Commentary",
+					Category: "Feature",
+					Selected: true,
+				}, {Label: "Remastered", Category: "Edition"}},
+				Artifacts:   api.TrackerArtifactRequirements{Description: true},
+				Readiness:   api.ReadinessStatusReady,
+				UploadReady: true,
 			},
 			{
 				TrackerID:         "BETA",
@@ -1002,6 +1011,9 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 	defer func() { _ = execution.Release() }()
 	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 3 {
 		t.Fatalf("upload plan = %#v", plan)
+	}
+	if !slices.Equal(plan.Trackers[0].EditionFeatures, projections.Projections[0].EditionFeatures) {
+		t.Fatal("upload plan lost the prepared edition/features catalogue")
 	}
 	if plan.ProjectionSet.ID != projections.ID || plan.Dupes.ID != dupes.ID || plan.Media == nil || plan.Media.ID != media.ID ||
 		plan.Descriptions == nil || plan.Descriptions.ID != descriptions.ID {
@@ -1226,6 +1238,20 @@ func TestWorkflowUploadPlanFailsTerminalImageHostTrackerAndRestoresAfterRetry(t 
 		t.Fatalf("failed image-host upload plan = %#v", failed)
 	}
 
+	media.ImageHostUploadSkipped = true
+	skippedPlan, skippedExecution, err := builder.Build(
+		t.Context(), projections, dupes, workflowDupePrivateEvidence{}, media, workflowMediaPrivateArtifacts{}, descriptions,
+		api.DescriptionInstructions{Options: api.UploadOptions{SkipAutoTorrent: true}}, releaseworkflow.UploadPlanBuildOptions{}, time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build upload plan after explicit host skip: %v", err)
+	}
+	defer func() { _ = skippedExecution.Release() }()
+	if len(skippedPlan.Trackers) != 2 || !skippedPlan.Trackers[1].Eligible || len(service.projections) != 2 ||
+		service.subject.ExactMedia == nil || !service.subject.ExactMedia.ImageHostUploadSkipped {
+		t.Fatalf("skip retained upload exclusion or lost upload opt-out: plan=%+v subject=%+v", skippedPlan, service.subject)
+	}
+	media.ImageHostUploadSkipped = false
 	media.Failures = nil
 	retryPlan, retryExecution, err := builder.Build(
 		context.Background(),
@@ -1369,6 +1395,22 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			name:           "unknown outcome semantics",
 			code:           "unknown_outcome",
 			message:        "Workflow receipt unavailable.",
+			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing. Reason: Workflow receipt unavailable.",
+			wantSubmission: api.StageStatusUnavailable,
+		},
+		{
+			name:             "unknown outcome retains ANT rejection reason",
+			code:             "unknown_outcome",
+			message:          `trackers: ANT upload failed status=400: A file with the same infohash already exists on the site! passkey=never-print-this source=C:\releases\Example.Release.2026`,
+			wantMessage:      "Reason: trackers: ANT upload failed status=400: A file with the same infohash already exists on the site!",
+			wantSubmission:   api.StageStatusUnavailable,
+			wantRedaction:    true,
+			wantPathSanitize: true,
+		},
+		{
+			name:           "unknown outcome empty detail fallback",
+			code:           "unknown_outcome",
+			message:        " ",
 			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing.",
 			wantSubmission: api.StageStatusUnavailable,
 		},
@@ -1392,6 +1434,13 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			failure := results[0].Failures[0].Failure
 			if results[0].SubmissionStatus != test.wantSubmission || !strings.Contains(failure.Message, test.wantMessage) {
 				t.Fatalf("upload failure = %#v", results[0])
+			}
+			wantCode, wantRecovery := api.OperationFailureInternal, api.OperationRecoveryRetry
+			if test.code == "unknown_outcome" {
+				wantCode, wantRecovery = api.OperationFailureUnknownOutcome, api.OperationRecoveryConfirm
+			}
+			if failure.Code != wantCode || failure.Recovery != wantRecovery {
+				t.Fatalf("upload failure changed recovery semantics: %#v", failure)
 			}
 			if test.wantRedaction && (!strings.Contains(failure.Message, "passkey=[REDACTED]") || strings.Contains(failure.Message, "never-print-this")) {
 				t.Fatal("upload failure did not redact the tracker detail")
@@ -1685,5 +1734,117 @@ func TestWorkflowTrackerArtifactIdentityIsTrackerScoped(t *testing.T) {
 			betaTorrent,
 			betaFingerprint,
 		)
+	}
+}
+
+func TestWorkflowUploadPlanRetainsLateQuestionnaireFailure(t *testing.T) {
+	service := &workflowRetainedUploadServiceFake{
+		failures: map[api.TrackerID]trackers.TrackerFailure{"GPW": {
+			Tracker: "GPW",
+			Code:    "questionnaire_required",
+			Message: "missing required new-group data",
+		}},
+		actions: map[api.TrackerID][]api.RequiredAction{"GPW": {{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: "GPW"}}},
+		questionnaires: map[api.TrackerID]*api.TrackerQuestionnaire{"GPW": {Tracker: "GPW", Fields: []api.TrackerQuestionnaireField{{
+			Key:      "director_imdb",
+			Kind:     "text",
+			Label:    "Director IMDb ID",
+			Required: true,
+		}}}},
+	}
+	builder := workflowUploadPlanBuilder{resolver: workflowUploadResolverFixed{subject: api.UploadSubject{SourcePath: filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")}}, trackers: service}
+	plan, execution, err := builder.Build(t.Context(),
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+			TrackerID:   "GPW",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		}}},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+			TrackerID: "GPW",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		}}},
+		workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{}, api.DescriptionInstructions{}, releaseworkflow.UploadPlanBuildOptions{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = execution.Release() }()
+	if len(plan.Trackers) != 1 {
+		t.Fatalf("trackers=%+v", plan.Trackers)
+	}
+	tracker := plan.Trackers[0]
+	if tracker.Eligible || tracker.Status != api.StageStatusFailed || len(tracker.Questionnaire) != 1 || tracker.Questionnaire[0].Key != "director_imdb" || !tracker.Questionnaire[0].Required || len(tracker.RequiredActions) != 1 {
+		t.Fatalf("late-required schema/failed authority not preserved: %+v", tracker)
+	}
+	before, err := workflowUploadTrackerSemanticFingerprint(api.TrackerReleaseProjection{}, tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker.Questionnaire[0].Required = false
+	after, err := workflowUploadTrackerSemanticFingerprint(api.TrackerReleaseProjection{}, tracker)
+	if err != nil || before == after {
+		t.Fatalf("questionnaire omitted from semantic fingerprint: %v", err)
+	}
+}
+
+func TestSanitizeWorkflowQuestionnaireDetachesAndRedactsValues(t *testing.T) {
+	schema := &api.TrackerQuestionnaire{Fields: []api.TrackerQuestionnaireField{
+		{Key: "api_key", Value: "private"},
+		{
+			Key:     "poster",
+			Value:   "https://images.example/poster.jpg?token=private",
+			Options: []string{"example"},
+		},
+		{Key: "trailer", Value: "https://www.youtube.com/watch?v=EXAMPLE#t=12"},
+	}}
+	fields := sanitizeWorkflowQuestionnaire(schema)
+	if fields[0].Value != "" || fields[1].Value != "" || fields[2].Value != schema.Fields[2].Value {
+		t.Fatalf("unsafe questionnaire=%+v", fields)
+	}
+	fields[1].Options[0] = "changed"
+	if schema.Fields[1].Options[0] != "example" {
+		t.Fatal("shared questionnaire storage")
+	}
+}
+
+func TestWorkflowQuestionnaireAnswersPreserveClearedConditionalFields(t *testing.T) {
+	projector, err := trackers.NewWorkflowProjector(impl.MustNewRegistry(), config.Config{}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := api.UploadSubject{
+		ReleaseName:                 "Example.Movie.2026.1080p-GRP",
+		Identity:                    api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		ProviderMetadata:            api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: "Action"}},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{"ANT": {"tags": "drama"}},
+	}
+	_, _, _, projections, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, subject, []api.TrackerID{"ANT"}, map[api.TrackerID]api.TrackerProjectionInstructions{"ANT": {Questionnaire: map[string]*string{"tags": nil}}}, nil, api.WorkflowExecutionModeNormal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projections.Projections) != 1 {
+		t.Fatalf("projections=%+v", projections)
+	}
+	projection := projections.Projections[0]
+	if projection.QuestionnaireAnswers == nil || len(projection.QuestionnaireAnswers) != 0 {
+		t.Fatalf("clear lacks exact empty authority: %+v", projection.QuestionnaireAnswers)
+	}
+	if slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool { return field.Key == "tags" }) {
+		t.Fatal("fixture must cover an auto-resolved field omitted from display schema")
+	}
+	encoded, err := json.Marshal(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored api.TrackerReleaseProjection
+	if err := json.Unmarshal(encoded, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.QuestionnaireAnswers == nil {
+		t.Fatal("empty answer authority lost through JSON")
+	}
+	answers := workflowQuestionnaireAnswers(map[api.TrackerID]map[string]string{"ANT": {"tags": "stale drama"}}, []api.TrackerReleaseProjection{restored})
+	if _, exists := answers["ANT"]["tags"]; exists {
+		t.Fatalf("cleared field revived: %+v", answers)
 	}
 }

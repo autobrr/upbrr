@@ -15,13 +15,16 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "standalone-ptp-constructibility-v1",
+		ID: "standalone-ptp-constructibility-v5",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
 			}
 			meta := standalone.UploadSubjectForValidation(subject)
 			failures := make([]api.RuleFailure, 0, 3)
+			if reason := validateNoEnglishSubtitles(meta); reason != "" {
+				failures = append(failures, trackers.NewRuleFailure("tracker_input.no_english_subtitles", reason, api.RuleDispositionStrict))
+			}
 			category, categoryErr := meta.Identity.RequireCategory()
 			if categoryErr != nil || category != api.CanonicalCategoryMovie {
 				failures = append(failures, trackers.NewRuleFailure(
@@ -54,6 +57,7 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 					api.RuleDispositionStrict,
 				))
 			}
+			failures = append(failures, languageFailures(subject)...)
 			return failures, nil
 		},
 	}

@@ -66,7 +66,7 @@ type ActiveInputRepository interface {
 	RenewActiveInput(context.Context, string, uint64, time.Time, time.Time) error
 	RelinquishActiveInput(context.Context, string, uint64, time.Time) error
 	LoadInputRecord(context.Context, string) (InputRecord, error)
-	LoadInputWorkflowAssociation(context.Context, string, string, string) (WorkflowID, AudioAnalysisResultID, error)
+	LoadInputWorkflowAssociation(context.Context, string, string, string) (InputWorkflowAssociation, error)
 	LoadInputRecordByID(context.Context, string) (InputRecord, error)
 	SaveInputRecord(context.Context, InputRecord) (InputRecord, error)
 }
@@ -91,4 +91,11 @@ func WithActiveInputAuthority(ctx context.Context, authority ActiveInputAuthorit
 func ActiveInputAuthorityFromContext(ctx context.Context) (ActiveInputAuthority, bool) {
 	authority, ok := ctx.Value(activeInputAuthorityKey{}).(ActiveInputAuthority)
 	return authority, ok
+}
+
+// InputWorkflowAssociation retains optional analysis IDs without positional coupling.
+type InputWorkflowAssociation struct {
+	WorkflowID      WorkflowID
+	AudioAnalysisID AudioAnalysisResultID
+	HDRAnalysisID   HDRAnalysisResultID
 }

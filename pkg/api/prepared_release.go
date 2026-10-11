@@ -182,8 +182,42 @@ type EpisodeFacts struct {
 	DateMatched       bool
 }
 
+// SubtitleCoverage records explicitly supplied dialogue coverage; empty retains
+// an unqualified language without guessing full or forced coverage.
+type SubtitleCoverage string
+
+const (
+	SubtitleCoverageUnspecified SubtitleCoverage = ""
+	SubtitleCoverageFull        SubtitleCoverage = "full"
+	SubtitleCoverageForced      SubtitleCoverage = "forced"
+)
+
+// SubtitleLanguageCoverage preserves coverage without changing base-language lists.
+type SubtitleLanguageCoverage struct {
+	Language string
+	Coverage SubtitleCoverage
+}
+
+// ReleaseFeature identifies a prepared annotation that does not establish a cut or edition.
+type ReleaseFeature string
+
+const (
+	ReleaseFeatureTwoDiscSet    ReleaseFeature = "two_disc_set"
+	ReleaseFeature4KRestoration ReleaseFeature = "4k_restoration"
+	ReleaseFeature4KRemaster    ReleaseFeature = "4k_remaster"
+	ReleaseFeatureExtras        ReleaseFeature = "extras"
+	ReleaseFeature2D3DEdition   ReleaseFeature = "2d_3d_edition"
+	ReleaseFeature3DAnaglyph    ReleaseFeature = "3d_anaglyph"
+	ReleaseFeature3DFullSBS     ReleaseFeature = "3d_full_sbs"
+	ReleaseFeature3DHalfOU      ReleaseFeature = "3d_half_ou"
+	ReleaseFeature3DHalfSBS     ReleaseFeature = "3d_half_sbs"
+)
+
 // MediaFacts contains finalized reusable media characteristics.
 type MediaFacts struct {
+	MediaFileFacts                       MediaFileFacts
+	AudioAbsent                          bool
+	LanguageFacts                        LanguageFacts
 	AudioLanguages                       []string
 	SubtitleLanguages                    []string
 	TrackAudioLanguages                  []string
@@ -195,6 +229,7 @@ type MediaFacts struct {
 	SubtitleLanguagesProvenance          FactProvenance
 	HardcodedSubs                        bool
 	HardcodedSubtitleLanguages           []string
+	HardcodedSubtitleCoverage            []SubtitleLanguageCoverage `json:"HardcodedSubtitleCoverage,omitempty"`
 	HardcodedSubsProvenance              FactProvenance
 	HardcodedSubtitleLanguagesProvenance FactProvenance
 	OriginalLanguage                     string
@@ -216,6 +251,8 @@ type MediaFacts struct {
 	VideoEncode                          string
 	HasEncodeSettings                    bool
 	BitDepth                             string
+	// ReleaseFeatures are source-backed annotations, separate from naming components.
+	ReleaseFeatures []ReleaseFeature `json:",omitempty"`
 	// Cut, Edition, and Presentation are independently addressable naming facts.
 	EditionSet        string
 	Cut               string
@@ -257,6 +294,8 @@ type DiscItemFacts struct {
 type DiscReportFacts struct {
 	Playlist PlaylistInfo
 	Summary  string
+	// HDR10PlusConfirmed records native HDR10+ confirmation for this selected timeline.
+	HDR10PlusConfirmed bool
 }
 
 // SelectedPlaylists returns all canonical selected playlists in disc/report order.

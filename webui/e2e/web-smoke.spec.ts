@@ -1,8 +1,18 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
 import { expect } from "@playwright/test";
-import { createE2EWorkspace, startApp, test, type AppServer } from "./helpers/e2eHarness";
+import {
+  createE2EWorkspace,
+  e2eBinary,
+  startApp,
+  test,
+  type AppServer,
+} from "./helpers/e2eHarness";
 import type { ApplicationInfo } from "../src/types";
 
 test("embedded web boots with dev auth, navigates core pages, and reports invalid paths", async ({
@@ -465,3 +475,85 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     await workspace.cleanup();
   }
 });
+
+for (const rootCount of [1, 2]) {
+  test(`host browser searches ${rootCount} allowed roots and selects exact nested paths`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace();
+    const allowedRoots = [
+      path.join(workspace.root, "first"),
+      path.join(workspace.root, "second"),
+    ].slice(0, rootCount);
+    const forbiddenRoot = path.join(workspace.root, "forbidden");
+    const fileName = "Beacon_Voyage.mkv";
+    const folderName = "Beacon-Voyage";
+    let app: AppServer | undefined;
+    try {
+      for (const root of [...allowedRoots, forbiddenRoot]) {
+        await mkdir(path.join(root, "nested", folderName), { recursive: true });
+        await writeFile(path.join(root, "nested", fileName), "synthetic media fixture");
+        await writeFile(path.join(root, "nested", "Beacon.Voyage.txt"), "not a video");
+      }
+      app = await startApp(workspace, { devNoAuth: false });
+      await app.stop();
+      app = undefined;
+      await promisify(execFile)(
+        e2eBinary,
+        ["auth", "browse-roots", "--config", workspace.configPath, ...allowedRoots],
+        { env: workspace.env, windowsHide: true },
+      );
+      app = await startApp(workspace, { seed: false, devNoAuth: false });
+      await page.goto(app.url);
+      await page.getByLabel("Username").fill("e2e-user");
+      await page.getByLabel("Password").fill("synthetic-e2e-password");
+      await page.getByRole("button", { name: "Sign In" }).click();
+      await page.getByRole("button", { name: "Browse file" }).click();
+      const dialog = page.getByRole("dialog", { name: "Host browser" });
+      const rootSearch = dialog.getByLabel("Search all browse roots");
+      await expect(dialog.getByRole("button", { name: /^Open / })).toHaveCount(rootCount);
+      await rootSearch.fill("voyage beacon");
+      for (const root of allowedRoots) {
+        await expect(
+          dialog.getByText(path.join(root, "nested", fileName), { exact: true }),
+        ).toBeVisible();
+      }
+      await expect(dialog.getByRole("button", { name: /^Select / })).toHaveCount(rootCount);
+      await expect(dialog.getByText("Beacon.Voyage.txt", { exact: true })).toHaveCount(0);
+      await expect(
+        dialog.getByText(path.join(forbiddenRoot, "nested", fileName), { exact: true }),
+      ).toHaveCount(0);
+
+      await dialog.getByRole("button", { name: "Clear search" }).click();
+      await expect(rootSearch).toHaveValue("");
+      await expect(dialog.getByRole("button", { name: /^Open / })).toHaveCount(rootCount);
+      await rootSearch.fill("BEACON Voyage");
+      const selectedRoot = allowedRoots[rootCount - 1];
+      const selectedFile = path.join(selectedRoot, "nested", fileName);
+      await dialog.getByRole("button", { name: `Select ${selectedFile}`, exact: true }).click();
+      await expect(page.getByLabel("Source path")).toHaveValue(selectedFile);
+      await expect(dialog).toHaveCount(0);
+
+      await page.getByRole("button", { name: "Browse folder" }).click();
+      await dialog.getByRole("button", { name: "Roots", exact: true }).click();
+      await rootSearch.fill("becnvyge");
+      const selectedFolder = path.join(selectedRoot, "nested", folderName);
+      await expect(
+        dialog.getByRole("button", { name: `Select ${selectedFolder}`, exact: true }),
+      ).toBeVisible();
+      await dialog.getByRole("button", { name: `Open ${selectedFolder}`, exact: true }).click();
+      await expect(dialog.getByLabel("Filter this directory")).toHaveValue("");
+      await expect(dialog.getByText(selectedFolder, { exact: true })).toBeVisible();
+      await dialog.getByRole("button", { name: "Up", exact: true }).click();
+      await dialog.getByLabel("Filter this directory").fill("voyage beacon");
+      await expect(
+        dialog.getByRole("button", { name: `Open ${folderName}`, exact: true }),
+      ).toBeVisible();
+      await dialog.getByRole("button", { name: `Select ${folderName}`, exact: true }).click();
+      await expect(page.getByLabel("Source path")).toHaveValue(selectedFolder);
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}

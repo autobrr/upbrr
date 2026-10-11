@@ -4,6 +4,8 @@
 package impl
 
 import (
+	"context"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -35,7 +37,9 @@ func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *
 				VideoEncode: "x264",
 				Tag:         "-GRP",
 			}, nil)
+			sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")
 			subject := api.UploadSubject{
+				SourcePath:            sourcePath,
 				ReleaseName:           generated.Name,
 				ReleaseNameNoTag:      generated.NameNoTag,
 				GeneratedName:         generated.GeneratedName,
@@ -43,14 +47,26 @@ func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *
 				Type:                  "DVDRIP",
 				Source:                "DVD",
 				Audio:                 "DTS 2.0",
-				VideoEncode:           "x264",
-				Tag:                   "-GRP",
+				LanguageFacts: api.LanguageFacts{Tracks: []api.MediaTrackFacts{{
+					Kind:         api.MediaTrackAudio,
+					Role:         api.AudioRoleProgramme,
+					Default:      true,
+					DefaultKnown: true,
+					Codec:        "DTS",
+					AudioLabel:   "DTS 2.0",
+				}}},
+				VideoEncode: "x264",
+				Tag:         "-GRP",
 				Identity: api.ExternalIdentity{
-					Category: api.CanonicalCategoryMovie,
-					IMDBID:   4242,
-					TMDBID:   4242,
+					SourcePath: sourcePath,
+					Generation: 1,
+					Category:   api.CanonicalCategoryMovie,
+					IMDBID:     4242,
+					TMDBID:     4242,
 				},
 				ProviderMetadata: api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					Generation: 1,
 					IMDB: &api.IMDBMetadata{
 						IMDBID: 4242,
 						Title:  "Example Movie",
@@ -58,9 +74,10 @@ func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *
 						Year:   2026,
 					},
 					TMDB: &api.TMDBMetadata{
-						TMDBID: 4242,
-						Title:  "Example Movie",
-						Year:   2026,
+						Category: "MOVIE",
+						TMDBID:   4242,
+						Title:    "Example Movie",
+						Year:     2026,
 					},
 				},
 				Release: api.ReleaseInfo{
@@ -252,5 +269,89 @@ func TestFileListExactUploadKeepsGeneratedDuplicateName(t *testing.T) {
 	subject.GeneratedName = nil
 	if _, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "FL", Meta: subject}, descriptor.ReleaseNamePolicy); failure == nil {
 		t.Fatal("missing search document accepted")
+	}
+}
+
+func TestDisplayedQuestionnaireNamesPreserveReviewedSearchThroughPreparation(t *testing.T) {
+	registry := MustNewRegistry()
+	generated := metadata.BuildReleaseName(api.ReleaseNameRequest{
+		Category:    "MOVIE",
+		Type:        "WEBDL",
+		Title:       "Example Movie",
+		Year:        2001,
+		Resolution:  "1080p",
+		Source:      "WEB",
+		VideoEncode: "H.264",
+		Tag:         "-GRP",
+	}, nil)
+	for _, name := range []string{"FL", "TVC"} {
+		t.Run(name, func(t *testing.T) {
+			descriptor, _ := registry.LookupDescriptor(name)
+			subject := api.UploadSubject{
+				ReleaseName:   "Opaque.Scene.Name-GRP",
+				GeneratedName: generated.GeneratedName,
+				Scene:         true,
+				SceneName:     "Opaque.Scene.Name-GRP",
+				Type:          "WEBDL",
+				Source:        "WEB",
+				VideoCodec:    "H.264",
+				Identity:      api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 4242},
+				Release: api.ReleaseInfo{
+					Title:      "Example Movie",
+					Year:       2001,
+					Resolution: "1080p",
+				},
+			}
+			input := trackers.PreparationInput{
+				Tracker: name,
+				Meta:    subject,
+				Intent:  trackers.PreparationIntentDryRun,
+			}
+			if name == "TVC" {
+				input.RequestedUploadName = new("Custom TVC Upload Name")
+			}
+			reviewed, failure := trackers.PrepareInputWithReleaseNamePolicy(input, descriptor.ReleaseNamePolicy)
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			provider, ok := descriptor.Definition.(trackers.ProjectionQuestionnaireProvider)
+			if !ok {
+				t.Fatalf("%s does not provide projection questionnaires", name)
+			}
+			reviewed.Projection.Questionnaire = trackers.ProjectQuestionnaire(provider.ProjectionQuestionnaire(reviewed))
+			wantSearch := reviewed.Projection.DuplicateCriteria.Name
+			if name == "FL" && wantSearch != subject.ReleaseName {
+				t.Fatalf("opaque default search=%q", wantSearch)
+			}
+			_, failure = trackers.PrepareAdapter(t.Context(), reviewed, nil, func(_ context.Context, prepared trackers.PreparationInput) (trackers.PreparedOperation, error) {
+				verified, nameFailure := trackers.PrepareInputWithReleaseNamePolicy(prepared, descriptor.ReleaseNamePolicy)
+				if nameFailure != nil {
+					return trackers.PreparedOperation{}, nameFailure
+				}
+				return trackers.NewPreparedOperation(api.TrackerDryRunEntry{
+					Tracker:     name,
+					Status:      "ready",
+					ReleaseName: verified.Projection.UploadReleaseName,
+				}, nil, nil), nil
+			})
+			if failure != nil {
+				t.Fatalf("displayed default changed reviewed search %q: %v", wantSearch, failure)
+			}
+			answerKey := "name"
+			if name == "TVC" {
+				answerKey = "name_override"
+			}
+			stale := reviewed
+			stale.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{name: {answerKey: "Stale unreviewed name"}}
+			if _, failure := trackers.PrepareInputWithReleaseNamePolicy(stale, descriptor.ReleaseNamePolicy); failure != nil {
+				t.Fatalf("exact answers were not applied before naming verification: %v", failure)
+			}
+			legacyProjection := *reviewed.Projection
+			legacyProjection.QuestionnaireAnswers = nil
+			stale.Projection = &legacyProjection
+			if _, failure := trackers.PrepareInputWithReleaseNamePolicy(stale, descriptor.ReleaseNamePolicy); failure == nil || failure.Code() != "name_projection_mismatch" {
+				t.Fatalf("legacy naming verification was bypassed: %v", failure)
+			}
+		})
 	}
 }

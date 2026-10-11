@@ -387,3 +387,31 @@ func classifyReleaseWorkflowError(err error) error {
 	}
 	return api.NewOperationError(failure, err)
 }
+
+func (b *Backend) openReleaseWorkflowHDRAnalysisArtifact(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysis api.HDRAnalysisRef,
+	artifactID api.PublicResourceID,
+) (releaseworkflow.MediaArtifactContent, error) {
+	runtime, err := b.requireRuntime()
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, err
+	}
+	workflowCore, err := runtime.releaseWorkflowCore()
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, err
+	}
+	content, err := workflowCore.OpenReleaseWorkflowHDRAnalysisArtifact(ctx, ownerID, workflowID, analysis, artifactID)
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, classifyReleaseWorkflowError(err)
+	}
+	if content.Body == nil || content.ContentType != "image/png" {
+		if content.Body != nil {
+			_ = content.Body.Close()
+		}
+		return releaseworkflow.MediaArtifactContent{}, classifyReleaseWorkflowError(releaseworkflow.ErrPrivateResourceIntegrity)
+	}
+	return content, nil
+}

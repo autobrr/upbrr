@@ -3,6 +3,7 @@ import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 const sidebars: SidebarsConfig = {
   docsSidebar: [
     "introduction",
+    "changelog/v0.4.0",
     {
       type: "category",
       label: "Getting started",
@@ -53,7 +54,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Workflow",
       link: { type: "doc", id: "workflow/index" },
-      items: ["workflow/audio-analysis"],
+      items: ["workflow/audio-analysis", "workflow/hdr-analysis"],
     },
     "trackers/index",
     "troubleshooting/index",
