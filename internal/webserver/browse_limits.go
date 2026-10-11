@@ -14,7 +14,7 @@ import (
 
 var errBrowseBusy = errors.New("host browser is busy; retry when another browse request finishes")
 
-// browseRequestLimiter bounds active filesystem work per server without queuing
+// browseRequestLimiter admits at most two filesystem requests per server without queuing
 // requests. A canceled request retains its slot until its filesystem call returns.
 type browseRequestLimiter struct {
 	active atomic.Int32

@@ -9,13 +9,20 @@ import type { BrowseDirectoryRequest, BrowseDirectoryResponse } from "../../type
 import { filterBrowseEntries, type SourcePathMode } from "../../utils/inputHistory";
 
 type Props = Readonly<{
+  /** Null closes the dialog; file mode permits video-file selection and folder mode selects directories. */
   mode: SourcePathMode | null;
+  /** Captured when the dialog opens; later draft edits do not restart browsing. Empty starts at roots. */
   initialPath: string;
   onClose: () => void;
+  /** Receives the selected host path and mode before onClose runs. */
   onSelect: (path: string, isDir: boolean, mode: SourcePathMode) => void;
 }>;
 
-/** Browses the host filesystem and returns only a selected path to the input owner. */
+/**
+ * Browses authorized host paths, debouncing recursive roots searches and filtering directory entries locally.
+ * Navigation, close and unmount cancel pending work; superseded or timed-out replies cannot update the view.
+ * Each request has a 15-second client deadline, including response reads and authentication retries.
+ */
 export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Props) {
   const [directory, setDirectory] = useState<BrowseDirectoryResponse | null>(null);
   const [loading, setLoading] = useState(false);

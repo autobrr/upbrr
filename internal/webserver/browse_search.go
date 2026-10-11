@@ -33,6 +33,8 @@ const (
 // browsePathsWithinRoots keeps legacy listings intact while making Roots an
 // explicit scope even for a single configured root. An empty root list means
 // the caller has already authorized unrestricted browsing.
+// A normalized-empty roots query lists roots without traversal. Searches share
+// result, entry and time bounds; caller cancellation returns an error after workers join.
 func browsePathsWithinRoots(ctx context.Context, req api.BrowseDirectoryRequest, fallback string, rootPaths []string) (api.BrowseDirectoryResponse, error) {
 	if req.Scope != "" && req.Scope != "directory" && req.Scope != "roots" {
 		return api.BrowseDirectoryResponse{}, errors.New("invalid browse scope")
@@ -185,6 +187,8 @@ func searchBrowseGroups(ctx context.Context, groups [][]api.BrowseDirectoryEntry
 	return *result
 }
 
+// browseSearch shares deduplication, result limits and the entry budget across
+// filesystem workers. mu protects traversal state and the accumulated response.
 type browseSearch struct {
 	ctx                              context.Context
 	matcher                          browseNameMatcher
@@ -389,8 +393,10 @@ func foldBrowseName(value string) string {
 }
 
 // matches mirrors qui's name matching, excluding its torrent-only glob, hash,
-// tag and category searches. Fuzzy matches allow fewer than ten deleted runes,
-// never substitutions or reordered characters. Accent folding is fuzzy-only.
+// tag and category searches. It tries normalized substrings, all query words,
+// then an accent-folded subsequence without substitutions or character reordering.
+// Fuzzy matches normally allow fewer than ten deleted runes; the pre-fold byte-length
+// fallback below accepts a folded subsequence without that limit.
 func (m browseNameMatcher) matches(name string) bool {
 	target := normalizeBrowseName(name)
 	if strings.Contains(target, m.query) {

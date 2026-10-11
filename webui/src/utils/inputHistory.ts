@@ -159,7 +159,10 @@ const matchesBrowseName = (name: string, query: string): boolean => {
   );
 };
 
-/** Filters loaded entries using the server's name rules, plus literal path substrings. */
+/**
+ * Filters loaded entries by normalized name substrings, query words or accent-folded fuzzy matches,
+ * plus case-insensitive literal path substrings. A normalized-empty query returns the original array.
+ */
 export const filterBrowseEntries = <T extends { name: string; path: string }>(
   entries: T[],
   search: string,

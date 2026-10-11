@@ -281,7 +281,10 @@ func (b *Backend) BrowseDirectoryWithinRoot(path string, mode string, root strin
 }
 
 // BrowseDirectoryWithinRoots lists or searches host paths within the authorized roots.
-// Recursive searches observe request cancellation and return bounded, possibly incomplete results.
+// An empty roots list permits unrestricted browsing; the caller owns authorization.
+// Recursive searches return usable partial results when an internal bound is reached,
+// but return an error on caller cancellation. Filesystem calls already in progress
+// must finish before the search returns.
 func (b *Backend) BrowseDirectoryWithinRoots(ctx context.Context, req api.BrowseDirectoryRequest, roots []string) (api.BrowseDirectoryResponse, error) {
 	if b == nil {
 		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")

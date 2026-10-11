@@ -240,6 +240,7 @@ const dispatchEventBlock = (block: string) => {
   callbacks.get(eventName)?.forEach((callback) => callback(payload));
 };
 
+/** Uses one caller signal for response reads, authentication refresh and the single auth retry. */
 const requestJSON = async <T>(path: string, requestInit: () => RequestInit): Promise<T> => {
   const initialRequest = requestInit();
   const signal = initialRequest.signal;

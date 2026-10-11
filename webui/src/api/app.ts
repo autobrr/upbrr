@@ -126,6 +126,7 @@ const selectTextFile = (accept: string) =>
 
 /** Host filesystem browsing exposed through the authenticated WebUI route. */
 export const hostBrowser = {
+  /** Lists or searches authorized roots; cancellation includes response reads, auth refresh and retry. */
   list: (request: BrowseDirectoryRequest, signal?: AbortSignal) =>
     requestApp<BrowseDirectoryResponse>("BrowseDirectory", request, { signal }),
 };
