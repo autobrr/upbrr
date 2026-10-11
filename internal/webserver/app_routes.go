@@ -201,7 +201,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "web browse root is not configured"})
 			return
 		}
-		value, err := s.backend.BrowseDirectoryWithinRoots(req.Path, req.Mode, policy.Roots)
+		value, err := s.backend.BrowseDirectoryWithinRoots(r.Context(), req, policy.Roots)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

@@ -1567,6 +1567,9 @@ export type BrowseDirectoryEntry = {
 };
 
 export type BrowseDirectoryResponse = {
+  scope: "roots" | "directory";
+  /** The search stopped at a traversal/result limit or could not read every directory. */
+  incomplete?: boolean;
   currentPath: string;
   parentPath: string;
   mode: "file" | "folder";
@@ -1574,6 +1577,9 @@ export type BrowseDirectoryResponse = {
 };
 
 export type BrowseDirectoryRequest = {
+  /** Explicit roots scope keeps the root listing visible even with one configured root. */
+  scope?: "roots" | "directory";
+  query?: string;
   path: string;
   mode: "file" | "folder";
 };

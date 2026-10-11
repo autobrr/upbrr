@@ -6,6 +6,10 @@ package api
 type BrowseDirectoryRequest struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`
+	// Scope selects "roots" for recursive search or "directory" for a listing.
+	// An omitted scope preserves legacy initial-directory behavior.
+	Scope string `json:"scope,omitempty"`
+	Query string `json:"query,omitempty"`
 }
 
 type BrowseDirectoryEntry struct {
@@ -21,4 +25,7 @@ type BrowseDirectoryResponse struct {
 	ParentPath  string                 `json:"parentPath"`
 	Mode        string                 `json:"mode"`
 	Entries     []BrowseDirectoryEntry `json:"entries"`
+	Scope       string                 `json:"scope"`
+	// Incomplete means a search stopped at a bound or could not read every path.
+	Incomplete bool `json:"incomplete,omitempty"`
 }

@@ -5,7 +5,7 @@ import { pageStyle } from "../../components/ui/pageStyle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { hostBrowser as hostBrowserClient } from "../../api/app";
-import type { BrowseDirectoryResponse } from "../../types";
+import type { BrowseDirectoryRequest, BrowseDirectoryResponse } from "../../types";
 import { filterBrowseEntries, type SourcePathMode } from "../../utils/inputHistory";
 
 type Props = Readonly<{
@@ -21,49 +21,90 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [scope, setScope] = useState<"roots" | "directory">("roots");
   const requestRevision = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadDirectory = useCallback(async (path: string, requestedMode: SourcePathMode) => {
-    const revision = ++requestRevision.current;
-    setLoading(true);
-    setError("");
-    try {
-      const result = await hostBrowserClient.list(path, requestedMode);
-      if (requestRevision.current === revision) setDirectory(result);
-    } catch (cause) {
-      if (requestRevision.current === revision) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    } finally {
-      if (requestRevision.current === revision) setLoading(false);
-    }
+  const cancelPending = useCallback(() => {
+    requestRevision.current += 1;
+    requestController.current?.abort();
+    if (searchTimer.current !== null) clearTimeout(searchTimer.current);
+    searchTimer.current = null;
   }, []);
+
+  const loadDirectory = useCallback(
+    async (request: BrowseDirectoryRequest) => {
+      cancelPending();
+      const revision = requestRevision.current;
+      const controller = new AbortController();
+      requestController.current = controller;
+      setScope(request.scope ?? "directory");
+      setLoading(true);
+      setError("");
+      try {
+        const result = await hostBrowserClient.list(request, controller.signal);
+        if (requestRevision.current === revision) setDirectory(result);
+      } catch (cause) {
+        if (requestRevision.current === revision) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      } finally {
+        if (requestRevision.current === revision) setLoading(false);
+      }
+    },
+    [cancelPending],
+  );
 
   useEffect(() => {
     if (mode) {
       setDirectory(null);
       setSearch("");
-      void loadDirectory(initialPath, mode);
+      const path = initialPath.trim();
+      void loadDirectory({ path, mode, scope: path ? "directory" : "roots" });
     }
-    return () => {
-      requestRevision.current += 1;
-    };
+    return cancelPending;
     // Opening a browser captures the input draft; later edits do not restart the listing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, loadDirectory]);
+  }, [mode, loadDirectory, cancelPending]);
 
+  const recursiveSearch = scope === "roots" && Boolean(search.trim());
   const entries = useMemo(
-    () => filterBrowseEntries(directory?.entries || [], search),
-    [directory?.entries, search],
+    () =>
+      scope === "roots"
+        ? directory?.entries || []
+        : filterBrowseEntries(directory?.entries || [], search),
+    [directory?.entries, search, scope],
   );
+  const navigate = (path: string, nextScope: "roots" | "directory") => {
+    if (!mode) return;
+    setSearch("");
+    setDirectory(null);
+    void loadDirectory({ path, mode, scope: nextScope });
+  };
+  const changeSearch = (value: string) => {
+    setSearch(value);
+    if (!mode || scope !== "roots") return;
+    cancelPending();
+    setDirectory(null);
+    setLoading(true);
+    setError("");
+    const request: BrowseDirectoryRequest = { path: "", mode, scope: "roots", query: value };
+    if (value.trim()) searchTimer.current = setTimeout(() => void loadDirectory(request), 250);
+    else void loadDirectory(request);
+  };
+  const close = () => {
+    cancelPending();
+    onClose();
+  };
   const select = (path: string, isDir: boolean) => {
     if (!mode || (mode === "folder" && !isDir) || (mode === "file" && isDir)) return;
     onSelect(path, isDir, mode);
-    onClose();
+    close();
   };
 
   return (
-    <Dialog.Root open={Boolean(mode)} onOpenChange={(open) => !open && onClose()}>
+    <Dialog.Root open={Boolean(mode)} onOpenChange={(open) => !open && close()}>
       <Dialog.Portal>
         <Dialog.Overlay className="host-browser-overlay fixed inset-0 z-[9000] bg-black/70" />
         <Dialog.Content className="fixed top-1/2 left-1/2 z-[9001] flex max-h-[min(760px,calc(100vh-48px))] w-[min(900px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-[14px] border border-foreground/10 bg-card p-4 shadow-[var(--shadow)]">
@@ -74,7 +115,9 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
               </Dialog.Title>
               <Dialog.Description asChild>
                 <p className="host-browser-path font-mono text-[0.95rem] mt-1 mb-0 text-muted-foreground [overflow-wrap:anywhere]">
-                  {directory?.currentPath || "Computer"}
+                  {scope === "roots"
+                    ? "All browse roots"
+                    : directory?.currentPath || "Loading directory..."}
                 </p>
               </Dialog.Description>
             </div>
@@ -88,22 +131,17 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
             <button
               className="ghost"
               type="button"
-              disabled={!directory?.parentPath || loading}
+              disabled={scope === "roots" || !directory?.parentPath || loading}
               onClick={() => {
-                if (mode && directory?.parentPath) void loadDirectory(directory.parentPath, mode);
+                if (directory?.parentPath) navigate(directory.parentPath, "directory");
               }}
             >
               Up
             </button>
-            <button
-              className="ghost"
-              type="button"
-              disabled={loading}
-              onClick={() => mode && void loadDirectory("", mode)}
-            >
+            <button className="ghost" type="button" onClick={() => navigate("", "roots")}>
               Roots
             </button>
-            {mode === "folder" && directory?.currentPath ? (
+            {mode === "folder" && scope === "directory" && directory?.currentPath ? (
               <button
                 className="primary"
                 type="button"
@@ -117,23 +155,39 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
               className="grid min-w-[min(280px,100%)] flex-1 gap-1 text-[0.82rem] text-muted-foreground"
               htmlFor="host-browser-search"
             >
-              <span>Search</span>
+              <span>{scope === "roots" ? "Search all browse roots" : "Filter this directory"}</span>
               <input
                 id="host-browser-search"
                 className="h-8 w-full rounded-lg border border-foreground/10 bg-card/45 px-2.5 text-foreground focus-visible:border-chart-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Filter current path"
-                disabled={loading || !directory}
+                onChange={(event) => changeSearch(event.target.value)}
+                placeholder={
+                  scope === "roots" ? "Find files and folders recursively" : "Filter loaded entries"
+                }
+                disabled={scope === "directory" && (loading || !directory)}
               />
             </label>
+            {search ? (
+              <button className="ghost" type="button" onClick={() => changeSearch("")}>
+                Clear search
+              </button>
+            ) : null}
           </div>
           {error ? (
             <p className={pageStyle.error} role="alert">
               {error}
             </p>
           ) : null}
-          {loading ? <p className="text-muted-foreground">Loading host paths...</p> : null}
+          {loading ? (
+            <p className="text-muted-foreground" role="status">
+              {recursiveSearch ? "Searching all browse roots..." : "Loading host paths..."}
+            </p>
+          ) : null}
+          {!loading && directory?.incomplete ? (
+            <p className="text-muted-foreground" role="status">
+              Search results are incomplete. Narrow your search or open a root to browse directly.
+            </p>
+          ) : null}
           {!loading && directory ? (
             <div className="grid min-h-60 gap-1.5 overflow-auto pr-1">
               {entries.length === 0 ? (
@@ -145,8 +199,15 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
                     key={entry.path}
                   >
                     <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                      {entry.isDir ? "[DIR] " : ""}
-                      {entry.name}
+                      <span>
+                        {entry.isDir ? "[DIR] " : ""}
+                        {entry.name}
+                      </span>
+                      {recursiveSearch ? (
+                        <span className="block font-mono text-xs text-muted-foreground">
+                          {entry.path}
+                        </span>
+                      ) : null}
                     </span>
                     <span className="text-[0.85rem] whitespace-nowrap text-muted-foreground">
                       {entry.isDir
@@ -158,8 +219,8 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
                         <button
                           className="ghost"
                           type="button"
-                          aria-label={`Open ${entry.name}`}
-                          onClick={() => mode && void loadDirectory(entry.path, mode)}
+                          aria-label={`Open ${recursiveSearch ? entry.path : entry.name}`}
+                          onClick={() => navigate(entry.path, "directory")}
                         >
                           Open
                         </button>
@@ -169,7 +230,7 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
                         <button
                           className="primary"
                           type="button"
-                          aria-label={`Select ${entry.name}`}
+                          aria-label={`Select ${recursiveSearch ? entry.path : entry.name}`}
                           onClick={() => select(entry.path, entry.isDir)}
                         >
                           Select

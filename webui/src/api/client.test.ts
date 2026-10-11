@@ -316,6 +316,51 @@ describe("web client", () => {
     );
   });
 
+  it("preserves roots search scope, query, and cancellation across auth retry", async () => {
+    window.__UPBRR_BASE_URL__ = "/upbrr/";
+    const result = {
+      scope: "roots",
+      currentPath: "",
+      parentPath: "",
+      mode: "file",
+      entries: [],
+      incomplete: true,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, csrfToken: "csrf-token" }))
+      .mockResolvedValueOnce(jsonResponse(result));
+    vi.stubGlobal("fetch", fetchMock);
+    const { initializeWebClient } = await import("./client");
+    const { hostBrowser } = await import("./app");
+    initializeWebClient("csrf-token", false);
+    const signal = new AbortController().signal;
+    const request = {
+      scope: "roots" as const,
+      path: "",
+      mode: "file" as const,
+      query: "Beacon Voyage",
+    };
+
+    await expect(hostBrowser.list(request, signal)).resolves.toEqual(result);
+
+    for (const call of [1, 3]) {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        call,
+        "/upbrr/api/app/BrowseDirectory",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+          signal,
+          body: JSON.stringify(request),
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": "csrf-token" },
+        }),
+      );
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("notifies session loss when an app request cannot refresh authentication", async () => {
     const fetchMock = vi
       .fn()

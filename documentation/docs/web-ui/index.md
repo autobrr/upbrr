@@ -153,6 +153,14 @@ See [Logging](./logging.md) for persistence, filtering, rotation, and buffer beh
 
 ## Host browser
 
+On **Input**, choose **Browse file** or **Browse folder**. **Roots** shows every allowed browse root, even when only one is configured. **Search all browse roots** finds matching names in the roots and their nested folders, including the roots themselves. Each result shows its exact path so you can distinguish identically named files or folders.
+
+Inside a folder, **Filter this directory** searches only the entries already listed there. Both scopes ignore case, treat common separators such as dots, underscores, hyphens, and brackets as spaces, and match query words in any order. For example, `Beacon Voyage` matches `Beacon.Voyage` and `Beacon_Voyage`. A restricted ordered-character match also finds close abbreviations; it does not correct arbitrary typos.
+
+Choose **Open** to enter a folder or **Select** to apply that exact path to Input. File browsing continues to show only recognized video files alongside folders. **Clear search** restores the root listing or removes the current directory filter; opening another folder also clears the search.
+
+Root searches are bounded to keep browsing responsive. If the results are marked incomplete, use a narrower query or open a root and browse directly. Unreadable directories can also leave results incomplete. Typing another query, navigating, or closing the browser cancels the previous request.
+
 The host browser lists only configured roots unless unrestricted browsing was explicitly enabled. If a valid folder is missing:
 
 1. verify the upbrr process or container can read it;

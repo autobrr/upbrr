@@ -125,17 +125,49 @@ export const addSourcePathHistoryEntry = (
   );
 };
 
+// Match Go's per-rune lowercase, without contextual sigma or dotted-I expansion.
+const normalizeBrowseSearch = (value: string): string =>
+  Array.from(value, (character) => (character === "İ" ? "i" : character.toLowerCase()))
+    .join("")
+    .replace(/[._\-[\](){}\p{White_Space}]+/gu, " ")
+    .replace(/^ | $/g, "");
+
+const foldBrowseSearch = (value: string): string =>
+  value
+    .normalize("NFD")
+    .replace(/\p{Mn}/gu, "")
+    .normalize("NFC");
+
+const matchesBrowseName = (name: string, query: string): boolean => {
+  const normalized = normalizeBrowseSearch(name);
+  if (normalized.includes(query) || query.split(" ").every((word) => normalized.includes(word))) {
+    return true;
+  }
+
+  const source = Array.from(foldBrowseSearch(query));
+  const target = Array.from(foldBrowseSearch(normalized));
+  let matched = 0;
+  for (const character of target) {
+    if (source[matched] === character) matched += 1;
+  }
+  if (matched !== source.length) return false;
+
+  // Keep qui's fold-first fallback when its ranker's UTF-8 byte-length guard rejects a query.
+  return (
+    new TextEncoder().encode(query).length > new TextEncoder().encode(normalized).length ||
+    target.length - source.length < 10
+  );
+};
+
+/** Filters loaded entries using the server's name rules, plus literal path substrings. */
 export const filterBrowseEntries = <T extends { name: string; path: string }>(
   entries: T[],
   search: string,
 ): T[] => {
-  const query = search.trim().toLowerCase();
-  if (!query) {
-    return entries;
-  }
-  return entries.filter((entry) => {
-    const name = entry.name.toLowerCase();
-    const path = entry.path.toLowerCase();
-    return name.includes(query) || path.includes(query);
-  });
+  const query = normalizeBrowseSearch(search);
+  if (!query) return entries;
+  const pathQuery = search.trim().toLowerCase();
+  return entries.filter(
+    (entry) => matchesBrowseName(entry.name, query) || entry.path.toLowerCase().includes(pathQuery),
+  );
 };
