@@ -38,3 +38,11 @@ Language : pt-BR
 		t.Fatalf("audio channels = %v, want %v", got, want)
 	}
 }
+
+func TestAudioLanguagesFromMediaInfoTextStopsAtMenu(t *testing.T) {
+	t.Parallel()
+	value := "Audio #1\nFormat : AAC\n\nMenu\nLanguage : pt-BR\n"
+	if got := AudioLanguagesFromMediaInfoText(value); len(got) != 0 {
+		t.Fatalf("audio languages = %v, want no audio language", got)
+	}
+}

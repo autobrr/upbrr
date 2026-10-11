@@ -6,9 +6,9 @@ package sam
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -34,7 +34,7 @@ func applySAMNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, c
 			return fmt.Errorf("include SAM TV year: %w", err)
 		}
 	}
-	if samHasPortuguese(meta.AudioLanguages) {
+	if samHasBrazilianPortuguese(meta.AudioLanguages) {
 		return nil
 	}
 	if err := editor.Omit(api.NameRoleDualAudio); err != nil {
@@ -43,10 +43,11 @@ func applySAMNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, c
 	return nil
 }
 
-// samHasPortuguese reports whether a normalized audio set contains Portuguese.
-func samHasPortuguese(values []string) bool {
+// samHasBrazilianPortuguese reports whether audio evidence explicitly identifies Brazilian Portuguese.
+func samHasBrazilianPortuguese(values []string) bool {
 	for _, value := range values {
-		if languageutil.NormalizeLanguageCode(value) == "pt" {
+		value = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "_", "-"))
+		if value == "pt-br" || strings.Contains(value, "portuguese (brazil)") || strings.Contains(value, "português (brasil)") {
 			return true
 		}
 	}

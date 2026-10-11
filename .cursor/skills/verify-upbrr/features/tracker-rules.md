@@ -1,1 +1,0 @@
-Feature: tracker rules verification

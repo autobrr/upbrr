@@ -53,6 +53,9 @@ type TrackerCandidate struct {
 	Trumpable        bool
 	Flags            []string
 	HDR              api.HDRFacts
+	AudioCodecs      []string
+	AudioChannels    []string
+	AudioLanguages   []string
 	DetailsLink      string
 	privateDownload  string
 	contentFromTitle bool
@@ -90,6 +93,9 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 		Trumpable:       entry.Trumpable,
 		Flags:           append([]string(nil), entry.Flags...),
 		HDR:             cloneHDRFacts(entry.HDR),
+		AudioCodecs:     append([]string(nil), entry.AudioCodecs...),
+		AudioChannels:   append([]string(nil), entry.AudioChannels...),
+		AudioLanguages:  append([]string(nil), entry.AudioLanguages...),
 		DetailsLink:     strings.TrimSpace(entry.Link),
 		privateDownload: strings.TrimSpace(entry.Download),
 	}

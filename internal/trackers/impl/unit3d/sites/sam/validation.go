@@ -81,7 +81,7 @@ func samContentStructureFailures(subject api.TrackerValidationSubject) []api.Rul
 }
 
 // samLanguageFailures rejects non-Portuguese content that lacks original audio,
-// Portuguese subtitles, or complete language evidence.
+// Brazilian Portuguese subtitles, or complete language evidence.
 func samLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	facts := subject.MediaFileFacts
 	original := languageutil.NormalizeLanguageCode(facts.OriginalLanguage)
@@ -98,8 +98,8 @@ func samLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure
 		if !samContainsLanguage(file.AudioLanguages, original) {
 			return []api.RuleFailure{samStrictFailure("sam_language", "non-Portuguese content requires original-language audio", facts.LanguageStatus)}
 		}
-		if !samContainsLanguage(file.SubtitleLanguages, "pt") {
-			return []api.RuleFailure{samStrictFailure("sam_language", "non-Portuguese content requires Portuguese subtitles", facts.LanguageStatus)}
+		if !samContainsBrazilianPortuguese(file.SubtitleLanguages) {
+			return []api.RuleFailure{samStrictFailure("sam_language", "non-Portuguese content requires Brazilian Portuguese subtitles", facts.LanguageStatus)}
 		}
 	}
 	return nil
@@ -145,12 +145,20 @@ func samContainsLanguage(values []string, language string) bool {
 	})
 }
 
+// samContainsBrazilianPortuguese requires an explicit Brazilian Portuguese tag.
+func samContainsBrazilianPortuguese(values []string) bool {
+	return slices.ContainsFunc(values, func(value string) bool {
+		value = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "_", "-"))
+		return value == "pt-br" || strings.Contains(value, "portuguese (brazil)") || strings.Contains(value, "português (brasil)")
+	})
+}
+
 // samStrictFailure creates a blocking SAM validation failure.
 func samStrictFailure(rule string, reason string, status api.MetadataEvidenceStatus) api.RuleFailure {
 	return trackers.NewEvidenceRuleFailure(rule, reason, api.RuleDispositionStrict, status)
 }
 
-// samEvidenceFailure creates a failure whose disposition reflects missing evidence.
+// samEvidenceFailure creates a blocking failure for missing evidence.
 func samEvidenceFailure(rule string, reason string, status api.MetadataEvidenceStatus) api.RuleFailure {
-	return trackers.NewEvidenceRuleFailure(rule, reason, api.RuleDispositionAdvisory, status)
+	return trackers.NewEvidenceRuleFailure(rule, reason, api.RuleDispositionStrict, status)
 }

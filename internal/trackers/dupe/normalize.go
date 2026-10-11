@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/rls"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -144,26 +145,29 @@ type contentScope struct {
 }
 
 type normalizedFacts struct {
-	Type          Fact
-	Source        Fact
-	Resolution    Fact
-	Codec         Fact
-	Container     Fact
-	Provider      Fact
-	Group         Fact
-	ReleaseOrigin Fact
-	Pack          Fact
-	Edition       Fact
-	Region        Fact
-	ThreeD        Fact
-	Repack        Fact
-	Size          Fact
-	Files         Fact
-	MediaKind     mediaKind
-	MediaClass    mediaClass
-	SourceFamily  sourceFamily
-	Content       contentScope
-	HDR           api.HDRFacts
+	Type           Fact
+	Source         Fact
+	Resolution     Fact
+	Codec          Fact
+	AudioCodec     Fact
+	AudioChannels  Fact
+	AudioLanguages Fact
+	Container      Fact
+	Provider       Fact
+	Group          Fact
+	ReleaseOrigin  Fact
+	Pack           Fact
+	Edition        Fact
+	Region         Fact
+	ThreeD         Fact
+	Repack         Fact
+	Size           Fact
+	Files          Fact
+	MediaKind      mediaKind
+	MediaClass     mediaClass
+	SourceFamily   sourceFamily
+	Content        contentScope
+	HDR            api.HDRFacts
 }
 
 type parsedTitleFacts struct {
@@ -218,6 +222,9 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
+		AudioCodec:     audioFact(target.AudioCodecs, FactOriginTargetMedia, "audioCodecs", canonicalAudioCodec),
+		AudioChannels:  audioFact(target.AudioChannels, FactOriginTargetMedia, "audioChannels", canonicalAudioChannels),
+		AudioLanguages: audioFact(target.AudioLanguages, FactOriginTargetMedia, "audioLanguages", languageutil.NormalizeLanguageCode),
 		Container: mergeStructuredAndTitleFact(
 			canonicalContainer(target.Container),
 			"container",
@@ -346,6 +353,9 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
+		AudioCodec:     audioFact(candidate.AudioCodecs, FactOriginTrackerAPI, "audioCodecs", canonicalAudioCodec),
+		AudioChannels:  audioFact(candidate.AudioChannels, FactOriginTrackerAPI, "audioChannels", canonicalAudioChannels),
+		AudioLanguages: audioFact(candidate.AudioLanguages, FactOriginTrackerAPI, "audioLanguages", languageutil.NormalizeLanguageCode),
 		Container: mergeStructuredAndTitleFact(
 			canonicalContainer(candidate.Container),
 			"container",
@@ -1409,6 +1419,53 @@ func mergeHDRWithTitle(structured api.HDRFacts, title api.HDRFacts) api.HDRFacts
 	return structured
 }
 
+func audioFact(values []string, origin FactOrigin, source string, normalize func(string) string) Fact {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value = normalize(value); value != "" {
+			seen[value] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return missingFact()
+	}
+	normalized := make([]string, 0, len(seen))
+	for value := range seen {
+		normalized = append(normalized, value)
+	}
+	slices.Sort(normalized)
+	return completeFact(strings.Join(normalized, "+"), origin, source)
+}
+
+func canonicalAudioCodec(value string) string {
+	value = strings.ToLower(strings.NewReplacer("-", "", ".", "", " ", "").Replace(value))
+	switch value {
+	case "eac3", "ddp", "dolbydigitalplus":
+		return "ddp"
+	case "ac3", "dd", "dolbydigital":
+		return "dd"
+	default:
+		return value
+	}
+}
+
+func canonicalAudioChannels(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " channels", "")
+	switch value {
+	case "1":
+		return "1.0"
+	case "2":
+		return "2.0"
+	case "6":
+		return "5.1"
+	case "8":
+		return "7.1"
+	default:
+		return value
+	}
+}
+
 func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) Fact {
 	switch dimension {
 	case trackerspkg.DupeDimensionType:
@@ -1425,6 +1482,12 @@ func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) F
 		return facts.Resolution
 	case trackerspkg.DupeDimensionCodec:
 		return facts.Codec
+	case trackerspkg.DupeDimensionAudioCodec:
+		return facts.AudioCodec
+	case trackerspkg.DupeDimensionAudioChannels:
+		return facts.AudioChannels
+	case trackerspkg.DupeDimensionAudioLanguages:
+		return facts.AudioLanguages
 	case trackerspkg.DupeDimensionContainer:
 		return facts.Container
 	case trackerspkg.DupeDimensionEdition:

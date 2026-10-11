@@ -33,8 +33,13 @@ func TestSAMNameKeepsTVYearAndDropsUnverifiedAudioMarker(t *testing.T) {
 	}
 
 	subject.AudioLanguages = []string{"Korean", "Portuguese"}
+	if got, want := samReviewedName(t, subject), "A Good Day to Ascend 2026 S01 2160p WEB-DL DDP5.1 H.265-QHstudIo"; got != want {
+		t.Fatalf("SAM generic Portuguese audio name = %q, want %q", got, want)
+	}
+
+	subject.AudioLanguages = []string{"Korean", "pt-BR"}
 	if got, want := samReviewedName(t, subject), "A Good Day to Ascend 2026 S01 2160p WEB-DL DDP5.1 H.265 DUAL-QHstudIo"; got != want {
-		t.Fatalf("SAM Portuguese audio name = %q, want %q", got, want)
+		t.Fatalf("SAM Brazilian Portuguese audio name = %q, want %q", got, want)
 	}
 }
 
@@ -94,9 +99,16 @@ func TestSAMValidation(t *testing.T) {
 			wantRule: "sam_language",
 		},
 		{
-			name: "foreign content requires Portuguese subtitles",
+			name: "foreign content requires Brazilian Portuguese subtitles",
 			mutate: func(subject *api.TrackerValidationSubject) {
-				subject.MediaFileFacts.Files[0].SubtitleLanguages = []string{"English"}
+				subject.MediaFileFacts.Files[0].SubtitleLanguages = []string{"Portuguese"}
+			},
+			wantRule: "sam_language",
+		},
+		{
+			name: "foreign content rejects European Portuguese subtitles",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.MediaFileFacts.Files[0].SubtitleLanguages = []string{"pt-PT"}
 			},
 			wantRule: "sam_language",
 		},
@@ -223,8 +235,8 @@ func samPassingSubject() api.TrackerValidationSubject {
 			ExpectedFileCount: 2,
 			OriginalLanguage:  "Korean",
 			Files: []api.MediaFileFact{
-				{AudioLanguages: []string{"Korean"}, SubtitleLanguages: []string{"Portuguese"}},
-				{AudioLanguages: []string{"Korean"}, SubtitleLanguages: []string{"Portuguese"}},
+				{AudioLanguages: []string{"Korean"}, SubtitleLanguages: []string{"pt-BR"}},
+				{AudioLanguages: []string{"Korean"}, SubtitleLanguages: []string{"pt-BR"}},
 			},
 		},
 	}
