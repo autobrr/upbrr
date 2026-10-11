@@ -5615,15 +5615,17 @@ func (m *Module) captureMedia(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build media artifacts: %w", err)
 	}
-	// Stale prep flags from priorMedia would skip UploadMediaImages / MediaSelection.
-	// Fresh builds keep any ImageRequirementsPrepared set by the builder.
-	if priorMedia != nil {
-		snapshot.ImageRequirementsPrepared = false
-		snapshot.ImageHostUploadSkipped = false
-	}
 	requirementsFingerprint, err := mediaRequirementsFingerprint(eligibleProjections.Projections)
 	if err != nil {
 		return CommandResult{}, err
+	}
+	// Stale prep flags from priorMedia would skip UploadMediaImages / MediaSelection.
+	// Fresh builds keep any ImageRequirementsPrepared set by the builder.
+	if priorMedia != nil {
+		snapshot.ImageHostUploadSkipped = false
+		if snapshot.RequirementsFingerprint != requirementsFingerprint {
+			snapshot.ImageRequirementsPrepared = false
+		}
 	}
 	if snapshot.RequirementsFingerprint != requirementsFingerprint {
 		return CommandResult{}, errors.New("release workflow build media artifacts: requirements fingerprint mismatch")
