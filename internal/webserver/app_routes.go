@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -193,7 +194,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			return
 		}
 		status := http.StatusBadRequest
-		value, err := s.browseRequests.run(r.Context(), func() (api.BrowseDirectoryResponse, error) {
+		value, err := s.browseRequests.run(r.Context(), func(ctx context.Context) (api.BrowseDirectoryResponse, error) {
 			policy, err := s.webBrowsePolicy(current)
 			if err != nil {
 				return api.BrowseDirectoryResponse{}, err
@@ -202,7 +203,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 				status = http.StatusForbidden
 				return api.BrowseDirectoryResponse{}, errors.New("web browse root is not configured")
 			}
-			return s.backend.BrowseDirectoryWithinRoots(r.Context(), req, policy.Roots)
+			return s.backend.BrowseDirectoryWithinRoots(ctx, req, policy.Roots)
 		})
 		if err != nil {
 			if errors.Is(err, errBrowseBusy) {

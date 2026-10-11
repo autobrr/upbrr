@@ -22,7 +22,7 @@ func TestBrowseLimitRetainsCanceledWorkUntilReturn(t *testing.T) {
 	defer close(release)
 	for range 2 {
 		go func() {
-			_, err := limiter.run(ctx, func() (api.BrowseDirectoryResponse, error) {
+			_, err := limiter.run(ctx, func(ctx context.Context) (api.BrowseDirectoryResponse, error) {
 				started <- struct{}{}
 				<-release // Model a filesystem call that cannot observe cancellation.
 				return api.BrowseDirectoryResponse{}, ctx.Err()
@@ -35,7 +35,7 @@ func TestBrowseLimitRetainsCanceledWorkUntilReturn(t *testing.T) {
 	}
 	cancel()
 	called := false
-	browse := func() (api.BrowseDirectoryResponse, error) {
+	browse := func(context.Context) (api.BrowseDirectoryResponse, error) {
 		called = true
 		return api.BrowseDirectoryResponse{Scope: "roots"}, nil
 	}
@@ -61,7 +61,7 @@ func TestBrowseLimitRejectsCanceledAdmissionAndReleasesErrors(t *testing.T) {
 	cancel()
 	called := false
 	wantErr := errors.New("filesystem unavailable")
-	browse := func() (api.BrowseDirectoryResponse, error) {
+	browse := func(context.Context) (api.BrowseDirectoryResponse, error) {
 		called = true
 		return api.BrowseDirectoryResponse{}, wantErr
 	}

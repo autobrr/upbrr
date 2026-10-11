@@ -20,7 +20,10 @@ type browseRequestLimiter struct {
 	active atomic.Int32
 }
 
-func (l *browseRequestLimiter) run(ctx context.Context, browse func() (api.BrowseDirectoryResponse, error)) (api.BrowseDirectoryResponse, error) {
+func (l *browseRequestLimiter) run(
+	ctx context.Context,
+	browse func(context.Context) (api.BrowseDirectoryResponse, error),
+) (api.BrowseDirectoryResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse admission: %w", err)
 	}
@@ -32,5 +35,5 @@ func (l *browseRequestLimiter) run(ctx context.Context, browse func() (api.Brows
 	if err := ctx.Err(); err != nil {
 		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse admission: %w", err)
 	}
-	return browse()
+	return browse(ctx)
 }
