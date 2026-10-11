@@ -5454,6 +5454,15 @@ func (m *Module) decideDuplicates(
 		if decision == api.DupeDecisionIgnored && strictDupeResult(*result) {
 			return CommandResult{}, fmt.Errorf("%w: tracker %s is already in client and cannot be overridden", ErrInvalidTransition, result.TrackerID)
 		}
+		confirmed := command.StaffTokenConfirmations[result.TrackerID] == current.ID
+		if decision == api.DupeDecisionIgnored && result.RequiresStaffToken && !confirmed {
+			return CommandResult{}, fmt.Errorf(
+				"%w: tracker %s requires confirmation of an appropriate staff-issued token",
+				ErrInvalidTransition,
+				result.TrackerID,
+			)
+		}
+		result.StaffTokenConfirmed = decision == api.DupeDecisionIgnored && result.RequiresStaffToken && confirmed
 		result.Decision = decision
 		result.Status = api.StageStatusCompleted
 		result.RequiredActions = nil

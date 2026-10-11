@@ -1053,3 +1053,30 @@ func TestCLICompositeTargetReviewWithoutCandidates(t *testing.T) {
 		t.Fatalf("target review output: %s", output.String())
 	}
 }
+
+func TestCLICompositeStaffTokenConfirmation(t *testing.T) {
+	for _, answer := range []string{"y\n", "n\n", "\n"} {
+		var output strings.Builder
+		session := &cliWorkflowSession{streams: cliIO{out: &output}, current: releaseworkflow.CommandResult{Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+			TrackerID:          "EXAMPLE",
+			Decision:           api.DupeDecisionPending,
+			RequiresStaffToken: true,
+		}}}},
+		}
+		feedback, _, err := session.collectCompositeDuplicateFeedback(
+			bufio.NewReader(strings.NewReader(answer)),
+			api.RequiredAction{TrackerID: "EXAMPLE"},
+			api.ReleaseWorkflowUploadFeedback{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		review := feedback.Response.DuplicateReview
+		if review.StaffTokenConfirmed != (answer == "y\n") || (review.Decision == api.DupeDecisionIgnored) != review.StaffTokenConfirmed {
+			t.Fatalf("answer %q: %+v", answer, review)
+		}
+		if !strings.Contains(output.String(), "appropriate staff-issued EXAMPLE token") {
+			t.Fatal("missing explicit token prompt")
+		}
+	}
+}

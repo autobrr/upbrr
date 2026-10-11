@@ -87,13 +87,16 @@ type WorkflowIntent struct {
 	SkipRemoteDuplicates   bool                                        `json:"skipRemoteDuplicates,omitempty"`
 	DuplicateCheckCount    uint8                                       `json:"duplicateCheckCount,omitempty"`
 	DuplicateDecisions     map[TrackerID]DupeDecision                  `json:"duplicateDecisions,omitempty"`
-	HDRAnalysis            *HDRAnalysisRequest                         `json:"hdrAnalysis,omitempty"`
-	Media                  *MediaCaptureInstructions                   `json:"media,omitempty"`
-	MediaSelection         *WorkflowMediaSelection                     `json:"mediaSelection,omitempty"`
-	SkipImageHostUpload    bool                                        `json:"skipImageHostUpload,omitempty"`
-	Descriptions           *DescriptionInstructions                    `json:"descriptions,omitempty"`
-	UploadTrackerIDs       []TrackerID                                 `json:"uploadTrackerIds,omitempty"`
-	NoSeed                 bool                                        `json:"noSeed,omitempty"`
+	// StaffTokenConfirmations maps each staff-required ignored tracker to the
+	// current assessment ID. Confirmations for an earlier assessment cannot authorize it.
+	StaffTokenConfirmations map[TrackerID]DupeAssessmentID `json:"staffTokenConfirmations,omitempty"`
+	HDRAnalysis             *HDRAnalysisRequest            `json:"hdrAnalysis,omitempty"`
+	Media                   *MediaCaptureInstructions      `json:"media,omitempty"`
+	MediaSelection          *WorkflowMediaSelection        `json:"mediaSelection,omitempty"`
+	SkipImageHostUpload     bool                           `json:"skipImageHostUpload,omitempty"`
+	Descriptions            *DescriptionInstructions       `json:"descriptions,omitempty"`
+	UploadTrackerIDs        []TrackerID                    `json:"uploadTrackerIds,omitempty"`
+	NoSeed                  bool                           `json:"noSeed,omitempty"`
 }
 
 // WorkflowMediaSelection distinguishes default-all selection from an explicit exact selection.

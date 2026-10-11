@@ -14,6 +14,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// reusableWorkflowDupes retains fresh evidence only when its projection and
+// execution inputs remain compatible. Retained staff-required lanes need new
+// confirmation; their original evidence lifetime is not extended.
 func reusableWorkflowDupes(
 	reuse *releaseworkflow.DuplicateAssessmentReuse,
 	projections api.TrackerReleaseProjectionSet,
@@ -71,6 +74,9 @@ func reusableWorkflowDupes(
 		}
 		if previousFingerprint == currentFingerprint {
 			result.RequiredActions = slices.Clone(result.RequiredActions)
+			if result.RequiresStaffToken {
+				releaseworkflow.RequireStaffTokenReview(&result)
+			}
 			retained[projection.TrackerID] = result
 		}
 	}

@@ -23,6 +23,53 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestParseShowInfoFrameType(t *testing.T) {
+	tests := []struct {
+		name      string
+		fields    string
+		frameType string
+	}{
+		{
+			name:      "I frame",
+			fields:    "i:P iskey:1 type:I",
+			frameType: "I",
+		},
+		{
+			name:      "P frame",
+			fields:    "i:P iskey:0 type:P",
+			frameType: "P",
+		},
+		{
+			name:      "B frame with progressive scan",
+			fields:    "i:P iskey:0 type:B",
+			frameType: "B",
+		},
+		{name: "missing picture type", fields: "i:P iskey:0"},
+		{name: "unknown picture type", fields: "i:P iskey:0 type:?"},
+		{name: "different field name", fields: "i:P iskey:0 pict_type:I"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := "[Parsed_showinfo_0 @ 0x1234] n: 0 pts: 12 pts_time:0.5 fmt:yuv420p sar:1/1 s:64x64 " + tt.fields + " checksum:12345678\n"
+			got := parseShowInfo(output)
+			if got.FrameType != tt.frameType || got.PTSTime != 0.5 {
+				t.Fatalf("parseShowInfo() = %+v, want frame type %q and PTS 0.5", got, tt.frameType)
+			}
+			wantOverlay := tt.frameType
+			if wantOverlay == "" {
+				wantOverlay = "Unknown"
+			}
+			filters := overlayFilters(captureRequest{FrameInfo: got})
+			if !strings.Contains(strings.Join(filters, ","), "Frame Type\\: "+wantOverlay+"'") {
+				t.Fatalf("overlay does not contain frame type %q", wantOverlay)
+			}
+		})
+	}
+	if got := parseShowInfo(""); got != (frameInfoResult{}) {
+		t.Fatalf("empty showinfo = %+v, want zero result", got)
+	}
+}
+
 func TestBundledFFmpegPathPrefersWorkingDirectory(t *testing.T) {
 	folder := osFolder()
 	if folder == "" {

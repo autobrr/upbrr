@@ -22,15 +22,10 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
-	assets.Description = trackers.StripDefaultDescriptionSignature(assets.Description)
-
-	description := buildDescription(trackers.PreparationInput{
-		Tracker:       req.Tracker,
-		Meta:          req.Meta,
-		TrackerConfig: req.TrackerConfig,
-		Runtime:       req.Runtime,
-		Logger:        req.Logger,
-	}, assets)
+	description, err := buildDescription(ctx, req, assets)
+	if err != nil {
+		return trackers.DescriptionResult{}, err
+	}
 
 	return trackers.DescriptionResult{
 		Group:       "ant",

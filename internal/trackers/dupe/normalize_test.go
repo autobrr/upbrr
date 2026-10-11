@@ -8,9 +8,59 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/rls"
+
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestTrackerTitleMetadataKeepsSourceAndExcludesFlagNamedGroup(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"Example.2026.1080p.BluRay.x264-IMAX.mkv", ".1080p.BluRay.x264"},
+		{"Example.2026.1080p.BluRay.x264-IMAX.MKV", ".1080p.BluRay.x264"},
+		{"Example.2026.1080p.BluRay.x264-IMAX.MP4", ".1080p.BluRay.x264"},
+		{"Example.2026.1080p.BluRay.x264-IMAX.m2ts", ".1080p.BluRay.x264"},
+		{"Example.2026.1080p.BluRay.x264-IMAX", ".1080p.BluRay.x264"},
+		{"Example.2026.IMAX.1080p.BluRay.x264-GRP.mkv", ".IMAX.1080p.BluRay.x264-"},
+		{"Example.2026.1080p.WEB-DL", ".1080p.WEB-DL"},
+		{"Example.2026-Blu-ray-3D", "-Blu-ray-3D"},
+	} {
+		got, bounded := TrackerTitleMetadata(rls.ParseString(tc.name))
+		if !bounded || got != tc.want {
+			t.Fatalf("%q metadata = %q, bounded=%t, want %q", tc.name, got, bounded, tc.want)
+		}
+	}
+}
+
+func TestNormalizeTorrentFilenameDoesNotContradictMediaContainer(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, kind, container, source string }{
+		{"Example.2026.1080p.BluRay.m2ts.123.torrent", "DISC", "m2ts", "BluRay"},
+		{"Example.2026.SD.DVD.VOBIFO.123.torrent", "DISC", "VOBIFO", "DVD"},
+		{"Example.2026.1080p.BluRay.MKV.123.torrent", "ENCODE", "MKV", "BluRay"},
+	} {
+		t.Run(tc.container, func(t *testing.T) {
+			facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+				Name:          tc.name,
+				CanonicalType: tc.kind,
+				Container:     tc.container,
+				Source:        tc.source,
+			}, "ANT"))
+			if facts.Container.Status != FactComplete || len(facts.Container.Contradictions) != 0 {
+				t.Fatalf("torrent filename manufactured a container conflict: %+v", facts.Container)
+			}
+		})
+	}
+	facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{Name: "Example.2026.123.torrent"}, "ANT"))
+	if facts.Container.Status != FactMissing || facts.MediaClass != mediaClassUnknown {
+		t.Fatalf("torrent filename supplied media evidence: %+v", facts)
+	}
+	facts = normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{Name: "Example.2026.SD.DVD.VOBIFO.123.torrent"}, "ANT"))
+	if facts.Container.Value != "vob_ifo" || facts.Container.Status != FactPartial || facts.Container.Origin != FactOriginTrackerTitle ||
+		dimensionFact(facts, trackerspkg.DupeDimensionMediaClass).Status != FactPartial {
+		t.Fatalf("title-only DVD evidence must remain partial: %+v", facts)
+	}
+}
 
 func TestNormalizeDiscEncodeFromStructuredTypeAndTitleSource(t *testing.T) {
 	t.Parallel()

@@ -9,6 +9,8 @@ import (
 
 // DupeEntry is one backend adapter's private duplicate-search hit.
 type DupeEntry struct {
+	// TrackerSlot is opaque tracker-native slot evidence, which may be partial.
+	TrackerSlot   string
 	Name          string
 	SizeBytes     int64
 	SizeKnown     bool
@@ -148,6 +150,9 @@ type DupeMatch struct {
 // DupeCheckResult is the sanitized duplicate-search outcome for one tracker.
 // Private adapter payloads and download authority are retained separately.
 type DupeCheckResult struct {
+	// RequiresStaffToken requires explicit owner attestation before overriding
+	// duplicate or incomplete-search evidence; it carries no token contents.
+	RequiresStaffToken    bool
 	Tracker               string
 	CanonicalReleaseName  string
 	UploadReleaseName     string

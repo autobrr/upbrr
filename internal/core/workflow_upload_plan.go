@@ -1109,15 +1109,18 @@ func (e *workflowUploadExecution) Execute(
 			failureCode := api.OperationFailureInternal
 			recovery := api.OperationRecoveryRetry
 			message := strings.TrimSpace(logging.SanitizeMessage(result.Failure.Message))
-			if message == "" {
-				message = "Tracker upload failed. Review the tracker result and retry after correcting the failure."
-			}
 			submissionStatus := api.StageStatusFailed
 			if result.Failure.Code == "unknown_outcome" {
 				failureCode = api.OperationFailureUnknownOutcome
 				recovery = api.OperationRecoveryConfirm
-				message = "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing."
+				warning := "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing."
+				if message != "" {
+					warning += " Reason: " + message
+				}
+				message = warning
 				submissionStatus = api.StageStatusUnavailable
+			} else if message == "" {
+				message = "Tracker upload failed. Review the tracker result and retry after correcting the failure."
 			}
 			public = append(public, api.UploadTrackerResult{
 				TrackerID:             trackerID,

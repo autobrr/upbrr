@@ -563,14 +563,15 @@ func (s *Service) projectAdapterResult(
 		match := evaluationMatch(evaluation)
 		hasDupes := evaluation.Blocks || hasActionableCandidateEvaluations(evaluation.Candidates) || len(evaluation.ReviewReasons) > 0
 		result := api.DupeCheckResult{
-			Tracker:       tracker,
-			HasDupes:      hasDupes,
-			Notes:         cloneNotes(adapterResult.Notes()),
-			Status:        "completed",
-			CheckedAt:     checkedAt,
-			PolicyID:      policy.ID,
-			Evaluations:   publicCandidateEvaluations(evaluation),
-			ReviewReasons: append([]api.DupeReason(nil), evaluation.ReviewReasons...),
+			Tracker:            tracker,
+			RequiresStaffToken: policy.StaffTokenOverride && (hasDupes || !effectiveComplete),
+			HasDupes:           hasDupes,
+			Notes:              cloneNotes(adapterResult.Notes()),
+			Status:             "completed",
+			CheckedAt:          checkedAt,
+			PolicyID:           policy.ID,
+			Evaluations:        publicCandidateEvaluations(evaluation),
+			ReviewReasons:      append([]api.DupeReason(nil), evaluation.ReviewReasons...),
 			Search: api.DupeSearchEvidence{
 				Complete:       effectiveComplete,
 				Pages:          search.Pages,

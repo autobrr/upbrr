@@ -5,24 +5,25 @@ package releaseworkflow
 
 import (
 	"context"
+	"path/filepath"
+	"testing"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
-	"path/filepath"
-	"testing"
 )
 
 type legacyANTTagsDefinition struct{ trackers.Definition }
 
 func (legacyANTTagsDefinition) ProjectionQuestionnaire(trackers.PreparationInput) *api.TrackerQuestionnaire {
 	return &api.TrackerQuestionnaire{Tracker: "ANT", Fields: []api.TrackerQuestionnaireField{{
-Key: "tags",
- Kind: "text",
- Required: true,
-}}}
+		Key:      "tags",
+		Kind:     "text",
+		Required: true,
+	}}}
 }
 
 func TestProjectionContinuationRefreshesPersistedANTTagsWithoutRepreparing(t *testing.T) {
@@ -70,22 +71,22 @@ func TestProjectionContinuationRefreshesPersistedANTTagsWithoutRepreparing(t *te
 		return api.UploadSubject{
 			SourcePath:        input.Release.SourcePath,
 			MediaInfoTextPath: filepath.Join(filepath.Dir(input.Release.SourcePath), "MEDIAINFO.txt"),
-			ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
-TMDBID: 123,
- Title: "Example Movie",
- Year: 2026,
- Genres: "Science Fiction, Action, Adventure, Thriller",
-}},
-			ReleaseName:       "Example.Movie.2026.1080p.BluRay.x264-GRP",
-			Source:            "BluRay",
-			Type:              "ENCODE",
-			Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
-			Release:           api.ReleaseInfo{
-Title: "Example Movie",
- Year: 2026,
- Category: "MOVIE",
- Resolution: "1080p",
-},
+			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+				TMDBID: 123,
+				Title:  "Example Movie",
+				Year:   2026,
+				Genres: "Science Fiction, Action, Adventure, Thriller",
+			}},
+			ReleaseName: "Example.Movie.2026.1080p.BluRay.x264-GRP",
+			Source:      "BluRay",
+			Type:        "ENCODE",
+			Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
+			Release: api.ReleaseInfo{
+				Title:      "Example Movie",
+				Year:       2026,
+				Category:   "MOVIE",
+				Resolution: "1080p",
+			},
 		}, nil
 	}
 	base := preparer.PrepareFunc
@@ -139,7 +140,13 @@ Title: "Example Movie",
 	if updated.Operation == nil {
 		t.Fatal("legacy schema was treated as already reached")
 	}
-	waitForWorkflowOperation(t, reopened, current.Workflow.ID, updated.Operation.ID, func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) })
+	waitForWorkflowOperation(
+		t,
+		reopened,
+		current.Workflow.ID,
+		updated.Operation.ID,
+		func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) },
+	)
 	updated, err = reopened.Current(t.Context(), testOwnerID, current.Workflow.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +155,8 @@ Title: "Example Movie",
 		t.Fatal("legacy projection was not replaced")
 	}
 	projection := updated.Projections.Projections[0]
-	if len(projection.Questionnaire) != 0 || !projection.DupeReady || !projection.UploadReady {
+	if len(projection.Questionnaire) != 1 || projection.Questionnaire[0].Key != "requestid" || projection.Questionnaire[0].Required || !projection.DupeReady ||
+		!projection.UploadReady {
 		t.Fatalf("usable genres retained a blocked projection: %+v", projection)
 	}
 	if preparations != 1 || updated.Release.Release.Generation != prepared.Generation || updated.Release.Release.Compatibility != prepared.Compatibility || prepared.Compatibility.ContractVersion != preparedrelease.ContractVersion {

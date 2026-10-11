@@ -13,7 +13,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestANTFlagFixturePreservesPartialSemantics(t *testing.T) {
+func TestANTFlagFixtureUsesDocumentedCompleteFlags(t *testing.T) {
 	t.Parallel()
 
 	payloadBytes, err := os.ReadFile(filepath.Join("testdata", "search_flags_variants.json"))
@@ -30,10 +30,10 @@ func TestANTFlagFixturePreservesPartialSemantics(t *testing.T) {
 	if len(entries) != 6 {
 		t.Fatalf("entries = %d", len(entries))
 	}
-	if entries[0].HDR.Status != api.HDREvidencePartial || entries[1].HDR.Status != api.HDREvidencePartial {
+	if entries[0].HDR.Status != api.HDREvidenceComplete || entries[1].HDR.Status != api.HDREvidenceComplete {
 		t.Fatalf("ANT structured flag status = %#v %#v", entries[0].HDR, entries[1].HDR)
 	}
-	if entries[3].HDR.Status != api.HDREvidenceMissing || entries[4].HDR.Status != api.HDREvidenceMissing {
+	if entries[3].HDR.Status != api.HDREvidenceComplete || entries[4].HDR.Status != api.HDREvidenceComplete {
 		t.Fatalf("ANT empty/missing flags = %#v %#v", entries[3].HDR, entries[4].HDR)
 	}
 }

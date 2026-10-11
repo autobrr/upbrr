@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v9"
+const GeneralDuplicatePolicyID = "general/duplicate/v10"
 
 // DuplicateSearchContractID versions authoritative search scope and completion semantics.
 // Projection/catalog fingerprints and persisted private evidence carry this ID so older
@@ -521,6 +521,19 @@ type UploadArtifactPolicyProvider interface {
 
 // DupePolicy declares tracker-specific duplicate comparison semantics.
 type DupePolicy struct {
+	// TargetSlot resolves opaque native slot evidence from finalized upload facts.
+	// A non-nil callback replaces generic resolution, media, HDR, edition, region
+	// and 3D coexistence comparisons with CompareSlots. Exact identity and content
+	// scope checks still apply. Nil preserves general comparisons; ID versions
+	// both pure callbacks.
+	TargetSlot func(api.UploadSubject) string `json:"-"`
+	// CompareSlots compares proposed and existing native evidence. Partial facts
+	// may prove coexistence; unavailable or unsupported comparisons require review.
+	// Resolved target names and the candidate name allow native flag contradiction checks.
+	CompareSlots func(target, candidate string, targetNames []string, candidateName string) api.DupeRelation `json:"-"`
+	// StaffTokenOverride requires owner attestation of staff-token possession to
+	// override duplicate or incomplete-search evidence. No token value is retained.
+	StaffTokenOverride bool `json:",omitempty"`
 	// ID is the stable versioned comparison-policy identifier.
 	ID string
 	// EvidenceID identifies the policy evidence backing automatic

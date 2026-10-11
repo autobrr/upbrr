@@ -94,7 +94,48 @@ func collectCandidateFindings(
 			Priority:       findingPriorityContentConflict,
 		})
 	}
-	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, policy, workScope)...)
+	generalPolicy := policy
+	if policy.TargetSlot != nil {
+		generalPolicy.SuppressGeneralCoexistence = append(slices.Clone(policy.SuppressGeneralCoexistence),
+			trackerspkg.DupeDimensionResolution, trackerspkg.DupeDimensionMediaClass, trackerspkg.DupeDimensionHDR,
+			trackerspkg.DupeDimensionEdition, trackerspkg.DupeDimensionRegion, trackerspkg.DupeDimensionThreeD)
+	}
+	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, generalPolicy, workScope)...)
+	if policy.TargetSlot != nil {
+		finding := RuleFinding{
+			RuleID:     policy.ID + "/native_slot",
+			EvidenceID: policy.EvidenceID,
+			Source:     "tracker",
+			Status:     RuleFindingIndeterminate,
+			Relation:   api.DupeRelationManualReview,
+			ReasonCode: "ordinary_slot_unproven",
+			Priority:   findingPrioritySlotMissing,
+		}
+		contradictory := targetFacts.HDR.Status == api.HDREvidenceContradictory || candidateFacts.HDR.Status == api.HDREvidenceContradictory
+		for _, fact := range []Fact{
+			targetFacts.Resolution, candidateFacts.Resolution, targetFacts.Source, candidateFacts.Source,
+			targetFacts.Codec, candidateFacts.Codec,
+			dimensionFact(targetFacts, trackerspkg.DupeDimensionMediaClass), dimensionFact(candidateFacts, trackerspkg.DupeDimensionMediaClass),
+		} {
+			contradictory = contradictory || fact.Status == FactContradictory
+		}
+		if contradictory {
+			finding.ReasonCode = "native_slot_contradictory"
+			finding.Contradictions = []string{"native_slot"}
+			finding.Priority = findingPriorityTrackerMatched
+		} else if policy.CompareSlots != nil {
+			finding.Relation = policy.CompareSlots(target.TrackerSlot, candidate.TrackerSlot, target.Names, candidate.Name)
+			if finding.Relation == api.DupeRelationSameSlot || finding.Relation == api.DupeRelationCoexists {
+				finding.Status = RuleFindingMatched
+				finding.Priority = findingPriorityTrackerMatched
+				finding.ReasonCode = "same_slot"
+				if finding.Relation == api.DupeRelationCoexists {
+					finding.ReasonCode = "distinct_ordinary_slot"
+				}
+			}
+		}
+		findings = append(findings, finding)
+	}
 	if policy.ExactMatchOnly {
 		findings = append(findings, collectExactOnlyFinding(target, targetFacts, candidate, candidateFacts, policy))
 	}

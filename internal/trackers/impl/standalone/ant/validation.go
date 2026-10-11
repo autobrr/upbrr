@@ -15,7 +15,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "standalone-ant-constructibility-v3",
+		ID: "standalone-ant-constructibility-v4",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
@@ -26,9 +26,12 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 			if strings.TrimSpace(typeName) == "" {
 				failures = append(failures, trackers.NewRuleFailure(
 					"unsupported_type",
-					"release does not map to an ANT type",
+					"ANT supports movies and TV movies only, including short films",
 					api.RuleDispositionStrict,
 				))
+			}
+			if _, err := requestID(standalone.QuestionnaireAnswers(meta, "ANT")); err != nil {
+				failures = append(failures, trackers.NewRuleFailure("invalid_request_id", err.Error(), api.RuleDispositionStrict))
 			}
 			if !standalone.PreparedMediaReady(subject) {
 				failures = append(failures, trackers.NewRuleFailure(

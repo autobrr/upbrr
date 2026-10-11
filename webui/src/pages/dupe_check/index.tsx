@@ -494,17 +494,25 @@ function WorkflowDupeAssessmentView({
             {canOverride ? (
               <label className="inline-flex items-center gap-2 text-xs font-semibold">
                 <span>
-                  {riskAcknowledgement
-                    ? "Acknowledge tracker policy risk"
-                    : "Ignore duplicate match"}
+                  {result?.requiresStaffToken
+                    ? "I have the appropriate staff-issued token for this upload"
+                    : riskAcknowledgement
+                      ? "Acknowledge tracker policy risk"
+                      : "Ignore duplicate match"}
                 </span>
                 <Switch
                   aria-label={
-                    riskAcknowledgement
-                      ? `Acknowledge dupe risk for ${trackerID}`
-                      : `Ignore dupes for ${trackerID}`
+                    result?.requiresStaffToken
+                      ? `Confirm staff-issued token for ${trackerID}`
+                      : riskAcknowledgement
+                        ? `Acknowledge dupe risk for ${trackerID}`
+                        : `Ignore dupes for ${trackerID}`
                   }
-                  checked={result?.decision === "ignored" || ignoredTrackers.has(trackerID)}
+                  checked={
+                    result?.requiresStaffToken
+                      ? result.decision === "ignored" && result.staffTokenConfirmed === true
+                      : result?.decision === "ignored" || ignoredTrackers.has(trackerID)
+                  }
                   disabled={busy}
                   onChange={(event) => setIgnored(trackerID, event.target.checked)}
                 />

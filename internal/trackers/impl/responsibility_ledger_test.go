@@ -117,7 +117,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	{
 		name:              "ANT",
 		family:            trackers.FamilyStandalone,
-		contentMode:       trackers.UploadContentModeScreenshots,
+		contentMode:       trackers.UploadContentModeDescription,
 		authMode:          "api_key",
 		authOwner:         "../auth/contract/requirements.go",
 		taxonomyOwner:     "standalone/ant/taxonomy.go",

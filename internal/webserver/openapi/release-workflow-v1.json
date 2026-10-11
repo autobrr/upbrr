@@ -6890,6 +6890,9 @@
           "decision": {
             "$ref": "#/components/schemas/DupeDecision"
           },
+          "staffTokenConfirmed": {
+            "type": "boolean"
+          },
           "trackerId": {
             "$ref": "#/components/schemas/TrackerID"
           }
@@ -10195,6 +10198,9 @@
               "$ref": "#/components/schemas/RequiredAction"
             }
           },
+          "requiresStaffToken": {
+            "type": "boolean"
+          },
           "reviewReasons": {
             "type": "array",
             "items": {
@@ -10206,6 +10212,9 @@
           },
           "searchFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "staffTokenConfirmed": {
+            "type": "boolean"
           },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
@@ -10352,6 +10361,9 @@
             "type": "string"
           },
           "threeD": {
+            "type": "string"
+          },
+          "trackerSlot": {
             "type": "string"
           },
           "type": {
@@ -12255,6 +12267,12 @@
           },
           "skipRemoteDuplicates": {
             "type": "boolean"
+          },
+          "staffTokenConfirmations": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DupeAssessmentID"
+            }
           },
           "trackerIds": {
             "type": "array",

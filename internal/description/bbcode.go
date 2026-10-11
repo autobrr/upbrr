@@ -128,6 +128,17 @@ type codeBlockPlaceholder struct {
 	pre   bool
 }
 
+// MapOutsideLiteralBlocks transforms BBCode without rewriting complete code and
+// pre blocks. The transform must preserve the opaque placeholders in its input.
+func MapOutsideLiteralBlocks(value string, transform func(string) string) string {
+	normalized, blocks := extractLiteralBlocks(value)
+	replacements := make([]string, 0, 2*len(blocks))
+	for _, block := range blocks {
+		replacements = append(replacements, block.token, block.raw)
+	}
+	return strings.NewReplacer(replacements...).Replace(transform(normalized))
+}
+
 func extractLiteralBlocks(value string) (string, []codeBlockPlaceholder) {
 	placeholderPrefix := nextCodeBlockPlaceholderPrefix(value)
 	htmlTags := htmlTagRanges(value)

@@ -244,6 +244,11 @@ export type DuplicatesFacet = Readonly<{
   acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
   /** Acknowledges or revokes the current exact tracker warnings through backend authority. */
   acknowledgeRules(tracker: string, acknowledged: boolean): Promise<boolean>;
+  /**
+   * Requests an accepted or ignored decision for the current assessment.
+   * Ignoring staff-required evidence also attests token possession for that assessment.
+   * Missing, non-reviewable, and in-client results cannot be overridden.
+   */
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 

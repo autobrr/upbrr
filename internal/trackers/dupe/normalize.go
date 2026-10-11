@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/rls"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -520,10 +521,17 @@ func parseBestTitle(names []string) parsedTitleFacts {
 // spelling so resolution, HDR10+, and HDR profile evidence are not synthesized or lost.
 func TrackerTitleMetadata(release rls.Release) (string, bool) {
 	var metadata strings.Builder
+	name := release.String()
+	groupSeparator := -1
+	rawGroupSeparator := -1
+	rawOffset := 0
 	bounded := false
 	yearPrefix := false
 	seriesPrefix := false
 	for _, tag := range release.Tags() {
+		original := fmt.Sprintf("%o", tag)
+		tagOffset := rawOffset
+		rawOffset += len(original)
 		if tag.Is(rls.TagTypeDate) || tag.Is(rls.TagTypeSeries) {
 			bounded = true
 			if tag.Is(rls.TagTypeSeries) {
@@ -534,8 +542,12 @@ func TrackerTitleMetadata(release rls.Release) (string, bool) {
 		if tag.Is(rls.TagTypeGroup) {
 			break
 		}
+		if tag.Is(rls.TagTypeExt) {
+			name = strings.TrimSuffix(name, original)
+		} else if tag.Is(rls.TagTypeContainer) {
+			name = strings.TrimSuffix(name, "."+original)
+		}
 		if !bounded {
-			original := fmt.Sprintf("%o", tag)
 			if tag.Is(rls.TagTypeText) && len(original) == 4 {
 				if _, err := strconv.Atoi(original); err == nil {
 					yearPrefix = true
@@ -553,13 +565,23 @@ func TrackerTitleMetadata(release rls.Release) (string, bool) {
 				return "", false
 			}
 		}
+		if tag.Is(rls.TagTypeDelim) && tag.Delim() == "-" {
+			groupSeparator = metadata.Len()
+			rawGroupSeparator = tagOffset
+		}
 		if tag.Is(rls.TagTypeCut) {
 			metadata.WriteString(tag.Normalize())
 		} else {
-			fmt.Fprintf(&metadata, "%o", tag)
+			metadata.WriteString(original)
 		}
 	}
-	return metadata.String(), bounded
+	text := metadata.String()
+	// Known tag words can obscure a final group from the parser. Use the same
+	// explicit suffix fallback as group normalization, only at a delimiter tag.
+	if release.Group == "" && groupSeparator >= 0 && rawGroupSeparator == strings.LastIndex(name, "-") && groupFromTitle(name) != "" {
+		text = text[:groupSeparator]
+	}
+	return text, bounded
 }
 
 // TrackerTitleHasSourceAndCodec reports whether bounded release metadata has
@@ -597,7 +619,7 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 		Source:     canonicalSource(release.Source),
 		Codec:      canonicalCodec(firstNonEmpty(release.Codec...)),
 		Container:  canonicalContainer(firstNonEmpty(release.Container, release.Ext)),
-		Provider:   canonicalProvider(release.Collection),
+		Provider:   titleProvider(release),
 		Group:      canonicalGroup(release.Group),
 		Edition:    edition,
 		Metadata:   metadata,
@@ -878,14 +900,77 @@ func canonicalContainer(value string) string {
 		return "ts"
 	case "iso", "avi":
 		return normalized
-	case "":
+	case "", "torrent":
 		return ""
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
 }
 
+var providerServiceCodes = metautil.ServiceCodeMap()
+
+// titleProvider accepts only recognized services from parsed collection tags.
+// Other collections, including IMAX, remain available as presentation evidence.
+func titleProvider(release rls.Release) string {
+	for _, tag := range release.Tags() {
+		if tag.Is(rls.TagTypeGroup) {
+			break
+		}
+		if !tag.Is(rls.TagTypeCollection) {
+			continue
+		}
+		// Preserve explicit service codes before the parser rewrites aliases.
+		if service := providerService(fmt.Sprintf("%o", tag)); service != "" {
+			return canonicalProvider(service)
+		}
+		info := tag.Info()
+		if info == nil {
+			continue
+		}
+		for alias, service := range providerServiceCodes {
+			if info.Match(alias) || info.Match(service) {
+				return canonicalProvider(tag.Normalize())
+			}
+		}
+	}
+	return ""
+}
+
+// providerService resolves known services without discarding meaningful punctuation.
+// Canonical codes take precedence over case-insensitive aliases; unknown values are empty.
+func providerService(value string) string {
+	value = strings.TrimSpace(value)
+	for _, service := range providerServiceCodes {
+		if strings.EqualFold(value, service) {
+			return service
+		}
+	}
+	for alias, service := range providerServiceCodes {
+		if strings.EqualFold(value, alias) {
+			return service
+		}
+	}
+	// These rls collection spellings are absent from the service dictionary.
+	switch strings.ToLower(value) {
+	case "bravo":
+		return "BRAV"
+	case "iplayer":
+		return "iP"
+	case "youtube":
+		return "YT"
+	case "criterion.collection":
+		return "CRIT"
+	default:
+		return ""
+	}
+}
+
+// canonicalProvider gives title and structured aliases one identity while preserving
+// custom structured codes that are absent from the service dictionary.
 func canonicalProvider(value string) string {
+	if service := providerService(value); service != "" {
+		value = service
+	}
 	normalized := compactAlphaNumeric(value)
 	switch normalized {
 	//nolint:misspell // ADN is the Animation Digital Network provider code.
@@ -1009,7 +1094,7 @@ func codecFromTitle(upper string) string {
 }
 
 func containerFromTitle(upper string) string {
-	for _, token := range []string{"MKV", "MP4", "M2TS", "VOB_IFO", "VIDEO_TS", "ISO", "AVI"} {
+	for _, token := range []string{"MKV", "MP4", "M2TS", "VOBIFO", "VOB_IFO", "VIDEO_TS", "ISO", "AVI"} {
 		if tokenPresent(upper, token) || strings.HasSuffix(upper, "."+token) {
 			return canonicalContainer(token)
 		}

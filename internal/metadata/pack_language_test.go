@@ -34,7 +34,13 @@ type packLanguageAnalyzer struct{ packAnalyzer }
 
 func (a *packLanguageAnalyzer) Analyze(ctx context.Context, target string) (string, []byte, error) {
 	text, _, err := a.packAnalyzer.Analyze(ctx, target)
-	return text, []byte(packLanguageReport), err
+	report := packLanguageReport
+	if len(a.targets) > 1 {
+		// HDR-only probes must not replace the selected report's programme languages.
+		report = strings.ReplaceAll(report, `"Language":"eng"`, `"Language":"deu"`)
+		report = strings.ReplaceAll(report, `"Language":"jpn"`, `"Language":"ita"`)
+	}
+	return text, []byte(report), err
 }
 
 func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
@@ -78,10 +84,9 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Primary mediainfo plus one HDR-eligibility probe per pack mkv.
-			wantProbes := 1 + len(selected.FileList)
+			wantProbes := append([]string{selected.VideoPath}, selected.FileList...)
 			if !selected.TVPack || len(selected.FileList) != 12 || slices.Contains(selected.FileList, extra) ||
-				len(analyzer.targets) != wantProbes || analyzer.targets[0] != selected.VideoPath {
+				!slices.Equal(analyzer.targets, wantProbes) {
 				t.Fatalf("pack selection changed: pack=%t files=%v video=%q probes=%v", selected.TVPack, selected.FileList, selected.VideoPath, analyzer.targets)
 			}
 			if numbered && selected.VideoPath != firstEpisode {
@@ -130,7 +135,7 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 					}
 				})
 			}
-			if len(analyzer.targets) != wantProbes || derived.VideoPath != selected.VideoPath {
+			if !slices.Equal(analyzer.targets, wantProbes) || derived.VideoPath != selected.VideoPath {
 				t.Fatalf("language eligibility inspected extra files or changed selection: video=%q probes=%v", derived.VideoPath, analyzer.targets)
 			}
 		})

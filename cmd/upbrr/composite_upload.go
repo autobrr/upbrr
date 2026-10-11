@@ -634,6 +634,9 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	if cliDupeRequiresRiskAcknowledgement(result) {
 		prompt = fmt.Sprintf("Acknowledge incomplete/manual policy evidence and upload to %s? [y/N]: ", result.TrackerID)
 	}
+	if result.RequiresStaffToken {
+		prompt = fmt.Sprintf("Confirm you have the appropriate staff-issued %s token for this upload? [y/N]: ", result.TrackerID)
+	}
 	allow, err := promptYesNo(reader, s.streams.out, prompt, false)
 	if err != nil {
 		return feedback, false, err
@@ -646,8 +649,9 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
 		Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
 		DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
-			TrackerID: result.TrackerID,
-			Decision:  decision,
+			StaffTokenConfirmed: result.RequiresStaffToken && allow,
+			TrackerID:           result.TrackerID,
+			Decision:            decision,
 		},
 	}
 	return feedback, false, nil
