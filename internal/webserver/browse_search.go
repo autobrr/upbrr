@@ -26,7 +26,7 @@ import (
 
 const (
 	browseSearchResultLimit = 200
-	browseSearchEntryLimit  = 20000
+	browseSearchEntryLimit  = 100000
 	browseSearchTimeout     = 2 * time.Second
 )
 
@@ -89,8 +89,8 @@ func searchBrowseRoots(ctx context.Context, roots []string, mode, query string, 
 }
 
 // groupBrowseRoots only permits parallel groups when every root has a known
-// local filesystem identity and roots do not overlap. Otherwise the original
-// serial order preserves containment scope and the selected result paths.
+// local filesystem identity and roots do not overlap. Overlapping roots retain
+// their traversal order to preserve containment scope and selected result paths.
 func groupBrowseRoots(
 	ctx context.Context,
 	entries []api.BrowseDirectoryEntry,
@@ -98,17 +98,12 @@ func groupBrowseRoots(
 ) [][]api.BrowseDirectoryEntry {
 	groups := make([][]api.BrowseDirectoryEntry, 0)
 	indices := make(map[string]int)
-	for i, entry := range entries {
+	if browseRootsOverlap(ctx, entries) {
+		return [][]api.BrowseDirectoryEntry{entries}
+	}
+	for _, entry := range entries {
 		if ctx.Err() != nil {
 			return nil
-		}
-		for _, previous := range entries[:i] {
-			if ctx.Err() != nil {
-				return nil
-			}
-			if pathutil.IsWithinRoot(previous.Path, entry.Path) || pathutil.IsWithinRoot(entry.Path, previous.Path) {
-				return [][]api.BrowseDirectoryEntry{entries}
-			}
 		}
 		key := identify(ctx, entry.Path)
 		if key == "" {
@@ -123,6 +118,20 @@ func groupBrowseRoots(
 		groups[index] = append(groups[index], entry)
 	}
 	return groups
+}
+
+func browseRootsOverlap(ctx context.Context, entries []api.BrowseDirectoryEntry) bool {
+	for i, entry := range entries {
+		for _, previous := range entries[:i] {
+			if ctx.Err() != nil {
+				return false
+			}
+			if pathutil.IsWithinRoot(previous.Path, entry.Path) || pathutil.IsWithinRoot(entry.Path, previous.Path) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // walkBrowseGroups joins both workers before returning, including after
@@ -231,6 +240,18 @@ func (s *browseSearch) addResult(key string, entry api.BrowseDirectoryEntry) {
 }
 
 func (s *browseSearch) group(ctx context.Context, entries []api.BrowseDirectoryEntry) {
+	// Overlapping roots must retain the first root's authorization scope and
+	// alias representative. Disjoint roots can share a breadth-first queue.
+	if browseRootsOverlap(ctx, entries) {
+		for _, entry := range entries {
+			s.group(ctx, []api.BrowseDirectoryEntry{entry})
+		}
+		return
+	}
+	type directory struct {
+		root, relative string
+	}
+	pending := make([]directory, 0, len(entries))
 	for _, entry := range entries {
 		if ctx.Err() != nil || s.stopped() {
 			return
@@ -243,24 +264,30 @@ func (s *browseSearch) group(ctx context.Context, entries []api.BrowseDirectoryE
 		if s.matcher.matches(entry.Name) {
 			s.addResult(browsePathKey(entry.Path), entry)
 		}
-		s.root(handle, entry.Path)
+		pending = append(pending, directory{root: entry.Path, relative: "."})
 		_ = handle.Close()
 	}
-}
-
-func (s *browseSearch) root(handle *os.Root, root string) {
-	pending := []string{"."}
-	for len(pending) > 0 && !s.stopped() {
-		directory := pending[len(pending)-1]
-		pending = pending[:len(pending)-1]
-		file, err := handle.Open(directory)
+	for next := 0; next < len(pending) && !s.stopped(); next++ {
+		current := pending[next]
+		pending[next] = directory{} // Release paths as the queue advances.
+		handle, err := os.OpenRoot(current.root)
 		if err != nil {
 			s.incomplete()
 			continue
 		}
-		if s.claimDirectory(browsePathKey(filepath.Join(root, directory))) {
+		file, err := handle.Open(current.relative)
+		_ = handle.Close()
+		if err != nil {
+			s.incomplete()
+			continue
+		}
+		if s.claimDirectory(browsePathKey(filepath.Join(current.root, current.relative))) {
 			// Each worker closes its directory before opening the next one.
-			s.directory(file, root, directory, &pending)
+			var children []string
+			s.directory(file, current.root, current.relative, &children)
+			for _, child := range children {
+				pending = append(pending, directory{root: current.root, relative: child})
+			}
 		}
 		_ = file.Close()
 	}
@@ -279,6 +306,15 @@ func (s *browseSearch) directory(directory *os.File, root, relative string, pend
 				continue
 			}
 			child := filepath.Join(relative, entry.Name())
+			if entry.IsDir() {
+				// ReadDir does not classify symlinks/junctions as directories.
+				// Root.Open enforces containment when the queued path is opened,
+				// including if a directory is replaced with a link in the meantime.
+				*pending = append(*pending, child)
+			}
+			if !matches {
+				continue
+			}
 			path := filepath.Join(root, child)
 			realPath, resolveErr := filepath.EvalSymlinks(path)
 			if resolveErr != nil {
@@ -286,12 +322,6 @@ func (s *browseSearch) directory(directory *os.File, root, relative string, pend
 				continue
 			}
 			if !pathutil.IsWithinRoot(root, realPath) {
-				continue
-			}
-			if entry.IsDir() {
-				*pending = append(*pending, child)
-			}
-			if !matches {
 				continue
 			}
 			info, infoErr := entry.Info()
