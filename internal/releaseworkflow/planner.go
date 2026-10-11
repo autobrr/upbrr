@@ -1337,11 +1337,14 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 			stageSucceeded(current.Media.Status) &&
 			continuationMediaCaptureSatisfied(current, request.Intent.Media)
 	case api.WorkflowGoalDescriptionsReady:
-		return descriptionsHaveViableTracker(current.Descriptions)
+		return descriptionsHaveViableTracker(current.Descriptions) &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
-		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs)
+		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	case api.WorkflowGoalUploaded:
-		return current.UploadResult != nil
+		return current.UploadResult != nil &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	default:
 		return false
 	}
@@ -1445,10 +1448,26 @@ func duplicateDecisionsComplete(dupes *api.DupeAssessment) bool {
 }
 
 func mediaRequirementsPreparedForIntent(media *api.MediaArtifactSet, skipImageHostUpload bool) bool {
-	if media != nil && stageSucceeded(media.Status) && media.ImageRequirementsPrepared {
-		return media.ImageHostUploadSkipped == skipImageHostUpload
+	if media == nil || !stageSucceeded(media.Status) {
+		return false
 	}
-	return mediaRequirementsPrepared(media)
+	if !media.ImageRequirementsPrepared {
+		return mediaRequirementsPrepared(media)
+	}
+	if media.ImageHostUploadSkipped == skipImageHostUpload {
+		return true
+	}
+	// Zero-image preparation has nothing to host; a skip-mode mismatch is a no-op.
+	if skipImageHostUpload && !mediaHasSelectedLocalImages(media) {
+		return true
+	}
+	return false
+}
+
+func mediaHasSelectedLocalImages(media *api.MediaArtifactSet) bool {
+	return media != nil && slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
+	})
 }
 
 func mediaRequirementsPrepared(media *api.MediaArtifactSet) bool {
@@ -1458,7 +1477,5 @@ func mediaRequirementsPrepared(media *api.MediaArtifactSet) bool {
 	if media.ImageRequirementsPrepared {
 		return true
 	}
-	return !slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
-		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
-	})
+	return !mediaHasSelectedLocalImages(media)
 }

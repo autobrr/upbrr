@@ -235,6 +235,12 @@ type TrackerPreflightBuilder interface {
 	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error)
 }
 
+// TrackerProjectionCatalogChecker verifies retained projection contracts against
+// the current tracker-owned catalog without preparation or remote work.
+type TrackerProjectionCatalogChecker interface {
+	CatalogCurrent(api.TrackerCatalogSnapshot) (bool, error)
+}
+
 // DupeAssessmentBuilder executes projection-bound duplicate checks and returns
 // a safe retained snapshot plus optional private evidence for later planning.
 type DupeAssessmentBuilder interface {
@@ -249,15 +255,23 @@ type DupeAssessmentBuilder interface {
 }
 
 // IncrementalDupeAssessmentBuilder can retain fresh, unchanged tracker evidence
-// after a rule acknowledgement. Reuse never grants new upload authority.
+// after a rule or questionnaire edit. Reuse never grants new upload authority.
 type IncrementalDupeAssessmentBuilder interface {
 	BuildWithReuse(context.Context, api.DuplicateSubject, api.TrackerReleaseProjectionSet,
 		api.TrackerPreflightAssessment, time.Time, bool, DuplicateAssessmentReuse) (api.DupeAssessment, any, error)
 }
 
+// QuestionnaireDupeAssessmentRebinder can rebind all compatible questionnaire-only
+// evidence without searching. An empty result means a fresh check is required.
+type QuestionnaireDupeAssessmentRebinder interface {
+	RebindQuestionnaire(context.Context, api.DuplicateSubject, api.TrackerReleaseProjectionSet,
+		api.TrackerPreflightAssessment, time.Time, bool, DuplicateAssessmentReuse) (api.DupeAssessment, any, error)
+}
+
 // DuplicateAssessmentReuse supplies the prior exact assessment and private evidence
-// for a rule-only change. InvalidatedTrackers must be checked again when eligible.
+// for a scoped edit. InvalidatedTrackers must be checked again when eligible.
 type DuplicateAssessmentReuse struct {
+	QuestionnaireOnly   bool
 	Assessment          api.DupeAssessment
 	Projections         api.TrackerReleaseProjectionSet
 	PrivateEvidence     any
@@ -265,8 +279,9 @@ type DuplicateAssessmentReuse struct {
 }
 
 // PendingDuplicateReuse retains evidence across the projection and preflight
-// stages of rule acknowledgement; it is not current duplicate authority.
+// stages of rule or questionnaire edits; it is not current duplicate authority.
 type PendingDuplicateReuse struct {
+	QuestionnaireOnly   bool
 	Assessment          api.DupeAssessmentRef
 	InvalidatedTrackers []api.TrackerID
 }
@@ -296,8 +311,9 @@ type RetainedAudioAnalysisLocalPath interface {
 }
 
 // DescriptionResources carries the current owner-scoped analysis alongside
-// retained media when a description depends on audio analysis.
+// retained media. HDR authority is resolved only for descriptions using automatic assets.
 type DescriptionResources struct {
+	HDR           func(context.Context) (api.HDRAnalysisResult, RetainedHDRAnalysisResource, error)
 	Media         any
 	AudioAnalysis api.AudioAnalysisResult
 	AudioPaths    RetainedAudioAnalysisLocalPath
@@ -512,6 +528,7 @@ type Repository interface {
 	Create(context.Context, string, string, api.WorkflowFingerprint, State) (State, bool, error)
 	Load(context.Context, string, api.WorkflowID) (State, error)
 	Save(context.Context, string, api.WorkflowRevision, State) error
+	CheckpointHDRExtractions(context.Context, string, api.WorkflowID, api.WorkflowRevision, map[api.HDRExtractionID]HDRExtractionRecord) error
 	Delete(context.Context, string, api.WorkflowID) error
 }
 
@@ -596,24 +613,31 @@ type State struct {
 	// authority until canonical preparation completes.
 	PendingCorrectionConfirmation *api.CorrectionConfirmation
 	PreparationInput              *api.PrepareInput
+	// TrackerScope retains selected IDs while evidence snapshots are invalidated.
+	// It grants no tracker-rule or upload authority.
+	TrackerScope []api.TrackerID
 	// PreparationDemand retains normalized metadata requirements separately because
 	// PrepareInput omits its internal-only requirements from persisted JSON used for hydration.
-	PreparationDemand      api.MetadataRequirementSet
-	TrackerInputAnswers    map[api.TrackerID]map[string]string
-	FactInstructions       map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot
-	Releases               map[api.ReleaseSnapshotID]api.ReleaseSnapshot
-	InputReadiness         map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot
-	Catalogs               map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot
-	Runtimes               map[api.TrackerRuntimeSnapshotID]api.TrackerRuntimeSnapshot
-	Selections             map[api.TrackerSelectionID]api.TrackerSelection
-	ProjectionInstructions map[api.TrackerProjectionInstructionSnapshotID]api.TrackerProjectionInstructionSnapshot
-	Projections            map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet
-	Preflights             map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment
-	Dupes                  map[api.DupeAssessmentID]api.DupeAssessment
-	PendingDuplicateReuse  *PendingDuplicateReuse
-	TrackerApprovals       map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
-	Media                  map[api.MediaArtifactSetID]api.MediaArtifactSet
-	AudioAnalyses          map[api.AudioAnalysisResultID]api.AudioAnalysisResult
+	PreparationDemand            api.MetadataRequirementSet
+	TrackerInputAnswers          map[api.TrackerID]map[string]string
+	FactInstructions             map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot
+	Releases                     map[api.ReleaseSnapshotID]api.ReleaseSnapshot
+	InputReadiness               map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot
+	Catalogs                     map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot
+	Runtimes                     map[api.TrackerRuntimeSnapshotID]api.TrackerRuntimeSnapshot
+	Selections                   map[api.TrackerSelectionID]api.TrackerSelection
+	ProjectionInstructions       map[api.TrackerProjectionInstructionSnapshotID]api.TrackerProjectionInstructionSnapshot
+	Projections                  map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet
+	Preflights                   map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment
+	Dupes                        map[api.DupeAssessmentID]api.DupeAssessment
+	PendingDuplicateReuse        *PendingDuplicateReuse
+	TrackerApprovals             map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
+	Media                        map[api.MediaArtifactSetID]api.MediaArtifactSet
+	HDRAnalyses                  map[api.HDRAnalysisResultID]api.HDRAnalysisResult
+	HDRExtractions               map[api.HDRExtractionID]HDRExtractionRecord
+	PendingHDRAnalysis           *api.HDRAnalysisRef
+	PendingHDRAnalysisWorkflowID api.WorkflowID
+	AudioAnalyses                map[api.AudioAnalysisResultID]api.AudioAnalysisResult
 	// PendingAudioAnalysis retains the current result while an active input is
 	// reverified and prepared again. It is restored only for the same release.
 	PendingAudioAnalysis           *api.AudioAnalysisRef
@@ -834,12 +858,14 @@ type projectionSetPublication struct {
 // PreflightTrackersCommand runs live checks and atomically publishes both the
 // assessment and a new finalized projection revision.
 type PreflightTrackersCommand struct {
-	WorkflowID       api.WorkflowID
-	ExpectedRevision api.WorkflowRevision
-	InputFingerprint api.WorkflowFingerprint
-	Interaction      api.InteractionMode
-	ExecutionMode    api.WorkflowExecutionMode
-	IdempotencyKey   string
+	SkipRemoteDuplicates bool
+	DuplicateCheckCount  uint8
+	WorkflowID           api.WorkflowID
+	ExpectedRevision     api.WorkflowRevision
+	InputFingerprint     api.WorkflowFingerprint
+	Interaction          api.InteractionMode
+	ExecutionMode        api.WorkflowExecutionMode
+	IdempotencyKey       string
 }
 
 func (PreflightTrackersCommand) commandName() string { return "preflight_trackers" }
@@ -849,15 +875,19 @@ func (PreflightTrackersCommand) operationKind() api.OperationKind {
 }
 func (c PreflightTrackersCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
 	return canonicalCommandFingerprint(struct {
-		ExpectedRevision api.WorkflowRevision
-		InputFingerprint api.WorkflowFingerprint
-		Interaction      api.InteractionMode
-		ExecutionMode    api.WorkflowExecutionMode
+		SkipRemoteDuplicates bool
+		DuplicateCheckCount  uint8
+		ExpectedRevision     api.WorkflowRevision
+		InputFingerprint     api.WorkflowFingerprint
+		Interaction          api.InteractionMode
+		ExecutionMode        api.WorkflowExecutionMode
 	}{
-		ExpectedRevision: c.ExpectedRevision,
-		InputFingerprint: c.InputFingerprint,
-		Interaction:      continuationInteractionMode(api.WorkflowIntent{Interaction: c.Interaction}),
-		ExecutionMode:    api.NormalizeWorkflowExecutionMode(c.ExecutionMode),
+		ExpectedRevision:     c.ExpectedRevision,
+		SkipRemoteDuplicates: c.SkipRemoteDuplicates,
+		DuplicateCheckCount:  normalizedDuplicateCheckOrdinal(c.DuplicateCheckCount),
+		InputFingerprint:     c.InputFingerprint,
+		Interaction:          continuationInteractionMode(api.WorkflowIntent{Interaction: c.Interaction}),
+		ExecutionMode:        api.NormalizeWorkflowExecutionMode(c.ExecutionMode),
 	})
 }
 
@@ -1118,14 +1148,27 @@ func (UploadMediaImagesCommand) operationKind() api.OperationKind {
 	return api.OperationKindImageHosting
 }
 func (c UploadMediaImagesCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
-	return canonicalCommandFingerprint(struct {
+	// SkipUpload=false must keep the pre-skip-mode fingerprint so retained
+	// operations and receipt replays stay compatible across upgrades.
+	payload := struct {
 		ExpectedRevision api.WorkflowRevision
 		Media            api.MediaArtifactSetRef
 		ArtifactIDs      []api.PublicResourceID
 		Host             string
 		Retry            bool
-		SkipUpload       bool
-	}{c.ExpectedRevision, c.Media, c.ArtifactIDs, c.Host, c.Retry, c.SkipUpload})
+		SkipUpload       *bool `json:",omitempty"`
+	}{
+		ExpectedRevision: c.ExpectedRevision,
+		Media:            c.Media,
+		ArtifactIDs:      c.ArtifactIDs,
+		Host:             c.Host,
+		Retry:            c.Retry,
+	}
+	if c.SkipUpload {
+		skip := true
+		payload.SkipUpload = &skip
+	}
+	return canonicalCommandFingerprint(payload)
 }
 
 // RemoveHostedImagesCommand removes hosted outcomes by opaque artifact ID.
