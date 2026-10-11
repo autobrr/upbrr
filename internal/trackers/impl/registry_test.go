@@ -755,7 +755,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned metadata policy")
 	}
-	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v5" ||
+	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v6" ||
 		policy.EvidenceID != "ant-slots-staff-overrides" || policy.TargetSlot == nil || !policy.StaffTokenOverride {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
 	}

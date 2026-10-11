@@ -899,7 +899,7 @@ func canonicalContainer(value string) string {
 		return "ts"
 	case "iso", "avi":
 		return normalized
-	case "":
+	case "", "torrent":
 		return ""
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
@@ -1030,7 +1030,7 @@ func codecFromTitle(upper string) string {
 }
 
 func containerFromTitle(upper string) string {
-	for _, token := range []string{"MKV", "MP4", "M2TS", "VOB_IFO", "VIDEO_TS", "ISO", "AVI"} {
+	for _, token := range []string{"MKV", "MP4", "M2TS", "VOBIFO", "VOB_IFO", "VIDEO_TS", "ISO", "AVI"} {
 		if tokenPresent(upper, token) || strings.HasSuffix(upper, "."+token) {
 			return canonicalContainer(token)
 		}

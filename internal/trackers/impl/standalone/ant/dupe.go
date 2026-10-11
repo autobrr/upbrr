@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -192,6 +193,7 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 			continue
 		}
 		files := antFiles(item["files"])
+		container := antCandidateContainer(item)
 		fileCount := int(antInt(item["fileCount"]))
 		if fileCount == 0 {
 			fileCount = len(files)
@@ -204,10 +206,10 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 			Download:      strings.ReplaceAll(antString(item["link"]), "&amp;", "&"),
 			Res:           antString(item["resolution"]),
 			Type:          antString(item["type"]),
-			CanonicalType: antCandidateType(item),
+			CanonicalType: antCandidateType(antString(item["type"]), container),
 			Source:        antCandidateSource(item),
 			Codec:         antString(item["codec"]),
-			Container:     antString(item["container"]),
+			Container:     container,
 			Group:         antString(item["releaseGroup"]),
 		}
 		if size := antInt(item["size"]); size > 0 {
@@ -278,11 +280,23 @@ func antCandidateSource(item map[string]any) string {
 	return antString(item["media"])
 }
 
+var antDiscFilenameContainer = regexp.MustCompile(`(?i)\.(vobifo|m2ts)\.[0-9]+\.torrent$`)
+
+// antCandidateContainer uses ANT's generated torrent filename only when the API omits its container.
+func antCandidateContainer(item map[string]any) string {
+	if container := antString(item["container"]); container != "" {
+		return container
+	}
+	if match := antDiscFilenameContainer.FindStringSubmatch(antString(item["fileName"])); len(match) == 2 {
+		return strings.ToLower(match[1])
+	}
+	return ""
+}
+
 // antCandidateType classifies disc containers explicitly and otherwise preserves ANT's type value.
-func antCandidateType(item map[string]any) string {
-	typeValue := antString(item["type"])
-	switch strings.ToLower(antString(item["container"])) {
-	case "m2ts", "bdmv", "vob/ifo", "video_ts", "iso":
+func antCandidateType(typeValue, container string) string {
+	switch strings.ToLower(container) {
+	case "m2ts", "bdmv", "vobifo", "vob/ifo", "video_ts", "iso":
 		return "DISC"
 	default:
 		return typeValue

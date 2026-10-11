@@ -267,7 +267,7 @@ func TestANTFullDiscCountriesAndSlots(t *testing.T) {
 	t.Parallel()
 
 	target := api.TrackerDuplicateTarget{
-		TrackerSlot: "FullDisc/1080//JP/",
+		TrackerSlot: "FullDisc/1080/BluRay/JP/",
 		Type:        "DISC",
 		Source:      "Blu-ray",
 		Resolution:  "1080p",
@@ -276,7 +276,7 @@ func TestANTFullDiscCountriesAndSlots(t *testing.T) {
 		SizeBytes:   1000,
 	}
 	entry := api.DupeEntry{
-		TrackerSlot:   "FullDisc/1080//JP/",
+		TrackerSlot:   "FullDisc/1080/BluRay/JP/",
 		Name:          "Example.Release.2026.1080p.Blu-ray.AVC-GRP",
 		CanonicalType: "DISC",
 		Source:        "Blu-ray",
@@ -392,4 +392,136 @@ func antDupeTestConfig() config.Config {
 	return config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 		"ANT": {APIKey: "token"},
 	}}}
+}
+
+func TestANTDiscCandidatesOccupyDistinctSlots(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, filename, container, source, resolution, codec, targetType string
+		wantContainer                                                 string
+		want                                                          api.DupeRelation
+	}{
+		{"DVD API container", "Example.2026.SD.DVD.VOBIFO.123.torrent", "VOBIFO", "DVD", "SD", "MPEG2", "ENCODE", "VOBIFO", api.DupeRelationCoexists},
+		{"DVD torrent filename", "Example.2026.SD.DVD.VOBIFO.123.torrent", "", "DVD", "SD", "MPEG2", "ENCODE", "vobifo", api.DupeRelationCoexists},
+		{"Blu-ray torrent filename", "Example.2026.1080p.BluRay.m2ts.123.torrent", "", "BluRay", "1080p", "H264", "ENCODE", "m2ts", api.DupeRelationCoexists},
+		{"Blu-ray disc versus remux", "Example.2026.1080p.BluRay.m2ts.123.torrent", "", "BluRay", "1080p", "H264", "REMUX", "m2ts", api.DupeRelationCoexists},
+		{"case insensitive filename", "Example.2026.1080p.BluRay.M2TS.123.TORRENT", "", "BluRay", "1080p", "H264", "ENCODE", "m2ts", api.DupeRelationCoexists},
+		{"same DVD disc unknown country", "Example.2026.SD.DVD.VOBIFO.123.torrent", "", "DVD", "SD", "MPEG2", "DISC", "vobifo", api.DupeRelationManualReview},
+		{"same Blu-ray disc unknown country", "Example.2026.1080p.BluRay.m2ts.123.torrent", "", "BluRay", "1080p", "H264", "DISC", "m2ts", api.DupeRelationManualReview},
+		{"explicit conflicting container", "Example.2026.1080p.BluRay.m2ts.123.torrent", "MKV", "BluRay", "1080p", "H264", "DISC", "MKV", api.DupeRelationManualReview},
+		{"explicit DVD MKV conflict", "Example.2026.SD.DVD.VOBIFO.123.torrent", "MKV", "DVD", "SD", "MPEG2", "DISC", "MKV", api.DupeRelationManualReview},
+		{"explicit DVD MP4 conflict", "Example.2026.SD.DVD.VOBIFO.123.torrent", "MP4", "DVD", "SD", "MPEG2", "DISC", "MP4", api.DupeRelationManualReview},
+		{"explicit DVD AVI conflict", "Example.2026.SD.DVD.VOBIFO.123.torrent", "AVI", "DVD", "SD", "MPEG2", "DISC", "AVI", api.DupeRelationManualReview},
+		{"ordinary encode", "Example.2026.1080p.BluRay.x264-GRP.mkv", "MKV", "BluRay", "1080p", "H264", "DISC", "MKV", api.DupeRelationCoexists},
+		{"DVD encode versus disc", "Example.2026.SD.DVD.MPEG2-GRP.mkv", "MKV", "DVD", "SD", "MPEG2", "DISC", "MKV", api.DupeRelationCoexists},
+		{"generated MKV versus disc", "Example.2026.1080p.BluRay.MKV.123.torrent", "MKV", "BluRay", "1080p", "H264", "DISC", "MKV", api.DupeRelationCoexists},
+		{"title word is not a disc marker", "VOBIFO.2026.SD.DVD.MPEG2.123.torrent", "", "DVD", "SD", "MPEG2", "ENCODE", "", api.DupeRelationSameSlot},
+		{"non-numeric suffix is not a disc marker", "Example.2026.SD.DVD.VOBIFO.GRP.torrent", "", "DVD", "SD", "MPEG2", "ENCODE", "", api.DupeRelationSameSlot},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := antDupeEntries(map[string]any{"item": []any{map[string]any{
+				"fileName":   tc.filename,
+				"container":  tc.container,
+				"media":      tc.source,
+				"resolution": tc.resolution,
+				"codec":      tc.codec,
+			}}})
+			if len(entries) != 1 || entries[0].Container != tc.wantContainer {
+				t.Fatalf("candidate container: entries=%+v want=%q", entries, tc.wantContainer)
+			}
+			meta := api.UploadSubject{
+				Type:       tc.targetType,
+				Source:     tc.source,
+				VideoCodec: tc.codec,
+				Release:    api.ReleaseInfo{Resolution: tc.resolution},
+			}
+			target := api.TrackerDuplicateTarget{
+				TrackerSlot: resolveTargetSlot(meta),
+				Type:        meta.Type,
+				Source:      meta.Source,
+				Resolution:  tc.resolution,
+				VideoCodec:  meta.VideoCodec,
+			}
+			result := dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entries[0], "ANT")},
+				*duplicatePolicy(), dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+			if got := result.Candidates[0].Relation; got != tc.want {
+				t.Fatalf("relation=%s want=%s facts=%+v", got, tc.want, result.Candidates[0].Facts)
+			}
+		})
+	}
+}
+
+func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
+	const filename = "Example.2026.1080p.BluRay.x264-GRP.mkv"
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"item":[
+			{"fileName":"Example.2026.SD.DVD.VOBIFO.123.torrent","media":"DVD","resolution":"SD","codec":"MPEG2"},
+			{"fileName":"Example.2026.1080p.BluRay.m2ts.124.torrent","media":"BluRay","resolution":"1080p","codec":"H264"},
+			{"files":[{"name":"` + filename + `"}],"media":"BluRay","resolution":"1080p","codec":"H264","container":"MKV"},
+			{"files":[{"name":"Example.2026.1080p.BluRay.REMUX.AVC-GRP.mkv"}],"media":"BluRay","resolution":"1080p","codec":"H264","container":"MKV","flags":["Remux"]}
+		]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})
+	for _, tc := range []struct {
+		name, kind, source, resolution, codec, matchName string
+		want                                           api.DupeRelation
+	}{
+		{"encode exact match", "ENCODE", "BluRay", "1080p", "H264", filename, api.DupeRelationExactDuplicate},
+		{"Blu-ray disc", "DISC", "BluRay", "1080p", "H264", "Example.2026.1080p.BluRay.m2ts.124.torrent", api.DupeRelationManualReview},
+		{"DVD disc", "DISC", "DVD", "SD", "MPEG2", "Example.2026.SD.DVD.VOBIFO.123.torrent", api.DupeRelationManualReview},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := api.UploadSubject{
+				Type:       tc.kind,
+				Source:     tc.source,
+				VideoCodec: tc.codec,
+				Release:    api.ReleaseInfo{Resolution: tc.resolution},
+			}
+			target := api.TrackerDuplicateTarget{
+				TrackerSlot: resolveTargetSlot(meta),
+				Type:        meta.Type,
+				Source:      meta.Source,
+				Resolution:  tc.resolution,
+				VideoCodec:  meta.VideoCodec,
+			}
+			if tc.kind == "ENCODE" {
+				target.Names, target.FileNames = []string{filename}, []string{filename}
+			}
+			service := dupe.NewServiceWithRegistry(antDupeTestConfig(), api.NopLogger{}, registry)
+			summary, err := service.Check(t.Context(), api.DuplicateSubject{
+				SourcePath: "proposed",
+				Identity:   api.ExternalIdentity{TMDBID: 123},
+				Projection: &api.TrackerReleaseProjection{DuplicateTarget: target},
+			}, []string{"ANT"})
+			if err != nil || len(summary.Results) != 1 {
+				t.Fatalf("search: summary=%+v err=%v", summary, err)
+			}
+			result := summary.Results[0]
+			if !result.HasDupes || !result.RequiresStaffToken || !result.Search.Complete || result.Search.CandidateCount != 4 {
+				t.Fatalf("unexpected duplicate result: %+v", result)
+			}
+			for _, candidate := range result.Evaluations {
+				want := api.DupeRelationCoexists
+				if candidate.Name == tc.matchName {
+					want = tc.want
+				}
+				if candidate.Relation != want {
+					t.Errorf("candidate=%q relation=%s want=%s", candidate.Name, candidate.Relation, want)
+				}
+			}
+			if len(result.Evaluations) != 4 {
+				t.Fatalf("evaluations=%+v", result.Evaluations)
+			}
+		})
+	}
 }

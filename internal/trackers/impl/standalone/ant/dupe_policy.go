@@ -17,7 +17,7 @@ import (
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:                 "ant/duplicate/v5",
+		ID:                 "ant/duplicate/v6",
 		EvidenceID:         "ant-slots-staff-overrides",
 		SearchScope:        trackers.DupeSearchScope{MaxPages: 100},
 		TargetSlot:         resolveTargetSlot,
@@ -77,6 +77,12 @@ func antSlot(kind, source, resolution, codec string, flags []string, country str
 	switch slotKind {
 	case "?":
 		rangeSlot = "?"
+	case "FullDisc":
+		// DVD and Blu-ray discs remain distinct even when their tiers overlap.
+		rangeSlot = "?"
+		if discSource := resolveMediaSource(source); discSource == "DVD" || discSource == "BluRay" || discSource == "HDDVD" {
+			rangeSlot = discSource
+		}
 	case "Encode", "WEB":
 		hdr := slices.Contains(upperFlags, "HDR10")
 		dv := slices.Contains(upperFlags, "DV")
