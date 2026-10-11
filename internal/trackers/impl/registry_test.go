@@ -120,7 +120,7 @@ func TestNameProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 			wantTitle, wantYear = api.IdentityProviderIMDB, api.IdentityProviderIMDB
 		case "YUS":
 			wantTitle = api.IdentityProviderIMDB
-		case "SP":
+		case "SP", "CBR":
 			wantTitle, wantYear = "", ""
 		case "OTW", "RMC":
 			wantTitle = ""
