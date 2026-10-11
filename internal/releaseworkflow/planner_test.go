@@ -994,7 +994,6 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 func TestContinuationGoalReachedReconcilesImageHostSkipMode(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
 	current := CommandResult{
 		Selection: &api.TrackerSelection{
 			TrackerIDs: []api.TrackerID{"ALPHA"},
@@ -1049,7 +1048,6 @@ func TestContinuationGoalReachedReconcilesImageHostSkipMode(t *testing.T) {
 			t.Fatalf("goal %s not reached when skip mode matches", goal)
 		}
 	}
-	_ = now
 }
 
 func TestMediaRequirementsPreparedForIntentKeepsZeroImageCache(t *testing.T) {
@@ -1112,7 +1110,7 @@ func TestMediaRequirementsPreparedForIntentKeepsZeroImageCache(t *testing.T) {
 			TrackerIDs:             []api.TrackerID{"ALPHA"},
 			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
 			SkipImageHostUpload:    true,
-			Descriptions:          &api.DescriptionInstructions{TemplateVersion: "workflow-v1"},
+			Descriptions:           &api.DescriptionInstructions{TemplateVersion: "workflow-v1"},
 		},
 	}
 	command, stage := planContinuationCommand(request, current, now)

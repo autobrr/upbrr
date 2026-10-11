@@ -577,17 +577,21 @@ type MediaArtifactSet struct {
 	TrackerApproval    *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
 	CaptureFingerprint WorkflowFingerprint            `json:"captureFingerprint"`
 	// SavedImagePlanID retains the reviewed import plan across workflow continuation.
-	SavedImagePlanID          MediaPlanID          `json:"savedImagePlanId,omitempty"`
-	RequirementsFingerprint   WorkflowFingerprint  `json:"requirementsFingerprint"`
-	Artifacts                 []MediaArtifact      `json:"artifacts"`
-	HostAttempts              []HostedImageAttempt `json:"hostAttempts,omitempty"`
-	FailedHosts               []string             `json:"failedHosts,omitempty"`
-	ImageRequirementsPrepared bool                 `json:"imageRequirementsPrepared"`
-	ImageHostUploadSkipped    bool                 `json:"imageHostUploadSkipped,omitempty"`
-	Status                    StageStatus          `json:"status"`
-	RequiredActions           []RequiredAction     `json:"requiredActions,omitempty"`
-	Failures                  []WorkflowFailure    `json:"failures,omitempty"`
-	CreatedAt                 time.Time            `json:"createdAt" ts_type:"string"`
+	SavedImagePlanID        MediaPlanID          `json:"savedImagePlanId,omitempty"`
+	RequirementsFingerprint WorkflowFingerprint  `json:"requirementsFingerprint"`
+	Artifacts               []MediaArtifact      `json:"artifacts"`
+	HostAttempts            []HostedImageAttempt `json:"hostAttempts,omitempty"`
+	FailedHosts             []string             `json:"failedHosts,omitempty"`
+	// ImageRequirementsPrepared records that required image preparation is satisfied
+	// through hosting or explicit skip. Status still determines overall media readiness.
+	ImageRequirementsPrepared bool `json:"imageRequirementsPrepared"`
+	// ImageHostUploadSkipped records preparation without new host uploads. Cached
+	// links remain reusable, and unknown external outcomes still require reconciliation.
+	ImageHostUploadSkipped bool              `json:"imageHostUploadSkipped,omitempty"`
+	Status                 StageStatus       `json:"status"`
+	RequiredActions        []RequiredAction  `json:"requiredActions,omitempty"`
+	Failures               []WorkflowFailure `json:"failures,omitempty"`
+	CreatedAt              time.Time         `json:"createdAt" ts_type:"string"`
 }
 
 // DescriptionOverrideInput is one explicit user-authored group description.

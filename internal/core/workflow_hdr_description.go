@@ -77,6 +77,9 @@ func resolveWorkflowDescriptionMedia(
 	return exact, nil
 }
 
+// uploadHDRDescriptionImages fills exact HDR uploads and per-tracker host choices
+// for generated descriptions. Explicit skip permits missing hosts and reuses
+// compatible cached links without uploading; final description overrides are excluded.
 func (b workflowDescriptionBuilder) uploadHDRDescriptionImages(ctx context.Context, subject api.UploadSubject, trackerNames []string) error {
 	trackerNames = hdrDescriptionTrackers(subject, trackerNames)
 	if len(trackerNames) == 0 {

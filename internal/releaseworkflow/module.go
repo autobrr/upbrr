@@ -5739,6 +5739,9 @@ func (m *Module) publishDupes(
 	return CommandResult{Dupes: &snapshot}, nil
 }
 
+// captureMedia publishes local media for the current authorized tracker set.
+// Retained captures clear skip mode so continuation can prepare images again;
+// pending external-effect reconciliation prevents capture from replacing its evidence.
 func (m *Module) captureMedia(
 	ctx context.Context,
 	ownerID string,
@@ -6018,6 +6021,8 @@ func uploadPlanPrivateResourceID(id api.UploadDryRunResultID) string {
 	return "upload-plan:" + string(id)
 }
 
+// setMediaSelection updates the requested artifact selections in the exact media
+// revision, clears image preparation and skip mode, and publishes revised readiness.
 func (m *Module) setMediaSelection(
 	ctx context.Context,
 	ownerID string,
@@ -6074,6 +6079,9 @@ func (m *Module) reorderMediaArtifacts(
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
 }
 
+// attachMediaArtifacts resolves staged attachments against the current media
+// context and publishes replacement resources. New attachments clear image
+// preparation and skip mode so continuation reassesses the selected images.
 func (m *Module) attachMediaArtifacts(
 	ctx context.Context,
 	ownerID string,
@@ -6137,6 +6145,10 @@ func (m *Module) attachMediaArtifacts(
 	return m.publishMediaReplacement(ownerID, state, nextRevision, now, updated, retained)
 }
 
+// uploadMediaImages prepares selected artifacts through required or explicit-host
+// uploads, or records skip without calling the mutator. Unknown external outcomes
+// retain a reconciliation action; leaving skip through one host does not mark all
+// required hosts prepared.
 func (m *Module) uploadMediaImages(
 	ctx context.Context,
 	ownerID string,
@@ -6258,6 +6270,9 @@ func selectedLocalMediaArtifactIDs(state *State, mediaRef api.MediaArtifactSetRe
 	return artifactIDs, nil
 }
 
+// selectExplicitMediaArtifacts replaces local screenshot and DVD-menu selection
+// with the requested IDs while preserving hosted-artifact selection. Callers
+// validate the requested IDs against the exact media revision before mutation.
 func selectExplicitMediaArtifacts(snapshot *api.MediaArtifactSet, artifactIDs []api.PublicResourceID) {
 	selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
 	for _, artifactID := range artifactIDs {
@@ -6271,6 +6286,8 @@ func selectExplicitMediaArtifacts(snapshot *api.MediaArtifactSet, artifactIDs []
 	}
 }
 
+// removeHostedImages removes requested hosted variants from the exact media
+// revision and clears preparation and skip mode before publishing revised readiness.
 func (m *Module) removeHostedImages(
 	ctx context.Context,
 	ownerID string,
@@ -6378,6 +6395,8 @@ func validateMediaRequirementsFingerprint(snapshot api.MediaArtifactSet, project
 	return nil
 }
 
+// deleteMediaArtifacts removes requested artifacts from retained media and clears
+// preparation and skip mode before publishing the remaining selection's readiness.
 func (m *Module) deleteMediaArtifacts(
 	ctx context.Context,
 	ownerID string,
@@ -6459,6 +6478,8 @@ func (m *Module) currentMutableMedia(
 	return snapshot, resource, nil
 }
 
+// publishMediaMutation recomputes readiness and tracker authority before publishing
+// a fingerprinted media revision, retaining its private resources for 24 hours.
 func (m *Module) publishMediaMutation(
 	ownerID string,
 	state *State,
@@ -6521,6 +6542,9 @@ func (m *Module) publishMediaMutation(
 	return result, nil
 }
 
+// publishMediaReplacement binds current tracker authority and the mutation
+// fingerprint to a new media revision, retaining replacement resources for 24 hours.
+// Callers compute media readiness before publication.
 func (m *Module) publishMediaReplacement(
 	ownerID string,
 	state *State,
@@ -6600,7 +6624,8 @@ func (m *Module) refreshPersistedMediaStatus(
 
 // refreshMutatedMediaStatus recomputes media readiness after a mutation while
 // retaining image-host failures and pending reconciliation actions. Before
-// required hosting runs, selected local assets determine readiness; afterward,
+// required hosting runs and during explicit skip, selected local assets determine
+// readiness. After normal hosting preparation,
 // each surviving tracker must have enough applicable hosted screenshot sources.
 // The full known projection set distinguishes an excluded tracker's retained
 // failure from an unscoped or unknown-tracker failure that must still block.

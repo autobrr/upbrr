@@ -287,6 +287,9 @@ func (b workflowDescriptionBuilder) Build(
 	return snapshot, nil
 }
 
+// uploadAudioDescriptionImages fills exact audio uploads and per-tracker host
+// choices. Explicit skip permits missing hosts and reuses compatible cached links
+// without uploading; textual statistics remain available independently.
 func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Context, subject api.UploadSubject, trackerNames []string) error {
 	if subject.ExactMedia == nil {
 		return nil
@@ -346,6 +349,10 @@ type workflowExactLocalMedia struct {
 	menu       api.DVDMenuCaptureImage
 }
 
+// resolveWorkflowExactMedia binds selected public artifacts to retained local paths
+// and hosted variants, preserving order and the hosting opt-out. Inconsistent
+// retained resources or purpose boundaries return an error; completed audio
+// analysis resources are included when supplied through DescriptionResources.
 func resolveWorkflowExactMedia(
 	privateMedia any,
 	media api.MediaArtifactSet,

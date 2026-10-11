@@ -72,6 +72,8 @@ func projectContinuationRequiredActions(
 
 // projectTrackerLaneOutcomes combines current stage evidence into per-tracker outcomes.
 // A terminal accepted in-client match clears actions retained by earlier stages.
+// Explicit image-host skip suppresses known hosting failures in successful media;
+// unknown external outcomes still contribute failure evidence.
 func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome {
 	if current.Projections == nil {
 		return nil

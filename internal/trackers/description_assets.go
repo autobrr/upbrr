@@ -304,6 +304,9 @@ func resolveDescriptionAssets(
 
 var sourceAudioBlockPattern = regexp.MustCompile(`(?is)\[spoiler=source_audio\].*?\[/spoiler\]`)
 
+// exactAudioDescriptionBlock renders exact hosted graphs and textual statistics
+// for one tracker. Missing graph variants are errors unless hosting was explicitly
+// skipped, in which case compatible graphs and statistics are still rendered.
 func exactAudioDescriptionBlock(tracker string, exact *api.ExactMediaAssets) (string, error) {
 	if exact == nil || len(exact.AudioTracks) == 0 {
 		return "", nil

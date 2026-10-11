@@ -93,10 +93,12 @@ type WorkflowIntent struct {
 	HDRAnalysis             *HDRAnalysisRequest            `json:"hdrAnalysis,omitempty"`
 	Media                   *MediaCaptureInstructions      `json:"media,omitempty"`
 	MediaSelection          *WorkflowMediaSelection        `json:"mediaSelection,omitempty"`
-	SkipImageHostUpload     bool                           `json:"skipImageHostUpload,omitempty"`
-	Descriptions            *DescriptionInstructions       `json:"descriptions,omitempty"`
-	UploadTrackerIDs        []TrackerID                    `json:"uploadTrackerIds,omitempty"`
-	NoSeed                  bool                           `json:"noSeed,omitempty"`
+	// SkipImageHostUpload suppresses new image-host uploads after local capture.
+	// Compatible cached images remain reusable in descriptions; false enables hosting.
+	SkipImageHostUpload bool                     `json:"skipImageHostUpload,omitempty"`
+	Descriptions        *DescriptionInstructions `json:"descriptions,omitempty"`
+	UploadTrackerIDs    []TrackerID              `json:"uploadTrackerIds,omitempty"`
+	NoSeed              bool                     `json:"noSeed,omitempty"`
 }
 
 // WorkflowMediaSelection distinguishes default-all selection from an explicit exact selection.

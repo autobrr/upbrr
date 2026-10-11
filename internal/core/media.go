@@ -677,6 +677,9 @@ func appendUniqueNormalizedTracker(trackersList []string, tracker string) []stri
 	return append(trackersList, name)
 }
 
+// uploadImagesToTarget reuses compatible retained or persisted links before
+// uploading missing images. Exact-media skip returns the reusable subset without
+// uploading; analysis reuse also requires matching purpose and host account.
 func (m *mediaModule) uploadImagesToTarget(
 	ctx context.Context,
 	meta api.UploadSubject,

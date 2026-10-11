@@ -642,6 +642,9 @@ func (p *RetainedUploadPlan) Release() error {
 	return errors.Join(errs...)
 }
 
+// preparationInput applies tracker group policy and description language facts.
+// It exposes image uploading only when a host and service are available and the
+// exact media snapshot has not opted out of hosting.
 func (s *Service) preparationInput(
 	ctx context.Context,
 	intent PreparationIntent,

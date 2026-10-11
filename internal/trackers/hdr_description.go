@@ -13,6 +13,9 @@ import (
 
 var sourceHDRBlockPattern = regexp.MustCompile(`(?is)\[spoiler=source_hdr\].*?\[/spoiler\]`)
 
+// exactHDRDescriptionBlock renders HDR plots from the tracker's selected host.
+// Explicit skip omits unavailable plots and returns an empty block when none are
+// reusable; normal hosting requires a matching HDR-purpose variant for every plot.
 func exactHDRDescriptionBlock(tracker string, exact *api.ExactMediaAssets) (string, error) {
 	if exact == nil || len(exact.HDRPlots) == 0 {
 		return "", nil

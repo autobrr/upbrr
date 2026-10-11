@@ -208,7 +208,7 @@ const (
 // AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
 	// ImageHostUploadSkipped preserves the workflow's explicit upload opt-out.
-	// Cached-link reuse must not fall back to uploading missing variants.
+	// Compatible cached links remain usable, but missing variants must not trigger uploads.
 	ImageHostUploadSkipped bool
 	HDRAnalysis            *HDRAnalysisRef
 	HDRPlots               []HDRDescriptionPlot
@@ -239,6 +239,7 @@ type AudioDescriptionTrack struct {
 }
 
 // Clone returns a detached exact-media bundle while preserving nil slices.
+// It retains the hosting opt-out and returns nil for a nil receiver.
 func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	if a == nil {
 		return nil

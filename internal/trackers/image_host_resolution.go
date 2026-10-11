@@ -200,6 +200,9 @@ func ensureDescriptionImageHostWithRegistry(
 	return ensureDescriptionImageHostWithDataAndRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, api.NopLogger{}, registry, nil)
 }
 
+// ensureDescriptionImageHostWithDataAndRegistry reuses policy-compatible images
+// or hosts missing variants. Exact-media skip keeps missing variants non-blocking
+// and prevents forced rehosting of source-only URLs or unhosted local images.
 func ensureDescriptionImageHostWithDataAndRegistry(
 	ctx context.Context,
 	tracker string,
@@ -611,6 +614,8 @@ func imageHostRequirementLabel(policy imageHostPolicy) string {
 	return "a configured image host"
 }
 
+// imageHostUploadSkipped accepts either the retained exact-media opt-out or the
+// operation's image-host override; an explicit false override cannot undo retained skip.
 func imageHostUploadSkipped(meta api.UploadSubject) bool {
 	return meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped ||
 		meta.ImageHostOverrides.SkipUpload != nil && *meta.ImageHostOverrides.SkipUpload

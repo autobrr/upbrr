@@ -801,6 +801,9 @@ func (m *Module) planContinuationCommand(
 	return planContinuationCommandWithReadiness(request, current, now, true, attemptRevision)
 }
 
+// planContinuationCommandWithReadiness chooses the next command or reports the
+// stage needing input. Goals after local capture prepare images for the requested
+// hosting mode before reusing downstream descriptions or upload reviews.
 func planContinuationCommandWithReadiness(
 	request api.ContinueReleaseWorkflowRequest,
 	current CommandResult,
@@ -1297,6 +1300,8 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 	return normalized
 }
 
+// continuationGoalReached checks retained results against the requested intent.
+// Goals after media capture also require preparation for the requested hosting mode.
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
 	if request.Intent.HDRAnalysis != nil && workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) {
 		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
@@ -1448,29 +1453,27 @@ func duplicateDecisionsComplete(dupes *api.DupeAssessment) bool {
 	})
 }
 
+// mediaRequirementsPreparedForIntent requires successful media preparation and
+// matching hosting mode. Requesting skip on prepared media with no selected local
+// images needs no new barrier; leaving skip mode still requires hosting preparation.
 func mediaRequirementsPreparedForIntent(media *api.MediaArtifactSet, skipImageHostUpload bool) bool {
-	if media == nil || !stageSucceeded(media.Status) {
+	if !mediaRequirementsPrepared(media) {
 		return false
 	}
-	if !media.ImageRequirementsPrepared {
-		return mediaRequirementsPrepared(media)
-	}
-	if media.ImageHostUploadSkipped == skipImageHostUpload {
-		return true
-	}
-	// Zero-image preparation has nothing to host; a skip-mode mismatch is a no-op.
-	if skipImageHostUpload && !mediaHasSelectedLocalImages(media) {
-		return true
-	}
-	return false
+	return !media.ImageRequirementsPrepared || media.ImageHostUploadSkipped == skipImageHostUpload ||
+		(skipImageHostUpload && !mediaHasSelectedLocalImages(media))
 }
 
+// mediaHasSelectedLocalImages reports whether selected screenshots or DVD menus
+// need image preparation; hosted variants do not count.
 func mediaHasSelectedLocalImages(media *api.MediaArtifactSet) bool {
 	return media != nil && slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
 		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
 	})
 }
 
+// mediaRequirementsPrepared accepts successful media with a completed hosting
+// barrier, including explicit skip, or with no selected local images to prepare.
 func mediaRequirementsPrepared(media *api.MediaArtifactSet) bool {
 	if media == nil || !stageSucceeded(media.Status) {
 		return false
