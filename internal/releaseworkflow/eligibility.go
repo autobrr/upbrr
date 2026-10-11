@@ -500,11 +500,19 @@ func TrackerImageHostFailure(media api.MediaArtifactSet, trackerID api.TrackerID
 		if failure.Failure.Operation != api.OperationKindImageHosting {
 			continue
 		}
+		if skippedTerminalImageHostFailure(media, failure) {
+			continue
+		}
 		if normalizeDownstreamTrackerID(failure.TrackerID) == trackerID {
 			return failure, true
 		}
 	}
 	return api.WorkflowFailure{}, false
+}
+
+func skippedTerminalImageHostFailure(media api.MediaArtifactSet, failure api.WorkflowFailure) bool {
+	return media.ImageHostUploadSkipped && failure.Failure.Operation == api.OperationKindImageHosting &&
+		failure.Failure.Code != api.OperationFailureUnknownOutcome
 }
 
 // DownstreamEligibleProjectionsAfterMedia removes trackers with terminal

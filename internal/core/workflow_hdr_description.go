@@ -86,6 +86,9 @@ func (b workflowDescriptionBuilder) uploadHDRDescriptionImages(ctx context.Conte
 		return nil
 	}
 	if b.media == nil {
+		if subject.ExactMedia.ImageHostUploadSkipped {
+			return nil
+		}
 		return errors.New("HDR image hosting is unavailable")
 	}
 	images := make([]api.ScreenshotImage, len(subject.ExactMedia.HDRPlots))
@@ -97,6 +100,9 @@ func (b workflowDescriptionBuilder) uploadHDRDescriptionImages(ctx context.Conte
 		return err
 	}
 	if len(targets) == 0 {
+		if subject.ExactMedia.ImageHostUploadSkipped {
+			return nil
+		}
 		return errors.New("no image host is available for HDR analysis")
 	}
 	result, err := b.media.uploadImagesToTargetsWithFallback(ctx, subject, "", nil, targets, images, nil, nil)
@@ -114,7 +120,7 @@ func (b workflowDescriptionBuilder) uploadHDRDescriptionImages(ctx context.Conte
 		}
 	}
 	for _, tracker := range trackerNames {
-		if hosts[strings.ToUpper(strings.TrimSpace(tracker))] == "" {
+		if hosts[strings.ToUpper(strings.TrimSpace(tracker))] == "" && !subject.ExactMedia.ImageHostUploadSkipped {
 			return fmt.Errorf("HDR analysis image host is unavailable for %s", tracker)
 		}
 	}

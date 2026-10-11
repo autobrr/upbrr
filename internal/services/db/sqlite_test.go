@@ -616,7 +616,9 @@ func TestSQLiteRepositoryHistoryCountsRuleDispositions(t *testing.T) {
 }
 
 func TestSQLiteRepositoryConcurrentDistinctPathWritesOnDisk(t *testing.T) {
-	t.Parallel()
+	// The four writers below already exercise concurrent SQLite handles. Keep
+	// this disk-heavy test separate from other tests so slow Windows CI flushes
+	// do not exhaust the bounded busy retries through unrelated disk contention.
 
 	repoPath := filepath.Join(t.TempDir(), "distinct-path-writes.db")
 	migratorRepo, err := OpenWithLogger(repoPath, nopLogger{})

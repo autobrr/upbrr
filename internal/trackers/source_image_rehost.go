@@ -41,7 +41,7 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 ) error {
 	logger := logging.FromContext(ctx, s.logger)
 
-	if assets == nil {
+	if assets == nil || meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped {
 		return nil
 	}
 	urls := sourceOnlyDescriptionImageURLs(assets.Description)

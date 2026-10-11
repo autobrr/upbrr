@@ -299,6 +299,9 @@ func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Con
 		return nil
 	}
 	if b.media == nil {
+		if subject.ExactMedia.ImageHostUploadSkipped {
+			return nil
+		}
 		return errors.New("image hosting service is unavailable")
 	}
 	targets, err := b.media.resolveImageUploadTargets(ctx, trackerNames, subject, "", nil)
@@ -306,6 +309,9 @@ func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Con
 		return err
 	}
 	if len(targets) == 0 {
+		if subject.ExactMedia.ImageHostUploadSkipped {
+			return nil
+		}
 		return errors.New("no image host is available for audio analysis")
 	}
 	result, err := b.media.uploadImagesToTargetsWithFallback(ctx, subject, "", nil, targets, images, nil, nil)
@@ -323,7 +329,7 @@ func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Con
 		}
 	}
 	for _, tracker := range trackerNames {
-		if hosts[strings.ToUpper(strings.TrimSpace(tracker))] == "" {
+		if hosts[strings.ToUpper(strings.TrimSpace(tracker))] == "" && !subject.ExactMedia.ImageHostUploadSkipped {
 			return fmt.Errorf("audio analysis image host is unavailable for %s", tracker)
 		}
 	}
@@ -400,8 +406,9 @@ func resolveWorkflowExactMedia(
 	slices.SortStableFunc(screenshots, compareLocalMediaOrder)
 	slices.SortStableFunc(menus, compareLocalMediaOrder)
 	exact := &api.ExactMediaAssets{
-		Screenshots: make([]api.ScreenshotImage, 0, len(screenshots)),
-		DVDMenus:    make([]api.DVDMenuCaptureImage, 0, len(menus)),
+		ImageHostUploadSkipped: media.ImageHostUploadSkipped,
+		Screenshots:            make([]api.ScreenshotImage, 0, len(screenshots)),
+		DVDMenus:               make([]api.DVDMenuCaptureImage, 0, len(menus)),
 	}
 	for _, item := range screenshots {
 		image := item.screenshot

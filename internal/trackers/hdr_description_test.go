@@ -12,6 +12,63 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestExplicitImageHostSkipKeepsCachedAnalysisImagesAndAudioStats(t *testing.T) {
+	for _, cachedFor := range []string{"", "HHD", "OTHER"} {
+		t.Run("cachedFor="+cachedFor, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			audioPath, hdrPath := filepath.Join(root, "audio.png"), filepath.Join(root, "hdr.png")
+			exact := &api.ExactMediaAssets{
+				ImageHostUploadSkipped: true,
+				AudioAnalysis:          &api.AudioAnalysisRef{ID: "audio", Revision: 1},
+				AudioTracks: []api.AudioDescriptionTrack{{
+					Ordinal: 1,
+					Stats:   "Peak -1 dB",
+					Images:  []api.ScreenshotImage{{Path: audioPath, Purpose: api.ScreenshotPurposeAudioAnalysis}},
+				}},
+				HDRAnalysis: &api.HDRAnalysisRef{ID: "hdr", Revision: 1},
+				HDRPlots: []api.HDRDescriptionPlot{{
+					TargetID: api.HDRTargetID("source", ""),
+					Label:    "Video 1",
+					Image: api.ScreenshotImage{
+						Path:    hdrPath,
+						Purpose: api.ScreenshotPurposeHDRAnalysis,
+						Width:   api.HDRAnalysisWidth,
+						Height:  api.HDRAnalysisHeight,
+					},
+				}},
+			}
+			if cachedFor != "" {
+				exact.AudioUploads = []api.UploadedImageLink{{
+					ImagePath: audioPath,
+					Host:      "imgbb",
+					RawURL:    "https://images.example.invalid/audio.png",
+					Purpose:   api.ScreenshotPurposeAudioAnalysis,
+				}}
+				exact.AudioUploadHosts = map[string]string{cachedFor: "imgbb"}
+				exact.HDRUploads = []api.UploadedImageLink{{
+					ImagePath: hdrPath,
+					Host:      "imgbb",
+					RawURL:    "https://images.example.invalid/hdr.png",
+					Purpose:   api.ScreenshotPurposeHDRAnalysis,
+				}}
+				exact.HDRUploadHosts = map[string]string{cachedFor: "imgbb"}
+			}
+			cached := cachedFor == "HHD"
+			assets, err := ResolveDescriptionAssets(t.Context(), "HHD", api.UploadSubject{
+				SourcePath: filepath.Join(root, "Example.mkv"), ExactMedia: exact,
+			}, &stubRepo{}, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+			if err != nil || !strings.Contains(assets.Description, "Peak -1 dB") ||
+				strings.Contains(assets.Description, "[img]") != cached {
+				t.Fatalf("skipped analysis description=%+v err=%v", assets, err)
+			}
+			if cached && (!strings.Contains(assets.Description, "/audio.png") || !strings.Contains(assets.Description, "/hdr.png")) {
+				t.Fatalf("skip lost cached analysis images: %+v", assets)
+			}
+		})
+	}
+}
+
 func TestHDRPreparedDescriptionCarriesFullSizePreviewAuthority(t *testing.T) {
 	const full = "https://images.example.invalid/full.png"
 	for _, preview := range []string{"https://images.example.invalid/preview.png", full, ""} {

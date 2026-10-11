@@ -159,7 +159,10 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 				advanceLane(&lanes[laneIndex], api.WorkflowGoalMediaReady)
 			}
 		}
-		applyTrackerFailures(lanes, index, current.Media.Failures)
+		failures := slices.DeleteFunc(slices.Clone(current.Media.Failures), func(failure api.WorkflowFailure) bool {
+			return skippedTerminalImageHostFailure(*current.Media, failure)
+		})
+		applyTrackerFailures(lanes, index, failures)
 	}
 
 	if current.Descriptions != nil {

@@ -207,18 +207,21 @@ const (
 // their hosted variants. Audio tracks, uploads, and host choices require an
 // AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
-	HDRAnalysis       *HDRAnalysisRef
-	HDRPlots          []HDRDescriptionPlot
-	HDRUploads        []UploadedImageLink
-	HDRUploadHosts    map[string]string
-	Screenshots       []ScreenshotImage
-	DVDMenus          []DVDMenuCaptureImage
-	ScreenshotUploads []UploadedImageLink
-	DVDMenuUploads    []UploadedImageLink
-	AudioAnalysis     *AudioAnalysisRef
-	AudioTracks       []AudioDescriptionTrack
-	AudioUploads      []UploadedImageLink
-	AudioUploadHosts  map[string]string
+	// ImageHostUploadSkipped preserves the workflow's explicit upload opt-out.
+	// Cached-link reuse must not fall back to uploading missing variants.
+	ImageHostUploadSkipped bool
+	HDRAnalysis            *HDRAnalysisRef
+	HDRPlots               []HDRDescriptionPlot
+	HDRUploads             []UploadedImageLink
+	HDRUploadHosts         map[string]string
+	Screenshots            []ScreenshotImage
+	DVDMenus               []DVDMenuCaptureImage
+	ScreenshotUploads      []UploadedImageLink
+	DVDMenuUploads         []UploadedImageLink
+	AudioAnalysis          *AudioAnalysisRef
+	AudioTracks            []AudioDescriptionTrack
+	AudioUploads           []UploadedImageLink
+	AudioUploadHosts       map[string]string
 }
 
 type HDRDescriptionPlot struct {
@@ -241,16 +244,17 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		return nil
 	}
 	cloned := &ExactMediaAssets{
-		HDRPlots:          cloneOptionalSlice(a.HDRPlots),
-		HDRUploads:        cloneOptionalSlice(a.HDRUploads),
-		HDRUploadHosts:    maps.Clone(a.HDRUploadHosts),
-		Screenshots:       cloneOptionalSlice(a.Screenshots),
-		DVDMenus:          cloneOptionalSlice(a.DVDMenus),
-		ScreenshotUploads: cloneOptionalSlice(a.ScreenshotUploads),
-		DVDMenuUploads:    cloneOptionalSlice(a.DVDMenuUploads),
-		AudioTracks:       cloneOptionalSlice(a.AudioTracks),
-		AudioUploads:      cloneOptionalSlice(a.AudioUploads),
-		AudioUploadHosts:  maps.Clone(a.AudioUploadHosts),
+		ImageHostUploadSkipped: a.ImageHostUploadSkipped,
+		HDRPlots:               cloneOptionalSlice(a.HDRPlots),
+		HDRUploads:             cloneOptionalSlice(a.HDRUploads),
+		HDRUploadHosts:         maps.Clone(a.HDRUploadHosts),
+		Screenshots:            cloneOptionalSlice(a.Screenshots),
+		DVDMenus:               cloneOptionalSlice(a.DVDMenus),
+		ScreenshotUploads:      cloneOptionalSlice(a.ScreenshotUploads),
+		DVDMenuUploads:         cloneOptionalSlice(a.DVDMenuUploads),
+		AudioTracks:            cloneOptionalSlice(a.AudioTracks),
+		AudioUploads:           cloneOptionalSlice(a.AudioUploads),
+		AudioUploadHosts:       maps.Clone(a.AudioUploadHosts),
 	}
 	if a.HDRAnalysis != nil {
 		ref := *a.HDRAnalysis

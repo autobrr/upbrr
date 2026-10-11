@@ -737,7 +737,7 @@ func (m *mediaModule) uploadImagesToTarget(
 		return image.Purpose.IsAnalysis()
 	})
 	progressCtx = api.WithImageUploadProgressTarget(ctx, progressTarget)
-	if len(missing) == 0 {
+	if len(missing) == 0 || (meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped) {
 		m.logger.Tracef(
 			"core: reusing uploaded images host=%s tracker=%s scope=%s trackers=%v count=%d",
 			target.Host,

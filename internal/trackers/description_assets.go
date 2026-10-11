@@ -311,22 +311,31 @@ func exactAudioDescriptionBlock(tracker string, exact *api.ExactMediaAssets) (st
 	images := make([]string, 0)
 	stats := make([]string, 0)
 	selectedHost := strings.TrimSpace(exact.AudioUploadHosts[strings.ToUpper(strings.TrimSpace(tracker))])
-	if len(exact.AudioUploadHosts) > 0 && selectedHost == "" {
+	hostUnavailable := len(exact.AudioUploadHosts) > 0 && selectedHost == ""
+	if hostUnavailable && !exact.ImageHostUploadSkipped {
 		return "", fmt.Errorf("trackers: hosted audio analysis image is unavailable for %s", tracker)
 	}
 	for _, track := range exact.AudioTracks {
 		label := fmt.Sprintf("Audio track %d", track.Ordinal)
-		if len(track.Images) > 0 {
-			images = append(images, "[b]"+label+"[/b]")
-		}
+		labeled := false
 		for _, image := range track.Images {
+			if hostUnavailable {
+				continue
+			}
 			upload, ok := exactUploadedVariant(tracker, image.Path, exact.AudioUploads, selectedHost)
 			graphURL := strings.TrimSpace(upload.RawURL)
 			if graphURL == "" {
 				graphURL = strings.TrimSpace(upload.ImgURL)
 			}
 			if !ok || graphURL == "" {
+				if exact.ImageHostUploadSkipped {
+					continue
+				}
 				return "", fmt.Errorf("trackers: hosted audio analysis image is unavailable for %s", tracker)
+			}
+			if !labeled {
+				images = append(images, "[b]"+label+"[/b]")
+				labeled = true
 			}
 			images = append(images, "[img]"+graphURL+"[/img]")
 		}

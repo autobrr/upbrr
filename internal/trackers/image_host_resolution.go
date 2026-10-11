@@ -262,7 +262,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			needsLocalRehost = true
 		}
 	}
-	if (sourceOnlySlots || needsLocalRehost) && meta.ExactMedia != nil {
+	if (sourceOnlySlots || needsLocalRehost) && meta.ExactMedia != nil && !meta.ExactMedia.ImageHostUploadSkipped {
 		skipUpload = false
 	}
 	persistSlots := screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry)
@@ -338,7 +338,8 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			tracker,
 			imageHostRequirementLabel(policy),
 		)
-		return descriptionImageHostResolution{feedback: feedback, blocking: sourceOnlySlots || needsLocalRehost}, nil
+		blocking := (sourceOnlySlots || needsLocalRehost) && (meta.ExactMedia == nil || !meta.ExactMedia.ImageHostUploadSkipped)
+		return descriptionImageHostResolution{feedback: feedback, blocking: blocking}, nil
 	}
 
 	sourceImages := slotSourceImagesForRehost(slots)
@@ -611,7 +612,8 @@ func imageHostRequirementLabel(policy imageHostPolicy) string {
 }
 
 func imageHostUploadSkipped(meta api.UploadSubject) bool {
-	return meta.ImageHostOverrides.SkipUpload != nil && *meta.ImageHostOverrides.SkipUpload
+	return meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped ||
+		meta.ImageHostOverrides.SkipUpload != nil && *meta.ImageHostOverrides.SkipUpload
 }
 
 func screenshotSlotsForImageHostResolution(

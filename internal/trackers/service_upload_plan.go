@@ -673,7 +673,7 @@ func (s *Service) preparationInput(
 		return input
 	}
 	input.SelectedImageHost = strings.ToLower(strings.TrimSpace(selectedHost))
-	if s.images != nil && input.SelectedImageHost != "" {
+	if s.images != nil && input.SelectedImageHost != "" && (meta.ExactMedia == nil || !meta.ExactMedia.ImageHostUploadSkipped) {
 		host := input.SelectedImageHost
 		input.UploadImages = func(ctx context.Context, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			return s.images.Upload(ctx, imageHostingSubject(meta), host, usageScopeForHost(s.registry, host), append([]api.ScreenshotImage(nil), images...))

@@ -5763,6 +5763,11 @@ func (m *Module) captureMedia(
 		return CommandResult{}, fmt.Errorf("%w: invalid media capture purpose", ErrInvalidTransition)
 	}
 	workflow := state.Workflow
+	if slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
+	}) {
+		return CommandResult{}, fmt.Errorf("%w: reconcile the pending external effect before capturing media", ErrInvalidTransition)
+	}
 	if workflow.Release == nil || workflow.TrackerProjections == nil || workflow.Dupes == nil {
 		return CommandResult{}, fmt.Errorf("%w: media dependencies are incomplete", ErrInvalidTransition)
 	}
@@ -5828,10 +5833,10 @@ func (m *Module) captureMedia(
 	// Stale prep flags from priorMedia would skip UploadMediaImages / MediaSelection.
 	// Fresh builds keep any ImageRequirementsPrepared set by the builder.
 	if priorMedia != nil {
-		snapshot.ImageHostUploadSkipped = false
-		if snapshot.RequirementsFingerprint != requirementsFingerprint {
+		if snapshot.ImageHostUploadSkipped || snapshot.RequirementsFingerprint != requirementsFingerprint {
 			snapshot.ImageRequirementsPrepared = false
 		}
+		snapshot.ImageHostUploadSkipped = false
 	}
 	if snapshot.RequirementsFingerprint != requirementsFingerprint {
 		return CommandResult{}, errors.New("release workflow build media artifacts: requirements fingerprint mismatch")

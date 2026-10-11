@@ -61,6 +61,8 @@ func TestWorkflowMediaIncrementalCapturePreservesGeneratedArtifacts(t *testing.T
 			}
 			first.Artifacts[0].Selected = false
 			first.Artifacts[0].Order = 7
+			first.ImageRequirementsPrepared = true
+			first.ImageHostUploadSkipped = true
 			retained, ok := private.(workflowMediaPrivateArtifacts)
 			if !ok {
 				t.Fatalf("retained resource = %T", private)
@@ -78,6 +80,9 @@ func TestWorkflowMediaIncrementalCapturePreservesGeneratedArtifacts(t *testing.T
 			}
 			if !reflect.DeepEqual(first.Artifacts, second.Artifacts[:len(first.Artifacts)]) {
 				t.Fatal("existing artifact identity, selection, or ordering changed")
+			}
+			if !second.ImageRequirementsPrepared || !second.ImageHostUploadSkipped {
+				t.Fatal("incremental producer lost preparation state before workflow invalidation")
 			}
 			retained, ok = secondPrivate.(workflowMediaPrivateArtifacts)
 			if !ok {
@@ -108,6 +113,9 @@ func TestWorkflowMediaIncrementalCapturePreservesGeneratedArtifacts(t *testing.T
 			}
 			if !reflect.DeepEqual(third.Artifacts, repeated.Artifacts) || len(screenshots.selections) != 4 {
 				t.Fatal("repeated capture was not a no-op")
+			}
+			if !repeated.ImageRequirementsPrepared || !repeated.ImageHostUploadSkipped {
+				t.Fatal("no-op producer lost preparation state before workflow invalidation")
 			}
 			plan.Discs = append(plan.Discs, api.ScreenshotDiscPlan{DiscID: "other"})
 			manual.Selections[0].DiscID = "other"
