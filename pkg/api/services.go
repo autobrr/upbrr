@@ -586,8 +586,7 @@ type SeasonEpisodeFacts struct {
 	Episodes []int
 }
 
-// PackageFacts contains source-layout facts derived without filesystem I/O.
-// Status remains partial until the caller supplies a complete all-file list.
+// PackageFacts contains source-layout facts derived from the prepared source file list.
 type PackageFacts struct {
 	Status                    MetadataEvidenceStatus
 	KnownFileCount            int
@@ -1024,7 +1023,7 @@ func deriveValidationPackageFacts(sourcePath string, fileList []string) PackageF
 	if facts.KnownFileCount == 0 {
 		return facts
 	}
-	facts.Status = MetadataEvidenceStatusPartial
+	facts.Status = MetadataEvidenceStatusComplete
 	facts.SingleFileFolder = facts.KnownFileCount == 1 && folderCandidate
 	facts.Extensions = make([]string, 0, len(extensions))
 	for extension := range extensions {

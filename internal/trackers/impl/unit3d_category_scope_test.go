@@ -149,6 +149,9 @@ func TestUnit3DCategorySearchIncludesUploadAndRelatedCategories(t *testing.T) {
 				// Synthetic Prepare subjects only derive Partial language status. SAM's
 				// fail-closed language policy requires original-language evidence; use
 				// Portuguese so non-pt Complete-status rules are out of scope here.
+				meta.Identity.SourcePath = meta.SourcePath
+				meta.ProviderMetadata.SourcePath = meta.SourcePath
+				meta.ProviderMetadata.TVDB = &api.TVDBMetadata{Status: "Ended"}
 				if meta.ProviderMetadata.TMDB == nil {
 					meta.ProviderMetadata.TMDB = &api.TMDBMetadata{}
 				}
@@ -249,6 +252,7 @@ func unit3DCategoryScopeSubject(t *testing.T, category api.CanonicalCategory) ap
 	}
 	return api.UploadSubject{
 		SourcePath:        filepath.Join(tempDir, "Example.Release.2026.1080p.WEB-DL.H264-GRP.mkv"),
+		FileList:          []string{filepath.Join(tempDir, "Example.Release.S01E02.2026.1080p.WEB-DL.H264-GRP.mkv")},
 		ReleaseName:       "Example.Release.2026.1080p.WEB-DL.H264-GRP",
 		MediaInfoTextPath: mediaInfoPath,
 		TorrentPath:       torrentPath,
