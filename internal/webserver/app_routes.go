@@ -192,18 +192,23 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		policy, err := s.webBrowsePolicy(current)
+		status := http.StatusBadRequest
+		value, err := s.browseRequests.run(r.Context(), func() (api.BrowseDirectoryResponse, error) {
+			policy, err := s.webBrowsePolicy(current)
+			if err != nil {
+				return api.BrowseDirectoryResponse{}, err
+			}
+			if !policy.AllowUnrestricted && len(policy.Roots) == 0 {
+				status = http.StatusForbidden
+				return api.BrowseDirectoryResponse{}, errors.New("web browse root is not configured")
+			}
+			return s.backend.BrowseDirectoryWithinRoots(r.Context(), req, policy.Roots)
+		})
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if !policy.AllowUnrestricted && len(policy.Roots) == 0 {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "web browse root is not configured"})
-			return
-		}
-		value, err := s.backend.BrowseDirectoryWithinRoots(r.Context(), req, policy.Roots)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			if errors.Is(err, errBrowseBusy) {
+				status = http.StatusServiceUnavailable
+			}
+			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, value)

@@ -3,7 +3,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setAppRequestHandlerForTests } from "../../api/client";
+import { initializeWebClient, setAppRequestHandlerForTests } from "../../api/client";
 import type {
   BrowseDirectoryEntry,
   BrowseDirectoryRequest,
@@ -69,6 +69,127 @@ describe("HostBrowserDialog", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("times out a stalled listing and manually retries the exact path without accepting a late reply", async () => {
+    const pending = deferred();
+    let calls = 0;
+    const list = installBrowser(async (request) =>
+      ++calls === 1
+        ? pending.promise
+        : response([entry("Current")], { scope: "directory", currentPath: request.path }),
+    );
+    render(
+      <HostBrowserDialog mode="folder" initialPath="/media" onClose={vi.fn()} onSelect={vi.fn()} />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(14_999));
+    expect(screen.getByRole("status")).toHaveTextContent("Loading host paths");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(list.mock.calls[0][1]?.aborted).toBe(true);
+    expect(screen.getByRole("alert")).toHaveTextContent("timed out after 15 seconds");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(list).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flush();
+    expect(list).toHaveBeenLastCalledWith(
+      { path: "/media", mode: "folder", scope: "directory" },
+      expect.any(AbortSignal),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("[DIR] Current")).toBeVisible();
+    await act(async () => pending.resolve(response([entry("Obsolete")])));
+    expect(screen.queryByText("[DIR] Obsolete")).not.toBeInTheDocument();
+  });
+
+  it("retries a timed-out roots query only on request and ignores its late result", async () => {
+    const pending = deferred();
+    const list = installBrowser(async (request) => (request.query ? pending.promise : roots));
+    render(<HostBrowserDialog mode="file" initialPath="" onClose={vi.fn()} onSelect={vi.fn()} />);
+    await flush();
+    search("Beacon Voyage");
+    await advanceSearch();
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(screen.getByRole("alert")).toHaveTextContent("timed out after 15 seconds");
+    await act(async () => pending.resolve(response([entry("Obsolete")])));
+    expect(screen.queryByText("[DIR] Obsolete")).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(list).toHaveBeenCalledTimes(2);
+    list.mockResolvedValueOnce(response([entry("Beacon.Voyage.mkv", undefined, false)]));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flush();
+    expect(list).toHaveBeenLastCalledWith(
+      { path: "", mode: "file", scope: "roots", query: "Beacon Voyage" },
+      expect.any(AbortSignal),
+    );
+    expect(screen.getByText("Beacon.Voyage.mkv")).toBeVisible();
+  });
+
+  it.each(["response body", "auth refresh", "auth retry"])(
+    "keeps one deadline across a delayed %s",
+    async (stage) => {
+      setAppRequestHandlerForTests(null);
+      initializeWebClient("csrf-token", false);
+      const signals: AbortSignal[] = [];
+      let calls = 0;
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        calls += 1;
+        signals.push(init?.signal as AbortSignal);
+        if (calls === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 8_000));
+          if (stage === "response body") {
+            const result = new Response();
+            vi.spyOn(result, "text").mockImplementation(() => new Promise(() => {}));
+            return result;
+          }
+          return new Response('{"error":"csrf validation failed"}', { status: 403 });
+        }
+        if (stage === "auth retry" && calls === 2) {
+          await new Promise((resolve) => setTimeout(resolve, 4_000));
+          return new Response('{"authenticated":true,"csrfToken":"csrf-token"}');
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(
+        <HostBrowserDialog mode="folder" initialPath="" onClose={vi.fn()} onSelect={vi.fn()} />,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(14_999));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(screen.getByRole("alert")).toHaveTextContent("timed out after 15 seconds");
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(signals).toHaveLength(
+        stage === "response body" ? 1 : stage === "auth refresh" ? 2 : 3,
+      );
+      expect(signals.every((signal) => signal === signals[0] && signal.aborted)).toBe(true);
+    },
+  );
+
+  it("cleans up deadlines on success, supersession, and close", async () => {
+    const list = installBrowser(async () => roots);
+    render(<HostBrowserDialog mode="folder" initialPath="" onClose={vi.fn()} onSelect={vi.fn()} />);
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(list.mock.calls[0][1]?.aborted).toBe(false);
+    list.mockImplementation(() => new Promise(() => {}));
+    search("old");
+    await advanceSearch();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    search("new");
+    await advanceSearch();
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(list.mock.calls[2][1]?.aborted).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(list.mock.calls[2][1]?.aborted).toBe(true);
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each(["", "   "])(

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -93,8 +94,15 @@ func TestBrowseRootsSearchScopesAndSelection(t *testing.T) {
 		}
 	}
 	fallback, err := browsePathsWithinRoots(t.Context(), api.BrowseDirectoryRequest{Scope: "directory", Mode: "file"}, first, nil)
-	if err != nil || fallback.CurrentPath == "" {
+	if err != nil {
 		t.Fatalf("unrestricted fallback: %#v, %v", fallback, err)
+	}
+	if runtime.GOOS == "windows" {
+		if fallback.Scope != "roots" || fallback.CurrentPath != "" || len(fallback.Entries) == 0 {
+			t.Fatalf("unrestricted drive roots: %#v", fallback)
+		}
+	} else if fallback.Scope != "directory" || fallback.CurrentPath != first {
+		t.Fatalf("unrestricted fallback directory: %#v", fallback)
 	}
 	legacy, err := browsePathsWithinRoots(t.Context(), api.BrowseDirectoryRequest{Mode: "file"}, "", []string{first})
 	if err != nil || legacy.Scope != "directory" || legacy.CurrentPath == "" {

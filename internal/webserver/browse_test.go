@@ -386,4 +386,13 @@ func TestBrowseDirectoryRouteSearchesOnlyAuthorizedRoots(t *testing.T) {
 	if recorder.Code == http.StatusOK {
 		t.Fatal("canceled search returned success")
 	}
+
+	server.browseRequests.active.Store(2)
+	req = newBrowseRequest()
+	req.Body = io.NopCloser(strings.NewReader(`{"scope":"roots","query":"Voyage","mode":"file"}`))
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "host browser is busy") {
+		t.Fatalf("busy search must be retryable, got %d: %s", recorder.Code, recorder.Body.String())
+	}
 }

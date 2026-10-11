@@ -85,11 +85,15 @@ const setPathCaseSensitivity = (caseInsensitive: unknown) => {
   if (typeof caseInsensitive === "boolean") caseInsensitivePaths = caseInsensitive;
 };
 
-const refreshAuthState = async () => {
+const refreshAuthState = async (signal?: AbortSignal | null) => {
+  signal?.throwIfAborted();
   if (notifiedSessionLoss === "changed") throw new SessionChangedError(sessionChangedMessage);
   if (notifiedSessionLoss === "lost" || !csrfToken) return false;
   const expectedCSRFToken = csrfToken;
-  const response = await fetch(withBasePath("/api/auth/status"), { credentials: "include" });
+  const response = await fetch(withBasePath("/api/auth/status"), {
+    credentials: "include",
+    signal,
+  });
   const payload = await parseJSONResponse<
     Record<string, unknown> & {
       authenticated?: boolean;
@@ -97,6 +101,7 @@ const refreshAuthState = async () => {
       caseInsensitivePaths?: boolean;
     }
   >(response);
+  signal?.throwIfAborted();
   if (!response.ok) {
     throw new Error(`Authentication status refresh failed (${response.status}).`);
   }
@@ -236,15 +241,21 @@ const dispatchEventBlock = (block: string) => {
 };
 
 const requestJSON = async <T>(path: string, requestInit: () => RequestInit): Promise<T> => {
-  let response = await fetch(withBasePath(path), requestInit());
+  const initialRequest = requestInit();
+  const signal = initialRequest.signal;
+  signal?.throwIfAborted();
+  let response = await fetch(withBasePath(path), initialRequest);
   let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
     response,
   );
+  signal?.throwIfAborted();
   if (!response.ok && isAuthFailureStatus(response.status)) {
     let refreshed = false;
     try {
-      refreshed = await refreshAuthState();
+      refreshed = await refreshAuthState(signal);
+      signal?.throwIfAborted();
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof SessionChangedError && path.startsWith("/api/app/")) {
         notifySessionLoss("changed");
       }
@@ -259,6 +270,7 @@ const requestJSON = async <T>(path: string, requestInit: () => RequestInit): Pro
       notifySessionLoss("lost");
     }
   }
+  signal?.throwIfAborted();
   if (!response.ok) {
     if (payload?.failure) throw new OperationFailureError(payload.failure);
     throw new Error(String(payload?.error || response.statusText || "Request failed"));
@@ -365,7 +377,7 @@ export const subscribeWebEventConnection = (callback: EventConnectionCallback) =
   };
 };
 
-/** Sends one typed application operation to the WebUI server. */
+/** Sends one typed application operation; caller cancellation also covers auth refresh and retry. */
 export const requestApp = <T>(
   method: string,
   body?: unknown,

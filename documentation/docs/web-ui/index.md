@@ -159,7 +159,9 @@ Inside a folder, **Filter this directory** searches only the entries already lis
 
 Choose **Open** to enter a folder or **Select** to apply that exact path to Input. File browsing continues to show only recognized video files alongside folders. **Clear search** restores the root listing or removes the current directory filter; opening another folder also clears the search.
 
-Root searches are bounded to keep browsing responsive. If the results are marked incomplete, use a narrower query or open a root and browse directly. Unreadable directories can also leave results incomplete. Typing another query, navigating, or closing the browser cancels the previous request.
+Root searches return at most 200 matches and inspect at most 20,000 entries. They check a two-second search budget between filesystem calls; a slow or unavailable filesystem can keep a call blocked longer. If the results are marked incomplete, use a narrower query or open a root and browse directly. Unreadable directories can also leave results incomplete.
+
+Typing another query, navigating, or closing the browser cancels the previous request, and late replies cannot replace newer results. Each browser request has a 15-second timeout that includes network time and any authentication refresh. A timeout or busy message offers **Retry**; requests are not automatically repeated after network failures. The server allows at most two host-browser operations at once and keeps an operation's slot until its filesystem work actually returns, even after cancellation.
 
 The host browser lists only configured roots unless unrestricted browsing was explicitly enabled. If a valid folder is missing:
 

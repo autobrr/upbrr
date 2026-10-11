@@ -11,6 +11,16 @@ const jsonResponse = (payload: unknown, init?: ResponseInit) =>
     ...init,
   });
 
+const delayedResponseBody = (init?: ResponseInit) => {
+  const response = new Response(null, init);
+  let resolve!: (text: string) => void;
+  const text = new Promise<string>((done) => {
+    resolve = done;
+  });
+  vi.spyOn(response, "text").mockReturnValue(text);
+  return { response, resolve: (payload: unknown) => resolve(JSON.stringify(payload)) };
+};
+
 const eventStreamResponse = (payload: unknown, onCancel?: () => void) => {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -305,6 +315,7 @@ describe("web client", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/auth/status", {
       credentials: "include",
+      signal: undefined,
     });
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
@@ -358,6 +369,130 @@ describe("web client", () => {
         }),
       );
     }
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not start an already-canceled request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { requestAppGet } = await import("./client");
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(requestAppGet("GetConfig", { signal: controller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh auth after cancellation while reading an error response", async () => {
+    const delayed = delayedResponseBody({ status: 403 });
+    const fetchMock = vi.fn().mockResolvedValue(delayed.response);
+    vi.stubGlobal("fetch", fetchMock);
+    const { initializeWebClient, requestAppGet, subscribeWebSessionLoss } =
+      await import("./client");
+    initializeWebClient("csrf-token", false);
+    const onSessionLoss = vi.fn();
+    const unsubscribe = subscribeWebSessionLoss(onSessionLoss);
+    const controller = new AbortController();
+    const request = requestAppGet("GetConfig", { signal: controller.signal });
+    await vi.waitFor(() => expect(delayed.response.text).toHaveBeenCalled());
+    const rejected = expect(request).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    delayed.resolve({ error: "csrf validation failed" });
+    await rejected;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onSessionLoss).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it("cancels stalled auth refresh without retrying or notifying session loss", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+      .mockImplementationOnce(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+              once: true,
+            });
+          }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { initializeWebClient, subscribeWebSessionLoss } = await import("./client");
+    const { hostBrowser } = await import("./app");
+    initializeWebClient("csrf-token", false);
+    const onSessionLoss = vi.fn();
+    const unsubscribe = subscribeWebSessionLoss(onSessionLoss);
+    const controller = new AbortController();
+    const request = hostBrowser.list(
+      { path: "", mode: "folder", scope: "roots" },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/auth/status", {
+      credentials: "include",
+      signal: controller.signal,
+    });
+    const rejected = expect(request).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onSessionLoss).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it.each([
+    { authenticated: false },
+    { authenticated: true, csrfToken: "other-session" },
+    { authenticated: true, csrfToken: "csrf-token", caseInsensitivePaths: true },
+  ])("ignores auth status body %j received after cancellation", async (payload) => {
+    const delayed = delayedResponseBody();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+      .mockResolvedValueOnce(delayed.response)
+      .mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      initializeWebClient,
+      requestAppGet,
+      subscribeWebSessionLoss,
+      isHostPathCaseInsensitive,
+    } = await import("./client");
+    initializeWebClient("csrf-token", false);
+    const onSessionLoss = vi.fn();
+    const unsubscribe = subscribeWebSessionLoss(onSessionLoss);
+    const controller = new AbortController();
+    const request = requestAppGet("GetConfig", { signal: controller.signal });
+    await vi.waitFor(() => expect(delayed.response.text).toHaveBeenCalled());
+    const rejected = expect(request).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    delayed.resolve(payload);
+    await rejected;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onSessionLoss).not.toHaveBeenCalled();
+    expect(isHostPathCaseInsensitive()).toBe(false);
+    unsubscribe();
+  });
+
+  it("rejects a late auth-retry response body after cancellation", async () => {
+    const delayed = delayedResponseBody();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, csrfToken: "csrf-token" }))
+      .mockResolvedValueOnce(delayed.response);
+    vi.stubGlobal("fetch", fetchMock);
+    const { initializeWebClient, requestAppGet } = await import("./client");
+    initializeWebClient("csrf-token", false);
+    const controller = new AbortController();
+    const request = requestAppGet("GetConfig", { signal: controller.signal });
+    await vi.waitFor(() => expect(delayed.response.text).toHaveBeenCalled());
+    const rejected = expect(request).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    delayed.resolve({ ok: true });
+    await rejected;
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 

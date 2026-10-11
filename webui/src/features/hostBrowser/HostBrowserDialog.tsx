@@ -24,6 +24,7 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
   const [scope, setScope] = useState<"roots" | "directory">("roots");
   const requestRevision = useRef(0);
   const requestController = useRef<AbortController | null>(null);
+  const lastRequest = useRef<BrowseDirectoryRequest | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancelPending = useCallback(() => {
@@ -39,6 +40,21 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
       const revision = requestRevision.current;
       const controller = new AbortController();
       requestController.current = controller;
+      lastRequest.current = request;
+      // One deadline covers the response body and any authentication refresh/retry.
+      const deadline = setTimeout(() => {
+        if (requestRevision.current !== revision) return;
+        requestRevision.current += 1;
+        const timeout = new DOMException(
+          "Host browser request timed out after 15 seconds. Retry, or choose another path or a narrower search.",
+          "TimeoutError",
+        );
+        controller.abort(timeout);
+        setError(timeout.message);
+        setLoading(false);
+      }, 15_000);
+      const clearDeadline = () => clearTimeout(deadline);
+      controller.signal.addEventListener("abort", clearDeadline, { once: true });
       setScope(request.scope ?? "directory");
       setLoading(true);
       setError("");
@@ -50,6 +66,8 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
           setError(cause instanceof Error ? cause.message : String(cause));
         }
       } finally {
+        clearDeadline();
+        controller.signal.removeEventListener("abort", clearDeadline);
         if (requestRevision.current === revision) setLoading(false);
       }
     },
@@ -174,9 +192,20 @@ export function HostBrowserDialog({ mode, initialPath, onClose, onSelect }: Prop
             ) : null}
           </div>
           {error ? (
-            <p className={pageStyle.error} role="alert">
-              {error}
-            </p>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <p className={pageStyle.error} role="alert">
+                {error}
+              </p>
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => {
+                  if (lastRequest.current) void loadDirectory(lastRequest.current);
+                }}
+              >
+                Retry
+              </button>
+            </div>
           ) : null}
           {loading ? (
             <p className="text-muted-foreground" role="status">
