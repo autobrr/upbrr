@@ -10,6 +10,7 @@ import (
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 )
 
@@ -25,7 +26,7 @@ type serviceAlias struct {
 // filename for metadata naming. Existing metadata service values win over
 // filename-derived matches.
 func resolveService(meta preparationstate.State) (string, string, string) {
-	services := serviceCodeMap()
+	services := metautil.ServiceCodeMap()
 	filename := strings.TrimSpace(meta.Filename)
 	if filename == "" {
 		filename = pathutil.Base(meta.SourcePath)
@@ -96,7 +97,7 @@ func resolveServiceValue(value string) (string, string) {
 		return "", ""
 	}
 
-	services := serviceCodeMap()
+	services := metautil.ServiceCodeMap()
 	for key, service := range services {
 		if strings.EqualFold(strings.TrimSpace(key), trimmed) {
 			return service, serviceLongName(service, services)

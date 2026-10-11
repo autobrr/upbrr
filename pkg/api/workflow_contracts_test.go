@@ -710,3 +710,28 @@ func assertWorkflowTypeHasNoForbiddenFields(t *testing.T, contractType reflect.T
 		assertWorkflowTypeHasNoForbiddenFields(t, field.Type, forbidden, seen)
 	}
 }
+
+func TestProjectionQuestionnaireAnswersPreserveEmptyAuthorityInJSON(t *testing.T) {
+	for _, answers := range []map[string]string{nil, {}, {"tags": "drama"}} {
+		projection := TrackerReleaseProjection{QuestionnaireAnswers: answers}
+		encoded, err := json.Marshal(projection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		_, included := fields["questionnaireAnswers"]
+		if included != (answers != nil) {
+			t.Fatalf("nil/empty authority changed: %s", encoded)
+		}
+		var restored TrackerReleaseProjection
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if (restored.QuestionnaireAnswers == nil) != (answers == nil) || len(restored.QuestionnaireAnswers) != len(answers) {
+			t.Fatalf("answer authority roundtrip=%+v", restored.QuestionnaireAnswers)
+		}
+	}
+}

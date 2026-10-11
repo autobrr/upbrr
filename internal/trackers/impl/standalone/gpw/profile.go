@@ -33,5 +33,8 @@ func Profile() standalone.Profile {
 	}
 }
 
+// Definition keeps legacy group-answer staging separate from visible review questions.
+type Definition struct{ *standalone.Definition }
+
 // New returns a fresh GPW definition from its tracker-local profile.
-func New() *standalone.Definition { return standalone.MustNew(Profile()) }
+func New() *Definition { return &Definition{Definition: standalone.MustNew(Profile())} }

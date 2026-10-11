@@ -16,7 +16,7 @@ import (
 func TestBuildDescriptionPreservesAudioAfterMenus(t *testing.T) {
 	t.Parallel()
 	const audio = "[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
-	got := buildDescription(trackers.PreparationInput{}, trackers.DescriptionAssets{
+	got := requireDescription(t, trackers.DescriptionAssets{
 		Description: "Notes\n\n" + audio,
 		MenuImages:  []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png"}},
 	})
@@ -25,7 +25,7 @@ func TestBuildDescriptionPreservesAudioAfterMenus(t *testing.T) {
 			t.Fatalf("missing %q in %q", token, got)
 		}
 	}
-	if strings.Index(got, "menu.png") >= strings.Index(got, "[spoiler=source_audio]") {
+	if strings.Index(got, "menu.png") >= strings.Index(got, "[hide=source_audio]") {
 		t.Fatalf("audio precedes menu: %q", got)
 	}
 }
@@ -107,4 +107,13 @@ func assertDescriptionTokensInOrder(t *testing.T, description string, tokens ...
 		}
 		previous = position
 	}
+}
+
+func requireDescription(t *testing.T, assets trackers.DescriptionAssets) string {
+	t.Helper()
+	result, err := buildDescription(t.Context(), trackers.PreparationInput{}, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }

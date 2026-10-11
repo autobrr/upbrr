@@ -23,9 +23,12 @@ func Profile() standalone.Profile {
 		AuthCapability:     authcontract.APIKeyCapability("BHD"),
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
-		ReleaseNamePolicy: trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy("standalone/bhd/v7", trackers.StructuredNamePolicy{
-			Defaults: applyBHDNameDefaults,
-		}), api.IdentityProviderIMDB),
+		ReleaseNamePolicy: trackers.WithTitleProvider(
+			trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy("standalone/bhd/v8", trackers.StructuredNamePolicy{
+				Defaults: applyBHDNameDefaults,
+			}), api.IdentityProviderIMDB),
+			api.IdentityProviderIMDB,
+		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		Rules:                rules(),
 		ValidationPolicy:     validationPolicy(),

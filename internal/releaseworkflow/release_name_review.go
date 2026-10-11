@@ -518,6 +518,9 @@ func rebaseDupesForReviewedNames(
 		}
 		result.UploadReleaseName = projection.UploadReleaseName
 		result.ProjectionFingerprint = fingerprint
+		if result.RequiresStaffToken {
+			RequireStaffTokenReview(result)
+		}
 	}
 	rebased.ProjectionSet = api.TrackerReleaseProjectionSetRef{
 		ID:       projections.ID,

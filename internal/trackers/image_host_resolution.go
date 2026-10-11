@@ -200,6 +200,9 @@ func ensureDescriptionImageHostWithRegistry(
 	return ensureDescriptionImageHostWithDataAndRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, api.NopLogger{}, registry, nil)
 }
 
+// ensureDescriptionImageHostWithDataAndRegistry reuses policy-compatible images
+// or hosts missing variants. Exact-media skip keeps missing variants non-blocking
+// and prevents forced rehosting of source-only URLs or unhosted local images.
 func ensureDescriptionImageHostWithDataAndRegistry(
 	ctx context.Context,
 	tracker string,
@@ -262,7 +265,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			needsLocalRehost = true
 		}
 	}
-	if (sourceOnlySlots || needsLocalRehost) && meta.ExactMedia != nil {
+	if (sourceOnlySlots || needsLocalRehost) && meta.ExactMedia != nil && !meta.ExactMedia.ImageHostUploadSkipped {
 		skipUpload = false
 	}
 	persistSlots := screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry)
@@ -338,7 +341,8 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			tracker,
 			imageHostRequirementLabel(policy),
 		)
-		return descriptionImageHostResolution{feedback: feedback, blocking: sourceOnlySlots || needsLocalRehost}, nil
+		blocking := (sourceOnlySlots || needsLocalRehost) && (meta.ExactMedia == nil || !meta.ExactMedia.ImageHostUploadSkipped)
+		return descriptionImageHostResolution{feedback: feedback, blocking: blocking}, nil
 	}
 
 	sourceImages := slotSourceImagesForRehost(slots)
@@ -610,8 +614,11 @@ func imageHostRequirementLabel(policy imageHostPolicy) string {
 	return "a configured image host"
 }
 
+// imageHostUploadSkipped accepts either the retained exact-media opt-out or the
+// operation's image-host override; an explicit false override cannot undo retained skip.
 func imageHostUploadSkipped(meta api.UploadSubject) bool {
-	return meta.ImageHostOverrides.SkipUpload != nil && *meta.ImageHostOverrides.SkipUpload
+	return meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped ||
+		meta.ImageHostOverrides.SkipUpload != nil && *meta.ImageHostOverrides.SkipUpload
 }
 
 func screenshotSlotsForImageHostResolution(
@@ -630,6 +637,9 @@ func screenshotSlotsForImageHostResolution(
 	return screenshotSlotsFromSourceWithoutPersist(ctx, tracker, meta, repo, logger, preloaded, registry)
 }
 
+// screenshotSlotsFromSourceWithoutPersist honors exact prepared screenshot
+// identities, including an empty selection, before legacy description reconciliation.
+// Exact preloaded slots are cloned and cancellation is checked before reuse.
 func screenshotSlotsFromSourceWithoutPersist(
 	ctx context.Context,
 	tracker string,
@@ -641,6 +651,9 @@ func screenshotSlotsFromSourceWithoutPersist(
 ) ([]api.ScreenshotSlot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
+	}
+	if preloaded != nil && preloaded.screenshotSlotsLoaded && preloaded.exactMedia != nil {
+		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return nil, nil

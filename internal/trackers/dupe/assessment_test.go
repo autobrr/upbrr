@@ -187,3 +187,63 @@ func TestAssessmentRetainValidAndApplyUseOnlyBoundPrivateState(t *testing.T) {
 		t.Fatalf("private cross-seed evidence lost: %#v", projected.CrossSeedTorrents)
 	}
 }
+
+func TestAssessmentTargetReviewIdentityAndIsolation(t *testing.T) {
+	reasons := []api.DupeReason{{Code: "source_review", Message: "Verify source eligibility."}}
+	entry := newAssessmentEntry(api.DuplicateSubject{}, config.Config{}, "EXAMPLE", DispositionResolved, "", true, api.DupeMatch{}, nil, reasons...)
+	original := entry.outcomeID
+	reasons[0].Message = "Changed caller review."
+	if entry.reviewReasons[0].Message == reasons[0].Message {
+		t.Fatal("assessment aliases supplied review")
+	}
+	cloned := cloneAssessmentEntry(entry)
+	cloned.reviewReasons[0].Message = "Changed review requirement."
+	if outcomeIdentity(cloned) == original {
+		t.Fatal("changed target review retained outcome authority")
+	}
+	if outcomeIdentity(entry) != original {
+		t.Fatal("cloned review aliases original assessment")
+	}
+	empty := newAssessmentEntry(api.DuplicateSubject{}, config.Config{}, "EXAMPLE", DispositionResolved, "", true, api.DupeMatch{}, nil)
+	explicitEmpty := newAssessmentEntry(api.DuplicateSubject{}, config.Config{}, "EXAMPLE", DispositionResolved, "", true, api.DupeMatch{}, nil, []api.DupeReason{}...)
+	if empty.outcomeID != explicitEmpty.outcomeID || empty.outcomeID == original {
+		t.Fatal("review outcome identity is not stable for empty and distinct for nonempty")
+	}
+}
+
+func TestAssessmentTargetReviewPersistsAndRequiresAuthorization(t *testing.T) {
+	meta, cfg := api.DuplicateSubject{}, config.Config{}
+	reasons := []api.DupeReason{{Code: "source_review", Message: "Verify source eligibility."}}
+	assessment := NewAssessment(meta, cfg, []AssessmentEvidence{{
+		Tracker:       "EXAMPLE",
+		Disposition:   DispositionResolved,
+		ReviewReasons: reasons,
+	}})
+	if assessment.entries["EXAMPLE"].verdict != VerdictBlocked {
+		t.Fatal("target review was implicitly cleared")
+	}
+	authorized, err := assessment.Authorize(meta, cfg, []string{"EXAMPLE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := authorized.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := UnmarshalAssessment(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := restored.entries["EXAMPLE"]
+	if !slices.Equal(entry.reviewReasons, reasons) || outcomeIdentity(entry) != entry.outcomeID || entry.verdict != VerdictOverridden {
+		t.Fatal("target review authority lost in persistence")
+	}
+	changed := NewAssessment(meta, cfg, []AssessmentEvidence{{
+		Tracker:       "EXAMPLE",
+		Disposition:   DispositionResolved,
+		ReviewReasons: []api.DupeReason{{Code: "staff_review", Message: "Verify staff approval."}},
+	}})
+	if merged := restored.Merge(changed, []string{"EXAMPLE"}); merged.entries["EXAMPLE"].verdict != VerdictBlocked || merged.entries["EXAMPLE"].authorization != AuthorizationNone {
+		t.Fatal("changed target review retained authorization")
+	}
+}

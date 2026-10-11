@@ -312,3 +312,63 @@ func TestDuplicateReuseRejectsRuleActionWithPendingStrictEvidence(t *testing.T) 
 		}
 	}
 }
+
+func TestQuestionnaireDuplicateReuseRetainsOnlyAnswerTransitions(t *testing.T) {
+	for _, scenario := range []string{
+		"answers", "selection", "execution", "settings", "name", "screenshots", "no change",
+		"submitted sibling", "submitted sibling changed name", "submitted sibling omitted name", "submitted sibling selection",
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			_, repository, _, current := newDuplicateReuseWorkflow(t)
+			baseline := *current.Workflow.Dupes
+			state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := ProjectTrackersCommand{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}, Instructions: map[api.TrackerID]api.TrackerProjectionInstructions{"ALPHA": {Questionnaire: map[string]*string{"review": new("yes")}}}}
+			instruction := command.Instructions["ALPHA"]
+			switch scenario {
+			case "selection":
+				command.TrackerIDs = []api.TrackerID{"ALPHA"}
+			case "execution":
+				command.ExecutionMode = api.WorkflowExecutionModeDebug
+			case "settings":
+				instruction.TrackerConfig.Anon = new(false)
+			case "name":
+				instruction.UploadReleaseName = api.WorkflowPatch[string]{Present: true, Value: "Changed.Name-GRP"}
+			case "screenshots":
+				instruction.ScreenshotCount = new(4)
+			case "no change":
+				instruction.Questionnaire = nil
+			case "submitted sibling", "submitted sibling changed name", "submitted sibling omitted name", "submitted sibling selection":
+				state.Workflow.SubmissionExclusions = []api.SubmissionExclusion{{TrackerID: "GAMMA", Reason: "already_uploaded"}}
+				command.TrackerIDs = append(command.TrackerIDs, "GAMMA")
+				excluded := api.TrackerProjectionInstructions{UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: "Submitted.Name-GRP"}}
+				snapshot := state.ProjectionInstructions[state.Workflow.ProjectionInstructions.ID]
+				snapshot.Instructions["GAMMA"] = excluded
+				state.ProjectionInstructions[snapshot.ID] = snapshot
+				command.Instructions["GAMMA"] = excluded
+				switch scenario {
+				case "submitted sibling changed name":
+					excluded.UploadReleaseName.Value = "Changed.Name-GRP"
+					command.Instructions["GAMMA"] = excluded
+				case "submitted sibling omitted name":
+					delete(command.Instructions, "GAMMA")
+				case "submitted sibling selection":
+					command.TrackerIDs = []api.TrackerID{"ALPHA", "GAMMA"}
+				}
+			}
+			command.Instructions["ALPHA"] = instruction
+			only, err := stageQuestionnaireDuplicateReuse(&state, command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := scenario == "answers" || scenario == "submitted sibling"; only != want || (state.PendingDuplicateReuse != nil) != want {
+				t.Fatalf("only=%t pending=%+v", only, state.PendingDuplicateReuse)
+			}
+			if only && state.PendingDuplicateReuse.Assessment != baseline {
+				t.Fatal("wrong baseline")
+			}
+		})
+	}
+}

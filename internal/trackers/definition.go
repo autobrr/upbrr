@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v8"
+const GeneralDuplicatePolicyID = "general/duplicate/v10"
 
 // DuplicateSearchContractID versions authoritative search scope and completion semantics.
 // Projection/catalog fingerprints and persisted private evidence carry this ID so older
@@ -66,6 +66,9 @@ func (e *AuthResolutionError) Unwrap() error {
 // PreparationInput supplies one immutable, operation-scoped tracker preparation snapshot.
 // The tracker module resolves this input before invoking an adapter.
 type PreparationInput struct {
+	// validationRegistry binds service-created preparation to the same complete
+	// rule set used by its reviewed projection. Direct callers retain site validation.
+	validationRegistry *Registry
 	// Intent selects the maximum preparation depth for this invocation.
 	Intent PreparationIntent
 	// ExecutionMode controls projection-time policy waivers. Empty means normal.
@@ -176,6 +179,10 @@ type ReleaseNamePolicyBinding struct {
 	ID           string
 	Elements     api.ReleaseNameElementPolicy
 	Confirmation ReleaseNameConfirmationMode
+	// TitleProvider selects current matching metadata for automatic primary titles.
+	// Empty preserves the existing resolver. Manual metadata, components and opaque
+	// names retain their authority; missing required automatic title evidence fails.
+	TitleProvider api.IdentityProvider
 	// MovieYearProvider selects authoritative current metadata for automatic movie-name years.
 	// Empty preserves the finalized year. Structured defaults respect manual year
 	// authority; opaque names are preserved unless the policy requires rebuilding.
@@ -189,6 +196,14 @@ type ReleaseNamePolicyBinding struct {
 type ReleaseNamePolicyProvider interface {
 	// ReleaseNamePolicy returns one required pure, versioned naming binding.
 	ReleaseNamePolicy() ReleaseNamePolicyBinding
+}
+
+// EditionFeatureResolver derives a complete, ordered review catalogue without I/O or mutation.
+type EditionFeatureResolver func(api.UploadSubject) []api.TrackerEditionFeature
+
+// EditionFeatureProvider declares optional tracker-owned edition and feature review.
+type EditionFeatureProvider interface {
+	EditionFeatureResolver() EditionFeatureResolver
 }
 
 // FamilyProvider declares a tracker's protocol family.
@@ -472,6 +487,20 @@ type InputSchemaProvider interface {
 	InputSchema(api.UploadSubject) *api.TrackerQuestionnaire
 }
 
+// ProjectionQuestionnaireProvider supplies tracker-local review questions from
+// finalized facts without payload preparation or I/O. Unanswered required fields
+// block only this tracker through the shared questionnaire action policy.
+type ProjectionQuestionnaireProvider interface {
+	ProjectionQuestionnaire(PreparationInput) *api.TrackerQuestionnaire
+}
+
+// TrackerAnswerSchemaProvider overrides the private accepted-answer schema used
+// by legacy CLI staging. It neither publishes Input controls nor gates readiness.
+// Other trackers use their ProjectionQuestionnaire schema for staging.
+type TrackerAnswerSchemaProvider interface {
+	TrackerAnswerSchema(PreparationInput) *api.TrackerQuestionnaire
+}
+
 // UploadArtifactPolicy declares tracker torrent personalization fields.
 type UploadArtifactPolicy struct {
 	// Source replaces the torrent info dictionary's private-tracker source field.
@@ -492,6 +521,19 @@ type UploadArtifactPolicyProvider interface {
 
 // DupePolicy declares tracker-specific duplicate comparison semantics.
 type DupePolicy struct {
+	// TargetSlot resolves opaque native slot evidence from finalized upload facts.
+	// A non-nil callback replaces generic resolution, media, HDR, edition, region
+	// and 3D coexistence comparisons with CompareSlots. Exact identity and content
+	// scope checks still apply. Nil preserves general comparisons; ID versions
+	// both pure callbacks.
+	TargetSlot func(api.UploadSubject) string `json:"-"`
+	// CompareSlots compares proposed and existing native evidence. Partial facts
+	// may prove coexistence; unavailable or unsupported comparisons require review.
+	// Resolved target names and the candidate name allow native flag contradiction checks.
+	CompareSlots func(target, candidate string, targetNames []string, candidateName string) api.DupeRelation `json:"-"`
+	// StaffTokenOverride requires owner attestation of staff-token possession to
+	// override duplicate or incomplete-search evidence. No token value is retained.
+	StaffTokenOverride bool `json:",omitempty"`
 	// ID is the stable versioned comparison-policy identifier.
 	ID string
 	// EvidenceID identifies the policy evidence backing automatic
@@ -506,6 +548,11 @@ type DupePolicy struct {
 	// still require action. Enabling this requires EvidenceID.
 	// The zero value preserves standard duplicate comparison.
 	ExactMatchOnly bool `json:",omitempty"`
+	// PackContainmentRequiresReview withholds non-disc pack/episode preference
+	// when the tracker requires comparison evidence the adapter cannot establish.
+	// Exact identity, full discs and proven coexistence retain their outcomes.
+	// Enabling this requires EvidenceID.
+	PackContainmentRequiresReview bool `json:",omitempty"`
 	// TargetReleaseOrigin derives tracker-native origin from the proposed release.
 	// ID versions this pure resolver; it is excluded from serialized fingerprints.
 	TargetReleaseOrigin func(api.UploadSubject, bool) string `json:"-"`
@@ -520,6 +567,11 @@ type DupePolicy struct {
 	DefaultTitleEdition string
 	// SearchScope declares how many pages may be consumed before search becomes incomplete.
 	SearchScope DupeSearchScope
+	// Slots lists the ordinary conditional slots. An unlisted or unproven
+	// combination requires review, including when a search returns no candidates.
+	Slots []DupeSlot `json:",omitempty"`
+	// TargetReviewRules retain source or staff decisions that search cannot prove.
+	TargetReviewRules []DupeTargetReview `json:",omitempty"`
 	// SlotDimensions are compared to establish tracker slot membership.
 	SlotDimensions []DupeDimension
 	// OptionalSlotDimensions establish distinct slots when either side carries
@@ -648,6 +700,8 @@ const (
 // are ANDed so policies can express compound tracker slots without custom
 // evaluator branches.
 type DupeCondition struct {
+	// Optional treats two absent variant facts as the same default presentation.
+	Optional         bool `json:",omitempty"`
 	Dimension        DupeDimension
 	TargetValues     []string
 	CandidateValues  []string
@@ -676,12 +730,36 @@ type DupeRule struct {
 
 // DupeSetPredicate is one declarative target or candidate fact predicate.
 type DupeSetPredicate struct {
+	// ValueTokens matches any exact token in a normalized '+'-separated signature.
+	// It never parses raw release titles.
+	ValueTokens      []string `json:",omitempty"`
 	Dimension        DupeDimension
 	Values           []string
 	ExcludedValues   []string
 	RequiresComplete bool
 	MatchTarget      bool
 	Optional         bool
+}
+
+// DupeSlot groups complete normalized facts into one permitted ordinary slot.
+// Repeated IDs permit alternative presentations in the same compatibility slot.
+type DupeSlot struct {
+	ID         string
+	Predicates []DupeSetPredicate
+	// ReviewReason describes external evidence required even with no existing release.
+	ReviewReason string
+}
+
+// DupeTargetReview describes a source or staff decision independently of occupancy.
+// Predicates select known review conditions; ordinary-slot evidence handles
+// missing eligibility facts. Partial facts may require review but never authorize it.
+type DupeTargetReview struct {
+	// IncludeIndeterminate retains review when known prerequisites match but
+	// the remaining condition lacks evidence. Known mismatches still skip it.
+	IncludeIndeterminate bool `json:",omitempty"`
+	ID                   string
+	Predicates           []DupeSetPredicate
+	Reason               string
 }
 
 // DupeSetCapacityOverride lowers a rule's capacity when any candidate matches
@@ -693,6 +771,9 @@ type DupeSetCapacityOverride struct {
 
 // DupeSetRule declares one collection-level capacity policy.
 type DupeSetRule struct {
+	// RequireSameContent excludes disjoint scopes and withholds capacity when
+	// complete same-scope evidence is unavailable.
+	RequireSameContent           bool `json:",omitempty"`
 	ID                           string
 	EvidenceID                   string
 	TargetPredicates             []DupeSetPredicate
@@ -868,6 +949,8 @@ type Descriptor struct {
 	Definition Definition
 	// ReleaseNamePolicy owns the tracker-local upload and duplicate-search names.
 	ReleaseNamePolicy ReleaseNamePolicyBinding
+	// EditionFeatures derives safe review options from finalized release facts.
+	EditionFeatures EditionFeatureResolver
 	// UploadContentMode identifies the shared content object consumed before preparation.
 	UploadContentMode UploadContentMode
 	// WorkflowMedia contains explicit tracker-owned media minimums.
@@ -914,4 +997,22 @@ type Descriptor struct {
 	MetadataLocale string
 	// DescriptionGroup is the optional tracker-specific description override group.
 	DescriptionGroup string
+}
+
+// StaffUploadToken returns only this tracker's optional backend credential.
+// This is the extension point for a future tracker-specific staff authorization
+// exchange. Presence alone never changes a rule result or bypasses a block.
+func (input PreparationInput) StaffUploadToken() api.StaffUploadToken {
+	var selected api.StaffUploadToken
+	found := false
+	for tracker, token := range input.Meta.StaffUploadTokens {
+		if !strings.EqualFold(strings.TrimSpace(tracker), strings.TrimSpace(input.Tracker)) {
+			continue
+		}
+		if found {
+			return api.StaffUploadToken{}
+		}
+		selected, found = token, true
+	}
+	return selected
 }

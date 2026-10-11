@@ -352,3 +352,47 @@ func TestBrowseDirectoryRouteRejectsInvalidPath(t *testing.T) {
 		t.Fatalf("expected invalid path to return 400, got %d", recorder.Code)
 	}
 }
+
+func TestBrowseDirectoryRouteSearchesOnlyAuthorizedRoots(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	root := canonicalBrowseTestPath(t, t.TempDir())
+	allowed := filepath.Join(root, "nested", "Shared.Voyage.mkv")
+	makeBrowseSearchFile(t, allowed)
+	server := testServerWithBackend(t, repo, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	setTestBrowsePolicy(t, server, dbPath, root, false)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+	req := newBrowseRequest()
+	req.Body = io.NopCloser(strings.NewReader(`{"scope":"roots","query":"voyage shared","mode":"file"}`))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("search status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var result api.BrowseDirectoryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Scope != "roots" || result.Incomplete || len(result.Entries) != 1 || result.Entries[0].Path != allowed {
+		t.Fatalf("search result: %#v", result)
+	}
+
+	req = newBrowseRequest()
+	req.Body = io.NopCloser(strings.NewReader(`{"scope":"roots","query":"Voyage","mode":"file"}`))
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req.WithContext(ctx))
+	if recorder.Code == http.StatusOK {
+		t.Fatal("canceled search returned success")
+	}
+
+	server.browseRequests.active.Store(2)
+	req = newBrowseRequest()
+	req.Body = io.NopCloser(strings.NewReader(`{"scope":"roots","query":"Voyage","mode":"file"}`))
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "host browser is busy") {
+		t.Fatalf("busy search must be retryable, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}

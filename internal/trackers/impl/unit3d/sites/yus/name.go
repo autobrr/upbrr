@@ -14,10 +14,25 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v5", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v8", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
 }
 
 func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if !isYUSFullDisc(meta) {
+		for _, role := range []api.ReleaseNameRole{api.NameRoleDualAudio, api.NameRoleDubbed} {
+			if err := editor.Omit(role); err != nil {
+				return fmt.Errorf("omit YUS audio-language marker: %w", err)
+			}
+		}
+		if trackers.KnownProgrammeLanguageCount(meta.LanguageFacts) >= 2 {
+			if err := editor.InsertBefore(api.NameRoleDualAudio, "Multi-Audio", api.NameRoleAudio); err != nil {
+				return fmt.Errorf("set YUS audio-language marker: %w", err)
+			}
+		}
+		if err := trackers.ApplyDefaultAudioName(editor, meta); err != nil {
+			return fmt.Errorf("apply YUS default audio: %w", err)
+		}
+	}
 	if err := applyYUSTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
@@ -43,17 +58,17 @@ func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 }
 
 func applyYUSTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
+	if unit3d.Category(meta) != "TV" {
 		return nil
 	}
-	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	if !yusMatchesTVDBTitle(editor, evidence.CanonicalName) {
+	evidence, ok := trackers.CurrentTVDBNameDisambiguation(editor, meta)
+	if !ok {
 		return nil
 	}
 	if err := editor.MoveBefore(api.NameRoleAlternateTitle, api.NameRoleYear); err != nil {
 		return fmt.Errorf("move YUS alternate title before year: %w", err)
 	}
-	if !evidence.IncludeYear {
+	if !meta.EffectiveMetadata.YearProvenance.IsManual() && !evidence.IncludeYear {
 		if err := editor.Omit(api.NameRoleYear); err != nil {
 			return fmt.Errorf("omit YUS TVDB year: %w", err)
 		}
@@ -69,12 +84,6 @@ func applyYUSTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubj
 		return fmt.Errorf("insert YUS TVDB locale: %w", err)
 	}
 	return nil
-}
-
-func yusMatchesTVDBTitle(editor *trackers.NameEditor, title string) bool {
-	component, ok := editor.Component(api.NameRoleTitle)
-	return ok && component.Present && !component.Manual && strings.TrimSpace(title) != "" &&
-		strings.EqualFold(strings.Join(strings.Fields(component.Value), " "), strings.Join(strings.Fields(title), " "))
 }
 
 func insertYUSDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubject) error {
@@ -95,6 +104,5 @@ func insertYUSDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubjec
 }
 
 func isYUSFullDisc(meta api.UploadSubject) bool {
-	nameType := strings.TrimSpace(meta.Type)
-	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
+	return trackers.IsFullDiscUpload(meta.DiscType, meta.Type)
 }

@@ -28,7 +28,7 @@ make backend             # fast CLI build sanity
 make test-go             # full Go race tests
 make test-frontend       # frontend lint/dead-code/type/unit/format
 pnpm --dir documentation run check # public documentation format/type/build
-make lint                # architecture/path/literal/workflow-contract checks + full Go lint
+make lint                # architecture/path/literal/contracts/correction-choice checks + full Go lint
 make precommit           # strong local validation before commit; no Go tests
 make prepush             # Lefthook pre-push wrapper
 git diff --check         # whitespace/conflict markers

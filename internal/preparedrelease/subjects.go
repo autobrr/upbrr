@@ -38,11 +38,14 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
 	subject := api.UploadSubject{
+		MediaFileFacts:              release.Media.MediaFileFacts.Clone(),
 		SourceIdentity:              release.SourceIdentity,
+		LanguageFacts:               release.Media.LanguageFacts.Clone(),
 		EffectiveMetadata:           release.MetadataFacts(),
 		ManualLanguages:             release.Media.ManualLanguages(),
 		HardcodedSubs:               release.Media.HardcodedSubs,
 		HardcodedSubtitleLanguages:  append([]string(nil), release.Media.HardcodedSubtitleLanguages...),
+		HardcodedSubtitleCoverage:   append([]api.SubtitleLanguageCoverage(nil), release.Media.HardcodedSubtitleCoverage...),
 		MediaBinding:                binding,
 		SourcePath:                  release.Source.SourcePath,
 		Paths:                       []string{resources.sourcePath},
@@ -104,6 +107,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		VideoEncode:                 release.Media.VideoEncode,
 		HasEncodeSettings:           release.Media.HasEncodeSettings,
 		BitDepth:                    release.Media.BitDepth,
+		ReleaseFeatures:             append([]api.ReleaseFeature(nil), release.Media.ReleaseFeatures...),
 		EditionSet:                  release.Media.EditionSet,
 		Cut:                         release.Media.Cut,
 		Presentation:                release.Media.Presentation,
@@ -144,6 +148,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		Files:               append([]api.VerifiedSourceFile(nil), subject.SourceIdentity.Files...),
 	}
 	cloned.SourceManifest = release.Source
+	cloned.StaffUploadTokens = maps.Clone(input.StaffUploadTokens)
 	return cloned, nil
 }
 
@@ -468,6 +473,7 @@ func (m *Module) ResolveDescriptionSubject(ctx context.Context, input api.Descri
 		ManualLanguages:             release.Media.ManualLanguages(),
 		HardcodedSubs:               release.Media.HardcodedSubs,
 		HardcodedSubtitleLanguages:  append([]string(nil), release.Media.HardcodedSubtitleLanguages...),
+		HardcodedSubtitleCoverage:   append([]api.SubtitleLanguageCoverage(nil), release.Media.HardcodedSubtitleCoverage...),
 		MediaBinding:                binding,
 		SourcePath:                  release.Source.SourcePath,
 		DiscType:                    firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),

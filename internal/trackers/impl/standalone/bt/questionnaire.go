@@ -4,40 +4,39 @@
 package bt
 
 import (
-	"strings"
-
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildQuestionnaire(meta api.UploadSubject, fields map[string][]string) *api.TrackerQuestionnaire {
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	return buildQuestionnaire(input.Meta)
+}
+
+func buildQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 	current := standalone.QuestionnaireAnswers(meta, "BT")
+	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
+	overview := metautil.FirstNonEmptyTrimmed(current["overview"], resolveOverview(meta, ptBR))
+	tags := metautil.FirstNonEmptyTrimmed(current["tags"], resolveTags(meta, ptBR))
 	var items []api.TrackerQuestionnaireField
 
-	sinopse := ""
-	if len(fields["sinopse"]) > 0 {
-		sinopse = strings.TrimSpace(fields["sinopse"][0])
-	}
-	if sinopse == "" {
+	if _, answered := current["overview"]; overview == "" || answered {
 		items = append(items, api.TrackerQuestionnaireField{
 			Key:      "overview",
 			Label:    "Overview",
 			Kind:     "textarea",
-			Value:    current["overview"],
+			Value:    overview,
 			Required: true,
 		})
 	}
 
-	tags := ""
-	if len(fields["tags"]) > 0 {
-		tags = strings.TrimSpace(fields["tags"][0])
-	}
-	if tags == "" {
+	if _, answered := current["tags"]; tags == "" || answered {
 		items = append(items, api.TrackerQuestionnaireField{
 			Key:      "tags",
 			Label:    "Tags",
 			Kind:     "text",
-			Value:    current["tags"],
+			Value:    tags,
 			Required: true,
 		})
 	}

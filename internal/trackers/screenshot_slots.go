@@ -1214,7 +1214,7 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 	result := SlotUploadAttachmentResult{}
 	seenUploads := make(map[string]struct{}, len(uploads))
 	for _, upload := range uploads {
-		if upload.Purpose == api.ScreenshotPurposeAudioAnalysis || sourceOnlyUploadedImage(upload) {
+		if upload.Purpose.IsAnalysis() || sourceOnlyUploadedImage(upload) {
 			continue
 		}
 		uploadKey := strings.ToLower(

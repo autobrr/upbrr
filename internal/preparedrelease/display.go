@@ -27,6 +27,9 @@ func (m *Module) ResolveDisplay(ctx context.Context, ref api.ReleaseRef) (api.Pr
 		return api.PreparedReleaseDisplay{}, err
 	}
 	resources := owned.resources
+	for _, target := range hdrTargetSubjects(owned) {
+		display.HDRTargets = append(display.HDRTargets, target.Target)
+	}
 	var mediaInfo string
 	if strings.EqualFold(firstNonEmpty(owned.result.Release.Disc.Type, owned.result.Release.Source.Classification.DiscType), "DVD") {
 		mediaInfo = api.AggregateDVDVOBMediaInfo(projectDiscResources(resources.discs), resources.dvdVOBMediaInfoText)
@@ -50,7 +53,11 @@ func ProjectDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, er
 		return api.PreparedReleaseDisplay{}, fmt.Errorf("prepared release: clone display source: %w", err)
 	}
 	release = detached
-	display := api.PreparedReleaseDisplay{ReleaseName: release.Naming.ReleaseName, Providers: []api.ProviderDisplay{}}
+	display := api.PreparedReleaseDisplay{
+		ReleaseName: release.Naming.ReleaseName,
+		Commentary:  release.Media.Commentary,
+		Providers:   []api.ProviderDisplay{},
+	}
 	identity := release.Identity
 	metadata := release.ProviderMetadata
 	if value := metadata.TMDB; value != nil {

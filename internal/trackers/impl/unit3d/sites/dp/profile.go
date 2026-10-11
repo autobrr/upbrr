@@ -13,7 +13,9 @@ func Profile() unit3d.Profile {
 		Name:              "DP",
 		BaseURL:           "https://darkpeers.org",
 		Rules:             Rules(),
+		ValidationPolicy:  validationPolicy(),
 		BannedGroups:      BannedGroups(),
 		ReleaseNamePolicy: namePolicy(),
+		Site:              unit3d.SiteProfile{ProjectionQuestionnaire: manualLanguageQuestionnaire},
 	}
 }

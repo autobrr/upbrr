@@ -4,10 +4,12 @@
 package otw
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -160,8 +162,47 @@ func otwVideoCodec(meta api.UploadSubject) string {
 	return ""
 }
 
+func otwLanguageFullDisc(meta api.UploadSubject) bool {
+	return trackers.IsFullDiscUpload(meta.DiscType, meta.Type) || trackers.IsFullDiscUpload(meta.Disc.Type, meta.Type)
+}
+
 func otwAudio(meta api.UploadSubject) string {
 	audio := strings.Join(strings.Fields(meta.Audio), " ")
+	if !otwLanguageFullDisc(meta) {
+		for {
+			before := audio
+			for _, label := range []string{"Dual-Audio", "Dubbed", "MULTI", "Dual Audio"} {
+				audio = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(audio, label+" "), " "+label))
+				if audio == label {
+					audio = ""
+				}
+			}
+			if audio == before {
+				break
+			}
+		}
+		marker := ""
+		facts := meta.LanguageFacts
+		switch {
+		case facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory:
+		case trackers.KnownProgrammeLanguageCount(facts) >= 3:
+			marker = "MULTI"
+		case facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && facts.HasEnglishDub() && facts.HasOriginalAudio():
+			marker = "Dual Audio"
+		case facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && facts.HasEnglishDub() && len(facts.ProgrammeLanguages) == 1:
+			marker = "Dubbed"
+		}
+		if value := meta.ReleaseNameOverrides.NoDual; value != nil && *value && slices.Contains([]string{"Dual Audio", "MULTI"}, marker) {
+			marker = ""
+		}
+		if value := meta.ReleaseNameOverrides.NoDub; value != nil && *value && marker == "Dubbed" {
+			marker = ""
+		}
+		if value := meta.ReleaseNameOverrides.DualAudio; value != nil && *value {
+			marker = "Dual Audio"
+		}
+		audio = strings.TrimSpace(marker + " " + audio)
+	}
 	channels := strings.Join(strings.Fields(meta.Channels), " ")
 	if audio == "" {
 		return channels

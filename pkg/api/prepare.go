@@ -114,6 +114,8 @@ type ClientSearchPolicy struct {
 // PreparationControls contains one-shot permissions and presentation choices.
 // These values never participate in preparation compatibility.
 type PreparationControls struct {
+	// CaptureHDRMetadata requests one-shot native collection, including a scan when text reports are cached.
+	CaptureHDRMetadata bool `json:"CaptureHDRMetadata,omitempty"`
 	// Interaction determines whether preparation may request manual input.
 	Interaction InteractionMode
 	// ConfirmBDMVRescan permits replacing a partial cached Blu-ray analysis.

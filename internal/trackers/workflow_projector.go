@@ -62,24 +62,16 @@ func (p *WorkflowProjector) Build(
 		return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{},
 			fmt.Errorf("trackers: build workflow projections: %w", err)
 	}
-	descriptors, err := p.registry.CatalogDescriptors()
+	catalog, err := p.catalogSnapshot()
 	if err != nil {
 		return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{}, err
-	}
-	catalog, err := (api.TrackerCatalogSnapshot{
-		CatalogVersion: "tracker-projection-v1",
-		Trackers:       descriptors,
-	}).WithFingerprint()
-	if err != nil {
-		return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{},
-			fmt.Errorf("trackers: catalog fingerprint: %w", err)
 	}
 
 	selected, err := p.resolveTrackerIDs(trackerIDs)
 	if err != nil {
 		return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{}, err
 	}
-	runtime, configFingerprints, err := p.runtimeSnapshot(catalog, descriptors)
+	runtime, configFingerprints, err := p.runtimeSnapshot(catalog, catalog.Trackers)
 	if err != nil {
 		return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{}, err
 	}
@@ -147,6 +139,28 @@ func (p *WorkflowProjector) Build(
 		RequiredActions:   actions,
 		Failures:          failures,
 	}, nil
+}
+
+// CatalogCurrent checks tracker-owned contract versions before reusing a
+// retained projection, including questionnaire schemas changed by an upgrade.
+func (p *WorkflowProjector) CatalogCurrent(retained api.TrackerCatalogSnapshot) (bool, error) {
+	current, err := p.catalogSnapshot()
+	if err != nil {
+		return false, err
+	}
+	return retained.Fingerprint == current.Fingerprint, nil
+}
+
+func (p *WorkflowProjector) catalogSnapshot() (api.TrackerCatalogSnapshot, error) {
+	descriptors, err := p.registry.CatalogDescriptors()
+	if err != nil {
+		return api.TrackerCatalogSnapshot{}, err
+	}
+	catalog, err := (api.TrackerCatalogSnapshot{CatalogVersion: "tracker-projection-v1", Trackers: descriptors}).WithFingerprint()
+	if err != nil {
+		return api.TrackerCatalogSnapshot{}, fmt.Errorf("trackers: catalog fingerprint: %w", err)
+	}
+	return catalog, nil
 }
 
 func selectedTrackerQuestionnaireAnswers(subject api.UploadSubject, selected []api.TrackerID) map[string]map[string]string {

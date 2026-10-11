@@ -44,7 +44,7 @@ func TestListTrackerCatalogComposesIdentitySchemaAndConfiguredState(t *testing.T
 	if mode := catalogEntryByName(t, catalog.Entries, "BTN").UploadContentMode; mode != string(trackers.UploadContentModeNone) {
 		t.Fatalf("BTN upload content mode = %q", mode)
 	}
-	if mode := catalogEntryByName(t, catalog.Entries, "ANT").UploadContentMode; mode != string(trackers.UploadContentModeScreenshots) {
+	if mode := catalogEntryByName(t, catalog.Entries, "ANT").UploadContentMode; mode != string(trackers.UploadContentModeDescription) {
 		t.Fatalf("ANT upload content mode = %q", mode)
 	}
 	if !catalogEntryByName(t, catalog.Entries, "BTN").Configured {

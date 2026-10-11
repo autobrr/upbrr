@@ -72,6 +72,8 @@ func projectContinuationRequiredActions(
 
 // projectTrackerLaneOutcomes combines current stage evidence into per-tracker outcomes.
 // A terminal accepted in-client match clears actions retained by earlier stages.
+// Explicit image-host skip suppresses known hosting failures in successful media;
+// unknown external outcomes still contribute failure evidence.
 func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome {
 	if current.Projections == nil {
 		return nil
@@ -159,7 +161,10 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 				advanceLane(&lanes[laneIndex], api.WorkflowGoalMediaReady)
 			}
 		}
-		applyTrackerFailures(lanes, index, current.Media.Failures)
+		failures := slices.DeleteFunc(slices.Clone(current.Media.Failures), func(failure api.WorkflowFailure) bool {
+			return skippedTerminalImageHostFailure(*current.Media, failure)
+		})
+		applyTrackerFailures(lanes, index, failures)
 	}
 
 	if current.Descriptions != nil {
@@ -503,6 +508,7 @@ func projectAvailableGoals(current CommandResult) []api.GoalAvailability {
 	goals := []api.WorkflowGoal{
 		api.WorkflowGoalPrepared,
 		api.WorkflowGoalInputReady,
+		api.WorkflowGoalTrackersProjected,
 		api.WorkflowGoalTrackersAssessed,
 		api.WorkflowGoalDuplicatesDecided,
 		api.WorkflowGoalMediaReady,
@@ -542,7 +548,7 @@ func goalAvailability(current CommandResult, goal api.WorkflowGoal) (bool, strin
 			return false, goalReasonPreparationRequired, "Prepare a release first."
 		}
 		return true, goalReasonAvailable, ""
-	case api.WorkflowGoalTrackersAssessed:
+	case api.WorkflowGoalTrackersProjected, api.WorkflowGoalTrackersAssessed:
 		if current.Release == nil {
 			return false, goalReasonPreparationRequired, "Prepare the selected source first."
 		}

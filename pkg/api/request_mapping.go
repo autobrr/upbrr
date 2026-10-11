@@ -47,9 +47,10 @@ func MapPreparationRequest(request Request, intent PreparationIntent) (PrepareIn
 			Client: cloneString(request.ClientOverrides.Client),
 		},
 		Controls: PreparationControls{
-			Interaction:       request.Options.InteractionMode,
-			ConfirmBDMVRescan: request.ConfirmBDMVRescan,
-			ForceRecheck:      cloneBool(request.ClientOverrides.ForceRecheck),
+			CaptureHDRMetadata: request.Options.HDRAnalysis != nil,
+			Interaction:        request.Options.InteractionMode,
+			ConfirmBDMVRescan:  request.ConfirmBDMVRescan,
+			ForceRecheck:       cloneBool(request.ClientOverrides.ForceRecheck),
 		},
 	}
 	if request.ReleaseNameOverrides.Category != nil {

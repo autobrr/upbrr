@@ -29,13 +29,31 @@ func TestZNTHStructuredReleaseNamePolicyOmitsOnlyEpisodeTitleRole(t *testing.T) 
 		ReleaseName:      result.Name,
 		ReleaseNameNoTag: result.NameNoTag,
 		GeneratedName:    result.GeneratedName,
-		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		SourcePath:       "znth-source",
+		Identity: api.ExternalIdentity{
+			SourcePath: "znth-source",
+			Generation: 1,
+			TMDBID:     1,
+			Category:   api.CanonicalCategoryTV,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "znth-source",
+			Generation: 1,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   1,
+				Category: "TV",
+				Title:    "Episode Title Show",
+			},
+		},
 	}
 	if got, want := znthReviewedName(t, subject, nil), "Episode Title Show S01E02 1080p WEB-DL-GRP"; got != want {
 		t.Fatalf("ZNTH name = %q, want %q", got, want)
 	}
 	movie := subject
 	movie.Identity.Category = api.CanonicalCategoryMovie
+	movieMetadata := *subject.ProviderMetadata.TMDB
+	movieMetadata.Category = "MOVIE"
+	movie.ProviderMetadata.TMDB = &movieMetadata
 	if got := znthReviewedName(t, movie, nil); got != movie.ReleaseName {
 		t.Fatalf("movie episode title changed: %q", got)
 	}

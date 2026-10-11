@@ -1,11 +1,11 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package metadata
+package metautil
 
-// serviceCodeMap maps filename/NFO service aliases to the normalized service
-// token used in generated release names.
-func serviceCodeMap() map[string]string {
+// ServiceCodeMap returns a fresh map of recognized service aliases to the
+// service tokens used in release names.
+func ServiceCodeMap() map[string]string {
 	return map[string]string{
 		"3SAT":                             "3SAT",
 		"3Sat":                             "3SAT",

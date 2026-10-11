@@ -31,6 +31,7 @@ var descriptionURLPattern = regexp.MustCompile(`(?i)https?://[^\s\[\]<>]+`)
 
 // rehostSourceOnlyDescriptionImages replaces image URLs that cannot travel
 // between trackers, including image links inside intact comparison blocks.
+// Exact-media skip leaves the assets unchanged and performs no rehosting.
 func (s *Service) rehostSourceOnlyDescriptionImages(
 	ctx context.Context,
 	tracker string,
@@ -41,7 +42,7 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 ) error {
 	logger := logging.FromContext(ctx, s.logger)
 
-	if assets == nil {
+	if assets == nil || meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped {
 		return nil
 	}
 	urls := sourceOnlyDescriptionImageURLs(assets.Description)

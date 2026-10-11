@@ -55,6 +55,7 @@ type Server struct {
 	hub                *eventHub
 	authLimiter        *fixedWindowLimiter
 	generalLimiter     *fixedWindowLimiter
+	browseRequests     browseRequestLimiter
 	apiTokens          *apiTokenStore
 	trustedProxies     []*net.IPNet
 	server             *http.Server

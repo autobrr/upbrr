@@ -125,6 +125,9 @@ type InputReadinessFieldOutcome struct {
 
 // InputReadinessEvaluation is the pure, local result returned by the tracker policy owner.
 type InputReadinessEvaluation struct {
+	// TrackerQuestionnaires validate legacy explicit answer staging without
+	// publishing tracker controls or adding canonical Input prerequisites.
+	TrackerQuestionnaires   []TrackerQuestionnaire       `json:"-"`
 	Schemas                 []TrackerQuestionnaire       `json:"schemas,omitempty"`
 	RequirementsFingerprint WorkflowFingerprint          `json:"requirementsFingerprint"`
 	Fields                  []InputReadinessFieldOutcome `json:"fields,omitempty"`

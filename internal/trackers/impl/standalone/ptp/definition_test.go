@@ -54,6 +54,14 @@ func (d *Definition) submit(ctx context.Context, input trackers.PreparationInput
 	return uploadAt(ctx, input, d.baseURL)
 }
 
+// ptpReviewedLanguageFixture supplies inspected programme facts for tests
+// exercising independent payload and transport behavior.
+func ptpReviewedLanguageFixture(meta api.UploadSubject, language string) api.UploadSubject {
+	meta.LanguageFacts = ptpLanguageSubject(language, language).LanguageFacts
+	meta.AudioLanguages = []string{language}
+	return meta
+}
+
 func TestBuildDescriptionPreservesAudioGraphsBeforeScreenshots(t *testing.T) {
 	t.Parallel()
 	const audio = "[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
@@ -235,7 +243,7 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 		"container":               "MKV",
 		"source":                  "WEB",
 		"subtitles[]":             "54,52,55",
-		"trumpable[]":             "4",
+		"trumpable[]":             "4,14",
 	} {
 		if got := fields[key]; got != want {
 			t.Fatalf("field %s=%q, want %q", key, got, want)
@@ -291,7 +299,7 @@ func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
 		Container:     "mkv",
 	}
 	questionnaire := buildQuestionnaire(meta, "123")
-	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "hardcoded_subtitle_languages" {
+	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "subtitle_tags" {
 		t.Fatalf("questionnaire=%#v", questionnaire)
 	}
 	if _, err := buildUploadFields(meta, "description", "123", nil, ""); err == nil {
@@ -313,7 +321,7 @@ func TestPTPInputReadinessUsesFinalizedHardcodedLanguages(t *testing.T) {
 
 	definition := New()
 	missing := definition.InputReadiness(api.UploadSubject{HardcodedSubs: true})
-	if len(missing) != 1 || missing[0].Status != api.InputReadinessFieldMissing || missing[0].Key != "metadata.hardcoded_subtitle_languages" {
+	if len(missing) != 0 {
 		t.Fatalf("missing=%#v", missing)
 	}
 	invalid := definition.InputReadiness(api.UploadSubject{
@@ -321,12 +329,11 @@ func TestPTPInputReadinessUsesFinalizedHardcodedLanguages(t *testing.T) {
 		HardcodedSubtitleLanguages:  []string{"English"},
 		TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": {"no_english_subtitles": "yes"}},
 	})
-	if len(invalid) != 1 || invalid[0].Status != api.InputReadinessFieldInvalid || invalid[0].Key != "tracker_input.no_english_subtitles" {
+	if len(invalid) != 0 {
 		t.Fatalf("invalid=%#v", invalid)
 	}
-	if schema := definition.InputSchema(api.UploadSubject{}); schema == nil || len(schema.Fields) != 1 || schema.Fields[0].Value != "auto" ||
-		len(schema.Fields[0].Options) != 3 {
-		t.Fatalf("schema=%#v", schema)
+	if field := legacySubtitleField(api.UploadSubject{}); field.Value != "auto" || len(field.Options) != 3 {
+		t.Fatalf("legacy tracker field=%#v", field)
 	}
 }
 
@@ -392,7 +399,7 @@ func TestPTPUploadUsesPreparedHardcodedLanguages(t *testing.T) {
 		Container:                  "mkv",
 	}
 	if questionnaire := buildQuestionnaire(meta, "123"); questionnaire != nil {
-		t.Fatalf("prepared languages still require input: %#v", questionnaire)
+		t.Fatalf("explicit hardcoded languages should not prompt again: %#v", questionnaire)
 	}
 	for _, answers := range []map[string]string{nil, {"hardcoded_subtitle_languages": "French"}} {
 		fields, err := buildUploadFields(meta, "description", "123", answers, "")
@@ -507,7 +514,7 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 
 	entry, err := (&Definition{baseURL: server.URL}).prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.UploadSubject{
+		Meta: ptpReviewedLanguageFixture(api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
@@ -524,7 +531,7 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 					Genres: "Action",
 				},
 			},
-		},
+		}, "French"),
 		TrackerConfig: config.TrackerConfig{
 			PTPAPIUser: "user",
 			PTPAPIKey:  "key",
@@ -549,8 +556,8 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	if _, exists := entry.Payload["title"]; exists {
 		t.Fatal("did not expect new-group title field when group already exists")
 	}
-	if entry.Questionnaire != nil {
-		t.Fatal("did not expect questionnaire for existing group upload")
+	if entry.Questionnaire == nil || entry.Questionnaire.Fields[0].Key != "trumpable_review" {
+		t.Fatalf("expected subtitle payload review for non-English audio, got %#v", entry.Questionnaire)
 	}
 }
 
@@ -561,7 +568,7 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 
 	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.UploadSubject{
+		Meta: ptpReviewedLanguageFixture(api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
@@ -579,7 +586,7 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 					Overview: "Plot",
 				},
 			},
-		},
+		}, "English"),
 		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
@@ -620,14 +627,14 @@ func TestDefinitionUploadRejectsMissingAnnounceBeforeRequest(t *testing.T) {
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
 	_, err := (&Definition{baseURL: server.URL}).submit(ctx, trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.UploadSubject{
+		Meta: ptpReviewedLanguageFixture(api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
 			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
-		},
+		}, "English"),
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		Logger:  api.NopLogger{},
 	})
@@ -647,13 +654,14 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	markTorrentWithPrivateMetadata(t, baseTorrentPath)
 	announceURL := "https://please.passthepopcorn.me/passkey/announce"
 	meta := api.UploadSubject{
-		SourcePath:  filepath.Join(tmp, "Movie.mkv"),
-		ReleaseName: "Movie.2026.1080p.BluRay.x264",
-		Release:     api.ReleaseInfo{Resolution: "1080p"},
-		Container:   "mkv",
-		Source:      "BluRay",
-		VideoCodec:  "AVC",
-		Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": {"trumpable_review": "no"}},
+		SourcePath:                  filepath.Join(tmp, "Movie.mkv"),
+		ReleaseName:                 "Movie.2026.1080p.BluRay.x264",
+		Release:                     api.ReleaseInfo{Resolution: "1080p"},
+		Container:                   "mkv",
+		Source:                      "BluRay",
+		VideoCodec:                  "AVC",
+		Identity:                    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				Title:    "Movie",
@@ -766,7 +774,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 
 	result, err := (&Definition{baseURL: server.URL}).submit(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta:    meta,
+		Meta:    ptpReviewedLanguageFixture(meta, "English"),
 		TrackerConfig: config.TrackerConfig{
 			Username:    "user",
 			Password:    "pass",
@@ -1072,5 +1080,49 @@ func markTorrentWithPrivateMetadata(t *testing.T, torrentPath string) {
 	defer file.Close()
 	if err := torrentMeta.Write(file); err != nil {
 		t.Fatalf("write torrent: %v", err)
+	}
+}
+
+func TestNewGroupMissingOnlyTagsReturnsQuestionnaireFailure(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+	input := trackers.PreparationInput{
+		Tracker: "PTP",
+		Meta: api.UploadSubject{
+			SourcePath:  filepath.Join(tmp, "Example.Movie.mkv"),
+			TorrentPath: torrentPath,
+			ReleaseName: "Example.Movie.2026.1080p.BluRay.x264-GRP",
+			Release: api.ReleaseInfo{
+				Title:      "Example Movie",
+				Year:       2026,
+				Resolution: "1080p",
+			},
+			Container:      "mkv",
+			Source:         "BluRay",
+			VideoCodec:     "AVC",
+			AudioLanguages: []string{"English"},
+			Identity:       api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+				Title:  "Example Movie",
+				Year:   2026,
+				Poster: "https://images.example/poster.jpg",
+			}},
+		},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")}}),
+	}
+	input.Meta = ptpReviewedLanguageFixture(input.Meta, "English")
+	_, err := New().prepareDryRun(t.Context(), input)
+	failure, ok := errors.AsType[*trackers.PreparationFailure](err)
+	// The dry-run adapter wraps the tracker failure; unwrap to its typed cause.
+	for ok && failure.Code() != "questionnaire_required" {
+		failure, ok = errors.AsType[*trackers.PreparationFailure](failure.Unwrap())
+	}
+	if !ok || !strings.Contains(failure.Message(), "missing tags") {
+		t.Fatalf("missing tags did not return recoverable questionnaire failure: %v", err)
+	}
+	input.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"PTP": {"tags": "drama"}}
+	if _, err := New().prepareDryRun(t.Context(), input); err != nil {
+		t.Fatalf("answered tags still failed: %v", err)
 	}
 }

@@ -128,7 +128,7 @@ func TestPrepareInputMappingFieldDispositionIsExplicit(t *testing.T) {
 	})
 	assertFieldNames(t, reflect.TypeFor[PreparationPolicy](), []string{"KeepFolder", "KeepImages", "OnlyID"})
 	assertFieldNames(t, reflect.TypeFor[ClientSearchPolicy](), []string{"Skip", "Client"})
-	assertFieldNames(t, reflect.TypeFor[PreparationControls](), []string{"Interaction", "ConfirmBDMVRescan", "ForceRecheck"})
+	assertFieldNames(t, reflect.TypeFor[PreparationControls](), []string{"CaptureHDRMetadata", "Interaction", "ConfirmBDMVRescan", "ForceRecheck"})
 }
 
 func TestMapPreparationRequestRejectsBlankSource(t *testing.T) {

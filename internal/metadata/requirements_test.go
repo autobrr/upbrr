@@ -10,6 +10,153 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestPreparedRequirementsSatisfied(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		fields []api.MetadataRequirementField
+		scope  api.MetadataRequirementScope
+		mutate func(*api.PreparedRelease, *api.ReleaseFactInstructions)
+		want   bool
+	}{
+		{
+			name:   "matching provider",
+			fields: []api.MetadataRequirementField{"tmdb"},
+			want:   true,
+		},
+		{name: "missing provider", fields: []api.MetadataRequirementField{"tvdb"}},
+		{
+			name:   "available alternative",
+			fields: []api.MetadataRequirementField{"tvdb", "tmdb"},
+			want:   true,
+		},
+		{
+			name:   "inapplicable category",
+			fields: []api.MetadataRequirementField{"tvdb"},
+			scope:  api.MetadataRequirementScopeTV,
+			want:   true,
+		},
+		{
+			name:   "stale provider identity",
+			fields: []api.MetadataRequirementField{"tmdb"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.ProviderMetadata.TMDB.TMDBID++
+			},
+		},
+		{
+			name:   "wrong provider category",
+			fields: []api.MetadataRequirementField{"tmdb"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.ProviderMetadata.TMDB.Category = "tv"
+			},
+		},
+		{
+			name:   "identity only",
+			fields: []api.MetadataRequirementField{"tmdb_id_only"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.ProviderMetadata.TMDB = nil
+			},
+			want: true,
+		},
+		{
+			name:   "manual genres",
+			fields: []api.MetadataRequirementField{"genres"},
+			mutate: func(_ *api.PreparedRelease, i *api.ReleaseFactInstructions) {
+				i.Metadata.Genres = new([]string{"Drama"})
+			},
+			want: true,
+		},
+		{
+			name:   "manual genres clear",
+			fields: []api.MetadataRequirementField{"genres"},
+			mutate: func(r *api.PreparedRelease, i *api.ReleaseFactInstructions) {
+				r.ProviderMetadata.TMDB.Genres = "Drama"
+				i.Metadata.Genres = new([]string{})
+			},
+		},
+		{
+			name:   "manual language clear",
+			fields: []api.MetadataRequirementField{"original_language"},
+			mutate: func(r *api.PreparedRelease, i *api.ReleaseFactInstructions) {
+				r.ProviderMetadata.TMDB.OriginalLanguage = "en"
+				i.Metadata.OriginalLanguage = new("")
+			},
+		},
+		{
+			name:   "manual movie year clear",
+			fields: []api.MetadataRequirementField{"year"},
+			mutate: func(_ *api.PreparedRelease, i *api.ReleaseFactInstructions) {
+				i.ReleaseName.ManualYear = new(0)
+			},
+		},
+		{
+			name:   "TV year requires alias evidence",
+			fields: []api.MetadataRequirementField{"year"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.Identity.Category = api.CanonicalCategoryTV
+				r.Identity.TVDBID = 22
+				r.ProviderMetadata.TVDB = &api.TVDBMetadata{TVDBID: 22, Year: 2026}
+			},
+		},
+		{
+			name:   "TV alias year",
+			fields: []api.MetadataRequirementField{"year"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.Identity.Category = api.CanonicalCategoryTV
+				r.Identity.TVDBID = 22
+				r.ProviderMetadata.TVDB = &api.TVDBMetadata{
+					TVDBID:        22,
+					Year:          2026,
+					YearFromAlias: true,
+				}
+			},
+			want: true,
+		},
+		{
+			name:   "movie localization",
+			fields: []api.MetadataRequirementField{"tmdb_localized_pt_br"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.ProviderMetadata.TMDB.Localized = map[string]api.TMDBLocalizedData{"pt-BR": {Title: "Example", Overview: "Example overview"}}
+			},
+			want: true,
+		},
+		{
+			name:   "TV localization needs episode overview",
+			fields: []api.MetadataRequirementField{"tmdb_localized_pt_br"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.Identity.Category = api.CanonicalCategoryTV
+				r.Episode.Season = 1
+				r.ProviderMetadata.TMDB.Category = "tv"
+				r.ProviderMetadata.TMDB.Localized = map[string]api.TMDBLocalizedData{"pt-BR": {Title: "Example", Overview: "Example overview"}}
+			},
+		},
+		{name: "unknown field", fields: []api.MetadataRequirementField{"future_field"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			release := api.PreparedRelease{
+				Naming:   api.NamingFacts{Title: "Example", Year: 2026},
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 11},
+				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+					TMDBID:   11,
+					Category: "movie",
+					Title:    "Example",
+					Year:     2026,
+				}},
+			}
+			instructions := api.ReleaseFactInstructions{}
+			if test.mutate != nil {
+				test.mutate(&release, &instructions)
+			}
+			set := api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{{Scope: test.scope, AnyOf: test.fields}}}
+			if got := PreparedRequirementsSatisfied(set, release, instructions); got != test.want {
+				t.Fatalf("PreparedRequirementsSatisfied() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRequiresProviderMetadataRefresh(t *testing.T) {
 	t.Parallel()
 

@@ -46,6 +46,7 @@ type CreateReleaseWorkflowUploadRequest struct {
 	Trackers       ReleaseWorkflowUploadTrackers     `json:"trackers,omitempty"`
 	Preparation    ReleaseWorkflowUploadPreparation  `json:"preparation,omitempty"`
 	Duplicates     ReleaseWorkflowUploadDuplicates   `json:"duplicates,omitempty"`
+	HDRAnalysis    *HDRAnalysisRequest               `json:"hdrAnalysis,omitempty"`
 	Media          ReleaseWorkflowUploadMedia        `json:"media,omitempty"`
 	Descriptions   ReleaseWorkflowUploadDescriptions `json:"descriptions,omitempty"`
 	ImageHosting   ReleaseWorkflowUploadImageHosting `json:"imageHosting,omitempty"`
@@ -279,6 +280,11 @@ type ReleaseWorkflowUploadTorrent struct {
 
 // Validate rejects malformed or contradictory composite upload requests.
 func (r CreateReleaseWorkflowUploadRequest) Validate() error {
+	if r.HDRAnalysis != nil {
+		if _, err := r.HDRAnalysis.Normalize(); err != nil {
+			return err
+		}
+	}
 	if r.Authority != nil && (r.Authority.WorkflowID == "" || r.Authority.ExpectedRevision == 0) {
 		return errors.New("existing workflow authority requires an ID and revision")
 	}
@@ -535,8 +541,11 @@ type ReleaseWorkflowUploadQuestionnaire struct {
 // ReleaseWorkflowUploadDuplicateReview records an accepted or ignored duplicate
 // decision for the action tracker or an explicitly named tracker.
 type ReleaseWorkflowUploadDuplicateReview struct {
-	TrackerID TrackerID    `json:"trackerId,omitempty"`
-	Decision  DupeDecision `json:"decision"`
+	// StaffTokenConfirmed attests staff-token possession for an ignored decision.
+	// The surrounding feedback action binds it to the current duplicate assessment.
+	StaffTokenConfirmed bool         `json:"staffTokenConfirmed,omitempty"`
+	TrackerID           TrackerID    `json:"trackerId,omitempty"`
+	Decision            DupeDecision `json:"decision"`
 }
 
 // ReleaseWorkflowUploadReprepare confirms forced preparation and may replace

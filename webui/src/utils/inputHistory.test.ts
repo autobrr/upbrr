@@ -165,3 +165,50 @@ describe("filterBrowseEntries", () => {
     expect(filterBrowseEntries(entries, " ")).toEqual(entries);
   });
 });
+
+describe("browse name matching", () => {
+  it.each([
+    ["Beacon.Voyage", "BEACON voyage", true],
+    ["Beacon_Voyage", "Beacon Voyage", true],
+    ["Beacon-Voyage", "Beacon Voyage", true],
+    ["[Beacon](Voyage){2026}", "2026 beacon voyage", true],
+    ["Beacon   Anew Voyage", "voyage beacon", true],
+    ["Beacon.Voyage", "becnvyge", true],
+    ["a123456789b", "ab", true],
+    ["a1234567890b", "ab", false],
+    ["123456789abZ", "aZ", false],
+    ["Café.Voyage", "cafe voyage", true],
+    ["Café.Voyage.Extended.2026", "cafe voyage", false],
+    ["😀a😀b", "ab", true],
+    ["é".repeat(12), "e".repeat(12), true],
+    ["e".repeat(12) + "x".repeat(10), "é".repeat(12), true],
+    ["Beacon.Voyage", "Becon Voyaeg", false],
+    ["Beacon.Voyage", "voygebec", false],
+    ["Beacon.Voyage", "Beacon*", false],
+    ["Star.Trek", "STAR trek", true],
+    ["Star_Trek", "trek star", true],
+    ["Star-[Trek]_(Voyage){2026}", " voyage   star ", true],
+    ["Star Trek", "stk", true],
+    ["123456789ab", "ab", true],
+    ["Star Trek", "ts", false],
+    ["Star Trek", "Ster Trek", false],
+    ["Café Voyage", "cafe voyage", true],
+    ["Cafe", "café", true],
+    ["東京_航海", "航海 東京", true],
+    ["Star Trek", " ", true],
+    ["Star Trek", "[Trek]", true],
+    ["Star Trek", "*Trek", false],
+    ["ΟΣ", "οσ", true],
+    ["İstanbul.Voyage.Extended.2026", "istanbul", true],
+    ["Beacon\u0085Voyage", "beacon voyage", true],
+  ])("matches %s against %s: %s", (name, query, matches) => {
+    const entry = { name, path: "/root/entry" };
+    expect(filterBrowseEntries([entry], query)).toEqual(matches ? [entry] : []);
+  });
+
+  it("does not fuzzy-match a containing path", () => {
+    expect(
+      filterBrowseEntries([{ name: "Other", path: "/Beacon.Voyage/Other" }], "becnvyge"),
+    ).toEqual([]);
+  });
+});

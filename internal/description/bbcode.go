@@ -50,26 +50,36 @@ func renderBBCode(value string) string {
 // description builders can place it before their screenshot sections.
 func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 	trimmed := strings.TrimSpace(value)
-	const opening = "[spoiler=source_audio]"
-	start := strings.LastIndex(trimmed, "\n"+opening)
-	switch {
-	case start >= 0:
-		start++
-	case strings.HasPrefix(trimmed, opening):
-		start = 0
-	default:
-		return trimmed, ""
-	}
-	for _, block := range comparison.BlockRanges(trimmed) {
-		if start >= block[0] && start < block[1] {
-			return trimmed, ""
+	ranges := comparison.BlockRanges(trimmed)
+	start, end := len(trimmed), len(trimmed)
+	for end > 0 {
+		prefix := strings.TrimSpace(trimmed[:end])
+		if !strings.HasSuffix(prefix, "[/spoiler]") {
+			break
 		}
+		index := strings.LastIndex(prefix, "[spoiler=")
+		if index < 0 || index > 0 && prefix[index-1] != '\n' {
+			break
+		}
+		if !strings.HasPrefix(prefix[index:], "[spoiler=source_audio]") && !strings.HasPrefix(prefix[index:], "[spoiler=source_hdr]") {
+			break
+		}
+		insideComparison := false
+		for _, block := range ranges {
+			if index >= block[0] && index < block[1] {
+				insideComparison = true
+				break
+			}
+		}
+		if insideComparison {
+			break
+		}
+		start, end = index, index
 	}
-	block := strings.TrimSpace(trimmed[start:])
-	if !strings.HasSuffix(block, "[/spoiler]") {
+	if start == len(trimmed) {
 		return trimmed, ""
 	}
-	return strings.TrimSpace(trimmed[:start]), block
+	return strings.TrimSpace(trimmed[:start]), strings.TrimSpace(trimmed[start:])
 }
 
 func compileImg(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
@@ -116,6 +126,17 @@ type codeBlockPlaceholder struct {
 	value string
 	raw   string
 	pre   bool
+}
+
+// MapOutsideLiteralBlocks transforms BBCode without rewriting complete code and
+// pre blocks. The transform must preserve the opaque placeholders in its input.
+func MapOutsideLiteralBlocks(value string, transform func(string) string) string {
+	normalized, blocks := extractLiteralBlocks(value)
+	replacements := make([]string, 0, 2*len(blocks))
+	for _, block := range blocks {
+		replacements = append(replacements, block.token, block.raw)
+	}
+	return strings.NewReplacer(replacements...).Replace(transform(normalized))
 }
 
 func extractLiteralBlocks(value string) (string, []codeBlockPlaceholder) {

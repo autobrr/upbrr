@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -47,7 +46,7 @@ func (b workflowDescriptionBuilder) Fingerprints(
 	if err != nil {
 		return "", "", err
 	}
-	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
+	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return "", "", err
 	}
@@ -125,7 +124,7 @@ func (b workflowDescriptionBuilder) Build(
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
-	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
+	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
@@ -155,6 +154,9 @@ func (b workflowDescriptionBuilder) Build(
 	}
 	if err := b.uploadAudioDescriptionImages(ctx, subject, trackerNames); err != nil {
 		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload audio analysis images: %w", err)
+	}
+	if err := b.uploadHDRDescriptionImages(ctx, subject, trackerNames); err != nil {
+		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload HDR analysis images: %w", err)
 	}
 	for _, projection := range descriptionTargets {
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
@@ -285,6 +287,9 @@ func (b workflowDescriptionBuilder) Build(
 	return snapshot, nil
 }
 
+// uploadAudioDescriptionImages fills exact audio uploads and per-tracker host
+// choices. Explicit skip permits missing hosts and reuses compatible cached links
+// without uploading; textual statistics remain available independently.
 func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Context, subject api.UploadSubject, trackerNames []string) error {
 	if subject.ExactMedia == nil {
 		return nil
@@ -297,6 +302,9 @@ func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Con
 		return nil
 	}
 	if b.media == nil {
+		if subject.ExactMedia.ImageHostUploadSkipped {
+			return nil
+		}
 		return errors.New("image hosting service is unavailable")
 	}
 	targets, err := b.media.resolveImageUploadTargets(ctx, trackerNames, subject, "", nil)
@@ -304,6 +312,9 @@ func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Con
 		return err
 	}
 	if len(targets) == 0 {
+		if subject.ExactMedia.ImageHostUploadSkipped {
+			return nil
+		}
 		return errors.New("no image host is available for audio analysis")
 	}
 	result, err := b.media.uploadImagesToTargetsWithFallback(ctx, subject, "", nil, targets, images, nil, nil)
@@ -321,7 +332,7 @@ func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Con
 		}
 	}
 	for _, tracker := range trackerNames {
-		if hosts[strings.ToUpper(strings.TrimSpace(tracker))] == "" {
+		if hosts[strings.ToUpper(strings.TrimSpace(tracker))] == "" && !subject.ExactMedia.ImageHostUploadSkipped {
 			return fmt.Errorf("audio analysis image host is unavailable for %s", tracker)
 		}
 	}
@@ -338,6 +349,10 @@ type workflowExactLocalMedia struct {
 	menu       api.DVDMenuCaptureImage
 }
 
+// resolveWorkflowExactMedia binds selected public artifacts to retained local paths
+// and hosted variants, preserving order and the hosting opt-out. Inconsistent
+// retained resources or purpose boundaries return an error; completed audio
+// analysis resources are included when supplied through DescriptionResources.
 func resolveWorkflowExactMedia(
 	privateMedia any,
 	media api.MediaArtifactSet,
@@ -398,8 +413,9 @@ func resolveWorkflowExactMedia(
 	slices.SortStableFunc(screenshots, compareLocalMediaOrder)
 	slices.SortStableFunc(menus, compareLocalMediaOrder)
 	exact := &api.ExactMediaAssets{
-		Screenshots: make([]api.ScreenshotImage, 0, len(screenshots)),
-		DVDMenus:    make([]api.DVDMenuCaptureImage, 0, len(menus)),
+		ImageHostUploadSkipped: media.ImageHostUploadSkipped,
+		Screenshots:            make([]api.ScreenshotImage, 0, len(screenshots)),
+		DVDMenus:               make([]api.DVDMenuCaptureImage, 0, len(menus)),
 	}
 	for _, item := range screenshots {
 		image := item.screenshot
@@ -475,7 +491,7 @@ func resolveWorkflowExactMedia(
 			return nil, errors.New("workflow exact media: hosted artifact cannot source another hosted artifact")
 		}
 	}
-	if audio != nil {
+	if audio != nil && audio.AudioAnalysis.ID != "" {
 		ref := api.AudioAnalysisRef{ID: audio.AudioAnalysis.ID, Revision: audio.AudioAnalysis.Revision}
 		exact.AudioAnalysis = &ref
 		for _, track := range audio.AudioAnalysis.Tracks {
@@ -564,12 +580,8 @@ func (b workflowDescriptionBuilder) resolveSubject(
 			Final:          override.Final,
 		})
 	}
-	questionnaire := make(map[string]map[string]string, len(instructions.QuestionnaireAnswers))
-	for trackerID, answers := range instructions.QuestionnaireAnswers {
-		cloned := make(map[string]string, len(answers))
-		maps.Copy(cloned, answers)
-		questionnaire[string(trackerID)] = cloned
-	}
+	questionnaire := workflowQuestionnaireAnswers(instructions.QuestionnaireAnswers, descriptionTargets)
+
 	subject, err := b.resolver.ResolveUploadSubject(ctx, api.UploadSubjectInput{
 		Release:                release,
 		Trackers:               trackerNames,

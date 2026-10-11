@@ -15,6 +15,7 @@ export const routeAccess = (
   hasTrackerData: boolean,
   requirements: TrackerWorkflowRequirements,
   hasAudioData = false,
+  hasHDRData = false,
 ): Readonly<Record<ReleaseRoute, RouteAccess>> => {
   const goal = (name: string): RouteAccess => {
     const availability = continuation?.availableGoals.find((candidate) => candidate.goal === name);
@@ -30,13 +31,16 @@ export const routeAccess = (
   const trackerAssessment = goal("trackers_assessed");
   const media = goal("media_ready");
   const descriptions = goal("descriptions_ready");
-  const upload = goal("upload_reviewed");
   return {
     input: { available: true, reason: "" },
     trackerData: {
       available: trackerAssessment.available && hasTrackerData,
       reasonCode: hasTrackerData ? trackerAssessment.reasonCode : undefined,
       reason: hasTrackerData ? trackerAssessment.reason : "No tracker data is available.",
+    },
+    hdrAnalysis: {
+      available: hasHDRData,
+      reason: hasHDRData ? "" : "Prepare an MKV or supported Blu-ray source first.",
     },
     audioAnalysis: {
       available: hasAudioData,
@@ -65,6 +69,6 @@ export const routeAccess = (
         ? descriptions.reason
         : "Selected trackers do not use shared descriptions.",
     },
-    upload,
+    upload: goal("upload_reviewed"),
   };
 };
