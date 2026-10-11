@@ -11,5 +11,5 @@ Launch: `make backend` builds binary; run `go test -race -v -timeout 20m ./...` 
 Doctor: `go version` and `go build ./cmd/upbrr` succeed.
 Drive: `make test-go` and `make lint`.
 Evidence: test output saved to `.cursor/skills/verify-upbrr/evidence/test-output.log`.
-Cleanup: `rm -rf .cursor/skills/verify-upbrr/evidence/*` (not directories).
+Cleanup: `find .cursor/skills/verify-upbrr/evidence -type f -delete` (preserve directories).
 Helpers: `make backend`, `make lint`.
