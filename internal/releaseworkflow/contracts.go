@@ -927,6 +927,7 @@ func (c CheckDuplicatesCommand) commandFingerprint() (api.WorkflowFingerprint, e
 
 // DecideDuplicatesCommand publishes owner decisions without repeating remote searches.
 type DecideDuplicatesCommand struct {
+	// StaffTokenConfirmations binds ignored staff-required decisions to the current assessment ID.
 	StaffTokenConfirmations map[api.TrackerID]api.DupeAssessmentID
 	WorkflowID              api.WorkflowID
 	ExpectedRevision        api.WorkflowRevision

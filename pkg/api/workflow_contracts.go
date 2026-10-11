@@ -454,7 +454,7 @@ type TrackerDupeAssessment struct {
 	// RequiresStaffToken blocks overrides until the owner explicitly attests possession.
 	RequiresStaffToken bool `json:"requiresStaffToken,omitempty"`
 	// StaffTokenConfirmed retains attestation for this projection; reprojecting clears it.
-	// The tracker validates the actual token.
+	// It records possession only, never the token contents.
 	StaffTokenConfirmed   bool                     `json:"staffTokenConfirmed,omitempty"`
 	TrackerID             TrackerID                `json:"trackerId"`
 	UploadReleaseName     string                   `json:"uploadReleaseName"`

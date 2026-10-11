@@ -45,6 +45,9 @@ func buildDescription(ctx context.Context, req trackers.PreparationInput, assets
 	return finalized, nil
 }
 
+// stripTMDBLogoImages removes image tags for the prepared TMDB logo identities,
+// including other TMDB sizes of the same asset. Complete code and pre blocks
+// remain unchanged; absent metadata leaves the text intact.
 func stripTMDBLogoImages(value string, metadata *api.TMDBMetadata) string {
 	if metadata == nil {
 		return value
@@ -80,6 +83,7 @@ func stripTMDBLogoImages(value string, metadata *api.TMDBMetadata) string {
 
 // prepareDescriptionText removes only owned screenshot content and known uploader
 // signatures. Other images, release notes, and supported user markup are retained.
+// Complete literal and comparison blocks bypass this cleanup.
 func prepareDescriptionText(value, screenshotHeader string, screenshots []api.ScreenshotImage) string {
 	return description.MapOutsideLiteralBlocks(value, func(value string) string {
 		value = bbcode.NormalizeNewlines(value)
@@ -126,6 +130,8 @@ func prepareDescriptionFragment(value, screenshotHeader string, screenshots []ap
 	return strings.TrimSpace(bbcode.RemoveExtraLines(strings.Join(parts, "\n\n")))
 }
 
+// resolveScreenshotPayload selects up to four nonempty URLs in input order,
+// preferring RawURL to ImgURL. Disabled screenshot submission returns empty text.
 func resolveScreenshotPayload(images []api.ScreenshotImage, allow bool) string {
 	if !allow || len(images) == 0 {
 		return ""

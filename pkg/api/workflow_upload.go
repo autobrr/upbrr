@@ -541,7 +541,8 @@ type ReleaseWorkflowUploadQuestionnaire struct {
 // ReleaseWorkflowUploadDuplicateReview records an accepted or ignored duplicate
 // decision for the action tracker or an explicitly named tracker.
 type ReleaseWorkflowUploadDuplicateReview struct {
-	// StaffTokenConfirmed explicitly attests possession of the appropriate staff-issued token.
+	// StaffTokenConfirmed attests staff-token possession for an ignored decision.
+	// The surrounding feedback action binds it to the current duplicate assessment.
 	StaffTokenConfirmed bool         `json:"staffTokenConfirmed,omitempty"`
 	TrackerID           TrackerID    `json:"trackerId,omitempty"`
 	Decision            DupeDecision `json:"decision"`

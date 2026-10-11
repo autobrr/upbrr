@@ -16,6 +16,8 @@ var antEmptyURLPattern = regexp.MustCompile(`(?is)\[url=[^\]]*]\s*\[/url\]`)
 var antEmptyAlignmentPattern = regexp.MustCompile(`(?is)\[(?:center|left|right|align=(?:center|left|right))\]\s*\[/(?:center|left|right|align)\]`)
 var antSizePattern = regexp.MustCompile(`(?i)\[/?size(?:=[^\]]*)?\]`)
 
+// finalizeDescription converts generated markup to ANT's supported tags while
+// preserving complete code and pre blocks, including their whitespace.
 func finalizeDescription(value string) string {
 	return description.MapOutsideLiteralBlocks(value, func(value string) string {
 		value = trackers.StripDefaultDescriptionSignature(value)

@@ -630,6 +630,9 @@ func screenshotSlotsForImageHostResolution(
 	return screenshotSlotsFromSourceWithoutPersist(ctx, tracker, meta, repo, logger, preloaded, registry)
 }
 
+// screenshotSlotsFromSourceWithoutPersist honors exact prepared screenshot
+// identities, including an empty selection, before legacy description reconciliation.
+// Exact preloaded slots are cloned and cancellation is checked before reuse.
 func screenshotSlotsFromSourceWithoutPersist(
 	ctx context.Context,
 	tracker string,

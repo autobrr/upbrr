@@ -219,7 +219,8 @@ func (r CheckReleaseWorkflowDuplicatesRequest) Validate() error {
 
 // DecideReleaseWorkflowDuplicatesRequest records owner duplicate decisions.
 type DecideReleaseWorkflowDuplicatesRequest struct {
-	// StaffTokenConfirmations attest token possession for each named current assessment ID.
+	// StaffTokenConfirmations binds each staff-required ignored decision to the
+	// current assessment ID; stale or absent confirmation cannot authorize an override.
 	StaffTokenConfirmations map[TrackerID]DupeAssessmentID `json:"staffTokenConfirmations,omitempty"`
 	ReleaseWorkflowCommandContext
 	Decisions map[TrackerID]DupeDecision `json:"decisions"`

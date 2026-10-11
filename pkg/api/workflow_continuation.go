@@ -87,7 +87,8 @@ type WorkflowIntent struct {
 	SkipRemoteDuplicates   bool                                        `json:"skipRemoteDuplicates,omitempty"`
 	DuplicateCheckCount    uint8                                       `json:"duplicateCheckCount,omitempty"`
 	DuplicateDecisions     map[TrackerID]DupeDecision                  `json:"duplicateDecisions,omitempty"`
-	// StaffTokenConfirmations attest staff-token possession for exact duplicate assessments.
+	// StaffTokenConfirmations maps each staff-required ignored tracker to the
+	// current assessment ID. Confirmations for an earlier assessment cannot authorize it.
 	StaffTokenConfirmations map[TrackerID]DupeAssessmentID `json:"staffTokenConfirmations,omitempty"`
 	HDRAnalysis             *HDRAnalysisRequest            `json:"hdrAnalysis,omitempty"`
 	Media                   *MediaCaptureInstructions      `json:"media,omitempty"`

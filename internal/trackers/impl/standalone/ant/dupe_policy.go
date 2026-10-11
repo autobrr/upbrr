@@ -34,7 +34,8 @@ func resolveTargetSlot(meta api.UploadSubject) string {
 	return antSlot(kind, meta.Source, meta.Release.Resolution, meta.VideoCodec, resolveFlags(meta), discCountry(meta.Region), true)
 }
 
-// antSlot follows ANT's kind priority and exact edition-flag combination.
+// antSlot encodes kind, resolution tier, HDR or disc source, disc country, and
+// edition flags in five slash-separated components. Unsupported 3D tiers return empty text.
 // Unknown components remain '?' so independently proved variants can coexist.
 func antSlot(kind, source, resolution, codec string, flags []string, country string, flagsComplete bool) string {
 	tier := "?"
@@ -118,6 +119,7 @@ func antSlot(kind, source, resolution, codec string, flags []string, country str
 	return strings.Join([]string{slotKind, tier, rangeSlot, country, strings.Join(editions, "+")}, "/")
 }
 
+// slotFlags uppercases recognized native flags; an unknown flag makes the list incomplete.
 func slotFlags(flags []string) ([]string, bool) {
 	upperFlags := make([]string, 0, len(flags))
 	for _, flag := range flags {
@@ -146,6 +148,9 @@ func slotFlags(flags []string) ([]string, bool) {
 	return upperFlags, true
 }
 
+// compareSlots lets known native differences coexist and requires review for
+// unresolved or contradictory evidence. An existing encode can close a proposed
+// WEB slot, so comparison is directional.
 func compareSlots(target, candidate string, targetNames []string, candidateName string) api.DupeRelation {
 	proposed, existing := strings.Split(target, "/"), strings.Split(candidate, "/")
 	if len(proposed) != 5 || len(existing) != 5 {
@@ -189,7 +194,7 @@ func compareSlots(target, candidate string, targetNames []string, candidateName 
 
 var title4KRemaster = regexp.MustCompile(`(?i)\b4k[ ._-]*remaster(?:ed)?\b`)
 
-// A positive bounded title marker must be present in complete native flags.
+// slotContradictsTitle requires positive bounded title markers in complete native flags.
 // Missing title markers and incomplete flags cannot establish a contradiction.
 func slotContradictsTitle(slot []string, name string) bool {
 	if slot[4] == "?" {

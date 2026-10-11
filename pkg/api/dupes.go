@@ -150,7 +150,8 @@ type DupeMatch struct {
 // DupeCheckResult is the sanitized duplicate-search outcome for one tracker.
 // Private adapter payloads and download authority are retained separately.
 type DupeCheckResult struct {
-	// RequiresStaffToken requires explicit owner attestation before overriding this evidence.
+	// RequiresStaffToken requires explicit owner attestation before overriding
+	// duplicate or incomplete-search evidence; it carries no token contents.
 	RequiresStaffToken    bool
 	Tracker               string
 	CanonicalReleaseName  string

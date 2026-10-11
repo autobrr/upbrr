@@ -67,6 +67,9 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	}, nil), nil
 }
 
+// submitPreparedUpload submits the captured payload and retains registered
+// torrent authority when available. Artifact retrieval failure does not undo
+// remote success; modified torrents are never reconstructed from unregistered bytes.
 func submitPreparedUpload(
 	ctx context.Context,
 	logger api.Logger,
@@ -352,6 +355,8 @@ func antUploadSuccess(payload map[string]any) bool {
 	return strings.EqualFold(strings.TrimSpace(stringValue(payload["status"])), "success")
 }
 
+// antUploadError preserves redacted API rejection details before status fallbacks,
+// including reasons returned in a successful HTTP response.
 func antUploadError(status int, payload map[string]any, body []byte) error {
 	if detail := commonhttp.ExtractHTTPErrorDetail(body); detail != "" {
 		if viewURL := strings.TrimSpace(stringValue(payload["view"])); viewURL != "" {
@@ -374,12 +379,7 @@ func stringValue(value any) string {
 	if value == nil {
 		return ""
 	}
-	switch typed := value.(type) {
-	case string:
-		return strings.TrimSpace(typed)
-	default:
-		return strings.TrimSpace(fmt.Sprint(value))
-	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func dedupeStrings(values []string) []string {

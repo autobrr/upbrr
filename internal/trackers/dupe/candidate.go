@@ -23,6 +23,7 @@ var (
 
 // TrackerCandidate is protocol-independent private candidate evidence.
 type TrackerCandidate struct {
+	// TrackerSlot preserves the adapter's opaque native evidence, including unknown components.
 	TrackerSlot      string
 	ID               string
 	Name             string

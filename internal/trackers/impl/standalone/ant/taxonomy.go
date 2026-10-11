@@ -13,6 +13,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// resolveType maps supported movie content to ANT's feature or short-film type.
+// Unsupported content returns an empty name; callers must reject it before upload.
 func resolveType(meta api.UploadSubject, answers map[string]string) (string, int) {
 	if !movieContent(meta) {
 		return "", 0
@@ -43,6 +45,7 @@ func resolveType(meta api.UploadSubject, answers map[string]string) (string, int
 	return "Short Film", 1
 }
 
+// movieContent prefers an explicit IMDb type over the canonical category fallback.
 func movieContent(meta api.UploadSubject) bool {
 	if meta.ProviderMetadata.IMDB != nil {
 		switch strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type)) {
@@ -206,6 +209,8 @@ func fullDisc(meta api.UploadSubject) bool {
 	return mediafacts.IsFullDisc(meta.DiscType, meta.Type)
 }
 
+// resolveMediaSource maps finalized source labels to ANT's API vocabulary.
+// Empty sources become Unknown; unsupported labels become Other.
 func resolveMediaSource(source string) string {
 	switch strings.NewReplacer("-", "", " ", "", "_", "").Replace(strings.ToUpper(strings.TrimSpace(source))) {
 	case "BLURAY", "BLURAY3D", "BD", "BDMV":
@@ -232,6 +237,7 @@ func resolveMediaSource(source string) string {
 }
 
 // discCountry maps the prepared release Region country code to ANT's ISO alpha-2 field.
+// Release-name aliases are accepted; invalid or non-country regions return empty text.
 func discCountry(region string) string {
 	code := strings.ToUpper(strings.TrimSpace(region))
 	// These release-name codes differ from ISO alpha-3.

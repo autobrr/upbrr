@@ -76,6 +76,8 @@ func buildQuestionnaire(meta api.UploadSubject, state uploadState) *api.TrackerQ
 	return &api.TrackerQuestionnaire{Tracker: "ANT", Fields: fields}
 }
 
+// requestID returns the optional request answer as canonical decimal text.
+// Zero, malformed, negative, or overflowing IDs are rejected; blank means absent.
 func requestID(answers map[string]string) (string, error) {
 	value := strings.TrimSpace(answers["requestid"])
 	if value == "" {

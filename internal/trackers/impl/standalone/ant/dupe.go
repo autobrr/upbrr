@@ -45,6 +45,8 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	}
 }
 
+// Search enumerates provider-bound ANT results within the configured page limit.
+// Unexhausted or inconsistent pagination retains candidates as incomplete evidence.
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
 	view := *s
 	view.logger = logging.FromContext(ctx, s.logger)
@@ -184,6 +186,8 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	})
 }
 
+// antDupeEntries retains API identities and resolves ANT-native slot evidence.
+// Omitted flags are known empty; malformed or unknown flags remain incomplete.
 func antDupeEntries(payload map[string]any) []api.DupeEntry {
 	items, _ := payload["item"].([]any)
 	entries := make([]api.DupeEntry, 0, len(items))
@@ -216,23 +220,18 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 			entry.SizeKnown, entry.SizeBytes = true, size
 		}
 		_, entry.FlagsPresent = item["flags"]
-		flagsValid := true
-		if flags, ok := item["flags"].([]any); ok {
-			for _, rawFlag := range flags {
-				flag, valid := rawFlag.(string)
-				flagsValid = flagsValid && valid && strings.TrimSpace(flag) != ""
-				if flag != "" {
-					entry.Flags = append(entry.Flags, flag)
-				}
+		flags, flagsOK := item["flags"].([]any)
+		flagsValid := !entry.FlagsPresent || flagsOK
+		for _, rawFlag := range flags {
+			flag, valid := rawFlag.(string)
+			flagsValid = flagsValid && valid && strings.TrimSpace(flag) != ""
+			if flag != "" {
+				entry.Flags = append(entry.Flags, flag)
 			}
 		}
 		// ANT omits fields with no value, so an omitted flags list is empty.
 		_, entry.FlagsComplete = slotFlags(entry.Flags)
 		entry.FlagsComplete = entry.FlagsComplete && flagsValid
-		if entry.FlagsPresent {
-			_, valid := item["flags"].([]any)
-			entry.FlagsComplete = entry.FlagsComplete && valid
-		}
 		entry.HDR = dupe.NormalizeTrackerHDRFlags(entry.Flags, true, entry.FlagsComplete)
 		if entry.FlagsComplete && entry.HDR.Status == api.HDREvidenceMissing {
 			entry.HDR = api.HDRFacts{
@@ -283,6 +282,7 @@ func antCandidateSource(item map[string]any) string {
 var antDiscFilenameContainer = regexp.MustCompile(`(?i)\.(vobifo|m2ts)\.[0-9]+\.torrent$`)
 
 // antCandidateContainer uses ANT's generated torrent filename only when the API omits its container.
+// Only numeric-ID VOBIFO and m2ts torrent suffixes establish disc-container evidence.
 func antCandidateContainer(item map[string]any) string {
 	if container := antString(item["container"]); container != "" {
 		return container

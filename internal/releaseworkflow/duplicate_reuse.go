@@ -16,6 +16,7 @@ import (
 
 // RequireStaffTokenReview clears retained attestation and blocks a staff-required
 // lane until the owner confirms possession for the current upload assessment.
+// It replaces the lane's decision and actions while retaining its search evidence.
 func RequireStaffTokenReview(result *api.TrackerDupeAssessment) {
 	result.StaffTokenConfirmed = false
 	result.Decision = api.DupeDecisionPending
