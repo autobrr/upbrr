@@ -106,7 +106,7 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	}
 }
 
-func TestMovieYearProvidersFollowTrackerMetadataAuthority(t *testing.T) {
+func TestNameProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 	t.Parallel()
 
 	registry, err := NewRegistry()
@@ -114,9 +114,21 @@ func TestMovieYearProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 		t.Fatalf("new registry: %v", err)
 	}
 	for _, name := range registry.NamesByFamily(trackers.FamilyUnit3D) {
+		wantTitle, wantYear := api.IdentityProviderTMDB, api.IdentityProviderTMDB
+		switch name {
+		case "HHD", "ULCX":
+			wantTitle, wantYear = api.IdentityProviderIMDB, api.IdentityProviderIMDB
+		case "YUS":
+			wantTitle = api.IdentityProviderIMDB
+		case "SP":
+			wantTitle, wantYear = "", ""
+		case "OTW", "RMC":
+			wantTitle = ""
+		}
 		descriptor, ok := registry.LookupDescriptor(name)
-		if !ok || descriptor.ReleaseNamePolicy.MovieYearProvider != api.IdentityProviderTMDB {
-			t.Fatalf("%s movie-year provider = %q", name, descriptor.ReleaseNamePolicy.MovieYearProvider)
+		if !ok || descriptor.ReleaseNamePolicy.TitleProvider != wantTitle || descriptor.ReleaseNamePolicy.MovieYearProvider != wantYear {
+			t.Fatalf("%s name providers = title %q year %q, want title %q year %q", name,
+				descriptor.ReleaseNamePolicy.TitleProvider, descriptor.ReleaseNamePolicy.MovieYearProvider, wantTitle, wantYear)
 		}
 	}
 	for name, provider := range map[string]api.IdentityProvider{
@@ -200,12 +212,13 @@ func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 	}
 }
 
-func TestOERequiredEvidenceUsesSharedInputReadiness(t *testing.T) {
+func TestOERequiredEvidenceUsesTrackerProjection(t *testing.T) {
 	registry := MustNewRegistry()
 	subject := api.UploadSubject{
-		Type:       "ENCODE",
-		VideoCodec: "AV1",
-		Tag:        "-SM737",
+		ReleaseName: "Example.Movie.2026.1080p.AV1-GRP",
+		Type:        "ENCODE",
+		VideoCodec:  "AV1",
+		Tag:         "-SM737",
 	}
 	for _, answered := range []bool{false, true} {
 		if answered {
@@ -218,30 +231,24 @@ func TestOERequiredEvidenceUsesSharedInputReadiness(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(evaluation.Schemas) != 1 || evaluation.Schemas[0].Tracker != "OE" || len(evaluation.Schemas[0].Fields) != 2 {
-			t.Fatalf("OE Input schema = %+v", evaluation.Schemas)
+		if len(evaluation.Schemas) != 0 {
+			t.Fatalf("tracker controls leaked into Input: %+v", evaluation.Schemas)
 		}
-		for _, field := range evaluation.Schemas[0].Fields {
-			if !field.Required {
-				t.Errorf("OE field %q must require evidence", field.Key)
+		projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: "OE", Meta: subject}, "input", "catalog", "config")
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		if len(projection.Questionnaire) != 2 {
+			t.Fatalf("OE projection questionnaire = %+v", projection.Questionnaire)
+		}
+		for _, field := range projection.Questionnaire {
+			if !field.Required || (field.Value != "") != answered {
+				t.Errorf("answered=%t field=%+v", answered, field)
 			}
-			found := false
-			for _, outcome := range evaluation.Fields {
-				if outcome.Key != "tracker_input."+field.Key {
-					continue
-				}
-				found = true
-				want := api.InputReadinessFieldMissing
-				if answered {
-					want = api.InputReadinessFieldReady
-				}
-				if outcome.Status != want || outcome.Disposition != api.RuleDispositionStrict {
-					t.Errorf("answered=%t field=%+v, want status=%s strict", answered, outcome, want)
-				}
-			}
-			if !found {
-				t.Errorf("missing central readiness outcome for %q", field.Key)
-			}
+		}
+		pending := slices.ContainsFunc(projection.RequiredActions, func(action api.RequiredAction) bool { return action.Kind == api.RequiredActionAnswerQuestionnaire })
+		if pending == answered {
+			t.Fatalf("answered=%t questionnaire action=%t", answered, pending)
 		}
 	}
 }
@@ -537,6 +544,22 @@ func TestRegistryOmitsGeneratedEpisodeTitleForBLU(t *testing.T) {
 	input, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
 		Tracker: "BLU",
 		Meta: api.UploadSubject{
+			SourcePath: "blu-source",
+			Identity: api.ExternalIdentity{
+				SourcePath: "blu-source",
+				Generation: 1,
+				TMDBID:     12345,
+				Category:   api.CanonicalCategoryTV,
+			},
+			ProviderMetadata: api.SourceScopedMetadata{
+				SourcePath: "blu-source",
+				Generation: 1,
+				TMDB: &api.TMDBMetadata{
+					TMDBID:   12345,
+					Category: "TV",
+					Title:    "Example.Show",
+				},
+			},
 			ReleaseName: included,
 			GeneratedName: &api.ReleaseNameDocument{
 				Version: api.ReleaseNameDocumentVersionV1,

@@ -11,6 +11,7 @@ import (
 	"github.com/autobrr/rls"
 	"github.com/autobrr/rls/taginfo"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -26,6 +27,17 @@ type CorrectionChoice struct {
 // parser tags with values produced by the metadata providers. The generator adds
 // tracker-owned catalog suggestions without coupling metadata to tracker implementations.
 func CorrectionChoices() (map[string][]CorrectionChoice, error) {
+	labels := languageutil.KnownLanguageLabels()
+	choices := make([]CorrectionChoice, 0, len(labels))
+	for _, label := range labels {
+		choices = append(choices, CorrectionChoice{Value: label, Label: label})
+	}
+	hardcoded := append(
+		slices.Clone(choices),
+		CorrectionChoice{Value: "English (Full)", Label: "English (Full)"},
+		CorrectionChoice{Value: "English (Forced)", Label: "English (Forced)"},
+	)
+	slices.SortFunc(hardcoded, func(a, b CorrectionChoice) int { return strings.Compare(a.Label, b.Label) })
 	infos, err := taginfo.LoadAll()
 	if err != nil {
 		return nil, fmt.Errorf("load correction choice tags: %w", err)
@@ -63,6 +75,8 @@ func CorrectionChoices() (map[string][]CorrectionChoice, error) {
 	serviceNames["AMZN"] = "Amazon Prime Video"
 
 	return map[string][]CorrectionChoice{
+		"SubtitleLanguages":          choices,
+		"HardcodedSubtitleLanguages": hardcoded,
 		"Category": {
 			{Value: string(api.CanonicalCategoryMovie), Label: "Movie"},
 			{Value: string(api.CanonicalCategoryTV), Label: "TV"},

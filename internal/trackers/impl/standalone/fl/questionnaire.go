@@ -7,9 +7,18 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	name := ""
+	if input.Projection != nil {
+		name = input.Projection.UploadReleaseName
+	}
+	return buildQuestionnaire(input.Meta, name)
+}
 
 func buildQuestionnaire(meta api.UploadSubject, computedName string) *api.TrackerQuestionnaire {
 	answers := standalone.QuestionnaireAnswers(meta, "FL")

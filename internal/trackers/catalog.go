@@ -59,6 +59,10 @@ func catalogCapabilities(descriptor Descriptor) api.TrackerCapabilityDescriptor 
 }
 
 func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint, error) {
+	titleSearchID := ""
+	if provider, ok := descriptor.Definition.(TitleSearchPolicyProvider); ok {
+		titleSearchID = provider.TitleSearchPolicy().ID
+	}
 	rules := safeRuleFingerprint(descriptor.Rules)
 	authPolicy := safeAuthPolicyFingerprint(descriptor.AuthPolicy)
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
@@ -66,12 +70,15 @@ func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint
 		Family            Family
 		ProjectorVersion  string
 		SearchContract    string
+		TitleSearchPolicy string
 		ReleaseNamePolicy string
 		NameConfirmation  ReleaseNameConfirmationMode
 		MovieYearProvider api.IdentityProvider
+		TitleProvider     api.IdentityProvider
 		UploadContentMode UploadContentMode
 		Rules             *ruleFingerprint
 		ValidationPolicy  string
+		RuleContract      string
 		Artifact          *ArtifactPolicy
 		DataPolicy        *DataLookupPolicy
 		BannedGroups      []string
@@ -93,12 +100,15 @@ func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint
 		Family:            descriptor.Family,
 		ProjectorVersion:  descriptor.ProjectorVersion,
 		SearchContract:    DuplicateSearchContractID,
+		TitleSearchPolicy: titleSearchID,
 		ReleaseNamePolicy: descriptor.ReleaseNamePolicy.ID,
 		NameConfirmation:  descriptor.ReleaseNamePolicy.Confirmation,
 		MovieYearProvider: descriptor.ReleaseNamePolicy.MovieYearProvider,
+		TitleProvider:     descriptor.ReleaseNamePolicy.TitleProvider,
 		UploadContentMode: descriptor.UploadContentMode,
 		Rules:             rules,
 		ValidationPolicy:  descriptor.Validation.ID,
+		RuleContract:      ValidationContractID,
 		Artifact:          descriptor.Artifact,
 		DataPolicy:        descriptor.DataPolicy,
 		BannedGroups:      slices.Clone(descriptor.BannedGroups),

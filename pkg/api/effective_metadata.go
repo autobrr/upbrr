@@ -117,22 +117,38 @@ const (
 // MediaTrackFacts describes only an inspected stream. An opaque resource ID and
 // exact manifest bind ordinal identities when native IDs are unavailable.
 type MediaTrackFacts struct {
-	ID                  string
-	Kind                MediaTrackKind
-	ResourceID          string
+	ID         string
+	Kind       MediaTrackKind
+	ResourceID string
+	// DiscID and PlaylistID scope streams inspected from a BDInfo playlist report.
+	DiscID              string
+	PlaylistID          string
 	ManifestFingerprint string
 	NativeID            string
 	Ordinal             int
-	Title               string
-	Codec               string
-	ChannelLayout       string
-	Channels            int
-	SampleRate          int
-	DetectedLanguages   []string
-	Languages           []string
-	LanguageProvenance  FactProvenance
-	Default             bool
-	Commentary          bool
+	// StreamOrder is the measured container order, not the per-kind Ordinal or NativeID.
+	// StreamOrderKnown is false when MediaInfo has no unambiguous nonnegative order.
+	StreamOrder           int
+	StreamOrderKnown      bool
+	Title                 string
+	Codec                 string
+	AudioLabel            string
+	ChannelLayout         string
+	Channels              int
+	SampleRate            int
+	DetectedLanguages     []string
+	Languages             []string
+	LanguageProvenance    FactProvenance
+	Default               bool
+	DefaultKnown          bool // True only for an explicit inspected MediaInfo Yes/No value.
+	Forced                bool
+	Role                  AudioTrackRole
+	EmbeddedCompatibility bool
+	Commentary            bool
+	// BitrateBitsPerSecond retains whole-bit BDInfo bitrate; zero means unavailable or invalid.
+	BitrateBitsPerSecond int64
+	// Hidden records BDInfo's hidden-stream marker, not a commentary classification.
+	Hidden bool
 }
 
 // ManualLanguageFacts contains the resolved manual lists used in generated descriptions.
@@ -165,7 +181,27 @@ func (m MediaFacts) ManualLanguages() ManualLanguageFacts {
 		result.Subtitles = slices.Clone(m.SubtitleLanguages)
 	}
 	if m.HardcodedSubtitleLanguagesProvenance.IsManual() {
-		result.HardcodedSubtitles = slices.Clone(m.HardcodedSubtitleLanguages)
+		for _, language := range m.HardcodedSubtitleLanguages {
+			found := false
+			for _, detail := range m.HardcodedSubtitleCoverage {
+				if detail.Language != language {
+					continue
+				}
+				found = true
+				label := language
+				switch detail.Coverage {
+				case SubtitleCoverageUnspecified:
+				case SubtitleCoverageFull:
+					label += " (Full)"
+				case SubtitleCoverageForced:
+					label += " (Forced)"
+				}
+				result.HardcodedSubtitles = append(result.HardcodedSubtitles, label)
+			}
+			if !found {
+				result.HardcodedSubtitles = append(result.HardcodedSubtitles, language)
+			}
+		}
 	}
 	return result
 }

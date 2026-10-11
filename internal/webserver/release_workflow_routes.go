@@ -56,7 +56,9 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowImageHostRequest](s, mux, "RetryReleaseWorkflowImageHost", true)
 	registerReleaseWorkflowCommand[api.RemoveReleaseWorkflowHostedImagesRequest](s, mux, "RemoveReleaseWorkflowHostedImages", false)
 	registerReleaseWorkflowCommand[api.AnalyzeReleaseWorkflowAudioRequest](s, mux, "AnalyzeReleaseWorkflowAudio", true)
+	registerReleaseWorkflowCommand[api.AnalyzeReleaseWorkflowHDRRequest](s, mux, "AnalyzeReleaseWorkflowHDR", true)
 	registerReleaseWorkflowCommand[api.SetReleaseWorkflowAudioAnalysisEnabledRequest](s, mux, "SetReleaseWorkflowAudioAnalysisEnabled", false)
+	registerReleaseWorkflowCommand[api.SetReleaseWorkflowHDRAnalysisEnabledRequest](s, mux, "SetReleaseWorkflowHDRAnalysisEnabled", false)
 	registerReleaseWorkflowCommand[api.SaveReleaseWorkflowDescriptionOverrideRequest](s, mux, "SaveReleaseWorkflowDescriptionOverride", false)
 	registerReleaseWorkflowCommand[api.ResetReleaseWorkflowDescriptionOverrideRequest](s, mux, "ResetReleaseWorkflowDescriptionOverride", false)
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowUploadRequest](s, mux, "RetryReleaseWorkflowUpload", true)
@@ -294,6 +296,38 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 			content,
 			audioAnalysisContentDisposition(content.ContentType),
 			"releaseworkflow: audio analysis response interrupted",
+		)
+	}))
+
+	mux.HandleFunc("/api/app/release-workflow-hdr-analysis", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		revision, err := strconv.ParseUint(r.URL.Query().Get("analysisRevision"), 10, 64)
+		if err != nil || revision == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid HDR analysis revision"})
+			return
+		}
+		content, err := s.backend.openReleaseWorkflowHDRAnalysisArtifact(
+			r.Context(),
+			current.ID,
+			api.WorkflowID(r.URL.Query().Get("workflowId")),
+			api.HDRAnalysisRef{
+				ID:       api.HDRAnalysisResultID(r.URL.Query().Get("analysisId")),
+				Revision: api.WorkflowRevision(revision),
+			},
+			api.PublicResourceID(r.URL.Query().Get("artifactId")),
+		)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		s.writeReleaseWorkflowArtifact(
+			w,
+			content,
+			`inline; filename="hdr10plus.png"`,
+			"releaseworkflow: HDR analysis response interrupted",
 		)
 	}))
 }

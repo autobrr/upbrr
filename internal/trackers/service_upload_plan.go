@@ -485,6 +485,21 @@ func retainedTrackerPreparation(slot trackerPlanSlot) RetainedTrackerPreparation
 	if slot.failure != nil {
 		failure := *slot.failure
 		preparation.Failure = &failure
+		if source, ok := errors.AsType[*PreparationFailure](failure.cause); ok && source.questionnaire != nil {
+			preparation.Preview = cloneTrackerDryRunEntry(api.TrackerDryRunEntry{
+				Tracker:       slot.tracker,
+				Status:        "blocked",
+				Message:       source.Message(),
+				Questionnaire: source.questionnaire,
+				RequiredActions: []api.RequiredAction{
+					{
+						Kind:      api.RequiredActionAnswerQuestionnaire,
+						TrackerID: api.TrackerID(slot.tracker),
+						Prompt:    source.Message(),
+					},
+				},
+			})
+		}
 	} else {
 		preparation.Preview = slot.plan.DryRun()
 	}
@@ -638,10 +653,11 @@ func (s *Service) preparationInput(
 	logger := logging.FromContext(ctx, s.logger)
 	meta, groupPolicy := ApplyGroupPolicy(trackerCfg, meta)
 	input := PreparationInput{
-		Intent:        intent,
-		Tracker:       tracker,
-		Meta:          meta,
-		TrackerConfig: trackerCfg,
+		validationRegistry: s.registry,
+		Intent:             intent,
+		Tracker:            tracker,
+		Meta:               meta,
+		TrackerConfig:      trackerCfg,
 		Runtime: PreparationRuntime{
 			DBPath:      s.cfg.MainSettings.DBPath,
 			Description: s.cfg.Description,

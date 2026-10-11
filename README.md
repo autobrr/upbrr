@@ -4,7 +4,7 @@
 >
 > **Quality check every upload before submitting.** Pay close attention to generated names, tracker category, tracker type, edition/source/resolution handling, description output, image links, and torrent-client injection settings. Do not rely on alpha automation as the final authority.
 
-<img width="1899" height="1580" alt="Screenshot 2026-06-12 093436" src="https://github.com/user-attachments/assets/d0bd8123-52d0-4d17-9aed-1cba270f258b" />
+<img width="1872" height="1565" alt="Screenshot 2026-10-05 222457" src="https://github.com/user-attachments/assets/6ab6a987-1a71-4834-933d-9711f1418687" />
 
 upbrr is a guided upload preparation app for private-tracker workflows. It helps you prepare, review, and submit releases without replacing tracker rules or user judgement.
 
@@ -20,7 +20,7 @@ upbrr is a guided upload preparation app for private-tracker workflows. It helps
 
 ## Documentation
 
-Start with the [installation guide](https://upbrr.com/docs/getting-started/installation) and [quick start](https://upbrr.com/docs/getting-started/quick-start).
+Start with the [installation guide](https://upbrr.com/docs/getting-started/installation) and [quick start](https://upbrr.com/docs/getting-started/quick-start). The published site follows releases. For a development or PR build, read the [documentation source](./documentation/docs/) at that build’s commit or branch.
 
 - [Introduction](https://upbrr.com/docs/introduction)
 - [Migration from Upload Assistant](https://upbrr.com/docs/getting-started/migrate-from-upload-assistant)

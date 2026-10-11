@@ -53,6 +53,51 @@ func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadHDRFailureReleasesSessionForRetry(t *testing.T) {
+	for _, supported := range []bool{false, true} {
+		t.Run(fmt.Sprintf("supported=%t", supported), func(t *testing.T) {
+			module, repository, _ := newCompositeUploadTestModule(t)
+			preparer := testPreparer()
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "hdr-unmet")
+			target := api.HDRTargetID(request.Source.Path, "")
+			preparer.DisplayFunc = func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
+				return api.PreparedReleaseDisplay{HDRTargets: []api.HDRAnalysisTarget{{ID: target, Supported: supported}}}, nil
+			}
+			module.preparer = preparer
+			module.hdrAnalysisBuilder = &hdrBuilderFixture{unavailable: true}
+			request.HDRAnalysis = &api.HDRAnalysisRequest{}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			current := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-hdr-unmet")
+			if current.Operation.Status != api.StageStatusFailed || current.Descriptions != nil || current.DryRun != nil {
+				t.Fatalf("HDR requirement status=%s descriptions=%t dryRun=%t", current.Operation.Status, current.Descriptions != nil, current.DryRun != nil)
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.Composite == nil || state.Composite.ActiveOperationID != "" || state.Composite.TerminalReason != "hdr_requirement_unmet" {
+				t.Fatalf("HDR failure retained composite admission: %#v", state.Composite)
+			}
+			request.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision}
+			request.HDRAnalysis = nil
+			request.IdempotencyKey = "hdr-disabled-retry"
+			retry, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("HDR failure blocked retry: %v", err)
+			}
+			retryApproval := waitCompositeUploadTestOperation(t, module, retry)
+			finished := approveCompositeUploadTrackers(t, module, retryApproval, []api.TrackerID{"ALPHA", "BETA"}, "approve-hdr-disabled-retry")
+			if finished.Operation.Status != api.StageStatusCompleted || finished.DryRun == nil {
+				t.Fatalf("retry status=%s dryRun=%t", finished.Operation.Status, finished.DryRun != nil)
+			}
+		})
+	}
+}
+
 func TestCompositeUploadInitialOpenRequestsExternalProviderLoad(t *testing.T) {
 	t.Parallel()
 	module, _, _ := newCompositeUploadTestModule(t)

@@ -18,6 +18,9 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  HDRAnalysisResult,
+  HDRAnalysisTarget,
+  HDRPeakSource,
   AudioAnalysisResult,
   AudioAnalysisResourceLimits,
   AudioAnalysisSelectionMode,
@@ -40,6 +43,7 @@ import type {
   SubmissionExclusion,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
+  TrackerReleaseProjection,
   TrackerProjectionInstructions,
   UploadDryRunResult,
   UploadResult,
@@ -49,6 +53,7 @@ import type {
 export type ReleaseRoute =
   | "input"
   | "trackerData"
+  | "hdrAnalysis"
   | "audioAnalysis"
   | "duplicates"
   | "screenshots"
@@ -180,7 +185,8 @@ export type InputFacet = Readonly<{
   changeClientSearch(value: PreparationIntent["search"]): void;
   chooseTrackers(trackers: readonly string[]): void;
   choosePlaylists(playlists: readonly string[], useAll: boolean): void;
-  confirmPlaylists(): Promise<boolean>;
+  reviewPlaylists(): void;
+  confirmPlaylists(captureHDRMetadata?: boolean): Promise<boolean>;
   cancelPlaylistSelection(): void;
   /** Aborts local preparation/workflow requests; this does not close the durable active input. */
   cancelPreparation(): void;
@@ -209,6 +215,17 @@ export type DuplicatesFacet = Readonly<{
     total: number;
     ignoredTrackers: readonly string[];
     selectedTrackers: readonly string[];
+    questionnaires: readonly Pick<
+      TrackerReleaseProjection,
+      "trackerId" | "displayName" | "questionnaire" | "questionnaireAnswers"
+    >[];
+    /** Late-only fields from the exact current tracker preparation report. */
+    preparationQuestionnaires: DuplicatesFacet["view"]["questionnaires"];
+    questionnaireStatus: FacetStatus;
+    questionnaireError: string;
+    questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    /** Local edits differ from the exact reviewed tracker answers. */
+    questionnaireDirty: boolean;
     /** Local tracker-name edits keyed by normalized tracker ID. */
     releaseNameOverrides: Readonly<Record<string, string>>;
     error: string;
@@ -216,6 +233,11 @@ export type DuplicatesFacet = Readonly<{
   run(): Promise<boolean>;
   cancel(): Promise<boolean>;
   chooseTrackers(trackers: readonly string[]): void;
+  /** Discover questions from prepared facts without preflight or external tracker requests. */
+  refreshQuestionnaires(): Promise<boolean>;
+  answerQuestionnaire(tracker: string, key: string, value: string): void;
+  /** Apply tracker answers and refresh their required questions without uploading or starting a duplicate search. */
+  applyQuestionnaireAnswers(): Promise<boolean>;
   /** Stores a tracker-name edit locally without resolving its backend action. */
   confirmReleaseName(tracker: string, value: string): void;
   /** Resolves or reopens the backend naming action using the current local edit. */
@@ -391,7 +413,10 @@ export type UploadFacet = Readonly<{
     selectedTrackers: readonly string[];
     projections: TrackerReleaseProjectionSet | null;
     ignoredDupesFor: readonly string[];
-    questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    /** Local edits differ from the exact reviewed tracker answers. */
+    questionnaireDirty: boolean;
+    /** A workflow command currently owns execution, so another action cannot start. */
+    workflowBusy: boolean;
     options: UploadRunOptions;
     /** Whether the owning process enforces live-testing restrictions. */
     liveTest: boolean;
@@ -408,7 +433,6 @@ export type UploadFacet = Readonly<{
     error: string;
   }>;
   chooseTrackers(trackers: readonly string[]): void;
-  answerQuestionnaire(tracker: string, key: string, value: string): void;
   changeOptions(options: Partial<UploadRunOptions>): void;
   runDryRun(): Promise<boolean>;
   start(): Promise<boolean>;
@@ -452,10 +476,39 @@ export type ReleaseSession = Readonly<{
   navigation: NavigationFacet;
   input: InputFacet;
   duplicates: DuplicatesFacet;
+  hdrAnalysis: HDRAnalysisFacet;
   audioAnalysis: AudioAnalysisFacet;
   screenshots: ScreenshotsFacet;
   menuImages: MenuImagesFacet;
   uploadedImages: UploadedImagesFacet;
   descriptions: DescriptionsFacet;
   upload: UploadFacet;
+}>;
+
+/** Selects opaque targets from the current prepared inventory and a brightness estimator. */
+export type HDRAnalysisGenerateInput = Readonly<{
+  targetIDs: readonly string[];
+  peakSource: HDRPeakSource;
+}>;
+/** Owns HDR operation intents, retained results and artifact URLs for the active generation. */
+export type HDRAnalysisFacet = Readonly<{
+  view: Readonly<{
+    available: boolean;
+    status: FacetStatus;
+    releaseGeneration: number;
+    targets: readonly HDRAnalysisTarget[];
+    result: HDRAnalysisResult | null;
+    phase: string;
+    message: string;
+    progress: number;
+    mutationBlockedReason: string;
+    error: string;
+  }>;
+  generate(input: HDRAnalysisGenerateInput): Promise<boolean>;
+  /** Reuses the retained target selection and estimator for another analysis attempt. */
+  retry(): Promise<boolean>;
+  /** Cancels the active HDR operation while retaining checkpointed metadata. */
+  cancel(): Promise<boolean>;
+  /** Addresses a plot in the current retained analysis revision. */
+  artifactURL(artifactID: string): string;
 }>;

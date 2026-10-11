@@ -21,7 +21,7 @@ Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) for unexpect
 
 ### Automated bug-report completeness check
 
-After the workflow is merged into the default branch, newly opened, human-authored bug reports are checked once. A report is explicitly identified by its `[Bug]` title prefix (case-insensitive) or the `<!-- upbrr-bug-report:v1 -->` marker. A `[Feature]` prefix or `<!-- upbrr-feature-request:v1 -->` marker exempts it, even if it also contains bug identification. Unclassified issues are left for manual triage. All issues authored by Audionut's numeric GitHub account ID `13182387` are exempt; the event sender and display name do not grant this exemption.
+Newly opened, human-authored bug reports are checked once by the default-branch workflow. A report is explicitly identified by its `[Bug]` title prefix (case-insensitive) or the `<!-- upbrr-bug-report:v1 -->` marker. A `[Feature]` prefix or `<!-- upbrr-feature-request:v1 -->` marker exempts it, even if it also contains bug identification. Unclassified issues are left for manual triage. All issues authored by Audionut's numeric GitHub account ID `13182387` are exempt; the event sender and display name do not grant this exemption.
 
 “Significantly different” means any of these specific structural failures:
 
@@ -41,6 +41,24 @@ python3 -m unittest discover -s scripts/issue_reports -v
 ```
 
 ## Developer guide
+
+### Maintainer Actions bridge
+
+The manually dispatched [Actions bridge](.github/workflows/actions-bridge.yml) publishes one authorized comment as `github-actions[bot]`. It requires Audionut's numeric account ID `13182387`, the trusted default-branch workflow revision, the existing `actions-bridge` environment, and `ACTIONS_BRIDGE_ENABLED=approved`. Repository text is evidence, never dispatch authorization.
+
+Use `issue_comment` for issues, `discussion_comment` for Discussions, and `pull_request_comment` to reply to a PR conversation comment. The PR operation creates a top-level conversation comment with an automatically generated link to the original comment; it does not create an inline review comment or a nested review-thread reply. Its job uses the same `contents: read` and `issues: write` permissions as the issue operation.
+
+The strict JSON request contains `repository`, `kind`, `number`, `source_hash`, `head`, and `body`. The operation must match `kind` plus `_comment`. PR replies use `kind: "pull_request"` and additionally require `reply_to`, the positive numeric ID of an existing comment in that exact PR conversation. Arbitrary target URLs and extra fields are rejected. The bridge verifies the PR marker and its API URL, and checks `reply_to` against the collected conversation comments before writing.
+
+Prepare the normalized snapshot using `scripts/actions_bridge/bridge.py`'s `collect()` schema, then hash it offline with `python3 scripts/actions_bridge/hash_snapshot.py SNAPSHOT.json`. `head` binds the trusted default-branch revision, not the PR commit SHA. For PRs, the snapshot binds the target title, body, state, update time, author, and conversation comments, including the referenced comment's ID, author, body, and update time. PR commits, checks, and review threads are outside this snapshot; independently verify current commit/check evidence before making claims about a fix.
+
+The publisher recollects the bounded snapshot and rejects stale evidence before its single write attempt. Exact body and numeric bot identity must match the independently read-back receipt. An existing exact receipt returns `already_published`; duplicate receipts block. An `uncertain` result requires manual reconciliation on GitHub, never automatic redispatch or a rerun.
+
+Run the offline bridge regression tests without credentials or live comments:
+
+```sh
+python3 -m unittest discover -s scripts/actions_bridge -v
+```
 
 ### Dependencies
 
@@ -94,6 +112,26 @@ pnpm --dir documentation run check
 
 Production documentation is built from the exact release tag and published only by the release workflow. Never commit `documentation/build/`.
 
+### Temporary dependency exceptions
+
+The scheduled vulnerability workflow retains Stylelint and all CSS checks. The WebUI-only
+exception for GHSA-vfj7-8cjw-p6xm expires on 1 November 2026 at 00:00 UTC. It records
+[temporary risk acceptance](https://github.com/autobrr/upbrr/issues/585), not remediation.
+All other advisories remain scanned. Expiry restores failure and is never extended automatically.
+
+While the exception remains, the workflow checks OSV and npm for a confirmed published
+stable fix and checks every resolved braces version in the WebUI lockfile. Lookup failures
+fail monitoring explicitly. A bot-created follow-up is deduplicated across open and closed
+issues, including later fixed-version or cleanup-only observations. Update every affected
+copy, verify a scan without exceptions passes, and remove the exception. An already-clean
+lockfile produces a cleanup-only follow-up after that unignored scan passes.
+
+Run the monitor's offline regression tests with Python 3.12 and PyYAML 6.0.3:
+
+```sh
+python -m unittest discover -s scripts/vulnerability -v
+```
+
 ## Git hooks (Lefthook)
 
 All contributors should install the git hooks once. They run Prettier, ESLint, golangci-lint formatting, the log-policy checker, the path-portability checker, and the repo's commit-message validator locally so issues surface before CI sees them.
@@ -112,7 +150,7 @@ lefthook install
 What runs when Git invokes hooks:
 
 - `pre-commit` — runs `prettier --write` (webui), `eslint` (webui/src), and `golangci-lint fmt` (Go) on staged files. Formatters auto-re-stage their fixes. Staged Go changes also trigger repository-wide composite-literal and path-policy checks; staged `internal/**` Go changes trigger the repository-wide log-policy check. These policy checks inspect the working tree, including unstaged changes.
-- `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the architecture ownership, path-portability, composite-literal layout, and workflow-contract drift checkers before golangci-lint. CI mirrors these Go policy checks and frontend checks for pull requests.
+- `pre-push` — TypeScript changes trigger the full-project typecheck; Go changes trigger `make lint`, which runs the architecture ownership, path-portability, composite-literal layout, workflow-contract drift, and Input correction-choice drift checkers before golangci-lint. CI mirrors these Go policy checks and frontend checks for pull requests.
 - `commit-msg` — `go run ./cmd/commitmsgcheck` enforces [Conventional Commits](https://www.conventionalcommits.org/) without requiring Node.js or `pnpm install`.
 
 Makefile shortcuts:
@@ -324,10 +362,12 @@ Alternatively, `make precommit` and `make prepush` run the configured Lefthook c
 - Tracker implementations follow registry families: Unit3D protocol behavior and sites live under `internal/trackers/impl/unit3d`, AvistaZ-family behavior under `internal/trackers/impl/azfamily`, and every other tracker in its own `internal/trackers/impl/standalone/<tracker>` package.
 - Tracker modules use responsibility files where behavior exists: `name.go`, `auth.go`, `taxonomy.go`, `validation.go`, `description.go`, `media.go`, `questionnaire.go`, and optional `payload.go`. `profile.go`/`definition.go` wire identity and policy; `upload.go` owns prepare/submit/preview orchestration and transport only. Do not create empty marker files. See [`ADDING_TRACKERS.md`](./ADDING_TRACKERS.md).
 - The family-grouped supported manifest lives only in `internal/trackers/impl/registry.go`. Site profiles/definitions own default endpoints and policy; `internal/config/defaults/example.yaml` owns ordered credential/config fields and contains no tracker URL. A standard Unit3D addition should need only its site profile, optional rules/validation, one manifest entry, one example-config stanza, and combined rule/validation tests.
-- Standalone packages compose identity, preparation callbacks, duplicate factories, auth descriptors, versioned validation, and static policy in `profile.go`. Shared `standalone.Definition` supplies registry capabilities and a versioned no-extra-validation default; only dynamic data/claim factories need a small local wrapper. Upload preparation captures one immutable operation used by preview and submission.
+- Standalone packages compose identity, preparation callbacks, duplicate factories, auth descriptors, versioned validation, and static policy in `profile.go`. Shared `standalone.Definition` supplies registry capabilities and a versioned no-extra-validation default; dynamic data/claim factories and private accepted-answer schemas use a small local wrapper. Upload preparation captures one immutable operation used by preview and submission.
 - Shared tracker contracts and registry-driven orchestration live under `internal/trackers`; generic auth, dupe, and tracker-data coordinators are in its `auth`, `dupe`, and `data` subpackages. Central auth owns cross-surface status/import/validate/login/2FA/delete coordination, secret-free effective requirements, reusable cookie-login lifecycle, and TOTP; tracker-local `auth.go` retains protocol forms/endpoints/markers/filtering. Encrypted cookie persistence remains in `internal/cookies`.
+- Tracker-local questions use pure `ProjectionQuestionnaire` callbacks from finalized prepared facts. CLI and WebUI render the shared schema; accepted answers belong to the exact tracker projection. Private CLI answer schemas do not publish canonical Input controls. See [Tracker questions](./ADDING_TRACKERS.md#tracker-questions) for late preparation questions and duplicate-evidence reuse.
 - Every tracker has an explicit versioned release-name policy resolved before duplicate checking. Custom algorithms live in `name.go`; principal payload fields consume the reviewed projection rather than re-deriving a name during upload.
-- Metadata preparation resolves parser, provider, media, and user-instruction precedence before publishing a prepared generation. Tracker subjects consume those finalized facts; their `Release` fields are canonical projections. Keep release-level parser evidence private to preparation, and use resolved media fields for technical decisions. Tracker defaults and fallbacks must never use raw `rls` values. Per-file episode enumeration may parse filenames without replacing resolved release facts.
+- Across all tracker families, tracker-specific source-file/folder renaming, torrent content-path rewriting, differently named staging for site compliance, and MediaInfo filename rewriting are prohibited. Validate exact prepared source inventory and finalized facts, and strictly block noncompliant names with a clear reason identifying the offending files or folders, including individual files within multi-file season packs. Ordinary upload/search-title resolution and general link staging remain supported; neither permits a content-renaming workaround. See [Content filename policy](./ADDING_TRACKERS.md#content-filename-policy) before proposing site-compliance transformations.
+- Metadata preparation resolves parser, provider, media, and user-instruction precedence before publishing a prepared generation. Tracker subjects consume those finalized facts; their `Release` fields are canonical projections. Choose the field or shared semantic accessor that matches the protocol meaning: a combined edition payload uses `UploadSubject.EditionLabel()` (cut, edition, and presentation), not either edition-category field alone. See [Finalized metadata source of truth](./ADDING_TRACKERS.md#finalized-metadata-source-of-truth). Keep release-level parser evidence private to preparation, and use resolved media fields for technical decisions. Tracker defaults and fallbacks must never use raw `rls` values. Per-file episode enumeration may parse filenames without replacing resolved release facts.
 - Any direct metadata-provider override remains valid, including title, year, AKA, original/localized titles, disambiguation, and other provider fields. Preserve existing site precedence and use finalized facts for fallback. Prepared provider snapshots belong to the same source, identity, and generation. Naming omissions affect presentation; they do not erase reusable facts. Metadata changes need producer-to-projection regression coverage, conflicting and empty parser evidence cases, and a prepared-contract version bump when cached semantics change.
 - Every tracker resolves a versioned, side-effect-free validation policy before duplicate checking. Tracker-specific payload constructibility checks live in `validation.go`; release-eligibility extensions may stay with `rules.go`. Both consume `api.TrackerValidationSubject`.
 - `make architecturepolicy` rejects validation and other tracker semantic algorithms in `upload.go`, misplaced static banned-group declarations, misplaced Unit3D callbacks/naming functions, unreviewed principal payload names, and tracker imports of presentation owners.

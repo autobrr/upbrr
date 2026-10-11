@@ -20,6 +20,11 @@ type workflowOperationScanner interface {
 	Scan(...any) error
 }
 
+type workflowOperationPayload struct {
+	api.WorkflowOperationStatus
+	HDRCleanupRelease api.ReleaseRef `json:"hdr_cleanup_release"`
+}
+
 // CreateReleaseWorkflowOperation persists queued state before work begins. An
 // exact idempotent repeat returns the existing operation.
 func (r *SQLiteRepository) CreateReleaseWorkflowOperation(
@@ -326,9 +331,11 @@ func scanWorkflowOperation(scanner workflowOperationScanner) (api.ReleaseWorkflo
 	record.OperationID = api.WorkflowOperationID(operationID)
 	record.ExpectedRevision = api.WorkflowRevision(expectedRevision)
 	record.CommandFingerprint = api.WorkflowFingerprint(fingerprint)
-	if err := json.Unmarshal(payload, &record.Status); err != nil {
+	var decoded workflowOperationPayload
+	if err := json.Unmarshal(payload, &decoded); err != nil {
 		return api.ReleaseWorkflowOperationRecord{}, fmt.Errorf("db load release workflow operation payload: %w", err)
 	}
+	record.Status, record.HDRCleanupRelease = decoded.WorkflowOperationStatus, decoded.HDRCleanupRelease
 	return cloneWorkflowOperationRecord(record), nil
 }
 
@@ -336,7 +343,7 @@ func encodeWorkflowOperationRecord(record api.ReleaseWorkflowOperationRecord) ([
 	if err := validateWorkflowOperationRecord(record); err != nil {
 		return nil, err
 	}
-	payload, err := json.Marshal(record.Status)
+	payload, err := json.Marshal(workflowOperationPayload{WorkflowOperationStatus: record.Status, HDRCleanupRelease: record.HDRCleanupRelease})
 	if err != nil {
 		return nil, fmt.Errorf("db encode release workflow operation: %w", err)
 	}

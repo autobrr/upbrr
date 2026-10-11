@@ -49,6 +49,8 @@ type compositeUploadSession struct {
 	FeedbackSequence         uint64                                      `json:"feedbackSequence,omitempty"`
 	FeedbackReceipts         map[string]compositeUploadFeedbackReceipt   `json:"feedbackReceipts,omitempty"`
 	TerminalReason           string                                      `json:"terminalReason,omitempty"`
+	// DuplicateAllowUpload retains request-level policy across evidence refreshes.
+	DuplicateAllowUpload []api.TrackerID `json:"duplicateAllowUpload,omitempty"`
 }
 
 type compositeUploadManualMedia struct {
@@ -394,9 +396,10 @@ func normalizeCompositeUploadRequest(
 			Client: cloneStringPointer(request.Preparation.ClientSearch.Client),
 		},
 		Controls: api.PreparationControls{
-			Interaction:       interaction,
-			ConfirmBDMVRescan: request.Preparation.ConfirmRescan,
-			ForceRecheck:      cloneBoolPointer(request.Client.ForceRecheck),
+			CaptureHDRMetadata: request.HDRAnalysis != nil,
+			Interaction:        interaction,
+			ConfirmBDMVRescan:  request.Preparation.ConfirmRescan,
+			ForceRecheck:       cloneBoolPointer(request.Client.ForceRecheck),
 		},
 		Force: request.Preparation.Force,
 	}
@@ -415,8 +418,9 @@ func normalizeCompositeUploadRequest(
 	if request.Duplicates.CheckCount != nil && *request.Duplicates.CheckCount == 2 {
 		checkCount = 2
 	}
+	allowUpload := normalizeCompositeTrackerIDs(request.Duplicates.AllowUpload)
 	decisions := make(map[api.TrackerID]api.DupeDecision)
-	for _, trackerID := range normalizeCompositeTrackerIDs(request.Duplicates.AllowUpload) {
+	for _, trackerID := range allowUpload {
 		decisions[trackerID] = api.DupeDecisionIgnored
 	}
 	media, selection := compositeUploadMediaIntent(request.Media)
@@ -425,6 +429,7 @@ func normalizeCompositeUploadRequest(
 		return nil, api.ReleaseFactInstructions{}, err
 	}
 	intent := api.WorkflowIntent{
+		HDRAnalysis:            request.HDRAnalysis,
 		FactInstructions:       &instructions,
 		Preparation:            &prepareInput,
 		Interaction:            interaction,
@@ -460,6 +465,7 @@ func normalizeCompositeUploadRequest(
 		Confirm:                  request.Unattended.Confirm,
 		PreparedRelease:          request.Execution.PreparedRelease,
 		DuplicateDisposition:     onEvidence,
+		DuplicateAllowUpload:     allowUpload,
 		RemoveTrackers:           normalizeCompositeTrackerIDs(request.Trackers.Remove),
 		DefaultProjection:        cloneCompositeUploadProjection(request.Trackers.DefaultProjection),
 		RequestedScreenshotCount: cloneIntPointer(request.Media.Screenshots.Count),
@@ -1070,6 +1076,12 @@ func (m *Module) runCompositeUpload(
 		}
 		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), command.ExpectedRevision+1)
 		if next == nil {
+			if stage == "hdr-selection-required" || stage == "hdr-analysis-failed" {
+				if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "hdr_requirement_unmet"); err != nil {
+					return CommandResult{}, err
+				}
+				return CommandResult{}, requestedHDRFailure(stage, current, request.Intent.HDRAnalysis)
+			}
 			if stage == "no-eligible-trackers" {
 				failure := compositeNoEligibleTrackersFailure(current, command.operationKind())
 				if err := m.failCompositeSession(
@@ -1184,6 +1196,7 @@ func (m *Module) hydrateCompositePreparedRelease(
 	input.RequirePrepared = true
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
+	input.Controls.CaptureHDRMetadata = false
 	if err := m.attachVerifiedInput(ctx, ownerID, current.Workflow.ID, &input); err != nil {
 		return err
 	}
@@ -1233,6 +1246,7 @@ func compositeUploadGoalReached(current CommandResult, session *compositeUploadS
 		return current.UploadResult != nil
 	case api.WorkflowGoalPrepared,
 		api.WorkflowGoalInputReady,
+		api.WorkflowGoalTrackersProjected,
 		api.WorkflowGoalTrackersAssessed,
 		api.WorkflowGoalDuplicatesDecided,
 		api.WorkflowGoalMediaReady,
@@ -1623,6 +1637,7 @@ var compositeUploadStages = []struct {
 	{ID: "check-duplicates", Label: "Check duplicates"},
 	{ID: "decide-duplicates", Label: "Resolve duplicate decisions"},
 	{ID: "capture-media", Label: "Capture or select media"},
+	{ID: "analyze-hdr", Label: "Analyze HDR10+ when requested"},
 	{ID: "prepare-image-requirements", Label: "Host images"},
 	{ID: "generate-descriptions", Label: "Generate descriptions"},
 	{ID: "review-uploads", Label: "Prepare upload review"},
@@ -1687,10 +1702,12 @@ func compositeUploadProgressItems(
 func compositeCompletedStageCount(current CommandResult) int {
 	switch {
 	case current.UploadResult != nil || current.DryRun != nil:
-		return 10
+		return 11
 	case current.Descriptions != nil:
-		return 8
+		return 9
 	case current.Media != nil && mediaRequirementsPrepared(current.Media):
+		return 8
+	case current.HDRAnalysis != nil && current.HDRAnalysis.Status == api.StageStatusCompleted:
 		return 7
 	case current.Media != nil:
 		return 6
@@ -2062,6 +2079,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		return CommandResult{}, fmt.Errorf("%w: upload feedback action is stale", ErrRevisionConflict)
 	}
 	resolvedByCommand := false
+	reproject := false
 	var result CommandResult
 	if action.Kind == api.RequiredActionReconcileSubmission {
 		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
@@ -2164,7 +2182,7 @@ func (m *Module) applyCompositeUploadFeedback(
 				state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = instruction
 				resolvedByCommand = true
 			} else {
-				invalidateTrackerAndDownstream(&state.Workflow)
+				reproject = true
 			}
 		}
 	case api.ReleaseWorkflowUploadFeedbackQuestionnaire:
@@ -2174,7 +2192,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		instruction := state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID]
 		instruction.Questionnaire = cloneStringPointerMap(command.Response.Questionnaire)
 		state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = instruction
-		invalidateTrackerAndDownstream(&state.Workflow)
+		reproject = true
 	case api.ReleaseWorkflowUploadFeedbackDuplicateReview:
 		if state.Composite.Intent.DuplicateDecisions == nil {
 			state.Composite.Intent.DuplicateDecisions = make(map[api.TrackerID]api.DupeDecision)
@@ -2263,6 +2281,28 @@ func (m *Module) applyCompositeUploadFeedback(
 		}
 		resolvedByCommand = true
 	case api.ReleaseWorkflowUploadFeedbackReconciliation:
+	}
+	if reproject {
+		if state.Workflow.Selection == nil || state.Workflow.TrackerProjections == nil {
+			return CommandResult{}, fmt.Errorf("%w: tracker feedback projection authority is unavailable", ErrInvalidTransition)
+		}
+		// Rebuild actions while the prior projection still owns name and rule
+		// acknowledgements. Its duplicate and upload authority is invalidated.
+		projections := state.Projections[state.Workflow.TrackerProjections.ID]
+		state.PendingDuplicateReuse = nil
+		state.Composite.Intent.DuplicateDecisions = make(map[api.TrackerID]api.DupeDecision, len(state.Composite.DuplicateAllowUpload))
+		for _, trackerID := range state.Composite.DuplicateAllowUpload {
+			state.Composite.Intent.DuplicateDecisions[trackerID] = api.DupeDecisionIgnored
+		}
+		if _, err := m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
+			WorkflowID:       command.WorkflowID,
+			ExpectedRevision: command.ExpectedRevision,
+			TrackerIDs:       state.Selections[state.Workflow.Selection.ID].TrackerIDs,
+			Instructions:     state.Composite.Intent.ProjectionInstructions,
+			ExecutionMode:    projections.ExecutionMode,
+		}, projectionRuleAuthorizations(projections)); err != nil {
+			return CommandResult{}, err
+		}
 	}
 	if !resolvedByCommand {
 		state.Workflow.RequiredActions = slices.DeleteFunc(state.Workflow.RequiredActions, func(candidate api.RequiredAction) bool {

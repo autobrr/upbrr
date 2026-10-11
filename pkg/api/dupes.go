@@ -160,10 +160,12 @@ type DupeCheckResult struct {
 	SearchFingerprint     WorkflowFingerprint
 	Search                DupeSearchEvidence
 	Evaluations           []DupeCandidateEvaluation
-	HasDupes              bool
-	Notes                 []string
-	Skipped               bool
-	SkipReason            string
+	// ReviewReasons require target-level policy acknowledgement, even without candidates.
+	ReviewReasons []DupeReason
+	HasDupes      bool
+	Notes         []string
+	Skipped       bool
+	SkipReason    string
 	// SkipCode is a stable machine-readable skip reason.
 	SkipCode  string
 	Status    string

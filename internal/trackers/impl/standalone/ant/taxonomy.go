@@ -137,22 +137,31 @@ func resolveFlags(meta api.UploadSubject) []string {
 	return dedupeStrings(flags)
 }
 
+// resolveTags preserves explicit answers and genre corrections, including clears,
+// before trying usable TMDB genres and then IMDb genres.
 func resolveTags(meta api.UploadSubject, answers map[string]string) (string, bool) {
-	if tagValue := normalizeTags(strings.TrimSpace(answers["tags"])); tagValue != "" {
-		return tagValue, true
+	if value, answered := answers["tags"]; answered {
+		return normalizeTags(value), true
 	}
-	values := []string(nil)
 	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
-		values = splitTags(trackers.PreferredGenreText(meta, ""))
-	} else if meta.ProviderMetadata.TMDB != nil {
-		values = splitTags(meta.ProviderMetadata.TMDB.Genres)
+		tags := genreTags(trackers.PreferredGenreText(meta, ""))
+		return tags, tags == ""
 	}
-	if len(values) == 0 {
-		if meta.ProviderMetadata.IMDB != nil && len(splitTags(meta.ProviderMetadata.IMDB.Genres)) > 0 {
-			return "", true
+	if meta.ProviderMetadata.TMDB != nil {
+		if tags := genreTags(meta.ProviderMetadata.TMDB.Genres); tags != "" {
+			return tags, false
 		}
-		return "", true
 	}
+	if meta.ProviderMetadata.IMDB != nil {
+		if tags := genreTags(meta.ProviderMetadata.IMDB.Genres); tags != "" {
+			return tags, false
+		}
+	}
+	return "", true
+}
+
+func genreTags(value string) string {
+	values := splitTags(value)
 	allowed := map[string]struct{}{
 		"action":      {},
 		"adventure":   {},
@@ -175,11 +184,15 @@ func resolveTags(meta api.UploadSubject, answers map[string]string) (string, boo
 	}
 	filtered := make([]string, 0, len(values))
 	for _, value := range values {
+		switch value {
+		case "science.fiction", "sci-fi":
+			value = "sci.fi"
+		}
 		if _, ok := allowed[value]; ok {
 			filtered = append(filtered, value)
 		}
 	}
-	return strings.Join(dedupeStrings(filtered), ","), false
+	return strings.Join(dedupeStrings(filtered), ",")
 }
 
 func detectAdult(meta api.UploadSubject) bool {
@@ -239,7 +252,7 @@ func splitTags(value string) []string {
 	items := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ';' })
 	result := make([]string, 0, len(items))
 	for _, item := range items {
-		normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(item, " ", ".")))
+		normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(item), " ", "."))
 		if normalized != "" {
 			result = append(result, normalized)
 		}

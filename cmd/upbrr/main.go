@@ -176,6 +176,9 @@ func runUpload(
 		showCLIVersion(ctx, streams.out)
 		return nil
 	}
+	if opts.HDRAnalysisOnly {
+		return runHDRAnalysisOnly(ctx, opts, paths, streams)
+	}
 	if opts.AudioAnalysisOnly {
 		return runAudioAnalysisOnly(ctx, opts, visitedFlags, paths, streams)
 	}

@@ -136,6 +136,12 @@ type cliOptions struct {
 	ComparisonIndex            int
 	MenuImages                 string
 	GetDVDMenus                bool
+	HDRAnalysis                bool
+	HDRAnalysisOnly            bool
+	HDRTargets                 string
+	HDRPlaylist                string
+	HDRPeakSource              string
+	HDROutputDir               string
 	AudioAnalysis              bool
 	AudioAnalysisOnly          bool
 	AudioOutput                string
@@ -283,6 +289,12 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
 	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.BoolVar(&opts.GetDVDMenus, "get-dvd-menus", false, "Capture distinct menus from an extracted DVD VIDEO_TS (requires compatible FFmpeg)")
+	fs.BoolVar(&opts.HDRAnalysis, "hdr-analysis", false, "Generate retained HDR10+ plots before upload")
+	fs.BoolVar(&opts.HDRAnalysisOnly, "hdr-analysis-only", false, "Plot one MKV or disc playlist without configuration or upload")
+	fs.StringVar(&opts.HDRTargets, "hdr-targets", "", "Ordered prepared HDR target IDs for upload")
+	fs.StringVar(&opts.HDRPlaylist, "hdr-playlist", "", "Numeric MPLS playlist for standalone disc analysis")
+	fs.StringVar(&opts.HDRPeakSource, "hdr-peak-source", "", "Peak estimator: histogram, histogram99, max-scl, max-scl-luminance")
+	fs.StringVar(&opts.HDROutputDir, "hdr-output-dir", "", "Parent directory for fresh standalone HDR artifacts")
 	fs.BoolVar(&opts.AudioAnalysis, "audio-analysis", false, "Generate local audio images and amplitude statistics in managed temporary storage before upload")
 	fs.BoolVar(&opts.AudioAnalysisOnly, "audio-analysis-only", false, "Analyze one media file without configuration or upload")
 	fs.StringVar(&opts.AudioOutput, "audio-output", "", "Output directory for --audio-analysis-only artifacts")
@@ -422,6 +434,9 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 			return err
 		}
 	}
+	if err := validateCLIHDR(*opts, visited); err != nil {
+		return err
+	}
 	if (visited["audio-tracks"] || visited["audio-images"]) && !opts.AudioAnalysis && !opts.AudioAnalysisOnly {
 		return errors.New("--audio-tracks and --audio-images require --audio-analysis or --audio-analysis-only")
 	}
@@ -530,6 +545,14 @@ func partitionUploadArgs(fs *pflag.FlagSet, args []string) ([]string, []string) 
 			continue
 		}
 
+		if name == "hc" && !strings.HasPrefix(arg, "---") {
+			flags, consumed := hardcodedLanguageFlags(args[i:])
+			if flags != nil {
+				flagArgs = append(flagArgs, flags...)
+				i += consumed - 1
+				continue
+			}
+		}
 		flagArgs = append(flagArgs, normalized)
 		if strings.Contains(arg, "=") || isBoolFlag(flagDef) {
 			continue
@@ -540,6 +563,39 @@ func partitionUploadArgs(fs *pflag.FlagSet, args []string) ([]string, []string) 
 		}
 	}
 	return flagArgs, positionalArgs
+}
+
+// hardcodedLanguageFlags extends the legacy boolean -hc alias without consuming
+// ordinary source paths or following flags. Attached values are unambiguous;
+// custom language names therefore require attached values.
+func hardcodedLanguageFlags(args []string) ([]string, int) {
+	if _, value, attached := strings.Cut(args[0], "="); attached {
+		if _, err := strconv.ParseBool(value); err == nil {
+			return nil, 0
+		}
+		return []string{"--hc", "--hardcoded-subtitle-languages=" + value}, 1
+	}
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return nil, 0
+	}
+	value := args[1]
+	if boolean, err := strconv.ParseBool(value); err == nil {
+		return []string{"--hc=" + strconv.FormatBool(boolean)}, 2
+	}
+	first := strings.TrimSpace(strings.Split(value, ",")[0])
+	known := languageutil.NormalizeLanguageCode(first) != ""
+	if value != "" && !known {
+		return nil, 0
+	}
+	consumed := 2
+	if known && len(args) > 2 {
+		coverage := strings.Trim(args[2], "()")
+		if strings.EqualFold(coverage, "Full") || strings.EqualFold(coverage, "Forced") {
+			value += " " + coverage
+			consumed++
+		}
+	}
+	return []string{"--hc", "--hardcoded-subtitle-languages=" + value}, consumed
 }
 
 func normalizeNonInterspersedArgs(fs *pflag.FlagSet, args []string) []string {
@@ -799,8 +855,27 @@ func cliHelpSections(name string) []helpSection {
 			"commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "anon", "draft", "modq", "channel",
 		}},
 		{title: "Screenshots and Images", names: []string{
-			"screens", "manual_frames", "comparison", "comparison_index", "menu-images", "get-dvd-menus", "imghost", "skip-imagehost-upload",
-			"audio-analysis", "audio-analysis-only", "audio-output", "audio-tracks", "audio-images", "descfile", "desclink",
+			"screens",
+			"manual_frames",
+			"comparison",
+			"comparison_index",
+			"menu-images",
+			"get-dvd-menus",
+			"imghost",
+			"skip-imagehost-upload",
+			"hdr-analysis",
+			"hdr-analysis-only",
+			"hdr-targets",
+			"hdr-playlist",
+			"hdr-peak-source",
+			"hdr-output-dir",
+			"audio-analysis",
+			"audio-analysis-only",
+			"audio-output",
+			"audio-tracks",
+			"audio-images",
+			"descfile",
+			"desclink",
 		}},
 		{title: "Client and Torrent", names: []string{
 			"client", "qbit-tag", "qbit-cat", "force-recheck", "no-seed", "skip_auto_torrent", "keep-folder", "onlyID", "infohash",
@@ -918,6 +993,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 			KeepFolder:      opts.KeepFolder,
 			OnlyID:          opts.OnlyID,
 			CaptureDVDMenus: opts.GetDVDMenus,
+			HDRAnalysis:     cliHDRUploadRequest(opts),
 			AudioAnalysis:   opts.AudioAnalysis,
 			AudioTracks:     strings.TrimSpace(opts.AudioTracks),
 			AudioImages:     strings.TrimSpace(opts.AudioImages),
@@ -1049,6 +1125,12 @@ func buildMetadataOverrides(opts cliOptions, visited map[string]bool) api.Metada
 	}
 	if visited["hardcoded-subtitle-languages"] {
 		values := languageutil.NormalizeLanguageList([]string{opts.HardcodedSubtitleLanguages})
+		overrides.HardcodedSubtitleLanguages = &values
+		if !visited["hardcoded-subs"] {
+			overrides.HardcodedSubs = boolPtr(len(values) > 0)
+		}
+	} else if visited["hardcoded-subs"] && opts.HardcodedSubs {
+		values := []string{}
 		overrides.HardcodedSubtitleLanguages = &values
 	}
 	return overrides

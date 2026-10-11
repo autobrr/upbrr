@@ -72,13 +72,6 @@ export default function TrackerUploadPage({ facet }: Props) {
   const { view } = facet;
   const [expandedTrackers, setExpandedTrackers] = useState<Record<string, boolean>>({});
   const selected = useMemo(() => new Set(view.selectedTrackers), [view.selectedTrackers]);
-  const questionnaireProjections = useMemo(
-    () =>
-      (view.projections?.projections || []).filter(
-        (projection) => selected.has(projection.trackerId) && projection.questionnaire?.length,
-      ),
-    [selected, view.projections],
-  );
   const trackerCards = useMemo(() => {
     const reports = view.dryRunResult?.reports || [];
     const reportsByTracker = new Map(reports.map((report) => [report.trackerId, report]));
@@ -149,59 +142,10 @@ export default function TrackerUploadPage({ facet }: Props) {
         </p>
       </header>
 
-      {questionnaireProjections.length ? (
-        <section className={`${pageStyle.panel} grid gap-3`}>
-          <h2>Tracker questions</h2>
-          {questionnaireProjections.map((projection) => (
-            <fieldset className="grid gap-3" key={projection.trackerId}>
-              <legend className="font-semibold">{projection.displayName}</legend>
-              {projection.questionnaire?.map((field) => {
-                const answer = view.questionnaireAnswers[projection.trackerId]?.[field.key] ?? "";
-                return (
-                  <label className="grid gap-1" key={field.key}>
-                    <span className={pageStyle.label}>
-                      {field.label || field.key}
-                      {field.required ? " *" : ""}
-                    </span>
-                    {field.options?.length ? (
-                      <Select
-                        value={answer}
-                        onChange={(event) =>
-                          facet.answerQuestionnaire(
-                            projection.trackerId,
-                            field.key,
-                            event.target.value,
-                          )
-                        }
-                      >
-                        <option value="">Select</option>
-                        {answer && !field.options.includes(answer) ? (
-                          <option value={answer}>{answer} (saved)</option>
-                        ) : null}
-                        {field.options.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </Select>
-                    ) : (
-                      <input
-                        value={answer}
-                        onChange={(event) =>
-                          facet.answerQuestionnaire(
-                            projection.trackerId,
-                            field.key,
-                            event.target.value,
-                          )
-                        }
-                      />
-                    )}
-                  </label>
-                );
-              })}
-            </fieldset>
-          ))}
-        </section>
+      {view.questionnaireDirty ? (
+        <p role="status">
+          Apply your tracker answer changes on Dupe Checking before running a dry run or upload.
+        </p>
       ) : null}
 
       {view.submissionExclusions.length ? (
@@ -265,7 +209,12 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={view.dryRunStatus === "running" || !hasDryRunCandidate}
+            disabled={
+              view.questionnaireDirty ||
+              view.workflowBusy ||
+              view.dryRunStatus === "running" ||
+              !hasDryRunCandidate
+            }
             onClick={() => void facet.runDryRun()}
           >
             {view.dryRunStatus === "running" ? "Running dry run..." : "Run dry run"}
@@ -273,7 +222,13 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={!view.mutationsAllowed || uploadRunning || !hasExecutableUpload}
+            disabled={
+              view.questionnaireDirty ||
+              view.workflowBusy ||
+              !view.mutationsAllowed ||
+              uploadRunning ||
+              !hasExecutableUpload
+            }
             onClick={() => void facet.start()}
           >
             {uploadRunning ? "Uploading..." : "Start upload"}
@@ -287,7 +242,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             <button
               className="ghost"
               type="button"
-              disabled={!view.mutationsAllowed}
+              disabled={view.questionnaireDirty || view.workflowBusy || !view.mutationsAllowed}
               onClick={() => void facet.retry()}
             >
               Retry failed uploads
@@ -297,7 +252,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             <button
               className="ghost"
               type="button"
-              disabled={!view.mutationsAllowed}
+              disabled={view.workflowBusy || !view.mutationsAllowed}
               onClick={() => void facet.retryClientInjection()}
             >
               Retry client injection
@@ -331,6 +286,7 @@ export default function TrackerUploadPage({ facet }: Props) {
               projection?.uploadReleaseName || report?.uploadReleaseName || "Unavailable";
             const canonicalName = projection?.canonicalReleaseName || "";
             const releaseNameNotices = releaseNameOverrideNotices(projection);
+            const editionFeatures = projection?.editionFeatures ?? report?.editionFeatures;
             return (
               <div
                 className="grid gap-2 rounded border border-border bg-muted p-3 text-foreground"
@@ -375,6 +331,28 @@ export default function TrackerUploadPage({ facet }: Props) {
                 <p className={`${pageStyle.value} break-all`}>
                   <span className="font-semibold">Tracker upload:</span> {uploadName}
                 </p>
+                {editionFeatures?.length ? (
+                  <section aria-label={`${trackerLabel} edition/features`} className="grid gap-2">
+                    <h3 className="font-semibold">Edition / features</h3>
+                    <ul className="grid gap-1 text-sm">
+                      {editionFeatures.map((feature) => (
+                        <li
+                          className="rounded border border-border bg-card p-2"
+                          key={`${feature.category}:${feature.label}`}
+                        >
+                          <span className="font-semibold">{feature.label}</span>
+                          {" · "}
+                          {feature.selected ? "Selected" : "Not selected"}
+                          {" · "}
+                          {feature.category}
+                          {feature.evidence ? (
+                            <p className="text-muted-foreground break-words">{feature.evidence}</p>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
                 {releaseNameNotices.length ? (
                   <div
                     aria-label={`Tracker naming notices for ${trackerId}`}

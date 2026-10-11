@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -276,7 +277,7 @@ func (b workflowUploadPlanBuilder) Build(
 	}
 	plan.Status = api.StageStatusBlocked
 	descriptionGroups := workflowUploadDescriptionGroups(descriptions, eligible)
-	questionnaire := workflowQuestionnaireAnswers(descriptionInstructions.QuestionnaireAnswers)
+	questionnaire := workflowQuestionnaireAnswers(descriptionInstructions.QuestionnaireAnswers, eligible)
 	subject, err := b.resolver.ResolveUploadSubject(ctx, api.UploadSubjectInput{
 		Release:                projections.ReleaseRef,
 		Trackers:               workflowProjectionTrackerNames(eligible),
@@ -292,6 +293,17 @@ func (b workflowUploadPlanBuilder) Build(
 	})
 	if err != nil {
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: resolve subject: %w", err)
+	}
+	subject.TrackerTitleSearchEvidence = make(map[string]api.TrackerTitleSearchEvidence)
+	for _, projection := range eligible {
+		if evidence := projection.TitleSearchEvidence; evidence != nil && evidence.Current(subject.Identity) &&
+			evidence.ConfigFingerprint == projection.ConfigFingerprint &&
+			evidence.FreshUntil.After(now) {
+			subject.TrackerTitleSearchEvidence[string(projection.TrackerID)] = *evidence
+			if evidence.FreshUntil.Before(plan.ExpiresAt) {
+				plan.ExpiresAt = evidence.FreshUntil
+			}
+		}
 	}
 	subject.ExactMedia = exactMedia
 	subject.ImageHostOverrides.FailedHosts = slices.Concat(subject.ImageHostOverrides.FailedHosts, media.FailedHosts)
@@ -382,6 +394,8 @@ func (b workflowUploadPlanBuilder) Build(
 			Status:            trackerStatuses[projection.TrackerID],
 			Failures:          append([]api.WorkflowFailure(nil), trackerFailures[projection.TrackerID]...),
 		}
+		tracker.Questionnaire = sanitizeWorkflowQuestionnaire(preparation.Preview.Questionnaire)
+		tracker.RequiredActions = append([]api.RequiredAction(nil), preparation.Preview.RequiredActions...)
 		switch reason := trackerReasons[projection.TrackerID]; {
 		case reason != "":
 			tracker.Warnings = []string{reason}
@@ -430,7 +444,7 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.TorrentArtifactID = torrentArtifactID
 			tracker.TorrentFingerprint = torrentFingerprint
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
-			tracker.RequiredActions = append([]api.RequiredAction(nil), preparation.Preview.RequiredActions...)
+			tracker.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
 			if identityErr != nil || torrentArtifactID == "" {
 				markWorkflowUploadTrackerMissingExactTorrent(&tracker, projection.TrackerID)
 				break
@@ -569,24 +583,28 @@ func workflowUploadTrackerSemanticFingerprint(
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Projection          api.TrackerReleaseProjection
 		Endpoint            string
+		EditionFeatures     []api.TrackerEditionFeature `json:",omitempty"`
 		Fields              []api.UploadPlanField
 		Files               []api.UploadPlanFile
 		Eligible            bool
 		Status              api.StageStatus
 		Warnings            []string
 		RequiredActions     []api.RequiredAction
+		Questionnaire       []api.TrackerQuestionnaireRequirement
 		PreparedOperationID api.PublicResourceID
 		TorrentArtifactID   api.PublicResourceID
 		TorrentFingerprint  api.WorkflowFingerprint
 	}{
 		projection,
 		tracker.Endpoint,
+		tracker.EditionFeatures,
 		tracker.Fields,
 		tracker.Files,
 		tracker.Eligible,
 		tracker.Status,
 		tracker.Warnings,
 		tracker.RequiredActions,
+		tracker.Questionnaire,
 		tracker.PreparedOperationID,
 		tracker.TorrentArtifactID,
 		tracker.TorrentFingerprint,
@@ -685,6 +703,7 @@ func workflowDryRunClientFailure(
 		api.OperationFailureClientInjection,
 		api.OperationFailureImageHostUnavailable,
 		api.OperationFailureAudioAnalysis,
+		api.OperationFailureHDRAnalysis,
 		api.OperationFailureInternal:
 	}
 	return api.WorkflowFailure{
@@ -988,12 +1007,14 @@ func (e *workflowUploadExecution) ResolveAction(
 	}
 	updated := e.trackers[index]
 	previousTorrentFingerprint := updated.TorrentFingerprint
-	updated.RequiredActions = nil
+	updated.RequiredActions = append([]api.RequiredAction(nil), preparation.Preview.RequiredActions...)
+	updated.Questionnaire = sanitizeWorkflowQuestionnaire(preparation.Preview.Questionnaire)
 	updated.Warnings = nil
 	updated.Failures = nil
 	if preparation.Failure != nil {
 		updated.Endpoint = ""
 		updated.Fields = nil
+		updated.EditionFeatures = nil
 		updated.Files = nil
 		updated.Eligible = false
 		updated.PreparedOperationID = ""
@@ -1024,7 +1045,7 @@ func (e *workflowUploadExecution) ResolveAction(
 		}
 	} else {
 		updated.Endpoint, updated.Fields, updated.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
-		updated.RequiredActions = append([]api.RequiredAction(nil), preparation.Preview.RequiredActions...)
+		updated.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
 		updated.PreparedOperationID, updated.TorrentArtifactID, updated.TorrentFingerprint, err = workflowTrackerArtifactIdentity(
 			trackerID,
 			preparation.TorrentPath,
@@ -1361,6 +1382,7 @@ func workflowClientFailureRecovery(code api.OperationFailureCode) api.OperationR
 		api.OperationFailureDryRunClientInjection,
 		api.OperationFailureImageHostUnavailable,
 		api.OperationFailureAudioAnalysis,
+		api.OperationFailureHDRAnalysis,
 		api.OperationFailureInternal,
 		"":
 		return api.OperationRecoveryNone
@@ -1488,13 +1510,21 @@ func workflowUploadDescriptionGroups(
 	return groups
 }
 
-func workflowQuestionnaireAnswers(input map[api.TrackerID]map[string]string) map[string]map[string]string {
+// workflowQuestionnaireAnswers gives the exact reviewed projection precedence over
+// retained description inputs, including clearing a previously supplied value.
+func workflowQuestionnaireAnswers(input map[api.TrackerID]map[string]string, projections []api.TrackerReleaseProjection) map[string]map[string]string {
 	result := make(map[string]map[string]string, len(input))
 	for trackerID, answers := range input {
 		cloned := make(map[string]string, len(answers))
 		maps.Copy(cloned, answers)
 		result[string(trackerID)] = cloned
 	}
+	for _, projection := range projections {
+		if projection.QuestionnaireAnswers != nil {
+			result[string(projection.TrackerID)] = maps.Clone(projection.QuestionnaireAnswers)
+		}
+	}
+
 	return result
 }
 
@@ -1537,6 +1567,20 @@ func sanitizeWorkflowUploadPreview(preview api.TrackerDryRunEntry) (string, []ap
 		return strings.Compare(left.Field, right.Field)
 	})
 	return endpoint, fields, files
+}
+
+func sanitizeWorkflowQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {
+	fields := trackers.ProjectQuestionnaire(questionnaire)
+	for index := range fields {
+		field := &fields[index]
+		// Editable defaults must remain exact. Withhold secret-bearing values
+		// instead of returning a truncated URL or a redaction marker as an answer.
+		safe := sanitizeWorkflowFieldValue(field.Key, field.Value)
+		if safe == "[redacted]" || safe == "[private path]" || strings.Contains(redaction.RedactValue(field.Value, nil), "[REDACTED]") {
+			field.Value = ""
+		}
+	}
+	return fields
 }
 
 func sanitizeWorkflowFieldValue(key string, value string) string {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -43,4 +44,12 @@ func validChannelID(value string) bool {
 		}
 	}
 	return true
+}
+
+// projectionQuestionnaire preserves the configured channel and default before remote validation.
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	value := metautil.FirstNonEmptyTrimmed(resolveChannelInput(input.Meta, input.TrackerConfig.Channel), "1")
+	questionnaire := buildChannelQuestionnaire(value)
+	questionnaire.Fields[0].Help = "Channel IDs are used directly. Channel tags are resolved during upload preparation."
+	return questionnaire
 }

@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -47,7 +46,7 @@ func (b workflowDescriptionBuilder) Fingerprints(
 	if err != nil {
 		return "", "", err
 	}
-	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
+	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return "", "", err
 	}
@@ -125,7 +124,7 @@ func (b workflowDescriptionBuilder) Build(
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
-	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
+	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
@@ -155,6 +154,9 @@ func (b workflowDescriptionBuilder) Build(
 	}
 	if err := b.uploadAudioDescriptionImages(ctx, subject, trackerNames); err != nil {
 		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload audio analysis images: %w", err)
+	}
+	if err := b.uploadHDRDescriptionImages(ctx, subject, trackerNames); err != nil {
+		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload HDR analysis images: %w", err)
 	}
 	for _, projection := range descriptionTargets {
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
@@ -475,7 +477,7 @@ func resolveWorkflowExactMedia(
 			return nil, errors.New("workflow exact media: hosted artifact cannot source another hosted artifact")
 		}
 	}
-	if audio != nil {
+	if audio != nil && audio.AudioAnalysis.ID != "" {
 		ref := api.AudioAnalysisRef{ID: audio.AudioAnalysis.ID, Revision: audio.AudioAnalysis.Revision}
 		exact.AudioAnalysis = &ref
 		for _, track := range audio.AudioAnalysis.Tracks {
@@ -564,12 +566,8 @@ func (b workflowDescriptionBuilder) resolveSubject(
 			Final:          override.Final,
 		})
 	}
-	questionnaire := make(map[string]map[string]string, len(instructions.QuestionnaireAnswers))
-	for trackerID, answers := range instructions.QuestionnaireAnswers {
-		cloned := make(map[string]string, len(answers))
-		maps.Copy(cloned, answers)
-		questionnaire[string(trackerID)] = cloned
-	}
+	questionnaire := workflowQuestionnaireAnswers(instructions.QuestionnaireAnswers, descriptionTargets)
+
 	subject, err := b.resolver.ResolveUploadSubject(ctx, api.UploadSubjectInput{
 		Release:                release,
 		Trackers:               trackerNames,

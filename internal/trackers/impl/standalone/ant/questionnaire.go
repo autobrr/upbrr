@@ -7,37 +7,51 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	answers := standalone.QuestionnaireAnswers(input.Meta, "ANT")
+	typeName, _ := resolveType(input.Meta, answers)
+	tags, _ := resolveTags(input.Meta, answers)
+	return buildQuestionnaire(input.Meta, uploadState{
+		typeName:     typeName,
+		tags:         tags,
+		adultContent: detectAdult(input.Meta),
+	})
+}
+
 func buildQuestionnaire(meta api.UploadSubject, state uploadState) *api.TrackerQuestionnaire {
 	current := standalone.QuestionnaireAnswers(meta, "ANT")
 	fields := make([]api.TrackerQuestionnaireField, 0, 3)
-	if strings.TrimSpace(state.typeName) == "" {
+	if _, answered := current["type"]; strings.TrimSpace(state.typeName) == "" || answered {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "type",
 			Label:       "ANT Type",
 			Kind:        "select",
 			Options:     []string{"Feature Film", "Short Film", "Miniseries", "Other"},
-			Value:       strings.TrimSpace(current["type"]),
+			Value:       metautil.FirstNonEmptyTrimmed(state.typeName, current["type"]),
 			Placeholder: "Select a release type",
 			Help:        "Pick the ANT content type for this release",
 			Required:    true,
 		})
 	}
-	if strings.TrimSpace(state.tags) == "" {
+	if _, answered := current["tags"]; strings.TrimSpace(state.tags) == "" || answered {
+		// ANT can obtain genres from TMDB when an explicit tag value is omitted.
+		required := meta.ProviderMetadata.TMDB == nil || genreTags(meta.ProviderMetadata.TMDB.Genres) == ""
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "tags",
 			Label:       "Tags",
 			Kind:        "text",
-			Value:       strings.TrimSpace(current["tags"]),
+			Value:       state.tags,
 			Placeholder: "action, drama",
 			Help:        "Comma-separated ANT tags",
-			Required:    true,
+			Required:    required,
 		})
 	}
-	if state.adultContent {
+	if _, answered := current["adult_screens"]; state.adultContent || answered {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "adult_screens",
 			Label:       "Upload Screenshots",

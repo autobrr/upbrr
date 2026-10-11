@@ -21,17 +21,19 @@ Use **Settings → Description** to control shared description builders. Tracker
 
 ## Text blocks
 
-| Field                         | Default         | Effect                                                                      |
-| ----------------------------- | --------------- | --------------------------------------------------------------------------- |
-| **Episode overview**          | Off             | Adds episode overview text to the shared Unit3D description when available. |
-| **Tonemapped header**         | Built-in notice | Adds the configured notice when screenshots were tone mapped.               |
-| **Custom description header** | Empty           | Prepends custom markup in tracker builders that support the shared header.  |
-| **Screenshot header**         | Empty           | Adds markup immediately before the screenshot block where supported.        |
-| **Disc menu header**          | Empty           | Adds markup immediately before the DVD menu-image block where supported.    |
-| **Custom signature**          | Empty           | Appends custom markup in builders that support the shared signature.        |
-| **Add Bluray link**           | Off             | Adds the selected blu-ray.com release URL when available.                   |
+| Field                         | Default         | Effect                                                                                  |
+| ----------------------------- | --------------- | --------------------------------------------------------------------------------------- |
+| **Episode overview**          | Off             | Adds episode overview text to the generated description where supported when available. |
+| **Tonemapped header**         | Built-in notice | Adds the configured notice when screenshots were tone mapped.                           |
+| **Custom description header** | Empty           | Prepends custom markup in tracker builders that support the shared header.              |
+| **Screenshot header**         | Empty           | Adds markup immediately before the screenshot block where supported.                    |
+| **Disc menu header**          | Empty           | Adds markup immediately before the DVD menu-image block where supported.                |
+| **Custom signature**          | Empty           | Appends custom markup in builders that support the shared signature.                    |
+| **Add Bluray link**           | Off             | Adds the selected blu-ray.com release URL when available.                               |
 
 Header and signature values are tracker markup, commonly BBCode. Preview them before submission; malformed or unsupported markup is not made portable automatically.
+
+Imported comparison blocks remain in the description rather than becoming ordinary screenshots. Review the destination-specific formatting on **Descriptions**. **Save group** retains the complete edited output without appending generated sections again; use **Reset group** to rebuild the group from its generated description.
 
 :::note Compatibility fields
 

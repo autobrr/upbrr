@@ -14,10 +14,13 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v4", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v5", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
 }
 
 func applyULCXNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
+		return fmt.Errorf("apply ULCX language markers: %w", err)
+	}
 	if err := applyULCXTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
@@ -38,11 +41,11 @@ func applyULCXNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, 
 }
 
 func applyULCXTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
+	if unit3d.Category(meta) != "TV" {
 		return nil
 	}
-	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	if !ulcxMatchesTVDBTitle(editor, evidence.CanonicalName) {
+	evidence, ok := trackers.CurrentTVDBNameDisambiguation(editor, meta)
+	if !ok {
 		return nil
 	}
 	if err := editor.MoveBefore(api.NameRoleAlternateTitle, api.NameRoleYear); err != nil {
@@ -56,23 +59,19 @@ func applyULCXTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSub
 		if err := editor.InsertAfter(api.NameRoleLocale, evidence.Locale, anchor); err != nil {
 			return fmt.Errorf("insert ULCX TVDB locale: %w", err)
 		}
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return fmt.Errorf("omit ULCX TVDB year with locale: %w", err)
+		if !meta.EffectiveMetadata.YearProvenance.IsManual() {
+			if err := editor.Omit(api.NameRoleYear); err != nil {
+				return fmt.Errorf("omit ULCX TVDB year with locale: %w", err)
+			}
 		}
 		return nil
 	}
-	if !evidence.IncludeYear {
+	if !meta.EffectiveMetadata.YearProvenance.IsManual() && !evidence.IncludeYear {
 		if err := editor.Omit(api.NameRoleYear); err != nil {
 			return fmt.Errorf("omit ULCX TVDB year: %w", err)
 		}
 	}
 	return nil
-}
-
-func ulcxMatchesTVDBTitle(editor *trackers.NameEditor, title string) bool {
-	component, ok := editor.Component(api.NameRoleTitle)
-	return ok && component.Present && !component.Manual && strings.TrimSpace(title) != "" &&
-		strings.EqualFold(strings.Join(strings.Fields(component.Value), " "), strings.Join(strings.Fields(title), " "))
 }
 
 func insertULCXDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubject) error {
@@ -110,6 +109,5 @@ func correctULCXX265Token(editor *trackers.NameEditor, meta api.UploadSubject) e
 }
 
 func isULCXFullDisc(meta api.UploadSubject) bool {
-	nameType := strings.TrimSpace(meta.Type)
-	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
+	return trackers.IsFullDiscUpload(meta.DiscType, meta.Type)
 }
