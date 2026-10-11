@@ -26,6 +26,6 @@ type BrowseDirectoryResponse struct {
 	Mode        string                 `json:"mode"`
 	Entries     []BrowseDirectoryEntry `json:"entries"`
 	Scope       string                 `json:"scope"`
-	// Incomplete means a search stopped at a bound or could not read every path.
+	// Incomplete means a search stopped at a bound or could not inspect a directory or matching entry.
 	Incomplete bool `json:"incomplete,omitempty"`
 }

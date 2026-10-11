@@ -161,6 +161,8 @@ Choose **Open** to enter a folder or **Select** to apply that exact path to Inpu
 
 Root searches return at most 200 matches and inspect at most 20,000 entries. They check a two-second search budget between filesystem calls; a slow or unavailable filesystem can keep a call blocked longer. If the results are marked incomplete, use a narrower query or open a root and browse directly. Unreadable directories can also leave results incomplete.
 
+Searches can use two workers when every browse root is on a recognized local filesystem. Roots on the same filesystem are searched one after another. If roots overlap, any root is on network storage, or a filesystem cannot be identified, the search stays sequential. Filesystem identities do not guarantee separate physical disks. When a search reaches a limit, repeated searches may return different subsets of matching paths.
+
 Typing another query, navigating, or closing the browser cancels the previous request, and late replies cannot replace newer results. Each browser request has a 15-second timeout that includes network time and any authentication refresh. A timeout or busy message offers **Retry**; requests are not automatically repeated after network failures. The server allows at most two host-browser operations at once and keeps an operation's slot until its filesystem work actually returns, even after cancellation.
 
 The host browser lists only configured roots unless unrestricted browsing was explicitly enabled. If a valid folder is missing:

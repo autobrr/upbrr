@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -76,11 +78,73 @@ func browsePathsWithinRoots(ctx context.Context, req api.BrowseDirectoryRequest,
 	return result, nil
 }
 
-// searchBrowseRoots reads directory entries in bounded batches, never follows
-// directory symlinks, and deduplicates resolved paths across overlapping roots.
+// searchBrowseRoots uses at most two filesystem-group workers with shared work
+// limits, never follows directory symlinks, and deduplicates overlapping roots.
 // Filesystem calls themselves are not interruptible; cancellation is checked
 // between calls and entries rather than leaving detached traversal goroutines.
 func searchBrowseRoots(ctx context.Context, roots []string, mode, query string, resultLimit, entryLimit int) api.BrowseDirectoryResponse {
+	entries := browseConfiguredRoots(mode, roots).Entries
+	groups := groupBrowseRoots(ctx, entries, browseVolumeKey)
+	return searchBrowseGroups(ctx, groups, mode, query, resultLimit, entryLimit)
+}
+
+// groupBrowseRoots only permits parallel groups when every root has a known
+// local filesystem identity and roots do not overlap. Otherwise the original
+// serial order preserves containment scope and the selected result paths.
+func groupBrowseRoots(
+	ctx context.Context,
+	entries []api.BrowseDirectoryEntry,
+	identify func(context.Context, string) string,
+) [][]api.BrowseDirectoryEntry {
+	groups := make([][]api.BrowseDirectoryEntry, 0)
+	indices := make(map[string]int)
+	for i, entry := range entries {
+		if ctx.Err() != nil {
+			return nil
+		}
+		for _, previous := range entries[:i] {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if pathutil.IsWithinRoot(previous.Path, entry.Path) || pathutil.IsWithinRoot(entry.Path, previous.Path) {
+				return [][]api.BrowseDirectoryEntry{entries}
+			}
+		}
+		key := identify(ctx, entry.Path)
+		if key == "" {
+			return [][]api.BrowseDirectoryEntry{entries}
+		}
+		index, exists := indices[key]
+		if !exists {
+			index = len(groups)
+			indices[key] = index
+			groups = append(groups, nil)
+		}
+		groups[index] = append(groups[index], entry)
+	}
+	return groups
+}
+
+// walkBrowseGroups joins both workers before returning, including after
+// cancellation while a filesystem operation is still blocked.
+func walkBrowseGroups(ctx context.Context, groups [][]api.BrowseDirectoryEntry, walk func(context.Context, []api.BrowseDirectoryEntry)) {
+	var next atomic.Int64
+	var workers sync.WaitGroup
+	for range min(2, len(groups)) {
+		workers.Go(func() {
+			for ctx.Err() == nil {
+				index := int(next.Add(1) - 1)
+				if index >= len(groups) {
+					return
+				}
+				walk(ctx, groups[index])
+			}
+		})
+	}
+	workers.Wait()
+}
+
+func searchBrowseGroups(ctx context.Context, groups [][]api.BrowseDirectoryEntry, mode, query string, resultLimit, entryLimit int) api.BrowseDirectoryResponse {
 	search := browseSearch{
 		ctx:         ctx,
 		matcher:     newBrowseNameMatcher(query),
@@ -94,30 +158,11 @@ func searchBrowseRoots(ctx context.Context, roots []string, mode, query string, 
 		entryLimit:  entryLimit,
 		resultLimit: resultLimit,
 	}
-	result := &search.result
-	for _, entry := range browseConfiguredRoots(mode, roots).Entries {
-		root := entry.Path
-		if ctx.Err() != nil {
-			result.Incomplete = true
-			break
-		}
-		handle, err := os.OpenRoot(root)
-		if err != nil {
-			result.Incomplete = true
-			continue
-		}
-		key := browsePathKey(root)
-		if search.matcher.matches(entry.Name) && !search.results[key] {
-			search.result.Entries = append(search.result.Entries, entry)
-			search.results[key] = true
-		}
-		search.root(handle, root)
-		_ = handle.Close()
-		if search.stopped() {
-			result.Incomplete = true
-			break
-		}
+	walkBrowseGroups(ctx, groups, search.group)
+	if search.stopped() {
+		search.incomplete()
 	}
+	result := &search.result
 	sort.Slice(result.Entries, func(i, j int) bool {
 		left, right := result.Entries[i], result.Entries[j]
 		if left.IsDir != right.IsDir {
@@ -134,13 +179,73 @@ func searchBrowseRoots(ctx context.Context, roots []string, mode, query string, 
 type browseSearch struct {
 	ctx                              context.Context
 	matcher                          browseNameMatcher
+	mu                               sync.Mutex
 	directories, results             map[string]bool
 	visited, entryLimit, resultLimit int
 	result                           api.BrowseDirectoryResponse
 }
 
 func (s *browseSearch) stopped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stoppedLocked()
+}
+
+func (s *browseSearch) stoppedLocked() bool {
 	return s.visited >= s.entryLimit || len(s.result.Entries) >= s.resultLimit || s.ctx.Err() != nil
+}
+
+func (s *browseSearch) visit() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stoppedLocked() {
+		return false
+	}
+	s.visited++
+	return true
+}
+
+func (s *browseSearch) incomplete() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.result.Incomplete = true
+}
+
+func (s *browseSearch) claimDirectory(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.directories[key] {
+		return false
+	}
+	s.directories[key] = true
+	return true
+}
+
+func (s *browseSearch) addResult(key string, entry api.BrowseDirectoryEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.results[key] && len(s.result.Entries) < s.resultLimit && s.ctx.Err() == nil {
+		s.results[key] = true
+		s.result.Entries = append(s.result.Entries, entry)
+	}
+}
+
+func (s *browseSearch) group(ctx context.Context, entries []api.BrowseDirectoryEntry) {
+	for _, entry := range entries {
+		if ctx.Err() != nil || s.stopped() {
+			return
+		}
+		handle, err := os.OpenRoot(entry.Path)
+		if err != nil {
+			s.incomplete()
+			continue
+		}
+		if s.matcher.matches(entry.Name) {
+			s.addResult(browsePathKey(entry.Path), entry)
+		}
+		s.root(handle, entry.Path)
+		_ = handle.Close()
+	}
 }
 
 func (s *browseSearch) root(handle *os.Root, root string) {
@@ -148,18 +253,15 @@ func (s *browseSearch) root(handle *os.Root, root string) {
 	for len(pending) > 0 && !s.stopped() {
 		directory := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
-		key := browsePathKey(filepath.Join(root, directory))
-		if s.directories[key] {
-			continue
-		}
 		file, err := handle.Open(directory)
 		if err != nil {
-			s.result.Incomplete = true
+			s.incomplete()
 			continue
 		}
-		s.directories[key] = true
-		// Each open directory is closed before the next one, regardless of depth.
-		s.directory(file, root, directory, &pending)
+		if s.claimDirectory(browsePathKey(filepath.Join(root, directory))) {
+			// Each worker closes its directory before opening the next one.
+			s.directory(file, root, directory, &pending)
+		}
 		_ = file.Close()
 	}
 }
@@ -168,34 +270,36 @@ func (s *browseSearch) directory(directory *os.File, root, relative string, pend
 	for !s.stopped() {
 		entries, err := directory.ReadDir(128)
 		for _, entry := range entries {
-			if s.stopped() {
+			if !s.visit() {
 				return
 			}
-			s.visited++
+			matches := showBrowseEntry(s.result.Mode, entry.Name(), entry.IsDir()) && s.matcher.matches(entry.Name())
+			// Excluded files need no path resolution; directories still need traversal.
+			if !entry.IsDir() && !matches {
+				continue
+			}
 			child := filepath.Join(relative, entry.Name())
 			path := filepath.Join(root, child)
 			realPath, resolveErr := filepath.EvalSymlinks(path)
 			if resolveErr != nil {
-				s.result.Incomplete = true
+				s.incomplete()
 				continue
 			}
 			if !pathutil.IsWithinRoot(root, realPath) {
 				continue
 			}
-			key := browsePathKey(realPath)
 			if entry.IsDir() {
 				*pending = append(*pending, child)
 			}
-			if s.results[key] || !showBrowseEntry(s.result.Mode, entry.Name(), entry.IsDir()) || !s.matcher.matches(entry.Name()) {
+			if !matches {
 				continue
 			}
 			info, infoErr := entry.Info()
 			if infoErr != nil {
-				s.result.Incomplete = true
+				s.incomplete()
 				continue
 			}
-			s.results[key] = true
-			s.result.Entries = append(s.result.Entries, api.BrowseDirectoryEntry{
+			s.addResult(browsePathKey(realPath), api.BrowseDirectoryEntry{
 				Name:       entry.Name(),
 				Path:       path,
 				IsDir:      entry.IsDir(),
@@ -205,7 +309,7 @@ func (s *browseSearch) directory(directory *os.File, root, relative string, pend
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				s.result.Incomplete = true
+				s.incomplete()
 			}
 			return
 		}
