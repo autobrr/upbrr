@@ -10,41 +10,41 @@ import (
 // DupeEntry is one backend adapter's private duplicate-search hit.
 type DupeEntry struct {
 	// TrackerSlot is opaque tracker-native slot evidence, which may be partial.
-	TrackerSlot   string
-	Name          string
-	SizeBytes     int64
-	SizeKnown     bool
-	SizeText      string
-	Files         []string
-	FileCount     int
-	Trumpable     bool
-	Link          string
-	Download      string
-	Flags         []string
-	FlagsPresent  bool
-	FlagsComplete bool
-	HDR           HDRFacts
-	ID            string
-	Type          string
-	CanonicalType string
-	Res           string
-	Category      string
-	Source        string
-	Codec         string
-	Container     string
-	Provider      string
-	ProviderIDs   []TrackerProviderID
-	Group         string
-	ReleaseOrigin string
-	Edition       string
-	Region        string
-	ThreeD        string
-	Repack        string
-	Attributes    map[string]string
-	Season        int
-	Episode       int
-	Pack          bool
-	Internal      bool
+	TrackerSlot    string
+	Name           string
+	SizeBytes      int64
+	SizeKnown      bool
+	SizeText       string
+	Files          []string
+	FileCount      int
+	Trumpable      bool
+	Link           string
+	Download       string
+	Flags          []string
+	FlagsPresent   bool
+	FlagsComplete  bool
+	HDR            HDRFacts
+	ID             string
+	Type           string
+	CanonicalType  string
+	Res            string
+	Category       string
+	Source         string
+	Codec          string
+	Container      string
+	Provider       string
+	ProviderIDs    []TrackerProviderID
+	Group          string
+	ReleaseOrigin  string
+	Edition        string
+	Region         string
+	ThreeD         string
+	Repack         string
+	Attributes     map[string]string
+	Season         int
+	Episode        int
+	Pack           bool
+	Internal       bool
 	BDInfo         string
 	Description    string
 	AudioCodecs    []string
