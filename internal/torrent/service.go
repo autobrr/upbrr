@@ -653,7 +653,7 @@ func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (
 // torrentRootName returns one safe metainfo root component without changing the source path.
 func torrentRootName(meta api.TorrentSubject, source string) (string, error) {
 	if rootName := strings.TrimSpace(meta.RootName); rootName != "" {
-		if strings.ContainsAny(rootName, `/\\`) || rootName == "." || rootName == ".." || filepath.IsAbs(rootName) {
+		if strings.ContainsAny(rootName, `/\\`) || rootName == "." || rootName == ".." || strings.Contains(rootName, ":") || (len(rootName) > 1 && rootName[1] == ':') {
 			return "", fmt.Errorf("torrent: invalid requested root name %q", meta.RootName)
 		}
 		return rootName, nil
