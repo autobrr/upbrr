@@ -6,6 +6,7 @@ package tvdb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -655,6 +656,102 @@ func TestSearchSeriesDecodesStringAliases(t *testing.T) {
 	}
 	if results[0].Aliases[0].Name != "Example Quest (2011)" || results[0].Aliases[0].Language != "" {
 		t.Fatalf("expected unlabelled string alias, got %#v", results[0].Aliases[0])
+	}
+}
+
+func TestGetJSONUnauthorizedRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		retryStatus  int
+		refreshFails bool
+		wantRequests int
+		wantErr      string
+	}{
+		{
+			name:         "successful retry",
+			retryStatus:  http.StatusOK,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry unauthorized",
+			retryStatus:  http.StatusUnauthorized,
+			wantRequests: 2,
+			wantErr:      "http 401",
+		},
+		{
+			name:         "refresh fails",
+			refreshFails: true,
+			wantRequests: 1,
+			wantErr:      "login http 401",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var bodies []*tvdbTrackingBody
+			requests, refreshes := 0, 0
+			client := NewClient(&http.Client{Transport: tvdbRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				for _, body := range bodies {
+					if !body.closed {
+						t.Error("response body still open before the next request")
+					}
+				}
+				switch req.URL.Path {
+				case "/login":
+					refreshes++
+					if tc.refreshFails || refreshes > 1 {
+						return tvdbTestResponse(http.StatusUnauthorized, ""), nil
+					}
+					return tvdbTestResponse(http.StatusOK, `{"data":{"token":"refreshed-token"}}`), nil
+				case "/series/123":
+					requests++
+					if requests > 2 {
+						t.Error("unexpected extra metadata request")
+						return nil, context.Canceled
+					}
+					wantAuth := "Bearer expired-token"
+					status := http.StatusUnauthorized
+					if requests == 2 {
+						wantAuth = "Bearer refreshed-token"
+						status = tc.retryStatus
+					}
+					if req.Header.Get("Authorization") != wantAuth {
+						t.Errorf("unexpected authorization token for metadata request %d", requests)
+					}
+					if req.URL.Query().Get("lang") != "eng" || req.Header.Get("Accept") != "application/json" {
+						t.Error("request lost query or Accept header")
+					}
+					resp := tvdbTestResponse(status, `{"status":"success"}`)
+					body := &tvdbTrackingBody{ReadCloser: resp.Body}
+					bodies = append(bodies, body)
+					resp.Body = body
+					return resp, nil
+				default:
+					t.Errorf("unexpected request path %q", req.URL.Path)
+					return nil, context.Canceled
+				}
+			})}, nil, "api-key", "")
+			client.baseURL = "https://tvdb.test"
+			client.authToken = "expired-token"
+
+			var target struct {
+				Status string `json:"status"`
+			}
+			err := client.getJSON(t.Context(), "/series/123", map[string]string{"lang": "eng"}, &target)
+			if tc.wantErr == "" {
+				if err != nil || target.Status != "success" {
+					t.Fatalf("retry result = %+v, error = %v", target, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) || target.Status != "" {
+				t.Fatalf("expected %q with no decoded result, got target = %+v, error = %v", tc.wantErr, target, err)
+			}
+			if requests != tc.wantRequests || refreshes != 1 {
+				t.Errorf("metadata requests = %d, refreshes = %d; want %d and 1", requests, refreshes, tc.wantRequests)
+			}
+			for _, body := range bodies {
+				if !body.closed {
+					t.Error("response body still open after return")
+				}
+			}
+		})
 	}
 }
 
@@ -1321,6 +1418,19 @@ type tvdbRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f tvdbRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type tvdbTrackingBody struct {
+	io.ReadCloser
+	closed bool
+}
+
+func (b *tvdbTrackingBody) Close() error {
+	b.closed = true
+	if err := b.ReadCloser.Close(); err != nil {
+		return fmt.Errorf("close tracked response body: %w", err)
+	}
+	return nil
 }
 
 func tvdbTestResponse(status int, body string) *http.Response {

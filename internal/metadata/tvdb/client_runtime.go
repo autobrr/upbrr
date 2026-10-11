@@ -1753,41 +1753,47 @@ func (c *Client) uncachedJSON(ctx context.Context, path string, params map[strin
 		url = url + "?" + strings.Join(q, "&")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("tvdb: build request for %s: %w", path, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token())
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("tvdb: execute request for %s: %w", path, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.refreshToken(ctx); err != nil {
-			return err
+	for canRefresh := true; ; {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return fmt.Errorf("tvdb: build request for %s: %w", path, err)
 		}
-		return c.uncachedJSON(ctx, path, params, target)
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		return errNotFound
-	}
+		req.Header.Set("Authorization", "Bearer "+c.token())
+		req.Header.Set("Accept", "application/json")
 
-	body, err := readTVDBResponseBody(resp.Body)
-	if err != nil {
-		return fmt.Errorf("tvdb: read response body for %s: %w", path, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("tvdb: http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(body), nil)))
-	}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("tvdb: execute request for %s: %w", path, err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			resp.Body.Close()
+			if !canRefresh {
+				return fmt.Errorf("tvdb: http %d after token refresh", resp.StatusCode)
+			}
+			canRefresh = false
+			if err := c.refreshToken(ctx); err != nil {
+				return err
+			}
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			return errNotFound
+		}
 
-	if err := json.Unmarshal(body, target); err != nil {
-		return fmt.Errorf("tvdb: decode %s: %w", path, err)
+		body, err := readTVDBResponseBody(resp.Body)
+		if err != nil {
+			return fmt.Errorf("tvdb: read response body for %s: %w", path, err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("tvdb: http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(body), nil)))
+		}
+
+		if err := json.Unmarshal(body, target); err != nil {
+			return fmt.Errorf("tvdb: decode %s: %w", path, err)
+		}
+		return nil
 	}
-	return nil
 }
 
 func (c *Client) ensureToken(ctx context.Context) error {
