@@ -353,6 +353,34 @@ func (b workflowUploadPlanBuilder) Build(
 			}
 			eligible = remaining
 		}
+		cbrRootName := workflowCBRTorrentRootName(eligible)
+		if cbrRootName == "" {
+			var rejected bool
+			eligible, rejected = workflowRejectCBRTorrentRoot(eligible)
+			if rejected {
+				message := "CBR requires its reviewed torrent root and cannot share a torrent with another tracker."
+				trackerStatuses["CBR"] = api.StageStatusFailed
+				trackerReasons["CBR"] = message
+				trackerFailures["CBR"] = []api.WorkflowFailure{{
+					TrackerID: "CBR",
+					Failure: api.OperationFailure{
+						Code:      api.OperationFailureInvalidInput,
+						Operation: api.OperationKindUploadDryRun,
+						Message:   message,
+						Recovery:  api.OperationRecoverySelectTrackers,
+					},
+				}}
+			}
+		} else if torrentSubject.RootName != cbrRootName {
+			torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
+			torrentSubject.RootName = cbrRootName
+			torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
+			torrent, err = b.torrents.Create(ctx, torrentSubject)
+			if err != nil {
+				return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare CBR torrent: %w", err)
+			}
+			subject.TorrentPath = torrent.Path
+		}
 		subject.Trackers = workflowProjectionTrackerNames(eligible)
 		subject.RehashedTrackers = append([]string(nil), torrent.RehashedTrackers...)
 	}
@@ -646,6 +674,19 @@ func workflowCBRTorrentRootName(eligible []api.TrackerReleaseProjection) string 
 		return ""
 	}
 	return strings.ReplaceAll(strings.TrimSpace(eligible[0].UploadReleaseName), " ", ".")
+}
+
+func workflowRejectCBRTorrentRoot(eligible []api.TrackerReleaseProjection) ([]api.TrackerReleaseProjection, bool) {
+	filtered := make([]api.TrackerReleaseProjection, 0, len(eligible))
+	rejected := false
+	for _, projection := range eligible {
+		if projection.TrackerID == "CBR" {
+			rejected = true
+			continue
+		}
+		filtered = append(filtered, projection)
+	}
+	return filtered, rejected
 }
 
 // RetryClientInjections injects registered tracker torrents into configured clients.

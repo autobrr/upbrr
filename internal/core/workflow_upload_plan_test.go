@@ -65,6 +65,19 @@ func TestWorkflowCBRTorrentRootName(t *testing.T) {
 	}
 }
 
+func TestWorkflowRejectCBRTorrentRootKeepsIndependentTrackers(t *testing.T) {
+	t.Parallel()
+
+	remaining, rejected := workflowRejectCBRTorrentRoot([]api.TrackerReleaseProjection{{TrackerID: "CBR"}, {TrackerID: "OTHER"}})
+	if !rejected || len(remaining) != 1 || remaining[0].TrackerID != "OTHER" {
+		t.Fatalf("remaining=%+v rejected=%t", remaining, rejected)
+	}
+	remaining, rejected = workflowRejectCBRTorrentRoot([]api.TrackerReleaseProjection{{TrackerID: "OTHER"}})
+	if rejected || len(remaining) != 1 || remaining[0].TrackerID != "OTHER" {
+		t.Fatalf("non-CBR remaining=%+v rejected=%t", remaining, rejected)
+	}
+}
+
 // LoadSubmissionFence returns the fake's fence record for one tracker identity.
 func (f workflowSubmissionFenceRepositoryFake) LoadSubmissionFence(
 	_ context.Context,

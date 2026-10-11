@@ -140,10 +140,19 @@ func TestCreateNewTorrent(t *testing.T) {
 // TestTorrentRootNameRejectsUnsafeRequestedComponent rejects non-component metainfo names.
 func TestTorrentRootNameRejectsUnsafeRequestedComponent(t *testing.T) {
 	t.Parallel()
-	for _, rootName := range []string{".", "..", "nested/name", `nested\name`} {
+	for _, rootName := range []string{".", "..", "nested/name", `nested\name`, "C:release"} {
 		if _, err := torrentRootName(api.TorrentSubject{RootName: rootName}, "source"); err == nil {
 			t.Errorf("root name %q was accepted", rootName)
 		}
+	}
+}
+
+func TestTorrentRootNameAllowsNonDriveColon(t *testing.T) {
+	t.Parallel()
+
+	name, err := torrentRootName(api.TorrentSubject{RootName: "Title: Part"}, "source")
+	if err != nil || name != "Title: Part" {
+		t.Fatalf("root name = %q, %v", name, err)
 	}
 }
 
