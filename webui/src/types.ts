@@ -249,6 +249,8 @@ export type MediaFacts = {
 
 export type MediaTrackFacts = {
   ID: string;
+  BitDepth?: number;
+  ChannelsKnown?: boolean;
   DiscID?: string;
   PlaylistID?: string;
   BitrateBitsPerSecond?: number;

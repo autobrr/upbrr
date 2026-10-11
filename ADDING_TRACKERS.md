@@ -1275,6 +1275,12 @@ flags and container order before asking for genuinely missing upload input. Use 
 `guidance_` rule code for non-language guidance that should appear in the collapsed WebUI
 Guidance panel; language guidance retains its existing `language_` codes.
 
+Audio sample-depth guidance uses the inspected track's `BitDepth`, codec and channel
+count, never video bit depth or an aggregate naming label. Zero sample depth is unknown;
+`ChannelsKnown` is false when the retained channel count came from partial evidence.
+Advice about primary programme audio must use an unambiguous inspected primary track
+and exclude secondary roles. Missing facts produce no speculative recommendation.
+
 Origin-country defaults must use current, source-bound provider evidence and the inspected primary
 original-language audio. Normalize supported country codes and names, retain all co-production
 countries when checking agreement, and never use the work’s origin to infer a dub’s country.
