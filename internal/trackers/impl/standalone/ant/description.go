@@ -6,6 +6,7 @@ package ant
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -17,12 +18,13 @@ import (
 )
 
 // buildDescription composes ANT's reviewed text separately from the API screenshot
-// payload. Final user-reviewed descriptions remain authoritative.
+// payload. Reviewed text is preserved apart from ANT's TMDB logo exclusion.
 func buildDescription(ctx context.Context, req trackers.PreparationInput, assets trackers.DescriptionAssets) (string, error) {
 	if assets.Final {
-		return strings.TrimSpace(assets.Description), nil
+		return strings.TrimSpace(stripTMDBLogoImages(assets.Description, req.Meta.ProviderMetadata.TMDB)), nil
 	}
 	cfg := req.Runtime.DescriptionConfig()
+	cfg.Description.AddLogo = false
 	meta := api.NewDescriptionSubject(req.Meta)
 	meta.DescriptionTemplate = prepareDescriptionText(meta.DescriptionTemplate, cfg.Description.ScreenshotHeader, assets.Screenshots)
 	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
@@ -36,11 +38,44 @@ func buildDescription(ctx context.Context, req trackers.PreparationInput, assets
 	if err != nil {
 		return "", fmt.Errorf("trackers: ANT description: %w", err)
 	}
-	finalized := finalizeDescription(composed)
+	finalized := finalizeDescription(stripTMDBLogoImages(composed, req.Meta.ProviderMetadata.TMDB))
 	if req.Intent == trackers.PreparationIntentDryRun {
 		unit3d.SaveDescriptionDebug(meta, "ANT", req.Runtime.DBPath, finalized, req.Logger)
 	}
 	return finalized, nil
+}
+
+func stripTMDBLogoImages(value string, metadata *api.TMDBMetadata) string {
+	if metadata == nil {
+		return value
+	}
+	for _, logoURL := range []string{metadata.Logo, metadata.TMDBLogo} {
+		if logoURL = strings.TrimSpace(logoURL); logoURL == "" {
+			continue
+		}
+		logoPattern := regexp.QuoteMeta(logoURL)
+		// TMDB supplies an original URL and a bare asset filename. Imported
+		// tracker descriptions can use another size of the same logo asset.
+		if parsed, err := url.Parse(logoURL); err == nil {
+			logoFile := strings.TrimPrefix(parsed.Path, "/")
+			if parsed.Host != "" {
+				logoFile = ""
+				if strings.EqualFold(parsed.Hostname(), "image.tmdb.org") {
+					if imagePath, ok := strings.CutPrefix(parsed.EscapedPath(), "/t/p/"); ok {
+						_, logoFile, _ = strings.Cut(imagePath, "/")
+					}
+				}
+			}
+			if logoFile != "" && !strings.Contains(logoFile, "/") {
+				logoPattern = `(?:` + logoPattern + `|(?i:https?://image\.tmdb\.org)/t/p/[^/\s]+/` + regexp.QuoteMeta(logoFile) + `)`
+			}
+		}
+		image := regexp.MustCompile(`(?is:\[img[^\]]*\])\s*` + logoPattern + `\s*(?i:\[/img\])`)
+		value = description.MapOutsideLiteralBlocks(value, func(fragment string) string {
+			return image.ReplaceAllString(fragment, "")
+		})
+	}
+	return value
 }
 
 // prepareDescriptionText removes only owned screenshot content and known uploader

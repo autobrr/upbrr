@@ -642,6 +642,9 @@ func screenshotSlotsFromSourceWithoutPersist(
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
 	}
+	if preloaded != nil && preloaded.screenshotSlotsLoaded && preloaded.exactMedia != nil {
+		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
+	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return nil, nil
 	}

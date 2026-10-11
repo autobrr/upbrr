@@ -50,13 +50,16 @@ func TestANTFullDescriptionKeepsContentAndSeparatesScreenshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{notes, "Template token", "Header token", "Signature token", "logo.png", "Caption retained", "The configured " + header + " label is mentioned here."} {
+	for _, want := range []string{notes, "Template token", "Header token", "Signature token", "Caption retained", "The configured " + header + " label is mentioned here."} {
 		if !strings.Contains(result.Description, want) {
 			t.Errorf("description lost %q: %q", want, result.Description)
 		}
 	}
 	if strings.Contains(result.Description, screenshot) || strings.Count(result.Description, header) != 1 {
 		t.Errorf("screenshot section leaked into description: %q", result.Description)
+	}
+	if strings.Contains(result.Description, "logo.png") {
+		t.Errorf("TMDB logo leaked into ANT description: %q", result.Description)
 	}
 	if Profile().UploadContentMode != trackers.UploadContentModeDescription {
 		t.Error("ANT must consume full shared descriptions")

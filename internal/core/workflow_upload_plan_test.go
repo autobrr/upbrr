@@ -1367,6 +1367,22 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			name:           "unknown outcome semantics",
 			code:           "unknown_outcome",
 			message:        "Workflow receipt unavailable.",
+			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing. Reason: Workflow receipt unavailable.",
+			wantSubmission: api.StageStatusUnavailable,
+		},
+		{
+			name:             "unknown outcome retains ANT rejection reason",
+			code:             "unknown_outcome",
+			message:          `trackers: ANT upload failed status=400: A file with the same infohash already exists on the site! passkey=never-print-this source=C:\releases\Example.Release.2026`,
+			wantMessage:      "Reason: trackers: ANT upload failed status=400: A file with the same infohash already exists on the site!",
+			wantSubmission:   api.StageStatusUnavailable,
+			wantRedaction:    true,
+			wantPathSanitize: true,
+		},
+		{
+			name:           "unknown outcome empty detail fallback",
+			code:           "unknown_outcome",
+			message:        " ",
 			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing.",
 			wantSubmission: api.StageStatusUnavailable,
 		},
@@ -1390,6 +1406,13 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			failure := results[0].Failures[0].Failure
 			if results[0].SubmissionStatus != test.wantSubmission || !strings.Contains(failure.Message, test.wantMessage) {
 				t.Fatalf("upload failure = %#v", results[0])
+			}
+			wantCode, wantRecovery := api.OperationFailureInternal, api.OperationRecoveryRetry
+			if test.code == "unknown_outcome" {
+				wantCode, wantRecovery = api.OperationFailureUnknownOutcome, api.OperationRecoveryConfirm
+			}
+			if failure.Code != wantCode || failure.Recovery != wantRecovery {
+				t.Fatalf("upload failure changed recovery semantics: %#v", failure)
 			}
 			if test.wantRedaction && (!strings.Contains(failure.Message, "passkey=[REDACTED]") || strings.Contains(failure.Message, "never-print-this")) {
 				t.Fatal("upload failure did not redact the tracker detail")

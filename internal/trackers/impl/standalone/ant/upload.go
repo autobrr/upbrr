@@ -104,9 +104,7 @@ func submitPreparedUpload(
 	payload := map[string]any{}
 	if len(bodyBytes) > 0 {
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return api.UploadSummary{}, errors.New("trackers: ANT json decode error, the API is probably down")
-			}
+			return api.UploadSummary{}, antUploadError(resp.StatusCode, payload, bodyBytes)
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !antUploadSuccess(payload) {
@@ -355,19 +353,10 @@ func antUploadSuccess(payload map[string]any) bool {
 }
 
 func antUploadError(status int, payload map[string]any, body []byte) error {
-	text := strings.ToLower(compactJSON(payload))
-	if status == http.StatusBadRequest {
-		switch {
-		case strings.Contains(text, "same infohash"):
-			if viewURL := strings.TrimSpace(stringValue(payload["view"])); viewURL != "" {
-				return fmt.Errorf("trackers: ANT same infohash already exists: %s", commonhttp.RedactErrorDetail(viewURL))
-			}
-			return errors.New("trackers: ANT same infohash already exists")
-		case strings.Contains(text, "exact same"):
-			return errors.New("trackers: ANT exact same media file already exists")
-		}
-	}
 	if detail := commonhttp.ExtractHTTPErrorDetail(body); detail != "" {
+		if viewURL := strings.TrimSpace(stringValue(payload["view"])); viewURL != "" {
+			detail += " (" + commonhttp.RedactErrorDetail(viewURL) + ")"
+		}
 		return fmt.Errorf("trackers: ANT upload failed status=%d: %s", status, detail)
 	}
 	switch status {
@@ -378,21 +367,7 @@ func antUploadError(status int, payload map[string]any, body []byte) error {
 	case http.StatusBadGateway:
 		return errors.New("trackers: ANT bad gateway")
 	}
-	if message := strings.TrimSpace(stringValue(payload["error"])); message != "" {
-		return fmt.Errorf("trackers: ANT api error: %s", commonhttp.RedactErrorDetail(message))
-	}
 	return commonhttp.UploadHTTPError("ANT", status, body)
-}
-
-func compactJSON(payload map[string]any) string {
-	if len(payload) == 0 {
-		return ""
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	return string(encoded)
 }
 
 func stringValue(value any) string {

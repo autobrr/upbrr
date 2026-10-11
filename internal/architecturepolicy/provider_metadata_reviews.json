@@ -123,6 +123,18 @@
     "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together.",
     "sha256": "cd7742d81e9e5bcc1a499cfdd4b26eea685b53cec75d86b7ca5ad61d351523f4"
   },
+  "internal/trackers/impl/standalone/ant/definition.go:prepareDescription": {
+    "reason": "Description preparation passes the exact prepared subject to the reviewed ANT composer. The explicit ANT logo exclusion also applies to final reviewed descriptions; other reviewed content and metadata/manual precedence remain unchanged.",
+    "sha256": "df7199f3730a5ec04ce4d3185bf65c78c278c0c4ac83f66ca48da220625af435"
+  },
+  "internal/trackers/impl/standalone/ant/description.go:buildDescription": {
+    "reason": "ANT always disables automatic logos locally and removes images matching the exact prepared TMDB Logo/TMDBLogo asset identities from composed or final reviewed text. This requested logo exclusion leaves other reviewed text, artwork, literal examples and the shared composer's manual metadata precedence intact; no provider title, year, genre or naming selector is introduced.",
+    "sha256": "6395bdcf8c08167b3d308a7149a99776fa7ca635e4c4f77bd022e9110af24caf"
+  },
+  "internal/trackers/impl/standalone/ant/description.go:stripTMDBLogoImages": {
+    "reason": "Logo and TMDBLogo are descriptive image identities from the exact prepared provider snapshot. Exact logo URLs and matching filenames on TMDB's image host across size variants are removed only from rendered BBCode images outside literal blocks. Other filenames and hosts remain intact. Missing metadata preserves text; manual title, year, genre and naming corrections are not selected or replaced.",
+    "sha256": "f214ae6d4b0be023d28822d94ba5b175daaf58b2edf1c8fb0547d90add5f4e8a"
+  },
   "internal/trackers/impl/standalone/ant/questionnaire.go:buildQuestionnaire": {
     "reason": "Adds optional request ID and limits type choices to films. Uses resolved tags without repopulating explicit tag or genre clears; exact-subject TMDB genres determine optional-tag requiredness. Type resolution and content eligibility share the reviewed movie gate; adult-screen answer precedence is unchanged.",
     "sha256": "5df574f1c6705c037f6ec7dbff210a123229bf7f34b6977986e639a2390c59d2"
@@ -148,7 +160,7 @@
     "sha256": "468ecd0f576304a1d33dba1b2efefdaa2c2ef10f8c511b79e5f4655866a5f617"
   },
   "internal/trackers/impl/standalone/ant/upload.go:prepareUploadState": {
-    "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence. Description composition consumes the same prepared subject and preserves final user-reviewed text; composition errors now propagate without changing metadata selectors.",
+    "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence. Description composition consumes the same prepared subject and preserves final user-reviewed text apart from the requested ANT TMDB logo exclusion; composition errors propagate without changing metadata selectors.",
     "sha256": "07318f8fa7802a00e72af3a05363eafb9bb690585964361d3b0d5454f6e9abb8"
   },
   "internal/trackers/impl/standalone/ant/upload.go:resolveKeywords": {
