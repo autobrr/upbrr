@@ -17,6 +17,23 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestNewClientWithoutApplicationDefault(t *testing.T) {
+	palette := clientPalette
+	clientPalette = nil
+	t.Cleanup(func() { clientPalette = palette })
+
+	client := NewClient(&http.Client{Transport: tvdbRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("unexpected HTTP request without an application default")
+		return nil, context.Canceled
+	})}, nil, " \t ", "")
+	if client.apiKey != "" {
+		t.Fatal("expected an empty application default")
+	}
+	if _, err := client.GetSeriesMetadata(t.Context(), 123); err == nil || err.Error() != "tvdb: api key missing" {
+		t.Fatalf("expected missing API key error, got %v", err)
+	}
+}
+
 func TestBuildNameDisambiguationFixtures(t *testing.T) {
 	tests := []struct {
 		name         string
