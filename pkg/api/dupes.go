@@ -45,8 +45,11 @@ type DupeEntry struct {
 	Episode       int
 	Pack          bool
 	Internal      bool
-	BDInfo        string
-	Description   string
+	BDInfo         string
+	Description    string
+	AudioCodecs    []string
+	AudioChannels  []string
+	AudioLanguages []string
 }
 
 // DupeRelation is one directional proposed-to-candidate relationship.

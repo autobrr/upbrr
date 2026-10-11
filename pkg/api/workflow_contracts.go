@@ -217,6 +217,9 @@ type TrackerDuplicateTarget struct {
 	Pack          bool     `json:"pack"`
 	SizeBytes     int64    `json:"sizeBytes,omitempty"`
 	FileNames     []string `json:"fileNames,omitempty"`
+	AudioCodecs   []string `json:"audioCodecs,omitempty"`
+	AudioChannels []string `json:"audioChannels,omitempty"`
+	AudioLanguages []string `json:"audioLanguages,omitempty"`
 }
 
 // TrackerArtifactRequirements are backend-owned tracker artifact requirements.
