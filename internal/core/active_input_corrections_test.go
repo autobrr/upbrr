@@ -106,7 +106,7 @@ func TestOpenActiveInputPreservesCorrectionReviewThroughReverification(t *testin
 				ResetFields:      []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataGenres}},
 			}, "reset-remaining")
 			if err != nil || ready.Current == nil || ready.Current.Release == nil || len(ready.Current.Workflow.RequiredActions) != 0 {
-				t.Fatalf("remaining reset did not prepare: view=%#v err=%v", ready, err)
+				t.Fatalf("remaining reset did not prepare: view=%#v err=%v cause=%v", ready, err, errors.Unwrap(err))
 			}
 		})
 	}
@@ -120,6 +120,51 @@ type activeCorrectionFixture struct {
 	binding       api.ContentBinding
 	patchCalls    int
 	verifications int
+}
+
+type activeCorrectionPollKey struct{}
+
+type activeCorrectionRepository struct {
+	*releaseworkflow.PersistentRepository
+	resume        chan struct{}
+	completed     chan struct{}
+	resumeOnce    sync.Once
+	completedOnce sync.Once
+}
+
+func (r *activeCorrectionRepository) LoadLatestOperation(
+	ctx context.Context, owner string, workflowID api.WorkflowID,
+) (api.ReleaseWorkflowOperationRecord, error) {
+	record, err := r.PersistentRepository.LoadLatestOperation(ctx, owner, workflowID)
+	if err != nil {
+		return api.ReleaseWorkflowOperationRecord{}, fmt.Errorf("load correction test operation: %w", err)
+	}
+	if ctx.Value(activeCorrectionPollKey{}) != true ||
+		(record.Status.Status != api.StageStatusQueued && record.Status.Status != api.StageStatusRunning) {
+		return record, nil
+	}
+	// Finish preparation between Current's workflow-state and operation reads.
+	r.resumeOnce.Do(func() { close(r.resume) })
+	select {
+	case <-ctx.Done():
+		return api.ReleaseWorkflowOperationRecord{}, fmt.Errorf("wait for correction test operation: %w", ctx.Err())
+	case <-r.completed:
+	}
+	record, err = r.PersistentRepository.LoadLatestOperation(ctx, owner, workflowID)
+	if err != nil {
+		return api.ReleaseWorkflowOperationRecord{}, fmt.Errorf("reload completed correction test operation: %w", err)
+	}
+	return record, nil
+}
+
+func (r *activeCorrectionRepository) SaveOperation(ctx context.Context, sequence uint64, record api.ReleaseWorkflowOperationRecord) error {
+	if err := r.PersistentRepository.SaveOperation(ctx, sequence, record); err != nil {
+		return fmt.Errorf("save correction test operation: %w", err)
+	}
+	if record.Status.Status == api.StageStatusCompleted {
+		r.completedOnce.Do(func() { close(r.completed) })
+	}
+	return nil
 }
 
 func newActiveCorrectionFixture(t *testing.T) *activeCorrectionFixture {
@@ -154,7 +199,12 @@ func newActiveCorrectionFixture(t *testing.T) *activeCorrectionFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workflow, err := releaseworkflow.New(persistent, releaseworkflow.NewMemoryPrivateResourceStore(), releaseworkflow.ReleasePreparerFunc{
+	pollingRepository := &activeCorrectionRepository{
+		PersistentRepository: persistent,
+		resume:               make(chan struct{}),
+		completed:            make(chan struct{}),
+	}
+	workflow, err := releaseworkflow.New(pollingRepository, releaseworkflow.NewMemoryPrivateResourceStore(), releaseworkflow.ReleasePreparerFunc{
 		ResolveInputFunc: func(_ context.Context, input api.PrepareInput, update api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error) {
 			fixture.mu.Lock()
 			defer fixture.mu.Unlock()
@@ -186,7 +236,7 @@ func newActiveCorrectionFixture(t *testing.T) *activeCorrectionFixture {
 				SourceFingerprint: fixture.binding.SourceFingerprint,
 			}, nil
 		},
-		PrepareResolvedFunc: func(_ context.Context, input api.ResolvedPreparationInput) (api.PrepareResult, error) {
+		PrepareResolvedFunc: func(ctx context.Context, input api.ResolvedPreparationInput) (api.PrepareResult, error) {
 			fixture.mu.Lock()
 			defer fixture.mu.Unlock()
 			for field, binding := range fixture.stored.Corrections.ContentBindings {
@@ -202,6 +252,11 @@ func newActiveCorrectionFixture(t *testing.T) *activeCorrectionFixture {
 			}
 			if len(stored.Corrections.StaleContentFields) > 0 {
 				return api.PrepareResult{}, &api.StaleContentCorrectionsError{Corrections: stored, CurrentBinding: fixture.binding}
+			}
+			select {
+			case <-ctx.Done():
+				return api.PrepareResult{}, fmt.Errorf("wait for correction test polling: %w", ctx.Err())
+			case <-pollingRepository.resume:
 			}
 			return api.PrepareResult{
 				Release:               api.PreparedRelease{Generation: 1, Source: api.SourceManifest{SourcePath: input.Input.SourcePath}},
@@ -237,6 +292,7 @@ func (f *activeCorrectionFixture) open(t *testing.T, patch *api.ReleaseCorrectio
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
+	pollCtx := context.WithValue(ctx, activeCorrectionPollKey{}, key == "reset-remaining")
 	before, err := f.core.GetActiveInput(ctx, "input-owner")
 	if err != nil {
 		return api.ActiveInputSnapshot{}, err
@@ -257,7 +313,10 @@ func (f *activeCorrectionFixture) open(t *testing.T, patch *api.ReleaseCorrectio
 		if current == nil {
 			return view, errors.New("active workflow missing")
 		}
-		if current.Operation == nil || (current.Operation.Status != api.StageStatusQueued && current.Operation.Status != api.StageStatusRunning) {
+		// Current reads workflow state before operation status, so a completed
+		// operation can belong to a newer revision. Poll again before continuing.
+		if current.Operation == nil || (current.Operation.Status != api.StageStatusQueued && current.Operation.Status != api.StageStatusRunning &&
+			current.Operation.ResultRevision <= current.Workflow.Revision) {
 			if current.Workflow.Status == api.WorkflowStatusBlocked || current.Release != nil {
 				return view, nil
 			}
@@ -276,7 +335,7 @@ func (f *activeCorrectionFixture) open(t *testing.T, patch *api.ReleaseCorrectio
 			return view, fmt.Errorf("wait for test input preparation: %w", ctx.Err())
 		case <-time.After(5 * time.Millisecond):
 		}
-		view, err = f.core.GetActiveInput(ctx, "input-owner")
+		view, err = f.core.GetActiveInput(pollCtx, "input-owner")
 		if err != nil {
 			return view, err
 		}
