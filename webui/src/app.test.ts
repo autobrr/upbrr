@@ -383,16 +383,18 @@ describe("App shell", () => {
         lifecycle: selected ? "ready" : "waiting",
         disposition: "none",
         refs: {},
-        availableGoals: [
-          "prepared",
-          "trackers_assessed",
-          "duplicates_decided",
-          "media_ready",
-          "descriptions_ready",
-          "upload_reviewed",
-          "dry_run",
-          "uploaded",
-        ].map((goal) => ({ goal, available: selected })),
+        availableGoals: (
+          [
+            "prepared",
+            "trackers_assessed",
+            "duplicates_decided",
+            "media_ready",
+            "descriptions_ready",
+            "upload_reviewed",
+            "dry_run",
+            "uploaded",
+          ] as const
+        ).map((goal) => ({ goal, available: selected })),
       },
       workflow: {
         id: workflowID,

@@ -19,7 +19,6 @@ import (
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/trackers"
-	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	isimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -52,15 +51,6 @@ func preparePolicyDefinition(ctx context.Context, input trackers.PreparationInpu
 			), nil
 		},
 	)
-}
-
-func antRuleRegistry(t *testing.T) *trackers.Registry {
-	t.Helper()
-	registry, err := trackerimpl.NewRegistry()
-	if err != nil {
-		t.Fatalf("create tracker registry: %v", err)
-	}
-	return registry
 }
 
 func TestEditionFromMetaMultiPlaylistAggregatesIMDbMatches(t *testing.T) {
@@ -121,7 +111,7 @@ func TestDeriveMediaFactsReturnsMediaInfoScanFailure(t *testing.T) {
 	}
 }
 
-func TestDeriveMediaFactsProjectsHardcodedSubtitleLanguagesOnlyWhenEnabled(t *testing.T) {
+func TestDeriveMediaFactsProjectsHardcodedSubtitleLanguageIntent(t *testing.T) {
 	t.Parallel()
 
 	languages := []string{"English", "French"}
@@ -150,15 +140,18 @@ func TestDeriveMediaFactsProjectsHardcodedSubtitleLanguagesOnlyWhenEnabled(t *te
 			wantManual:    true,
 		},
 		{
-			name:         "automatic no suppresses languages",
-			sourcePath:   "Example.Movie.2026-GRP.mkv",
-			wantSubsFrom: api.FactProvenanceAutomatic,
+			name:          "explicit languages enable hardcoded without marker",
+			sourcePath:    "Example.Movie.2026-GRP.mkv",
+			wantSubs:      true,
+			wantSubsFrom:  api.FactProvenanceManual,
+			wantLanguages: []string{"English", "French"},
+			wantManual:    true,
 		},
 		{
 			name:          "automatic marker retains languages",
 			sourcePath:    "Example.Movie.2026.HARDSUB-GRP.mkv",
 			wantSubs:      true,
-			wantSubsFrom:  api.FactProvenanceAutomatic,
+			wantSubsFrom:  api.FactProvenanceManual,
 			wantLanguages: []string{"English", "French"},
 			wantManual:    true,
 		},
@@ -2917,70 +2910,6 @@ func TestAudioFromMediaNormalizesBDInfoCodecWithAtmos(t *testing.T) {
 	}
 }
 
-func TestResolveAudioBloatPolicyBlocksStrictTrackersForEnglishOriginal(t *testing.T) {
-	blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
-		AudioLanguages: []string{"English", "French"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
-		},
-	}, []string{"ANT", "BHD", "AITHER", "ASC"}, antRuleRegistry(t))
-
-	if got := blocked["ANT"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected ANT blocked for French bloat, got %#v", blocked)
-	}
-	if got := blocked["BHD"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected BHD blocked for French bloat, got %#v", blocked)
-	}
-	if got := warned["AITHER"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected AITHER warning for French bloat, got %#v", warned)
-	}
-	if _, ok := warned["ASC"]; ok {
-		t.Fatalf("did not expect ASC warning, got %#v", warned)
-	}
-}
-
-func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testing.T) {
-	blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
-		AudioLanguages: []string{"English", "Japanese", "French"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
-		},
-	}, []string{"ANT", "BHD", "SPD"}, antRuleRegistry(t))
-
-	if blocked != nil {
-		t.Fatalf("expected no blocked trackers, got %#v", blocked)
-	}
-	if got := warned["ANT"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected ANT warning for French bloat, got %#v", warned)
-	}
-	if got := warned["BHD"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected BHD warning for French bloat, got %#v", warned)
-	}
-	if got := warned["SPD"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected SPD warning for French bloat, got %#v", warned)
-	}
-}
-
-func TestResolveAudioBloatPolicyExemptsDiscContent(t *testing.T) {
-	t.Parallel()
-
-	for _, discType := range []string{"DVD", "BDMV", "Blu-Ray", "HD DVD"} {
-		t.Run(discType, func(t *testing.T) {
-			t.Parallel()
-			blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
-				DiscType:       discType,
-				AudioLanguages: []string{"English", "French", "Spanish"},
-				ProviderMetadata: api.SourceScopedMetadata{
-					TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
-				},
-			}, []string{"ANT", "BHD", "AITHER"}, antRuleRegistry(t))
-			if blocked != nil || warned != nil {
-				t.Fatalf("%s disc audio policy blocked=%#v warned=%#v", discType, blocked, warned)
-			}
-		})
-	}
-}
-
 func TestCanonicalAudioLanguagePreservesCompleteScottishGaelicLabel(t *testing.T) {
 	t.Parallel()
 
@@ -2992,10 +2921,6 @@ func TestCanonicalAudioLanguagePreservesCompleteScottishGaelicLabel(t *testing.T
 	}
 	if got := languageutil.NormalizeLanguageLabel("mul"); got != "Multiple Languages" {
 		t.Fatalf("multiple-language label = %q", got)
-	}
-	_, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{AudioLanguages: []string{"Scottish Gaelic", "English", "French"}, ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "gd"}}}, []string{"AITHER"}, antRuleRegistry(t))
-	if got := warned["AITHER"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("Scottish Gaelic audio warning = %#v", warned)
 	}
 }
 
@@ -3095,5 +3020,55 @@ func TestDeriveMediaFactsReleaseVersionCorrections(t *testing.T) {
 				t.Fatalf("detected version survived clear: %q", meta.ReleaseName)
 			}
 		})
+	}
+}
+
+func TestEmptyHardcodedLanguagesClearOrRetainExplicitUnknownIntent(t *testing.T) {
+	for _, enabled := range []*bool{nil, new(true), new(false)} {
+		languages := []string{}
+		input := preparationstate.State{
+			SourcePath:        "Example.Movie.2026.HARDSUB-GRP.mkv",
+			Release:           api.ReleaseInfo{Title: "Example Movie"},
+			MetadataOverrides: api.MetadataOverrides{HardcodedSubs: enabled, HardcodedSubtitleLanguages: &languages},
+		}
+		svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+		meta, err := svc.deriveMediaFacts(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := enabled != nil && *enabled
+		if meta.HardcodedSubs != want || len(meta.HardcodedSubtitleLanguages) != 0 {
+			t.Fatalf("empty languages = hardcoded %v languages %v", meta.HardcodedSubs, meta.HardcodedSubtitleLanguages)
+		}
+	}
+}
+
+func TestHardcodedCoverageKeepsBaseLanguageFacts(t *testing.T) {
+	languages := []string{"English Forced", "Spanish", "English Full", "Custom Dialect", "English"}
+	input := preparationstate.State{MetadataOverrides: api.MetadataOverrides{HardcodedSubtitleLanguages: &languages}}
+	if err := applyMetadataOverrides(&input); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(input.HardcodedSubtitleLanguages, []string{"English", "Spanish", "Custom Dialect"}) {
+		t.Fatalf("languages=%v", input.HardcodedSubtitleLanguages)
+	}
+	if len(input.HardcodedSubtitleCoverage) != 5 || input.HardcodedSubtitleCoverage[0].Coverage != api.SubtitleCoverageForced || input.HardcodedSubtitleCoverage[1].Coverage != api.SubtitleCoverageUnspecified || input.HardcodedSubtitleCoverage[2].Coverage != api.SubtitleCoverageFull || input.HardcodedSubtitleCoverage[4].Coverage != api.SubtitleCoverageUnspecified {
+		t.Fatalf("coverage=%v", input.HardcodedSubtitleCoverage)
+	}
+}
+
+func TestHardcodedCoveragePreservesCustomBareNames(t *testing.T) {
+	languages := []string{"Custom Dialect Full", "Custom Dialect Forced"}
+	input := preparationstate.State{MetadataOverrides: api.MetadataOverrides{HardcodedSubtitleLanguages: &languages}}
+	if err := applyMetadataOverrides(&input); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(input.HardcodedSubtitleLanguages, languages) {
+		t.Fatalf("custom language names changed: %v", input.HardcodedSubtitleLanguages)
+	}
+	for _, detail := range input.HardcodedSubtitleCoverage {
+		if detail.Coverage != api.SubtitleCoverageUnspecified {
+			t.Fatalf("custom language acquired inferred coverage: %#v", detail)
+		}
 	}
 }

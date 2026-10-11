@@ -9,45 +9,44 @@ import (
 
 // DupeEntry is one backend adapter's private duplicate-search hit.
 type DupeEntry struct {
-	Name           string
-	SizeBytes      int64
-	SizeKnown      bool
-	SizeText       string
-	Files          []string
-	FileCount      int
-	Trumpable      bool
-	Link           string
-	Download       string
-	Flags          []string
-	FlagsPresent   bool
-	FlagsComplete  bool
-	HDR            HDRFacts
-	ID             string
-	Type           string
-	CanonicalType  string
-	Res            string
-	Category       string
-	Source         string
-	Codec          string
-	AudioCodecs    []string
-	AudioChannels  []string
-	AudioLanguages []string
-	Container      string
-	Provider       string
-	ProviderIDs    []TrackerProviderID
-	Group          string
-	ReleaseOrigin  string
-	Edition        string
-	Region         string
-	ThreeD         string
-	Repack         string
-	Attributes     map[string]string
-	Season         int
-	Episode        int
-	Pack           bool
-	Internal       bool
-	BDInfo         string
-	Description    string
+	// TrackerSlot is opaque tracker-native slot evidence, which may be partial.
+	TrackerSlot   string
+	Name          string
+	SizeBytes     int64
+	SizeKnown     bool
+	SizeText      string
+	Files         []string
+	FileCount     int
+	Trumpable     bool
+	Link          string
+	Download      string
+	Flags         []string
+	FlagsPresent  bool
+	FlagsComplete bool
+	HDR           HDRFacts
+	ID            string
+	Type          string
+	CanonicalType string
+	Res           string
+	Category      string
+	Source        string
+	Codec         string
+	Container     string
+	Provider      string
+	ProviderIDs   []TrackerProviderID
+	Group         string
+	ReleaseOrigin string
+	Edition       string
+	Region        string
+	ThreeD        string
+	Repack        string
+	Attributes    map[string]string
+	Season        int
+	Episode       int
+	Pack          bool
+	Internal      bool
+	BDInfo        string
+	Description   string
 }
 
 // DupeRelation is one directional proposed-to-candidate relationship.
@@ -151,6 +150,9 @@ type DupeMatch struct {
 // DupeCheckResult is the sanitized duplicate-search outcome for one tracker.
 // Private adapter payloads and download authority are retained separately.
 type DupeCheckResult struct {
+	// RequiresStaffToken requires explicit owner attestation before overriding
+	// duplicate or incomplete-search evidence; it carries no token contents.
+	RequiresStaffToken    bool
 	Tracker               string
 	CanonicalReleaseName  string
 	UploadReleaseName     string
@@ -163,10 +165,12 @@ type DupeCheckResult struct {
 	SearchFingerprint     WorkflowFingerprint
 	Search                DupeSearchEvidence
 	Evaluations           []DupeCandidateEvaluation
-	HasDupes              bool
-	Notes                 []string
-	Skipped               bool
-	SkipReason            string
+	// ReviewReasons require target-level policy acknowledgement, even without candidates.
+	ReviewReasons []DupeReason
+	HasDupes      bool
+	Notes         []string
+	Skipped       bool
+	SkipReason    string
 	// SkipCode is a stable machine-readable skip reason.
 	SkipCode  string
 	Status    string

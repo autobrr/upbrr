@@ -11,6 +11,22 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestNormalizeDescriptionPreservesLiteralAndComparisonWhitespace(t *testing.T) {
+	t.Parallel()
+	for _, block := range []string{
+		"[code]first\n\n\n  indented line[/code]",
+		"[pre]first\n\n\n  indented line[/pre]",
+		"[comparison=Source,Encode]first\n\n\n  indented line[/comparison]",
+		"[comparison=Source,Encode][code]first\n\n\n  indented line[/code][/comparison]",
+	} {
+		input := " \nBefore\n\n\n" + block + "\n\n\nAfter\n "
+		want := "Before\n\n" + block + "\n\nAfter"
+		if got := normalizeDescription(input); got != want {
+			t.Errorf("normalized description = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestBuildDescriptionKeepsComparisonImagesWhenReplacingScreenshots(t *testing.T) {
 	comparison := "[spoiler=Comparisons]\r\n[align=left]Source &amp; Encode[/align]\r\n\r\n\r\n" +
 		"[center][url=https://img.example/comparison-page][img width=320]https://img.example/comparison.png[/img][/url][/center]\r\n[/spoiler]"

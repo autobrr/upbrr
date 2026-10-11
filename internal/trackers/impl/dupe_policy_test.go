@@ -46,10 +46,42 @@ func TestBuiltIn2160pDVHDRSlots(t *testing.T) {
 					Codec:         "H.265",
 					HDR:           completeHDR(format),
 				}, tracker)
+				if policy.TargetSlot != nil {
+					target.TrackerSlot = policy.TargetSlot(api.UploadSubject{
+						Type:       target.Type,
+						Source:     target.Source,
+						VideoCodec: target.VideoCodec,
+						HDR:        "DV HDR10",
+						Release:    api.ReleaseInfo{Resolution: target.Resolution},
+					})
+					candidate.TrackerSlot = policy.TargetSlot(api.UploadSubject{
+						Type:       candidate.CanonicalType,
+						Source:     candidate.Source,
+						VideoCodec: candidate.Codec,
+						HDR: map[api.HDRFormat]string{
+							api.HDRFormatSDR:         "",
+							api.HDRFormatDolbyVision: "DV",
+							api.HDRFormatHDR10:       "HDR10",
+						}[format],
+						Release: api.ReleaseInfo{Resolution: candidate.Resolution},
+					})
+				}
 				result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy,
 					dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
-				if result.Candidates[0].Relation != api.DupeRelationCoexists || result.RequiresAction {
+				want := api.DupeRelationCoexists
+				if tracker == "AITHER" && format == api.HDRFormatHDR10 {
+					want = api.DupeRelationProposedTrumps
+				}
+				if result.Candidates[0].Relation != want || result.RequiresAction != (want == api.DupeRelationProposedTrumps) {
 					t.Fatalf("DV+HDR versus %s: %#v", format, result)
+				}
+				if tracker == "AITHER" && format == api.HDRFormatHDR10 {
+					target.HDR, candidate.HDR = candidate.HDR, target.HDR
+					reverse := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy,
+						dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+					if reverse.Candidates[0].Relation != api.DupeRelationExistingPreferred || !reverse.Blocks {
+						t.Fatalf("plain HDR versus DV+HDR: %#v", reverse)
+					}
 				}
 			}
 		})
@@ -357,22 +389,29 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			tracker: "AITHER",
 			target: api.TrackerDuplicateTarget{
 				Type:       "WEB-DL",
+				Source:     "WEB",
+				Provider:   "AMZN",
+				VideoCodec: "H.264",
 				Resolution: "1080p",
 				HDR:        completeSDR,
 			},
 			candidate: dupe.TrackerCandidate{
 				Type:       "WEBRip",
+				Source:     "WEB",
+				Provider:   "AMZN",
+				Codec:      "H.264",
 				Resolution: "1080p",
 				HDR:        completeSDR,
 			},
 			relation: api.DupeRelationProposedTrumps,
 		},
 		{
-			name:    "ANT HDR compatibility",
+			name:    "ANT remux HDR formats share a staff-token slot",
 			tracker: "ANT",
 			target: api.TrackerDuplicateTarget{
-				Type:       "REMUX",
-				Resolution: "2160p",
+				TrackerSlot: "Remux/2160///",
+				Type:        "REMUX",
+				Resolution:  "2160p",
 				HDR: api.HDRFacts{
 					Formats: []api.HDRFormat{api.HDRFormatHDR10Plus},
 					Origin:  api.HDREvidenceTrackerAPI,
@@ -380,15 +419,16 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 				},
 			},
 			candidate: dupe.TrackerCandidate{
-				Type:       "REMUX",
-				Resolution: "2160p",
+				TrackerSlot: "Remux/2160///",
+				Type:        "REMUX",
+				Resolution:  "2160p",
 				HDR: api.HDRFacts{
 					Formats: []api.HDRFormat{api.HDRFormatHDR10},
 					Origin:  api.HDREvidenceTrackerAPI,
 					Status:  api.HDREvidenceComplete,
 				},
 			},
-			relation: api.DupeRelationProposedTrumps,
+			relation: api.DupeRelationSameSlot,
 		},
 		{
 			name:    "DVL distinct releases coexist",
@@ -451,7 +491,7 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			relation: api.DupeRelationProposedTrumps,
 		},
 		{
-			name:    "SP season pack direction",
+			name:    "SP season pack comparison requires evidence review",
 			tracker: "SP",
 			target: api.TrackerDuplicateTarget{
 				Type:       "WEB-DL",
@@ -467,7 +507,7 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 				Pack:       true,
 				HDR:        completeSDR,
 			},
-			relation: api.DupeRelationExistingPreferred,
+			relation: api.DupeRelationManualReview,
 		},
 		{
 			name:    "ULCX WEB and encode slots",

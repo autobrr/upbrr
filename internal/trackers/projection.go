@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,8 @@ import (
 // remote work. Readiness remains unproven until naming, generic rules,
 // metadata policy, and tracker-native validation complete.
 func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection {
+	answers := make(map[string]string)
+	maps.Copy(answers, input.Meta.TrackerQuestionnaireAnswers[strings.ToUpper(strings.TrimSpace(input.Tracker))])
 	canonicalName := canonicalProjectionName(input.Meta)
 	if canonicalName == "" {
 		canonicalName = "unresolved"
@@ -49,6 +52,7 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 	target := duplicateTarget(input.Meta)
 	target.Names = append([]string{canonicalName}, target.Names...)
 	projection := api.TrackerReleaseProjection{
+		QuestionnaireAnswers: answers,
 		TrackerID:            api.TrackerID(strings.ToUpper(strings.TrimSpace(input.Tracker))),
 		DisplayName:          strings.ToUpper(strings.TrimSpace(input.Tracker)),
 		CanonicalReleaseName: canonicalName,
@@ -140,8 +144,9 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		ProviderIDs:         append([]api.TrackerProviderID(nil), criteria.ProviderIDs...),
 		DuplicateCriteria:   criteria,
 		DuplicateTarget:     target,
+		EditionFeatures:     slices.Clone(preview.EditionFeatures),
 		DescriptionGroup:    strings.ToLower(strings.TrimSpace(preview.DescriptionGroup)),
-		Questionnaire:       projectQuestionnaire(preview.Questionnaire),
+		Questionnaire:       ProjectQuestionnaire(preview.Questionnaire),
 		Readiness:           readiness,
 		DupeReady:           dupeReady,
 		UploadReady:         dupeReady,
@@ -168,12 +173,28 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 	return projection, nil
 }
 
+// applyReviewedQuestionnaire restores only exact answer authority, before name
+// verification or payload preparation can consult mutable caller answers.
+func applyReviewedQuestionnaire(input PreparationInput) PreparationInput {
+	if input.Projection == nil || input.Projection.QuestionnaireAnswers == nil {
+		return input
+	}
+	input.Meta.TrackerQuestionnaireAnswers = maps.Clone(input.Meta.TrackerQuestionnaireAnswers)
+	if input.Meta.TrackerQuestionnaireAnswers == nil {
+		input.Meta.TrackerQuestionnaireAnswers = make(map[string]map[string]string)
+	}
+	input.Meta.TrackerQuestionnaireAnswers[string(input.Projection.TrackerID)] = maps.Clone(input.Projection.QuestionnaireAnswers)
+	return input
+}
+
 func applyReviewedProjection(input PreparationInput) PreparationInput {
+	input = applyReviewedQuestionnaire(input)
 	if input.Projection == nil {
 		return input
 	}
 	projection := *input.Projection
 	input.Projection = &projection
+
 	if value := strings.TrimSpace(projection.Taxonomy.Type.Label); value != "" {
 		input.Meta.Type = value
 	}
@@ -198,6 +219,9 @@ func validatePreparedProjection(input PreparationInput, preview api.TrackerDryRu
 		return err
 	}
 	want := input.Projection
+	if want.EditionFeatures != nil && !slices.Equal(prepared.EditionFeatures, want.EditionFeatures) {
+		return errors.New("prepared edition/features differ from reviewed projection")
+	}
 	if prepared.UploadReleaseName != want.UploadReleaseName {
 		return fmt.Errorf(
 			"prepared upload name %q differs from reviewed projection %q",
@@ -315,7 +339,8 @@ func projectionProviderIDs(identity api.ExternalIdentity) []api.TrackerProviderI
 	return result
 }
 
-func projectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {
+// ProjectQuestionnaire returns detached tracker-owned fields for safe workflow review.
+func ProjectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {
 	if questionnaire == nil {
 		return nil
 	}
@@ -323,6 +348,9 @@ func projectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.Tracker
 	for index, field := range questionnaire.Fields {
 		result[index] = api.TrackerQuestionnaireRequirement{
 			Key:      strings.TrimSpace(field.Key),
+			Kind:     field.Kind,
+			Value:    field.Value,
+			Help:     field.Help,
 			Label:    strings.TrimSpace(field.Label),
 			Required: field.Required,
 			Options:  append([]string(nil), field.Options...),
@@ -346,8 +374,14 @@ func (r *Registry) ProjectRelease(
 		return blockedReleaseProjection(input, failure.Message()), failure
 	}
 	projection := pureReleaseProjection(input)
+	if descriptor.EditionFeatures != nil {
+		projection.EditionFeatures = slices.Clone(descriptor.EditionFeatures(input.Meta))
+	}
 	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetReleaseOrigin != nil {
 		projection.DuplicateTarget.ReleaseOrigin = strings.TrimSpace(descriptor.DupePolicy.TargetReleaseOrigin(input.Meta, input.Runtime.Internal))
+	}
+	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetSlot != nil {
+		projection.DuplicateTarget.TrackerSlot = descriptor.DupePolicy.TargetSlot(input.Meta)
 	}
 	var failure *PreparationFailure
 	if contextErr := ctx.Err(); contextErr != nil {
@@ -387,7 +421,8 @@ func (r *Registry) ProjectRelease(
 	} else {
 		applyResolvedReleaseNames(&projection, resolvedNames)
 	}
-	projection.DuplicateTarget.Names = projectionDuplicateNames(projection)
+	nativeNames := descriptor.DupePolicy != nil && descriptor.DupePolicy.CompareSlots != nil
+	projection.DuplicateTarget.Names = projectionDuplicateNames(projection, nativeNames)
 	appendReleaseNameProvenance(&projection, descriptor.ReleaseNamePolicy, input.RequestedUploadName)
 	projection.TrackerID = api.TrackerID(descriptor.Name)
 	projection.DisplayName = descriptor.DisplayName
@@ -445,6 +480,15 @@ func (r *Registry) ProjectRelease(
 	}
 	if failure == nil {
 		validationSubject := api.NewTrackerValidationSubject(input.Meta, input.Tracker)
+		if provider, ok := descriptor.Definition.(TitleSearchPolicyProvider); ok {
+			policy := provider.TitleSearchPolicy()
+			evidence := validationSubject.TitleSearchEvidence
+			if evidence.Current(input.Meta.Identity) && evidence.ConfigFingerprint == configFingerprint && evidence.PolicyID == policy.ID {
+				projection.TitleSearchEvidence = &evidence
+			} else {
+				validationSubject.TitleSearchEvidence = api.TrackerTitleSearchEvidence{}
+			}
+		}
 		projection.PreparedResourceFingerprint = api.WorkflowFingerprint(validationSubject.PreparedResourceFingerprint)
 		ruleFailures, ruleErr := EvaluateTrackerValidationWithRegistry(
 			ctx,
@@ -453,17 +497,7 @@ func (r *Registry) ProjectRelease(
 			validationSubject,
 			input.Logger,
 		)
-		if provider, ok := descriptor.Definition.(InputReadinessProvider); ok {
-			for _, outcome := range provider.InputReadiness(input.Meta) {
-				if outcome.Status == api.InputReadinessFieldMissing || outcome.Status == api.InputReadinessFieldInvalid {
-					ruleFailures = append(ruleFailures, api.RuleFailure{
-						Rule:        "input." + outcome.Key,
-						Reason:      outcome.Message,
-						Disposition: outcome.Disposition,
-					})
-				}
-			}
-		}
+		ruleFailures = append(ruleFailures, inputReadinessRuleFailures(input.Meta, descriptor.Definition)...)
 		if ruleErr != nil {
 			failure = NewPreparationFailure(input.Tracker, "rules", "tracker projection policy evaluation failed", ruleErr)
 			projection.Readiness = api.ReadinessStatusBlocked
@@ -551,15 +585,38 @@ func (r *Registry) ProjectRelease(
 			})
 		}
 	}
+	if failure == nil {
+		if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); ok {
+			input.Projection = &projection
+			projection.Questionnaire = ProjectQuestionnaire(provider.ProjectionQuestionnaire(input))
+			if slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+				return field.Required && strings.TrimSpace(field.Value) == ""
+			}) {
+				projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+					Kind:      api.RequiredActionAnswerQuestionnaire,
+					TrackerID: projection.TrackerID,
+					Prompt:    "Review tracker inputs for " + projection.DisplayName + ".",
+				})
+				projection.UploadReady = false
+				projection.DupeReady = false
+				if projection.Readiness != api.ReadinessStatusIneligible {
+					projection.Readiness = api.ReadinessStatusBlocked
+				}
+			}
+		}
+	}
 	return projection, failure
 }
 
-func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string {
-	values := make([]string, 0, 2+len(projection.AdditionalNames)+len(projection.DuplicateTarget.Names))
+func projectionDuplicateNames(projection api.TrackerReleaseProjection, nativeNames bool) []string {
+	values := make([]string, 0, 3+len(projection.AdditionalNames)+len(projection.DuplicateTarget.Names))
 	values = append(values,
 		projection.CanonicalReleaseName,
 		projection.DuplicateCriteria.Name,
 	)
+	if nativeNames {
+		values = append(values, projection.UploadReleaseName)
+	}
 	for _, additional := range projection.AdditionalNames {
 		values = append(values, additional.Value)
 	}
@@ -672,6 +729,8 @@ func ApplyProjectionRuleFailures(
 		blocking := RuleFailureBlocksExecution(failure, executionMode, authorized)
 		decision := string(disposition)
 		switch {
+		case disposition == api.RuleDispositionStrict && !blocking:
+			decision = "bypassed"
 		case disposition == api.RuleDispositionStrict:
 			hasStrict = true
 			decision = "ineligible"

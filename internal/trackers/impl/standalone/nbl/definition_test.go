@@ -51,6 +51,7 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 			MediaInfoTextPath: mediaInfoPath,
 			Identity:          api.ExternalIdentity{TVmazeID: 987},
 			TVPack:            true,
+			LanguageFacts:     api.LanguageFacts{ProgrammeLanguages: []string{"English"}, ProgrammeStatus: api.MetadataEvidenceStatusComplete},
 			ExactMedia: &api.ExactMediaAssets{
 				Screenshots: []api.ScreenshotImage{{Path: screenshotPath, Purpose: api.ScreenshotPurposeFinal}},
 				ScreenshotUploads: []api.UploadedImageLink{{

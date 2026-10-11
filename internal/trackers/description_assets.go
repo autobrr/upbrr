@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/bbcode/comparison"
+	descriptiontext "github.com/autobrr/upbrr/internal/description"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -270,11 +271,25 @@ func resolveDescriptionAssets(
 	}
 	if audioBlock != "" && !final {
 		// An edited generated description may already include the previous block.
-		// Replace that owned section while preserving edits to the surrounding text.
-		description = comparison.MapOutsideBlocks(description, func(fragment string) string {
-			return sourceAudioBlockPattern.ReplaceAllString(fragment, "")
+		// Replace that owned section while preserving literal examples and surrounding text.
+		description = descriptiontext.MapOutsideLiteralBlocks(description, func(value string) string {
+			return comparison.MapOutsideBlocks(value, func(fragment string) string {
+				return sourceAudioBlockPattern.ReplaceAllString(fragment, "")
+			})
 		})
 		description = strings.TrimSpace(strings.Join([]string{description, audioBlock}, "\n\n"))
+	}
+	if !final && meta.ExactMedia != nil {
+		hdrBlock, hdrErr := exactHDRDescriptionBlock(tracker, meta.ExactMedia)
+		if hdrErr != nil {
+			return DescriptionAssets{}, hdrErr
+		}
+		description = descriptiontext.MapOutsideLiteralBlocks(description, func(value string) string {
+			return comparison.MapOutsideBlocks(value, func(fragment string) string {
+				return sourceHDRBlockPattern.ReplaceAllString(fragment, "")
+			})
+		})
+		description = strings.TrimSpace(strings.Join([]string{description, hdrBlock}, "\n\n"))
 	}
 	hasDescription := strings.TrimSpace(description) != ""
 	return DescriptionAssets{
@@ -1114,7 +1129,7 @@ func uploadedImagesFromSource(
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return slices.DeleteFunc(uploads, func(upload api.UploadedImageLink) bool {
-		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis || sourceOnlyUploadedImage(upload)
+		return upload.Purpose.IsAnalysis() || sourceOnlyUploadedImage(upload)
 	}), nil
 }
 

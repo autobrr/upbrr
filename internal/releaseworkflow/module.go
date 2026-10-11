@@ -264,6 +264,7 @@ type Module struct {
 	trackerPreflight          TrackerPreflightBuilder
 	dupeBuilder               DupeAssessmentBuilder
 	mediaBuilder              MediaArtifactBuilder
+	hdrAnalysisBuilder        HDRAnalysisBuilder
 	audioAnalysisBuilder      AudioAnalysisBuilder
 	descriptionBuilder        DescriptionBuilder
 	uploadPlanBuilder         UploadPlanBuilder
@@ -449,6 +450,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 
 	priorWorkflow := state.Workflow
+	priorHDRExtractions := maps.Clone(state.HDRExtractions)
 	priorDuplicateReuse := state.PendingDuplicateReuse
 	now := m.clock.Now().UTC()
 	nextRevision := state.Workflow.Revision + 1
@@ -477,7 +479,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 	state.Receipts[receiptKey] = commandReceipt{Fingerprint: fingerprint, Result: result}
 	commitCtx := ctx
-	if retainsStoppedAudioAnalysis(command, result) {
+	if retainsStoppedAudioAnalysis(command, result) || hdrStoppedResult(command, result) {
 		commitCtx = context.WithoutCancel(ctx)
 	} else if err := ctx.Err(); err != nil {
 		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
@@ -502,6 +504,11 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 			return CommandResult{}, err
 		}
 	}
+	for id := range priorHDRExtractions {
+		if _, retained := state.HDRExtractions[id]; !retained {
+			m.private.Delete(ownerID, state.Workflow.ID, hdrExtractionPrivateResourceID(id))
+		}
+	}
 	if result.Dupes != nil {
 		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
@@ -511,6 +518,13 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 	if result.Media != nil || result.Descriptions != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
+	}
+	if result.HDRAnalysis != nil {
+		for _, prior := range state.HDRAnalyses {
+			if prior.AttemptID != result.HDRAnalysis.AttemptID {
+				m.private.Delete(ownerID, state.Workflow.ID, hdrAnalysisPrivateResourceID(prior.AttemptID))
+			}
+		}
 	}
 	if result.AudioAnalysis != nil {
 		for _, prior := range state.AudioAnalyses {
@@ -546,6 +560,9 @@ func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkf
 	}
 	if result.Media != nil && (prior.Media == nil || prior.Media.ID != result.Media.ID) {
 		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(result.Media.ID))
+	}
+	if result.HDRAnalysis != nil && (prior.HDRAnalysis == nil || prior.HDRAnalysis.ID != result.HDRAnalysis.ID) {
+		m.private.Delete(ownerID, workflowID, hdrAnalysisPrivateResourceID(result.HDRAnalysis.AttemptID))
 	}
 	if result.AudioAnalysis != nil && (prior.AudioAnalysis == nil || prior.AudioAnalysis.ID != result.AudioAnalysis.ID) {
 		m.private.Delete(ownerID, workflowID, audioAnalysisPrivateResourceID(result.AudioAnalysis.AttemptID))
@@ -983,6 +1000,10 @@ func (m *Module) operationResultIsCurrent(ownerID string, result *api.WorkflowOp
 		ref := state.Workflow.Media
 		snapshot, ok := state.Media[api.MediaArtifactSetID(result.RefID)]
 		return ref != nil && string(ref.ID) == result.RefID && ref.Revision == result.RefRevision && ok && snapshot.Revision == result.RefRevision
+	case api.WorkflowOperationResultHDRAnalysis:
+		ref := state.Workflow.HDRAnalysis
+		snapshot, ok := state.HDRAnalyses[api.HDRAnalysisResultID(result.RefID)]
+		return ref != nil && string(ref.ID) == result.RefID && ref.Revision == result.RefRevision && ok && snapshot.Revision == result.RefRevision
 	case api.WorkflowOperationResultAudioAnalysis:
 		ref := state.Workflow.AudioAnalysis
 		snapshot, ok := state.AudioAnalyses[api.AudioAnalysisResultID(result.RefID)]
@@ -1164,12 +1185,23 @@ func (m *Module) runOperation(
 				status.Progress = 100
 				status.Completed = max(status.Completed, status.Total)
 			}
+			if status.Operation == api.OperationKindHDRAnalysis && result.HDRAnalysis != nil {
+				for _, target := range result.HDRAnalysis.Targets {
+					if target.Failure == nil {
+						continue
+					}
+					classified := m.operationErrorClassifier(status.Operation, api.NewHDRAnalysisError(*target.Failure, nil))
+					if failure, ok := api.AsOperationFailure(classified); ok {
+						status.Failures = append(status.Failures, api.WorkflowFailure{Failure: failure})
+					}
+				}
+			}
 			switch status.Status {
 			case api.StageStatusBlocked:
 				status.Message = "Operation requires action."
 			case api.StageStatusFailed:
 				status.Message = "Operation completed with retained failures."
-				status.Failures = append([]api.WorkflowFailure(nil), result.Workflow.Failures...)
+				status.Failures = append(status.Failures, result.Workflow.Failures...)
 			case api.StageStatusPartial:
 				status.Message = "Operation completed with mixed outcomes."
 			case api.StageStatusExecuted:
@@ -1452,6 +1484,11 @@ func operationResultForCommand(command Command, result CommandResult) (*api.Work
 		if result.Media != nil {
 			refID, revision = string(result.Media.ID), result.Media.Revision
 		}
+	case AnalyzeHDRCommand:
+		kind = api.WorkflowOperationResultHDRAnalysis
+		if result.HDRAnalysis != nil {
+			refID, revision = string(result.HDRAnalysis.ID), result.HDRAnalysis.Revision
+		}
 	case AnalyzeAudioCommand:
 		kind = api.WorkflowOperationResultAudioAnalysis
 		if result.AudioAnalysis != nil {
@@ -1519,6 +1556,10 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 	case CaptureMediaCommand:
 		if result.Media != nil {
 			stageStatus = result.Media.Status
+		}
+	case AnalyzeHDRCommand:
+		if result.HDRAnalysis != nil {
+			stageStatus = result.HDRAnalysis.Status
 		}
 	case AnalyzeAudioCommand:
 		if result.AudioAnalysis != nil {
@@ -1876,6 +1917,14 @@ func (m *Module) recoverOperationAfterLease(
 	if state.Workflow.Revision != current.ExpectedRevision && !commandCommitted && !compositeValid {
 		return m.interruptRecoveredOperation(ctx, current, "The retained operation authority is stale.")
 	}
+	if hdrCommand, hdr := capsule.command.(AnalyzeHDRCommand); hdr && !commandCommitted {
+		m.private.Delete(current.OwnerID, current.WorkflowID, hdrAnalysisPrivateResourceID(string(current.OperationID)))
+		if cleaner, ok := m.hdrAnalysisBuilder.(HDRAnalysisAttemptCleaner); ok {
+			if err := cleaner.CleanupAttempt(hdrCommand.Instructions.Release, string(current.OperationID), state.HDRExtractions); err != nil {
+				return fmt.Errorf("clean interrupted HDR attempt: %w", err)
+			}
+		}
+	}
 	if _, audioCommand := capsule.command.(AnalyzeAudioCommand); audioCommand && !commandCommitted {
 		m.private.Delete(
 			current.OwnerID,
@@ -2049,6 +2098,9 @@ func (m *Module) interruptRecoveredOperation(
 	record api.ReleaseWorkflowOperationRecord,
 	reason string,
 ) error {
+	if err := m.cleanupInterruptedHDR(ctx, record); err != nil {
+		return err
+	}
 	now := m.clock.Now().UTC()
 	terminal, err := m.mutateOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID, func(status *api.WorkflowOperationStatus) {
 		status.Status = api.StageStatusInterrupted
@@ -2479,6 +2531,9 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 				)
 			}
 		}
+	}
+	if ref := state.Workflow.HDRAnalysis; ref != nil {
+		result.HDRAnalysis = currentSnapshot(state.HDRAnalyses, ref.ID)
 	}
 	if ref := state.Workflow.AudioAnalysis; ref != nil {
 		result.AudioAnalysis = currentSnapshot(state.AudioAnalyses, ref.ID)
@@ -3504,6 +3559,8 @@ func newState(ownerID string, workflow api.ReleaseWorkflow) State {
 		Dupes:                  make(map[api.DupeAssessmentID]api.DupeAssessment),
 		TrackerApprovals:       make(map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot),
 		Media:                  make(map[api.MediaArtifactSetID]api.MediaArtifactSet),
+		HDRAnalyses:            make(map[api.HDRAnalysisResultID]api.HDRAnalysisResult),
+		HDRExtractions:         make(map[api.HDRExtractionID]HDRExtractionRecord),
 		AudioAnalyses:          make(map[api.AudioAnalysisResultID]api.AudioAnalysisResult),
 		Descriptions:           make(map[api.DescriptionSetID]api.DescriptionSet),
 		DryRuns:                make(map[api.UploadDryRunResultID]api.UploadDryRunResult),
@@ -3584,6 +3641,10 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CaptureMediaCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case AnalyzeHDRCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case SetHDRAnalysisEnabledCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case AnalyzeAudioCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SetAudioAnalysisEnabledCommand:
@@ -3639,7 +3700,7 @@ func (m *Module) apply(
 	command mutation,
 ) (CommandResult, error) {
 	switch command.(type) {
-	case PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand:
+	case ProjectTrackersCommand, PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand:
 	default:
 		state.PendingDuplicateReuse = nil
 	}
@@ -3668,6 +3729,10 @@ func (m *Module) apply(
 		return m.refreshPersistedMediaStatus(ctx, ownerID, state, nextRevision, now, typed)
 	case CaptureMediaCommand:
 		return m.captureMedia(ctx, ownerID, state, nextRevision, now, typed)
+	case AnalyzeHDRCommand:
+		return m.analyzeHDR(ctx, ownerID, state, nextRevision, now, typed, nil, nil)
+	case SetHDRAnalysisEnabledCommand:
+		return CommandResult{}, m.setHDRAnalysisEnabled(ctx, state, typed)
 	case AnalyzeAudioCommand:
 		return m.analyzeAudio(ctx, ownerID, state, nextRevision, now, typed)
 	case SetAudioAnalysisEnabledCommand:
@@ -3723,6 +3788,19 @@ func (m *Module) invalidateWorkflowPrivateResources(
 	state *State,
 ) error {
 	var preserved []string
+	for id := range state.HDRExtractions {
+		preserved = append(preserved, hdrExtractionPrivateResourceID(id))
+	}
+	if ref := state.Workflow.HDRAnalysis; ref != nil {
+		if analysis, ok := state.HDRAnalyses[ref.ID]; ok && analysis.Revision == ref.Revision {
+			preserved = append(preserved, hdrAnalysisPrivateResourceID(analysis.AttemptID))
+		}
+	}
+	if ref := state.PendingHDRAnalysis; ref != nil && state.PendingHDRAnalysisWorkflowID == state.Workflow.ID {
+		if analysis, ok := state.HDRAnalyses[ref.ID]; ok && analysis.Revision == ref.Revision {
+			preserved = append(preserved, hdrAnalysisPrivateResourceID(analysis.AttemptID))
+		}
+	}
 	if pending := state.PendingDuplicateReuse; pending != nil {
 		preserved = append(preserved, dupePrivateResourceID(pending.Assessment.ID))
 	}
@@ -3765,10 +3843,15 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.Dupes = nil
 	state.Workflow.TrackerApproval = nil
 	state.Workflow.Media = nil
+	state.Workflow.HDRAnalysis = nil
+	state.Workflow.HDRAnalysisEnabled = false
 	state.Workflow.AudioAnalysis = nil
 	state.Workflow.AudioAnalysisEnabled = false
 	state.PendingAudioAnalysis = nil
 	state.PendingAudioAnalysisWorkflowID = ""
+	state.HDRExtractions = make(map[api.HDRExtractionID]HDRExtractionRecord)
+	state.HDRAnalyses = make(map[api.HDRAnalysisResultID]api.HDRAnalysisResult)
+	state.PendingHDRAnalysis, state.PendingHDRAnalysisWorkflowID = nil, ""
 	state.Workflow.Descriptions = nil
 	state.Workflow.DryRun = nil
 	state.Workflow.UploadResult = nil
@@ -3896,6 +3979,7 @@ func (m *Module) prepareRelease(
 	now time.Time,
 	command PrepareReleaseCommand,
 ) (CommandResult, error) {
+	command.TrackerIDs = workflowTrackerScope(state, command.TrackerIDs)
 	if err := m.attachVerifiedInput(ctx, ownerID, state.Workflow.ID, &command.Input); err != nil {
 		return CommandResult{}, err
 	}
@@ -3914,6 +3998,7 @@ func (m *Module) prepareRelease(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow normalize input requirements: %w", err)
 	}
+	state.TrackerScope = slices.Clone(command.TrackerIDs)
 	facts, ok := state.FactInstructions[state.Workflow.FactInstructions.ID]
 	if !ok || facts.Revision != state.Workflow.FactInstructions.Revision {
 		return CommandResult{}, fmt.Errorf("%w: fact instructions unavailable", ErrInvalidTransition)
@@ -4016,6 +4101,10 @@ func (m *Module) prepareRelease(
 		return CommandResult{}, fmt.Errorf("release workflow publish release: %w", err)
 	}
 	state.Releases[snapshot.ID] = snapshot
+	if state.PendingHDRAnalysisWorkflowID == "" && (state.Workflow.HDRAnalysis != nil || len(state.HDRExtractions) > 0) {
+		state.PendingHDRAnalysis = state.Workflow.HDRAnalysis
+		state.PendingHDRAnalysisWorkflowID = state.Workflow.ID
+	}
 	prior := state.Workflow.Release
 	state.Workflow.Release = &api.ReleaseSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	if prior == nil || prior.ID != snapshot.ID || prior.Revision != snapshot.Revision {
@@ -4035,6 +4124,30 @@ func (m *Module) prepareRelease(
 	if err != nil {
 		return CommandResult{}, err
 	}
+	var capturedHDRTargets []string
+	if command.Input.Controls.CaptureHDRMetadata && state.Composite == nil {
+		for _, target := range display.HDRTargets {
+			if target.Supported && target.SelectionPolicy == "primary_hevc_angle_zero" {
+				capturedHDRTargets = append(capturedHDRTargets, target.ID)
+			}
+		}
+	}
+	if err := m.restorePendingHDR(ctx, ownerID, state, ref, nextRevision, now, capturedHDRTargets); err != nil {
+		return CommandResult{}, err
+	}
+	if len(capturedHDRTargets) > 0 && state.Workflow.HDRAnalysis == nil {
+		_, err := m.analyzeHDR(ctx, ownerID, state, nextRevision, now, AnalyzeHDRCommand{Instructions: api.HDRAnalysisInstructions{
+			Release: ref, TargetIDs: capturedHDRTargets,
+		}}, nil, nil)
+		if err != nil {
+			return CommandResult{}, err
+		}
+	}
+	for id, record := range state.HDRExtractions {
+		if record.Release != ref {
+			delete(state.HDRExtractions, id)
+		}
+	}
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
@@ -4047,6 +4160,7 @@ func (m *Module) prepareRelease(
 		Release:          &snapshot,
 		FactInstructions: &facts,
 		AudioAnalysis:    restoredAudio,
+		HDRAnalysis:      currentHDRResult(state),
 	}, nil
 }
 
@@ -4544,6 +4658,7 @@ func (m *Module) setTrackerContext(
 	state.Catalogs[catalog.ID] = catalog
 	state.Runtimes[runtime.ID] = runtime
 	state.Selections[selection.ID] = selection
+	state.TrackerScope = slices.Clone(selection.TrackerIDs)
 	state.Workflow.TrackerCatalog = &api.TrackerCatalogSnapshotRef{ID: catalog.ID, Revision: catalog.Revision}
 	state.Workflow.TrackerRuntime = &api.TrackerRuntimeSnapshotRef{ID: runtime.ID, Revision: runtime.Revision}
 	state.Workflow.Selection = &api.TrackerSelectionRef{ID: selection.ID, Revision: selection.Revision}
@@ -4567,7 +4682,15 @@ func (m *Module) projectTrackers(
 	now time.Time,
 	command ProjectTrackersCommand,
 ) (CommandResult, error) {
-	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, command, nil)
+	questionnaireOnly, err := stageQuestionnaireDuplicateReuse(state, command)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	var authorizations map[api.TrackerID]api.WorkflowFingerprint
+	if questionnaireOnly && state.Workflow.TrackerProjections != nil {
+		authorizations = projectionRuleAuthorizations(state.Projections[state.Workflow.TrackerProjections.ID])
+	}
+	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, command, authorizations)
 }
 
 func (m *Module) projectTrackersWithRuleAuthorizations(
@@ -4605,6 +4728,19 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve tracker projection subject: %w", err)
+	}
+	// Acknowledgement reprojects the same generation; preserve only server-owned
+	// title evidence. A new source generation must acquire its own evidence.
+	if retainedRef := state.Workflow.TrackerProjections; retainedRef != nil {
+		retained := state.Projections[retainedRef.ID]
+		if retained.ReleaseRef == (api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}) {
+			subject.TrackerTitleSearchEvidence = make(map[string]api.TrackerTitleSearchEvidence)
+			for _, projection := range retained.Projections {
+				if evidence := projection.TitleSearchEvidence; evidence != nil && evidence.Current(subject.Identity) && evidence.FreshUntil.After(now) {
+					subject.TrackerTitleSearchEvidence[string(projection.TrackerID)] = *evidence
+				}
+			}
+		}
 	}
 	if m.submissionHistory != nil {
 		remaining, exclusions, filterErr := m.submissionHistory.FilterConfirmedSubmissions(ctx, subject, command.TrackerIDs)
@@ -4825,6 +4961,9 @@ func (m *Module) preflightTrackers(
 	if err := validatePreflightBuild(initial, assessment, finalized); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build tracker preflight: %w", err)
 	}
+	if err := mergePreflightActions(&assessment, finalized); err != nil {
+		return CommandResult{}, err
+	}
 	applyPreflightInteractionPolicy(command.Interaction, &assessment, finalized)
 	if command.InputFingerprint != "" {
 		assessment.InputFingerprint = command.InputFingerprint
@@ -4842,6 +4981,15 @@ func (m *Module) preflightTrackers(
 	assessment.CreatedAt = now
 	if err := m.stampPreflightActions(&assessment, nextRevision, now); err != nil {
 		return CommandResult{}, err
+	}
+	// Both published views must carry the same action authority. Builders return
+	// detached action slices, and preflight may introduce new tracker questions.
+	actionsByTracker := make(map[api.TrackerID][]api.RequiredAction, len(assessment.Results))
+	for _, result := range assessment.Results {
+		actionsByTracker[result.TrackerID] = result.RequiredActions
+	}
+	for index := range finalized {
+		finalized[index].RequiredActions = slices.Clone(actionsByTracker[finalized[index].TrackerID])
 	}
 	assessment.Status = preflightStageStatus(assessment.Results)
 	if err := assessment.Validate(); err != nil {
@@ -4873,7 +5021,48 @@ func (m *Module) preflightTrackers(
 		return CommandResult{}, err
 	}
 	setWorkflowStageStatus(&state.Workflow, finalSet.Status, finalSet.RequiredActions, finalSet.Failures)
-	return CommandResult{Preflight: &assessment, Projections: &finalSet}, nil
+	reused, err := m.rebindQuestionnaireDupes(ctx, ownerID, state, nextRevision, now, command, finalSet, assessment)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return CommandResult{
+		Preflight:   &assessment,
+		Projections: &finalSet,
+		Dupes:       reused,
+	}, nil
+}
+
+// mergePreflightActions retains finalized projection prerequisites omitted from
+// the assessment, while giving its live result precedence for shared identities.
+// New actions are deduplicated before the workflow assigns their IDs.
+func mergePreflightActions(assessment *api.TrackerPreflightAssessment, finalized []api.TrackerReleaseProjection) error {
+	projectionActions := make(map[api.TrackerID][]api.RequiredAction, len(finalized))
+	for _, projection := range finalized {
+		projectionActions[projection.TrackerID] = projection.RequiredActions
+	}
+	for index := range assessment.Results {
+		result := &assessment.Results[index]
+		seen := make(map[string]struct{})
+		actions := make([]api.RequiredAction, 0, len(result.RequiredActions)+len(projectionActions[result.TrackerID]))
+		for _, action := range slices.Concat(result.RequiredActions, projectionActions[result.TrackerID]) {
+			action.TrackerID = result.TrackerID
+			key := "id:" + string(action.ID)
+			if action.ID == "" {
+				fingerprint, err := api.CanonicalWorkflowFingerprint(action)
+				if err != nil {
+					return fmt.Errorf("release workflow fingerprint preflight action: %w", err)
+				}
+				key = "new:" + string(fingerprint)
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			actions = append(actions, action)
+		}
+		result.RequiredActions = actions
+	}
+	return nil
 }
 
 func applyPreflightInteractionPolicy(
@@ -5172,11 +5361,18 @@ func (m *Module) checkDuplicates(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build duplicate assessment: %w", err)
 	}
+	return m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, privateEvidence, command.CheckOrdinal)
+}
+
+func (m *Module) publishBuiltDupes(
+	ownerID string, state *State, nextRevision api.WorkflowRevision, now time.Time,
+	projections api.TrackerReleaseProjectionSet, snapshot api.DupeAssessment, privateEvidence any, checkOrdinal uint8,
+) (CommandResult, error) {
 	if err := validateDupeBuild(projections, snapshot); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build duplicate assessment: %w", err)
 	}
-	snapshot.CheckOrdinal = normalizedDuplicateCheckOrdinal(command.CheckOrdinal)
-	snapshot.InputFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+	snapshot.CheckOrdinal = normalizedDuplicateCheckOrdinal(checkOrdinal)
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		BuilderFingerprint api.WorkflowFingerprint
 		CheckOrdinal       uint8
 	}{
@@ -5186,6 +5382,7 @@ func (m *Module) checkDuplicates(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint duplicate assessment ordinal: %w", err)
 	}
+	snapshot.InputFingerprint = fingerprint
 	if err := m.stampDupeActions(&snapshot, nextRevision, now); err != nil {
 		return CommandResult{}, err
 	}
@@ -5197,7 +5394,7 @@ func (m *Module) checkDuplicates(
 	if privateEvidence != nil && result.Dupes != nil {
 		if err := m.private.Put(
 			ownerID,
-			workflow.ID,
+			state.Workflow.ID,
 			dupePrivateResourceID(result.Dupes.ID),
 			privateEvidence,
 			result.Dupes.ExpiresAt,
@@ -5257,6 +5454,15 @@ func (m *Module) decideDuplicates(
 		if decision == api.DupeDecisionIgnored && strictDupeResult(*result) {
 			return CommandResult{}, fmt.Errorf("%w: tracker %s is already in client and cannot be overridden", ErrInvalidTransition, result.TrackerID)
 		}
+		confirmed := command.StaffTokenConfirmations[result.TrackerID] == current.ID
+		if decision == api.DupeDecisionIgnored && result.RequiresStaffToken && !confirmed {
+			return CommandResult{}, fmt.Errorf(
+				"%w: tracker %s requires confirmation of an appropriate staff-issued token",
+				ErrInvalidTransition,
+				result.TrackerID,
+			)
+		}
+		result.StaffTokenConfirmed = decision == api.DupeDecisionIgnored && result.RequiresStaffToken && confirmed
 		result.Decision = decision
 		result.Status = api.StageStatusCompleted
 		result.RequiredActions = nil
@@ -5551,8 +5757,8 @@ func (m *Module) captureMedia(
 	case "", api.ScreenshotPurposeFinal, api.ScreenshotPurposeMenu:
 	case api.ScreenshotPurposePreview:
 		return CommandResult{}, fmt.Errorf("%w: preview images cannot satisfy retained media requirements", ErrInvalidTransition)
-	case api.ScreenshotPurposeAudioAnalysis:
-		return CommandResult{}, fmt.Errorf("%w: audio analysis images cannot satisfy retained media requirements", ErrInvalidTransition)
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
+		return CommandResult{}, fmt.Errorf("%w: analysis images cannot satisfy retained media requirements", ErrInvalidTransition)
 	default:
 		return CommandResult{}, fmt.Errorf("%w: invalid media capture purpose", ErrInvalidTransition)
 	}
@@ -6556,7 +6762,7 @@ func (m *Module) stampMediaActions(snapshot *api.MediaArtifactSet, revision api.
 	return nil
 }
 
-func (m *Module) descriptionResources(ownerID string, state *State, media any, now time.Time) (any, error) {
+func (m *Module) audioDescriptionResources(ownerID string, state *State, media any, now time.Time) (any, error) {
 	ref := state.Workflow.AudioAnalysis
 	if !state.Workflow.AudioAnalysisEnabled || ref == nil {
 		return media, nil
@@ -6632,7 +6838,7 @@ func (m *Module) generateDescriptions(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for descriptions: %w", err)
 	}
-	privateMedia, err = m.descriptionResources(ownerID, state, privateMedia, now)
+	privateMedia, err = m.descriptionResources(ctx, ownerID, state, privateMedia, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -6829,7 +7035,7 @@ func (m *Module) mutateDescriptionOverride(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for description override: %w", err)
 	}
-	privateMedia, err = m.descriptionResources(ownerID, state, privateMedia, now)
+	privateMedia, err = m.descriptionResources(ctx, ownerID, state, privateMedia, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -7516,12 +7722,14 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 			UploadReleaseName:   tracker.UploadReleaseName,
 			Status:              status,
 			Endpoint:            tracker.Endpoint,
+			EditionFeatures:     slices.Clone(tracker.EditionFeatures),
 			Fields:              append([]api.UploadPlanField(nil), tracker.Fields...),
 			Files:               append([]api.UploadPlanFile(nil), tracker.Files...),
 			PreparedOperationID: tracker.PreparedOperationID,
 			TorrentArtifactID:   tracker.TorrentArtifactID,
 			TorrentFingerprint:  tracker.TorrentFingerprint,
 			SemanticFingerprint: tracker.SemanticFingerprint,
+			Questionnaire:       append([]api.TrackerQuestionnaireRequirement(nil), tracker.Questionnaire...),
 			ClientInjection: api.ClientInjectionOutcome{
 				Status:  tracker.ClientInjectionStatus,
 				Message: tracker.ClientInjectionMessage,
@@ -7529,6 +7737,12 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 			Warnings: append([]string(nil), tracker.Warnings...),
 			Failures: failures,
 		})
+	}
+	for reportIndex := range reports {
+		for fieldIndex := range reports[reportIndex].Questionnaire {
+			field := &reports[reportIndex].Questionnaire[fieldIndex]
+			field.Options = slices.Clone(field.Options)
+		}
 	}
 	return reports
 }
@@ -8598,6 +8812,8 @@ func finishUnavailableImageHostingReconciliation(workflow *api.ReleaseWorkflow, 
 
 func invalidatePreparedAndDownstream(workflow *api.ReleaseWorkflow) {
 	workflow.Release = nil
+	workflow.HDRAnalysis = nil
+	workflow.HDRAnalysisEnabled = false
 	workflow.AudioAnalysis = nil
 	workflow.AudioAnalysisEnabled = false
 	workflow.InputReadiness = nil

@@ -13,6 +13,33 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestAitherFullDiscLanguageMarkerPreservesAggregateFacts(t *testing.T) {
+	for _, test := range []struct {
+		name, releaseType, discType string
+		aggregate, programme        []string
+		want                        string
+	}{
+		{"canonical disc keeps legacy marker", "DISC", "", []string{"Japanese"}, []string{"English"}, "JAPANESE"},
+		{"canonical disc keeps legacy English omission", "DISC", "", []string{"English"}, []string{"Japanese"}, ""},
+		{"labelled disc keeps legacy omission", "DISC", "BDMV", []string{"Japanese"}, []string{"Japanese"}, ""},
+		{"remux uses finalized programme facts", "REMUX", "", []string{"English"}, []string{"Japanese"}, "JAPANESE"},
+		{"disc-sourced remux uses programme facts", "REMUX", "BDMV", []string{"English"}, []string{"Japanese"}, "JAPANESE"},
+		{"disc-sourced silent remux keeps marker", "REMUX", "DVD", nil, []string{"ZXX"}, "ZXX"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := api.UploadSubject{
+				Type:           test.releaseType,
+				DiscType:       test.discType,
+				AudioLanguages: test.aggregate,
+				LanguageFacts:  aitherTestLanguageFacts("Japanese", test.programme, nil),
+			}
+			if got := aitherLanguage(subject); got != test.want {
+				t.Fatalf("language marker = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAitherStructuredReleaseNamePolicy(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -55,7 +82,8 @@ func TestAitherStructuredReleaseNamePolicy(t *testing.T) {
 			want: "Example Release 2026 480p DVDRip DD 1.0 x264-GRP",
 		},
 		{
-			name: "DVD rip keeps video encode after dual audio marker",
+			name:      "DVD rip keeps video encode after dual audio marker",
+			languages: []string{"Japanese", "English"},
 			request: api.ReleaseNameRequest{
 				Category:    "MOVIE",
 				Type:        "DVDRIP",
@@ -138,13 +166,19 @@ func TestAitherStructuredReleaseNamePolicy(t *testing.T) {
 			},
 			languages: []string{"English"},
 			configure: func(subject *api.UploadSubject) {
-				subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-					CanonicalName: "Canonical Name",
-					SeriesYear:    2026,
-					Locale:        "US",
-					IncludeYear:   true,
-					IncludeLocale: true,
-				}}
+				subject.ProviderMetadata.TVDB = &api.TVDBMetadata{
+					TVDBID:      1,
+					NameEnglish: "TVDB Series",
+					NameDisambiguation: api.TVDBNameDisambiguation{
+						CanonicalName: "TVDB Canonical Name",
+						Status:        api.MetadataEvidenceStatusComplete,
+						Source:        "tvdb-name/v1",
+						SeriesYear:    2026,
+						Locale:        "US",
+						IncludeYear:   true,
+						IncludeLocale: true,
+					},
+				}
 			},
 			want: "Canonical Name AKA Original Name US 2026 S01E01 1080p WEB-DL DD+ 5.1 H.264-GRP",
 		},
@@ -280,7 +314,7 @@ func TestAitherCanonicalEditionSet(t *testing.T) {
 	}
 }
 
-func TestAitherTVDBDisambiguationRequiresCurrentMatchingAutomaticTitle(t *testing.T) {
+func TestAitherTVDBDisambiguationRequiresCurrentMatchingIdentity(t *testing.T) {
 	t.Parallel()
 	request := api.ReleaseNameRequest{
 		Category:    "TV",
@@ -298,21 +332,26 @@ func TestAitherTVDBDisambiguationRequiresCurrentMatchingAutomaticTitle(t *testin
 	tests := []struct {
 		name      string
 		configure func(*api.UploadSubject)
-		want      string
 	}{
 		{name: "missing evidence", configure: func(*api.UploadSubject) {}},
 		{name: "stale snapshot", configure: func(subject *api.UploadSubject) {
 			subject.SourcePath, subject.Identity.SourcePath, subject.ProviderMetadata.SourcePath = "current", "current", "stale"
 			subject.ProviderMetadata.TVDB = aitherTVDBEvidence()
 		}},
-		{name: "conflicting canonical title", configure: func(subject *api.UploadSubject) {
-			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-				CanonicalName: "Other Series",
-				SeriesYear:    2030,
-				Locale:        "US",
-				IncludeYear:   true,
-				IncludeLocale: true,
-			}}
+		{name: "conflicting TVDB identity", configure: func(subject *api.UploadSubject) {
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{
+				TVDBID:      2,
+				NameEnglish: "TVDB Series",
+				NameDisambiguation: api.TVDBNameDisambiguation{
+					CanonicalName: "Other Series",
+					Status:        api.MetadataEvidenceStatusComplete,
+					Source:        "tvdb-name/v1",
+					SeriesYear:    2030,
+					Locale:        "US",
+					IncludeYear:   true,
+					IncludeLocale: true,
+				},
+			}
 		}},
 		{
 			name: "manual title",
@@ -321,17 +360,13 @@ func TestAitherTVDBDisambiguationRequiresCurrentMatchingAutomaticTitle(t *testin
 				subject.ReleaseName = subject.GeneratedName.Render().Name
 				subject.ProviderMetadata.TVDB = aitherTVDBEvidence()
 			},
-			want: "Example Series AKA Original US 2030 S01E01 1080p WEB-DL DD+ 5.1 H.264-GRP",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			subject := aitherGeneratedSubject(t, request, []string{"English"})
-			want := test.want
-			if want == "" {
-				want = subject.ReleaseName
-			}
+			want := subject.ReleaseName
 			test.configure(&subject)
 			if got := aitherReviewedName(t, subject, nil); got != want {
 				t.Fatalf("reviewed name = %q, want unchanged %q", got, want)
@@ -341,19 +376,25 @@ func TestAitherTVDBDisambiguationRequiresCurrentMatchingAutomaticTitle(t *testin
 }
 
 func aitherTVDBEvidence() *api.TVDBMetadata {
-	return &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-		CanonicalName: "Example Series",
-		SeriesYear:    2030,
-		Locale:        "US",
-		IncludeYear:   true,
-		IncludeLocale: true,
-	}}
+	return &api.TVDBMetadata{
+		TVDBID:      1,
+		NameEnglish: "TVDB Series",
+		NameDisambiguation: api.TVDBNameDisambiguation{
+			CanonicalName: "TVDB Series",
+			Status:        api.MetadataEvidenceStatusComplete,
+			Source:        "tvdb-name/v1",
+			SeriesYear:    2030,
+			Locale:        "US",
+			IncludeYear:   true,
+			IncludeLocale: true,
+		},
+	}
 }
 
 func TestAitherProfileUsesStructuredPolicy(t *testing.T) {
 	t.Parallel()
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/aither/v4" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/aither/v7" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("AITHER policy = %#v", policy)
 	}
 }
@@ -365,11 +406,24 @@ func aitherGeneratedSubject(t *testing.T, request api.ReleaseNameRequest, langua
 		t.Fatal("BuildReleaseName did not produce a structured document")
 	}
 	category, _ := api.NormalizeCanonicalCategory(request.Category)
+	original := "English"
+	if len(languages) > 0 {
+		original = languages[0]
+	}
+
 	return api.UploadSubject{
+		LanguageFacts:    aitherTestLanguageFacts(original, languages, []string{"English"}),
 		ReleaseName:      generated.Name,
 		ReleaseNameNoTag: generated.NameNoTag,
 		GeneratedName:    generated.GeneratedName,
-		Identity:         api.ExternalIdentity{Category: category},
+		SourcePath:       "aither",
+		ProviderMetadata: api.SourceScopedMetadata{SourcePath: "aither", Generation: 1},
+		Identity: api.ExternalIdentity{
+			SourcePath: "aither",
+			Generation: 1,
+			TVDBID:     1,
+			Category:   category,
+		},
 		Release: api.ReleaseInfo{
 			Category:   request.Category,
 			Title:      request.Title,
@@ -403,7 +457,7 @@ func aitherReviewedName(t *testing.T, subject api.UploadSubject, requested *stri
 		Tracker:             "AITHER",
 		Meta:                subject,
 		RequestedUploadName: requested,
-	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
+	}, namePolicy())
 	if failure != nil {
 		t.Fatal(failure)
 	}

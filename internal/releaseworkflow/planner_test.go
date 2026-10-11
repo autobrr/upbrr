@@ -1566,9 +1566,10 @@ func TestContinuationPreparationSatisfiedAfterFreshOpen(t *testing.T) {
 		RequirePrepared:   false,
 		Instructions:      api.ReleaseFactInstructions{SourceLookup: "Example Release 2026"},
 		Controls: api.PreparationControls{
-			Interaction:       api.InteractionModeInteractive,
-			ConfirmBDMVRescan: true,
-			ForceRecheck:      &forceRecheck,
+			Interaction:        api.InteractionModeInteractive,
+			ConfirmBDMVRescan:  true,
+			ForceRecheck:       &forceRecheck,
+			CaptureHDRMetadata: true,
 		},
 	}
 	fingerprint, err := preparationLineageFingerprint(opened)
@@ -1583,6 +1584,7 @@ func TestContinuationPreparationSatisfiedAfterFreshOpen(t *testing.T) {
 	continued.Controls.Interaction = api.InteractionModeUnattendedConfirm
 	continued.Controls.ConfirmBDMVRescan = false
 	continued.Controls.ForceRecheck = nil
+	continued.Controls.CaptureHDRMetadata = false
 	continued.Instructions.TrackerIDs = map[string]string{}
 	if !continuationPreparationSatisfied(current, &continued) {
 		t.Fatal("fresh prepared generation was not retained for continuation")

@@ -4,7 +4,6 @@
 package metadata
 
 import (
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -17,15 +16,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var (
-	namingTVPathHintPattern = regexp.MustCompile(`(?i)[\\/](tv|tvshows?|series)[\\/]`)
-	namingTVNameHintPattern = regexp.MustCompile(
-		`(?i)\bS(?:\d{2}|\d{4})(?:E\d{1,3})?\b|\b(?:season|series)\s*(?:\d{2}|\d{4})\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`,
-	)
-	namingSubsPleaseHintPattern = regexp.MustCompile(`(?i)subsplease`)
-	namingAnimeEpisodeHint      = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)
-	namingWebDLFilenamePattern  = regexp.MustCompile(`(?i)(^|[ ._-])web([ ._-]|$)|web-?dl`)
-)
+var namingWebDLFilenamePattern = regexp.MustCompile(`(?i)(^|[ ._-])web([ ._-]|$)|web-?dl`)
 
 // BuildReleaseName normalizes category and format signals, applies the request's
 // manual omission controls, and builds tracker-style name variants. Unsupported
@@ -178,7 +169,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	if category == "TV" {
 		searchYear := strings.TrimSpace(req.SearchYear)
 		if parsedYear, err := strconv.Atoi(searchYear); err == nil && parsedYear > 0 {
-			title = trimTrailingParentheticalYear(title, parsedYear)
+			title = metautil.TrimTrailingParentheticalYear(title, parsedYear)
 			if !req.NoYear {
 				year = parsedYear
 			}
@@ -1249,7 +1240,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	}
 	searchYear := ""
 	if strings.EqualFold(category, "TV") && year > 0 {
-		title = trimTrailingParentheticalYear(title, year)
+		title = metautil.TrimTrailingParentheticalYear(title, year)
 		searchYear = strconv.Itoa(year)
 	}
 	tvdbYearSource := ""
@@ -1500,18 +1491,6 @@ func fillProviderAlternateTitle(current, primary string, candidates ...string) s
 	return ""
 }
 
-func trimTrailingParentheticalYear(title string, year int) string {
-	trimmed := strings.TrimSpace(title)
-	if year <= 0 {
-		return trimmed
-	}
-	suffix := "(" + strconv.Itoa(year) + ")"
-	if !strings.HasSuffix(trimmed, suffix) {
-		return trimmed
-	}
-	return strings.TrimSpace(strings.TrimSuffix(trimmed, suffix))
-}
-
 func inferReleaseTypeFromName(path string) string {
 	base := strings.ToUpper(pathutil.Base(path))
 	if webType := inferWebReleaseTypeFromFilename(pathutil.Base(path)); webType != "" {
@@ -1655,9 +1634,6 @@ func inferCategoryFromMetadata(meta preparationstate.State) string {
 	if meta.HasTVSeasonEpisodeSignal() {
 		return "TV"
 	}
-	if category := normalizeNamingCategory(meta.Release.Category); category != "" {
-		return category
-	}
 	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
 		return "TV"
 	}
@@ -1665,13 +1641,8 @@ func inferCategoryFromMetadata(meta preparationstate.State) string {
 	if strings.Contains(releaseType, "TV") || strings.Contains(releaseType, "SERIES") || strings.Contains(releaseType, "EPISODE") {
 		return "TV"
 	}
-	sourcePath := filepath.ToSlash(strings.TrimSpace(meta.SourcePath))
-	pathHint := pathutil.Base(meta.SourcePath)
-	if namingTVPathHintPattern.MatchString(sourcePath) || namingTVNameHintPattern.MatchString(pathHint) {
-		return "TV"
-	}
-	if namingSubsPleaseHintPattern.MatchString(sourcePath) && namingAnimeEpisodeHint.MatchString(pathHint) {
-		return "TV"
+	if category := detectedSourceCategory(meta.SourcePath, meta.Release.Category); category != "" {
+		return category
 	}
 	return "MOVIE"
 }

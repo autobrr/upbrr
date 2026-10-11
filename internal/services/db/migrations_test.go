@@ -645,3 +645,71 @@ func assertSQLiteObjectExists(t *testing.T, db *sql.DB, objectType, name string)
 		t.Fatalf("expected %s %s to exist", objectType, name)
 	}
 }
+
+func TestHDRMigrationUpgradesBeforeWorkflowRetention(t *testing.T) {
+	t.Parallel()
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	prior := slices.DeleteFunc(slices.Clone(migrationRegistry), func(step migrationStep) bool {
+		return step.id != baselineMigrationID && step.id != "2026_09_add_active_input"
+	})
+	if err := migrateContextWithRegistry(t.Context(), rawDB, prior); err != nil {
+		t.Fatalf("create prior active-input database: %v", err)
+	}
+	for range 2 {
+		if err := Migrate(rawDB); err != nil {
+			t.Fatalf("upgrade prior active-input database: %v", err)
+		}
+	}
+	exists, err := tableColumnExists(t.Context(), rawDB, "input_workflow_associations", "hdr_analysis_id")
+	if err != nil || !exists {
+		t.Fatalf("upgraded HDR association column exists=%t err=%v", exists, err)
+	}
+}
+
+func TestHDRAssociationMigrationPreservesExistingRowsOnRepeat(t *testing.T) {
+	t.Parallel()
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	ctx := t.Context()
+	if _, err := rawDB.ExecContext(ctx, `CREATE TABLE input_workflow_associations (input_id TEXT PRIMARY KEY, workflow_id TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rawDB.ExecContext(ctx, `INSERT INTO input_workflow_associations (input_id, workflow_id) VALUES ('input', 'workflow')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateHDRAnalysisAssociation(ctx, rawDB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rawDB.ExecContext(ctx, `UPDATE input_workflow_associations SET hdr_analysis_id = 'hdr' WHERE input_id = 'input'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateHDRAnalysisAssociation(ctx, rawDB); err != nil {
+		t.Fatalf("repeat migration: %v", err)
+	}
+	var workflowID, hdrID string
+	if err := rawDB.QueryRowContext(ctx, `SELECT workflow_id, hdr_analysis_id FROM input_workflow_associations WHERE input_id = 'input'`).Scan(&workflowID, &hdrID); err != nil {
+		t.Fatal(err)
+	}
+	if workflowID != "workflow" || hdrID != "hdr" {
+		t.Fatalf("retained association = (%q, %q)", workflowID, hdrID)
+	}
+}
+
+func TestHDRAssociationMigrationSkipsMissingTable(t *testing.T) {
+	t.Parallel()
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	if err := migrateHDRAnalysisAssociation(t.Context(), rawDB); err != nil {
+		t.Fatalf("missing optional table: %v", err)
+	}
+}

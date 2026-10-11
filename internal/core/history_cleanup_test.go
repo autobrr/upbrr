@@ -90,10 +90,8 @@ func (f historyActiveInputRepoFake) LoadInputRecord(context.Context, string) (ap
 	return f.record, nil
 }
 
-func (f historyActiveInputRepoFake) LoadInputWorkflowAssociation(context.Context, string, string, string) (
-	api.WorkflowID, api.AudioAnalysisResultID, error,
-) {
-	return "", "", internalerrors.ErrNotImplemented
+func (f historyActiveInputRepoFake) LoadInputWorkflowAssociation(context.Context, string, string, string) (api.InputWorkflowAssociation, error) {
+	return api.InputWorkflowAssociation{}, internalerrors.ErrNotImplemented
 }
 
 func (f historyActiveInputRepoFake) LoadInputRecordByID(context.Context, string) (api.InputRecord, error) {

@@ -56,6 +56,7 @@ type WorkflowGoal string
 const (
 	WorkflowGoalPrepared          WorkflowGoal = "prepared"
 	WorkflowGoalInputReady        WorkflowGoal = "input_ready"
+	WorkflowGoalTrackersProjected WorkflowGoal = "trackers_projected"
 	WorkflowGoalTrackersAssessed  WorkflowGoal = "trackers_assessed"
 	WorkflowGoalDuplicatesDecided WorkflowGoal = "duplicates_decided"
 	WorkflowGoalMediaReady        WorkflowGoal = "media_ready"
@@ -86,11 +87,15 @@ type WorkflowIntent struct {
 	SkipRemoteDuplicates   bool                                        `json:"skipRemoteDuplicates,omitempty"`
 	DuplicateCheckCount    uint8                                       `json:"duplicateCheckCount,omitempty"`
 	DuplicateDecisions     map[TrackerID]DupeDecision                  `json:"duplicateDecisions,omitempty"`
-	Media                  *MediaCaptureInstructions                   `json:"media,omitempty"`
-	MediaSelection         *WorkflowMediaSelection                     `json:"mediaSelection,omitempty"`
-	Descriptions           *DescriptionInstructions                    `json:"descriptions,omitempty"`
-	UploadTrackerIDs       []TrackerID                                 `json:"uploadTrackerIds,omitempty"`
-	NoSeed                 bool                                        `json:"noSeed,omitempty"`
+	// StaffTokenConfirmations maps each staff-required ignored tracker to the
+	// current assessment ID. Confirmations for an earlier assessment cannot authorize it.
+	StaffTokenConfirmations map[TrackerID]DupeAssessmentID `json:"staffTokenConfirmations,omitempty"`
+	HDRAnalysis             *HDRAnalysisRequest            `json:"hdrAnalysis,omitempty"`
+	Media                   *MediaCaptureInstructions      `json:"media,omitempty"`
+	MediaSelection          *WorkflowMediaSelection        `json:"mediaSelection,omitempty"`
+	Descriptions            *DescriptionInstructions       `json:"descriptions,omitempty"`
+	UploadTrackerIDs        []TrackerID                    `json:"uploadTrackerIds,omitempty"`
+	NoSeed                  bool                           `json:"noSeed,omitempty"`
 }
 
 // WorkflowMediaSelection distinguishes default-all selection from an explicit exact selection.
@@ -129,6 +134,20 @@ type ContinueReleaseWorkflowRequest struct {
 
 // Validate verifies request identity and typed desired-state shape.
 func (r ContinueReleaseWorkflowRequest) Validate() error {
+	if r.Intent.HDRAnalysis != nil {
+		if _, err := r.Intent.HDRAnalysis.Normalize(); err != nil {
+			return err
+		}
+	}
+	if r.Goal == WorkflowGoalTrackersProjected {
+		if r.Authority == nil {
+			return errors.New("tracker projection requires exact workflow authority")
+		}
+		if r.Intent.FactInstructions != nil || r.Intent.CorrectionPatch != nil || len(r.Intent.TrackerInputAnswers) > 0 ||
+			len(r.Answers) > 0 || r.TrackerApproval != nil || r.Approval != nil {
+			return errors.New("tracker projection cannot change release facts or resolve workflow actions")
+		}
+	}
 	if len(r.Intent.TrackerInputAnswers) > 0 && (r.Intent.CorrectionPatch != nil || r.Intent.FactInstructions != nil ||
 		(r.Intent.Preparation != nil && continuationPreparationHasFactCorrections(*r.Intent.Preparation))) {
 		return errors.New("trackerInputAnswers cannot be combined with release corrections")
@@ -269,6 +288,7 @@ func validWorkflowGoal(goal WorkflowGoal) bool {
 	switch goal {
 	case WorkflowGoalPrepared,
 		WorkflowGoalInputReady,
+		WorkflowGoalTrackersProjected,
 		WorkflowGoalTrackersAssessed,
 		WorkflowGoalDuplicatesDecided,
 		WorkflowGoalMediaReady,

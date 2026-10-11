@@ -38,7 +38,7 @@ Never include credentials, cookies, passkeys, announce URLs, OTP data, plaintext
 
 Public documentation lives in `documentation/`. Internal planning material under `docs/` is separate.
 
-From the repository root:
+Use Node.js 24 or newer and the pnpm version pinned in `documentation/package.json`. From the repository root:
 
 ```powershell
 pnpm --dir documentation install --frozen-lockfile

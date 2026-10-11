@@ -630,6 +630,9 @@ func screenshotSlotsForImageHostResolution(
 	return screenshotSlotsFromSourceWithoutPersist(ctx, tracker, meta, repo, logger, preloaded, registry)
 }
 
+// screenshotSlotsFromSourceWithoutPersist honors exact prepared screenshot
+// identities, including an empty selection, before legacy description reconciliation.
+// Exact preloaded slots are cloned and cancellation is checked before reuse.
 func screenshotSlotsFromSourceWithoutPersist(
 	ctx context.Context,
 	tracker string,
@@ -641,6 +644,9 @@ func screenshotSlotsFromSourceWithoutPersist(
 ) ([]api.ScreenshotSlot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
+	}
+	if preloaded != nil && preloaded.screenshotSlotsLoaded && preloaded.exactMedia != nil {
+		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return nil, nil

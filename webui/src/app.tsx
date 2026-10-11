@@ -27,6 +27,7 @@ type ActiveTab = ScreenId;
 const releaseRouteTabs: Readonly<Record<ReleaseRoute, ActiveTab>> = {
   input: "input",
   trackerData: "tracker",
+  hdrAnalysis: "hdr_analysis",
   audioAnalysis: "audio_analysis",
   duplicates: "dupes",
   screenshots: "screenshots",
@@ -174,6 +175,9 @@ function AppShell() {
             onSelect: () => setActiveTab("bluray"),
           },
         ]
+      : []),
+    ...(releaseSession.hdrAnalysis.view.available
+      ? [releaseNavItem("HDR Analysis", "hdr_analysis", "hdrAnalysis", true)]
       : []),
     ...(hasAudioData
       ? [releaseNavItem("Audio Analysis", "audio_analysis", "audioAnalysis", true)]

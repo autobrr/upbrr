@@ -25,7 +25,7 @@ func Profile() standalone.Profile {
 		UploadContentMode:  trackers.UploadContentModeDescription,
 		ReleaseNamePolicy:  releaseNamePolicy(),
 		Rules:              &trackers.RuleSet{MinResolution: "720p"},
-		ValidationPolicy:   validationPolicy(),
+		ValidationPolicy:   trackers.WithLanguageAssessment(validationPolicy(), languageAssessment),
 		PrepareDescription: prepareDescription,
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, hdbBaseURL, nil)

@@ -56,14 +56,20 @@ export function WorkflowOperationProgress({
         <div>
           <p className={pageStyle.label}>Release workflow</p>
           <p className="font-semibold text-foreground">
-            {(events.length ? rootEvent?.message : failureMessage) ||
+            {(operation.operation === "analyze_hdr"
+              ? operation.message
+              : events.length
+                ? rootEvent?.message
+                : failureMessage) ||
               operation.message ||
               operation.phase ||
               operation.command}
           </p>
         </div>
         <span className="text-muted-foreground text-sm">
-          {operation.total > 0 ? `${completed}/${operation.total} complete` : `${progress}%`}
+          {operation.total > 0 && operation.operation !== "analyze_hdr"
+            ? `${completed}/${operation.total} complete`
+            : `${Math.round(progress)}%`}
         </span>
       </div>
       <div

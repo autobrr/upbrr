@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
-	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
@@ -31,8 +31,8 @@ const (
 )
 
 // workflowPreflightBuilder adapts live auth validation to the workflow's
-// immutable preflight/finalized-projection boundary. Other live prerequisites
-// are already resolved by the current registry-owned projector pass.
+// immutable preflight/finalized-projection boundary, including title evidence
+// required before pure language-rule evaluation.
 type workflowPreflightBuilder struct {
 	auth     api.TrackerAuthService
 	config   config.Config
@@ -118,6 +118,19 @@ func (b workflowPreflightBuilder) Build(
 			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: tracker %s is absent from catalog", projection.TrackerID)
 		}
 	}
+	initialFingerprints := make(map[api.TrackerID]api.WorkflowFingerprint, len(initial.Projections))
+	for _, projection := range initial.Projections {
+		fingerprint, err := api.CanonicalWorkflowFingerprint(projection)
+		if err != nil {
+			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: initial projection fingerprint: %w", err)
+		}
+		initialFingerprints[projection.TrackerID] = fingerprint
+	}
+	var err error
+	subject, initial, err = b.assessTitleSearchRules(ctx, subject, initial, assessedAt)
+	if err != nil {
+		return api.TrackerPreflightAssessment{}, nil, err
+	}
 	checkedSubject, localResourcesChanged, err := subjectWithAvailablePreparedResources(subject)
 	if err != nil {
 		return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: inspect prepared resources: %w", err)
@@ -133,6 +146,9 @@ func (b workflowPreflightBuilder) Build(
 				continue
 			}
 			validationSubject := api.NewTrackerValidationSubject(checkedSubject, string(projection.TrackerID))
+			if projection.QuestionnaireAnswers != nil {
+				validationSubject.QuestionnaireAnswers = maps.Clone(projection.QuestionnaireAnswers)
+			}
 			checkedFingerprint := api.WorkflowFingerprint(validationSubject.PreparedResourceFingerprint)
 			if projection.PreparedResourceFingerprint == checkedFingerprint {
 				continue
@@ -243,12 +259,8 @@ func (b workflowPreflightBuilder) Build(
 		}
 	}
 	var bannedRefreshErr error
-	audioBlocked := make(map[string][]string)
-	audioWarned := make(map[string][]string)
-	audioWarningTrackers := make(map[string][]string)
 	if !debugMode {
 		bannedRefreshErr = b.banned.RefreshDynamic(ctx, b.config, selectedIDs, b.logger)
-		audioBlocked, audioWarned = metadata.EvaluateAudioBloatPolicy(subject, selectedIDs, b.registry)
 	}
 
 	freshUntil := assessedAt.Add(workflowPreflightFreshness)
@@ -266,10 +278,7 @@ func (b workflowPreflightBuilder) Build(
 		})
 	}
 	for index, projection := range initial.Projections {
-		projectionFingerprint, err := api.CanonicalWorkflowFingerprint(projection)
-		if err != nil {
-			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: fingerprint %s projection: %w", projection.TrackerID, err)
-		}
+		projectionFingerprint := initialFingerprints[projection.TrackerID]
 		result := api.TrackerPreflightResult{
 			TrackerID:             projection.TrackerID,
 			State:                 api.TrackerPreflightStateReady,
@@ -377,16 +386,6 @@ func (b workflowPreflightBuilder) Build(
 				}
 			}
 		}
-		if !debugMode && result.State == api.TrackerPreflightStateReady && len(audioBlocked[trackerName]) > 0 {
-			setPolicyBlockedPreflight(
-				&result,
-				fmt.Sprintf("Audio languages %s are not allowed for this tracker on bloated releases.", strings.Join(audioBlocked[trackerName], ", ")),
-			)
-		}
-		if languages := audioWarned[trackerName]; result.State == api.TrackerPreflightStateReady && len(languages) > 0 {
-			key := strings.Join(languages, ",")
-			audioWarningTrackers[key] = append(audioWarningTrackers[key], trackerName)
-		}
 		finalProjection := projection
 		if debugMode && result.State == api.TrackerPreflightStateReady {
 			if descriptor.Capabilities.StaticBannedGroups || descriptor.Capabilities.DynamicBannedGroups {
@@ -401,13 +400,6 @@ func (b workflowPreflightBuilder) Build(
 					&finalProjection,
 					"claim_policy",
 					"Debug mode bypassed tracker claim policy.",
-				)
-			}
-			if registered, ok := b.registry.LookupDescriptor(string(projection.TrackerID)); ok && registered.AudioPolicy != nil {
-				appendBypassedRuntimeDecision(
-					&finalProjection,
-					"audio_policy",
-					"Debug mode bypassed tracker audio policy.",
 				)
 			}
 		}
@@ -443,20 +435,6 @@ func (b workflowPreflightBuilder) Build(
 			Total:     len(initial.Projections),
 			Message:   message,
 		})
-	}
-	audioWarningLanguages := make([]string, 0, len(audioWarningTrackers))
-	for languages := range audioWarningTrackers {
-		audioWarningLanguages = append(audioWarningLanguages, languages)
-	}
-	slices.Sort(audioWarningLanguages)
-	for _, languages := range audioWarningLanguages {
-		trackerNames := audioWarningTrackers[languages]
-		slices.Sort(trackerNames)
-		b.logger.Warnf(
-			"core: tracker preflight audio bloat trackers=%s languages=%s decision=advisory blocking=false",
-			strings.Join(trackerNames, ","),
-			languages,
-		)
 	}
 	inputFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		ProjectionSet api.TrackerReleaseProjectionSetRef

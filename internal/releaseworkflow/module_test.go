@@ -2145,7 +2145,12 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 				FreshUntil:            now.Add(time.Hour),
 			}
 			if index == 0 {
-				result.Matches = []api.DupeMatchProjection{{ID: "123", Name: "Example.Release.2026.ALPHA-GRP"}}
+				result.RequiresStaffToken = true
+				result.Matches = []api.DupeMatchProjection{{
+					ID:       "123",
+					Name:     "Example.Release.2026.ALPHA-GRP",
+					Relation: api.DupeRelationExactDuplicate,
+				}}
 				result.Decision = api.DupeDecisionAccepted
 			} else {
 				result.Matches = []api.DupeMatchProjection{{
@@ -2235,14 +2240,47 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	if repeated.Dupes == nil || repeated.Dupes.ID != checked.Dupes.ID || checks != 1 {
 		t.Fatalf("repeated dupes = %#v checks=%d", repeated, checks)
 	}
-	decided := executeCommand(t, module, DecideDuplicatesCommand{
-		WorkflowID:       checked.Workflow.ID,
-		ExpectedRevision: checked.Workflow.Revision,
-		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
-	})
+
+	for _, confirmation := range []api.DupeAssessmentID{"", "stale-assessment"} {
+		_, err := module.Execute(t.Context(), testOwnerID, DecideDuplicatesCommand{
+			WorkflowID:              checked.Workflow.ID,
+			ExpectedRevision:        checked.Workflow.Revision,
+			Decisions:               map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+			StaffTokenConfirmations: map[api.TrackerID]api.DupeAssessmentID{"ALPHA": confirmation},
+		})
+		if !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("unconfirmed staff-token override = %v", err)
+		}
+	}
+	decisionCommand := DecideDuplicatesCommand{
+		WorkflowID:              checked.Workflow.ID,
+		ExpectedRevision:        checked.Workflow.Revision,
+		Decisions:               map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+		StaffTokenConfirmations: map[api.TrackerID]api.DupeAssessmentID{"ALPHA": checked.Dupes.ID},
+		IdempotencyKey:          "confirm-staff-token",
+	}
+	decided := executeCommand(t, module, decisionCommand)
 	if decided.Dupes == nil || decided.Dupes.Status != api.StageStatusCompleted ||
-		decided.Dupes.Results[0].Decision != api.DupeDecisionIgnored || checks != 1 {
+		decided.Dupes.Results[0].Decision != api.DupeDecisionIgnored || !decided.Dupes.Results[0].StaffTokenConfirmed || checks != 1 {
 		t.Fatalf("decided dupes = %#v checks=%d", decided, checks)
+	}
+	if replay := executeCommand(t, module, decisionCommand); replay.Dupes.ID != decided.Dupes.ID {
+		t.Fatal("unchanged confirmed decision replay did not retain its receipt")
+	}
+	for _, confirmations := range []map[api.TrackerID]api.DupeAssessmentID{nil, {"ALPHA": ""}, {"ALPHA": "stale-assessment"}} {
+		replay := decisionCommand
+		replay.StaffTokenConfirmations = confirmations
+		if _, err := module.Execute(t.Context(), testOwnerID, replay); !errors.Is(err, ErrIdempotencyConflict) {
+			t.Fatalf("changed confirmation replay = %v, want idempotency conflict", err)
+		}
+	}
+	decided = executeCommand(t, module, DecideDuplicatesCommand{
+		WorkflowID:       decided.Workflow.ID,
+		ExpectedRevision: decided.Workflow.Revision,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"BETA": api.DupeDecisionAccepted},
+	})
+	if !decided.Dupes.Results[0].StaffTokenConfirmed {
+		t.Fatal("decision-only sibling publication discarded a valid confirmation")
 	}
 	_, err := module.Execute(context.Background(), testOwnerID, DecideDuplicatesCommand{
 		WorkflowID:       decided.Workflow.ID,
@@ -2417,6 +2455,27 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	})
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("repeat direct upload error = %v, want %v", err, ErrInvalidTransition)
+	}
+}
+
+func TestDuplicateDecisionFingerprintPreservesLegacyNoConfirmation(t *testing.T) {
+	command := DecideDuplicatesCommand{
+		ExpectedRevision: 7,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+	}
+	legacy, err := canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Decisions        map[api.TrackerID]api.DupeDecision
+	}{command.ExpectedRevision, command.Decisions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, confirmations := range []map[api.TrackerID]api.DupeAssessmentID{nil, {}} {
+		command.StaffTokenConfirmations = confirmations
+		got, err := command.commandFingerprint()
+		if err != nil || got != legacy {
+			t.Fatalf("absent confirmation changed durable legacy receipt: %s != %s (%v)", got, legacy, err)
+		}
 	}
 }
 
@@ -5420,4 +5479,57 @@ func testFingerprint(t *testing.T, value string) api.WorkflowFingerprint {
 		t.Fatalf("fingerprint %q: %v", value, err)
 	}
 	return fingerprint
+}
+
+func TestUploadDryRunReportsPreserveLateQuestionnaireAndRecoveryAction(t *testing.T) {
+	questionnaire := []api.TrackerQuestionnaireRequirement{{
+		Key:      "channel",
+		Kind:     "select",
+		Label:    "Channel",
+		Value:    "unknown",
+		Required: true,
+		Options:  []string{"unknown", "1"},
+	}}
+	tracker := api.UploadPlanTracker{
+		TrackerID:       "SPD",
+		Status:          api.StageStatusFailed,
+		Questionnaire:   questionnaire,
+		RequiredActions: []api.RequiredAction{{Kind: api.RequiredActionAnswerQuestionnaire, Prompt: "Choose a valid channel"}},
+	}
+	reports := uploadDryRunReports([]api.UploadPlanTracker{tracker})
+	if len(reports) != 1 || len(reports[0].Questionnaire) != 1 || reports[0].Questionnaire[0].Value != "unknown" || !reports[0].Questionnaire[0].Required {
+		t.Fatalf("late questionnaire missing from failed report: %+v", reports)
+	}
+	reports[0].Questionnaire[0].Options[0] = "changed"
+	if questionnaire[0].Options[0] != "unknown" {
+		t.Fatal("report shares questionnaire options")
+	}
+	module, _ := newTestModule(t, testPreparer())
+	actions, err := module.stampUploadPlanActions(api.UploadPlan{Trackers: []api.UploadPlanTracker{tracker}, ExpiresAt: time.Now().Add(time.Hour)}, 2, time.Now())
+	if err != nil || len(actions) != 1 || actions[0].Kind != api.RequiredActionAnswerQuestionnaire || actions[0].TrackerID != "SPD" || actions[0].Status != api.RequiredActionStatusPending {
+		t.Fatalf("late questionnaire recovery action=%+v error=%v", actions, err)
+	}
+}
+
+func TestUploadDryRunReportsPreserveEditionFeatures(t *testing.T) {
+	t.Parallel()
+	features := []api.TrackerEditionFeature{{
+		Label:    "With Commentary",
+		Category: "Feature",
+		Selected: true,
+		Evidence: "Effective commentary",
+	}, {Label: "Remastered", Category: "Edition"}}
+	reports := uploadDryRunReports([]api.UploadPlanTracker{{
+		TrackerID:       "EXAMPLE",
+		Status:          api.StageStatusReady,
+		EditionFeatures: features,
+		Fields:          []api.UploadPlanField{{Key: "remaster_title", Value: "With Commentary"}},
+	}})
+	if len(reports) != 1 || !slices.Equal(reports[0].EditionFeatures, features) || reports[0].Fields[0].Value != "With Commentary" {
+		t.Fatal("dry-run report lost review catalogue or wire payload")
+	}
+	reports[0].EditionFeatures[0].Selected = false
+	if !features[0].Selected {
+		t.Fatal("dry-run report aliases retained review catalogue")
+	}
 }

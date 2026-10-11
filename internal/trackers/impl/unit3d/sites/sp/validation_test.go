@@ -30,6 +30,15 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
+			name: "software is strict",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "SOFTWARE"
+			},
+			wantRule:        "sp_block_software",
+			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
 			name: "missing package evidence is advisory",
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.PackageFacts.Status = api.MetadataEvidenceStatusUnavailable
@@ -115,7 +124,7 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 				t.Fatalf("validate SP subject: %v", err)
 			}
 			if test.wantRule == "" {
-				if len(failures) != 0 {
+				if len(failures) != 1 || failures[0].Rule != "guidance_sp_pack_consistency" || failures[0].Disposition != api.RuleDispositionAdvisory {
 					t.Fatalf("unexpected failures: %#v", failures)
 				}
 				return
@@ -127,7 +136,7 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestSPValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v4" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v8" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -181,6 +190,11 @@ func spPassingSubject() api.TrackerValidationSubject {
 func spUniformFile(fileName string) api.MediaFileFact {
 	return api.MediaFileFact{
 		FileName:          fileName,
+		VideoTrackCount:   1,
+		Container:         "mkv",
+		BitDepth:          "8",
+		AudioStatus:       api.MetadataEvidenceStatusComplete,
+		SubtitleStatus:    api.MetadataEvidenceStatusComplete,
 		Source:            "WEB",
 		Resolution:        "1080p",
 		VideoCodec:        "AVC",
@@ -204,4 +218,15 @@ func requireSPValidationFailure(
 		}
 	}
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
+}
+
+func TestSPFullDiscPackUniformityRetainsBaseline(t *testing.T) {
+	subject := spPassingSubject()
+	subject.Type, subject.DiscType = "DISC", "BDMV"
+	subject.MediaFileFacts.Files[1].AudioLanguages = []string{"Japanese"}
+	failures, err := ValidationPolicy().Check(t.Context(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSPValidationFailure(t, failures, "sp_pack_uniformity", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 }

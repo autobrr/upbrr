@@ -13,14 +13,23 @@ package czt
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// categoryQuestionnaire offers a (non-blocking) category dropdown pre-filled
-// with the auto-detected category, so the user can override it for content
-// upbrr can't classify from video metadata.
+func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	return categoryQuestionnaire(input.Meta)
+}
+
+// categoryQuestionnaire preserves an explicit category override and otherwise
+// offers the auto-detected video category. Unclassified content requires a choice.
 func categoryQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 	auto := autoCategory(meta)
+	category := resolveQuestionnaireCategory(standalone.QuestionnaireAnswers(meta, trackerName)["category"])
+	if category == "" {
+		category = auto
+	}
 	return &api.TrackerQuestionnaire{
 		Tracker: trackerName,
 		Fields: []api.TrackerQuestionnaireField{{
@@ -28,7 +37,7 @@ func categoryQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 			Label:    "Category",
 			Kind:     "select",
 			Options:  categoryNames(),
-			Value:    categoryNameForID(auto),
+			Value:    categoryNameForID(category),
 			Help:     "Auto-detected from video metadata. Override for software, games, music, XXX, etc.",
 			Required: auto == "",
 		}},

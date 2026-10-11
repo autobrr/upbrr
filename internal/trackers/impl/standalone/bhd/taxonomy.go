@@ -64,11 +64,19 @@ func resolveTags(meta api.UploadSubject) []string {
 	if strings.EqualFold(strings.TrimSpace(meta.Is3D), "3D") {
 		tags = append(tags, "3D")
 	}
-	audio := strings.ToLower(strings.TrimSpace(meta.Audio))
-	if strings.Contains(audio, "dual-audio") {
-		tags = append(tags, "DualAudio")
-	}
-	if strings.Contains(audio, "dubbed") {
+	if isBHDFullDisc(meta) {
+		// Full discs retain their existing presentation-derived tags.
+		audio := strings.ToLower(strings.TrimSpace(meta.Audio))
+		if strings.Contains(audio, "dual-audio") {
+			tags = append(tags, "DualAudio")
+		}
+		if strings.Contains(audio, "dubbed") {
+			tags = append(tags, "EnglishDub")
+		}
+	} else if meta.LanguageFacts.HasEnglishDub() && meta.LanguageFacts.AudioStatus != api.MetadataEvidenceStatusContradictory {
+		if meta.LanguageFacts.HasOriginalAudio() {
+			tags = append(tags, "DualAudio")
+		}
 		tags = append(tags, "EnglishDub")
 	}
 	if strings.Contains(strings.ToLower(meta.EditionLabel()), "open matte") {

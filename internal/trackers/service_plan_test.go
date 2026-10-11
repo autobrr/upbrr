@@ -1006,3 +1006,32 @@ func (d releaseErrorDefinition) Prepare(context.Context, PreparationInput) (Trac
 		return errors.New("token=secret-value cleanup failed")
 	}), nil
 }
+
+func TestRetainedQuestionnaireFailurePreservesSafeReviewWithoutSubmission(t *testing.T) {
+	questionnaire := &api.TrackerQuestionnaire{Tracker: "GPW", Fields: []api.TrackerQuestionnaireField{{
+		Key:      "director_imdb",
+		Label:    "Director IMDb ID",
+		Kind:     "text",
+		Required: true,
+		Options:  []string{"example"},
+	}}}
+	failure := NewQuestionnairePreparationFailure("GPW", "missing required new-group data", questionnaire)
+	questionnaire.Fields[0].Options[0] = "changed"
+	slot := trackerPlanSlot{tracker: "GPW", failure: &TrackerFailure{
+		Tracker: "GPW",
+		Code:    failure.Code(),
+		Message: failure.Message(),
+		cause:   failure,
+	}}
+	preparation := retainedTrackerPreparation(slot)
+	if preparation.Failure == nil || preparation.Preview.Status != "blocked" || preparation.TorrentPath != "" {
+		t.Fatalf("failed preparation gained upload authority: %+v", preparation)
+	}
+	if preparation.Preview.Questionnaire == nil || preparation.Preview.Questionnaire.Fields[0].Options[0] != "example" || len(preparation.Preview.RequiredActions) != 1 || preparation.Preview.RequiredActions[0].Kind != api.RequiredActionAnswerQuestionnaire {
+		t.Fatalf("late-required questionnaire lost: %+v", preparation.Preview)
+	}
+	preparation.Preview.Questionnaire.Fields[0].Options[0] = "mutated"
+	if next := retainedTrackerPreparation(slot); next.Preview.Questionnaire.Fields[0].Options[0] != "example" {
+		t.Fatal("published questionnaire shares storage with retained failure")
+	}
+}

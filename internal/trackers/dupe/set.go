@@ -65,7 +65,7 @@ func evaluateSetRules(
 		if targetResult == setPredicateIndeterminate {
 			used := make([]int, 0, len(candidates))
 			for index := range candidates {
-				result, missing := evaluateSetPredicates(targetFacts, candidateFacts[index], rule.CandidatePredicates, "candidate")
+				result, missing := evaluateSetMember(targetFacts, candidateFacts[index], rule)
 				if result == setPredicateMismatch {
 					continue
 				}
@@ -87,7 +87,7 @@ func evaluateSetRules(
 		members := make([]int, 0, len(candidates))
 		used := make([]int, 0, len(candidates))
 		for index := range candidates {
-			result, missing := evaluateSetPredicates(targetFacts, candidateFacts[index], rule.CandidatePredicates, "candidate")
+			result, missing := evaluateSetMember(targetFacts, candidateFacts[index], rule)
 			switch result {
 			case setPredicateMatched:
 				members = append(members, index)
@@ -201,6 +201,11 @@ func evaluateSetPredicates(
 			continue
 		}
 		if len(predicate.Values) > 0 && !containsFold(predicate.Values, subjectFact.Value) {
+			mismatch = true
+		}
+		if len(predicate.ValueTokens) > 0 && !slices.ContainsFunc(strings.Split(subjectFact.Value, "+"), func(token string) bool {
+			return containsFold(predicate.ValueTokens, token)
+		}) {
 			mismatch = true
 		}
 		if containsFold(predicate.ExcludedValues, subjectFact.Value) {
@@ -345,4 +350,23 @@ func uniqueSorted(values []string) []string {
 	}
 	slices.Sort(result)
 	return result
+}
+
+func evaluateSetMember(target normalizedFacts, candidate normalizedFacts, rule trackerspkg.DupeSetRule) (setPredicateResult, []string) {
+	result, missing := evaluateSetPredicates(target, candidate, rule.CandidatePredicates, "candidate")
+	if !rule.RequireSameContent || result == setPredicateMismatch {
+		return result, missing
+	}
+	if compareContentScopes(target.Content, candidate.Content) == contentDefinitelyDisjoint ||
+		target.Content.Kind == contentScopeSeasonPack && candidate.Content.Kind == contentScopeEpisode ||
+		candidate.Content.Kind == contentScopeSeasonPack && target.Content.Kind == contentScopeEpisode {
+		return setPredicateMismatch, nil
+	}
+	if !sameKnownContentScope(target.Content, candidate.Content) ||
+		target.Content.Kind != contentScopeWork && (target.Content.Origin == FactOriginContentName || target.Content.Origin == FactOriginTrackerTitle) ||
+		candidate.Content.Kind != contentScopeWork &&
+			(candidate.Content.Origin == FactOriginContentName || candidate.Content.Origin == FactOriginTrackerTitle) {
+		return setPredicateIndeterminate, append(missing, "content_scope")
+	}
+	return result, missing
 }

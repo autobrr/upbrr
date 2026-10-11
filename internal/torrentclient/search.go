@@ -398,7 +398,8 @@ func (s *Service) searchQbitClient(
 	clientCfg config.TorrentClientConfig,
 	meta api.ClientSubject,
 	constraints pieceConstraints,
-) (api.ClientSearchResult, []api.TorrentMatch, error) {
+) (searchResult api.ClientSearchResult, matchesResult []api.TorrentMatch, err error) {
+	defer func() { err = safeClientError(err, clientCfg.QbitHost()) }()
 	searchTerms := buildSearchTerms(meta)
 	if len(searchTerms) == 0 {
 		s.logger.Debugf("clients: %s search term empty for source=%s", name, meta.SourcePath)
@@ -430,7 +431,7 @@ func (s *Service) searchQbitClient(
 		if host == "" {
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s qbit host is required", name)
 		}
-		s.logger.Tracef("clients: %s searching via qBittorrent WebAPI host=%s", name, host)
+		s.logger.Tracef("clients: %s searching via qBittorrent WebAPI", name)
 		qbitClient = qbittorrent.NewClient(qbittorrent.Config{
 			Host:          host,
 			Username:      strings.TrimSpace(clientCfg.QbitUsername()),
@@ -486,14 +487,14 @@ func (s *Service) searchQbitClient(
 		comment := strings.TrimSpace(torrent.Comment)
 		props, err := fetchTorrentProperties(ctx, qbitClient, httpClient, proxyBaseURL, torrent.Hash, useProxy)
 		if err != nil {
-			s.logger.Debugf("clients: %s properties lookup failed for %s: %v", name, torrent.Name, err)
+			s.logger.Debugf("clients: %s properties lookup failed for %s: %v", name, torrent.Name, safeClientError(err, clientCfg.QbitHost()))
 		} else if comment == "" {
 			comment = strings.TrimSpace(props.Comment)
 		}
 
 		trackers, err := fetchTorrentTrackers(ctx, qbitClient, httpClient, proxyBaseURL, torrent.Hash, useProxy, torrent.Trackers)
 		if err != nil {
-			s.logger.Debugf("clients: %s trackers lookup failed for %s: %v", name, torrent.Name, err)
+			s.logger.Debugf("clients: %s trackers lookup failed for %s: %v", name, torrent.Name, safeClientError(err, clientCfg.QbitHost()))
 		}
 
 		trackerURLs := collectTrackerURLs(torrent.Tracker, trackers)
@@ -542,7 +543,11 @@ func (s *Service) searchQbitClient(
 
 	sortMatchingTorrents(matches, priorityOrder)
 
-	selection, err := s.selectValidTorrent(ctx, meta, matches, dataVerifiedByHash, constraints, qbitClient, httpClient, proxyBaseURL, useProxy)
+	clientEndpoint := proxyBaseURL
+	if !useProxy {
+		clientEndpoint = clientCfg.QbitHost()
+	}
+	selection, err := s.selectValidTorrent(ctx, meta, matches, dataVerifiedByHash, constraints, qbitClient, httpClient, clientEndpoint, useProxy)
 	if err != nil {
 		return api.ClientSearchResult{}, nil, err
 	}
@@ -1304,7 +1309,7 @@ func (s *Service) selectValidTorrent(
 	constraints pieceConstraints,
 	qbitClient *qbittorrent.Client,
 	httpClient *http.Client,
-	proxyBase string,
+	clientEndpoint string,
 	useProxy bool,
 ) (validatedTorrentSelection, error) {
 	selection := validatedTorrentSelection{}
@@ -1401,9 +1406,9 @@ func (s *Service) selectValidTorrent(
 			}
 		}
 
-		data, err := exportTorrent(ctx, qbitClient, httpClient, proxyBase, normalizedHash, useProxy)
+		data, err := exportTorrent(ctx, qbitClient, httpClient, clientEndpoint, normalizedHash, useProxy)
 		if err != nil {
-			s.logger.Debugf("clients: export torrent failed for %s: %v", normalizedHash, err)
+			s.logger.Debugf("clients: export torrent failed for %s: %v", normalizedHash, safeClientError(err, clientEndpoint))
 			continue
 		}
 		if len(data) == 0 {

@@ -5,6 +5,7 @@ package mediainfo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +18,20 @@ import (
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestModuleAnalyzerHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")
+	if err := os.WriteFile(path, []byte("synthetic media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	text, payload, err := (moduleAnalyzer{}).Analyze(ctx, path)
+	if !errors.Is(err, context.Canceled) || text != "" || len(payload) != 0 {
+		t.Fatalf("canceled analysis returned text=%q payload=%q err=%v", text, payload, err)
+	}
+}
 
 func TestExportWritesCleanedArtifacts(t *testing.T) {
 	tmpRoot := t.TempDir()

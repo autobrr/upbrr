@@ -14,6 +14,8 @@ import hash_snapshot
 
 HEAD = "a" * 40
 BOT = {"id": bridge.BOT_ID, "login": bridge.BOT_LOGIN, "type": "Bot"}
+KINDS = ("issue", "pull_request", "discussion")
+REPLY_TO = 6000000000
 
 
 def issue():
@@ -21,9 +23,12 @@ def issue():
 
 
 class FakeAPI:
-    def __init__(self):
+    def __init__(self, kind="issue"):
         self.item = issue()
         self.comments = []
+        if kind == "pull_request":
+            self.item["pull_request"] = {"url": "https://api.github.com/repos/autobrr/upbrr/pulls/7"}
+            self.comments.append({"id": REPLY_TO, "body": "Please explain this result", "updated_at": "now", "user": self.item["user"].copy()})
         self.head = HEAD
         self.posts = 0
         self.mode = "ok"
@@ -57,6 +62,8 @@ class BridgeTests(unittest.TestCase):
         request = {"repository": bridge.REPOSITORY, "kind": kind, "number": 7}
         source = bridge.collect(api, request, "main")
         request.update(source_hash=bridge.digest(source), head=HEAD, body="Reviewed result")
+        if kind == "pull_request":
+            request["reply_to"] = REPLY_TO
         return request
 
     def run_write(self, api, request):
@@ -69,9 +76,9 @@ class BridgeTests(unittest.TestCase):
             api.assert_not_called()
 
     def test_enabled_main_publishes_and_detects_duplicates(self):
-        for kind in ("issue", "discussion"):
+        for kind in KINDS:
             with self.subTest(kind=kind), TemporaryDirectory() as directory:
-                api = FakeAPI()
+                api = FakeAPI(kind)
                 operation = kind + "_comment"
                 event = {
                     "repository": {"full_name": bridge.REPOSITORY, "default_branch": "main"},
@@ -126,6 +133,111 @@ class BridgeTests(unittest.TestCase):
             with self.assertRaises(bridge.Rejected):
                 bridge.parse_request(json.dumps(req), operation)
 
+    def test_pr_reply_schema_and_job_boundaries(self):
+        req = self.request(FakeAPI("pull_request"), "pull_request")
+        self.assertEqual(bridge.parse_request(json.dumps(req), "pull_request_comment"), req)
+        for value in (True, 0, -1, 2**63, "6000000000", 1.5, None):
+            with self.subTest(value=value), self.assertRaises(bridge.Rejected):
+                bridge.parse_request(json.dumps(dict(req, reply_to=value)), "pull_request_comment")
+        missing = dict(req)
+        del missing["reply_to"]
+        with self.assertRaises(bridge.Rejected):
+            bridge.parse_request(json.dumps(missing), "pull_request_comment")
+        for kind in ("issue", "discussion"):
+            with self.subTest(kind=kind), self.assertRaises(bridge.Rejected):
+                bridge.parse_request(json.dumps(req), kind + "_comment")
+            other = dict(self.request(FakeAPI(kind), kind), reply_to=REPLY_TO)
+            with self.assertRaises(bridge.Rejected):
+                bridge.parse_request(json.dumps(other), kind + "_comment")
+
+    def test_pr_reply_is_top_level_with_exact_generated_reference(self):
+        api = FakeAPI("pull_request")
+        req = self.request(api, "pull_request")
+        self.assertEqual(self.run_write(api, req)["status"], "published")
+        reference = "In reply to [this comment](https://github.com/autobrr/upbrr/pull/7#issuecomment-6000000000):\n\n"
+        marker = bridge.digest({"operation": "pull_request_comment", "request": req})
+        self.assertEqual(api.comments[-1]["body"], reference + req["body"] + f"\n\n<!-- upbrr-bridge:{marker} -->")
+        self.assertEqual([path for method, path in api.calls if method == "POST"], ["/repos/autobrr/upbrr/issues/7/comments"])
+
+    def test_pr_requires_matching_target_and_conversation_reference(self):
+        for change in ("issue", "number", "url", "marker", "missing", "duplicate"):
+            api = FakeAPI("pull_request")
+            req = self.request(api, "pull_request")
+            if change == "issue":
+                del api.item["pull_request"]
+            elif change == "number":
+                api.item["number"] = 8
+            elif change == "url":
+                api.item["pull_request"]["url"] = "https://api.github.com/repos/other/repo/pulls/7"
+            elif change == "marker":
+                api.item["pull_request"] = None
+            elif change == "missing":
+                req["reply_to"] += 1
+            else:
+                api.comments.append(copy.deepcopy(api.comments[0]))
+                req["source_hash"] = bridge.digest(bridge.collect(api, req, "main"))
+            with self.subTest(change=change), self.assertRaises(bridge.Rejected):
+                self.run_write(api, req)
+            self.assertEqual(api.posts, 0)
+
+    def test_stale_pr_and_reply_evidence_never_posts(self):
+        for change in ("state", "body", "title", "updated_at", "reply_body", "reply_updated_at", "reply_author", "deleted_reply"):
+            api = FakeAPI("pull_request")
+            req = self.request(api, "pull_request")
+            if change.startswith("reply_"):
+                key = change.removeprefix("reply_")
+                if key == "author":
+                    api.comments[0]["user"]["id"] += 1
+                else:
+                    api.comments[0][key] = "changed"
+            elif change == "deleted_reply":
+                api.comments.clear()
+            else:
+                api.item[change] = "changed"
+            with self.subTest(change=change), self.assertRaises(bridge.Rejected):
+                self.run_write(api, req)
+            self.assertEqual(api.posts, 0)
+
+    def test_pr_receipt_still_reconciles_after_source_changes(self):
+        api = FakeAPI("pull_request")
+        req = self.request(api, "pull_request")
+        self.run_write(api, req)
+        api.comments.pop(0)
+        api.head = "b" * 40
+        self.assertEqual(self.run_write(api, req)["status"], "already_published")
+        self.assertEqual(api.posts, 1)
+
+    def test_pr_edited_receipt_is_not_success(self):
+        for change in ("body", "reference", "marker"):
+            api = FakeAPI("pull_request")
+            req = self.request(api, "pull_request")
+            self.run_write(api, req)
+            original = api.comments[-1]["body"]
+            if change == "body":
+                api.comments[-1]["body"] = original.replace(req["body"], "Other result")
+            elif change == "reference":
+                api.comments[-1]["body"] = original.replace(str(REPLY_TO), str(REPLY_TO + 1))
+            else:
+                api.comments[-1]["body"] = original.split("\n\n<!--")[0]
+            with self.subTest(change=change), self.assertRaises(bridge.Rejected):
+                self.run_write(api, req)
+            self.assertEqual(api.posts, 1)
+
+    def test_pr_success_response_without_verified_readback_is_uncertain(self):
+        api = FakeAPI("pull_request")
+        req = self.request(api, "pull_request")
+        call = api.call
+
+        def forged_post(method, path, payload=None):
+            response = call(method, path, payload)
+            if method == "POST":
+                api.comments[-1]["user"]["id"] = 5
+            return response
+
+        with patch.object(api, "call", side_effect=forged_post):
+            self.assertEqual(self.run_write(api, req)["status"], "uncertain")
+        self.assertEqual(api.posts, 1)
+
     def test_context(self):
         event = {"repository": {"full_name": bridge.REPOSITORY, "default_branch": "main"}, "sender": {"id": int(bridge.ACTOR_ID)}, "inputs": {"operation": "issue_comment"}}
         env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REPOSITORY": bridge.REPOSITORY, "GITHUB_ACTOR_ID": bridge.ACTOR_ID, "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": bridge.REPOSITORY + "/.github/workflows/actions-bridge.yml@refs/heads/main", "GITHUB_SHA": HEAD, "GITHUB_WORKFLOW_SHA": HEAD, "GITHUB_RUN_ATTEMPT": "1"}
@@ -147,19 +259,19 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(api.posts, 0)
 
     def test_publish_and_duplicate_no_second_post(self):
-        for kind in ("issue", "discussion"):
+        for kind in KINDS:
             with self.subTest(kind=kind):
-                api = FakeAPI()
+                api = FakeAPI(kind)
                 req = self.request(api, kind)
                 self.assertEqual(self.run_write(api, req)["status"], "published")
                 self.assertEqual(self.run_write(api, req)["status"], "already_published")
                 self.assertEqual(api.posts, 1)
 
     def test_uncertain_post_readback_no_retry(self):
-        for kind in ("issue", "discussion"):
+        for kind in KINDS:
             for mode, expected in (("timeout", "published"), ("lost", "uncertain")):
                 with self.subTest(kind=kind, mode=mode):
-                    api = FakeAPI()
+                    api = FakeAPI(kind)
                     api.mode = mode
                     result = self.run_write(api, self.request(api, kind))
                     self.assertEqual(result["status"], expected)
@@ -190,12 +302,12 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(api.posts, 0)
 
     def test_forged_marker_or_bot_login_not_receipt(self):
-        for kind in ("issue", "discussion"):
-            api = FakeAPI()
+        for kind in KINDS:
+            api = FakeAPI(kind)
             req = self.request(api, kind)
             self.run_write(api, req)
             for forged in ({"id": 5, "login": bridge.BOT_LOGIN, "type": "Bot"}, {"id": bridge.BOT_ID, "login": "other", "type": "Bot"}, {"id": bridge.BOT_ID, "login": bridge.BOT_LOGIN, "type": "User"}):
-                api.comments[0]["user"] = forged
+                api.comments[-1]["user"] = forged
                 with self.subTest(kind=kind, forged=forged), self.assertRaises(bridge.Rejected):
                     self.run_write(api, req)
                 self.assertEqual(api.posts, 1)
@@ -240,12 +352,12 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(api.posts, 0)
 
     def test_duplicate_bot_receipts_fail_closed(self):
-        for kind in ("issue", "discussion"):
+        for kind in KINDS:
             with self.subTest(kind=kind):
-                api = FakeAPI()
+                api = FakeAPI(kind)
                 req = self.request(api, kind)
                 self.run_write(api, req)
-                api.comments.append(copy.deepcopy(api.comments[0]))
+                api.comments.append(copy.deepcopy(api.comments[-1]))
                 with self.assertRaises(bridge.Rejected):
                     self.run_write(api, req)
                 self.assertEqual(api.posts, 1)
@@ -271,9 +383,9 @@ class BridgeTests(unittest.TestCase):
                 api.call("GET", "/repos/autobrr/upbrr/issues/7")
 
     def test_offline_hash_matches_publisher_snapshot(self):
-        for kind in ("issue", "discussion"):
+        for kind in KINDS:
             with self.subTest(kind=kind):
-                api = FakeAPI()
+                api = FakeAPI(kind)
                 api.comments.append({"id": 9, "body": "Existing comment", "updated_at": "now", "user": BOT})
                 req = {"repository": bridge.REPOSITORY, "kind": kind, "number": 7}
                 source = bridge.collect(api, req, "main")
@@ -295,17 +407,22 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn("write-all", source)
         jobs = source.split("jobs:\n", 1)[1]
         self.assertNotIn("  snapshot:", jobs)
-        issue_job, discussion_job = jobs.split("  discussion_comment:\n", 1)
-        self.assertIn("issues: write", issue_job)
-        self.assertNotIn("discussions:", issue_job)
+        issue_job, rest = jobs.split("  pull_request_comment:\n", 1)
+        pr_job, discussion_job = rest.split("  discussion_comment:\n", 1)
+        for job in (issue_job, pr_job):
+            self.assertIn("issues: write", job)
+            self.assertNotIn("discussions:", job)
+            self.assertNotIn("pull-requests:", job)
         self.assertIn("discussions: write", discussion_job)
         self.assertNotIn("issues:", discussion_job)
-        for job, operation in ((issue_job, "issue_comment"), (discussion_job, "discussion_comment")):
+        for job, operation in ((issue_job, "issue_comment"), (pr_job, "pull_request_comment"), (discussion_job, "discussion_comment")):
             self.assertIn(f"inputs.operation == '{operation}'", job)
             self.assertIn("github.actor_id == '13182387'", job)
             self.assertIn("persist-credentials: false", job)
             self.assertIn("environment: actions-bridge", job)
             self.assertIn("vars.ACTIONS_BRIDGE_ENABLED == 'approved'", job)
+            self.assertIn("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", job)
+            self.assertIn(f"BRIDGE_OPERATION: {operation}", job)
         self.assertTrue(bridge.ENABLED)
 
 

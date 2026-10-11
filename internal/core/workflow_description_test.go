@@ -696,3 +696,27 @@ func TestWorkflowDescriptionSaveKeepsEditedRegisteredGroup(t *testing.T) {
 		t.Fatalf("Save group reverted edit: want %q, got %q", source, saved.Descriptions[0].Source)
 	}
 }
+
+func TestDescriptionSubjectUsesExactProjectionQuestionnaireAnswers(t *testing.T) {
+	resolver := &workflowDescriptionResolverFake{}
+	builder := workflowDescriptionBuilder{resolver: resolver}
+	instructions := api.DescriptionInstructions{QuestionnaireAnswers: map[api.TrackerID]map[string]string{"OE": {"source_notes": "stale", "encoding_settings": "old settings"}}}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID:            "OE",
+		Artifacts:            api.TrackerArtifactRequirements{Description: true},
+		QuestionnaireAnswers: map[string]string{"source_notes": "Reviewed source"},
+	}}}
+	_, err := builder.resolveSubject(t.Context(), api.ReleaseRef{}, projections, instructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolver.input.QuestionnaireAnswers["OE"]["source_notes"] != "Reviewed source" {
+		t.Fatalf("reviewed answer lost: %+v", resolver.input.QuestionnaireAnswers)
+	}
+	if _, exists := resolver.input.QuestionnaireAnswers["OE"]["encoding_settings"]; exists {
+		t.Fatal("cleared reviewed answer restored from old description")
+	}
+	if instructions.QuestionnaireAnswers["OE"]["source_notes"] != "stale" {
+		t.Fatal("mutated caller instructions")
+	}
+}
