@@ -152,3 +152,99 @@ func TestSourceSeasonWarningSamplesAgainstKnownSeason(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareSourceSeasonFallbackIgnoresAuxiliaryFilesAcrossReuse(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, name := range []string{"Example.S01E01.mkv", "Example.S00E01.nfo", "Example.S02E01.Sample.MKV"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("synthetic fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := newMemoryStore()
+	collector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("synthetic"))
+	module := newTestModule(t, store, collector)
+	input := api.PrepareInput{SourcePath: root, Policy: api.PreparationPolicy{KeepFolder: true}}
+	var generation api.PreparedGeneration
+	for _, stage := range []string{"fresh", "cached", "persisted"} {
+		if stage == "persisted" {
+			module = newTestModule(t, store, collector)
+		}
+		result, err := module.Prepare(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, diagnostic := range result.Diagnostics {
+			if diagnostic.Code == "multiple_source_seasons" {
+				t.Fatalf("%s preparation counted auxiliary files: %s", stage, diagnostic.Message)
+			}
+		}
+		if stage == "fresh" {
+			generation = result.Release.Generation
+		} else if result.Release.Generation != generation {
+			t.Fatalf("%s preparation did not reuse the generation", stage)
+		}
+	}
+}
+
+func TestSourceSeasonWarningManifestFallbackEligibility(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name           string
+		files          []string
+		discType       string
+		classifiedType string
+		wantWarning    bool
+	}{
+		{
+			name:  "non-disc ignores sidecars and ordinary samples",
+			files: []string{"Example.S01E01.mkv", "Example.S00E01.nfo", "Example.S02E01.Sample.MKV"},
+		},
+		{
+			name:        "non-disc retains explicit samples and uppercase video extensions",
+			files:       []string{"Example.S01E01.mkv", "Example.S00E01.!Sample.MKV"},
+			wantWarning: true,
+		},
+		{
+			name:        "non-disc retains real mixed seasons without sidecar seasons",
+			files:       []string{"Example.S01E01.mkv", "Example.S00E01.mp4", "Example.S02E01.nfo"},
+			wantWarning: true,
+		},
+		{
+			name:        "release disc type retains playlists",
+			files:       []string{"Example.S01E01.mpls", "Example.S00E01.Sample.mpls"},
+			discType:    "BDMV",
+			wantWarning: true,
+		},
+		{
+			name:           "source disc classification retains non-video entries",
+			files:          []string{"Example.S01E01.ifo", "Example.S00E01.Sample.vob"},
+			classifiedType: "DVD",
+			wantWarning:    true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "Sample.S99")
+			manifest := api.SourceManifest{SourcePath: root, Classification: api.SourceClassification{DiscType: test.classifiedType}}
+			for _, name := range test.files {
+				entryType := api.SourceEntryTypeFile
+				if filepath.Ext(name) == ".mpls" {
+					entryType = api.SourceEntryTypePlaylist
+				}
+				manifest.Entries = append(manifest.Entries, api.SourceManifestEntry{Path: filepath.Join(root, name), Type: entryType})
+			}
+			owned := envelope{result: api.PrepareResult{Release: api.PreparedRelease{Source: manifest, Disc: api.DiscFacts{Type: test.discType}}}}
+			warnings := sourceSeasonDiagnostics(owned)
+			wantCount := 0
+			if test.wantWarning {
+				wantCount = 1
+			}
+			if len(warnings) != wantCount {
+				t.Fatalf("warnings = %#v, want %d", warnings, wantCount)
+			}
+			if wantCount != 0 && !strings.Contains(warnings[0].Message, "Multiple seasons detected: S00, S01.") {
+				t.Fatalf("unexpected season evidence: %s", warnings[0].Message)
+			}
+		})
+	}
+}

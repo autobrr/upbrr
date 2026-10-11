@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -21,6 +22,12 @@ func sourceSeasonDiagnostics(owned envelope) []api.PreparationDiagnostic {
 	files := owned.resources.fileList
 	if len(files) == 0 {
 		files = manifestFiles(owned.result.Release.Source)
+		if firstNonEmpty(owned.result.Release.Disc.Type, owned.result.Release.Source.Classification.DiscType) == "" {
+			files = slices.DeleteFunc(files, func(file string) bool {
+				name := strings.ToLower(filepath.Base(file))
+				return !filesystem.IsVideoFile(name) || (strings.Contains(name, "sample") && !strings.Contains(name, "!sample"))
+			})
+		}
 	}
 	bySeason := make(map[int][]string)
 	seen := make(map[string]bool)
