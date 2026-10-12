@@ -94,9 +94,7 @@ type cliOptions struct {
 	Anime                      bool
 	UseSeasonEpisode           bool
 	InputOnly                  bool
-	Title                      string
 	AlternateTitle             string
-	OriginalTitle              string
 	Genres                     string
 	AudioLanguages             string
 	SubtitleLanguages          string
@@ -331,9 +329,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.UseSeasonEpisode, "use-season-episode", false, "Use the explicit season and episode values")
 	fs.BoolVar(&opts.InputOnly, "input-only", false, "Prepare and evaluate local tracker input without remote tracker work")
 	fs.StringVar(&opts.SourceLookup, "source-lookup", "", "Use a tracker source URL for metadata lookup")
-	fs.StringVar(&opts.Title, "title", "", "Override title")
 	fs.StringVar(&opts.AlternateTitle, "alternate-title", "", "Override alternate title")
-	fs.StringVar(&opts.OriginalTitle, "original-title", "", "Override original title")
 	fs.StringVar(&opts.Genres, "genres", "", "Override genres (comma-separated)")
 	fs.StringVar(&opts.AudioLanguages, "audio-languages", "", "Override audio languages (comma-separated)")
 	fs.StringVar(&opts.SubtitleLanguages, "subtitle-languages", "", "Override subtitle languages (comma-separated)")
@@ -846,7 +842,7 @@ func cliHelpSections(name string) []helpSection {
 			"category", "type", "source", "resolution", "tag", "service", "distributor", "original-language",
 			"edition", "season", "episode", "episode-title", "manual-year", "daily", "region", "use-season-episode", "no-season", "no-year",
 			"no-aka", "no-tag", "no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio",
-			"title", "alternate-title", "original-title", "genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
+			"alternate-title", "genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
 		}},
 		{title: "Input Corrections", names: []string{"source-lookup", "track-languages", "reset-input", "confirm-input", "tracker-input"}},
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
@@ -1099,14 +1095,8 @@ func buildMetadataOverrides(opts cliOptions, visited map[string]bool) api.Metada
 	if visited["anime"] {
 		overrides.Anime = boolPtr(opts.Anime)
 	}
-	if visited["title"] {
-		overrides.Title = stringPtr(opts.Title)
-	}
 	if visited["alternate-title"] {
 		overrides.AlternateTitle = stringPtr(opts.AlternateTitle)
-	}
-	if visited["original-title"] {
-		overrides.OriginalTitle = stringPtr(opts.OriginalTitle)
 	}
 	if visited["genres"] {
 		values := splitCSV(opts.Genres)
@@ -1150,8 +1140,8 @@ func isCLIInputCorrectionFlag(name string) bool {
 		"tmdb", "imdb", "tvdb", "tvmaze", "mal", "category", "type", "source", "resolution", "tag", "service", "edition",
 		"season", "episode", "episode-title", "manual-year", "daily", "use-season-episode", "no-season", "no-year", "no-aka", "no-tag",
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
-		"original-language", "commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "title", "alternate-title",
-		"original-title", "genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
+		"original-language", "commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "alternate-title",
+		"genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
 		"track-languages", "reset-input", "confirm-input",
 	}, name)
 }

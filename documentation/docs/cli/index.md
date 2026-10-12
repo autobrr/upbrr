@@ -164,11 +164,11 @@ Exit code `0` means Input is ready. Exit code `2` means required input prevents 
 
 ### Correct descriptive fields and languages
 
+Title and original title are read-only provider values. Use `--alternate-title` to correct the alternate title.
+
 | Option                                            | Purpose                                                                                                |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--title <text>`                                  | Override the resolved title.                                                                           |
 | `--alternate-title <text>`                        | Override the alternate title.                                                                          |
-| `--original-title <text>`                         | Override the original title.                                                                           |
 | `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                             |
 | `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                         |
 | `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                            |

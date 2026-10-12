@@ -140,12 +140,8 @@ Release Overrides:
       Remove dual-audio tag from audio name
   -dual-audio, --dual-audio
       Add dual-audio tag to audio name
-  -title, --title string
-      Override title
   -alternate-title, --alternate-title string
       Override alternate title
-  -original-title, --original-title string
-      Override original title
   -genres, --genres string
       Override genres (comma-separated)
   -audio-languages, --audio-languages string
