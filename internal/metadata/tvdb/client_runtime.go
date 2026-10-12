@@ -1758,7 +1758,8 @@ func (c *Client) uncachedJSON(ctx context.Context, path string, params map[strin
 		if err != nil {
 			return fmt.Errorf("tvdb: build request for %s: %w", path, err)
 		}
-		req.Header.Set("Authorization", "Bearer "+c.token())
+		requestToken := c.token()
+		req.Header.Set("Authorization", "Bearer "+requestToken)
 		req.Header.Set("Accept", "application/json")
 
 		resp, err := c.http.Do(req)
@@ -1771,7 +1772,7 @@ func (c *Client) uncachedJSON(ctx context.Context, path string, params map[strin
 				return fmt.Errorf("tvdb: http %d after token refresh", resp.StatusCode)
 			}
 			canRefresh = false
-			if err := c.refreshToken(ctx); err != nil {
+			if err := c.refreshToken(ctx, requestToken); err != nil {
 				return err
 			}
 			continue
@@ -1805,9 +1806,13 @@ func (c *Client) ensureToken(ctx context.Context) error {
 	return c.loginLocked(ctx)
 }
 
-func (c *Client) refreshToken(ctx context.Context) error {
+func (c *Client) refreshToken(ctx context.Context, rejectedToken string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// A delayed 401 must not discard another request's successful refresh.
+	if c.authToken != "" && c.authToken != rejectedToken {
+		return nil
+	}
 	c.authToken = ""
 	return c.loginLocked(ctx)
 }
