@@ -32,7 +32,9 @@ func TestLauncherEditsReplaceEffectiveSuppressionMode(t *testing.T) {
 				input, keys := io.Pipe()
 				defer input.Close()
 				defer keys.Close()
-				output := &cliScriptedTerminal{input: keys, keys: "Synthetic.Film.2026-GRP.mkv\t\x01\x0b" + draft + "\t\r"}
+				// Paste text without rendering every character; keep navigation and acceptance as real keys.
+				script := "\x1b[200~Synthetic.Film.2026-GRP.mkv\x1b[201~\t\x01\x0b\x1b[200~" + draft + "\x1b[201~\t\r"
+				output := &cliScriptedTerminal{input: keys, keys: script}
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 				defer cancel()
 				err = runUpload(ctx, args, opts, visited, paths, cliIO{
