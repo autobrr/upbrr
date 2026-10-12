@@ -257,6 +257,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		Episode: api.EpisodeFacts{
 			Season:            meta.SeasonInt,
 			Episode:           meta.EpisodeInt,
+			MultipleEpisodes:  meta.MultipleEpisodes,
 			SeasonLabel:       meta.SeasonStr,
 			EpisodeLabel:      meta.EpisodeStr,
 			DailyDate:         meta.DailyEpisodeDate,

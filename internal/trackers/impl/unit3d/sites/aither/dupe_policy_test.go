@@ -560,3 +560,38 @@ func TestDuplicateTitleWEBEncodeStillNeedsSourceReview(t *testing.T) {
 		t.Fatalf("partial WEB source bypassed review: %#v", got)
 	}
 }
+
+func TestDuplicateSpecialEpisodesRetainSeparateContentScopes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name            string
+		season, episode int
+		coexists        bool
+	}{
+		{name: "same special", episode: 1},
+		{
+			name:     "different special",
+			episode:  2,
+			coexists: true,
+		},
+		{
+			name:     "ordinary episode",
+			season:   1,
+			episode:  1,
+			coexists: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			target := aitherTarget("REMUX", "1080p", "H.264", 100)
+			target.Category, target.Episode = "TV", 1
+			target.Names = []string{"Example.Series.S00E01.1080p.BluRay.REMUX-GRP"}
+			candidate := aitherCandidate("existing", target)
+			candidate.Season, candidate.Episode = test.season, test.episode
+			candidate.Name = fmt.Sprintf("Example.Series.S%02dE%02d.1080p.BluRay.REMUX-OTHER", test.season, test.episode)
+			got := aitherEvaluate(target, candidate)
+			if len(got.Candidates) != 1 || (got.Candidates[0].Relation == api.DupeRelationCoexists) != test.coexists || got.RequiresAction == test.coexists {
+				t.Fatalf("specials content comparison changed: %#v", got)
+			}
+		})
+	}
+}

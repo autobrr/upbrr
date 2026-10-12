@@ -13,6 +13,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestExtract(t *testing.T) {
@@ -156,6 +157,19 @@ func TestExtract(t *testing.T) {
 	}
 }
 
+func TestSpecialTechnicalSuffixesRemainIndividual(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"1080p", "2160p", "10bit", "2026-01-01", "2026.01.01"} {
+		t.Run(suffix, func(t *testing.T) {
+			t.Parallel()
+			got := Extract("Example.Series.S00E01-"+suffix+".WEB-DL-GRP.mkv", preparationstate.State{})
+			if !got.SeasonKnown || got.Season != 0 || got.Episode != 1 || got.MultipleEpisodes || got.TVPack {
+				t.Fatalf("technical suffix changed individual membership: %+v", got)
+			}
+		})
+	}
+}
+
 func TestFormatSeasonEpisode(t *testing.T) {
 	t.Parallel()
 	if got := FormatSeason(3); got != "S03" {
@@ -178,6 +192,18 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 		value string
 		want  int
 	}{
+		{
+			name:  "explicit special season",
+			parse: ParseSeasonInstruction,
+			value: "S00",
+			want:  0,
+		},
+		{
+			name:  "bare special season",
+			parse: ParseSeasonInstruction,
+			value: "00",
+			want:  0,
+		},
 		{
 			name:  "empty season clears",
 			parse: ParseSeasonInstruction,
@@ -305,11 +331,6 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 			value: "0",
 		},
 		{
-			name:  "zero prefixed season",
-			parse: ParseSeasonInstruction,
-			value: "S00",
-		},
-		{
 			name:  "season overflow",
 			parse: ParseSeasonInstruction,
 			value: "10000",
@@ -384,7 +405,10 @@ func TestExtractSeasonTokenWidths(t *testing.T) {
 	for _, token := range []string{"768x576", "1920x800", "1x05", "01x05", "2026x03", "S1E03", "S123E03", "S12345E03", "S1", "S123", "Season 1", "Series 123", "S1E03E04", "S123E03E04"} {
 		t.Run(token, func(t *testing.T) {
 			got := Extract("Example.Show."+token+".1080p.mkv", preparationstate.State{})
-			if !reflect.DeepEqual(got, Result{}) {
+			// Invalid season widths cannot supply coordinates, but explicit
+			// combined membership must survive a later coordinate correction.
+			want := Result{MultipleEpisodes: token == "S1E03E04" || token == "S123E03E04"}
+			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("rejected token %q produced %+v", token, got)
 			}
 		})
@@ -450,5 +474,27 @@ func TestFormatSeasonInstructionRoundTrip(t *testing.T) {
 				t.Fatalf("season did not round-trip: %d, %v", got, err)
 			}
 		})
+	}
+}
+
+func TestExplicitSpecialEpisodeZeroDoesNotUseFallbacks(t *testing.T) {
+	t.Parallel()
+	for _, meta := range []preparationstate.State{
+		{},
+		{Release: api.ReleaseInfo{Episode: 3}},
+		{VideoPath: "Example.Series.E02.mkv"},
+	} {
+		got := Extract("[GRP] Example.Series.S00E00.02 (1080p).mkv", meta)
+		if got.Episode != 0 || got.AbsoluteEpisode != 2 || !got.SeasonKnown {
+			t.Fatalf("invalid special episode was repaired by fallback evidence: %+v", got)
+		}
+	}
+	for _, name := range []string{
+		"[GRP] Example.Series.S02E00.02 (1080p).mkv",
+		"[GRP] Example.Series.02 (1080p).mkv",
+	} {
+		if got := Extract(name, preparationstate.State{}); got.Episode != 2 || got.AbsoluteEpisode != 2 {
+			t.Fatalf("positive/unknown season fallback changed: %+v", got)
+		}
 	}
 }

@@ -2012,6 +2012,9 @@
           "EpisodeLabel": {
             "type": "string"
           },
+          "MultipleEpisodes": {
+            "type": "boolean"
+          },
           "Overview": {
             "type": "string"
           },
@@ -2041,6 +2044,7 @@
           "DateMatched",
           "Episode",
           "EpisodeLabel",
+          "MultipleEpisodes",
           "Overview",
           "Pack",
           "Season",
@@ -2764,6 +2768,9 @@
           "Season": {
             "type": "integer"
           },
+          "SeasonKnown": {
+            "type": "boolean"
+          },
           "Title": {
             "type": "string"
           }
@@ -2774,6 +2781,7 @@
           "ReleaseDate",
           "ReleaseYear",
           "Season",
+          "SeasonKnown",
           "Title"
         ]
       },
@@ -9345,6 +9353,9 @@
           "EpisodeSeason": {
             "type": "integer"
           },
+          "EpisodeSeasonKnown": {
+            "type": "boolean"
+          },
           "Episodes": {
             "type": "array",
             "items": {
@@ -9425,6 +9436,7 @@
           "EpisodeOverview",
           "EpisodeOverviewEnglish",
           "EpisodeSeason",
+          "EpisodeSeasonKnown",
           "Episodes",
           "FirstAired",
           "Genres",

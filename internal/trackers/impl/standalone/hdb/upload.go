@@ -276,7 +276,8 @@ func buildUploadFields(
 	if isHDBTVCategory(meta) {
 		season := meta.SeasonInt
 		episode := meta.EpisodeInt
-		if season <= 0 {
+		// Missing season metadata must not be treated as an explicit S00 special.
+		if season < 0 || season == 0 && meta.SeasonStr != "S00" {
 			season = 1
 		}
 		if episode <= 0 {
