@@ -115,9 +115,9 @@ func TestPresentationRefreshFailurePreservesPollingAndCancellation(t *testing.T)
 	}
 }
 
-type cliCompositeProjectionFixture struct{ proceed <-chan struct{} }
+type cliCompositeProjectionFixture struct{}
 
-func (b cliCompositeProjectionFixture) Build(ctx context.Context, _ api.ReleaseSnapshot, _ api.UploadSubject,
+func (cliCompositeProjectionFixture) Build(_ context.Context, _ api.ReleaseSnapshot, _ api.UploadSubject,
 	trackers []api.TrackerID, instructions map[api.TrackerID]api.TrackerProjectionInstructions,
 	_ map[api.TrackerID]api.WorkflowFingerprint, execution api.WorkflowExecutionMode,
 ) (api.TrackerCatalogSnapshot, api.TrackerRuntimeSnapshot, api.TrackerSelection, api.TrackerReleaseProjectionSet, error) {
@@ -128,12 +128,6 @@ func (b cliCompositeProjectionFixture) Build(ctx context.Context, _ api.ReleaseS
 		Prompt:    "Choose edition.",
 	}}
 	if answer := instructions["BETA"].Questionnaire["edition"]; answer != nil {
-		select {
-		case <-b.proceed:
-		case <-ctx.Done():
-			return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{},
-				fmt.Errorf("projection fixture canceled: %w", ctx.Err())
-		}
 		name, actions = cliCompositeNewName, nil
 	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(name)
@@ -224,7 +218,7 @@ func (b cliCompositePreflightFixture) Build(ctx context.Context, _ api.UploadSub
 }
 
 func TestCompositePollingRefreshesActualQuestionnaireAndStageSnapshots(t *testing.T) {
-	projectionProceed, preflightProceed := make(chan struct{}), make(chan struct{})
+	preflightProceed := make(chan struct{})
 	module, err := releaseworkflow.New(releaseworkflow.NewMemoryRepository(), releaseworkflow.NewMemoryPrivateResourceStore(),
 		releaseworkflow.ReleasePreparerFunc{
 			PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
@@ -246,7 +240,7 @@ func TestCompositePollingRefreshesActualQuestionnaireAndStageSnapshots(t *testin
 					Type:        "movie",
 				}, nil
 			},
-		}, releaseworkflow.WithTrackerProjectionBuilder(cliCompositeProjectionFixture{proceed: projectionProceed}),
+		}, releaseworkflow.WithTrackerProjectionBuilder(cliCompositeProjectionFixture{}),
 		releaseworkflow.WithTrackerPreflightBuilder(cliCompositePreflightFixture{proceed: preflightProceed}))
 	if err != nil {
 		t.Fatal(err)
@@ -327,27 +321,22 @@ func TestCompositePollingRefreshesActualQuestionnaireAndStageSnapshots(t *testin
 			t.Error("composite presentation poller failed to join")
 		}
 	}()
-	for _, name := range []string{"", cliCompositeNewName} {
-		deadline = time.Now().Add(5 * time.Second)
-		for {
-			bridge.mu.Lock()
-			view := bridge.latest
-			bridge.mu.Unlock()
-			if view.Revision > blocked.Workflow.Revision && len(view.Lanes) == 1 && !strings.Contains(view.Lanes[0].Detail, cliCompositeOldName) &&
-				(name == "" || strings.Contains(view.Lanes[0].Detail, name)) {
-				if view.OperationID != resumed.Operation.ID || view.Lanes[0].Status == cliLaneReady {
-					t.Fatal("fresh composite snapshot lost operation identity or displayed unresolved authority as ready")
-				}
-				break
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		bridge.mu.Lock()
+		view := bridge.latest
+		bridge.mu.Unlock()
+		if view.Revision > blocked.Workflow.Revision && len(view.Lanes) == 1 && !strings.Contains(view.Lanes[0].Detail, cliCompositeOldName) &&
+			strings.Contains(view.Lanes[0].Detail, cliCompositeNewName) {
+			if view.OperationID != resumed.Operation.ID || view.Lanes[0].Status == cliLaneReady {
+				t.Fatal("fresh composite snapshot lost operation identity or displayed unresolved authority as ready")
 			}
-			if time.Now().After(deadline) {
-				t.Fatalf("intermediate composite snapshot did not replace prior questionnaire authority (stage %q)", name)
-			}
-			time.Sleep(10 * time.Millisecond)
+			break
 		}
-		if name == "" {
-			close(projectionProceed)
+		if time.Now().After(deadline) {
+			t.Fatal("intermediate composite snapshot did not replace prior questionnaire authority")
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

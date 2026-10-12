@@ -294,6 +294,17 @@ func (b workflowUploadPlanBuilder) Build(
 	if err != nil {
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: resolve subject: %w", err)
 	}
+	subject.TrackerTitleSearchEvidence = make(map[string]api.TrackerTitleSearchEvidence)
+	for _, projection := range eligible {
+		if evidence := projection.TitleSearchEvidence; evidence != nil && evidence.Current(subject.Identity) &&
+			evidence.ConfigFingerprint == projection.ConfigFingerprint &&
+			evidence.FreshUntil.After(now) {
+			subject.TrackerTitleSearchEvidence[string(projection.TrackerID)] = *evidence
+			if evidence.FreshUntil.Before(plan.ExpiresAt) {
+				plan.ExpiresAt = evidence.FreshUntil
+			}
+		}
+	}
 	subject.ExactMedia = exactMedia
 	subject.ImageHostOverrides.FailedHosts = slices.Concat(subject.ImageHostOverrides.FailedHosts, media.FailedHosts)
 	skipImageUpload := true
@@ -692,6 +703,7 @@ func workflowDryRunClientFailure(
 		api.OperationFailureClientInjection,
 		api.OperationFailureImageHostUnavailable,
 		api.OperationFailureAudioAnalysis,
+		api.OperationFailureHDRAnalysis,
 		api.OperationFailureInternal:
 	}
 	return api.WorkflowFailure{
@@ -1097,15 +1109,18 @@ func (e *workflowUploadExecution) Execute(
 			failureCode := api.OperationFailureInternal
 			recovery := api.OperationRecoveryRetry
 			message := strings.TrimSpace(logging.SanitizeMessage(result.Failure.Message))
-			if message == "" {
-				message = "Tracker upload failed. Review the tracker result and retry after correcting the failure."
-			}
 			submissionStatus := api.StageStatusFailed
 			if result.Failure.Code == "unknown_outcome" {
 				failureCode = api.OperationFailureUnknownOutcome
 				recovery = api.OperationRecoveryConfirm
-				message = "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing."
+				warning := "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing."
+				if message != "" {
+					warning += " Reason: " + message
+				}
+				message = warning
 				submissionStatus = api.StageStatusUnavailable
+			} else if message == "" {
+				message = "Tracker upload failed. Review the tracker result and retry after correcting the failure."
 			}
 			public = append(public, api.UploadTrackerResult{
 				TrackerID:             trackerID,
@@ -1370,6 +1385,7 @@ func workflowClientFailureRecovery(code api.OperationFailureCode) api.OperationR
 		api.OperationFailureDryRunClientInjection,
 		api.OperationFailureImageHostUnavailable,
 		api.OperationFailureAudioAnalysis,
+		api.OperationFailureHDRAnalysis,
 		api.OperationFailureInternal,
 		"":
 		return api.OperationRecoveryNone

@@ -172,14 +172,14 @@ for (const scenario of [
     upload: true,
   },
   {
-    name: "screenshot trackers expose image pages without requiring descriptions",
+    name: "ANT requires descriptions before upload",
     trackers: ["ANT"],
     mediaKind: "movie",
     preparedMediaInfo: true,
     releaseDisplayName: releaseWorkflowParityFixture.releaseDisplayName,
     screenshots: true,
     descriptions: false,
-    upload: true,
+    upload: false,
   },
   {
     name: "mixed trackers expose the strictest shared content workflow",
@@ -247,9 +247,11 @@ for (const scenario of [
 
 for (const tracker of ["ANT", "BTN"] as const) {
   for (const action of ["Run dry run", "Start upload"] as const) {
-    test(`embedded web ${tracker} ${action} prepares content without the description editor`, async ({
-      page,
-    }) => {
+    const contentFlow =
+      tracker === "ANT"
+        ? "reviews saved descriptions and retains hosted screenshots"
+        : "prepares content without the description editor";
+    test(`embedded web ${tracker} ${action} ${contentFlow}`, async ({ page }) => {
       const workspace = await createE2EWorkspace({
         mediaKind: tracker === "BTN" ? "tv" : "movie",
         preparedMediaInfo: true,
@@ -275,11 +277,59 @@ for (const tracker of ["ANT", "BTN"] as const) {
         }
         await runDuplicateCheck(page);
         if (tracker === "ANT") {
+          await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
           await page.getByRole("button", { name: "Screenshots" }).click();
           await page.getByRole("button", { name: "Generate screenshots" }).click();
           await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+          await expect(page.getByRole("button", { name: "Descriptions" })).toBeEnabled();
+          await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
+          await page.getByRole("button", { name: "Upload Images" }).click();
+          await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
+          await expect(page.getByText("1 saved")).toBeVisible();
+          expect(workspace.fake.counters.imageUploads).toBe(1);
+          await page.getByRole("button", { name: "Descriptions" }).click();
+          await page.getByRole("button", { name: "Refresh descriptions" }).click();
+          await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
+          const editor = page.getByRole("textbox", { name: "Raw description for ANT" });
+          await expect(editor).toHaveValue("E2E description fixture.");
+          const editedDescription =
+            "[b]ANT release notes[/b]\n[quote]Screenshots are hosted separately.[/quote]";
+          await editor.fill(editedDescription);
+          await page.getByRole("button", { name: "Render ANT", exact: true }).click();
+          const rendered = page.locator(".tracker-description.rendered");
+          await expect(rendered.locator("b")).toHaveText("ANT release notes");
+          await expect(rendered.locator("blockquote")).toHaveText(
+            "QuoteScreenshots are hosted separately.",
+          );
+          const saved = waitForAppMethod(page, "SaveReleaseWorkflowDescriptionOverride");
+          await page.getByRole("button", { name: "Save group ANT", exact: true }).click();
+          expect((await saved).ok()).toBe(true);
+          await expect(page.getByText("Description saved.", { exact: true })).toBeVisible();
+
+          const reloaded = waitForAppMethod(page, "GetActiveInput");
+          await page.reload();
+          const current = await activeCurrentFromResponse(await reloaded);
+          expect(current.descriptions?.descriptions).toEqual([
+            expect.objectContaining({
+              groupKey: "ant",
+              trackerIds: ["ANT"],
+              source: editedDescription,
+            }),
+          ]);
+          expect(
+            current.media?.artifacts
+              .filter((artifact) => artifact.kind === "hosted_image")
+              .map((artifact) => artifact.url),
+          ).toEqual([`${workspace.fake.url}/image/1`]);
+          await page.getByRole("button", { name: "Descriptions" }).click();
+          await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
+          await expect(editor).toHaveValue(editedDescription);
+          await expect(rendered.locator("b")).toHaveText("ANT release notes");
+          await page.getByRole("button", { name: "Upload Images" }).click();
+          await expect(page.getByText("1 saved")).toBeVisible();
+        } else {
+          await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
         }
-        await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
         await page.getByRole("button", { name: "Upload", exact: true }).click();
         await page.getByRole("button", { name: action, exact: true }).click();
         if (action === "Start upload") {
@@ -296,7 +346,11 @@ for (const tracker of ["ANT", "BTN"] as const) {
           expect(workspace.fake.counters.trackerUploads).toBe(0);
           expect(workspace.fake.counters.clientInjections).toBe(0);
         }
-        await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
+        await expectEnabledState(
+          page.getByRole("button", { name: "Descriptions" }),
+          tracker === "ANT" && action === "Run dry run",
+        );
+        expect(workspace.fake.counters.imageUploads).toBe(tracker === "ANT" ? 1 : 0);
         await expect(page.getByText("Exact upload dry run is unavailable.")).toHaveCount(0);
       } finally {
         await app?.stop();
@@ -986,7 +1040,7 @@ test("embedded web recovers saved corrections before a release snapshot and pres
         const continued = waitForAppMethod(page, "OpenActiveInput");
         await apply.click();
         const continuedResponse = await continued;
-        expect(continuedResponse.ok()).toBe(true);
+        expect(continuedResponse.ok(), app!.output()).toBe(true);
         const command = workflowCommandBody(
           "OpenActiveInput",
           continuedResponse.request().postDataJSON(),
@@ -1844,6 +1898,80 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
   }
 });
 
+test("embedded HDR description opens a full-size lightbox without a saved preview map", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    await runDuplicateCheck(page);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await page.getByRole("button", { name: "Generate screenshots" }).click();
+    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+    await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
+    await expect(page.getByText("1 saved")).toBeVisible();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await page.getByRole("button", { name: "Refresh descriptions" }).click();
+    await page.getByRole("button", { name: "Expand" }).click();
+    const url = "https://images.example.invalid/hdr.png";
+    await page.route(url, (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="1200"><rect width="100%" height="100%" fill="#5975a9"/></svg>',
+      }),
+    );
+    await page.getByRole("textbox").fill(`[spoiler=source_hdr][img]${url}[/img][/spoiler]`);
+    await page.getByRole("button", { name: "Render HDS", exact: true }).click();
+    const preview = page
+      .getByRole("heading", { name: "Rendered Raw Preview" })
+      .locator("../..")
+      .locator(".tracker-description.rendered");
+    await preview.locator("summary").click();
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate((mode) => {
+        const next = JSON.stringify({ version: 1, theme: "minimal", mode, accents: {} });
+        localStorage.setItem("upbrr:appearance:v1", next);
+        dispatchEvent(
+          new StorageEvent("storage", {
+            key: "upbrr:appearance:v1",
+            newValue: next,
+            storageArea: localStorage,
+          }),
+        );
+      }, mode);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await preview.getByRole("img").click();
+        const dialog = page.getByRole("dialog", { name: "Description image" });
+        const image = dialog.getByRole("img");
+        await expect(image).toHaveAttribute("src", url);
+        await expect
+          .poll(() =>
+            image.evaluate((image: HTMLImageElement) => ({
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+            })),
+          )
+          .toEqual({ width: 3000, height: 1200 });
+        const box = await image.boundingBox();
+        expect(box?.width).toBe(3000);
+        expect(box?.height).toBe(1200);
+        await dialog.getByRole("button", { name: "Close image preview" }).click();
+        await expect(dialog).toHaveCount(0);
+      }
+    }
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web restores edited descriptions after reopening an input", async ({ page }) => {
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
@@ -2029,7 +2157,24 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
     for (const tracker of ["HDS", "PTP"]) {
       await page.getByRole("checkbox", { name: tracker }).check();
     }
-    await runDuplicateCheck(page, "blocked");
+    const checked = await runDuplicateCheck(page, "blocked");
+    const ptp = checked.projections?.projections.find(
+      (projection) => projection.trackerId === "PTP",
+    );
+    expect(ptp).toMatchObject({ readiness: "ready", dupeReady: true });
+    expect(ptp?.questionnaire ?? []).toHaveLength(0);
+    await expect(page.getByRole("button", { name: "Apply tracker answers" })).toHaveCount(0);
+    expect(checked.dupes?.results.map((result) => result.trackerId).sort()).toEqual(["HDS", "PTP"]);
+    expect(checked.dupes?.results.find((result) => result.trackerId === "PTP")).toMatchObject({
+      status: "blocked",
+      decision: "pending",
+      matches: [
+        {
+          name: "Example.Show.S01E01.1080p.WEB-DL.DV-GRP",
+          relation: "manual_review",
+        },
+      ],
+    });
 
     await expect(page.getByText("Example.Release.2026.1080p.SDR-GRP")).toHaveCount(0);
     await expect(page.getByText("Example.Release.2026.1080p.HDR10-GRP")).toBeVisible();
@@ -2272,14 +2417,17 @@ for (const size of [
         const imageBox = await image.boundingBox();
         expect(imageBox?.width).toBe(size.width);
         expect(imageBox?.height).toBe(size.height);
-        await scrollArea.evaluate((element) => element.scrollTo(0, 0));
-        const start = await scrollArea.evaluate((element) => {
-          const box = element.getBoundingClientRect();
-          const img = element.querySelector("img")!.getBoundingClientRect();
-          return { left: img.left - box.left, top: img.top - box.top };
-        });
-        expect(start.left).toBeGreaterThanOrEqual(0);
-        expect(start.top).toBe(0);
+        // Keyboard scrolling can still animate after the viewport changes.
+        await expect
+          .poll(async () => {
+            await scrollArea.evaluate((element) => element.scrollTo(0, 0));
+            return scrollArea.evaluate((element) => {
+              const box = element.getBoundingClientRect();
+              const img = element.querySelector("img")!.getBoundingClientRect();
+              return { leftInBounds: img.left >= box.left, top: img.top - box.top };
+            });
+          })
+          .toEqual({ leftInBounds: true, top: 0 });
         const overflow = await scrollArea.evaluate((element) => ({
           x: element.scrollWidth > element.clientWidth,
           y: element.scrollHeight > element.clientHeight,
@@ -2295,19 +2443,21 @@ for (const size of [
             .poll(() => scrollArea.evaluate((element) => element.scrollTop))
             .toBeGreaterThan(0);
         }
-        await scrollArea.evaluate((element) =>
-          element.scrollTo(element.scrollWidth, element.scrollHeight),
-        );
-        const end = await scrollArea.evaluate((element) => {
-          const box = element.getBoundingClientRect();
-          const img = element.querySelector("img")!.getBoundingClientRect();
-          return {
-            right: img.right - (box.left + element.clientWidth),
-            bottom: img.bottom - (box.top + element.clientHeight),
-          };
-        });
-        expect(end.right).toBeLessThanOrEqual(1);
-        expect(end.bottom).toBeLessThanOrEqual(1);
+        await expect
+          .poll(async () => {
+            await scrollArea.evaluate((element) =>
+              element.scrollTo(element.scrollWidth, element.scrollHeight),
+            );
+            return scrollArea.evaluate((element) => {
+              const box = element.getBoundingClientRect();
+              const img = element.querySelector("img")!.getBoundingClientRect();
+              return {
+                rightInBounds: img.right - (box.left + element.clientWidth) <= 1,
+                bottomInBounds: img.bottom - (box.top + element.clientHeight) <= 1,
+              };
+            });
+          })
+          .toEqual({ rightInBounds: true, bottomInBounds: true });
         await expect(close).toBeInViewport();
       }
       await close.click();

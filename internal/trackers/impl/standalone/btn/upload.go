@@ -517,9 +517,9 @@ func buildBTNUploadPayload(req trackers.PreparationInput, fields map[string]stri
 	if resolveFastTorrent(req.TrackerConfig) {
 		payload["fasttorrent"] = "on"
 	}
-	if language := resolveBTNOriginalLanguage(req.Meta); language != "" && !isBTNEnglishLanguage(language) {
+	if foreign, countryID := btnLanguagePayload(req.Meta); foreign {
 		payload["foreign"] = "on"
-		if countryID := resolveCountryID(req.Meta); countryID != "" {
+		if countryID != "" {
 			payload["country"] = countryID
 		}
 	}

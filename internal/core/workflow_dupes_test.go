@@ -12,9 +12,87 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestWorkflowStaffTokenRequiredForRemoteExactDuplicates(t *testing.T) {
+	result := api.DupeCheckResult{
+		Status:             "completed",
+		RequiresStaffToken: true,
+		HasDupes:           true,
+		Search:             api.DupeSearchEvidence{Complete: true},
+		Evaluations:        []api.DupeCandidateEvaluation{{Relation: api.DupeRelationExactDuplicate}},
+	}
+	target := api.TrackerDupeAssessment{TrackerID: "EXAMPLE"}
+	setWorkflowDupeOutcome(&target, result)
+	if target.Decision != api.DupeDecisionPending || target.Status != api.StageStatusBlocked || len(target.RequiredActions) != 1 ||
+		!strings.Contains(target.RequiredActions[0].Prompt, "staff-issued token") {
+		t.Fatalf("exact duplicate did not require token confirmation: %+v", target)
+	}
+}
+
+func TestWorkflowPackWarningUsesExistingBoundDuplicateReview(t *testing.T) {
+	evaluation := dupechecking.Evaluate(
+		api.TrackerDuplicateTarget{
+			Category: "TV",
+			Type:     "WEBDL",
+			Season:   1,
+			Pack:     true,
+		},
+		[]dupechecking.TrackerCandidate{{
+			ID:       "episode",
+			Name:     "Example Episode",
+			Category: "TV",
+			Type:     "WEBDL",
+			Season:   1,
+			Episode:  2,
+		}},
+		trackers.DupePolicy{
+			ID:                            "review/duplicate/v1",
+			EvidenceID:                    "reviewed-pack-rules",
+			PackContainmentRequiresReview: true,
+		},
+		dupechecking.SearchEvidence{Complete: true, WorkScope: dupechecking.WorkScopeProviderID},
+	)
+	item := evaluation.Candidates[0]
+	result := api.DupeCheckResult{
+		Status:   "completed",
+		HasDupes: evaluation.RequiresAction,
+		Search: api.DupeSearchEvidence{
+			Complete:       true,
+			CandidateCount: 1,
+			WorkScope:      string(dupechecking.WorkScopeProviderID),
+		},
+		Evaluations: []api.DupeCandidateEvaluation{{
+			ID:       item.Candidate.ID,
+			Name:     item.Candidate.Name,
+			Relation: item.Relation,
+			Reasons:  item.Reasons,
+		}},
+	}
+	assessment := api.TrackerDupeAssessment{TrackerID: "SP", Matches: publicDupeMatches(result)}
+	setWorkflowDupeOutcome(&assessment, result)
+	if assessment.Decision != api.DupeDecisionPending || len(assessment.RequiredActions) != 1 || assessment.RequiredActions[0].Kind != api.RequiredActionReviewDuplicates ||
+		len(assessment.Matches) != 1 || assessment.Matches[0].Reasons[0].Message != item.Reasons[0].Message {
+		t.Fatalf("comparison warning bypassed shared review: %#v", assessment)
+	}
+	before, err := duplicateEvidenceFingerprint(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Evaluations[0].Group = "CHANGED"
+	after, err := duplicateEvidenceFingerprint(result)
+	if err != nil || before == after {
+		t.Fatalf("changed candidate facts retained evidence authority: %v", err)
+	}
+	result.Search.Complete = false
+	refreshed, err := duplicateEvidenceFingerprint(result)
+	if err != nil || refreshed == after {
+		t.Fatalf("changed enumeration retained evidence authority: %v", err)
+	}
+}
 
 type workflowDupeServiceFake struct {
 	queries     []string
@@ -546,4 +624,94 @@ func workflowTestFingerprint(t *testing.T, value string) api.WorkflowFingerprint
 		t.Fatalf("fingerprint %s: %v", value, err)
 	}
 	return fingerprint
+}
+
+func TestWorkflowTargetReviewWithoutCandidates(t *testing.T) {
+	result := api.DupeCheckResult{
+		Status:        "completed",
+		Search:        api.DupeSearchEvidence{Complete: true},
+		ReviewReasons: []api.DupeReason{{Code: "source_review", Message: "Verify source eligibility."}},
+	}
+	assessment := api.TrackerDupeAssessment{TrackerID: "EXAMPLE"}
+	setWorkflowDupeOutcome(&assessment, result)
+	if assessment.Decision != api.DupeDecisionPending || len(assessment.RequiredActions) != 1 || assessment.RequiredActions[0].Kind != api.RequiredActionReviewDuplicates || len(publicDupeMatches(result)) != 0 {
+		t.Fatalf("target review did not use existing review action without invented candidates: %#v", assessment)
+	}
+	before, err := duplicateEvidenceFingerprint(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.ReviewReasons[0].Message = "Verify staff approval."
+	after, err := duplicateEvidenceFingerprint(result)
+	if err != nil || before == after {
+		t.Fatalf("changed review retained authority: %v", err)
+	}
+	result.Evaluations = []api.DupeCandidateEvaluation{{Relation: api.DupeRelationExactDuplicate}}
+	setWorkflowDupeOutcome(&assessment, result)
+	if assessment.Decision != api.DupeDecisionAccepted {
+		t.Fatal("target review weakened exact duplicate")
+	}
+}
+
+func TestDuplicateEvidenceFingerprintPreservesLegacyEmptyReview(t *testing.T) {
+	result := api.DupeCheckResult{Status: "completed", Search: api.DupeSearchEvidence{Complete: true}}
+	legacy, err := api.CanonicalWorkflowFingerprint(struct {
+		Search      api.DupeSearchEvidence
+		Evaluations []api.DupeCandidateEvaluation
+		HasDupes    bool
+		Skipped     bool
+		SkipCode    string
+		Status      string
+		Error       string
+	}{Search: result.Search, Status: result.Status})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reasons := range [][]api.DupeReason{nil, {}} {
+		result.ReviewReasons = reasons
+		got, err := duplicateEvidenceFingerprint(result)
+		if err != nil || got != legacy {
+			t.Fatalf("empty review changed legacy authority: %s != %s (%v)", got, legacy, err)
+		}
+	}
+}
+
+func TestWorkflowDupeBuilderRetainsTargetReviewWithoutCandidates(t *testing.T) {
+	now := time.Date(2026, time.October, 8, 12, 0, 0, 0, time.UTC)
+	reason := api.DupeReason{Code: "source_review", Message: "Verify source eligibility."}
+	service := &workflowDupeServiceFake{result: &api.DupeCheckResult{
+		Status:        "completed",
+		Search:        api.DupeSearchEvidence{Complete: true},
+		ReviewReasons: []api.DupeReason{reason},
+	}}
+	projections := api.TrackerReleaseProjectionSet{
+		ID:       "projections",
+		Revision: 1,
+		Projections: []api.TrackerReleaseProjection{{
+			TrackerID:         "EXAMPLE",
+			UploadReleaseName: "Example.2026.1080p-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			DupeReady:         true,
+			DuplicatePolicyID: "example/v1",
+		}},
+	}
+	preflight := api.TrackerPreflightAssessment{
+		ID:        "preflight",
+		Revision:  1,
+		Status:    api.StageStatusReady,
+		ExpiresAt: now.Add(time.Hour),
+		Results:   []api.TrackerPreflightResult{{TrackerID: "EXAMPLE", State: api.TrackerPreflightStateReady}},
+	}
+	assessment, _, err := (workflowDupeBuilder{service: service}).Build(t.Context(), api.DuplicateSubject{}, projections, preflight, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := assessment.Results[0]
+	if result.Decision != api.DupeDecisionPending || len(result.Matches) != 0 || len(result.ReviewReasons) != 1 || result.ReviewReasons[0] != reason || result.EvidenceFingerprint == "" {
+		t.Fatalf("target policy review lost in projection: %#v", result)
+	}
+	service.result.ReviewReasons[0].Message = "Changed review."
+	if result.ReviewReasons[0] != reason {
+		t.Fatal("published review aliases service evidence")
+	}
 }

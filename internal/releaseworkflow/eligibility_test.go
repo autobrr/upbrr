@@ -16,6 +16,21 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestStaffTokenDownstreamGate(t *testing.T) {
+	projection := api.TrackerReleaseProjection{Readiness: api.ReadinessStatusReady, UploadReady: true}
+	for _, confirmed := range []bool{false, true} {
+		dupe := api.TrackerDupeAssessment{
+			Decision:            api.DupeDecisionIgnored,
+			Status:              api.StageStatusCompleted,
+			RequiresStaffToken:  true,
+			StaffTokenConfirmed: confirmed,
+		}
+		if got := ProjectionEligibleForDownstream(projection, dupe, true); got != confirmed {
+			t.Fatalf("confirmed=%t: downstream eligible=%t", confirmed, got)
+		}
+	}
+}
+
 func TestWorkflowModuleDoesNotReadRawTrackerSelectionDownstream(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +103,16 @@ func TestDownstreamEligibleProjectionsAfterMediaExcludesOnlyFailedImageHostTrack
 	failure, failed := TrackerImageHostFailure(media, "BETA")
 	if !failed || failure.Resource != "pixhost" {
 		t.Fatalf("tracker image-host failure = %#v, found=%t", failure, failed)
+	}
+	media.ImageHostUploadSkipped = true
+	eligible = DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
+	if len(eligible.Projections) != 2 {
+		t.Fatalf("skip retained terminal image-host exclusion: %#v", eligible.Projections)
+	}
+	media.Failures[0].Failure.Code = api.OperationFailureUnknownOutcome
+	eligible = DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
+	if len(eligible.Projections) != 1 || eligible.Projections[0].TrackerID != "ALPHA" {
+		t.Fatalf("skip cleared unresolved image-host effect: %#v", eligible.Projections)
 	}
 
 	media.Failures = nil
@@ -256,6 +281,15 @@ func TestDownstreamTrackerSetEnforcesModeAndExactApproval(t *testing.T) {
 	webTargets, err = resolveDownstreamTrackerSet(&state, nil, downstreamStageUpload, now)
 	if err != nil || !slices.Equal(webTargets.TrackerIDs(), []api.TrackerID{"ALPHA"}) {
 		t.Fatalf("WebUI upload targets after image-host failure = %#v err=%v", webTargets, err)
+	}
+	skipped := media
+	skipped.ImageHostUploadSkipped = true
+	state.Media[media.ID] = skipped
+	for _, stage := range []downstreamStage{downstreamStageDescriptions, downstreamStageUpload} {
+		webTargets, err = resolveDownstreamTrackerSet(&state, nil, stage, now)
+		if err != nil || !slices.Equal(webTargets.TrackerIDs(), []api.TrackerID{"ALPHA", "BETA"}) {
+			t.Fatalf("skip retained downstream exclusion stage=%s: %#v err=%v", stage, webTargets, err)
+		}
 	}
 
 	// Losing every tracker to image hosting must name the cause here instead of

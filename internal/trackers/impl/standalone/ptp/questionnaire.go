@@ -79,12 +79,19 @@ var subtitleReviewOptions = []string{
 	"Hardcoded Subs (Non-English)",
 }
 
-// projectionQuestionnaire exposes only the applicable subtitle review controls.
+// projectionQuestionnaire exposes applicable subtitle choices.
 // New-group requirements are discovered during remote upload preparation.
 func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
+	fields := subtitleReviewFields(input.Meta, standalone.QuestionnaireAnswers(input.Meta, "PTP"))
+	if field := legacySubtitleField(input.Meta); field.Required || field.Value != "auto" {
+		fields = append(fields, field)
+	}
+	if len(fields) == 0 {
+		return nil
+	}
 	return &api.TrackerQuestionnaire{
 		Tracker: "PTP",
-		Fields:  append(subtitleReviewFields(input.Meta, standalone.QuestionnaireAnswers(input.Meta, "PTP")), legacySubtitleField(input.Meta)),
+		Fields:  fields,
 	}
 }
 

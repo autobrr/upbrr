@@ -35,7 +35,7 @@ type trackerResponsibilityRow struct {
 }
 
 func unit3DResponsibility(name string) trackerResponsibilityRow {
-	return unit3DResponsibilityVersion(name, "canonical", "", "v2")
+	return unit3DResponsibilityVersion(name, "canonical", "", "v3")
 }
 
 func unit3DResponsibilityVersion(name string, policy string, descriptionGroup string, version string) trackerResponsibilityRow {
@@ -67,31 +67,31 @@ func azFamilyResponsibilityVersion(name string, version string) trackerResponsib
 		descriptionOwner:  "azfamily/description.go",
 		mediaOwner:        "azfamily/media.go",
 		releaseNamePolicy: "azfamily/" + strings.ToLower(name) + "/" + version,
-		projectorVersion:  "azfamily-v2",
+		projectorVersion:  "azfamily-v2-questionnaire-v2",
 		principalName:     "name",
 	}
 }
 
 var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("ACM", "acm", "acm", "v4"),
-	unit3DResponsibilityVersion("AITHER", "aither", "", "v4"),
+	unit3DResponsibilityVersion("AITHER", "aither", "", "v7"),
 	unit3DResponsibility("BLU"),
 	unit3DResponsibilityVersion("CBR", "cbr", "", "v2"),
-	unit3DResponsibilityVersion("DP", "dp", "", "v3"),
+	unit3DResponsibilityVersion("DP", "dp", "", "v8"),
 	unit3DResponsibilityVersion("DVL", "dvl", "", "v2"),
 	unit3DResponsibility("EMUW"),
 	unit3DResponsibility("FRIKI"),
-	unit3DResponsibilityVersion("HHD", "hhd", "", "v3"),
+	unit3DResponsibilityVersion("HHD", "hhd", "", "v4"),
 	unit3DResponsibility("IHD"),
 	unit3DResponsibility("ITT"),
 	unit3DResponsibilityVersion("LCD", "lcd", "", "v2"),
 	unit3DResponsibilityVersion("LDU", "ldu", "", "v2"),
 	unit3DResponsibility("LST"),
 	unit3DResponsibility("LT"),
-	unit3DResponsibilityVersion("LUME", "lume", "", "v3"),
+	unit3DResponsibilityVersion("LUME", "lume", "", "v5"),
 	unit3DResponsibility("MNS"),
 	unit3DResponsibilityVersion("OE", "oe", "oe", "v2"),
-	unit3DResponsibilityVersion("OTW", "otw", "", "v5"),
+	unit3DResponsibilityVersion("OTW", "otw", "", "v6"),
 	unit3DResponsibility("PT"),
 	unit3DResponsibility("PTT"),
 	unit3DResponsibility("R4E"),
@@ -101,15 +101,15 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("RMC", "rmc", "", "v3"),
 	unit3DResponsibilityVersion("SAM", "sam", "", "v2"),
 	unit3DResponsibility("SHRI"),
-	unit3DResponsibilityVersion("SP", "sp", "", "v4"),
+	unit3DResponsibilityVersion("SP", "sp", "sp", "v5"),
 	unit3DResponsibility("STC"),
 	unit3DResponsibility("TIK"),
 	unit3DResponsibility("TLZ"),
 	unit3DResponsibility("TOS"),
 	unit3DResponsibility("TTR"),
-	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v4"),
+	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v5"),
 	unit3DResponsibility("UTP"),
-	unit3DResponsibilityVersion("YUS", "yus", "", "v5"),
+	unit3DResponsibilityVersion("YUS", "yus", "", "v8"),
 	unit3DResponsibilityVersion("ZNTH", "znth", "", "v2"),
 	azFamilyResponsibilityVersion("AZ", "v4"),
 	azFamilyResponsibilityVersion("CZ", "v7"),
@@ -117,7 +117,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	{
 		name:              "ANT",
 		family:            trackers.FamilyStandalone,
-		contentMode:       trackers.UploadContentModeScreenshots,
+		contentMode:       trackers.UploadContentModeDescription,
 		authMode:          "api_key",
 		authOwner:         "../auth/contract/requirements.go",
 		taxonomyOwner:     "standalone/ant/taxonomy.go",
@@ -170,7 +170,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/bhd/description.go",
 		mediaOwner:        "standalone/bhd/media.go",
 		descriptionGroup:  "bhd",
-		releaseNamePolicy: "standalone/bhd/v7",
+		releaseNamePolicy: "standalone/bhd/v8",
 		projectorVersion:  "standalone-v2-questionnaire-v2",
 		principalName:     "name",
 	},

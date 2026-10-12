@@ -14,6 +14,9 @@ import (
 
 // SiteProfile contains site-owned Unit3D taxonomy and preparation callbacks.
 type SiteProfile struct {
+	// AdjustTitleSearchParams broadens only the dedicated preflight title lookup.
+	// Ordinary duplicate searches retain AdjustSearchParams behavior.
+	AdjustTitleSearchParams func(url.Values)
 	// ProjectionQuestionnaire exposes tracker-local review without payload preparation or I/O.
 	ProjectionQuestionnaire func(trackers.PreparationInput) *api.TrackerQuestionnaire
 	// InputSchema declares site-specific controls using finalized prepared facts.

@@ -1224,6 +1224,20 @@ func TestWorkflowUploadPlanFailsTerminalImageHostTrackerAndRestoresAfterRetry(t 
 		t.Fatalf("failed image-host upload plan = %#v", failed)
 	}
 
+	media.ImageHostUploadSkipped = true
+	skippedPlan, skippedExecution, err := builder.Build(
+		t.Context(), projections, dupes, workflowDupePrivateEvidence{}, media, workflowMediaPrivateArtifacts{}, descriptions,
+		api.DescriptionInstructions{Options: api.UploadOptions{SkipAutoTorrent: true}}, releaseworkflow.UploadPlanBuildOptions{}, time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build upload plan after explicit host skip: %v", err)
+	}
+	defer func() { _ = skippedExecution.Release() }()
+	if len(skippedPlan.Trackers) != 2 || !skippedPlan.Trackers[1].Eligible || len(service.projections) != 2 ||
+		service.subject.ExactMedia == nil || !service.subject.ExactMedia.ImageHostUploadSkipped {
+		t.Fatalf("skip retained upload exclusion or lost upload opt-out: plan=%+v subject=%+v", skippedPlan, service.subject)
+	}
+	media.ImageHostUploadSkipped = false
 	media.Failures = nil
 	retryPlan, retryExecution, err := builder.Build(
 		context.Background(),
@@ -1367,6 +1381,22 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			name:           "unknown outcome semantics",
 			code:           "unknown_outcome",
 			message:        "Workflow receipt unavailable.",
+			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing. Reason: Workflow receipt unavailable.",
+			wantSubmission: api.StageStatusUnavailable,
+		},
+		{
+			name:             "unknown outcome retains ANT rejection reason",
+			code:             "unknown_outcome",
+			message:          `trackers: ANT upload failed status=400: A file with the same infohash already exists on the site! passkey=never-print-this source=C:\releases\Example.Release.2026`,
+			wantMessage:      "Reason: trackers: ANT upload failed status=400: A file with the same infohash already exists on the site!",
+			wantSubmission:   api.StageStatusUnavailable,
+			wantRedaction:    true,
+			wantPathSanitize: true,
+		},
+		{
+			name:           "unknown outcome empty detail fallback",
+			code:           "unknown_outcome",
+			message:        " ",
 			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing.",
 			wantSubmission: api.StageStatusUnavailable,
 		},
@@ -1390,6 +1420,13 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			failure := results[0].Failures[0].Failure
 			if results[0].SubmissionStatus != test.wantSubmission || !strings.Contains(failure.Message, test.wantMessage) {
 				t.Fatalf("upload failure = %#v", results[0])
+			}
+			wantCode, wantRecovery := api.OperationFailureInternal, api.OperationRecoveryRetry
+			if test.code == "unknown_outcome" {
+				wantCode, wantRecovery = api.OperationFailureUnknownOutcome, api.OperationRecoveryConfirm
+			}
+			if failure.Code != wantCode || failure.Recovery != wantRecovery {
+				t.Fatalf("upload failure changed recovery semantics: %#v", failure)
 			}
 			if test.wantRedaction && (!strings.Contains(failure.Message, "passkey=[REDACTED]") || strings.Contains(failure.Message, "never-print-this")) {
 				t.Fatal("upload failure did not redact the tracker detail")

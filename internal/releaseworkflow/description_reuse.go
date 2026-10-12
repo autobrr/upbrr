@@ -36,6 +36,10 @@ func (m *Module) prepareReusableDescriptions(
 	if err != nil {
 		return fmt.Errorf("release workflow retain description media: %w", err)
 	}
+	privateMedia, err = m.descriptionResources(ctx, ownerID, state, privateMedia, now)
+	if err != nil {
+		return fmt.Errorf("release workflow retain description resources: %w", err)
+	}
 	privateInputs, err := m.private.Get(ownerID, state.Workflow.ID, descriptionPrivateResourceID(snapshot.ID), now)
 	if err != nil {
 		return fmt.Errorf("release workflow retain description inputs: %w", err)

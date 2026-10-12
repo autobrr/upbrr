@@ -169,7 +169,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	if category == "TV" {
 		searchYear := strings.TrimSpace(req.SearchYear)
 		if parsedYear, err := strconv.Atoi(searchYear); err == nil && parsedYear > 0 {
-			title = trimTrailingParentheticalYear(title, parsedYear)
+			title = metautil.TrimTrailingParentheticalYear(title, parsedYear)
 			if !req.NoYear {
 				year = parsedYear
 			}
@@ -1240,7 +1240,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	}
 	searchYear := ""
 	if strings.EqualFold(category, "TV") && year > 0 {
-		title = trimTrailingParentheticalYear(title, year)
+		title = metautil.TrimTrailingParentheticalYear(title, year)
 		searchYear = strconv.Itoa(year)
 	}
 	tvdbYearSource := ""
@@ -1489,18 +1489,6 @@ func fillProviderAlternateTitle(current, primary string, candidates ...string) s
 		return "AKA " + alternate
 	}
 	return ""
-}
-
-func trimTrailingParentheticalYear(title string, year int) string {
-	trimmed := strings.TrimSpace(title)
-	if year <= 0 {
-		return trimmed
-	}
-	suffix := "(" + strconv.Itoa(year) + ")"
-	if !strings.HasSuffix(trimmed, suffix) {
-		return trimmed
-	}
-	return strings.TrimSpace(strings.TrimSuffix(trimmed, suffix))
 }
 
 func inferReleaseTypeFromName(path string) string {

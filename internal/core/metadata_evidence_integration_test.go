@@ -230,6 +230,14 @@ func TestDefaultCoreMetadataEvidenceSurvivesServiceCorrection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Provider collection above intentionally exercises TVmaze only. Supply
+			// the current title snapshot required by AITHER at the projection boundary.
+			upload.Identity.TMDBID = 4242
+			upload.ProviderMetadata.TMDB = &api.TMDBMetadata{
+				TMDBID:   4242,
+				Category: "TV",
+				Title:    refreshed.Release.Naming.Title,
+			}
 			projection, failure := trackerimpl.MustNewRegistry().ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: "AITHER", Meta: upload}, fingerprint, fingerprint, fingerprint)
 			if failure != nil {
 				t.Fatal(failure)

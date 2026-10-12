@@ -13,7 +13,7 @@ import (
 func TestProjectionQuestionnaireRetainsAnsweredFields(t *testing.T) {
 	t.Parallel()
 
-	meta := api.UploadSubject{}
+	meta := api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie}}
 	questionnaire := Profile().ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
 	if questionnaire == nil || len(questionnaire.Fields) != 2 {
 		t.Fatalf("expected missing type and tags fields, got %#v", questionnaire)
@@ -26,7 +26,7 @@ func TestProjectionQuestionnaireRetainsAnsweredFields(t *testing.T) {
 		},
 	}
 	questionnaire = projectionQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if questionnaire == nil || len(questionnaire.Fields) != 3 {
+	if questionnaire == nil || len(questionnaire.Fields) != 4 {
 		t.Fatalf("answered fields disappeared: %#v", questionnaire)
 	}
 	want := map[string]string{
@@ -48,12 +48,15 @@ func TestProjectionQuestionnaireUsesAutomaticMetadata(t *testing.T) {
 		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: "Drama"}},
 	}
-	if got := projectionQuestionnaire(trackers.PreparationInput{Meta: meta}); got != nil {
+	if got := projectionQuestionnaire(
+		trackers.PreparationInput{Meta: meta},
+	); got == nil || len(got.Fields) != 1 || got.Fields[0].Key != "requestid" ||
+		got.Fields[0].Required {
 		t.Fatalf("automatic type and tags should need no questions: %#v", got)
 	}
 	meta.ProviderMetadata.TMDB.Keywords = "adult"
 	got := projectionQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if got == nil || len(got.Fields) != 1 || got.Fields[0].Key != "adult_screens" || got.Fields[0].Value != "no" {
+	if got == nil || len(got.Fields) != 2 || got.Fields[0].Key != "adult_screens" || got.Fields[0].Value != "no" {
 		t.Fatalf("adult screenshot consent should default to no: %#v", got)
 	}
 }

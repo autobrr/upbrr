@@ -155,6 +155,16 @@ const trackerSummary = (
   if (!result) return "Not checked";
   if (result.status === "failed") return "Check failed";
   const count = actionMatches(result).length;
+  if (!count && result.reviewReasons?.length) {
+    switch (result.decision) {
+      case "accepted":
+        return "Policy review · blocked";
+      case "ignored":
+        return "Policy review · acknowledged";
+      case "pending":
+        return "Policy review needed";
+    }
+  }
   switch (result.decision) {
     case "accepted":
       return `${count} potential dupe${count === 1 ? "" : "s"} · blocked`;
@@ -213,6 +223,13 @@ function CandidateList({ matches }: Readonly<{ matches: readonly DupeMatchProjec
             {facts.length ? (
               <span className="text-muted-foreground text-xs">{facts.join(" · ")}</span>
             ) : null}
+            {uniqueMessages((match.reasons || []).map((reason) => reason.message)).map(
+              (message) => (
+                <p key={message} className="w-full text-xs">
+                  {message}
+                </p>
+              ),
+            )}
           </div>
         );
       })}
@@ -273,6 +290,22 @@ function WorkflowDupeAssessmentView({
         const ruleAcknowledgement = !strictBlocked
           ? ruleAcknowledgementAction(projection)
           : undefined;
+        const bypassedPolicyNotices = uniqueMessages(
+          (projection?.policyDecisions || [])
+            .filter((decision) => !decision.blocking && decision.decision === "bypassed")
+            .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
+        );
+        const guidanceNotices = uniqueMessages(
+          (projection?.policyDecisions || [])
+            .filter(
+              (decision) =>
+                !decision.blocking &&
+                decision.disposition === "advisory" &&
+                (decision.code.startsWith("language_") || decision.code.startsWith("guidance_")) &&
+                decision.decision !== "bypassed",
+            )
+            .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
+        );
         const canonicalName = projection?.canonicalReleaseName?.trim() || "";
         const uploadName =
           result?.uploadReleaseName?.trim() || projection?.uploadReleaseName?.trim() || "";
@@ -288,7 +321,8 @@ function WorkflowDupeAssessmentView({
           namesModified || (uploadName && releaseNameNotices.length),
         );
         const blockReasons = trackerBlockReasons(projection, readiness, result);
-        const riskAcknowledgement = requiresRiskAcknowledgement(result);
+        const riskAcknowledgement =
+          Boolean(result?.reviewReasons?.length) || requiresRiskAcknowledgement(result);
         const canOverride = Boolean(
           result &&
           !inClient &&
@@ -331,6 +365,33 @@ function WorkflowDupeAssessmentView({
                   </p>
                 ))}
               </div>
+            ) : null}
+
+            {bypassedPolicyNotices.length ? (
+              <div
+                aria-label={`${trackerID} debug policy decisions`}
+                className="grid gap-1 text-sm text-muted-foreground"
+              >
+                {bypassedPolicyNotices.map((message) => (
+                  <p key={message}>Debug mode bypassed this rule: {message}</p>
+                ))}
+              </div>
+            ) : null}
+
+            {guidanceNotices.length ? (
+              <details
+                aria-label={`${trackerID} guidance warnings`}
+                className="rounded border border-border p-2 text-sm text-muted-foreground"
+              >
+                <summary className="cursor-pointer font-semibold focus-visible:outline focus-visible:outline-ring">
+                  Guidance ({guidanceNotices.length})
+                </summary>
+                <div className="mt-2 grid gap-1">
+                  {guidanceNotices.map((message) => (
+                    <p key={message}>Warning: {message}</p>
+                  ))}
+                </div>
+              </details>
             ) : null}
 
             {ruleAcknowledgement ? (
@@ -382,6 +443,19 @@ function WorkflowDupeAssessmentView({
               </div>
             ) : null}
 
+            {result?.reviewReasons?.length ? (
+              <div
+                aria-label={`${trackerID} duplicate policy review`}
+                className="grid gap-1 text-sm"
+              >
+                {uniqueMessages(
+                  result.reviewReasons.map((reason) => reason.message || reason.code),
+                ).map((message) => (
+                  <p key={message}>{message}</p>
+                ))}
+              </div>
+            ) : null}
+
             <CandidateList matches={matches} />
 
             {!strictBlocked && (nameConfirmation.pending || nameConfirmation.confirmed) ? (
@@ -420,17 +494,25 @@ function WorkflowDupeAssessmentView({
             {canOverride ? (
               <label className="inline-flex items-center gap-2 text-xs font-semibold">
                 <span>
-                  {riskAcknowledgement
-                    ? "Acknowledge tracker policy risk"
-                    : "Ignore duplicate match"}
+                  {result?.requiresStaffToken
+                    ? "I have the appropriate staff-issued token for this upload"
+                    : riskAcknowledgement
+                      ? "Acknowledge tracker policy risk"
+                      : "Ignore duplicate match"}
                 </span>
                 <Switch
                   aria-label={
-                    riskAcknowledgement
-                      ? `Acknowledge dupe risk for ${trackerID}`
-                      : `Ignore dupes for ${trackerID}`
+                    result?.requiresStaffToken
+                      ? `Confirm staff-issued token for ${trackerID}`
+                      : riskAcknowledgement
+                        ? `Acknowledge dupe risk for ${trackerID}`
+                        : `Ignore dupes for ${trackerID}`
                   }
-                  checked={result?.decision === "ignored" || ignoredTrackers.has(trackerID)}
+                  checked={
+                    result?.requiresStaffToken
+                      ? result.decision === "ignored" && result.staffTokenConfirmed === true
+                      : result?.decision === "ignored" || ignoredTrackers.has(trackerID)
+                  }
                   disabled={busy}
                   onChange={(event) => setIgnored(trackerID, event.target.checked)}
                 />
@@ -596,9 +678,19 @@ export default function DupeCheckPage({
                   <details className="rounded border border-border p-3" key={projection.trackerId}>
                     <summary className="cursor-pointer font-semibold focus-visible:outline focus-visible:outline-ring">
                       {projection.displayName}
-                      {projection.questionnaire?.some((field) => field.required)
-                        ? " · Required"
-                        : ""}
+                      {projection.questionnaire?.some(
+                        (field) =>
+                          field.required &&
+                          !(
+                            view.questionnaireAnswers[projection.trackerId]?.[field.key] ??
+                            field.value ??
+                            ""
+                          ).trim(),
+                      )
+                        ? " · Required answers missing"
+                        : projection.questionnaire?.some((field) => field.required)
+                          ? " · Required fields filled"
+                          : " · Optional controls"}
                       {projection.questionnaire?.some((field) => {
                         const draft = view.questionnaireAnswers[projection.trackerId]?.[field.key];
                         return (

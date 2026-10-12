@@ -39,6 +39,7 @@ func runAudioAnalysisOnly(ctx context.Context, opts cliOptions, visited map[stri
 	if err != nil {
 		return fmt.Errorf("resolve audio analysis input: %w", err)
 	}
+	// #nosec G703 -- The local CLI explicitly permits reading user-selected source paths.
 	info, err := os.Stat(input)
 	if err != nil {
 		return fmt.Errorf("open audio analysis input: %w", err)

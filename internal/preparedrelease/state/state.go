@@ -47,6 +47,7 @@ type DiscReportResource struct {
 
 // DiscResource contains all preparation-private evidence for one source disc.
 type DiscResource struct {
+	HDRCaptures         map[string]HDRCaptureResource
 	ID                  string
 	Name                string
 	Type                string
@@ -63,6 +64,19 @@ type DiscResource struct {
 	DurationSeconds     float64
 	DVDVOBMediaInfoJSON string
 	DVDVOBMediaInfoText string
+}
+
+// HDRCaptureResource is preparation-owned provisional metadata awaiting exact-generation adoption.
+type HDRCaptureResource struct {
+	Failure           *api.HDRAnalysisFailure
+	Lease             *HDRCaptureLease `json:"-"`
+	Directory         string
+	Path              string
+	SourceFingerprint string
+	Size              int64
+	SHA256            string
+	TrackID           uint64
+	Absent            bool
 }
 
 // ResolvedNaming contains the naming fields selected from canonical provider,
@@ -147,6 +161,7 @@ type State struct {
 	FileList                []string
 	SourceSize              int64
 	MediaInfoJSONPath       string
+	HDRFileEligibility      map[string]bool
 	MediaInfoTextPath       string
 	DVDIFOPath              string
 	DVDVOBPath              string
@@ -229,11 +244,13 @@ type State struct {
 	Identity                             api.ExternalIdentity
 	ExternalIdentityCandidates           []api.ExternalIdentityCandidate
 	ProviderMetadata                     api.SourceScopedMetadata
+	MediaFileFacts                       api.MediaFileFacts
 	AudioLanguages                       []string
 	SubtitleLanguages                    []string
 	TrackAudioLanguages                  []string
 	TrackSubtitleLanguages               []string
 	MediaTracks                          []api.MediaTrackFacts
+	AudioAbsent                          bool
 	PrimaryAudioTrackID                  string
 	TrackCoverageComplete                bool
 	AudioLanguagesProvenance             api.FactProvenance

@@ -34,6 +34,58 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 - Upload and dry-run must share payload preparation. Dry-run must not submit the upload or repeat
   workflow-level discovery and duplicate checking.
 
+## Content filename policy
+
+Across all tracker families, tracker-specific content renaming is prohibited. Do not rename
+source files or folders, rewrite torrent content paths, or stage differently named content to
+satisfy a site's naming rules. This includes inserting or changing filename tokens and renaming
+a season-pack root folder. A site's requirement does not justify adding a shared content-renamer
+capability.
+
+MediaInfo must describe the prepared source. Do not rewrite its `Complete name` to match a
+manufactured filename or otherwise alter that evidence to make content appear compliant.
+
+Tracker validation must strictly block upload when existing names fail the site's requirements.
+Use the exact prepared source inventory and finalized facts, checking all applicable file and
+folder names in single-file and multi-file content, including individual files within season
+packs. Identify the offending files or folders and explain the failed requirement. A warning
+that permits upload, or an automatic rename-and-rewrite workaround, is insufficient.
+
+For example, if a site requires an audio token missing from
+`Example.Show.S01E01.1080p.WEB-DL.H.264-GRP.mkv`, block upload and explain the missing token.
+Do not insert `DDP5.1` into the content filename and rewrite MediaInfo to match.
+
+Ordinary tracker-specific upload/search-title resolution remains supported; changing a
+submitted title does not authorize changing content names or MediaInfo filenames. Existing
+general link staging also remains supported, but must not be used to work around this policy.
+
+## Finalized metadata source of truth
+
+All tracker families consume the finalized subject for their operation: upload/dry-run,
+duplicate search, rules, or validation. Metadata preparation resolves parser, provider, media,
+and user-instruction precedence before publishing the exact prepared generation. Trackers must
+not reconstruct defaults or fallbacks from raw parser values or rendered release names.
+
+Choose the subject field or shared semantic accessor that matches the protocol field's meaning.
+The subject's `Release` is also a canonical projection, not raw parser output: `meta.Release.*`
+is valid when it represents the required fact. Keep naming tokens distinct from technical
+media facts; for example, use resolved `meta.VideoCodec`, `meta.Audio`, and `meta.Channels` for
+technical decisions rather than treating `meta.Release.Codec` or `meta.Release.Audio` naming
+tokens as interchangeable evidence.
+
+For an `api.UploadSubject` named `meta`, `Cut`, `Edition`, and `Presentation` are independently
+resolved categories. Both `meta.Edition` and `meta.Release.Edition` contain only the edition
+category. A payload requiring their combined wording must use `meta.EditionLabel()`, which
+joins cut, edition, and presentation. For example, a Director's Cut with Open Matte presentation
+still needs both categories even when Edition is empty. `EditionSet` controls rendered naming
+and is not included in that payload label. Naming policies continue to edit the individual
+structured components described below.
+
+Tracker-specific provider overrides remain valid, including title, year, AKA, and original or
+localized titles. Preserve the site's precedence, consume prepared provider evidence bound to
+the same source, identity, and generation, and use finalized facts for fallback. Do not recover
+missing facts from stale provider state or fetch metadata inside a pure mapping callback.
+
 ## Responsibility layout
 
 Tracker filenames are architecture boundaries:
@@ -189,6 +241,24 @@ generated document independently of the exact selection. Missing generated compo
 with a reprepare instruction rather than silently searching for the opaque upload name.
 
 #### Preserve manual choices unless the tracker explicitly requires otherwise
+
+Automatic primary titles use `ReleaseNamePolicyBinding.TitleProvider`, independently of
+`MovieYearProvider`. Unit3D defaults both to TMDB; declare an evidenced exception in
+`Profile.NameProviders`. An empty `NameProviders` policy disables both defaults for a
+source-preserving resolver. A site that already selects its title can leave `Title` empty
+while choosing its movie-year provider. These are compiled tracker policies, not user settings.
+
+Provider selection edits only a projection copy, before site defaults. It requires a matching
+positive provider ID and exact nonblank source/current generation; TMDB must also match the
+movie/TV category. Missing automatic title evidence fails with a refresh/reprepare instruction.
+Manual metadata, manual title components and opaque names retain their authority. Existing
+provider collection supplies the title snapshots; naming callbacks perform no I/O. Reviewed
+naming fingerprints include the selected provider, so changing it requires renewed review.
+
+Use `CurrentTVDBNameDisambiguation` for identity-bound TV qualifiers when the primary title
+comes from another provider. It rejects stale or mismatched evidence and manual titles;
+tracker-local callbacks still own qualifier placement and manual-year preservation. Do not
+require rendered title text to equal TVDB's spelling.
 
 `StructuredNamePolicy.Defaults` applies optional presentation preferences. Its editor leaves
 manual components unchanged and skips unavailable targets. `Mandatory` runs after defaults and
@@ -356,9 +426,16 @@ failure from empty text or zero selected images.
 
 All Unit3D and AvistaZ-family definitions currently declare `description` once at family level.
 Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN/NBL
-for `none`, ANT/RTF for `screenshots`, and most other standalone trackers for `description`.
+for `none`, RTF for `screenshots`, and ANT and most other standalone trackers for `description`.
 Changing a standalone tracker's workflow later should require only its profile and tracker-local
 adapter implementation; do not add tracker-name branches to core or tracker orchestration.
+
+ANT composes the full description through the shared section builder, then applies its own BBCode
+adjustments. Ordinary selected screenshots use the API screenshot field, so the description omits
+their image tags and the configured screenshot header while retaining unrelated artwork, disc menus,
+audio analysis, and release notes. Reviewed final description overrides remain authoritative.
+Automatic tonemapping notices are omitted because selected screenshots do not retain evidence of
+applied conversion; user-authored tonemapping notes are preserved.
 
 Set `standalone.Profile.UsesMenuImages` when the adapter consumes selected DVD menu images,
 so shared preparation can rehost source-only menus for that tracker. Unit3D and AvistaZ families
@@ -487,7 +564,7 @@ func Profile() unit3d.Profile {
 }
 ```
 
-Put the algorithms in `taxonomy.go`:
+Put the algorithms in `taxonomy.go`, using the [finalized metadata fields and semantic accessors](#finalized-metadata-source-of-truth) for category and payload mappings:
 
 ```go
 // taxonomy.go
@@ -680,13 +757,30 @@ Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;
 - `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug mode bypasses it automatically;
-- `strict` blocks in every execution mode.
+- `strict` blocks normal uploads and cannot be acknowledged. An explicitly marked `RuleFailure.DebugBypass` may preserve a tracker eligibility bypass in debug mode; unrelated strict constructibility checks still block.
 
 The workflow emits one tracker-scoped override for the exact current warning set. WebUI places it
 on that tracker's duplicate-review card as a reversible acknowledgement toggle; interactive CLI
 prompts for it. A changed warning set or prepared generation invalidates that authority and requires
 new approval. Revocation clears dependent checks and preparation through the shared workflow.
-Strict failures cannot be overridden.
+Strict failures cannot be overridden for a normal upload.
+
+A tracker that requires remote title-existence evidence can opt into `TitleSearchPolicyProvider`.
+For Unit3D sites, bind a versioned `TitleSearchPolicy` and a site-local `AdjustTitleSearchParams`
+callback in `dupe.go`. The dedicated `TitleSearchAdapter.SearchTitle` lookup must preserve provider
+identity and the complete category family while removing season, episode, resolution, and format
+narrowing. Ordinary duplicate searches, including full-disc searches, retain their existing scope.
+The pure requirement predicate must exclude full discs when the rule does not apply to them.
+
+Preflight performs the lookup before language-rule readiness gates and passes detached
+`TrackerTitleSearchEvidence` into pure validation. Only a completed, authoritatively bound lookup
+can prove zero torrents; failed, incomplete, or unbound searches remain unresolved. Count every
+same-work row before duplicate-slot filtering. Evidence and any acknowledgement are bound to the
+prepared generation, title identity, tracker configuration, and versioned search policy. The workflow
+retains that evidence for later validation, reuses fresh complete empty searches for duplicate
+checking, and never extends their original freshness. Version the title-search policy when its
+query contract changes. Do not put network work in `ValidationPolicy.Check`, expose private
+tracker rows in review results, or represent a local acknowledgement as a remote tracker tag.
 
 Every constructibility predicate whose result depends on a required mapping or resource, including
 a missing resolution, category, type, questionnaire answer, or prepared media fact, must be
@@ -987,7 +1081,7 @@ torrent as if it were tracker-registered.
 
 Map the standalone protocol's categories, types, resolutions, sources, codecs, audio/languages,
 tags, and flags in `taxonomy.go`. Keep taxonomy pure—no network, filesystem, auth, payload
-encoding, or description rendering. Consume finalized prepared contracts:
+encoding, or description rendering. Follow the [field and accessor guidance](#finalized-metadata-source-of-truth), including `EditionLabel()` for combined edition payload wording. Consume finalized prepared contracts:
 
 - `api.UploadSubject` for upload/dry-run
 - `api.DuplicateSubject` for duplicate search
@@ -1021,6 +1115,38 @@ The adapter's `Search` must return one structural result:
 
 Use only the dependency snapshot supplied to the factory. Do not read unrelated global config.
 Bound response bodies, sanitize remote diagnostics, and normalize entries into `api.DupeEntry`.
+
+Title-derived providers use the shared service-alias dictionary and retain partial title
+provenance. A parser collection marker such as IMAX is not a service; retain its separate
+presentation evidence. Structured API and prepared provider values remain authoritative,
+including custom provider codes, and genuine title conflicts remain contradictory. Known service
+aliases normalize to the same identity in both sources; punctuation in service names remains
+significant (for example, Disney and Disney+).
+
+Use `DupePolicy.Slots` for conditional ordinary-slot matrices, with complete normalized
+predicates and shared IDs only for presentations that compete in the same slot. Unlisted or
+unproven combinations retain review. `SetRules` handles collection-wide capacity; use
+`RequireSameContent` when title-only or overlapping scopes cannot establish occupancy. A
+slot's `ReviewReason` or a `TargetReviewRules` entry retains source/staff prerequisites that
+an empty search cannot prove. Keep these declarations in the tracker-owned policy and version
+behavior changes; never introduce tracker-name dispatch into the evaluator.
+
+For tracker-native slots, `TargetSlot` projects the proposed upload's resolved facts and
+`CompareSlots` compares them with the adapter's `DupeEntry.TrackerSlot` evidence. Keep both
+callbacks tracker-local and advance the duplicate policy version when their behavior changes.
+Do not infer equality or coexistence from missing facts, and preserve contradictory-evidence review.
+
+`StaffTokenOverride` requires explicit possession confirmation before overriding remote
+duplicates or incomplete search evidence. The confirmation is bound to the current assessment;
+automatic upload decisions cannot supply it, and refreshed evidence requires confirmation again.
+Blocking a duplicate needs no token. In-client matches remain non-overridable. The tracker, not
+this attestation, validates any staff token at submission.
+
+Target-level duplicate policy reviews use `DupeCheckResult.ReviewReasons` and
+`TrackerDupeAssessment.reviewReasons`, including when a complete search has no candidates.
+Keep these reasons separate from candidate matches. They enter the existing fingerprint-bound
+duplicate-review decision; acknowledging them does not establish source quality, staff approval,
+or trump eligibility. Empty reasons preserve existing evidence fingerprints.
 
 #### TRACE request logging
 
@@ -1085,11 +1211,17 @@ profile or Unit3D site profile, implemented in `questionnaire.go`. The callback 
 `PreparationInput`, including the centrally resolved name in `Projection.UploadReleaseName`, and
 must perform no I/O or payload preparation. Return backend-owned fields with stable keys,
 validated retained values, and empty values for unanswered required fields. Schema values may
-include display defaults; they do not become answers automatically. The projection's exact
+include display defaults; they do not become answers automatically. Resolve optional payload fields
+and question requiredness separately when the destination can supply an omitted value. Share the
+same normalized defaults with upload preparation, preserve explicit values and deliberate clears,
+and only fall back between providers when no usable primary-provider value remains. The projection's exact
 `QuestionnaireAnswers` map owns accepted answers for descriptions and upload. An allocated empty
 map clears earlier answers; an omitted legacy map has no new answer authority. The
 projector emits a tracker-scoped questionnaire action even alongside an unrelated strict failure;
-answering the questionnaire never waives that failure. Do not turn an upload review into a global
+answering the questionnaire never waives that failure. Preflight publication must use the same
+stamped action IDs, workflow revision and expiry in the aggregate assessment and each tracker
+projection; tracker lanes must not retain stale or duplicate unstamped questions.
+Do not turn an upload review into a global
 Input prerequisite. Legacy explicit CLI answer staging validates against these pure schemas by default,
 but does not publish them as Input controls or block canonical Input readiness. A tracker whose
 accepted CLI fields exceed its visible questions may implement `TrackerAnswerSchemaProvider` on
@@ -1117,6 +1249,58 @@ generation, private evidence, skip mode, and in-client restrictions still apply.
 incomplete answer retains only a private reuse baseline, with no current duplicate or upload
 authority. Rebinding never extends duplicate freshness. Canonical prepared-release contract versions do not change for
 tracker-only questionnaire semantics; version the tracker projector instead.
+
+Non-disc TV-pack preparation uses the selected primary video's MediaInfo report. Passive pack
+consistency guidance must not request all-file collection, block on missing per-file reports,
+or ask users to establish source variation. A primary report cannot prove pack-wide consistency.
+Track-order recommendations use explicit measured container stream order, never MediaInfo document
+order, per-kind ordinals, or opaque native IDs. They remain advisory for ordinary and personal
+releases; missing order evidence must not become an upload or questionnaire gate. Keep original-audio
+presence, default flags, permitted dubs, subtitles and compatibility requirements independent of
+track order. Do not change canonical primary-track selection or naming to relax an ordering check.
+Ordinary MediaInfo audio tracks contribute their inspected languages without a recognized title
+or an original/default flag. Explicit secondary roles remain excluded from programme languages;
+missing or contradictory language evidence remains unresolved. For non-disc packs, use
+`ProgrammeLanguageStatus(subject)` for programme-language eligibility against the existing
+MediaInfo-selected resource. Uninspected pack files produce passive coverage guidance, not a
+programme-language gate. Keep canonical language statuses and `TrackCoverageComplete` unchanged:
+they still describe collection-wide evidence and protect naming, source binding and independent
+requirements. Do not rewrite language facts to bypass coverage; questionnaire keys use those facts.
+
+Source-history, retention, provenance, quality and hypothetical subtitle concerns are passive
+advisories, not questionnaires or unresolved answer gates. Keep unknown facts unknown; warnings
+must not assert source compliance or grant staff permission, replacement qualification, or an
+exception to independent measured constraints. Use inspected languages, titles, default/forced
+flags and container order before asking for genuinely missing upload input. Use an advisory
+`guidance_` rule code for non-language guidance that should appear in the collapsed WebUI
+Guidance panel; language guidance retains its existing `language_` codes.
+
+Audio sample-depth guidance uses the inspected track's `BitDepth`, codec and channel
+count, never video bit depth or an aggregate naming label. Zero sample depth is unknown;
+`ChannelsKnown` is false when the retained channel count came from partial evidence.
+Advice about primary programme audio must use an unambiguous inspected primary track
+and exclude secondary roles. Missing facts produce no speculative recommendation.
+
+Origin-country defaults must use current, source-bound provider evidence and the inspected primary
+original-language audio. Normalize supported country codes and names, retain all co-production
+countries when checking agreement, and never use the work’s origin to infer a dub’s country.
+Explicit answers and finalized language corrections retain precedence.
+
+Compatibility-audio inference stays tracker-local and uses the shared measured-relationship
+helpers. A distinct same-resource stream with fully known matching languages may accompany one
+unambiguous suitable mix; track order is not a requirement. Keep every plausible mix in the
+candidate set, including unidentified evidence, so filtering cannot manufacture uniqueness.
+Preserve current explicit answer-key presence before inference, including blank, unresolved and
+negative choices. Do not rewrite canonical roles or borrow another site's codec, embedded-core,
+count or disposition policy. Accepted companions must also be excluded from that site's
+redundant-programme checks without suppressing genuine distinct mixes.
+
+Retained factual choices and tracker acknowledgements must bind to the tracker, prepared
+generation, finalized track evidence, source, release type and disc type. Use `LanguageQuestionKey`
+for that shared contract; include additional evidence separately when it is not part of
+`LanguageFacts`. An acknowledgement accepts the current waivable finding, not a claim about
+uninspected source material. Recognize supported source forms without importing another site's
+source whitelist.
 
 ### 7. Add optional capabilities
 

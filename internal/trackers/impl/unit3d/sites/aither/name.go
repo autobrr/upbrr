@@ -5,6 +5,7 @@ package aither
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -16,12 +17,15 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v4", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v7", trackers.StructuredNamePolicy{
 		Defaults: applyAitherNameDefaults,
 	})
 }
 
 func applyAitherNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
+		return fmt.Errorf("apply AITHER language markers: %w", err)
+	}
 	if err := applyAitherTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
@@ -55,29 +59,29 @@ func applyAitherNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject
 }
 
 func applyAitherTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+	if unit3d.Category(meta) != "TV" {
 		return nil
 	}
-	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	title, ok := editor.Component(api.NameRoleTitle)
-	if !ok || !title.Present || !strings.EqualFold(strings.Join(strings.Fields(title.Value), " "), strings.Join(strings.Fields(evidence.CanonicalName), " ")) {
+	evidence, ok := trackers.CurrentTVDBNameDisambiguation(editor, meta)
+	if !ok {
 		return nil
 	}
-	if meta.EffectiveMetadata.YearProvenance.IsManual() {
-		evidence.SeriesYear = meta.EffectiveMetadata.Year
+	manualYear := meta.EffectiveMetadata.YearProvenance.IsManual()
+	if !manualYear {
+		if !evidence.IncludeYear || evidence.SeriesYear <= 0 {
+			if err := editor.Omit(api.NameRoleYear); err != nil {
+				return fmt.Errorf("omit AITHER TVDB year: %w", err)
+			}
+		} else {
+			if err := editor.Set(api.NameRoleYear, strconv.Itoa(evidence.SeriesYear)); err != nil {
+				return fmt.Errorf("set AITHER TVDB year: %w", err)
+			}
+			if err := editor.Include(api.NameRoleYear); err != nil {
+				return fmt.Errorf("include AITHER TVDB year: %w", err)
+			}
+		}
 	}
-	if !evidence.IncludeYear || evidence.SeriesYear <= 0 {
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return fmt.Errorf("omit AITHER TVDB year: %w", err)
-		}
-	} else {
-		if err := editor.Set(api.NameRoleYear, strconv.Itoa(evidence.SeriesYear)); err != nil {
-			return fmt.Errorf("set AITHER TVDB year: %w", err)
-		}
-		if err := editor.Include(api.NameRoleYear); err != nil {
-			return fmt.Errorf("include AITHER TVDB year: %w", err)
-		}
-	}
+
 	anchor := api.NameRoleAlternateTitle
 	component, ok := editor.Component(anchor)
 	if !ok || !component.Present {
@@ -89,7 +93,7 @@ func applyAitherTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadS
 		}
 		anchor = api.NameRoleLocale
 	}
-	if evidence.IncludeYear && evidence.SeriesYear > 0 {
+	if !manualYear && evidence.IncludeYear && evidence.SeriesYear > 0 {
 		if err := editor.MoveAfter(api.NameRoleYear, anchor); err != nil {
 			return fmt.Errorf("move AITHER TVDB year: %w", err)
 		}
@@ -197,14 +201,30 @@ func firstAitherPresentRole(present []api.ReleaseNameRole, candidates ...api.Rel
 	return ""
 }
 
-// aitherLanguage returns the first AITHER language marker for a non-disc release
-// without English audio.
+// aitherLanguage returns AITHER's non-English marker, preserving the legacy
+// aggregate-language behavior for full-disc uploads.
 func aitherLanguage(meta api.UploadSubject) string {
-	if unit3d.IsDiscType(meta.DiscType) || unit3d.HasEnglishLanguage(meta.AudioLanguages) {
+	languages := meta.LanguageFacts.ProgrammeLanguages
+	if trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+		if unit3d.IsDiscType(meta.DiscType) {
+			return ""
+		}
+		languages = meta.AudioLanguages
+	}
+	if unit3d.HasEnglishLanguage(languages) {
 		return ""
 	}
-	for _, value := range meta.AudioLanguages {
+	if !trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+		subject := api.NewTrackerValidationSubject(meta, "AITHER")
+		if track, ok := multilingualProgrammeTrack(subject); ok {
+			return multilingualMarker(subject, track)
+		}
+	}
+	for _, value := range languages {
 		if language := aitherLanguageComponent(value); language != "" {
+			if language == "MULTIPLE LANGUAGES" && !trackers.IsFullDiscUpload(meta.DiscType, meta.Type) {
+				return ""
+			}
 			return language
 		}
 	}
@@ -234,4 +254,38 @@ func isDVDSource(source string) bool {
 	default:
 		return false
 	}
+}
+
+// multilingualProgrammeTrack counts accepted standalone companions as part of
+// their programme mix, preserving the independent spoken-language balance review.
+func multilingualProgrammeTrack(subject api.TrackerValidationSubject) (api.MediaTrackFacts, bool) {
+	facts := subject.LanguageFacts
+	var programme []api.MediaTrackFacts
+	for _, track := range facts.Tracks {
+		if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) {
+			if trackers.StandaloneDolbyAudio(track) && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0 {
+				answer, _ := resolveCompatibilityMix(subject, track)
+				if answer != "" &&
+					slices.ContainsFunc(compatibilityMixes(facts, track), func(mix api.MediaTrackFacts) bool { return mix.ID == answer && mix.Codec != "" }) {
+					continue
+				}
+			}
+			programme = append(programme, track)
+		}
+	}
+	if len(programme) != 1 || len(programme[0].Languages) < 2 || slices.Contains(facts.ProgrammeLanguages, "English") {
+		return api.MediaTrackFacts{}, false
+	}
+	return programme[0], true
+}
+
+func multilingualMarker(subject api.TrackerValidationSubject, track api.MediaTrackFacts) string {
+	answer := subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "multilingual_balance_"+track.ID)]
+	if answer == "evenly_split" {
+		return "MULTIPLE LANGUAGES"
+	}
+	if language, ok := strings.CutPrefix(answer, "predominant:"); ok && slices.Contains(track.Languages, language) {
+		return aitherLanguageComponent(language)
+	}
+	return ""
 }

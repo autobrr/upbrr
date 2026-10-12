@@ -20,11 +20,6 @@ Use **Settings → Metadata** to control how preparation gathers reusable torren
 
 **Keep images** and **Only ID** work independently. With both enabled, supported trackers can still supply images while omitting description text. Imported comparison blocks stay in descriptions and are excluded from the ordinary screenshot set. To reuse eligible saved screenshots, open **Screenshots** and choose **Use saved images** when offered.
 
-## Advanced compatibility fields
-
-- **BTN API** is a legacy location. Current configuration migrates it to the BTN entry under [Trackers](./trackers.md).
-- **User overrides**, **Ping Unit3D**, and **Check Predb** remain in the stored schema but have no current runtime reader.
-
 ## Verify the change
 
 Save, prepare a synthetic release, then inspect **Tracker Data** and the preparation progress. Blu-ray lookup requires a disc source and IMDb identity; an ordinary video file will not exercise those settings.

@@ -215,6 +215,9 @@ const (
 
 // MediaFacts contains finalized reusable media characteristics.
 type MediaFacts struct {
+	MediaFileFacts                       MediaFileFacts
+	AudioAbsent                          bool
+	LanguageFacts                        LanguageFacts
 	AudioLanguages                       []string
 	SubtitleLanguages                    []string
 	TrackAudioLanguages                  []string
@@ -291,6 +294,8 @@ type DiscItemFacts struct {
 type DiscReportFacts struct {
 	Playlist PlaylistInfo
 	Summary  string
+	// HDR10PlusConfirmed records native HDR10+ confirmation for this selected timeline.
+	HDR10PlusConfirmed bool
 }
 
 // SelectedPlaylists returns all canonical selected playlists in disc/report order.

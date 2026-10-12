@@ -523,6 +523,28 @@ func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.
 	}
 }
 
+func TestPrintCLIWorkflowProjectionsShowsPassiveWarningsWithoutDetailedOutput(t *testing.T) {
+	for _, readiness := range []api.ReadinessStatus{api.ReadinessStatusReady, api.ReadinessStatusIneligible} {
+		output := captureWriter(func(output io.Writer) {
+			printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{
+				Projections: []api.TrackerReleaseProjection{{
+					DisplayName: "Example",
+					Readiness:   readiness,
+					PolicyDecisions: []api.TrackerPolicyDecision{{
+						Code:        "source_history",
+						Decision:    "advisory",
+						Disposition: api.RuleDispositionAdvisory,
+						Message:     "Check the source history when relevant.",
+					}},
+				}},
+			}, nil, false)
+		})
+		if !strings.Contains(output, "Example warning: Check the source history when relevant.") || strings.Contains(output, "acknowledge") {
+			t.Fatalf("passive warning output = %q", output)
+		}
+	}
+}
+
 func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T) {
 	output := captureWriter(func(output io.Writer) {
 		printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{

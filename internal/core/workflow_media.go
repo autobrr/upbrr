@@ -498,8 +498,8 @@ func (b workflowMediaBuilder) Build(
 		screenshotCount = max(screenshotCount, len(instructions.ManualFrames))
 	case api.ScreenshotPurposePreview:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
-	case api.ScreenshotPurposeAudioAnalysis:
-		return api.MediaArtifactSet{}, nil, errors.New("workflow media capture: audio analysis is not a screenshot purpose")
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
+		return api.MediaArtifactSet{}, nil, errors.New("workflow media capture: analysis is not a screenshot purpose")
 	default:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
 	}
@@ -2990,12 +2990,13 @@ func (b workflowMediaBuilder) mediaMutationBase(
 	if err != nil {
 		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media fingerprint: %w", err)
 	}
-	return api.MediaArtifactSet{
+	media := api.MediaArtifactSet{
 		CaptureFingerprint:      fingerprint,
 		RequirementsFingerprint: requirements,
 		Artifacts:               []api.MediaArtifact{},
 		Status:                  api.StageStatusCompleted,
-	}, workflowMediaPrivateArtifacts{
+	}
+	retained := workflowMediaPrivateArtifacts{
 		ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),
 		DVDMenuImages:     make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
 		HostedImages:      make(map[api.PublicResourceID]api.UploadedImageLink),
@@ -3005,7 +3006,8 @@ func (b workflowMediaBuilder) mediaMutationBase(
 		hostedRepository:  b.media.repo,
 		mediaReuse:        b.media.mediaReuse,
 		commitState:       &workflowMediaCommitState{},
-	}, nil
+	}
+	return media, retained, nil
 }
 
 func hostedImageKey(sourceID api.PublicResourceID, link api.UploadedImageLink) string {

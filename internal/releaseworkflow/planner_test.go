@@ -947,15 +947,17 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 		Intent: api.WorkflowIntent{
 			TrackerIDs:             []api.TrackerID{"ALPHA"},
 			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			SkipImageHostUpload:    true,
 		},
 	}
 	command, stage := planContinuationCommand(request, current, now)
 	upload, ok := command.(UploadMediaImagesCommand)
-	if !ok || stage != "prepare-image-requirements" || upload.Host != "" || upload.Media.ID != current.Media.ID {
+	if !ok || stage != "prepare-image-requirements" || upload.Host != "" || upload.Media.ID != current.Media.ID || !upload.SkipUpload {
 		t.Fatalf("planned image barrier: stage=%q command=%#v", stage, command)
 	}
 
 	current.Media.ImageRequirementsPrepared = true
+	current.Media.ImageHostUploadSkipped = true
 	current.Media.Artifacts = append(current.Media.Artifacts, api.MediaArtifact{
 		ID:       "hosted-screen-plan",
 		Kind:     api.MediaArtifactHostedImage,
@@ -963,6 +965,13 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 		Selected: true,
 		Source:   "screen-plan",
 	})
+	request.Intent.SkipImageHostUpload = false
+	command, stage = planContinuationCommand(request, current, now)
+	upload, ok = command.(UploadMediaImagesCommand)
+	if !ok || stage != "prepare-image-requirements" || upload.SkipUpload {
+		t.Fatalf("planned image hosting after skip mode changed: stage=%q command=%#v", stage, command)
+	}
+	current.Media.ImageHostUploadSkipped = false
 	request.Intent.Descriptions = &api.DescriptionInstructions{TemplateVersion: "workflow-v1"}
 	command, stage = planContinuationCommand(request, current, now)
 	if _, ok := command.(GenerateDescriptionsCommand); !ok || stage != "generate-descriptions" {
@@ -979,6 +988,173 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 	command, stage = planContinuationCommand(request, current, now)
 	if command != nil || stage != "" {
 		t.Fatalf("media-ready capture scheduled image hosting: stage=%q command=%#v", stage, command)
+	}
+}
+
+func TestContinuationGoalReachedReconcilesImageHostSkipMode(t *testing.T) {
+	t.Parallel()
+
+	current := CommandResult{
+		Selection: &api.TrackerSelection{
+			TrackerIDs: []api.TrackerID{"ALPHA"},
+		},
+		ProjectionInstructions: &api.TrackerProjectionInstructionSnapshot{
+			Instructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+		},
+		Projections: &api.TrackerReleaseProjectionSet{
+			ID:       "projections-goal",
+			Revision: 1,
+		},
+		Media: &api.MediaArtifactSet{
+			ID:                        "media-goal",
+			Revision:                  4,
+			Status:                    api.StageStatusCompleted,
+			ImageRequirementsPrepared: true,
+			ImageHostUploadSkipped:    true,
+			Artifacts: []api.MediaArtifact{{
+				ID:       "screen-goal",
+				Kind:     api.MediaArtifactScreenshot,
+				Selected: true,
+			}},
+		},
+		Descriptions: &api.DescriptionSet{
+			ID:     "descriptions-goal",
+			Status: api.StageStatusCompleted,
+			Descriptions: []api.RenderedDescription{{
+				GroupKey: "alpha",
+				Source:   "synthetic description",
+			}},
+		},
+		DryRun: &api.UploadDryRunResult{
+			Status: api.StageStatusCompleted,
+		},
+	}
+	for _, goal := range []api.WorkflowGoal{
+		api.WorkflowGoalDescriptionsReady,
+		api.WorkflowGoalDryRun,
+		api.WorkflowGoalUploadReviewed,
+	} {
+		request := api.ContinueReleaseWorkflowRequest{
+			Goal: goal,
+			Intent: api.WorkflowIntent{
+				SkipImageHostUpload: false,
+			},
+		}
+		if continuationGoalReached(current, request) {
+			t.Fatalf("goal %s reached with mismatched image-host skip mode", goal)
+		}
+		request.Intent.SkipImageHostUpload = true
+		if !continuationGoalReached(current, request) {
+			t.Fatalf("goal %s not reached when skip mode matches", goal)
+		}
+	}
+}
+
+func TestMediaRequirementsPreparedForIntentKeepsZeroImageCache(t *testing.T) {
+	t.Parallel()
+
+	media := &api.MediaArtifactSet{
+		ID:                        "media-zero",
+		Revision:                  2,
+		Status:                    api.StageStatusCompleted,
+		ImageRequirementsPrepared: true,
+		ImageHostUploadSkipped:    false,
+	}
+	if !mediaRequirementsPreparedForIntent(media, true) {
+		t.Fatal("zero-image prepared media should stay prepared when skip is requested")
+	}
+	if !mediaRequirementsPreparedForIntent(media, false) {
+		t.Fatal("zero-image prepared media should stay prepared for default hosting")
+	}
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-zero", Revision: 3},
+		Release:  &api.ReleaseSnapshot{ID: "release-zero", Revision: 1},
+		Selection: &api.TrackerSelection{
+			TrackerIDs: []api.TrackerID{"ALPHA"},
+		},
+		ProjectionInstructions: &api.TrackerProjectionInstructionSnapshot{
+			Instructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+		},
+		Projections: &api.TrackerReleaseProjectionSet{
+			ID:       "projections-zero",
+			Revision: 1,
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID:   "ALPHA",
+				Readiness:   api.ReadinessStatusReady,
+				DupeReady:   true,
+				UploadReady: true,
+			}},
+		},
+		Preflight: &api.TrackerPreflightAssessment{
+			ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: "projections-zero", Revision: 1},
+			ExpiresAt:     now.Add(time.Hour),
+		},
+		Dupes: &api.DupeAssessment{
+			ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: "projections-zero", Revision: 1},
+			Status:        api.StageStatusCompleted,
+			ExpiresAt:     now.Add(time.Hour),
+			Results: []api.TrackerDupeAssessment{{
+				TrackerID: "ALPHA",
+				Status:    api.StageStatusCompleted,
+				Decision:  api.DupeDecisionNoMatch,
+			}},
+		},
+		Media: media,
+	}
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "continue-zero-skip",
+		Goal:           api.WorkflowGoalDescriptionsReady,
+		Intent: api.WorkflowIntent{
+			TrackerIDs:             []api.TrackerID{"ALPHA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			SkipImageHostUpload:    true,
+			Descriptions:           &api.DescriptionInstructions{TemplateVersion: "workflow-v1"},
+		},
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	if _, ok := command.(GenerateDescriptionsCommand); !ok || stage != "generate-descriptions" {
+		t.Fatalf("zero-image skip scheduled barrier instead of descriptions: stage=%q command=%#v", stage, command)
+	}
+}
+
+func TestUploadMediaImagesCommandFingerprintOmitsDefaultSkip(t *testing.T) {
+	t.Parallel()
+
+	base := UploadMediaImagesCommand{
+		ExpectedRevision: 9,
+		Media:            api.MediaArtifactSetRef{ID: "media-fp", Revision: 3},
+		ArtifactIDs:      []api.PublicResourceID{"screen-fp"},
+		Host:             "imgbox",
+		Retry:            true,
+	}
+	defaultFP, err := base.commandFingerprint()
+	if err != nil {
+		t.Fatalf("default fingerprint: %v", err)
+	}
+	legacyFP, err := canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Media            api.MediaArtifactSetRef
+		ArtifactIDs      []api.PublicResourceID
+		Host             string
+		Retry            bool
+	}{base.ExpectedRevision, base.Media, base.ArtifactIDs, base.Host, base.Retry})
+	if err != nil {
+		t.Fatalf("legacy fingerprint: %v", err)
+	}
+	if defaultFP != legacyFP {
+		t.Fatalf("SkipUpload=false changed default hosting fingerprint: got %s want %s", defaultFP, legacyFP)
+	}
+
+	skipped := base
+	skipped.SkipUpload = true
+	skippedFP, err := skipped.commandFingerprint()
+	if err != nil {
+		t.Fatalf("skip fingerprint: %v", err)
+	}
+	if skippedFP == defaultFP {
+		t.Fatal("SkipUpload=true must change the command fingerprint")
 	}
 }
 
@@ -1566,9 +1742,10 @@ func TestContinuationPreparationSatisfiedAfterFreshOpen(t *testing.T) {
 		RequirePrepared:   false,
 		Instructions:      api.ReleaseFactInstructions{SourceLookup: "Example Release 2026"},
 		Controls: api.PreparationControls{
-			Interaction:       api.InteractionModeInteractive,
-			ConfirmBDMVRescan: true,
-			ForceRecheck:      &forceRecheck,
+			Interaction:        api.InteractionModeInteractive,
+			ConfirmBDMVRescan:  true,
+			ForceRecheck:       &forceRecheck,
+			CaptureHDRMetadata: true,
 		},
 	}
 	fingerprint, err := preparationLineageFingerprint(opened)
@@ -1583,6 +1760,7 @@ func TestContinuationPreparationSatisfiedAfterFreshOpen(t *testing.T) {
 	continued.Controls.Interaction = api.InteractionModeUnattendedConfirm
 	continued.Controls.ConfirmBDMVRescan = false
 	continued.Controls.ForceRecheck = nil
+	continued.Controls.CaptureHDRMetadata = false
 	continued.Instructions.TrackerIDs = map[string]string{}
 	if !continuationPreparationSatisfied(current, &continued) {
 		t.Fatal("fresh prepared generation was not retained for continuation")

@@ -58,6 +58,7 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 		))
 	}
 	failures = append(failures, otwNamingFailures(subject, meta)...)
+	failures = append(failures, otwLanguageNamingFailures(subject, meta)...)
 	if subject.ProvenanceFacts.Status != api.MetadataEvidenceStatusComplete {
 		failures = append(failures, trackers.NewEvidenceRuleFailure(
 			"otw_content_classification_evidence",
@@ -66,7 +67,39 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 			subject.ProvenanceFacts.Status,
 		))
 	}
+	if !otwLanguageFullDisc(meta) && !slices.Contains(subject.LanguageFacts.ProgrammeLanguages, "English") &&
+		!slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English") {
+		failures = append(
+			failures,
+			trackers.LanguageRuleFailure(subject, "english_accessibility", "try to include English audio or subtitles", trackers.LanguageAdvisory),
+		)
+	}
+
 	return failures, nil
+}
+
+// otwLanguageNamingFailures requires only evidence used to select the audio marker.
+// Three established programme languages fix MULTI even with incomplete coverage.
+func otwLanguageNamingFailures(subject api.TrackerValidationSubject, meta api.UploadSubject) []api.RuleFailure {
+	if otwLanguageFullDisc(meta) {
+		return nil
+	}
+	facts := subject.LanguageFacts
+	count := trackers.KnownProgrammeLanguageCount(facts)
+	if (facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete || facts.ProgrammeStatus == api.MetadataEvidenceStatusPartial) && count >= 3 {
+		return nil
+	}
+	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && facts.AudioAbsent && len(facts.ProgrammeLanguages) == 0 {
+		return nil
+	}
+	reason := "programme languages, track roles or inspected coverage need review for audio naming"
+	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && count > 0 && count == len(facts.ProgrammeLanguages) {
+		if !slices.Contains(facts.ProgrammeLanguages, "English") || facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0 {
+			return nil
+		}
+		reason = "original-language evidence is required to determine the English audio naming marker"
+	}
+	return []api.RuleFailure{trackers.LanguageRuleFailure(subject, "naming_evidence", reason, trackers.LanguageUnresolved)}
 }
 
 func otwEvidencePolicy(rule string) trackers.EvidencePredicatePolicy {
@@ -159,6 +192,7 @@ func otwUploadSubject(subject api.TrackerValidationSubject) api.UploadSubject {
 		Tag:               subject.Tag,
 		Identity:          subject.Identity,
 		ProviderMetadata:  subject.ProviderMetadata,
+		LanguageFacts:     subject.LanguageFacts.Clone(),
 		EffectiveMetadata: subject.EffectiveMetadata,
 		SeasonInt:         subject.SeasonInt,
 		EpisodeInt:        subject.EpisodeInt,

@@ -380,6 +380,9 @@ func (r *Registry) ProjectRelease(
 	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetReleaseOrigin != nil {
 		projection.DuplicateTarget.ReleaseOrigin = strings.TrimSpace(descriptor.DupePolicy.TargetReleaseOrigin(input.Meta, input.Runtime.Internal))
 	}
+	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetSlot != nil {
+		projection.DuplicateTarget.TrackerSlot = descriptor.DupePolicy.TargetSlot(input.Meta)
+	}
 	var failure *PreparationFailure
 	if contextErr := ctx.Err(); contextErr != nil {
 		failure = NewPreparationFailure(input.Tracker, "projection", "tracker projection canceled", contextErr)
@@ -418,7 +421,8 @@ func (r *Registry) ProjectRelease(
 	} else {
 		applyResolvedReleaseNames(&projection, resolvedNames)
 	}
-	projection.DuplicateTarget.Names = projectionDuplicateNames(projection)
+	nativeNames := descriptor.DupePolicy != nil && descriptor.DupePolicy.CompareSlots != nil
+	projection.DuplicateTarget.Names = projectionDuplicateNames(projection, nativeNames)
 	appendReleaseNameProvenance(&projection, descriptor.ReleaseNamePolicy, input.RequestedUploadName)
 	projection.TrackerID = api.TrackerID(descriptor.Name)
 	projection.DisplayName = descriptor.DisplayName
@@ -476,6 +480,15 @@ func (r *Registry) ProjectRelease(
 	}
 	if failure == nil {
 		validationSubject := api.NewTrackerValidationSubject(input.Meta, input.Tracker)
+		if provider, ok := descriptor.Definition.(TitleSearchPolicyProvider); ok {
+			policy := provider.TitleSearchPolicy()
+			evidence := validationSubject.TitleSearchEvidence
+			if evidence.Current(input.Meta.Identity) && evidence.ConfigFingerprint == configFingerprint && evidence.PolicyID == policy.ID {
+				projection.TitleSearchEvidence = &evidence
+			} else {
+				validationSubject.TitleSearchEvidence = api.TrackerTitleSearchEvidence{}
+			}
+		}
 		projection.PreparedResourceFingerprint = api.WorkflowFingerprint(validationSubject.PreparedResourceFingerprint)
 		ruleFailures, ruleErr := EvaluateTrackerValidationWithRegistry(
 			ctx,
@@ -484,17 +497,7 @@ func (r *Registry) ProjectRelease(
 			validationSubject,
 			input.Logger,
 		)
-		if provider, ok := descriptor.Definition.(InputReadinessProvider); ok {
-			for _, outcome := range provider.InputReadiness(input.Meta) {
-				if outcome.Status == api.InputReadinessFieldMissing || outcome.Status == api.InputReadinessFieldInvalid {
-					ruleFailures = append(ruleFailures, api.RuleFailure{
-						Rule:        "input." + outcome.Key,
-						Reason:      outcome.Message,
-						Disposition: outcome.Disposition,
-					})
-				}
-			}
-		}
+		ruleFailures = append(ruleFailures, inputReadinessRuleFailures(input.Meta, descriptor.Definition)...)
 		if ruleErr != nil {
 			failure = NewPreparationFailure(input.Tracker, "rules", "tracker projection policy evaluation failed", ruleErr)
 			projection.Readiness = api.ReadinessStatusBlocked
@@ -605,12 +608,15 @@ func (r *Registry) ProjectRelease(
 	return projection, failure
 }
 
-func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string {
-	values := make([]string, 0, 2+len(projection.AdditionalNames)+len(projection.DuplicateTarget.Names))
+func projectionDuplicateNames(projection api.TrackerReleaseProjection, nativeNames bool) []string {
+	values := make([]string, 0, 3+len(projection.AdditionalNames)+len(projection.DuplicateTarget.Names))
 	values = append(values,
 		projection.CanonicalReleaseName,
 		projection.DuplicateCriteria.Name,
 	)
+	if nativeNames {
+		values = append(values, projection.UploadReleaseName)
+	}
 	for _, additional := range projection.AdditionalNames {
 		values = append(values, additional.Value)
 	}
@@ -711,6 +717,8 @@ func ApplyProjectionRuleFailures(
 		blocking := RuleFailureBlocksExecution(failure, executionMode, authorized)
 		decision := string(disposition)
 		switch {
+		case disposition == api.RuleDispositionStrict && !blocking:
+			decision = "bypassed"
 		case disposition == api.RuleDispositionStrict:
 			hasStrict = true
 			decision = "ineligible"

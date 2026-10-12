@@ -17,6 +17,19 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestCLICompositeDupeEvidenceIncludesBackendWarning(t *testing.T) {
+	const warning = "Audio-language matching is unverified. You may acknowledge this warning and continue the upload; this does not establish matching content or trump eligibility."
+	var output strings.Builder
+	printCLICompositeDupeMatches(&output, []api.DupeMatchProjection{{
+		Name:     "Example.Show.S01E02.1080p.WEB-DL-GRP",
+		Relation: api.DupeRelationManualReview,
+		Reasons:  []api.DupeReason{{Code: "pack_audio_languages_unverified", Message: warning}},
+	}})
+	if !strings.Contains(output.String(), warning) || !strings.Contains(output.String(), "manual_review") {
+		t.Fatalf("CLI hid the waiver warning: %s", output.String())
+	}
+}
+
 func TestCLICompositeMediaUsesConfiguredScreenshotsUnlessOverridden(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -1030,5 +1043,52 @@ func TestCLICompositeEditionFeaturesDoNotPromptInUnattendedMode(t *testing.T) {
 	feedback, declined, err := session.collectCompositeUploadFeedback(t.Context(), nil, config.Config{}, api.NopLogger{}, api.RequiredAction{Kind: api.RequiredActionApproveTrackers})
 	if err == nil || !strings.Contains(err.Error(), "unattended") || declined || feedback.Response.TrackerApproval != nil || output.Len() != 0 {
 		t.Fatalf("unattended review: error=%v declined=%t output=%q", err, declined, output.String())
+	}
+}
+
+func TestCLICompositeTargetReviewWithoutCandidates(t *testing.T) {
+	var output strings.Builder
+	session := &cliWorkflowSession{streams: cliIO{out: &output}, current: releaseworkflow.CommandResult{Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+		TrackerID:     "EXAMPLE",
+		Decision:      api.DupeDecisionPending,
+		Search:        api.DupeSearchEvidence{Complete: true},
+		ReviewReasons: []api.DupeReason{{Code: "source_review", Message: "Verify source eligibility."}},
+	}}}}}
+	feedback, declined, err := session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader("y\n")), api.RequiredAction{TrackerID: "EXAMPLE"}, api.ReleaseWorkflowUploadFeedback{})
+	if err != nil || declined {
+		t.Fatalf("collect target review: %v", err)
+	}
+	if feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionIgnored {
+		t.Fatalf("missing bound duplicate feedback: %#v", feedback)
+	}
+	if !strings.Contains(output.String(), "Policy review: Verify source eligibility.") || !strings.Contains(output.String(), "Acknowledge incomplete/manual policy evidence") || strings.Contains(output.String(), "Duplicate candidates:") {
+		t.Fatalf("target review output: %s", output.String())
+	}
+}
+
+func TestCLICompositeStaffTokenConfirmation(t *testing.T) {
+	for _, answer := range []string{"y\n", "n\n", "\n"} {
+		var output strings.Builder
+		session := &cliWorkflowSession{streams: cliIO{out: &output}, current: releaseworkflow.CommandResult{Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+			TrackerID:          "EXAMPLE",
+			Decision:           api.DupeDecisionPending,
+			RequiresStaffToken: true,
+		}}}},
+		}
+		feedback, _, err := session.collectCompositeDuplicateFeedback(
+			bufio.NewReader(strings.NewReader(answer)),
+			api.RequiredAction{TrackerID: "EXAMPLE"},
+			api.ReleaseWorkflowUploadFeedback{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		review := feedback.Response.DuplicateReview
+		if review.StaffTokenConfirmed != (answer == "y\n") || (review.Decision == api.DupeDecisionIgnored) != review.StaffTokenConfirmed {
+			t.Fatalf("answer %q: %+v", answer, review)
+		}
+		if !strings.Contains(output.String(), "appropriate staff-issued EXAMPLE token") {
+			t.Fatal("missing explicit token prompt")
+		}
 	}
 }

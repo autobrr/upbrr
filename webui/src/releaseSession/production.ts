@@ -61,6 +61,23 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
       releaseWorkflowClient.operation(workflowID, operationID, signal),
     cancelOperation: (workflowID, operationID, signal) =>
       releaseWorkflowClient.cancelOperation(workflowID, operationID, signal),
+    analyzeHDR: (current, instructions, idempotencyKey, signal) =>
+      releaseWorkflowClient.analyzeHDR(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          instructions,
+          idempotencyKey,
+        },
+        signal,
+      ),
+    hdrAnalysisURL: (current, analysisID, analysisRevision, artifactID) =>
+      releaseWorkflowClient.hdrAnalysisURL(
+        current.workflow.id,
+        analysisID,
+        analysisRevision,
+        artifactID,
+      ),
     analyzeAudio: (current, instructions, idempotencyKey, signal) =>
       releaseWorkflowClient.analyzeAudio(
         {

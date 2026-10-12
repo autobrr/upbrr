@@ -362,14 +362,14 @@ func TestNewTrackerValidationSubjectProjectsFinalTrackerDescription(t *testing.T
 				Trackers:       []string{"HDB"},
 				Description:    "Manual synopsis.\n[img]https://img.example/poster.jpg[/img]",
 				HasOverride:    true,
-				RawDescription: "unused raw description",
+				RawDescription: "Edited source description without the retained explanation.",
 			},
 		},
 	}
 
 	projected := NewTrackerValidationSubject(subject, "hdb")
 	if !projected.DescriptionGroupsFinal ||
-		projected.DescriptionOverride != "Manual synopsis.\n[img]https://img.example/poster.jpg[/img]" {
+		projected.DescriptionOverride != subject.DescriptionGroups[1].Source() {
 		t.Fatalf("tracker description evidence = %#v", projected)
 	}
 }
@@ -677,5 +677,69 @@ func TestValidationSeasonTokenWidths(t *testing.T) {
 	got := NewTrackerValidationSubject(UploadSubject{SourcePath: root, FileList: files}, "example").PackageFacts.DetectedSeasons
 	if len(got) != 3 || got[0] != 0 || got[1] != 1 || got[2] != 2026 {
 		t.Fatalf("mixed-season evidence = %v, want [0 1 2026]", got)
+	}
+}
+
+func TestNewTrackerValidationSubjectSelectsGroupContentAndFinalityTogether(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		groups      []DescriptionBuilderGroup
+		globalFinal bool
+		want        string
+		final       bool
+	}{
+		{
+			name: "edited group precedes direct override",
+			groups: []DescriptionBuilderGroup{{
+				Trackers:       []string{"SP"},
+				Description:    "retained output",
+				RawDescription: "edited source",
+			}},
+			want: "edited source",
+		},
+		{
+			name: "selected group final with unrelated unfinished group",
+			groups: []DescriptionBuilderGroup{{Trackers: []string{"OTHER"}, Description: "other draft"}, {
+				Trackers:       []string{"SP"},
+				RawDescription: "final edited source",
+				Final:          true,
+			}},
+			want:  "final edited source",
+			final: true,
+		},
+		{
+			name:        "global final applies to selected group",
+			groups:      []DescriptionBuilderGroup{{Trackers: []string{"SP"}, Description: "legacy final source"}},
+			globalFinal: true,
+			want:        "legacy final source",
+			final:       true,
+		},
+		{
+			name: "unrelated final group cannot finalize selected draft",
+			groups: []DescriptionBuilderGroup{{
+				Trackers:    []string{"OTHER"},
+				Description: "other final",
+				Final:       true,
+			}, {Trackers: []string{"SP"}, RawDescription: "selected draft"}},
+			want: "selected draft",
+		},
+		{name: "no group falls back to direct override", want: "direct override"},
+		{
+			name:   "empty matching group falls back to direct override",
+			groups: []DescriptionBuilderGroup{{Trackers: []string{"SP"}, Final: true}},
+			want:   "direct override",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := NewTrackerValidationSubject(UploadSubject{
+				DescriptionOverride:    "direct override",
+				DescriptionGroups:      test.groups,
+				DescriptionGroupsFinal: test.globalFinal,
+			}, "sp")
+			if got.DescriptionOverride != test.want || got.DescriptionGroupsFinal != test.final {
+				t.Fatalf("description=%q final=%t, want %q final=%t", got.DescriptionOverride, got.DescriptionGroupsFinal, test.want, test.final)
+			}
+		})
 	}
 }

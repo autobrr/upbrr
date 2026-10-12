@@ -1606,7 +1606,7 @@ func TestResolveExternalIDsRefreshesCachedTVDBPosterThumbnail(t *testing.T) {
 		PosterThumbnail:                "https://artworks.thetvdb.com/thumbnail.jpg",
 		PosterThumbnailLookupAttempted: true,
 	}}
-	svc := NewService(&fakeRepo{}, WithTVDBClient(tvdbClient))
+	svc := NewService(&fakeRepo{}, WithTVDBClient(tvdbClient), WithIMDBClient(&stubIMDB{}), WithTVmazeClient(&stubTVmaze{}))
 	state := preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1655,7 +1655,7 @@ func TestResolveExternalIDsRefreshesCachedTVmazeBackdrop(t *testing.T) {
 			BackdropLookupAttempted: true,
 		}},
 	}}
-	svc := NewService(&fakeRepo{}, WithTVmazeClient(tvmazeClient))
+	svc := NewService(&fakeRepo{}, WithTVmazeClient(tvmazeClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}))
 	state := preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1782,6 +1782,7 @@ func TestResolveExternalIDsRefreshesTVDBDisambiguationWithoutRefetchingSeries(t 
 	}
 	svc := NewService(&fakeRepo{},
 		WithTVDBClient(tvdbClient),
+		WithIMDBClient(&stubIMDB{}),
 		WithTVmazeClient(&stubTVmaze{}),
 	)
 

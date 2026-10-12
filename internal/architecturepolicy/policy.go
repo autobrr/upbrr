@@ -186,6 +186,7 @@ var trackerUploadResponsibilityPatterns = []struct {
 var unit3DCallbackFiles = map[string]string{
 	"ApplyAdditionalPayload":  "payload.go",
 	"AdjustSearchParams":      "dupe.go",
+	"AdjustTitleSearchParams": "dupe.go",
 	"BuildDescription":        "description.go",
 	"BuildName":               "name.go",
 	"CategoryIDs":             "taxonomy.go",

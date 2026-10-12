@@ -15,6 +15,7 @@ export const routeAccess = (
   hasTrackerData: boolean,
   requirements: TrackerWorkflowRequirements,
   hasAudioData = false,
+  hasHDRData = false,
 ): Readonly<Record<ReleaseRoute, RouteAccess>> => {
   const goal = (name: string): RouteAccess => {
     const availability = continuation?.availableGoals.find((candidate) => candidate.goal === name);
@@ -36,6 +37,10 @@ export const routeAccess = (
       available: trackerAssessment.available && hasTrackerData,
       reasonCode: hasTrackerData ? trackerAssessment.reasonCode : undefined,
       reason: hasTrackerData ? trackerAssessment.reason : "No tracker data is available.",
+    },
+    hdrAnalysis: {
+      available: hasHDRData,
+      reason: hasHDRData ? "" : "Prepare an MKV or supported Blu-ray source first.",
     },
     audioAnalysis: {
       available: hasAudioData,

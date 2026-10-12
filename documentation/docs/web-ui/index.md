@@ -36,6 +36,7 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 | **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
 | **Dupe Check**     | Answer tracker questions and review search results, rules, and names.    |
 | **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
+| **HDR Analysis**   | Generate, inspect, download, and include HDR10+ brightness plots.        |
 | **Screenshots**    | Generate, import, order, and select screenshots.                         |
 | **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
 | **Upload Images**  | Publish selected images through configured hosts.                        |
@@ -66,11 +67,13 @@ Each successful graph can be previewed, opened at full size, or downloaded as it
 
 See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and troubleshooting details.
 
+**HDR Analysis** appears when prepared Input contains eligible targets. MKV files require MediaInfo-confirmed HDR10+ on a unique HEVC video track. For Blu-ray, check **Check for HDR10+ in the selected playlists** during playlist selection, or use **Review selected playlists** for an already prepared disc. Confirmed playlists are plotted during preparation, ready to view on **HDR Analysis**. Opening the page does not read the source. For MKV files, select targets and a peak estimator, then click **Generate**. MKV progress shows structure discovery and metadata collection. Complete retained metadata supports estimator changes without another source scan. Completed analyses are automatically included in generated descriptions; partial plots remain inspectable. Compatible saved plots and their hosted links are restored when reopening a release. See [HDR analysis](../workflow/hdr-analysis.md).
+
 ### Correct Input facts
 
 Use **Input** to correct provider IDs, genre, release naming fields, and languages before duplicate checking. **Title** and **Original title** are read-only; **Manual year** is editable for movies and locked for TV. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
 
-**Category**, **Type**, **Source**, and **Resolution** accept only the supported dropdown choices. They have no custom-entry or blank option. If a current value is missing or unsupported, a disabled placeholder keeps it visible without creating a correction; choose a supported value or use **Auto**. **Service**, **Region**, and **Distributor** (under **Metadata and languages**) offer searchable suggestions: focus the field or use its browse button to see all choices, then type a partial name or code to filter. Service choices show the full name and acronym, and selecting one stores the recognized acronym. Distributor suggestions come from the shared UNIT3D publisher catalog; selecting one keeps the publisher name so each tracker can resolve its own ID. Region suggestions include the shared country codes. Custom names and explicit numeric tracker IDs remain editable. Use the arrow keys and **Enter** to select a suggestion, or **Escape** to dismiss the list. Clearing a searchable field keeps an explicit blank correction; use **Auto** to restore automatic detection.
+**Category**, **Type**, **Source**, and **Resolution** accept only the supported dropdown choices. They have no custom-entry or blank option. If a current value is missing or unsupported, a disabled placeholder keeps it visible without creating a correction; choose a supported value or use **Auto**. **Service**, **Region**, and **Distributor** (under **Metadata and languages**) offer searchable suggestions: focus the field or use its browse button to see all choices, then type a partial name or code to filter. Service choices show the full name and acronym, and selecting one stores the recognized acronym. Distributor suggestions come from the supported publisher catalog; selecting one keeps the publisher name so each tracker can resolve its own ID. Region suggestions include the shared country codes. Custom names and explicit numeric tracker IDs remain editable. Use the arrow keys and **Enter** to select a suggestion, or **Escape** to dismiss the list. Clearing a searchable field keeps an explicit blank correction; use **Auto** to restore automatic detection.
 
 Edited fields show a pending change until you apply **Refresh metadata**. Applied overrides remain marked **Manual value · Applied** after refresh. **Auto** clears the local draft and queues removal of the saved correction; the field shows **Auto reset pending** until refresh derives the automatic value. The previous prepared value may remain visible while that reset is pending.
 
@@ -86,7 +89,7 @@ A complete manual name has no reliable component boundaries. If a mandatory rule
 
 The **Edition** field shows the detected cut, edition, and presentation labels, or just `2in1` for a two-edition set. Replace or clear this field to override those automatic labels, or set **No edition** to **Yes** to omit them. Apply **Refresh metadata**; choose **Auto** on the edited control to restore automatic handling.
 
-A solitary Theatrical cut or edition is ignored; compound editions retain it. On PTP's Upload card, **Edition / features** shows all supported options, their effective selections, and evidence alongside the normal payload preview. See [PTP editions and features](../trackers/index.md#ptp-editions-and-features) for supported explicit labels and automatic Blu-ray commentary detection.
+A solitary Theatrical cut or edition is ignored; compound editions retain it. Review the effective selections and supporting evidence alongside the payload preview. See [editions and commentary](../trackers/index.md#editions-and-commentary) for manual corrections.
 
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
 
@@ -149,6 +152,18 @@ Logs are designed for safer sharing, but inspect them before posting. Never incl
 See [Logging](./logging.md) for persistence, filtering, rotation, and buffer behavior.
 
 ## Host browser
+
+On **Input**, choose **Browse file** or **Browse folder**. **Roots** shows every allowed browse root, even when only one is configured. **Search all browse roots** finds matching names in the roots and their nested folders, including the roots themselves. Each result shows its exact path so you can distinguish identically named files or folders.
+
+Inside a folder, **Filter this directory** searches only the entries already listed there. Both scopes ignore case, treat common separators such as dots, underscores, hyphens, and brackets as spaces, and match query words in any order. For example, `Beacon Voyage` matches `Beacon.Voyage` and `Beacon_Voyage`. A restricted ordered-character match also finds close abbreviations; it does not correct arbitrary typos.
+
+Choose **Open** to enter a folder or **Select** to apply that exact path to Input. File browsing continues to show only recognized video files alongside folders. **Clear search** restores the root listing or removes the current directory filter; opening another folder also clears the search.
+
+Root searches return at most 200 matches and inspect at most 100,000 entries. They check a two-second search budget between filesystem calls; a slow or unavailable filesystem can keep a call blocked longer. If the results are marked incomplete, open a root and browse directly. A narrower query can help with the match limit, but does not reduce how many filenames must be inspected. Unreadable directories can also leave results incomplete.
+
+Searches can use two workers when every browse root is on a recognized local filesystem. Within each worker, separate roots are visited before their subdirectories, so a deep library does not have to finish before another root gets searched. A single large directory can still use up the search budget. If roots overlap, each root is traversed in order to preserve its access boundary. If any root is on network storage or a filesystem cannot be identified, the search uses one worker. Filesystem identities do not guarantee separate physical disks. When a search reaches a limit, repeated searches may return different subsets of matching paths.
+
+Typing another query, navigating, or closing the browser cancels the previous request, and late replies cannot replace newer results. Each browser request has a 15-second timeout that includes network time and any authentication refresh. A timeout or busy message offers **Retry**; requests are not automatically repeated after network failures. The server allows at most two host-browser operations at once and keeps an operation's slot until its filesystem work actually returns, even after cancellation.
 
 The host browser lists only configured roots unless unrestricted browsing was explicitly enabled. If a valid folder is missing:
 

@@ -225,6 +225,8 @@ func contractRoots() []reflect.Type {
 		api.ReorderReleaseWorkflowMediaRequest{},
 		api.AttachReleaseWorkflowMediaRequest{},
 		api.AnalyzeReleaseWorkflowAudioRequest{},
+		api.AnalyzeReleaseWorkflowHDRRequest{},
+		api.SetReleaseWorkflowHDRAnalysisEnabledRequest{},
 		api.SetReleaseWorkflowAudioAnalysisEnabledRequest{},
 		api.UploadReleaseWorkflowImagesRequest{},
 		api.RemoveReleaseWorkflowHostedImagesRequest{},
@@ -472,6 +474,17 @@ func routeManifest() []route {
 			Errors:      errorProfileJSONMutation,
 		},
 		{
+			Path:        "/workflows/{workflowId}/hdr-analysis",
+			Method:      http.MethodPost,
+			OperationID: "analyzeWorkflowHDR",
+			Tag:         "HDR Analysis",
+			Summary:     "Generate HDR analysis images",
+			Description: "Starts durable, generation-bound HDR10+ metadata plotting for selected prepared HDR targets.",
+			Request:     reflect.TypeFor[api.AnalyzeReleaseWorkflowHDRRequest](),
+			Success:     jsonSuccess("202", "Workflow state with the non-terminal hdr-analysis operation attached.", current, true),
+			Errors:      errorProfileJSONMutation,
+		},
+		{
 			Path:        "/workflows/{workflowId}/audio-analysis/enabled",
 			Method:      http.MethodPut,
 			OperationID: "setWorkflowAudioAnalysisEnabled",
@@ -483,6 +496,17 @@ func routeManifest() []route {
 			Errors:      errorProfileJSONMutation,
 		},
 		{
+			Path:        "/workflows/{workflowId}/hdr-analysis/enabled",
+			Method:      http.MethodPut,
+			OperationID: "setWorkflowHDRAnalysisEnabled",
+			Tag:         "HDR Analysis",
+			Summary:     "Set HDR analysis enabled state",
+			Description: "Enables or disables the optional hdr-analysis page without starting source reads.",
+			Request:     reflect.TypeFor[api.SetReleaseWorkflowHDRAnalysisEnabledRequest](),
+			Success:     jsonSuccess("200", "Workflow state after changing hdr-analysis enablement.", current, true),
+			Errors:      errorProfileJSONMutation,
+		},
+		{
 			Path:        "/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}",
 			Method:      http.MethodGet,
 			OperationID: "openWorkflowAudioAnalysisArtifact",
@@ -490,6 +514,16 @@ func routeManifest() []route {
 			Summary:     "Open audio analysis artifact",
 			Description: "Streams a retained PNG or statistics text file from the exact requested audio-analysis revision.",
 			Success:     binarySuccess("Audio analysis PNG or statistics text."),
+			Errors:      errorProfileRevisionedRead,
+		},
+		{
+			Path:        "/workflows/{workflowId}/hdr-analysis/{analysisId}/artifacts/{artifactId}",
+			Method:      http.MethodGet,
+			OperationID: "openWorkflowHDRAnalysisArtifact",
+			Tag:         "HDR Analysis",
+			Summary:     "Open HDR analysis artifact",
+			Description: "Streams a retained PNG from the exact requested hdr-analysis revision.",
+			Success:     binarySuccess("HDR10+ analysis PNG."),
 			Errors:      errorProfileRevisionedRead,
 		},
 		{
@@ -824,10 +858,14 @@ func routeParameters(item route) []any {
 			"schema":      map[string]any{"type": "string"},
 		})
 	}
-	if item.OperationID == "openWorkflowMediaArtifact" || item.OperationID == "openWorkflowAudioAnalysisArtifact" {
+	if item.OperationID == "openWorkflowMediaArtifact" || item.OperationID == "openWorkflowAudioAnalysisArtifact" ||
+		item.OperationID == "openWorkflowHDRAnalysisArtifact" {
 		description := "Exact positive revision of the route-bound media artifact set."
 		if item.OperationID == "openWorkflowAudioAnalysisArtifact" {
 			description = "Exact positive revision of the route-bound audio-analysis result."
+		}
+		if item.OperationID == "openWorkflowHDRAnalysisArtifact" {
+			description = "Exact positive revision of the route-bound HDR-analysis result."
 		}
 		parameters = append(parameters, map[string]any{
 			"name":        "revision",
@@ -861,6 +899,9 @@ func routeResponses(item route) map[string]any {
 					"image/png":  binarySchema,
 					"text/plain": map[string]any{"schema": map[string]any{"type": "string"}},
 				}
+			}
+			if item.OperationID == "openWorkflowHDRAnalysisArtifact" {
+				content = map[string]any{"image/png": binarySchema}
 			}
 			response["content"] = content
 		} else if success.Response != nil {
@@ -896,7 +937,7 @@ func pathParameterMetadata(name string) (string, string) {
 	case "mediaId":
 		return "Route-bound media artifact-set identifier.", "media-example"
 	case "analysisId":
-		return "Route-bound audio-analysis result identifier.", "audio-analysis-example"
+		return "Route-bound analysis result identifier.", "analysis-example"
 	case "operationId":
 		return "Durable workflow operation identifier.", "operation-example"
 	case "previewId":

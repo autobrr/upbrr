@@ -117,6 +117,7 @@ const inputFacet = (): InputFacet => ({
   },
   updateSourceDraft: vi.fn(),
   selectSource: vi.fn(),
+  reviewPlaylists: vi.fn(),
   changeSourceLookupURL: vi.fn(),
   changeIdentity: vi.fn(),
   changeMetadata: vi.fn(),
@@ -691,11 +692,13 @@ describe("InputPage", () => {
       ...facet,
       view: {
         ...facet.view,
+        selectedSource: "",
+        sourceDraft: "C:\\media\\Synthetic Disc A",
         playlist: { ...facet.view.playlist, selected: ["disc-one:00001.mpls"] },
       },
     };
     cleanup();
-    render(
+    const { rerender } = render(
       <InputPage
         facet={selectedFacet}
         sourcePathHistory={[]}
@@ -710,6 +713,29 @@ describe("InputPage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Confirm Selection" }));
     expect(facet.confirmPlaylists).toHaveBeenCalledOnce();
+    expect(facet.confirmPlaylists).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByLabelText("Check for HDR10+ in the selected playlists"));
+    rerender(
+      <InputPage
+        facet={{
+          ...selectedFacet,
+          view: { ...selectedFacet.view, sourceDraft: "C:\\media\\Synthetic Disc B" },
+        }}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+    expect(screen.getByLabelText("Check for HDR10+ in the selected playlists")).not.toBeChecked();
+    fireEvent.click(screen.getByLabelText("Check for HDR10+ in the selected playlists"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Selection" }));
+    expect(facet.confirmPlaylists).toHaveBeenLastCalledWith(true);
+    expect(screen.getByLabelText("Check for HDR10+ in the selected playlists")).not.toBeChecked();
   });
 
   it("groups duplicate playlist names and selects opaque IDs for every disc", () => {

@@ -9,8 +9,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/autobrr/rls"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -41,6 +45,8 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	}
 }
 
+// Search enumerates provider-bound ANT results within the configured page limit.
+// Unexhausted or inconsistent pagination retains candidates as incomplete evidence.
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
 	view := *s
 	view.logger = logging.FromContext(ctx, s.logger)
@@ -53,9 +59,9 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	params := url.Values{"t": {"search"}, "o": {"json"}}
 	switch {
 	case meta.Identity.TMDBID != 0:
-		params.Set("tmdb", strconv.Itoa(meta.Identity.TMDBID))
+		params.Set("tmdbid", strconv.Itoa(meta.Identity.TMDBID))
 	case meta.Identity.IMDBID != 0:
-		params.Set("imdb", providerid.IMDb(meta.Identity.IMDBID).Digits())
+		params.Set("imdbid", providerid.IMDb(meta.Identity.IMDBID).Digits())
 	default:
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing tmdb/imdb id for ANT dupe search", nil)
 	}
@@ -69,6 +75,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	entries := make([]api.DupeEntry, 0)
 	offset := 0
 	expectedTotal := -1
+	pageTotals := false
 	expectedTotalPresent := false
 	expectedOffsetPresent := false
 	complete := false
@@ -88,8 +95,8 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		dupe.TraceSearchRequest(s.logger, "ANT", req.Method, "/api.php", map[string]any{
 			"t":      pageParams.Get("t"),
 			"o":      pageParams.Get("o"),
-			"tmdb":   pageParams.Get("tmdb"),
-			"imdb":   pageParams.Get("imdb"),
+			"tmdbid": pageParams.Get("tmdbid"),
+			"imdbid": pageParams.Get("imdbid"),
 			"limit":  pageParams.Get("limit"),
 			"offset": pageParams.Get("offset"),
 		})
@@ -129,14 +136,25 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			pageOffset = pagination.Offset
 		}
 		if pagination.TotalPresent {
+			if pageTotals && itemCount == 0 && pagination.Total == expectedTotal && pageOffset == expectedTotal {
+				// A full first page can advertise either a page count or an exact cumulative total.
+				complete = true
+				break
+			}
 			if expectedTotal < 0 {
 				expectedTotal = pagination.Total
-			} else if pagination.Total != expectedTotal {
+				pageTotals = pagination.Total == itemCount
+			} else if pageTotals && pagination.Total != itemCount || !pageTotals && pagination.Total != expectedTotal {
 				break
 			}
 		}
 		nextOffset := pageOffset + itemCount
 		switch {
+		case pageTotals && itemCount < pageLimit:
+			complete = true
+		case pageTotals && nextOffset > offset:
+			offset = nextOffset
+			continue
 		case expectedTotal == 0 && itemCount == 0:
 			complete = true
 		case expectedTotal > 0 && nextOffset == expectedTotal:
@@ -168,6 +186,8 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	})
 }
 
+// antDupeEntries retains API identities and resolves ANT-native slot evidence.
+// Omitted flags are known empty; malformed or unknown flags remain incomplete.
 func antDupeEntries(payload map[string]any) []api.DupeEntry {
 	items, _ := payload["item"].([]any)
 	entries := make([]api.DupeEntry, 0, len(items))
@@ -177,6 +197,7 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 			continue
 		}
 		files := antFiles(item["files"])
+		container := antCandidateContainer(item)
 		fileCount := int(antInt(item["fileCount"]))
 		if fileCount == 0 {
 			fileCount = len(files)
@@ -189,25 +210,49 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 			Download:      strings.ReplaceAll(antString(item["link"]), "&amp;", "&"),
 			Res:           antString(item["resolution"]),
 			Type:          antString(item["type"]),
-			CanonicalType: antCandidateType(item),
+			CanonicalType: antCandidateType(antString(item["type"]), container),
 			Source:        antCandidateSource(item),
 			Codec:         antString(item["codec"]),
-			Container:     antString(item["container"]),
+			Container:     container,
 			Group:         antString(item["releaseGroup"]),
 		}
 		if size := antInt(item["size"]); size > 0 {
 			entry.SizeKnown, entry.SizeBytes = true, size
 		}
 		_, entry.FlagsPresent = item["flags"]
-		if flags, ok := item["flags"].([]any); ok {
-			for _, rawFlag := range flags {
-				if flag := antString(rawFlag); flag != "" {
-					entry.Flags = append(entry.Flags, flag)
-				}
+		flags, flagsOK := item["flags"].([]any)
+		flagsValid := !entry.FlagsPresent || flagsOK
+		for _, rawFlag := range flags {
+			flag, valid := rawFlag.(string)
+			flagsValid = flagsValid && valid && strings.TrimSpace(flag) != ""
+			if flag != "" {
+				entry.Flags = append(entry.Flags, flag)
 			}
 		}
-		entry.FlagsComplete = false
-		entry.HDR = dupe.NormalizeTrackerHDRFlags(entry.Flags, entry.FlagsPresent, false)
+		// ANT omits fields with no value, so an omitted flags list is empty.
+		_, entry.FlagsComplete = slotFlags(entry.Flags)
+		entry.FlagsComplete = entry.FlagsComplete && flagsValid
+		entry.HDR = dupe.NormalizeTrackerHDRFlags(entry.Flags, true, entry.FlagsComplete)
+		if entry.FlagsComplete && entry.HDR.Status == api.HDREvidenceMissing {
+			entry.HDR = api.HDRFacts{
+				Formats:      []api.HDRFormat{api.HDRFormatSDR},
+				Origin:       api.HDREvidenceTrackerAPI,
+				Status:       api.HDREvidenceComplete,
+				SourceFields: []string{"flags"},
+			}
+		}
+		entry.Region = discCountry(rls.ParseString(entry.Name).Region)
+		if entry.CanonicalType != "DISC" {
+			switch {
+			case slices.Contains(entry.Flags, "Remux"):
+				entry.CanonicalType = "REMUX"
+			case resolveMediaSource(entry.Source) == "WEB":
+				entry.CanonicalType = "WEBDL"
+			case entry.CanonicalType == "" && entry.Source != "" && entry.Codec != "":
+				entry.CanonicalType = "ENCODE"
+			}
+		}
+		entry.TrackerSlot = antSlot(entry.CanonicalType, entry.Source, entry.Res, entry.Codec, entry.Flags, entry.Region, entry.FlagsComplete)
 		entries = append(entries, entry)
 	}
 	return entries
@@ -234,11 +279,24 @@ func antCandidateSource(item map[string]any) string {
 	return antString(item["media"])
 }
 
+var antDiscFilenameContainer = regexp.MustCompile(`(?i)\.(vobifo|m2ts)\.[0-9]+\.torrent$`)
+
+// antCandidateContainer uses ANT's generated torrent filename only when the API omits its container.
+// Only numeric-ID VOBIFO and m2ts torrent suffixes establish disc-container evidence.
+func antCandidateContainer(item map[string]any) string {
+	if container := antString(item["container"]); container != "" {
+		return container
+	}
+	if match := antDiscFilenameContainer.FindStringSubmatch(antString(item["fileName"])); len(match) == 2 {
+		return strings.ToLower(match[1])
+	}
+	return ""
+}
+
 // antCandidateType classifies disc containers explicitly and otherwise preserves ANT's type value.
-func antCandidateType(item map[string]any) string {
-	typeValue := antString(item["type"])
-	switch strings.ToLower(antString(item["container"])) {
-	case "m2ts", "bdmv", "vob/ifo", "video_ts", "iso":
+func antCandidateType(typeValue, container string) string {
+	switch strings.ToLower(container) {
+	case "m2ts", "bdmv", "vobifo", "vob/ifo", "video_ts", "iso":
 		return "DISC"
 	default:
 		return typeValue

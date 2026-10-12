@@ -165,6 +165,7 @@ func TestValidateDupePolicyRequiresEvidenceIDForAutomaticRules(t *testing.T) {
 	t.Parallel()
 
 	for _, policy := range []DupePolicy{
+		{ID: "example/duplicate/v1", PackContainmentRequiresReview: true},
 		{
 			ID:             "example/duplicate/v2",
 			SlotDimensions: []DupeDimension{DupeDimensionResolution},
@@ -255,5 +256,32 @@ func TestCloneDupePolicyPreservesRuleConditions(t *testing.T) {
 		source.SetRules[0].CandidatePredicates[0].ExcludedValues[0] != "sdr" ||
 		source.SetRules[0].CapacityOverrides[0].CandidatePredicates[0].Values[0] != "2160p" {
 		t.Fatalf("set rule clone mutated source: %#v", source.SetRules[0])
+	}
+}
+
+func TestConditionalDupePolicyClonesAndValidates(t *testing.T) {
+	t.Parallel()
+	source := DupePolicy{
+		ID:         "example/duplicate/v1",
+		EvidenceID: "example-rules",
+		Slots:      []DupeSlot{{ID: "ordinary", Predicates: []DupeSetPredicate{{Dimension: DupeDimensionCodec, Values: []string{"h264"}}}}},
+		TargetReviewRules: []DupeTargetReview{{
+			ID:         "source",
+			Reason:     "Review source evidence.",
+			Predicates: []DupeSetPredicate{{Dimension: DupeDimensionResolution, Values: []string{"sd"}}},
+		}},
+	}
+	if err := validateDupePolicy(source); err != nil {
+		t.Fatal(err)
+	}
+	cloned := cloneDupePolicy(source)
+	cloned.Slots[0].Predicates[0].Values[0] = "h265"
+	cloned.TargetReviewRules[0].Predicates[0].Values[0] = "1080p"
+	if source.Slots[0].Predicates[0].Values[0] != "h264" || source.TargetReviewRules[0].Predicates[0].Values[0] != "sd" {
+		t.Fatal("conditional policy clone retained mutable predicate slices")
+	}
+	source.EvidenceID = ""
+	if err := validateDupePolicy(source); err == nil {
+		t.Fatal("conditional automatic policy accepted without evidence")
 	}
 }

@@ -121,6 +121,15 @@ func (r *SQLiteRepository) SaveReleaseWorkflowState(
 			return fmt.Errorf("db save release workflow state rows: %w", err)
 		}
 		if rows == 1 {
+			if _, err := tx.ExecContext(
+				ctx,
+				`UPDATE input_workflow_associations SET hdr_analysis_id = json_extract(?, '$.Workflow.hdrAnalysis.id') WHERE owner_id = ? AND workflow_id = ?`,
+				record.Payload,
+				record.OwnerID,
+				record.WorkflowID,
+			); err != nil {
+				return fmt.Errorf("db retain HDR analysis association: %w", err)
+			}
 			if record.DescriptionReuse != nil {
 				if err := saveReusableDescriptionTx(ctx, tx, record.DescriptionReuse.SourcePath, record.DescriptionReuse.Description); err != nil {
 					return err

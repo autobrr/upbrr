@@ -207,6 +207,7 @@ export type SessionAction =
       error: string;
     }>
   | Readonly<{ type: "playlist_draft_changed"; playlists: readonly string[]; useAll: boolean }>
+  | Readonly<{ type: "playlist_reviewed"; candidates: readonly PlaylistInfo[] }>
   | Readonly<{ type: "playlist_dismissed" }>
   | Readonly<{
       type: "playlist_resumed";
@@ -1392,6 +1393,18 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         },
       };
     }
+    case "playlist_reviewed":
+      return {
+        ...state,
+        playlist: {
+          status: "awaiting_selection",
+          required: true,
+          candidates: action.candidates,
+          selected: action.candidates.map((candidate) => candidate.id),
+          useAll: false,
+          error: "",
+        },
+      };
     case "playlist_draft_changed":
       return {
         ...state,
@@ -1409,7 +1422,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         ...state,
         preparation: {
           ...state.preparation,
-          status: "cancelled",
+          status: state.preparation.status === "ready" ? "ready" : "cancelled",
         },
         playlist: { ...state.playlist, status: "cancelled", required: false, error: "" },
       };

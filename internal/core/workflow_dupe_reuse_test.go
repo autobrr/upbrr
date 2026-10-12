@@ -284,6 +284,24 @@ func TestWorkflowDupeReusePreservesSiblingsAndCurrentPrivateAuthority(t *testing
 	}
 }
 
+func TestWorkflowDupeReuseRequiresFreshStaffConfirmationForSibling(t *testing.T) {
+	f := newWorkflowDupeReuseFixture(t)
+	prior := &f.reuse.Assessment.Results[2]
+	prior.RequiresStaffToken = true
+	prior.StaffTokenConfirmed = true
+	prior.Decision = api.DupeDecisionIgnored
+	assessment, _ := f.build(t)
+	result := assessment.Results[2]
+	if result.StaffTokenConfirmed || result.Decision != api.DupeDecisionPending || len(result.RequiredActions) != 1 ||
+		releaseworkflow.ProjectionEligibleForDownstream(f.projections.Projections[2], result, true) {
+		t.Fatalf("sibling evidence reuse retained staff authorization: %+v", result)
+	}
+	if f.service.calls["GAMMA"] != 1 || !result.CheckedAt.Equal(prior.CheckedAt) || !result.FreshUntil.Equal(prior.FreshUntil) ||
+		!reflect.DeepEqual(result.Matches, prior.Matches) {
+		t.Fatal("revoking staff authorization discarded evidence or extended its freshness")
+	}
+}
+
 func assertWorkflowDupeReuseVaultRoundTrip(
 	t *testing.T,
 	evidence workflowDupePrivateEvidence,
@@ -362,6 +380,8 @@ func TestWorkflowDupeReuseRejectsChangedOrStaleEvidence(t *testing.T) {
 		{name: "source", change: func(f *workflowDupeReuseFixture) { f.projections.ReleaseRef.SourcePath += ".changed" }},
 		{name: "generation", change: func(f *workflowDupeReuseFixture) { f.projections.ReleaseRef.Generation++ }},
 		{name: "configuration", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].ConfigFingerprint = "changed" }},
+		{name: "reviewed upload name", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].UploadReleaseName += ".changed" }},
+		{name: "target identity", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicateTargetFingerprint = "changed" }},
 		{name: "criteria", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicateCriteria.Name += ".changed" }},
 		{name: "policy", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicatePolicyFingerprint = "changed" }},
 		{name: "warning fingerprint", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].WaivableRuleFingerprint = "changed" }},

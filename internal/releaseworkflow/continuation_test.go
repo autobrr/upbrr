@@ -62,6 +62,27 @@ func TestWorkflowContinuationFailsOnlyTrackerWithTerminalImageHostFailure(t *tes
 		failed.Lifecycle != api.OperationLifecycleTerminal || !failed.Retryable || len(failed.Failures) != 1 {
 		t.Fatalf("failed image-host tracker outcome = %#v", failed)
 	}
+	current.Media.ImageHostUploadSkipped = true
+	for index := range current.Projections.Projections {
+		current.Projections.Projections[index].UploadReady = true
+	}
+	current.Dupes = &api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+		{
+			TrackerID: "ALPHA",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+		{
+			TrackerID: "BETA",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+	}}
+	continuation = projectWorkflowContinuation(current)
+	if continuation.TrackerOutcomes[1].UploadEligibility != api.UploadEligibilityEligible ||
+		continuation.TrackerOutcomes[1].Disposition == api.WorkflowDispositionFailed {
+		t.Fatalf("skip retained failed lane outcome: %+v", continuation.TrackerOutcomes[1])
+	}
 }
 
 func TestTerminalOperationStatusReportsPartialImageHostOutcome(t *testing.T) {

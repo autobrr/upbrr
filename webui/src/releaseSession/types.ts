@@ -18,6 +18,9 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  HDRAnalysisResult,
+  HDRAnalysisTarget,
+  HDRPeakSource,
   AudioAnalysisResult,
   AudioAnalysisResourceLimits,
   AudioAnalysisSelectionMode,
@@ -50,6 +53,7 @@ import type {
 export type ReleaseRoute =
   | "input"
   | "trackerData"
+  | "hdrAnalysis"
   | "audioAnalysis"
   | "duplicates"
   | "screenshots"
@@ -181,7 +185,8 @@ export type InputFacet = Readonly<{
   changeClientSearch(value: PreparationIntent["search"]): void;
   chooseTrackers(trackers: readonly string[]): void;
   choosePlaylists(playlists: readonly string[], useAll: boolean): void;
-  confirmPlaylists(): Promise<boolean>;
+  reviewPlaylists(): void;
+  confirmPlaylists(captureHDRMetadata?: boolean): Promise<boolean>;
   cancelPlaylistSelection(): void;
   /** Aborts local preparation/workflow requests; this does not close the durable active input. */
   cancelPreparation(): void;
@@ -239,6 +244,11 @@ export type DuplicatesFacet = Readonly<{
   acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
   /** Acknowledges or revokes the current exact tracker warnings through backend authority. */
   acknowledgeRules(tracker: string, acknowledged: boolean): Promise<boolean>;
+  /**
+   * Requests an accepted or ignored decision for the current assessment.
+   * Ignoring staff-required evidence also attests token possession for that assessment.
+   * Missing, non-reviewable, and in-client results cannot be overridden.
+   */
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 
@@ -471,10 +481,39 @@ export type ReleaseSession = Readonly<{
   navigation: NavigationFacet;
   input: InputFacet;
   duplicates: DuplicatesFacet;
+  hdrAnalysis: HDRAnalysisFacet;
   audioAnalysis: AudioAnalysisFacet;
   screenshots: ScreenshotsFacet;
   menuImages: MenuImagesFacet;
   uploadedImages: UploadedImagesFacet;
   descriptions: DescriptionsFacet;
   upload: UploadFacet;
+}>;
+
+/** Selects opaque targets from the current prepared inventory and a brightness estimator. */
+export type HDRAnalysisGenerateInput = Readonly<{
+  targetIDs: readonly string[];
+  peakSource: HDRPeakSource;
+}>;
+/** Owns HDR operation intents, retained results and artifact URLs for the active generation. */
+export type HDRAnalysisFacet = Readonly<{
+  view: Readonly<{
+    available: boolean;
+    status: FacetStatus;
+    releaseGeneration: number;
+    targets: readonly HDRAnalysisTarget[];
+    result: HDRAnalysisResult | null;
+    phase: string;
+    message: string;
+    progress: number;
+    mutationBlockedReason: string;
+    error: string;
+  }>;
+  generate(input: HDRAnalysisGenerateInput): Promise<boolean>;
+  /** Reuses the retained target selection and estimator for another analysis attempt. */
+  retry(): Promise<boolean>;
+  /** Cancels the active HDR operation while retaining checkpointed metadata. */
+  cancel(): Promise<boolean>;
+  /** Addresses a plot in the current retained analysis revision. */
+  artifactURL(artifactID: string): string;
 }>;

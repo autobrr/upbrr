@@ -216,9 +216,9 @@ func TestDraftEditsPreserveMixedQuotesAndEmptyOriginalValues(t *testing.T) {
 		for _, attached := range []bool{false, true} {
 			args := []string{"--ui=tui", "--infohash", "0123456789abcdef0123456789abcdef01234567"}
 			if attached {
-				args = append(args, "--title="+title)
+				args = append(args, "--edition="+title)
 			} else {
-				args = append(args, "--title", title)
+				args = append(args, "--edition", title)
 			}
 			args = append(args, "--", "original.mkv")
 			draft, _, _ := cliDraftArguments(args)
@@ -235,7 +235,7 @@ func TestDraftEditsPreserveMixedQuotesAndEmptyOriginalValues(t *testing.T) {
 				t.Fatalf("unrelated edit rejected original quoted/empty value: %v", err)
 			}
 			opts, _, sources, err := parseCLIOptions(validated)
-			if err != nil || opts.Title != title || opts.InfoHash != "0123456789abcdef0123456789abcdef01234567" || opts.Screens != 0 || !slices.Equal(sources, paths) {
+			if err != nil || opts.Edition != title || opts.InfoHash != "0123456789abcdef0123456789abcdef01234567" || opts.Screens != 0 || !slices.Equal(sources, paths) {
 				t.Fatal("unrelated edit changed original values or source authority")
 			}
 		}
@@ -624,6 +624,66 @@ func TestPlainAndTUIBuildSameExplicitTrackerApproval(t *testing.T) {
 	}
 	if !reflect.DeepEqual(feedbacks[0], feedbacks[1]) {
 		t.Fatal("presentation changed typed feedback or idempotency")
+	}
+}
+
+func TestPlainAndTUIPreserveDuplicatePolicyReviewEvidence(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		for _, approval := range []bool{false, true} {
+			t.Run(fmt.Sprintf("terminal=%t/approval=%t", terminal, approval), func(t *testing.T) {
+				var output strings.Builder
+				var presenter cliPresenter = &cliPlainPresenter{reader: bufio.NewReader(strings.NewReader("y\n")), output: &output}
+				if terminal {
+					model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
+					model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+					presenter = &modelPresenter{model: model, answers: []string{"y"}}
+				}
+				writer := &cliPresentationWriter{
+					Writer:    &output,
+					presenter: presenter,
+					ctx:       t.Context(),
+					terminal:  terminal,
+				}
+				session := &cliWorkflowSession{
+					streams: cliIO{out: writer, presenter: presenter},
+					current: releaseworkflow.CommandResult{
+						Projections: &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "ALPHA", UploadReleaseName: "Synthetic.Film.2026-GRP"}}},
+						Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+							TrackerID: "ALPHA",
+							ReviewReasons: []api.DupeReason{
+								{Code: "manual_search", Message: "Search results require manual review."},
+								{Code: "incomplete_search"},
+							},
+							Matches: []api.DupeMatchProjection{{
+								Name:     "Synthetic.Film.2026-GRP",
+								Link:     "https://alpha.example/torrents/123?passkey=never-print-this",
+								Relation: api.DupeRelationManualReview,
+							}},
+						}}},
+					},
+				}
+				action := api.RequiredAction{TrackerID: "ALPHA", Options: []api.RequiredActionOption{{Value: "ALPHA"}}}
+				var err error
+				if approval {
+					_, _, err = session.collectCompositeTrackerApproval(nil, api.NopLogger{}, action, api.ReleaseWorkflowUploadFeedback{})
+				} else {
+					_, _, err = session.collectCompositeDuplicateFeedback(nil, action, api.ReleaseWorkflowUploadFeedback{})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, evidence := range []string{output.String(), writer.question.Evidence} {
+					for _, expected := range []string{"Policy review: Search results require manual review.", "Policy review: incomplete_search", "Policy review: manual_review", "Duplicate candidates:", "Synthetic.Film.2026-GRP"} {
+						if !strings.Contains(evidence, expected) {
+							t.Fatalf("review evidence missing %q: %q", expected, evidence)
+						}
+					}
+					if strings.Contains(evidence, "never-print-this") {
+						t.Fatalf("review evidence exposed a passkey: %q", evidence)
+					}
+				}
+			})
+		}
 	}
 }
 

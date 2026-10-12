@@ -232,6 +232,8 @@ func (b workflowDupeBuilder) build(
 		}
 		trackerResult.Matches = publicDupeMatches(result)
 		trackerResult.Search = result.Search
+		trackerResult.ReviewReasons = append([]api.DupeReason(nil), result.ReviewReasons...)
+		trackerResult.RequiresStaffToken = result.RequiresStaffToken
 		if hasWorkflowDupeExtendedLineage(trackerResult) {
 			trackerResult.EvidenceFingerprint, err = duplicateEvidenceFingerprint(result)
 			if err != nil {
@@ -240,6 +242,13 @@ func (b workflowDupeBuilder) build(
 		}
 		if !result.CheckedAt.IsZero() {
 			trackerResult.CheckedAt = result.CheckedAt
+		}
+		if evidence := projection.TitleSearchEvidence; result.Search.Scope == "title_preflight" && evidence != nil &&
+			evidence.FreshUntil.Before(trackerResult.FreshUntil) {
+			trackerResult.FreshUntil = evidence.FreshUntil
+			if evidence.FreshUntil.Before(expiresAt) {
+				expiresAt = evidence.FreshUntil
+			}
 		}
 		setWorkflowDupeOutcome(&trackerResult, result)
 		results = append(results, trackerResult)
@@ -336,21 +345,25 @@ func hasWorkflowDupeExtendedLineage(result api.TrackerDupeAssessment) bool {
 
 func duplicateEvidenceFingerprint(result api.DupeCheckResult) (api.WorkflowFingerprint, error) {
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Search      api.DupeSearchEvidence
-		Evaluations []api.DupeCandidateEvaluation
-		HasDupes    bool
-		Skipped     bool
-		SkipCode    string
-		Status      string
-		Error       string
+		Search             api.DupeSearchEvidence
+		Evaluations        []api.DupeCandidateEvaluation
+		ReviewReasons      []api.DupeReason `json:",omitempty"`
+		HasDupes           bool
+		RequiresStaffToken bool `json:",omitempty"`
+		Skipped            bool
+		SkipCode           string
+		Status             string
+		Error              string
 	}{
-		Search:      result.Search,
-		Evaluations: result.Evaluations,
-		HasDupes:    result.HasDupes,
-		Skipped:     result.Skipped,
-		SkipCode:    result.SkipCode,
-		Status:      result.Status,
-		Error:       result.Error,
+		Search:             result.Search,
+		Evaluations:        result.Evaluations,
+		ReviewReasons:      result.ReviewReasons,
+		HasDupes:           result.HasDupes,
+		RequiresStaffToken: result.RequiresStaffToken,
+		Skipped:            result.Skipped,
+		SkipCode:           result.SkipCode,
+		Status:             result.Status,
+		Error:              result.Error,
 	})
 	if err != nil {
 		return "", fmt.Errorf("canonical duplicate evidence fingerprint: %w", err)
@@ -437,6 +450,8 @@ func setWorkflowDupeOutcome(target *api.TrackerDupeAssessment, result api.DupeCh
 			},
 			TrackerID: target.TrackerID,
 		}}
+	case result.RequiresStaffToken:
+		releaseworkflow.RequireStaffTokenReview(target)
 	case hasBlockingDupeRelation(result):
 		// Duplicate evidence blocks only this tracker by default. The assessment
 		// itself is complete, so unrelated trackers and downstream pages remain
@@ -450,7 +465,7 @@ func setWorkflowDupeOutcome(target *api.TrackerDupeAssessment, result api.DupeCh
 	case result.Skipped:
 		target.Decision = api.DupeDecisionSkipped
 		target.Status = api.StageStatusSkipped
-	case result.HasDupes || !result.Search.Complete:
+	case result.HasDupes || len(result.ReviewReasons) > 0 || !result.Search.Complete:
 		target.Decision = api.DupeDecisionPending
 		target.Status = api.StageStatusBlocked
 		target.RequiredActions = []api.RequiredAction{{

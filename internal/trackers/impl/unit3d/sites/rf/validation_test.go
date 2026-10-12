@@ -7,6 +7,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -67,7 +69,7 @@ func TestRFRejectsMultipleMovieFilesAndMissingScreenshots(t *testing.T) {
 func TestRFValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-rf-policy-v2" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-rf-policy-v5" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -92,6 +94,19 @@ func TestRFFullDVDUsesVOBMediaInfoInsteadOfBDInfo(t *testing.T) {
 
 func rfPassingSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
+		Tracker: "RF",
+		LanguageFacts: mediafacts.ResolveLanguages(api.MediaFacts{
+			OriginalLanguage:      "English",
+			TrackCoverageComplete: true,
+			PrimaryAudioTrackID:   "main",
+			Tracks: []api.MediaTrackFacts{{
+				ID:        "main",
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"English"},
+				Default:   true,
+			}},
+		}),
 		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 		PackageFacts: api.PackageFacts{
 			Status:         api.MetadataEvidenceStatusComplete,
@@ -148,4 +163,161 @@ func assertRFFailure(
 		}
 	}
 	t.Fatalf("missing rule %q: %+v", rule, failures)
+}
+
+func TestRFLanguageEvidenceAndForcedSubtitleException(t *testing.T) {
+	t.Parallel()
+	subject := api.TrackerValidationSubject{Tracker: "RF", LanguageFacts: api.LanguageFacts{
+		OriginalLanguages:      []string{"Japanese"},
+		OriginalLanguagesKnown: true,
+		SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+	}}
+	key := trackers.LanguageQuestionKey(subject, "english_subtitles_expected")
+	subject.QuestionnaireAnswers = map[string]string{key: "yes"}
+	assertRFFailure(t, languageFailures(subject), "language_retail_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
+	assertRFFailure(t, languageFailures(subject), "language_subtitle_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusComplete
+	subject.Identity.Generation++
+	assertRFFailure(t, languageFailures(subject), "language_retail_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	subject.LanguageFacts.OriginalLanguagesKnown = false
+	assertRFFailure(t, languageFailures(subject), "language_subtitle_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	subject.Type = "DISC"
+	if failures := languageFailures(subject); len(failures) != 0 {
+		t.Fatalf("full disc changed: %+v", failures)
+	}
+	subject.Type = "WEBDL"
+	subject.LanguageFacts.OriginalLanguagesKnown = true
+	subject.LanguageFacts.OriginalLanguages = []string{"English"}
+	subject.LanguageFacts.SubtitleLanguages = []string{"English"}
+	subject.LanguageFacts.Tracks = []api.MediaTrackFacts{{Kind: api.MediaTrackSubtitle, Languages: []string{"English (Forced)"}}}
+	if failures := languageFailures(subject); len(failures) != 0 {
+		t.Fatalf("explicit forced-English correction rejected: %+v", failures)
+	}
+	subject.LanguageFacts.Tracks[0].Languages = []string{"English"}
+	assertRFFailure(t, languageFailures(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
+}
+
+func TestRFManualSubtitleClearDoesNotReuseForcedException(t *testing.T) {
+	t.Parallel()
+	media := api.MediaFacts{
+		OriginalLanguage:      "English",
+		TrackCoverageComplete: true,
+		SubtitleLanguages:     []string{"English (Forced)"},
+		Tracks: []api.MediaTrackFacts{{
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{"English"},
+			Forced:    true,
+		}},
+	}
+	subject := api.TrackerValidationSubject{Tracker: "RF", LanguageFacts: mediafacts.ResolveLanguages(media)}
+	if failures := languageFailures(subject); len(failures) != 0 {
+		t.Fatalf("known forced English rejected: %+v", failures)
+	}
+	media.SubtitleLanguages = nil
+	media.SubtitleLanguagesProvenance = api.FactProvenanceManualEmpty
+	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+	assertRFFailure(t, languageFailures(subject), "language_subtitle_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+}
+
+func TestRFMixedOriginalSubtitlesRemainGuidanceWithoutAnswers(t *testing.T) {
+	t.Parallel()
+	subject := rfPassingSubject()
+	subject.LanguageFacts.OriginalLanguages = []string{"English", "Japanese"}
+	subject.LanguageFacts.SubtitleLanguages = []string{"English"}
+	subject.LanguageFacts.Tracks = []api.MediaTrackFacts{{
+		Kind:      api.MediaTrackSubtitle,
+		Languages: []string{"English"},
+		Forced:    true,
+	}}
+	key := trackers.LanguageQuestionKey(subject, "predominantly_english")
+	for _, answer := range []string{"", "yes", "no"} {
+		subject.QuestionnaireAnswers = map[string]string{key: answer}
+		failures := languageFailures(subject)
+		assertRFFailure(t, failures, "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
+		for _, failure := range failures {
+			if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+				t.Fatalf("subtitle guidance blocked on an answer: %+v", failures)
+			}
+		}
+	}
+	if Profile().Site.ProjectionQuestionnaire != nil {
+		t.Fatal("guidance-only subtitle exception still has a questionnaire")
+	}
+}
+
+func TestRFRetailSubtitleExpectationIsWarnOnly(t *testing.T) {
+	meta := api.UploadSubject{LanguageFacts: api.LanguageFacts{
+		OriginalLanguages:      []string{"Japanese"},
+		OriginalLanguagesKnown: true,
+		SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+	}}
+	if Profile().Site.ProjectionQuestionnaire != nil {
+		t.Fatal("hypothetical retail source required a questionnaire")
+	}
+	subject := api.NewTrackerValidationSubject(meta, "RF")
+	key := trackers.LanguageQuestionKey(subject, "english_subtitles_expected")
+	for _, answer := range []string{"", "yes", "no"} {
+		subject.QuestionnaireAnswers = map[string]string{key: answer}
+		failures := languageFailures(subject)
+		assertRFFailure(t, failures, "language_retail_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+		if len(failures) != 1 || trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) {
+			t.Fatalf("retail expectation blocked without an answer or acknowledgement: %+v", failures)
+		}
+	}
+}
+
+func TestRFSubtitleGuidanceDoesNotCreateUploadAuthority(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		mutate func(*api.TrackerValidationSubject)
+	}{
+		{
+			name:   "hardcoded subtitles",
+			mutate: func(subject *api.TrackerValidationSubject) { subject.HardcodedSubs = true },
+		},
+		{
+			name: "embedded subtitles",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.LanguageFacts.SubtitleLanguages = []string{"English"}
+				subject.LanguageFacts.Tracks = []api.MediaTrackFacts{{Kind: api.MediaTrackSubtitle, Languages: []string{"English"}}}
+			},
+		},
+		{
+			name:   "missing original-language evidence",
+			mutate: func(subject *api.TrackerValidationSubject) { subject.LanguageFacts.OriginalLanguagesKnown = false },
+		},
+		{
+			name: "partial subtitle evidence",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := rfPassingSubject()
+			test.mutate(&subject)
+			failures := evaluateRFEvidence(t, subject)
+			projection := api.TrackerReleaseProjection{
+				TrackerID:   "RF",
+				Readiness:   api.ReadinessStatusReady,
+				DupeReady:   true,
+				UploadReady: true,
+			}
+			if err := trackers.ApplyProjectionRuleFailures(&projection, failures, api.WorkflowExecutionModeNormal, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(projection.PolicyDecisions) == 0 || !projection.DupeReady || !projection.UploadReady || len(projection.RequiredActions) != 0 || projection.WaivableRuleFingerprint != "" {
+				t.Fatalf("guidance acquired an upload gate or acknowledgement: %+v", projection)
+			}
+			for _, decision := range projection.PolicyDecisions {
+				if decision.Blocking || decision.Disposition != api.RuleDispositionAdvisory {
+					t.Fatalf("guidance is not advisory: %+v", decision)
+				}
+			}
+			subject.SceneRenamed = true
+			assertRFFailure(t, evaluateRFEvidence(t, subject), "rf_source_name", api.RuleDispositionStrict, api.MetadataEvidenceStatusUnavailable)
+		})
+	}
 }

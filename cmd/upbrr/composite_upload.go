@@ -443,6 +443,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			projection.Artifacts.ImageHosting,
 			projection.Artifacts.Description,
 		)
+		printCLICompositeDupeReviewReasons(output, dupe.ReviewReasons)
 		printCLICompositeDupeMatches(output, dupe.Matches)
 		if writer, ok := s.streams.out.(*cliPresentationWriter); ok {
 			writer.question.Evidence = safeTerminalText(evidence.String())
@@ -652,6 +653,7 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		result.Search.Pages,
 		emptyCLIValue(result.PolicyID),
 	)
+	printCLICompositeDupeReviewReasons(s.streams.out, result.ReviewReasons)
 	printCLICompositeDupeMatches(s.streams.out, result.Matches)
 	var evidence strings.Builder
 	fmt.Fprintf(
@@ -664,6 +666,7 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		result.Search.Complete,
 		emptyCLIValue(result.PolicyID),
 	)
+	printCLICompositeDupeReviewReasons(&evidence, result.ReviewReasons)
 	printCLICompositeDupeMatches(&evidence, result.Matches)
 	if cliDupeRequiresRiskAcknowledgement(result) {
 		evidence.WriteString("Risk acknowledgement required: incomplete or manual evidence.\n")
@@ -675,6 +678,9 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	prompt := fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID)
 	if cliDupeRequiresRiskAcknowledgement(result) {
 		prompt = fmt.Sprintf("Acknowledge incomplete/manual policy evidence and upload to %s? [y/N]: ", result.TrackerID)
+	}
+	if result.RequiresStaffToken {
+		prompt = fmt.Sprintf("Confirm you have the appropriate staff-issued %s token for this upload? [y/N]: ", result.TrackerID)
 	}
 	allow, err := promptYesNo(reader, s.streams.out, prompt, false)
 	if err != nil {
@@ -688,11 +694,22 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
 		Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
 		DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
-			TrackerID: result.TrackerID,
-			Decision:  decision,
+			StaffTokenConfirmed: result.RequiresStaffToken && allow,
+			TrackerID:           result.TrackerID,
+			Decision:            decision,
 		},
 	}
 	return feedback, false, nil
+}
+
+func printCLICompositeDupeReviewReasons(output io.Writer, reasons []api.DupeReason) {
+	for _, reason := range reasons {
+		message := strings.TrimSpace(reason.Message)
+		if message == "" {
+			message = reason.Code
+		}
+		fmt.Fprintf(output, "Policy review: %s\n", logging.SanitizeMessage(message))
+	}
 }
 
 func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProjection) {
@@ -708,6 +725,9 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 			emptyCLIValue(string(match.EvidenceStatus)),
 			emptyCLIValue(string(match.HDR.Origin)),
 		)
+		if match.Relation == api.DupeRelationManualReview {
+			fmt.Fprintf(output, "     Policy review: %s\n", match.Relation)
+		}
 		if len(match.Reasons) > 0 {
 			reasons := make([]string, 0, len(match.Reasons))
 			for _, reason := range match.Reasons {
@@ -717,6 +737,11 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 			}
 			if len(reasons) > 0 {
 				fmt.Fprintf(output, "     Reasons: %s\n", strings.Join(reasons, ","))
+			}
+			for _, reason := range match.Reasons {
+				if message := strings.TrimSpace(logging.SanitizeMessage(reason.Message)); message != "" {
+					fmt.Fprintf(output, "     %s\n", message)
+				}
 			}
 		} else if reason := strings.TrimSpace(match.Reason); reason != "" {
 			fmt.Fprintf(output, "     Reason: %s\n", reason)
@@ -728,7 +753,7 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 }
 
 func cliDupeRequiresRiskAcknowledgement(result api.TrackerDupeAssessment) bool {
-	if result.Search.Pages > 0 && !result.Search.Complete {
+	if len(result.ReviewReasons) > 0 || (result.Search.Pages > 0 && !result.Search.Complete) {
 		return true
 	}
 	return slices.ContainsFunc(result.Matches, func(match api.DupeMatchProjection) bool {
@@ -892,6 +917,7 @@ func mapCLICompositeUploadRequest(
 			OnEvidence:  onEvidence,
 			AllowUpload: normalizeCLIWorkflowTrackerIDs(request.IgnoreDupesFor),
 		},
+		HDRAnalysis: request.Options.HDRAnalysis,
 		Media: api.ReleaseWorkflowUploadMedia{
 			Screenshots: api.ReleaseWorkflowUploadScreenshots{
 				Count:                  &screenshotCount,

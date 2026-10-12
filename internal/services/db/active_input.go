@@ -203,12 +203,13 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 				return api.ErrActiveInputChanged
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO input_workflow_associations
-				(canonical_path, owner_id, source_version, workflow_id, audio_analysis_id, updated_at)
-				VALUES (?, ?, ?, ?, '', ?)
+				(canonical_path, owner_id, source_version, workflow_id, audio_analysis_id, hdr_analysis_id, updated_at)
+				VALUES (?, ?, ?, ?, '', NULL, ?)
 				ON CONFLICT(canonical_path, owner_id) DO UPDATE SET
 					source_version = excluded.source_version,
 					workflow_id = excluded.workflow_id,
 					audio_analysis_id = excluded.audio_analysis_id,
+					hdr_analysis_id = excluded.hdr_analysis_id,
 					updated_at = excluded.updated_at`,
 				saved.CanonicalPath, next.OwnerID, saved.SourceVersion, next.WorkflowID, formatWorkflowStateTime(now)); err != nil {
 				return fmt.Errorf("db associate input workflow: %w", err)
@@ -423,20 +424,22 @@ func (r *SQLiteRepository) LoadInputRecord(ctx context.Context, canonicalPath st
 }
 
 // LoadInputWorkflowAssociation resolves the last workflow for this owner and verified source version.
-func (r *SQLiteRepository) LoadInputWorkflowAssociation(ctx context.Context, canonicalPath, ownerID, sourceVersion string) (
-	api.WorkflowID, api.AudioAnalysisResultID, error,
-) {
-	var workflowID api.WorkflowID
-	var audioID api.AudioAnalysisResultID
-	err := r.historyQuery(ctx).QueryRowContext(ctx, `SELECT workflow_id, audio_analysis_id FROM input_workflow_associations
-		WHERE canonical_path = ? AND owner_id = ? AND source_version = ?`, canonicalPath, ownerID, sourceVersion).Scan(&workflowID, &audioID)
+func (r *SQLiteRepository) LoadInputWorkflowAssociation(
+	ctx context.Context,
+	canonicalPath, ownerID, sourceVersion string,
+) (api.InputWorkflowAssociation, error) {
+	var association api.InputWorkflowAssociation
+	var hdrID sql.NullString
+	err := r.historyQuery(ctx).QueryRowContext(ctx, `SELECT workflow_id, audio_analysis_id, hdr_analysis_id FROM input_workflow_associations
+ WHERE canonical_path = ? AND owner_id = ? AND source_version = ?`, canonicalPath, ownerID, sourceVersion).Scan(&association.WorkflowID, &association.AudioAnalysisID, &hdrID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", nil
+		return api.InputWorkflowAssociation{}, nil
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("db load input workflow association: %w", err)
+		return api.InputWorkflowAssociation{}, fmt.Errorf("db load input workflow association: %w", err)
 	}
-	return workflowID, audioID, nil
+	association.HDRAnalysisID = api.HDRAnalysisResultID(hdrID.String)
+	return association, nil
 }
 
 // SaveInputRecord preserves the original opaque ID when the same path is inspected again.

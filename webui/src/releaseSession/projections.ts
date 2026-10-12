@@ -121,6 +121,7 @@ export const workflowPrepareInput = (input: PrepareInput): WorkflowPrepareInput 
   },
   Controls: {
     Interaction: input.Controls?.Interaction ?? "",
+    CaptureHDRMetadata: input.Controls?.CaptureHDRMetadata ?? false,
     ConfirmBDMVRescan: input.Controls?.ConfirmBDMVRescan ?? false,
     ...(input.Controls?.ForceRecheck !== undefined
       ? { ForceRecheck: input.Controls.ForceRecheck }
@@ -309,6 +310,7 @@ export const preparationInputForWorkflow = (
   sourcePath: string,
   intent: PreparationIntent,
   confirmBDMVRescan: boolean,
+  captureHDRMetadata = false,
 ): PrepareInput => ({
   SourcePath: sourcePath,
   Intent: "preview",
@@ -339,6 +341,7 @@ export const preparationInputForWorkflow = (
   },
   Controls: {
     Interaction: "interactive",
+    CaptureHDRMetadata: captureHDRMetadata,
     ConfirmBDMVRescan: confirmBDMVRescan,
   },
   Force: false,

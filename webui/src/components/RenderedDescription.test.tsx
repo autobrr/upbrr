@@ -96,4 +96,47 @@ describe("RenderedDescription external links", () => {
     expect(openImage).toHaveBeenCalledWith(full, "Screenshot");
     expect(openExternal).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "https://images.example.invalid/hdr-preview.png",
+    "https://images.example.invalid/hdr.png",
+  ])("opens an HDR description image using its retained full-size URL (%s)", (preview) => {
+    const full = "https://images.example.invalid/hdr.png";
+    const openImage = vi.fn();
+    render(
+      <RenderedDescription
+        html={`<details open><summary>source_hdr</summary><img src="${preview}" alt="HDR10+ plot"></details>`}
+        imagePreviews={{ [full]: preview }}
+        onImageOpen={openImage}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "HDR10+ plot" }));
+    expect(openImage).toHaveBeenCalledWith(full, "HDR10+ plot");
+  });
+
+  it("opens a previously saved full-size HDR image without a preview map", () => {
+    const full = "https://images.example.invalid/hdr.png";
+    const openImage = vi.fn();
+    render(
+      <RenderedDescription
+        html={`<img src="${full}" alt="HDR10+ plot">`}
+        onImageOpen={openImage}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "HDR10+ plot" }));
+    expect(openImage).toHaveBeenCalledWith(full, "HDR10+ plot");
+  });
+
+  it.each(["/relative.png", "data:image/png;base64,AAAA", "javascript:alert(1)"])(
+    "does not grant lightbox authority to an unmapped unsafe image (%s)",
+    (source) => {
+      const openImage = vi.fn();
+      render(
+        <RenderedDescription html={`<img src="${source}" alt="Image">`} onImageOpen={openImage} />,
+      );
+      fireEvent.click(screen.getByRole("img"));
+      expect(openImage).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button")).toBeNull();
+    },
+  );
 });
