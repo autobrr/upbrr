@@ -527,7 +527,7 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 	}
 	options := make([]cliPromptOption, len(action.Options))
 	for index, option := range action.Options {
-		options[index] = cliPromptOption{Label: option.Label, Value: option.Value}
+		options[index] = cliPromptOption{Label: option.Label, Value: strconv.Itoa(index + 1)}
 	}
 	answer, err := askCLIField(reader, output, cliPrompt{
 		Kind:     cliPromptMultiSelect,
@@ -544,7 +544,13 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 	selectedDiscs := make(map[string]struct{})
 	for _, token := range strings.FieldsFunc(answer, func(r rune) bool { return r == ',' || r == ' ' }) {
 		for index, option := range action.Options {
-			if token != strconv.Itoa(index+1) && token != option.Value {
+			if token == strconv.Itoa(index+1) {
+				token = option.Value
+				break
+			}
+		}
+		for _, option := range action.Options {
+			if token != option.Value {
 				continue
 			}
 			if _, ok := seen[option.Value]; !ok {
@@ -1121,8 +1127,12 @@ func collectCLIWorkflowQuestionnaires(
 				if field.Kind == "multiselect" {
 					prompt.Kind = cliPromptMultiSelect
 				}
-				for _, option := range field.Options {
-					prompt.Options = append(prompt.Options, cliPromptOption{Label: option, Value: option})
+				for index, option := range field.Options {
+					value := option
+					if field.Kind == "multiselect" {
+						value = strconv.Itoa(index + 1)
+					}
+					prompt.Options = append(prompt.Options, cliPromptOption{Label: option, Value: value})
 				}
 			}
 			answer, err := askCLIField(reader, output, prompt)

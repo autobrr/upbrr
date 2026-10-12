@@ -722,7 +722,14 @@ func TestPresentersPreserveRequiredActionFeedback(t *testing.T) {
 				if terminal {
 					model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
 					model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-					presenter = &modelPresenter{model: model, answers: slices.Clone(test.answers)}
+					answers := slices.Clone(test.answers)
+					if test.kind == api.RequiredActionSelectPlaylist {
+						answers = []string{"1,2"}
+					}
+					if test.kind == api.RequiredActionSelectMetadata {
+						answers = []string{"1"}
+					}
+					presenter = &modelPresenter{model: model, answers: answers}
 				}
 				action := api.RequiredAction{
 					ID:               "action",
@@ -787,7 +794,7 @@ func TestQuestionnairePresentationPreservesKindsHelpAndExactAnswers(t *testing.T
 		if terminal {
 			model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
 			model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-			terminalPresenter = &modelPresenter{model: model, answers: []string{"y", "blue,red", "notes"}}
+			terminalPresenter = &modelPresenter{model: model, answers: []string{"y", "2,1", "notes"}}
 			presenter = terminalPresenter
 		}
 		writer := &cliPresentationWriter{

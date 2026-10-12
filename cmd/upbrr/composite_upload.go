@@ -504,7 +504,7 @@ func selectCLICompositeOption(
 	}
 	options := make([]cliPromptOption, len(action.Options))
 	for index, option := range action.Options {
-		options[index] = cliPromptOption{Label: option.Label, Value: option.Value}
+		options[index] = cliPromptOption{Label: option.Label, Value: strconv.Itoa(index + 1)}
 	}
 	answer, err := askCLIField(reader, output, cliPrompt{
 		Kind:     cliPromptSelect,
@@ -517,7 +517,12 @@ func selectCLICompositeOption(
 		return "", err
 	}
 	for index, option := range action.Options {
-		if answer == strconv.Itoa(index+1) || strings.EqualFold(strings.TrimSpace(answer), option.Value) {
+		if answer == strconv.Itoa(index+1) {
+			return option.Value, nil
+		}
+	}
+	for _, option := range action.Options {
+		if strings.EqualFold(strings.TrimSpace(answer), option.Value) {
 			return option.Value, nil
 		}
 	}
