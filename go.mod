@@ -9,7 +9,7 @@ require (
 	github.com/autobrr/go-mediainfo v0.8.1-0.20260911072119-0b32d930ae1f
 	github.com/autobrr/go-qbittorrent v1.19.0
 	github.com/autobrr/go-torrent v1.1.1
-	github.com/autobrr/mkbrr v1.26.0
+	github.com/autobrr/mkbrr v1.27.0
 	github.com/autobrr/rls v0.9.0
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8
@@ -34,8 +34,8 @@ require (
 	github.com/asticode/go-astikit v0.30.0 // indirect
 	github.com/asticode/go-astits v1.16.0 // indirect
 	github.com/at-wat/ebml-go v0.19.4 // indirect
-	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.10.2 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
