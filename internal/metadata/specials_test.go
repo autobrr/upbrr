@@ -263,8 +263,11 @@ func TestPreparedSpecialSeasonCorrectionsSurviveRestart(t *testing.T) {
 			result := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: patch})
 			facts := result.Release.Episode
 			if result.Release.Generation <= previous || facts.Season != test.season || facts.SeasonLabel != test.label || facts.Episode != 1 ||
-				test.title != "" && facts.Title != test.title {
+				facts.Title != test.title {
 				t.Fatalf("corrected generation=%d episode=%+v", result.Release.Generation, facts)
+			}
+			if test.label == "" && (facts.Overview != "" || facts.Year != 0 || facts.AiredDate != "") {
+				t.Fatalf("cleared season retained special episode facts: %+v", facts)
 			}
 			if test.label != "" && !strings.Contains(result.Release.Naming.ReleaseName, test.label+"E01") ||
 				test.label == "" && strings.Contains(result.Release.Naming.ReleaseName, "S00") {

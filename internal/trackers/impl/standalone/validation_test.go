@@ -150,6 +150,21 @@ func TestValidatePreparationDoesNotPromotePartialTypedBDInfo(t *testing.T) {
 	}
 }
 
+func TestValidationAdapterPreservesEpisodeMembership(t *testing.T) {
+	t.Parallel()
+	for _, multiple := range []bool{false, true} {
+		original := api.UploadSubject{
+			SeasonStr:        "S00",
+			EpisodeInt:       1,
+			MultipleEpisodes: multiple,
+		}
+		restored := UploadSubjectForValidation(api.NewTrackerValidationSubject(original, "EXAMPLE"))
+		if restored.MultipleEpisodes != multiple || restored.SeasonStr != "S00" || restored.EpisodeInt != 1 {
+			t.Fatalf("adapter lost episode membership: season=%q episode=%d multiple=%t, want multiple=%t", restored.SeasonStr, restored.EpisodeInt, restored.MultipleEpisodes, multiple)
+		}
+	}
+}
+
 func TestValidationAdapterPreservesEditionCategories(t *testing.T) {
 	t.Parallel()
 	original := api.UploadSubject{

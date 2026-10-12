@@ -912,8 +912,8 @@
     "sha256": "ca303dcb536d4a16860a4a7231058775ccf4367a8ed5097942bf3c36437d780d"
   },
   "internal/trackers/impl/standalone/hdb/upload.go:buildUploadFields": {
-    "reason": "Preserves explicit canonical season-zero coordinates while retaining existing missing/invalid-season and episode defaults. Reviewed upload names, provider IMDb URL resolution, canonical identity, category mapping, and manual metadata precedence remain unchanged.",
-    "sha256": "af2e670a4ea84115f96d3635be7985585440dc5fce2645efc00562fbeee04334"
+    "reason": "Preserves explicit canonical season-zero coordinates and maps canonical TV packs to episode zero; existing non-pack episode defaults and combined-episode handling remain unchanged. Reviewed upload names, provider IMDb URL resolution, canonical identity, category mapping, and manual metadata precedence remain unchanged.",
+    "sha256": "eee5a7f4a3f93139693b1bb35e41811ecfd78ed123baee32a25f642e8a9df530"
   },
   "internal/trackers/impl/standalone/hdb/upload.go:prepareUploadAt": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1280,8 +1280,8 @@
     "sha256": "985ac2a8da22171745a30c68ebf0d89fa97deebf6adbc6f160337b93e4407d28"
   },
   "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
-    "reason": "Clones finalized exact-generation language facts into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced.",
-    "sha256": "43f3ca0d43d286cdc8f8d065b0c163e3db5d6d4c1e3d91241cd6b8d20a7491e4"
+    "reason": "Clones finalized exact-generation language facts and retained multi-episode membership into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced.",
+    "sha256": "e34f0c75444bacb90efe1daa65c5399dda9c19a86e7272d3d655896e4abe8eba"
   },
   "internal/trackers/impl/unit3d/additional_rules.go:Anime": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

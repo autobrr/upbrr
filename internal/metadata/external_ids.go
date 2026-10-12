@@ -2694,8 +2694,10 @@ func (s *Service) applyTVEpisodeMetadata(
 	// episode titles, overviews, and air dates match the corrected values.
 	manualSeason, manualEpisode, manualSeasonSet := manualSeasonEpisodeInstructionValues(meta.ReleaseNameOverrides)
 	explicitZero := meta.HasExplicitSeasonZero()
+	if meta.ReleaseNameOverrides.Season != nil {
+		explicitZero = manualSeasonSet && manualSeason == 0
+	}
 	if manualSeasonSet {
-		explicitZero = manualSeason == 0
 		season = manualSeason
 	}
 	if manualEpisode > 0 {

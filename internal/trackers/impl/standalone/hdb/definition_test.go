@@ -6,11 +6,13 @@ package hdb
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -187,6 +189,21 @@ func TestDefinitionUploadMissingCredentials(t *testing.T) {
 }
 
 func TestDefinitionUploadSuccess(t *testing.T) {
+	t.Run("single episode", func(t *testing.T) { testDefinitionUploadSuccess(t, 1, false) })
+	t.Run("season pack", func(t *testing.T) { testDefinitionUploadSuccess(t, 1, true) })
+	t.Run("specials pack", func(t *testing.T) { testDefinitionUploadSuccess(t, 0, true) })
+}
+
+func testDefinitionUploadSuccess(t *testing.T, season int, pack bool) {
+	t.Helper()
+	seasonLabel := fmt.Sprintf("S%02d", season)
+	episodeLabel := "E02"
+	wantEpisode := "2"
+	if pack {
+		episodeLabel = ""
+		wantEpisode = "0"
+	}
+	episodeToken := seasonLabel + episodeLabel
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "test.torrent")
 	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
@@ -212,6 +229,12 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 		switch {
 		case r.URL.Path == "/upload/upload":
 			uploadSeen = true
+			if r.Method != http.MethodPost {
+				t.Errorf("upload method = %q, want POST", r.Method)
+			}
+			if cookie, err := r.Cookie("uid"); err != nil || cookie.Value != "cookievalue" {
+				t.Error("expected stored session cookie on upload")
+			}
 			if ct := r.Header.Get("Content-Type"); !strings.Contains(ct, "multipart/form-data") {
 				t.Errorf("expected multipart content-type, got %q", ct)
 				return
@@ -219,6 +242,17 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			if err := r.ParseMultipartForm(5 << 20); err != nil {
 				t.Errorf("parse multipart: %v", err)
 				return
+			}
+			defer func() {
+				if err := r.MultipartForm.RemoveAll(); err != nil {
+					t.Errorf("remove multipart files: %v", err)
+				}
+			}()
+			if got := r.FormValue("tvdb_season"); got != strconv.Itoa(season) {
+				t.Errorf("tvdb_season = %q, want %d", got, season)
+			}
+			if got := r.FormValue("tvdb_episode"); got != wantEpisode {
+				t.Errorf("tvdb_episode = %q, want %q", got, wantEpisode)
 			}
 			uploadedName = r.FormValue("name")
 			if uploadedName == "" {
@@ -282,16 +316,19 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			},
 			Type:        "WEBDL",
 			VideoCodec:  "HEVC",
-			SeasonStr:   "S01",
-			EpisodeStr:  "E02",
+			SeasonInt:   season,
+			SeasonStr:   seasonLabel,
+			EpisodeInt:  2,
+			EpisodeStr:  episodeLabel,
+			TVPack:      pack,
 			Release:     api.ReleaseInfo{Resolution: "2160p"},
-			ReleaseName: "Example.Show.S01E02.Example.Episode.2160p.WEBDL.HEVC",
+			ReleaseName: "Example.Show." + episodeToken + ".Example.Episode.2160p.WEBDL.HEVC",
 			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
 				IncludeEpisodeTitle: api.ReleaseNameVariant{
-					Name: "Example.Show.S01E02.Example.Episode.2160p.WEBDL.HEVC",
+					Name: "Example.Show." + episodeToken + ".Example.Episode.2160p.WEBDL.HEVC",
 				},
 				OmitEpisodeTitle: api.ReleaseNameVariant{
-					Name: "Example.Show.S01E02.2160p.WEBDL.HEVC",
+					Name: "Example.Show." + episodeToken + ".2160p.WEBDL.HEVC",
 				},
 			},
 		},
@@ -331,10 +368,10 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if !uploadSeen {
 		t.Fatal("expected upload endpoint to be called")
 	}
-	if uploadedName != "Example Show S01E02 2160p WEB-DL HEVC" {
+	if uploadedName != "Example Show "+episodeToken+" 2160p WEB-DL HEVC" {
 		t.Fatalf("uploaded name = %q, want structured generated name", uploadedName)
 	}
-	if uploadedTorrentName != "Example.Show.S01E02.2160p.WEB-DL.HEVC.torrent" {
+	if uploadedTorrentName != "Example.Show."+episodeToken+".2160p.WEB-DL.HEVC.torrent" {
 		t.Fatalf("uploaded torrent name = %q, want dotted release name", uploadedTorrentName)
 	}
 	if !downloadSeen {
