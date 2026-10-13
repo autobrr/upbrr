@@ -38,14 +38,17 @@ func uploadTorrentFilename(name string) string {
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v6", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v7", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
 
-// resolveReleaseNames returns HDB's upload/search projections and rejects stale
-// provider metadata instead of mixing it with the current prepared generation.
+// resolveReleaseNames preserves explicit complete names and rejects stale
+// provider metadata when generating HDB names from the current prepared generation.
 func resolveReleaseNames(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+	if input.RequestedName != nil {
+		return trackers.ResolvedReleaseNames{Upload: strings.TrimSpace(*input.RequestedName)}, nil
+	}
 	meta := input.Subject
 	if exact := exactHDBReleaseName(meta); exact != "" {
 		return trackers.ResolvedReleaseNames{Upload: exact}, nil
@@ -137,7 +140,7 @@ func buildGeneratedHDBName(meta api.UploadSubject, originalTitle string) string 
 	} else {
 		parts = append(parts, hdbIMDbYear(meta))
 	}
-	parts = append(parts, normalizedHDBElement(meta.Release.Resolution), hdbSourceElement(meta))
+	parts = append(parts, meta.Repack, normalizedHDBElement(meta.Release.Resolution), hdbSourceElement(meta))
 	video := hdbVideoCodecElement(meta)
 	audio := hdbAudioElement(meta)
 	if hdbAudioBeforeVideo(meta) {
