@@ -101,10 +101,23 @@ func TestCompositeUploadMissingGlobalInputReportsOriginalBlocker(t *testing.T) {
 	if state.Composite == nil || state.Composite.ActiveOperationID != "" || state.Composite.TerminalReason != "input-not-ready" {
 		t.Fatalf("missing input terminal session = %#v", state.Composite)
 	}
+	if state.Workflow.Status != api.WorkflowStatusFailed || len(state.Workflow.Failures) != 1 ||
+		state.Workflow.Failures[0].Failure != failure {
+		t.Fatalf("missing input persisted workflow status=%s failures=%#v", state.Workflow.Status, state.Workflow.Failures)
+	}
 	readback, err := module.Operation(t.Context(), testOwnerID, current.Workflow.ID, current.Operation.ID)
 	if err != nil || readback.Status != api.StageStatusFailed || len(readback.Failures) != 1 ||
-		readback.Failures[0].Failure.Code != api.OperationFailureInvalidInput {
+		readback.Failures[0].Failure != failure {
 		t.Fatalf("missing input operation readback = %#v, %v", readback, err)
+	}
+	workflowReadback, err := module.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("read missing input workflow: %v", err)
+	}
+	if workflowReadback.Workflow.Status != api.WorkflowStatusFailed ||
+		len(workflowReadback.Workflow.Failures) != 1 || workflowReadback.Workflow.Failures[0].Failure != failure {
+		t.Fatalf("missing input workflow readback status=%s failures=%#v",
+			workflowReadback.Workflow.Status, workflowReadback.Workflow.Failures)
 	}
 
 	inputsCorrected = true

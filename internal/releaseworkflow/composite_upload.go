@@ -1103,15 +1103,16 @@ func (m *Module) runCompositeUpload(
 				)
 			}
 			if stage == "input-not-ready" {
-				if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, stage); err != nil {
-					return CommandResult{}, err
-				}
-				return CommandResult{}, api.NewOperationError(api.OperationFailure{
+				failure := api.OperationFailure{
 					Code:      api.OperationFailureInvalidInput,
 					Operation: command.operationKind(),
 					Message:   compositeMissingGlobalInputMessage(current.InputReadiness),
 					Recovery:  api.OperationRecoveryEditInput,
-				}, ErrInvalidTransition)
+				}
+				if err := m.failCompositeSession(ctx, ownerID, command.WorkflowID, operationID, stage, failure); err != nil {
+					return CommandResult{}, err
+				}
+				return CommandResult{}, api.NewOperationError(failure, ErrInvalidTransition)
 			}
 			if stage == "" && compositeUploadTerminalDuplicateResult(current) {
 				if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "terminal_duplicate"); err != nil {
