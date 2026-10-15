@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/services/hdranalysis"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
- "github.com/autobrr/upbrr/internal/services/hdranalysis"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -171,7 +171,8 @@ func testAutomaticHDRWorkflowRetainedReplay(t *testing.T, sampled, audioOnly boo
 		}
 		text, readErr := io.ReadAll(content.Body)
 		closeErr := content.Body.Close()
-		if readErr != nil || closeErr != nil || content.ContentType != "text/plain" || content.Filename != "audio-stats.txt" || !strings.Contains(string(text), "Num samples") {
+		if readErr != nil || closeErr != nil || content.ContentType != "text/plain" || content.Filename != "audio-stats.txt" ||
+			!strings.Contains(string(text), "Num samples") {
 			t.Fatalf("retained audio stats failed: read=%v close=%v bytes=%d", readErr, closeErr, len(text))
 		}
 	}
@@ -266,7 +267,8 @@ func testAutomaticHDRWorkflowRetainedReplay(t *testing.T, sampled, audioOnly boo
 		}
 		beforeFile, beforeErr := hdrFileIntegrity(before)
 		afterFile, afterErr := hdrFileIntegrity(after)
-		if beforeErr != nil || afterErr != nil || beforeFile.SHA256 != afterFile.SHA256 || artifact.Kind != first.Targets[0].Artifacts[i].Kind || before == after {
+		if beforeErr != nil || afterErr != nil || beforeFile.SHA256 != afterFile.SHA256 || artifact.Kind != first.Targets[0].Artifacts[i].Kind ||
+			before == after {
 			t.Fatalf("copied artifact changed: %s before=%v after=%v", artifact.Kind, beforeErr, afterErr)
 		}
 	}
@@ -278,7 +280,8 @@ func testAutomaticHDRWorkflowRetainedReplay(t *testing.T, sampled, audioOnly boo
 		t.Fatalf("source-free replay=%+v records=%d err=%v", second, len(store.Records), err)
 	}
 	for _, artifact := range second.Targets[0].Artifacts {
-		if artifact.Kind == api.HDRArtifactReferencePicturePlot || artifact.Kind == api.HDRArtifactAutomaticGrade || artifact.Kind == api.HDRArtifactAutomaticColour {
+		if artifact.Kind == api.HDRArtifactReferencePicturePlot || artifact.Kind == api.HDRArtifactAutomaticGrade ||
+			artifact.Kind == api.HDRArtifactAutomaticColour {
 			t.Fatal("recovery kept unverifiable reference plots")
 		}
 	}
@@ -310,48 +313,117 @@ func testAutomaticHDRWorkflowRetainedReplay(t *testing.T, sampled, audioOnly boo
 }
 
 func TestAutomaticHDRRetryKeepsSuccessfulTargetSourceFree(t *testing.T) {
- if os.Getenv("UPBRR_HDR_DECODE_CALIBRATION")!="1" {t.Skip("requires actual shared decoder")}
- builder,resolver,_:=hdrFixture(t)
- data,err:=os.ReadFile(filepath.Join("..","services","hdranalysis","testdata","decoded-pq-cuts-25.mkv"))
- if err!=nil {t.Fatal(err)}
- original:=resolver.subject.Targets[0]
- resolver.subject.Targets=nil
- request:=api.HDRAnalysisInstructions{
-Release:resolver.subject.Release,
-ProfileVersion:api.HDRAnalysisProfileV2,
-Decoded:&api.HDRDecodedOptions{Automatic:true},
-}
- for _,name:=range []string{"First.mkv","Second.mkv"} {
-  target:=original
-  target.Path=filepath.Join(t.TempDir(),name)
-  if err:=os.WriteFile(target.Path,data,0o600);err!=nil {t.Fatal(err)}
-  target.Target.ID=api.HDRTargetID(target.Path,"")
-  target.Target.Evidence,err=hdranalysis.InspectFileSource(t.Context(),target.Path)
-  if err!=nil {t.Fatal(err)}
-  resolver.subject.Targets=append(resolver.subject.Targets,target)
-  request.TargetIDs=append(request.TargetIDs,target.Target.ID)
- }
- entries:=make(map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord)
- resources:=make(map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource)
- publish:=func(record releaseworkflow.HDRExtractionRecord,resource releaseworkflow.RetainedHDRExtractionResource)error{
-  entries[record.ID],resources[record.ID]=record,resource
-  return nil
- }
- store:=releaseworkflow.HDRMeasurementStore{Records:make(map[string]releaseworkflow.HDRMeasurementRecord),Resources:make(map[string]releaseworkflow.RetainedHDRMeasurementResource)}
- store.Publish=func(record releaseworkflow.HDRMeasurementRecord,resource releaseworkflow.RetainedHDRMeasurementResource)error{
-  store.Records[record.ID],store.Resources[record.ID]=record,resource
-  return nil
- }
- first,owned,err:=builder.Build(t.Context(),releaseworkflow.HDRPreparation{Release:request.Release},request,"mixed-first",time.Now(),nil,nil,entries,resources,publish,&store)
- if err!=nil || len(first.Targets)!=2 || len(entries)!=2 {t.Fatalf("initial targets: %+v %v",first,err)}
- for _,target:=range first.Targets {if target.Decoded[0].State!=api.HDRDecodedComplete {t.Fatalf("initial decoded result: %+v",target.Decoded)}}
- for id,record:=range store.Records {if record.TargetID==request.TargetIDs[1] && record.Result.Mode==api.HDRDecodedAutomatic {delete(store.Resources,id)}}
- partial,partialOwned,err:=builder.Build(t.Context(),releaseworkflow.HDRPreparation{Release:request.Release},request,"mixed-partial",time.Now(),&first,owned,entries,resources,publish,&store)
- if err!=nil || partial.Targets[0].Decoded[0].State!=api.HDRDecodedComplete || partial.Targets[1].Decoded[0].State!=api.HDRDecodedFailed {t.Fatalf("mixed result: %+v %v",partial,err)}
- if err:=os.Remove(resolver.subject.Targets[0].Path);err!=nil {t.Fatal(err)}
- request.DecodedRetry=&api.HDRDecodedRetry{AnalysisAttemptID:partial.AttemptID,Modes:[]api.HDRDecodedMode{api.HDRDecodedAutomatic}}
- retry,_,err:=builder.Build(t.Context(),releaseworkflow.HDRPreparation{Release:request.Release},request,"mixed-retry",time.Now(),&partial,partialOwned,entries,resources,publish,&store)
- if err!=nil || len(retry.Targets)!=2 {t.Fatalf("retry: %+v %v",retry,err)}
- for _,target:=range retry.Targets {if target.Decoded[0].State!=api.HDRDecodedComplete {t.Fatalf("retry lost successful target: %+v",target.Decoded)}}
- if len(entries)!=3 || len(store.Records)!=6 {t.Fatalf("retry reread successful sibling: native=%d measurements=%d",len(entries),len(store.Records))}
+	if os.Getenv("UPBRR_HDR_DECODE_CALIBRATION") != "1" {
+		t.Skip("requires actual shared decoder")
+	}
+	builder, resolver, _ := hdrFixture(t)
+	data, err := os.ReadFile(filepath.Join("..", "services", "hdranalysis", "testdata", "decoded-pq-cuts-25.mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := resolver.subject.Targets[0]
+	resolver.subject.Targets = nil
+	request := api.HDRAnalysisInstructions{
+		Release:        resolver.subject.Release,
+		ProfileVersion: api.HDRAnalysisProfileV2,
+		Decoded:        &api.HDRDecodedOptions{Automatic: true},
+	}
+	for _, name := range []string{"First.mkv", "Second.mkv"} {
+		target := original
+		target.Path = filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(target.Path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		target.Target.ID = api.HDRTargetID(target.Path, "")
+		target.Target.Evidence, err = hdranalysis.InspectFileSource(t.Context(), target.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolver.subject.Targets = append(resolver.subject.Targets, target)
+		request.TargetIDs = append(request.TargetIDs, target.Target.ID)
+	}
+	entries := make(map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord)
+	resources := make(map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource)
+	publish := func(record releaseworkflow.HDRExtractionRecord, resource releaseworkflow.RetainedHDRExtractionResource) error {
+		entries[record.ID], resources[record.ID] = record, resource
+		return nil
+	}
+	store := releaseworkflow.HDRMeasurementStore{
+		Records:   make(map[string]releaseworkflow.HDRMeasurementRecord),
+		Resources: make(map[string]releaseworkflow.RetainedHDRMeasurementResource),
+	}
+	store.Publish = func(record releaseworkflow.HDRMeasurementRecord, resource releaseworkflow.RetainedHDRMeasurementResource) error {
+		store.Records[record.ID], store.Resources[record.ID] = record, resource
+		return nil
+	}
+	first, owned, err := builder.Build(
+		t.Context(),
+		releaseworkflow.HDRPreparation{Release: request.Release},
+		request,
+		"mixed-first",
+		time.Now(),
+		nil,
+		nil,
+		entries,
+		resources,
+		publish,
+		&store,
+	)
+	if err != nil || len(first.Targets) != 2 || len(entries) != 2 {
+		t.Fatalf("initial targets: %+v %v", first, err)
+	}
+	for _, target := range first.Targets {
+		if target.Decoded[0].State != api.HDRDecodedComplete {
+			t.Fatalf("initial decoded result: %+v", target.Decoded)
+		}
+	}
+	for id, record := range store.Records {
+		if record.TargetID == request.TargetIDs[1] && record.Result.Mode == api.HDRDecodedAutomatic {
+			delete(store.Resources, id)
+		}
+	}
+	partial, partialOwned, err := builder.Build(
+		t.Context(),
+		releaseworkflow.HDRPreparation{Release: request.Release},
+		request,
+		"mixed-partial",
+		time.Now(),
+		&first,
+		owned,
+		entries,
+		resources,
+		publish,
+		&store,
+	)
+	if err != nil || partial.Targets[0].Decoded[0].State != api.HDRDecodedComplete || partial.Targets[1].Decoded[0].State != api.HDRDecodedFailed {
+		t.Fatalf("mixed result: %+v %v", partial, err)
+	}
+	if err := os.Remove(resolver.subject.Targets[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	request.DecodedRetry = &api.HDRDecodedRetry{AnalysisAttemptID: partial.AttemptID, Modes: []api.HDRDecodedMode{api.HDRDecodedAutomatic}}
+	retry, _, err := builder.Build(
+		t.Context(),
+		releaseworkflow.HDRPreparation{Release: request.Release},
+		request,
+		"mixed-retry",
+		time.Now(),
+		&partial,
+		partialOwned,
+		entries,
+		resources,
+		publish,
+		&store,
+	)
+	if err != nil || len(retry.Targets) != 2 {
+		t.Fatalf("retry: %+v %v", retry, err)
+	}
+	for _, target := range retry.Targets {
+		if target.Decoded[0].State != api.HDRDecodedComplete {
+			t.Fatalf("retry lost successful target: %+v", target.Decoded)
+		}
+	}
+	if len(entries) != 3 || len(store.Records) != 6 {
+		t.Fatalf("retry reread successful sibling: native=%d measurements=%d", len(entries), len(store.Records))
+	}
 }

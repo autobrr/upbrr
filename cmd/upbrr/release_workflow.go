@@ -36,6 +36,7 @@ type cliReleaseWorkflowCore interface {
 	StartLiveTestReleaseWorkflowUpload(context.Context, string, api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
 	ContinueReleaseWorkflow(context.Context, string, api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
 	StartReleaseWorkflow(context.Context, string, releaseworkflow.Command) (api.WorkflowOperationStatus, error)
+	ExecuteReleaseWorkflow(context.Context, string, releaseworkflow.Command) (releaseworkflow.CommandResult, error)
 	StartReleaseWorkflowUpload(
 		context.Context,
 		string,
@@ -115,6 +116,10 @@ func (s *cliWorkflowSession) releaseActiveInput(ctx context.Context) {
 	active, err := s.core.GetActiveInput(cleanup, cliWorkflowOwnerID)
 	if err == nil && active.State == api.ActiveInputActive && active.Revision == s.inputClaim.revision &&
 		active.Current != nil && active.Current.Workflow.ID == s.inputClaim.workflowID {
+		if active.Current.HDRAnalysis != nil || active.Current.HDRPendingRequest != nil {
+			s.logger.Debugf("workflow: state=retained decision=resume_hdr")
+			return
+		}
 		_, err = s.core.ReleaseActiveInput(cleanup, cliWorkflowOwnerID, api.ReleaseActiveInputRequest{ExpectedRevision: s.inputClaim.revision})
 	}
 	if err != nil {

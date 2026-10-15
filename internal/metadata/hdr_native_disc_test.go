@@ -54,8 +54,12 @@ func TestNativeDiscSharesReportAndPreservesHDRWhenDVFails(t *testing.T) {
 				t.Fatal(err)
 			}
 			playlist, err := os.ReadFile(filepath.Join(root, "BDMV", "PLAYLIST", "00001.mpls"))
-			if err != nil { t.Fatal(err) }
-			if err := os.WriteFile(filepath.Join(root, "BDMV", "PLAYLIST", "00002.mpls"), playlist, 0o600); err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "BDMV", "PLAYLIST", "00002.mpls"), playlist, 0o600); err != nil {
+				t.Fatal(err)
+			}
 			options := bd.Options{
 				Path:            root,
 				Settings:        bd.DefaultSettings(t.TempDir()),
@@ -73,7 +77,14 @@ func TestNativeDiscSharesReportAndPreservesHDRWhenDVFails(t *testing.T) {
 			service := hdranalysis.New(hdranalysis.NewAdmission(), nil)
 			err = service.WithSession(t.Context(), func(session *hdranalysis.Session) error {
 				// Another root's live results remain charged while this root is scanned.
-				if out, err := session.ScanNativeDisc(t.Context(), options, api.HDRAnalysisFormatsBoth, hdranalysis.DiscScanRetainedBytes-128<<20, "00001.MPLS"); out != nil || !errors.Is(err, extract.ErrResourceLimit) {
+				if out, err := session.ScanNativeDisc(
+					t.Context(),
+					options,
+					api.HDRAnalysisFormatsBoth,
+					hdranalysis.DiscScanRetainedBytes-128<<20,
+					"00001.MPLS",
+				); out != nil ||
+					!errors.Is(err, extract.ErrResourceLimit) {
 					t.Fatalf("second root ignored retained quota: %+v %v", out, err)
 				}
 				out, scanErr := session.ScanNativeDisc(t.Context(), options, api.HDRAnalysisFormatsBoth, 64<<20, "00001.MPLS")
@@ -92,9 +103,13 @@ func TestNativeDiscSharesReportAndPreservesHDRWhenDVFails(t *testing.T) {
 					return fmt.Errorf("native disc verification: %w", takeErr)
 				}
 				defer native.Release()
-				if out.RetainedBytes() != 128<<20 { t.Fatalf("taken playlist kept owned extraction bytes: %d", out.RetainedBytes()) }
+				if out.RetainedBytes() != 128<<20 {
+					t.Fatalf("taken playlist kept owned extraction bytes: %d", out.RetainedBytes())
+				}
 				out.Release()
-				if out.RetainedBytes() != 0 { t.Fatal("released disc kept report accounting") }
+				if out.RetainedBytes() != 0 {
+					t.Fatal("released disc kept report accounting")
+				}
 				if native.HDR10PlusError != nil || native.HDR10Plus == nil || len(timeline) != 1 {
 					t.Fatalf("HDR result: %v timeline=%d", native.HDR10PlusError, len(timeline))
 				}
@@ -230,7 +245,12 @@ func TestNativeDiscFormatSelectionAndHDRFailureIsolation(t *testing.T) {
 					t.Fatal("format selection lost ordinary disc report")
 				}
 				if tc.late && (len(out.Report.Timelines) != 17 || len(out.Playlists) != 1 || len(out.DolbyVision) != 1) {
-					t.Fatalf("assembly selection altered report or retained unrequested targets: timelines=%d hdr=%d dv=%d", len(out.Report.Timelines), len(out.Playlists), len(out.DolbyVision))
+					t.Fatalf(
+						"assembly selection altered report or retained unrequested targets: timelines=%d hdr=%d dv=%d",
+						len(out.Report.Timelines),
+						len(out.Playlists),
+						len(out.DolbyVision),
+					)
 				}
 				native, timeline, err := out.TakePlaylist(playlist, 0)
 				if err != nil {
@@ -238,7 +258,12 @@ func TestNativeDiscFormatSelectionAndHDRFailureIsolation(t *testing.T) {
 				}
 				defer native.Release()
 				if !native.ScanComplete || len(timeline) != 1 {
-					t.Fatalf("successful selected format lost playlist completion: HDR=%v DV=%v timeline=%d", native.HDR10PlusError, native.DolbyVisionError, len(timeline))
+					t.Fatalf(
+						"successful selected format lost playlist completion: HDR=%v DV=%v timeline=%d",
+						native.HDR10PlusError,
+						native.DolbyVisionError,
+						len(timeline),
+					)
 				}
 				if tc.formats == api.HDRAnalysisFormatsHDR10Plus {
 					if native.DolbyVision != nil || native.DolbyVisionError != nil {

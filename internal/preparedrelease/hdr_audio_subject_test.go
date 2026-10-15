@@ -59,14 +59,29 @@ func TestHDRTargetAudioUsesOnlyPersistedExactResource(t *testing.T) {
 }
 
 func TestHDRTargetAudioPreservesProvenAbsence(t *testing.T) {
- path := `E:\Synthetic\Silent.mkv`
- release:=api.PreparedRelease{Source:api.SourceManifest{Entries:[]api.SourceManifestEntry{{Path:path,Type:api.SourceEntryTypeFile}}},Media:api.MediaFacts{AudioAbsent:true,TrackCoverageComplete:true}}
- target:=api.HDRAnalysisTargetSubject{Path:path}
- if subject:=hdrTargetAudioSubject(release,api.ReleaseRef{},api.PreparedMediaBinding{},target);subject==nil || len(subject.Tracks)!=0 {t.Fatal("lost proven single-file audio absence")}
- for _,mutate:=range []func(*api.PreparedRelease,*api.HDRAnalysisTargetSubject){
-  func(r *api.PreparedRelease,_ *api.HDRAnalysisTargetSubject){r.Media.AudioAbsent=false},
-  func(r *api.PreparedRelease,_ *api.HDRAnalysisTargetSubject){r.Media.TrackCoverageComplete=false},
-  func(_ *api.PreparedRelease,target *api.HDRAnalysisTargetSubject){target.Path=`E:\Synthetic\Uninspected.mkv`},
-  func(_ *api.PreparedRelease,target *api.HDRAnalysisTargetSubject){target.DiscRoot=`E:\Synthetic\Disc`},
- } {r,target:=release,target;mutate(&r,&target);if hdrTargetAudioSubject(r,api.ReleaseRef{},api.PreparedMediaBinding{},target)!=nil {t.Fatal("unknown scope claimed audio absence")}}
+	path := `E:\Synthetic\Silent.mkv`
+	release := api.PreparedRelease{
+		Source: api.SourceManifest{Entries: []api.SourceManifestEntry{{Path: path, Type: api.SourceEntryTypeFile}}},
+		Media:  api.MediaFacts{AudioAbsent: true, TrackCoverageComplete: true},
+	}
+	target := api.HDRAnalysisTargetSubject{Path: path}
+	if subject := hdrTargetAudioSubject(release, api.ReleaseRef{}, api.PreparedMediaBinding{}, target); subject == nil || len(subject.Tracks) != 0 {
+		t.Fatal("lost proven single-file audio absence")
+	}
+	for _, mutate := range []func(*api.PreparedRelease, *api.HDRAnalysisTargetSubject){
+		func(r *api.PreparedRelease, _ *api.HDRAnalysisTargetSubject) { r.Media.AudioAbsent = false },
+		func(r *api.PreparedRelease, _ *api.HDRAnalysisTargetSubject) { r.Media.TrackCoverageComplete = false },
+		func(_ *api.PreparedRelease, target *api.HDRAnalysisTargetSubject) {
+			target.Path = `E:\Synthetic\Uninspected.mkv`
+		},
+		func(_ *api.PreparedRelease, target *api.HDRAnalysisTargetSubject) {
+			target.DiscRoot = `E:\Synthetic\Disc`
+		},
+	} {
+		r, target := release, target
+		mutate(&r, &target)
+		if hdrTargetAudioSubject(r, api.ReleaseRef{}, api.PreparedMediaBinding{}, target) != nil {
+			t.Fatal("unknown scope claimed audio absence")
+		}
+	}
 }

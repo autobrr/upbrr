@@ -5,14 +5,15 @@ package core
 
 import (
 	"context"
-	"github.com/autobrr/upbrr/internal/preparedrelease"
-	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/preparedrelease"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -55,7 +56,10 @@ func TestDecodedWorkflowRetainsUnsupportedAndRequiresExplicitRetryForMissingRepo
 				entries[record.ID], resources[record.ID] = record, resource
 				return nil
 			}
-			store := releaseworkflow.HDRMeasurementStore{Records: make(map[string]releaseworkflow.HDRMeasurementRecord), Resources: make(map[string]releaseworkflow.RetainedHDRMeasurementResource)}
+			store := releaseworkflow.HDRMeasurementStore{
+				Records:   make(map[string]releaseworkflow.HDRMeasurementRecord),
+				Resources: make(map[string]releaseworkflow.RetainedHDRMeasurementResource),
+			}
 			store.Publish = func(record releaseworkflow.HDRMeasurementRecord, resource releaseworkflow.RetainedHDRMeasurementResource) error {
 				if len(entries) != 1 {
 					t.Fatal("decoded checkpoint preceded native checkpoint")
@@ -66,7 +70,19 @@ func TestDecodedWorkflowRetainsUnsupportedAndRequiresExplicitRetryForMissingRepo
 				store.Records[record.ID], store.Resources[record.ID] = record, resource
 				return nil
 			}
-			first, plots, err := builder.Build(t.Context(), releaseworkflow.HDRPreparation{Release: release}, request, "decoded-first", time.Now(), nil, nil, entries, resources, publish, &store)
+			first, plots, err := builder.Build(
+				t.Context(),
+				releaseworkflow.HDRPreparation{Release: release},
+				request,
+				"decoded-first",
+				time.Now(),
+				nil,
+				nil,
+				entries,
+				resources,
+				publish,
+				&store,
+			)
 			if err != nil || len(store.Records) != 1 || len(first.Targets[0].Decoded) != 1 || first.Targets[0].Decoded[0].State != api.HDRDecodedUnsupported {
 				t.Fatalf("initial decoded result=%+v records=%d err=%v", first, len(store.Records), err)
 			}
@@ -84,7 +100,19 @@ func TestDecodedWorkflowRetainsUnsupportedAndRequiresExplicitRetryForMissingRepo
 			if err := os.Remove(source); err != nil {
 				t.Fatal(err)
 			}
-			second, _, err := builder.Build(t.Context(), releaseworkflow.HDRPreparation{Release: release}, request, "decoded-reuse", time.Now(), &first, plots, entries, resources, publish, &store)
+			second, _, err := builder.Build(
+				t.Context(),
+				releaseworkflow.HDRPreparation{Release: release},
+				request,
+				"decoded-reuse",
+				time.Now(),
+				&first,
+				plots,
+				entries,
+				resources,
+				publish,
+				&store,
+			)
 			if err != nil || len(store.Records) != 1 || second.Targets[0].Decoded[0].State != api.HDRDecodedUnsupported {
 				t.Fatalf("terminal decoded result was not reused: %+v %v", second, err)
 			}
@@ -112,8 +140,21 @@ func TestDecodedWorkflowRetainsUnsupportedAndRequiresExplicitRetryForMissingRepo
 				}
 			}
 			clear(store.Resources)
-			third, _, err := builder.Build(t.Context(), releaseworkflow.HDRPreparation{Release: release}, request, "decoded-missing", time.Now(), &second, nil, entries, resources, publish, &store)
-			if err != nil || len(store.Records) != 1 || third.Targets[0].Decoded[0].State != api.HDRDecodedFailed || third.Targets[0].Decoded[0].Reason != "resource_unavailable" {
+			third, _, err := builder.Build(
+				t.Context(),
+				releaseworkflow.HDRPreparation{Release: release},
+				request,
+				"decoded-missing",
+				time.Now(),
+				&second,
+				nil,
+				entries,
+				resources,
+				publish,
+				&store,
+			)
+			if err != nil || len(store.Records) != 1 || third.Targets[0].Decoded[0].State != api.HDRDecodedFailed ||
+				third.Targets[0].Decoded[0].Reason != "resource_unavailable" {
 				t.Fatalf("missing report granted source reads: %+v %v", third, err)
 			}
 			third.ID, third.WorkflowID, third.Revision = "decoded-missing", "workflow", 1
@@ -218,7 +259,11 @@ func TestDecodedComparisonWorkflowCheckpointAndRenderReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vault, err := releaseworkflow.NewPrivateArtifactVault(vaultRoot, hdrResourceCodec(builder.root, "extraction"), hdrResourceCodec(builder.root, "measurement"))
+	vault, err := releaseworkflow.NewPrivateArtifactVault(
+		vaultRoot,
+		hdrResourceCodec(builder.root, "extraction"),
+		hdrResourceCodec(builder.root, "measurement"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +314,19 @@ func TestDecodedComparisonWorkflowCheckpointAndRenderReuse(t *testing.T) {
 		}
 		return nil
 	}
-	interrupted, _, err := builder.Build(interruptedCtx, preparation, request, "comparison-interrupted", time.Now(), nil, nil, entries, resources, publish, &store)
+	interrupted, _, err := builder.Build(
+		interruptedCtx,
+		preparation,
+		request,
+		"comparison-interrupted",
+		time.Now(),
+		nil,
+		nil,
+		entries,
+		resources,
+		publish,
+		&store,
+	)
 	if err != nil || interrupted.Status != api.StageStatusCanceled || len(store.Records) != 1 {
 		t.Fatalf("completed mode did not survive cancellation: %+v records=%d err=%v", interrupted, len(store.Records), err)
 	}

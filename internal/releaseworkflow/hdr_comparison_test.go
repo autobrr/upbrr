@@ -27,8 +27,8 @@ func TestCompositeHDRComparisonSelectionIsCheckpointedBeforeAnalysis(t *testing.
 	request.HDRComparisonSelection = &api.HDRComparisonSelection{Path: path}
 	request.HDRAnalysis = &api.HDRAnalysisRequest{Decoded: &api.HDRDecodedOptions{Comparison: &api.HDRComparisonOptions{
 		FrameOffset: new(0),
- Crop: api.HDRCrop{Width: 192, Height: 112},
- Grade: true,
+		Crop:        api.HDRCrop{Width: 192, Height: 112},
+		Grade:       true,
 	}}}
 	preparer := testPreparer()
 	preparer.DisplayFunc = func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
@@ -50,10 +50,10 @@ func TestCompositeHDRComparisonSelectionIsCheckpointedBeforeAnalysis(t *testing.
 			return api.InputRecord{}, fmt.Errorf("encode comparison fixture: %w", err)
 		}
 		return api.InputRecord{
-CanonicalPath: input.SourcePath,
- SourceVersion: "comparison",
- Manifest: payload,
-}, nil
+			CanonicalPath: input.SourcePath,
+			SourceVersion: "comparison",
+			Manifest:      payload,
+		}, nil
 	}
 	started, err := module.StartUpload(t.Context(), testOwnerID, request)
 	if err != nil {
@@ -68,7 +68,8 @@ CanonicalPath: input.SourcePath,
 	if inspections != 1 || builder.builds != 1 || state.Composite == nil || state.Composite.ComparisonSelection != nil || state.Workflow.HDRComparison == nil {
 		t.Fatalf("comparison selection did not precede analysis: inspections=%d builds=%d state=%+v", inspections, builder.builds, state.Composite)
 	}
-	if state.Composite.Intent.HDRAnalysis.Decoded.Comparison.SourceID != state.Workflow.HDRComparison.ID || current.Release.Release.Source.SourcePath != request.Source.Path {
+	if state.Composite.Intent.HDRAnalysis.Decoded.Comparison.SourceID != state.Workflow.HDRComparison.ID ||
+		current.Release.Release.Source.SourcePath != request.Source.Path {
 		t.Fatal("comparison binding was not checkpointed or replaced primary input")
 	}
 	// The actual initial request retains the reference in the serialized continuation,
@@ -81,7 +82,8 @@ CanonicalPath: input.SourcePath,
 	if err := json.Unmarshal(payload, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if restored.Composite.ComparisonSelection != nil || restored.Composite.Intent.HDRAnalysis.Decoded.Comparison.SourceID != restored.Workflow.HDRComparison.ID {
+	if restored.Composite.ComparisonSelection != nil ||
+		restored.Composite.Intent.HDRAnalysis.Decoded.Comparison.SourceID != restored.Workflow.HDRComparison.ID {
 		t.Fatal("serialized continuation lost its resolved comparison handle")
 	}
 }
@@ -141,7 +143,10 @@ func TestHDRComparisonSelectionPreservesPrimaryAndIsolatesAuthority(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := api.HDRAnalysisInstructions{Release: release, Decoded: &api.HDRDecodedOptions{Comparison: &api.HDRComparisonOptions{SourceID: selected.HDRComparison.ID}}}
+	request := api.HDRAnalysisInstructions{
+		Release: release,
+		Decoded: &api.HDRDecodedOptions{Comparison: &api.HDRComparisonOptions{SourceID: selected.HDRComparison.ID}},
+	}
 	source, err := module.resolveHDRComparison(testOwnerID, state, request)
 	if err != nil || source.Path != path {
 		t.Fatalf("resolve comparison: %+v %v", source, err)

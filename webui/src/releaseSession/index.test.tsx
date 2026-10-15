@@ -11,6 +11,7 @@ import type {
   ActiveInputSnapshot,
   ContinueReleaseWorkflowRequest,
   DescriptionInstructions,
+  HDRAnalysisInstructions,
   DupeDecision,
   MediaCaptureInstructions,
   Operation as WorkflowOperationStatus,
@@ -479,6 +480,15 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
       updatedAt: "2026-07-20T00:00:01Z",
     }),
     analyzeHDR: async (current) => current,
+    selectHDRComparison: async (current) => current,
+    setHDRAnalysisEnabled: async (current, artifactIDs) => ({
+      ...current,
+      workflow: {
+        ...current.workflow,
+        hdrAnalysisEnabled: artifactIDs.length > 0,
+        hdrImages: { artifactIds: artifactIDs },
+      },
+    }),
     hdrAnalysisURL: (_current, analysisID, analysisRevision, artifactID) =>
       `/api/app/release-workflow-hdr-analysis?analysisId=${analysisID}&analysisRevision=${analysisRevision}&artifactId=${artifactID}`,
     analyzeAudio: async (current) => current,
@@ -627,6 +637,9 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     deleteMedia: async (...args) => remember(await configured.deleteMedia(...args)),
     attachMedia: async (...args) => remember(await configured.attachMedia(...args)),
     analyzeHDR: async (...args) => remember(await configured.analyzeHDR(...args)),
+    selectHDRComparison: async (...args) => remember(await configured.selectHDRComparison(...args)),
+    setHDRAnalysisEnabled: async (...args) =>
+      remember(await configured.setHDRAnalysisEnabled(...args)),
     analyzeAudio: async (...args) => remember(await configured.analyzeAudio(...args)),
     setAudioAnalysisEnabled: async (...args) =>
       remember(await configured.setAudioAnalysisEnabled(...args)),
@@ -1123,6 +1136,281 @@ describe("useReleaseSession", () => {
     expect(result.current.screenshots.view.error).toBe("");
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it.each(["retained", "pending"])(
+    "retries a %s v1 HDR request without widening formats",
+    async (source) => {
+      const workflowID = "workflow-hdr-legacy";
+      const initial = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 8),
+        preview("Synthetic.HDR.mkv", 1),
+      );
+      const instructions: HDRAnalysisInstructions = {
+        release: { SourcePath: "Synthetic.HDR.mkv", Generation: 1 },
+        targetIds: ["hdr_11111111111111111111111111111111"],
+        peakSource: "histogram",
+        profileVersion: "hdr-analysis-v1",
+      };
+      const current: ReleaseWorkflowCurrent = {
+        ...initial,
+        workflow: { ...initial.workflow, hdrAnalysis: { id: "legacy", revision: 7 } },
+        hdrPendingRequest: source === "pending" ? instructions : undefined,
+        hdrAnalysis: {
+          ...instructions,
+          id: "legacy",
+          workflowId: workflowID,
+          revision: 7,
+          manifestFingerprint: "manifest",
+          attemptId: "legacy-attempt",
+          status: "failed",
+          targets: [],
+          createdAt: "2026-10-10T00:00:00Z",
+        },
+      };
+      const analyzeHDR = vi.fn(
+        async (_current: ReleaseWorkflowCurrent, _instructions: HDRAnalysisInstructions) => current,
+      );
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({ current: async () => current, analyzeHDR }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.hdrAnalysis.view.result?.id).toBe("legacy"));
+      await act(async () => {
+        await result.current.hdrAnalysis.retry();
+      });
+      expect(analyzeHDR).toHaveBeenCalledOnce();
+      // JSON serialization is the browser transport boundary: omitted options stay omitted.
+      expect(JSON.parse(JSON.stringify(analyzeHDR.mock.calls[0]?.[1]))).toEqual(instructions);
+      unmount();
+    },
+  );
+
+  it.each([undefined, { artifactIds: ["native"] }, { artifactIds: [] }])(
+    "defaults combined HDR audio images and retains explicit selections (%s)",
+    async (selection) => {
+      const workflowID = "workflow-hdr-audio-default";
+      const initial = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 8),
+        preview("Synthetic.HDR.mkv", 1),
+      );
+      const current: ReleaseWorkflowCurrent = {
+        ...initial,
+        workflow: {
+          ...initial.workflow,
+          hdrAnalysis: { id: "hdr-audio", revision: 8 },
+          hdrAnalysisEnabled: true,
+          hdrImages: selection,
+        },
+        hdrAnalysis: {
+          id: "hdr-audio",
+          workflowId: workflowID,
+          revision: 8,
+          release: { SourcePath: "Synthetic.HDR.mkv", Generation: 1 },
+          manifestFingerprint: "manifest",
+          attemptId: "hdr-audio-attempt",
+          targetIds: ["hdr_11111111111111111111111111111111"],
+          peakSource: "histogram",
+          formats: "both",
+          profileVersion: "hdr-analysis-v2",
+          status: "partial",
+          createdAt: "2026-10-10T00:00:00Z",
+          targets: [
+            {
+              targetId: "hdr_11111111111111111111111111111111",
+              label: "Video 1",
+              status: "partial",
+              frames: 0,
+              scenes: 0,
+              decoded: [
+                {
+                  mode: "audio",
+                  state: "complete",
+                  profile: "audio-analysis-v3",
+                  measured: 1,
+                  selected: 1,
+                  artifacts: ["wave", "spectrum", "stats"],
+                },
+              ],
+              artifacts: [
+                {
+                  id: "native",
+                  kind: "hdr10plus_plot",
+                  mime: "image/png",
+                  width: 3000,
+                  height: 1200,
+                  profile: "hdr-analysis-v2",
+                },
+                {
+                  id: "wave",
+                  kind: "audio_waveform",
+                  mime: "image/png",
+                  width: 1800,
+                  height: 180,
+                  profile: "hdr-analysis-v2",
+                },
+                {
+                  id: "spectrum",
+                  kind: "audio_spectrogram",
+                  mime: "image/png",
+                  width: 1800,
+                  height: 600,
+                  profile: "hdr-analysis-v2",
+                },
+                {
+                  id: "unowned",
+                  kind: "audio_waveform",
+                  mime: "image/png",
+                  width: 1800,
+                  height: 180,
+                  profile: "hdr-analysis-v2",
+                },
+                {
+                  id: "picture",
+                  kind: "picture_brightness_plot",
+                  mime: "image/png",
+                  width: 3000,
+                  height: 1200,
+                  profile: "hdr-analysis-v2",
+                },
+                {
+                  id: "stats",
+                  kind: "audio_stats",
+                  mime: "text/plain",
+                  width: 0,
+                  height: 0,
+                  profile: "hdr-analysis-v2",
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({ current: async () => current }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.hdrAnalysis.view.result?.id).toBe("hdr-audio"));
+      expect(result.current.hdrAnalysis.view.includedArtifactIDs).toEqual(
+        selection?.artifactIds ?? ["native", "wave", "spectrum"],
+      );
+      unmount();
+    },
+  );
+
+  it("preserves the retained profile when retrying decoded HDR checks", async () => {
+    const workflowID = "workflow-hdr-decoded-retry";
+    const initial = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 8),
+      preview("Synthetic.HDR.mkv", 1),
+    );
+    const instructions: HDRAnalysisInstructions = {
+      release: { SourcePath: "Synthetic.HDR.mkv", Generation: 1 },
+      targetIds: ["hdr_11111111111111111111111111111111"],
+      peakSource: "histogram",
+      formats: "both",
+      profileVersion: "hdr-analysis-v3",
+      decoded: { sceneSync: true, activeArea: false },
+    };
+    const current: ReleaseWorkflowCurrent = {
+      ...initial,
+      workflow: { ...initial.workflow, hdrAnalysis: { id: "retained", revision: 8 } },
+      hdrAnalysis: {
+        ...instructions,
+        id: "retained",
+        workflowId: workflowID,
+        revision: 8,
+        manifestFingerprint: "manifest",
+        attemptId: "retained-attempt",
+        status: "partial",
+        targets: [],
+        createdAt: "2026-10-10T00:00:00Z",
+      },
+    };
+    const analyzeHDR = vi.fn(
+      async (_current: ReleaseWorkflowCurrent, _instructions: HDRAnalysisInstructions) => current,
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current, analyzeHDR }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.hdrAnalysis.view.result?.id).toBe("retained"));
+    await act(async () => {
+      await result.current.hdrAnalysis.retryDecoded(["scene_sync"]);
+    });
+    expect(analyzeHDR).toHaveBeenCalledOnce();
+    expect(analyzeHDR.mock.calls[0]?.[1]).toEqual({
+      ...instructions,
+      decodedRetry: { analysisAttemptId: "retained-attempt", modes: ["scene_sync"] },
+    });
+    unmount();
+  });
+
+  it("resumes the pending HDR request ahead of an older retained result", async () => {
+    const workflowID = "workflow-hdr-pending";
+    const initial = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 8),
+      preview("Synthetic.HDR.mkv", 1),
+    );
+    const pending: HDRAnalysisInstructions = {
+      release: { SourcePath: "Synthetic.HDR.mkv", Generation: 1 },
+      targetIds: ["hdr_11111111111111111111111111111111"],
+      peakSource: "max-scl-luminance",
+      formats: "both",
+      profileVersion: "hdr-analysis-v2",
+      decoded: { sceneSync: true, activeArea: false },
+      decodedRetry: { analysisAttemptId: "old-attempt", modes: ["scene_sync"] },
+    };
+    const current: ReleaseWorkflowCurrent = {
+      ...initial,
+      workflow: { ...initial.workflow, hdrAnalysis: { id: "older", revision: 7 } },
+      hdrPendingRequest: pending,
+      hdrAnalysis: {
+        id: "older",
+        workflowId: workflowID,
+        revision: 7,
+        release: pending.release,
+        manifestFingerprint: "manifest",
+        attemptId: "old-attempt",
+        targetIds: [],
+        peakSource: "histogram",
+        profileVersion: "hdr-analysis-v2",
+        formats: "auto",
+        status: "failed",
+        targets: [],
+        createdAt: "2026-10-10T00:00:00Z",
+      },
+    };
+    const analyzeHDR = vi.fn(
+      async (_current: ReleaseWorkflowCurrent, _instructions: HDRAnalysisInstructions) => current,
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current, analyzeHDR }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.hdrAnalysis.view.pendingRequest).toEqual(pending));
+    await act(async () => {
+      await result.current.hdrAnalysis.retry();
+    });
+    expect(analyzeHDR).toHaveBeenCalledOnce();
+    expect(analyzeHDR.mock.calls[0]?.[1]).toEqual(pending);
+    unmount();
   });
 
   it.each([false, true])(

@@ -378,7 +378,8 @@ func TestAutomaticHDRDefaultDescriptionAndExpiredReferenceRecovery(t *testing.T)
 		t.Fatal(err)
 	}
 	restored := currentHDRResult(&state)
-	if restored == nil || restored.Decoded == nil || !restored.Decoded.Automatic || restored.Decoded.Comparison == nil || restored.Decoded.Comparison.SourceID != "expired" {
+	if restored == nil || restored.Decoded == nil || !restored.Decoded.Automatic || restored.Decoded.Comparison == nil ||
+		restored.Decoded.Comparison.SourceID != "expired" {
 		t.Fatal("recovery changed automatic checkpoint identity or dropped primary modes")
 	}
 }
@@ -387,19 +388,24 @@ func TestHDROperationRetainsTypedTargetFailures(t *testing.T) {
 	for _, partial := range []bool{false, true} {
 		t.Run(strconv.FormatBool(partial), func(t *testing.T) {
 			builder := &hdrBuilderFixture{partial: partial, unavailable: !partial}
-			module, _ := newTestModule(t, testPreparer(), WithHDRAnalysisBuilder(builder), WithOperationErrorClassifier(func(operation api.OperationKind, err error) error {
-				failure, ok := api.AsHDRAnalysisFailure(err)
-				if !ok {
-					t.Fatalf("classifier received an untyped HDR cause: %v", err)
-				}
-				return api.NewOperationError(api.OperationFailure{
-					Code:            api.OperationFailureHDRAnalysis,
-					Operation:       operation,
-					Message:         failure.Message,
-					HDRAnalysisCode: failure.Code,
-					Recovery:        api.OperationRecoveryRetry,
-				}, err)
-			}))
+			module, _ := newTestModule(
+				t,
+				testPreparer(),
+				WithHDRAnalysisBuilder(builder),
+				WithOperationErrorClassifier(func(operation api.OperationKind, err error) error {
+					failure, ok := api.AsHDRAnalysisFailure(err)
+					if !ok {
+						t.Fatalf("classifier received an untyped HDR cause: %v", err)
+					}
+					return api.NewOperationError(api.OperationFailure{
+						Code:            api.OperationFailureHDRAnalysis,
+						Operation:       operation,
+						Message:         failure.Message,
+						HDRAnalysisCode: failure.Code,
+						Recovery:        api.OperationRecoveryRetry,
+					}, err)
+				}),
+			)
 			created := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "hdr-terminal"})
 			prepared := executeCommand(t, module, PrepareReleaseCommand{
 				WorkflowID:       created.Workflow.ID,
@@ -423,7 +429,13 @@ func TestHDROperationRetainsTypedTargetFailures(t *testing.T) {
 			if partial {
 				want = api.StageStatusPartial
 			}
-			terminal := waitForWorkflowOperation(t, module, prepared.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool { return status.Status == want })
+			terminal := waitForWorkflowOperation(
+				t,
+				module,
+				prepared.Workflow.ID,
+				operation.ID,
+				func(status api.WorkflowOperationStatus) bool { return status.Status == want },
+			)
 			wantCount := 2
 			if partial {
 				wantCount = 1
@@ -432,7 +444,8 @@ func TestHDROperationRetainsTypedTargetFailures(t *testing.T) {
 				t.Fatalf("terminal failures=%#v", terminal)
 			}
 			for _, failure := range terminal.Failures {
-				if failure.Failure.Code != api.OperationFailureHDRAnalysis || failure.Failure.Operation != api.OperationKindHDRAnalysis || failure.Failure.HDRAnalysisCode == "" {
+				if failure.Failure.Code != api.OperationFailureHDRAnalysis || failure.Failure.Operation != api.OperationKindHDRAnalysis ||
+					failure.Failure.HDRAnalysisCode == "" {
 					t.Fatalf("untyped target failure: %#v", failure)
 				}
 			}
@@ -507,11 +520,29 @@ func TestHDRWorkflowCheckpointBeforeRenderAndRetry(t *testing.T) {
 	if err := repo.CheckpointHDRRequest(t.Context(), "foreign", stored.Workflow.ID, stored.Workflow.Revision, pending); !errors.Is(err, ErrWorkflowNotFound) {
 		t.Fatalf("foreign request checkpoint: %v", err)
 	}
-	if err := repo.CheckpointHDRRequest(t.Context(), testOwnerID, stored.Workflow.ID, stored.Workflow.Revision+1, pending); !errors.Is(err, ErrRevisionConflict) {
+	if err := repo.CheckpointHDRRequest(
+		t.Context(),
+		testOwnerID,
+		stored.Workflow.ID,
+		stored.Workflow.Revision+1,
+		pending,
+	); !errors.Is(
+		err,
+		ErrRevisionConflict,
+	) {
 		t.Fatalf("stale request checkpoint: %v", err)
 	}
 	pending.Instructions.Release.Generation++
-	if err := repo.CheckpointHDRRequest(t.Context(), testOwnerID, stored.Workflow.ID, stored.Workflow.Revision, pending); !errors.Is(err, ErrInvalidTransition) {
+	if err := repo.CheckpointHDRRequest(
+		t.Context(),
+		testOwnerID,
+		stored.Workflow.ID,
+		stored.Workflow.Revision,
+		pending,
+	); !errors.Is(
+		err,
+		ErrInvalidTransition,
+	) {
 		t.Fatalf("different-generation request checkpoint: %v", err)
 	}
 	builder.failRender = false
@@ -773,7 +804,12 @@ func (b *hdrCleanupBuilderFixture) CloneExtractions(
 	return b.hdrInputRestorerFixture.CloneExtractions(ctx, preparation, entries, resources, attempt)
 }
 
-func (b *hdrCleanupBuilderFixture) CleanupAttempt(release api.ReleaseRef, _ string, entries map[api.HDRExtractionID]HDRExtractionRecord, _ map[string]HDRMeasurementRecord) error {
+func (b *hdrCleanupBuilderFixture) CleanupAttempt(
+	release api.ReleaseRef,
+	_ string,
+	entries map[api.HDRExtractionID]HDRExtractionRecord,
+	_ map[string]HDRMeasurementRecord,
+) error {
 	b.cleaned = append(b.cleaned, release)
 	b.protected = maps.Clone(entries)
 	return nil
@@ -883,7 +919,13 @@ func TestHDRPreparationRecoveryHasAuthorityBeforeAllocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			waitForWorkflowOperation(t, module, before.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool { return status.Status == api.StageStatusFailed })
+			waitForWorkflowOperation(
+				t,
+				module,
+				before.Workflow.ID,
+				operation.ID,
+				func(status api.WorkflowOperationStatus) bool { return status.Status == api.StageStatusFailed },
+			)
 			want := api.ReleaseRef{SourcePath: source, Generation: generation}
 			if test.checkpointFailure {
 				if len(observed) != 0 {
@@ -941,34 +983,38 @@ func TestHDRPreparationRecoveryHasAuthorityBeforeAllocation(t *testing.T) {
 }
 
 func TestMixedTargetDecodedRetryRetainsSelection(t *testing.T) {
- b := &hdrBuilderFixture{decodedOnly: true, partial: true}
- m, _ := newTestModule(t, testPreparer(), WithHDRAnalysisBuilder(b))
- created := executeCommand(t, m, CreateWorkflowCommand{WorkflowID: "review-mixed"})
- prepared := executeCommand(t, m, PrepareReleaseCommand{
-WorkflowID: created.Workflow.ID,
- ExpectedRevision: created.Workflow.Revision,
- Input: api.PrepareInput{SourcePath: "Synthetic.HDR.mkv"},
-})
- ids := []string{api.HDRTargetID("first", ""), api.HDRTargetID("second", "")}
- instructions := api.HDRAnalysisInstructions{
-Release: api.ReleaseRef{SourcePath: prepared.Release.Release.Source.SourcePath, Generation: prepared.Release.Release.Generation},
- TargetIDs: ids,
- ProfileVersion: api.HDRAnalysisProfileV2,
- Decoded: &api.HDRDecodedOptions{Audio: true},
-}
- initial := executeCommand(t, m, AnalyzeHDRCommand{
-WorkflowID: prepared.Workflow.ID,
- ExpectedRevision: prepared.Workflow.Revision,
- Instructions: instructions,
- IdempotencyKey: "initial",
-})
- if initial.HDRAnalysis.Targets[0].Decoded[0].State != api.HDRDecodedComplete || initial.HDRAnalysis.Targets[1].Decoded[0].State != api.HDRDecodedFailed { t.Fatal("fixture does not have mixed outcomes") }
- instructions.DecodedRetry = &api.HDRDecodedRetry{AnalysisAttemptID: initial.HDRAnalysis.AttemptID, Modes: []api.HDRDecodedMode{api.HDRDecodedAudio}}
- retried := executeCommand(t,m,AnalyzeHDRCommand{
-WorkflowID:initial.Workflow.ID,
-ExpectedRevision:initial.Workflow.Revision,
-Instructions:instructions,
-IdempotencyKey:"retry",
-})
- if b.builds != 2 || len(retried.HDRAnalysis.Targets)!=2 {t.Fatal("mixed retry did not preserve target selection")}
+	b := &hdrBuilderFixture{decodedOnly: true, partial: true}
+	m, _ := newTestModule(t, testPreparer(), WithHDRAnalysisBuilder(b))
+	created := executeCommand(t, m, CreateWorkflowCommand{WorkflowID: "review-mixed"})
+	prepared := executeCommand(t, m, PrepareReleaseCommand{
+		WorkflowID:       created.Workflow.ID,
+		ExpectedRevision: created.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "Synthetic.HDR.mkv"},
+	})
+	ids := []string{api.HDRTargetID("first", ""), api.HDRTargetID("second", "")}
+	instructions := api.HDRAnalysisInstructions{
+		Release:        api.ReleaseRef{SourcePath: prepared.Release.Release.Source.SourcePath, Generation: prepared.Release.Release.Generation},
+		TargetIDs:      ids,
+		ProfileVersion: api.HDRAnalysisProfileV2,
+		Decoded:        &api.HDRDecodedOptions{Audio: true},
+	}
+	initial := executeCommand(t, m, AnalyzeHDRCommand{
+		WorkflowID:       prepared.Workflow.ID,
+		ExpectedRevision: prepared.Workflow.Revision,
+		Instructions:     instructions,
+		IdempotencyKey:   "initial",
+	})
+	if initial.HDRAnalysis.Targets[0].Decoded[0].State != api.HDRDecodedComplete || initial.HDRAnalysis.Targets[1].Decoded[0].State != api.HDRDecodedFailed {
+		t.Fatal("fixture does not have mixed outcomes")
+	}
+	instructions.DecodedRetry = &api.HDRDecodedRetry{AnalysisAttemptID: initial.HDRAnalysis.AttemptID, Modes: []api.HDRDecodedMode{api.HDRDecodedAudio}}
+	retried := executeCommand(t, m, AnalyzeHDRCommand{
+		WorkflowID:       initial.Workflow.ID,
+		ExpectedRevision: initial.Workflow.Revision,
+		Instructions:     instructions,
+		IdempotencyKey:   "retry",
+	})
+	if b.builds != 2 || len(retried.HDRAnalysis.Targets) != 2 {
+		t.Fatal("mixed retry did not preserve target selection")
+	}
 }

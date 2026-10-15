@@ -31,9 +31,29 @@ func TestHDRPreparedAudioWorkflowExpandsSelectionWithoutNativeRecapture(t *testi
 		t.Fatal(err)
 	}
 	source := filepath.Join(t.TempDir(), "Synthetic.Prepared.Tracks.mkv")
-	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-i", filepath.Join("..", "services", "hdranalysis", "testdata", "decoded-pq-cuts-25.mkv"),
-		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4.8", "-map", "0:v:0", "-map", "1:a:0", "-map", "1:a:0",
-		"-c:v", "copy", "-c:a", "pcm_s16le", source}
+	args := []string{
+		"-hide_banner",
+		"-nostdin",
+		"-loglevel",
+		"error",
+		"-i",
+		filepath.Join("..", "services", "hdranalysis", "testdata", "decoded-pq-cuts-25.mkv"),
+		"-f",
+		"lavfi",
+		"-i",
+		"sine=frequency=440:sample_rate=48000:duration=4.8",
+		"-map",
+		"0:v:0",
+		"-map",
+		"1:a:0",
+		"-map",
+		"1:a:0",
+		"-c:v",
+		"copy",
+		"-c:a",
+		"pcm_s16le",
+		source,
+	}
 	if output, err := exec.CommandContext(t.Context(), executable, args...).CombinedOutput(); err != nil {
 		t.Fatalf("author prepared source: %v %s", err, output)
 	}
@@ -84,7 +104,10 @@ func TestHDRPreparedAudioWorkflowExpandsSelectionWithoutNativeRecapture(t *testi
 		entries[record.ID], resources[record.ID] = record, resource
 		return nil
 	}
-	store := releaseworkflow.HDRMeasurementStore{Records: make(map[string]releaseworkflow.HDRMeasurementRecord), Resources: make(map[string]releaseworkflow.RetainedHDRMeasurementResource)}
+	store := releaseworkflow.HDRMeasurementStore{
+		Records:   make(map[string]releaseworkflow.HDRMeasurementRecord),
+		Resources: make(map[string]releaseworkflow.RetainedHDRMeasurementResource),
+	}
 	store.Publish = func(record releaseworkflow.HDRMeasurementRecord, resource releaseworkflow.RetainedHDRMeasurementResource) error {
 		if len(entries) != 1 || record.AudioTrackID == "" {
 			t.Fatal("track checkpoint preceded native checkpoint or lost track identity")
@@ -98,15 +121,19 @@ func TestHDRPreparedAudioWorkflowExpandsSelectionWithoutNativeRecapture(t *testi
 	var prior *api.HDRAnalysisResult
 	var priorResource releaseworkflow.RetainedHDRAnalysisResource
 	for _, phase := range []string{"primary", "all", "missing-alternate", "retry", "source-free", "missing"} {
-  uploads.paths = nil
-  request.DecodedRetry = nil
-  if phase == "missing-alternate" {
-   for id, record := range store.Records { if record.AudioTrackID == "alternate" { delete(store.Resources,id) } }
-  }
-  if phase == "retry" {
-   request.DecodedRetry = &api.HDRDecodedRetry{AnalysisAttemptID:prior.AttemptID,Modes:[]api.HDRDecodedMode{api.HDRDecodedAudio}}
-  }
-  if phase == "all" {
+		uploads.paths = nil
+		request.DecodedRetry = nil
+		if phase == "missing-alternate" {
+			for id, record := range store.Records {
+				if record.AudioTrackID == "alternate" {
+					delete(store.Resources, id)
+				}
+			}
+		}
+		if phase == "retry" {
+			request.DecodedRetry = &api.HDRDecodedRetry{AnalysisAttemptID: prior.AttemptID, Modes: []api.HDRDecodedMode{api.HDRDecodedAudio}}
+		}
+		if phase == "all" {
 			request.Decoded = &api.HDRDecodedOptions{Audio: true, AllAudioTracks: true}
 		}
 		if phase == "source-free" {
@@ -128,17 +155,21 @@ func TestHDRPreparedAudioWorkflowExpandsSelectionWithoutNativeRecapture(t *testi
 		}
 		audio := result.Targets[0].Decoded[0]
 		records := want
-  if phase == "retry" || phase == "source-free" || phase == "missing" {records++}
-  if len(entries) != 1 || len(store.Records) != records || len(audio.AudioTracks) != want || audio.Selected != want {
+		if phase == "retry" || phase == "source-free" || phase == "missing" {
+			records++
+		}
+		if len(entries) != 1 || len(store.Records) != records || len(audio.AudioTracks) != want || audio.Selected != want {
 			t.Fatalf("%s recaptured metadata or lost exact selection: native=%d records=%d audio=%+v", phase, len(entries), len(store.Records), audio)
 		}
-		if phase != "missing" && phase != "missing-alternate" && (audio.Measured != want || len(audio.Artifacts) != want*3 || audio.Coverage != api.HDRCoverageComplete) {
+		if phase != "missing" && phase != "missing-alternate" &&
+			(audio.Measured != want || len(audio.Artifacts) != want*3 || audio.Coverage != api.HDRCoverageComplete) {
 			t.Fatalf("%s lost measured outputs: %+v", phase, audio)
 		}
-		if phase == "missing-alternate" && (audio.Measured != 1 || audio.AudioTracks[0].State != api.HDRDecodedComplete || audio.AudioTracks[1].State != api.HDRDecodedFailed) {
-   t.Fatalf("missing sibling did not produce mixed outcome: %+v",audio)
-  }
-  if phase == "missing" && (audio.Measured != 0 || audio.Coverage != api.HDRCoveragePartial) {
+		if phase == "missing-alternate" &&
+			(audio.Measured != 1 || audio.AudioTracks[0].State != api.HDRDecodedComplete || audio.AudioTracks[1].State != api.HDRDecodedFailed) {
+			t.Fatalf("missing sibling did not produce mixed outcome: %+v", audio)
+		}
+		if phase == "missing" && (audio.Measured != 0 || audio.Coverage != api.HDRCoveragePartial) {
 			t.Fatalf("missing reports granted source reads or PCM authority: %+v", audio)
 		}
 		if phase == "all" && len(uploads.paths) != 2 || phase == "source-free" && len(uploads.paths) != 4 {
@@ -372,13 +403,17 @@ func TestHDRPreparedAudioRejectsUnknownScopeAndExcessTracksWithoutSubset(t *test
 }
 
 func TestHDRPreparedKnownAudioAbsenceKeepsNativeComplete(t *testing.T) {
- builder,resolver,_:=hdrFixture(t)
- target:=resolver.subject.Targets[0]
- target.Audio=&api.AudioAnalysisSubject{VideoPath:target.Path,SourceFingerprint:resolver.subject.SourceFingerprint}
- outcome:=api.HDRAnalysisTargetResult{Formats:[]api.HDRFormatResult{{Format:api.HDRNativeDolbyVision,State:api.HDRExtractionComplete}}}
- capture,err:=builder.prepareHDRAudioCapture(t.Context(),nil,resolver.subject,target,
-  api.HDRAnalysisInstructions{ProfileVersion:api.HDRAnalysisProfileV3,Decoded:&api.HDRDecodedOptions{Audio:true}},
-  &releaseworkflow.HDRExtractionRecord{},nil,&outcome,hdrManagedResource{},"silent",0,"")
- if err!=nil || capture==nil || len(capture.Selected)!=0 || len(outcome.Decoded)!=1 {t.Fatalf("absent audio: %+v %v",capture,err)}
- if outcome.Decoded[0].State!=api.HDRDecodedNotRun || outcome.Decoded[0].Reason!="no_audio" || outcome.AnalysisStatus()!=api.StageStatusCompleted {t.Fatalf("known absence downgraded native completion: %+v",outcome)}
+	builder, resolver, _ := hdrFixture(t)
+	target := resolver.subject.Targets[0]
+	target.Audio = &api.AudioAnalysisSubject{VideoPath: target.Path, SourceFingerprint: resolver.subject.SourceFingerprint}
+	outcome := api.HDRAnalysisTargetResult{Formats: []api.HDRFormatResult{{Format: api.HDRNativeDolbyVision, State: api.HDRExtractionComplete}}}
+	capture, err := builder.prepareHDRAudioCapture(t.Context(), nil, resolver.subject, target,
+		api.HDRAnalysisInstructions{ProfileVersion: api.HDRAnalysisProfileV3, Decoded: &api.HDRDecodedOptions{Audio: true}},
+		&releaseworkflow.HDRExtractionRecord{}, nil, &outcome, hdrManagedResource{}, "silent", 0, "")
+	if err != nil || capture == nil || len(capture.Selected) != 0 || len(outcome.Decoded) != 1 {
+		t.Fatalf("absent audio: %+v %v", capture, err)
+	}
+	if outcome.Decoded[0].State != api.HDRDecodedNotRun || outcome.Decoded[0].Reason != "no_audio" || outcome.AnalysisStatus() != api.StageStatusCompleted {
+		t.Fatalf("known absence downgraded native completion: %+v", outcome)
+	}
 }

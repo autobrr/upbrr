@@ -120,18 +120,18 @@ func TestDescriptionFailedCacheRefreshRetainsFinalEdits(t *testing.T) {
 	builder := &descriptionFailedRefreshFake{
 		descriptionAtomicBuilderFake: descriptionAtomicBuilderFake{&descriptionBuilderFake{testing: t}},
 		override: api.DescriptionOverrideInput{
-			GroupKey: current.Descriptions.Descriptions[0].GroupKey,
+			GroupKey:   current.Descriptions.Descriptions[0].GroupKey,
 			TrackerIDs: []api.TrackerID{"ALPHA"},
-			Source: "Owner final text",
-			Final: true,
+			Source:     "Owner final text",
+			Final:      true,
 		},
 	}
 	module.descriptionBuilder = builder
 	result := executeCommand(t, module, GenerateDescriptionsCommand{
-		WorkflowID: current.Workflow.ID,
+		WorkflowID:       current.Workflow.ID,
 		ExpectedRevision: current.Workflow.Revision,
-		Instructions: api.DescriptionInstructions{TemplateVersion: "refresh-renderer"},
-		IdempotencyKey: "refresh-failed",
+		Instructions:     api.DescriptionInstructions{TemplateVersion: "refresh-renderer"},
+		IdempotencyKey:   "refresh-failed",
 	})
 	if result.Descriptions == nil || result.Descriptions.Status != api.StageStatusFailed || builder.builds != 0 {
 		t.Fatalf("failed refresh was discarded or rebuilt: descriptions=%+v builds=%d", result.Descriptions, builder.builds)
@@ -157,15 +157,15 @@ func (b *descriptionFailedRefreshFake) RestoreCompatibleDescriptions(ctx context
 	instructions.Overrides = []api.DescriptionOverrideInput{b.override}
 	input, template, err := b.Fingerprints(ctx, release, projections, media, private, instructions)
 	return api.DescriptionSet{
-		InputFingerprint: input,
+		InputFingerprint:    input,
 		TemplateFingerprint: template,
-		Status: api.StageStatusFailed,
+		Status:              api.StageStatusFailed,
 		Failures: []api.WorkflowFailure{{
 			TrackerID: "ALPHA",
 			Failure: api.OperationFailure{
-				Code: api.OperationFailureInvalidInput,
+				Code:      api.OperationFailureInvalidInput,
 				Operation: api.OperationKindDescription,
-				Message: "Injected renderer failure",
+				Message:   "Injected renderer failure",
 			},
 		}},
 	}, instructions, err
