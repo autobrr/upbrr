@@ -117,7 +117,7 @@ func (s *cliWorkflowSession) releaseActiveInput(ctx context.Context) {
 	if err == nil && active.State == api.ActiveInputActive && active.Revision == s.inputClaim.revision &&
 		active.Current != nil && active.Current.Workflow.ID == s.inputClaim.workflowID {
 		if active.Current.HDRAnalysis != nil || active.Current.HDRPendingRequest != nil {
-			s.logger.Debugf("workflow: state=retained decision=resume_hdr")
+			s.logger.Debugf("workflow: state=retained_hdr decision=keep")
 			return
 		}
 		_, err = s.core.ReleaseActiveInput(cleanup, cliWorkflowOwnerID, api.ReleaseActiveInputRequest{ExpectedRevision: s.inputClaim.revision})
