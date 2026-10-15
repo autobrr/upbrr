@@ -38,7 +38,7 @@ func oeTestSubject() api.UploadSubject {
 func TestAudioAnalysisFollowsEvidenceAndMenus(t *testing.T) {
 	t.Parallel()
 	got, err := buildDescription(t.Context(), oeTestSubject(), config.Config{}, config.TrackerConfig{}, api.NopLogger{},
-		"Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
+		"Notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		[]api.ScreenshotImage{{
 			RawURL: "https://images.example.invalid/menu.png",
 			ImgURL: "https://images.example.invalid/menu.png",

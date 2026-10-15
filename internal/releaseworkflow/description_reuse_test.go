@@ -6,6 +6,7 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -105,4 +106,67 @@ func (descriptionAtomicBuilderFake) RestoreCompatibleDescriptions(_ context.Cont
 	_ api.TrackerReleaseProjectionSet, _ api.MediaArtifactSet, _ any, instructions api.DescriptionInstructions,
 ) (api.DescriptionSet, api.DescriptionInstructions, error) {
 	return api.DescriptionSet{}, instructions, nil
+}
+
+func TestDescriptionFailedCacheRefreshRetainsFinalEdits(t *testing.T) {
+	module, _, _ := newCompositeUploadTestModule(t)
+	started, err := module.StartUpload(t.Context(), testOwnerID,
+		compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "description-refresh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	current := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA"}, "refresh-approval")
+	builder := &descriptionFailedRefreshFake{
+		descriptionAtomicBuilderFake: descriptionAtomicBuilderFake{&descriptionBuilderFake{testing: t}},
+		override: api.DescriptionOverrideInput{
+			GroupKey: current.Descriptions.Descriptions[0].GroupKey,
+			TrackerIDs: []api.TrackerID{"ALPHA"},
+			Source: "Owner final text",
+			Final: true,
+		},
+	}
+	module.descriptionBuilder = builder
+	result := executeCommand(t, module, GenerateDescriptionsCommand{
+		WorkflowID: current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Instructions: api.DescriptionInstructions{TemplateVersion: "refresh-renderer"},
+		IdempotencyKey: "refresh-failed",
+	})
+	if result.Descriptions == nil || result.Descriptions.Status != api.StageStatusFailed || builder.builds != 0 {
+		t.Fatalf("failed refresh was discarded or rebuilt: descriptions=%+v builds=%d", result.Descriptions, builder.builds)
+	}
+	retained, err := module.private.Get(testOwnerID, result.Workflow.ID, descriptionPrivateResourceID(result.Descriptions.ID), module.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	instructions, ok := retained.(api.DescriptionInstructions)
+	if !ok || !reflect.DeepEqual(instructions.Overrides, []api.DescriptionOverrideInput{builder.override}) {
+		t.Fatalf("final edits not retained for retry: %+v", retained)
+	}
+}
+
+type descriptionFailedRefreshFake struct {
+	descriptionAtomicBuilderFake
+	override api.DescriptionOverrideInput
+}
+
+func (b *descriptionFailedRefreshFake) RestoreCompatibleDescriptions(ctx context.Context, release api.ReleaseRef,
+	projections api.TrackerReleaseProjectionSet, media api.MediaArtifactSet, private any, instructions api.DescriptionInstructions,
+) (api.DescriptionSet, api.DescriptionInstructions, error) {
+	instructions.Overrides = []api.DescriptionOverrideInput{b.override}
+	input, template, err := b.Fingerprints(ctx, release, projections, media, private, instructions)
+	return api.DescriptionSet{
+		InputFingerprint: input,
+		TemplateFingerprint: template,
+		Status: api.StageStatusFailed,
+		Failures: []api.WorkflowFailure{{
+			TrackerID: "ALPHA",
+			Failure: api.OperationFailure{
+				Code: api.OperationFailureInvalidInput,
+				Operation: api.OperationKindDescription,
+				Message: "Injected renderer failure",
+			},
+		}},
+	}, instructions, err
 }

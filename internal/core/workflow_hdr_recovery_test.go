@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	dv "github.com/Audionut/go-dovi-extract/extract"
 	"github.com/autobrr/go-bdinfo/pkg/bdinfo/video"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -50,12 +51,24 @@ func TestHDRPlaylistPreparationRendersCapturedSidecarWithoutReadingDisc(t *testi
 		},
 		Source: video.Source{Kind: "m2ts", Path: filepath.Join(release.SourcePath, "BDMV", "STREAM", "00001.M2TS")},
 	}}
-	record, captured, err := builder.retainExtraction(t.Context(), release, sidecar, "playlist-capture")
+	native := &hdranalysis.NativeExtraction{
+		HDR10Plus:        sidecar.Extraction,
+		DolbyVisionError: dv.ErrUnsupportedInput,
+		ScanComplete:     true,
+		TrackID:          sidecar.Identity.ResolvedTrackID,
+	}
+	evidence, err := native.Evidence(api.HDRAnalysisFormatsBoth, api.HDRSourceEvidence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.Timeline = sidecar.Timeline
+	defer evidence.Release()
+	record, captured, err := builder.retainNativeExtraction(t.Context(), release, sidecar.Identity, api.HDRAnalysisFormatsBoth, evidence, "playlist-capture")
 	if err != nil {
 		t.Fatal(err)
 	}
 	target := &resolver.subject.Targets[0]
-	target.CapturedPath, target.CapturedSize, target.CapturedSHA256, target.CapturedTrackID = captured.Files["metadata"].Path, record.Size, record.SHA256, record.ResolvedTrackID
+	target.CapturedNativePath, target.CapturedNativeSize, target.CapturedNativeSHA256, target.CapturedTrackID = captured.Files["metadata"].Path, record.Size, record.SHA256, record.ResolvedTrackID
 	preparer := releaseworkflow.ReleasePreparerFunc{
 		PrepareFunc: func(context.Context, api.PrepareInput) (api.PrepareResult, error) {
 			return api.PrepareResult{Release: api.PreparedRelease{
@@ -99,7 +112,7 @@ func TestHDRPlaylistPreparationRendersCapturedSidecarWithoutReadingDisc(t *testi
 		"owner",
 		prepared.Workflow.ID,
 		*prepared.Workflow.HDRAnalysis,
-		prepared.HDRAnalysis.Targets[0].Artifact.ID,
+		prepared.HDRAnalysis.Targets[0].DescriptionImages()[0].ID,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -133,10 +146,14 @@ func TestHDRStoredPlotRestoresWithoutMetadataAndReusesHostedLinks(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := api.HDRAnalysisInstructions{Release: release, TargetIDs: []string{sidecar.Identity.TargetID}}
-	original, plots, err := builder.Build(t.Context(), release, request, "original", time.Now().UTC(), nil, nil,
+	request := api.HDRAnalysisInstructions{
+		ProfileVersion: api.HDRAnalysisProfileVersion,
+		Release:        release,
+		TargetIDs:      []string{sidecar.Identity.TargetID},
+	}
+	original, plots, err := builder.Build(t.Context(), releaseworkflow.HDRPreparation{Release: release}, request, "original", time.Now().UTC(), nil, nil,
 		map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{record.ID: record},
-		map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: metadata}, nil)
+		map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: metadata}, nil, nil)
 	if err != nil || original.Status != api.StageStatusCompleted {
 		t.Fatalf("original=%#v err=%v", original, err)
 	}
@@ -197,7 +214,7 @@ func TestHDRStoredPlotRestoresWithoutMetadataAndReusesHostedLinks(t *testing.T) 
 	resolver.subject.MediaBinding.PreparedMediaFingerprint = "second"
 	phases := make(map[string]bool)
 	ctx := hdranalysis.WithProgress(t.Context(), func(update hdranalysis.Progress) { phases[update.Phase] = true })
-	restored, resource, err := builder.Build(ctx, request.Release, request, "restored", time.Now().UTC(), &original, retained, nil, nil, nil)
+	restored, resource, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: request.Release}, request, "restored", time.Now().UTC(), &original, retained, nil, nil, nil, nil)
 	if err != nil || restored.Status != api.StageStatusCompleted || resource == nil || phases["reading_metadata"] || phases["rendering"] {
 		t.Fatalf("PNG restoration reread or rerendered: result=%#v phases=%v err=%v", restored, phases, err)
 	}
@@ -283,7 +300,7 @@ func TestHDRStoredPlotRestoresWithoutMetadataAndReusesHostedLinks(t *testing.T) 
 			}
 			result, _, err := candidate.Build(
 				t.Context(),
-				instructions.Release,
+				releaseworkflow.HDRPreparation{Release: instructions.Release},
 				instructions,
 				"rejected-"+test,
 				time.Now().UTC(),
@@ -292,7 +309,7 @@ func TestHDRStoredPlotRestoresWithoutMetadataAndReusesHostedLinks(t *testing.T) 
 				nil,
 				nil,
 				nil,
-			)
+				nil)
 			if err != nil || result.Status == api.StageStatusCompleted {
 				t.Fatalf("incompatible plot reused: %#v err=%v", result, err)
 			}

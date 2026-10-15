@@ -12,13 +12,13 @@ import (
 func TestHDRBoundaryColourProfileCompatibility(t *testing.T) {
 	for _, profile := range []string{"hdr-boundary-pq16-v1", "hdr-boundary-pq16-colour-v2", "hdr-boundary-pq16-colour-v3"} {
 		result := HDRDecodedResult{
-			Mode:     HDRDecodedBoundarySync,
-			Profile:  profile,
-			State:    HDRDecodedComplete,
+Mode: HDRDecodedBoundarySync,
+ Profile: profile,
+ State: HDRDecodedComplete,
 			Coverage: HDRCoverageComplete,
-			Selected: 1,
-			Measured: 1,
-		}
+ Selected: 1,
+ Measured: 1,
+}
 		if err := result.Validate(); err != nil {
 			t.Fatalf("profile %s: %v", profile, err)
 		}
@@ -215,9 +215,6 @@ func TestHDRNewFeaturesRequireV3WithoutChangingLegacyDefault(t *testing.T) {
 		}
 		got, err := request.Normalize()
 		want := HDRAnalysisProfileV2
-		if options == nil {
-			want = HDRAnalysisProfileVersion
-		}
 		if options != nil && options.RequiresV3() {
 			want = HDRAnalysisProfileV3
 		}

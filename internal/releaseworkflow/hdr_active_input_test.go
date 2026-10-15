@@ -20,11 +20,12 @@ type hdrInputRestorerFixture struct {
 
 func (b *hdrInputRestorerFixture) CloneExtractions(
 	_ context.Context,
-	release api.ReleaseRef,
+	preparation HDRPreparation,
 	entries map[api.HDRExtractionID]HDRExtractionRecord,
 	resources map[api.HDRExtractionID]RetainedHDRExtractionResource,
 	attempt string,
 ) (map[api.HDRExtractionID]HDRExtractionRecord, map[api.HDRExtractionID]RetainedHDRExtractionResource, error) {
+	release := preparation.Release
 	b.clones++
 	cloned := make(map[api.HDRExtractionID]HDRExtractionRecord)
 	retained := make(map[api.HDRExtractionID]RetainedHDRExtractionResource)
@@ -46,6 +47,8 @@ func TestRepeatedInputVerificationPreservesPendingHDR(t *testing.T) {
 		metadataOnly  bool
 		pngOnly       bool
 		changedSource bool
+		native        bool
+		selectDV      bool
 	}{
 		{name: "reopened enabled", reopen: true},
 		{
@@ -68,6 +71,28 @@ func TestRepeatedInputVerificationPreservesPendingHDR(t *testing.T) {
 		{name: "current disabled", disabled: true},
 		{name: "current metadata only", metadataOnly: true},
 		{
+			name:     "native selected image reopened",
+			native:   true,
+			selectDV: true,
+			reopen:   true,
+		},
+		{
+			name:     "native selected image current",
+			native:   true,
+			selectDV: true,
+		},
+		{
+			name:     "native disabled reopened",
+			native:   true,
+			disabled: true,
+			reopen:   true,
+		},
+		{
+			name:     "native disabled current",
+			native:   true,
+			disabled: true,
+		},
+		{
 			name:          "changed source after reopen",
 			reopen:        true,
 			changedSource: true,
@@ -88,6 +113,7 @@ func TestRepeatedInputVerificationPreservesPendingHDR(t *testing.T) {
 			}
 			version := "verified-a"
 			builder := &hdrInputRestorerFixture{failRender: test.metadataOnly, pngOnly: test.pngOnly}
+			builder.dual = test.native
 			reads := 0
 			builder.checkpoint = func(HDRExtractionRecord) { reads++ }
 			preparer := testPreparer()
@@ -138,9 +164,13 @@ func TestRepeatedInputVerificationPreservesPendingHDR(t *testing.T) {
 			})
 			targets := []string{api.HDRTargetID(input.SourcePath, "")}
 			instructions := api.HDRAnalysisInstructions{
-				Release:    api.ReleaseRef{SourcePath: input.SourcePath, Generation: prepared.Release.Release.Generation},
-				TargetIDs:  targets,
-				PeakSource: api.HDRPeakMaxSCL,
+				ProfileVersion: api.HDRAnalysisProfileVersion,
+				Release:        api.ReleaseRef{SourcePath: input.SourcePath, Generation: prepared.Release.Release.Generation},
+				TargetIDs:      targets,
+				PeakSource:     api.HDRPeakMaxSCL,
+			}
+			if test.native {
+				instructions.ProfileVersion = api.HDRAnalysisProfileV2
 			}
 			analyzed, err := module.Execute(t.Context(), testOwnerID, AnalyzeHDRCommand{
 				WorkflowID:       active.WorkflowID,
@@ -156,6 +186,14 @@ func TestRepeatedInputVerificationPreservesPendingHDR(t *testing.T) {
 					WorkflowID:       active.WorkflowID,
 					ExpectedRevision: analyzed.Workflow.Revision,
 					Enabled:          false,
+				})
+			}
+			if test.selectDV {
+				analyzed = executeCommand(t, module, SetHDRAnalysisEnabledCommand{
+					WorkflowID:       active.WorkflowID,
+					ExpectedRevision: analyzed.Workflow.Revision,
+					Enabled:          true,
+					ArtifactIDs:      []api.PublicResourceID{analyzed.HDRAnalysis.Targets[0].DescriptionImages()[1].ID},
 				})
 			}
 			var expectedPending *api.HDRAnalysisRef
@@ -272,8 +310,14 @@ func TestRepeatedInputVerificationPreservesPendingHDR(t *testing.T) {
 			}
 			if restored.HDRAnalysis == nil || restored.HDRAnalysis.WorkflowID != active.WorkflowID ||
 				!slices.Equal(restored.HDRAnalysis.TargetIDs, targets) || restored.HDRAnalysis.PeakSource != api.HDRPeakMaxSCL ||
-				!restored.Workflow.HDRAnalysisEnabled || reads != wantReads {
+				restored.Workflow.HDRAnalysisEnabled != (!test.native || !test.disabled) || reads != wantReads {
 				t.Fatalf("restored analysis=%#v enabled=%v reads=%d", restored.HDRAnalysis, restored.Workflow.HDRAnalysisEnabled, reads)
+			}
+			if test.selectDV {
+				images := restored.HDRAnalysis.Targets[0].DescriptionImages()
+				if restored.Workflow.HDRImages == nil || !slices.Equal(restored.Workflow.HDRImages.ArtifactIDs, []api.PublicResourceID{images[1].ID}) {
+					t.Fatal("rebind did not preserve exact Dolby Vision image selection")
+				}
 			}
 		})
 	}

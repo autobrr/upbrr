@@ -191,12 +191,9 @@ func (i HDRAnalysisInstructions) Normalize() (HDRAnalysisInstructions, error) {
 		return HDRAnalysisInstructions{}, err
 	}
 	if i.ProfileVersion == "" {
-		i.ProfileVersion = HDRAnalysisProfileVersion
-		if i.Decoded != nil {
-			i.ProfileVersion = HDRAnalysisProfileV2
-			if i.Decoded.RequiresV3() {
-				i.ProfileVersion = HDRAnalysisProfileV3
-			}
+		i.ProfileVersion = HDRAnalysisProfileV2
+		if i.Decoded != nil && i.Decoded.RequiresV3() {
+			i.ProfileVersion = HDRAnalysisProfileV3
 		}
 	}
 	if i.ProfileVersion != HDRAnalysisProfileVersion && !IsNativeHDRProfile(i.ProfileVersion) {
@@ -256,6 +253,8 @@ type HDRAnalysisSubject struct {
 }
 
 type HDRAnalysisTargetSubject struct {
+	// Audio is nil for unknown scope; a non-nil subject with no tracks records
+	// inspected audio absence for this exact file and prepared generation.
 	Audio                *AudioAnalysisSubject
 	Target               HDRAnalysisTarget
 	Path                 string

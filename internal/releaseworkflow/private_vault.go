@@ -66,6 +66,7 @@ func NewPrivateArtifactVault(root string, codecs ...PrivateResourceCodec) (*Priv
 		entries:  make(map[privateResourceKey]privateResourceEntry),
 		consumed: make(map[privateResourceKey]struct{}),
 		codecs: map[string]PrivateResourceCodec{
+			privateResourceKindHDRComparison: {Kind: privateResourceKindHDRComparison, Decode: decodeHDRComparisonSource},
 			privateResourceKindMediaPreview: {
 				Kind: privateResourceKindMediaPreview, Decode: decodeMediaPreviewContent,
 			},

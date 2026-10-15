@@ -75,6 +75,7 @@ type CollectedFacts struct {
 // filesystem paths.
 type CollectedResources struct {
 	HDRFileEligibility    map[string]bool
+	HDRFileEvidence       map[string]api.HDRSourceEvidence
 	SourcePath            string
 	VideoPath             string
 	FileList              []string
@@ -942,6 +943,7 @@ type preparationResources struct {
 	fileList              []string
 	mediaInfoJSONPath     string
 	hdrFileEligibility    map[string]bool
+	hdrFileEvidence       map[string]api.HDRSourceEvidence
 	mediaInfoTextPath     string
 	dvdIFOPath            string
 	dvdVOBPath            string
@@ -985,6 +987,7 @@ func mergePreparationResources(base preparationResources, collected preparationR
 	base.fileList = append([]string(nil), collected.fileList...)
 	base.mediaInfoJSONPath = collected.mediaInfoJSONPath
 	base.hdrFileEligibility = maps.Clone(collected.hdrFileEligibility)
+	base.hdrFileEvidence = maps.Clone(collected.hdrFileEvidence)
 	base.mediaInfoTextPath = collected.mediaInfoTextPath
 	base.dvdIFOPath = collected.dvdIFOPath
 	base.dvdVOBPath = collected.dvdVOBPath
@@ -1005,6 +1008,7 @@ func resourcesFromCollected(collected CollectedResources) preparationResources {
 		fileList:              append([]string(nil), collected.FileList...),
 		mediaInfoJSONPath:     collected.MediaInfoJSONPath,
 		hdrFileEligibility:    maps.Clone(collected.HDRFileEligibility),
+		hdrFileEvidence:       maps.Clone(collected.HDRFileEvidence),
 		mediaInfoTextPath:     collected.MediaInfoTextPath,
 		dvdIFOPath:            collected.DVDIFOPath,
 		dvdVOBPath:            collected.DVDVOBPath,
@@ -1032,6 +1036,7 @@ func cloneEnvelope(value envelope) (envelope, error) {
 			fileList:            append([]string(nil), value.resources.fileList...),
 			mediaInfoJSONPath:   value.resources.mediaInfoJSONPath,
 			hdrFileEligibility:  maps.Clone(value.resources.hdrFileEligibility),
+			hdrFileEvidence:     maps.Clone(value.resources.hdrFileEvidence),
 			mediaInfoTextPath:   value.resources.mediaInfoTextPath,
 			dvdIFOPath:          value.resources.dvdIFOPath,
 			dvdVOBPath:          value.resources.dvdVOBPath,

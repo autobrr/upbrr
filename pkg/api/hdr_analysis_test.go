@@ -67,7 +67,7 @@ func TestHDRSelectionNormalization(t *testing.T) {
 	id := HDRTargetID("private-source", "00001.MPLS")
 	instructions := HDRAnalysisInstructions{Release: ReleaseRef{SourcePath: "Synthetic.HDR.mkv", Generation: 1}, TargetIDs: []string{id}}
 	normalized, err := instructions.Normalize()
-	if err != nil || normalized.PeakSource != HDRPeakHistogram || normalized.ProfileVersion != HDRAnalysisProfileVersion {
+	if err != nil || normalized.PeakSource != HDRPeakHistogram || normalized.ProfileVersion != HDRAnalysisProfileV2 || normalized.Formats != HDRAnalysisFormatsAuto {
 		t.Fatalf("normalize=%#v %v", normalized, err)
 	}
 	normalized.TargetIDs[0] = "changed"

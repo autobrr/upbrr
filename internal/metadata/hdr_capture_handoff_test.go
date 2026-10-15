@@ -120,6 +120,11 @@ func TestHDRNativeCaptureSurvivesPreparedHandoffAndSeedRetirement(t *testing.T) 
 	}
 	ref := api.ReleaseRef{SourcePath: fixture.input.SourcePath, Generation: prepared.Release.Generation}
 	instructions := api.HDRAnalysisInstructions{Release: ref, TargetIDs: []string{api.HDRTargetID(fixture.pipeline.state.Discs[0].Root, "00001.MPLS")}}
+	subject, err := fixture.module.ResolveHDRAnalysisSubject(t.Context(), instructions)
+	if err != nil || len(subject.Targets) != 1 || subject.Targets[0].CapturedNativePath == "" {
+		t.Fatalf("v2 absence evidence was lost: %#v %v", subject.Targets, err)
+	}
+	instructions.ProfileVersion = api.HDRAnalysisProfileVersion
 	_, err = fixture.module.ResolveHDRAnalysisSubject(t.Context(), instructions)
 	failure, ok := api.AsHDRAnalysisFailure(err)
 	if !ok || failure.Code != api.HDRAnalysisFailureUnsupportedInput {

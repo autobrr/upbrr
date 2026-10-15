@@ -32,7 +32,8 @@ import (
 )
 
 type hdrAnalysisSubjectResolver interface {
-	ResolveHDRAnalysisSubject(context.Context, api.HDRAnalysisInstructions) (api.HDRAnalysisSubject, error)
+	ResolveRetainedHDRAnalysisSubject(context.Context, api.HDRAnalysisInstructions, []api.HDRAnalysisTarget) (api.HDRAnalysisSubject, error)
+	ValidateHDRAnalysisSource(context.Context, api.ReleaseRef) error
 }
 
 type workflowHDRAnalysisBuilder struct {
@@ -44,7 +45,7 @@ type workflowHDRAnalysisBuilder struct {
 
 func (b workflowHDRAnalysisBuilder) Build(
 	ctx context.Context,
-	release api.ReleaseRef,
+	preparation releaseworkflow.HDRPreparation,
 	instructions api.HDRAnalysisInstructions,
 	attemptID string,
 	now time.Time,
@@ -53,13 +54,18 @@ func (b workflowHDRAnalysisBuilder) Build(
 	entries map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord,
 	retained map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource,
 	publish func(releaseworkflow.HDRExtractionRecord, releaseworkflow.RetainedHDRExtractionResource) error,
+	measurements *releaseworkflow.HDRMeasurementStore,
 ) (api.HDRAnalysisResult, releaseworkflow.RetainedHDRAnalysisResource, error) {
+	release := preparation.Release
 	instructions.Release = release
 	normalized, err := instructions.Normalize()
 	if err != nil {
 		return api.HDRAnalysisResult{}, nil, fmt.Errorf("normalize HDR analysis: %w", err)
 	}
-	subject, err := b.resolver.ResolveHDRAnalysisSubject(ctx, normalized)
+	if api.IsNativeHDRProfile(normalized.ProfileVersion) {
+		return b.buildNative(ctx, preparation, normalized, attemptID, now, prior, priorResource, entries, retained, publish, measurements)
+	}
+	subject, err := b.resolver.ResolveRetainedHDRAnalysisSubject(ctx, normalized, preparation.Targets)
 	if err != nil {
 		return api.HDRAnalysisResult{}, nil, fmt.Errorf("resolve HDR analysis: %w", err)
 	}
@@ -135,7 +141,7 @@ func (b workflowHDRAnalysisBuilder) Build(
 				TargetID:          target.Target.ID,
 				SelectionPolicy:   target.Target.SelectionPolicy,
 			}
-			sourceRetry := prior != nil && prior.Release == release && prior.TargetNeedsSourceRetry(target.Target.ID)
+			sourceRetry := hdrNeedsSourceRetry(subject, target, prior, entries, measurements, api.HDRExtractionSchemaVersion)
 			var sidecar hdranalysis.Sidecar
 			var found bool
 			var targetErr error
@@ -154,7 +160,10 @@ func (b workflowHDRAnalysisBuilder) Build(
 				case target.CapturedPath != "" && !sourceRetry:
 					sidecar, targetErr = b.readCaptured(ctx, target, identity)
 				default:
-					sidecar, targetErr = b.extractTarget(ctx, session, subject, target, root, discs)
+					targetErr = b.resolver.ValidateHDRAnalysisSource(ctx, release)
+					if targetErr == nil {
+						sidecar, targetErr = b.extractTarget(ctx, session, subject, target, root, discs)
+					}
 				}
 				if targetErr == nil || errors.Is(targetErr, extract.ErrNoMetadata) {
 					sidecar.Identity = identity
@@ -162,7 +171,7 @@ func (b workflowHDRAnalysisBuilder) Build(
 					if sidecar.Extraction != nil {
 						sidecar.Identity.ResolvedTrackID = sidecar.Extraction.Frames[0].Stream.TrackID
 					}
-					if err := b.revalidate(ctx, normalized, subject); err != nil {
+					if err := b.resolver.ValidateHDRAnalysisSource(ctx, release); err != nil {
 						targetErr = err
 					} else {
 						stage = "saving_metadata"
@@ -312,24 +321,9 @@ func (b workflowHDRAnalysisBuilder) readCaptured(
 			err,
 		))
 	}
-	if target.CapturedSize <= 0 || target.CapturedSize > hdranalysis.MaxSidecarBytes || !pathutil.IsWithinRoot(b.root, target.CapturedPath) {
-		return fail(releaseworkflow.ErrPrivateResourceIntegrity)
-	}
-	resolved, err := filepath.EvalSymlinks(target.CapturedPath)
-	resolvedRoot, rootErr := filepath.EvalSymlinks(b.root)
-	if err != nil || rootErr != nil || !pathutil.IsWithinRoot(resolvedRoot, resolved) {
-		return fail(releaseworkflow.ErrPrivateResourceIntegrity)
-	}
-	file, err := os.Open(target.CapturedPath)
+	file, err := b.openCapturedHDR(target.CapturedPath, target.CapturedSize, target.CapturedSHA256)
 	if err != nil {
 		return fail(err)
-	}
-	hash := sha256.New()
-	size, hashErr := io.Copy(hash, io.LimitReader(file, target.CapturedSize+1))
-	_, seekErr := file.Seek(0, io.SeekStart)
-	if hashErr != nil || seekErr != nil || size != target.CapturedSize || hex.EncodeToString(hash.Sum(nil)) != target.CapturedSHA256 {
-		_ = file.Close()
-		return fail(releaseworkflow.ErrPrivateResourceIntegrity)
 	}
 	identity.ResolvedTrackID = target.CapturedTrackID
 	sidecar, decodeErr := hdranalysis.ReadSidecar(ctx, file, identity)
@@ -395,9 +389,13 @@ func restoreHDRSidecar(ctx context.Context, release api.ReleaseRef, target api.H
 	return hdranalysis.Sidecar{}, false, unavailable
 }
 
-// hdrExtractionIDs prioritizes complete metadata over absence; opaque IDs only break ties deterministically.
+// hdrExtractionIDs prioritizes the latest checkpoint. Legacy records without a
+// sequence prefer complete metadata over absence, with opaque IDs breaking ties.
 func hdrExtractionIDs(entries map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord) []api.HDRExtractionID {
 	return slices.SortedFunc(maps.Keys(entries), func(a, b api.HDRExtractionID) int {
+		if entries[a].Sequence != entries[b].Sequence {
+			return cmp.Compare(entries[b].Sequence, entries[a].Sequence)
+		}
 		if entries[a].Absent != entries[b].Absent {
 			if entries[a].Absent {
 				return 1
@@ -425,24 +423,8 @@ func (b workflowHDRAnalysisBuilder) extractTarget(
 	}
 	outcome, scanned := discs[target.DiscRoot]
 	if !scanned {
-		settings := bd.DefaultSettings(reportRoot)
-		settings.GenerateStreamDiagnostics = false
-		settings.ExtendedStreamDiagnostics = true
-		selected := 0
-		for _, candidate := range subject.Targets {
-			if candidate.DiscRoot == target.DiscRoot {
-				selected++
-			}
-		}
-		if selected == 1 {
-			settings.PlaylistOnly = target.Target.Playlist
-		}
 		var err error
-		outcome, err = session.ScanDisc(ctx, bd.Options{
-			Path:            target.DiscRoot,
-			Settings:        settings,
-			IncludeTimeline: true,
-		})
+		outcome, err = session.ScanDisc(ctx, nativeDiscOptions(subject, target, reportRoot))
 		if err != nil {
 			return hdranalysis.Sidecar{}, fmt.Errorf("workflow_hdr_analysis: %w", err)
 		}
@@ -456,7 +438,11 @@ func (b workflowHDRAnalysisBuilder) extractTarget(
 }
 
 func (b workflowHDRAnalysisBuilder) revalidate(ctx context.Context, instructions api.HDRAnalysisInstructions, subject api.HDRAnalysisSubject) error {
-	current, err := b.resolver.ResolveHDRAnalysisSubject(ctx, instructions)
+	targets := make([]api.HDRAnalysisTarget, len(subject.Targets))
+	for i, target := range subject.Targets {
+		targets[i] = target.Target
+	}
+	current, err := b.resolver.ResolveRetainedHDRAnalysisSubject(ctx, instructions, targets)
 	if err != nil {
 		return fmt.Errorf("workflow_hdr_analysis: %w", err)
 	}
@@ -579,7 +565,9 @@ func (r hdrManagedResource) validDirectory() bool {
 }
 
 func (r hdrManagedResource) directoryAuthority(allowMissing bool) bool {
-	if r.Kind != "analysis" && r.Kind != "extraction" || !filepath.IsAbs(r.Root) || !filepath.IsAbs(r.Directory) || pathutil.SamePath(r.Root, r.Directory) ||
+	if r.Kind != "analysis" && r.Kind != "extraction" && r.Kind != "measurement" && r.Kind != "boundary" || !filepath.IsAbs(r.Root) ||
+		!filepath.IsAbs(r.Directory) ||
+		pathutil.SamePath(r.Root, r.Directory) ||
 		!pathutil.IsWithinRoot(r.Root, r.Directory) {
 		return false
 	}
@@ -616,12 +604,8 @@ func (r hdrManagedResource) Release() error {
 	return nil
 }
 
-func (r hdrManagedResource) open(id api.PublicResourceID) (*os.File, error) {
+func (r hdrManagedResource) open(id api.PublicResourceID, limit int64) (*os.File, error) {
 	value, ok := r.Files[id]
-	limit := int64(32 << 20)
-	if r.Kind == "extraction" {
-		limit = hdranalysis.MaxSidecarBytes
-	}
 	if value.Size <= 0 || value.Size > limit || len(value.SHA256) != 64 {
 		return nil, releaseworkflow.ErrPrivateResourceIntegrity
 	}
@@ -660,7 +644,7 @@ func (r hdrManagedResource) OpenExtraction(ctx context.Context, record releasewo
 		file.SHA256 != record.SHA256 {
 		return nil, releaseworkflow.ErrPrivateResourceIntegrity
 	}
-	return r.open("metadata")
+	return r.open("metadata", hdranalysis.MaxSidecarBytes)
 }
 
 func (r hdrManagedResource) OpenArtifact(
@@ -676,7 +660,22 @@ func (r hdrManagedResource) OpenArtifact(
 		return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceUnavailable
 	}
 	found := false
+	contentType, filename := "image/png", "hdr10plus.png"
+	width, height := api.HDRAnalysisWidth, api.HDRAnalysisHeight
 	for _, target := range snapshot.Targets {
+		if api.IsNativeHDRProfile(snapshot.ProfileVersion) {
+			for _, artifact := range target.Artifacts {
+				if artifact.ID == id {
+					if artifact.Validate(target.Formats) != nil {
+						return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceIntegrity
+					}
+					found = true
+					contentType = artifact.MIME
+					filename = artifact.Filename()
+					width, height = artifact.Width, artifact.Height
+				}
+			}
+		}
 		if target.Status == api.StageStatusCompleted && target.Artifact != nil && target.Artifact.ID == id {
 			found = true
 		}
@@ -684,17 +683,45 @@ func (r hdrManagedResource) OpenArtifact(
 	if !found {
 		return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceUnavailable
 	}
-	file, err := r.open(id)
+	limit := int64(32 << 20)
+	switch contentType {
+	case "application/json":
+		limit = hdranalysis.MaxReportBytes
+	case "text/plain":
+		limit = api.AudioAnalysisStatsMaxBytes
+	}
+	file, err := r.open(id, limit)
 	if err != nil {
 		return releaseworkflow.MediaArtifactContent{}, fmt.Errorf("workflow_hdr_analysis: %w", err)
 	}
-	configuration, decodeErr := png.DecodeConfig(file)
-	_, seekErr := file.Seek(0, io.SeekStart)
-	if decodeErr != nil || seekErr != nil || configuration.Width != api.HDRAnalysisWidth || configuration.Height != api.HDRAnalysisHeight {
+	switch contentType {
+	case "image/png":
+		configuration, decodeErr := png.DecodeConfig(file)
+		_, seekErr := file.Seek(0, io.SeekStart)
+		if decodeErr != nil || seekErr != nil || configuration.Width != width || configuration.Height != height {
+			_ = file.Close()
+			return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceIntegrity
+		}
+	case "text/plain":
+		if !api.HDRArtifactAudioStats.MatchesFilename(filename) || r.Files[id].Size <= 0 ||
+			r.Files[id].Size > api.AudioAnalysisStatsMaxBytes {
+			_ = file.Close()
+			return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceIntegrity
+		}
+	case "application/json":
+		if r.Files[id].Size > hdranalysis.MaxReportBytes {
+			_ = file.Close()
+			return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceIntegrity
+		}
+	default:
 		_ = file.Close()
 		return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceIntegrity
 	}
-	return releaseworkflow.MediaArtifactContent{Body: file, ContentType: "image/png"}, nil
+	return releaseworkflow.MediaArtifactContent{
+		Body:        file,
+		ContentType: contentType,
+		Filename:    filename,
+	}, nil
 }
 
 func (r hdrManagedResource) LocalArtifactPath(snapshot api.HDRAnalysisResult, id api.PublicResourceID) (string, error) {
@@ -709,12 +736,15 @@ func (r hdrManagedResource) LocalArtifactPath(snapshot api.HDRAnalysisResult, id
 }
 
 func (r hdrManagedResource) MarshalPrivateResource() (string, []byte, error) {
-	if !r.validDirectory() {
+	if !r.validDirectory() || len(r.Files) > api.HDRAnalysisMaxTargets*216 {
 		return "", nil, releaseworkflow.ErrPrivateResourceIntegrity
 	}
 	encoded, err := json.Marshal(r)
 	if err != nil {
 		return "", nil, fmt.Errorf("encode HDR private resource: %w", err)
+	}
+	if len(encoded) > 16<<20 {
+		return "", nil, releaseworkflow.ErrPrivateResourceIntegrity
 	}
 	return "hdr/" + r.Kind + "/v1", encoded, nil
 }
@@ -722,13 +752,14 @@ func (r hdrManagedResource) MarshalPrivateResource() (string, []byte, error) {
 func hdrResourceCodec(root, kind string) releaseworkflow.PrivateResourceCodec {
 	decode := func(payload []byte, allowMissing bool) (any, error) {
 		var resource hdrManagedResource
-		if len(payload) > 64<<10 {
+		if len(payload) > 16<<20 {
 			return nil, releaseworkflow.ErrPrivateResourceIntegrity
 		}
 		if err := json.Unmarshal(payload, &resource, json.RejectUnknownMembers(true)); err != nil {
 			return nil, fmt.Errorf("decode HDR resource: %w", err)
 		}
-		if resource.Kind != kind || !pathutil.SamePath(resource.Root, root) || !resource.directoryAuthority(allowMissing) {
+		if len(resource.Files) > api.HDRAnalysisMaxTargets*216 || resource.Kind != kind || !pathutil.SamePath(resource.Root, root) ||
+			!resource.directoryAuthority(allowMissing) {
 			return nil, releaseworkflow.ErrPrivateResourceIntegrity
 		}
 		return resource, nil
@@ -738,5 +769,48 @@ func hdrResourceCodec(root, kind string) releaseworkflow.PrivateResourceCodec {
 		Decode:           func(payload []byte) (any, error) { return decode(payload, false) },
 		DecodeForRelease: func(payload []byte) (any, error) { return decode(payload, true) },
 		NoExpiry:         true,
+	}
+}
+
+func (b workflowHDRAnalysisBuilder) openCapturedHDR(path string, sizeBound int64, digest string) (*os.File, error) {
+	if sizeBound <= 0 || sizeBound > hdranalysis.MaxSidecarBytes || !pathutil.IsWithinRoot(b.root, path) {
+		return nil, releaseworkflow.ErrPrivateResourceIntegrity
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	resolvedRoot, rootErr := filepath.EvalSymlinks(b.root)
+	if err != nil || rootErr != nil || !pathutil.IsWithinRoot(resolvedRoot, resolved) {
+		return nil, releaseworkflow.ErrPrivateResourceIntegrity
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open captured HDR evidence: %w", err)
+	}
+	hash := sha256.New()
+	size, hashErr := io.Copy(hash, io.LimitReader(file, sizeBound+1))
+	_, seekErr := file.Seek(0, io.SeekStart)
+	if hashErr != nil || seekErr != nil || size != sizeBound || hex.EncodeToString(hash.Sum(nil)) != digest {
+		_ = file.Close()
+		return nil, releaseworkflow.ErrPrivateResourceIntegrity
+	}
+	return file, nil
+}
+
+func nativeDiscOptions(subject api.HDRAnalysisSubject, target api.HDRAnalysisTargetSubject, reportRoot string) bd.Options {
+	settings := bd.DefaultSettings(reportRoot)
+	settings.GenerateStreamDiagnostics = false
+	settings.ExtendedStreamDiagnostics = true
+	selected := 0
+	for _, candidate := range subject.Targets {
+		if candidate.DiscRoot == target.DiscRoot {
+			selected++
+		}
+	}
+	if selected == 1 {
+		settings.PlaylistOnly = target.Target.Playlist
+	}
+	return bd.Options{
+		Path:            target.DiscRoot,
+		Settings:        settings,
+		IncludeTimeline: true,
 	}
 }

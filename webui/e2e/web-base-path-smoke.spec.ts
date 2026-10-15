@@ -192,7 +192,7 @@ test("HDR analysis blocks unconfirmed input after reload under a base path", asy
     await expect(page.getByRole("checkbox", { name: /Video 1/ })).toBeDisabled();
     await expect(page.getByRole("checkbox", { name: /Video 1/ })).not.toBeChecked();
     await expect(page.getByRole("checkbox", { name: /Video 1/ })).toHaveAccessibleName(
-      /MediaInfo must confirm HDR10\+ on a unique HEVC video track\./,
+      /MediaInfo must identify a unique HEVC video track\./,
     );
     await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
     await expect(page.getByRole("checkbox", { name: "Include in descriptions" })).toHaveCount(0);

@@ -68,6 +68,9 @@ type DiscResource struct {
 
 // HDRCaptureResource is preparation-owned provisional metadata awaiting exact-generation adoption.
 type HDRCaptureResource struct {
+	NativePath        string
+	NativeSize        int64
+	NativeSHA256      string
 	Failure           *api.HDRAnalysisFailure
 	Lease             *HDRCaptureLease `json:"-"`
 	Directory         string
@@ -162,6 +165,7 @@ type State struct {
 	SourceSize              int64
 	MediaInfoJSONPath       string
 	HDRFileEligibility      map[string]bool
+	HDRFileEvidence         map[string]api.HDRSourceEvidence
 	MediaInfoTextPath       string
 	DVDIFOPath              string
 	DVDVOBPath              string

@@ -27,6 +27,7 @@ const (
 type MediaArtifactContent struct {
 	Body        io.ReadCloser
 	ContentType string
+	Filename    string
 }
 
 // MediaPreviewContent retains one non-authoritative frame preview without
@@ -529,6 +530,8 @@ type Repository interface {
 	Load(context.Context, string, api.WorkflowID) (State, error)
 	Save(context.Context, string, api.WorkflowRevision, State) error
 	CheckpointHDRExtractions(context.Context, string, api.WorkflowID, api.WorkflowRevision, map[api.HDRExtractionID]HDRExtractionRecord) error
+	CheckpointHDRMeasurements(context.Context, string, api.WorkflowID, api.WorkflowRevision, map[string]HDRMeasurementRecord) error
+	CheckpointHDRRequest(context.Context, string, api.WorkflowID, api.WorkflowRevision, PendingHDRRequest) error
 	Delete(context.Context, string, api.WorkflowID) error
 }
 
@@ -635,6 +638,8 @@ type State struct {
 	Media                        map[api.MediaArtifactSetID]api.MediaArtifactSet
 	HDRAnalyses                  map[api.HDRAnalysisResultID]api.HDRAnalysisResult
 	HDRExtractions               map[api.HDRExtractionID]HDRExtractionRecord
+	HDRMeasurements              map[string]HDRMeasurementRecord
+	HDRPendingRequest            *PendingHDRRequest
 	PendingHDRAnalysis           *api.HDRAnalysisRef
 	PendingHDRAnalysisWorkflowID api.WorkflowID
 	AudioAnalyses                map[api.AudioAnalysisResultID]api.AudioAnalysisResult

@@ -421,6 +421,7 @@ func newCoreWithHooks(
 				workflowPrivateResourceCodecs(workflowMediaArtifacts, workflowAudioAnalysis),
 				hdrResourceCodec(audioTmpRoot, "analysis"),
 				hdrResourceCodec(audioTmpRoot, "extraction"),
+				hdrResourceCodec(audioTmpRoot, "measurement"),
 			)...,
 		)
 		if vaultErr != nil {
@@ -465,6 +466,11 @@ func newCoreWithHooks(
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),
 	)
+	if inspector, ok := services.Metadata.(interface {
+		InspectHDRComparison(context.Context, string, string) (api.HDRSourceEvidence, error)
+	}); ok {
+		workflowOptions = append(workflowOptions, releaseworkflow.WithHDRComparisonInspector(inspector.InspectHDRComparison))
+	}
 	if activeInputs, ok := repoOwner.(api.ActiveInputRepository); ok {
 		workflowOptions = append(workflowOptions, releaseworkflow.WithActiveInputs(activeInputs, verifyWorkflowInput))
 	}
@@ -1151,6 +1157,8 @@ func migrateLegacyCookies(ctx context.Context, sqliteDB *sql.DB, dbPath string, 
 	return nil
 }
 
+// OpenReleaseWorkflowHDRAnalysisArtifact opens an artifact from the owner's current
+// analysis revision and prepared generation. The caller must close the returned Body.
 func (c *Core) OpenReleaseWorkflowHDRAnalysisArtifact(
 	ctx context.Context,
 	ownerID string,
@@ -1165,6 +1173,8 @@ func (c *Core) OpenReleaseWorkflowHDRAnalysisArtifact(
 	return content, nil
 }
 
+// ReleaseWorkflowHDRAnalysisArtifactPath resolves a verified private host path for
+// the current analysis. The retained resource owns its lifetime; do not expose the path publicly.
 func (c *Core) ReleaseWorkflowHDRAnalysisArtifactPath(
 	ctx context.Context,
 	ownerID string,

@@ -37,11 +37,15 @@ func TestHDRDescriptionReuseRejectsConsumedPlots(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			analysis, paths, err := extractor.Build(t.Context(), resolver.subject.Release,
-				api.HDRAnalysisInstructions{Release: resolver.subject.Release, TargetIDs: []string{sidecar.Identity.TargetID}},
+			analysis, paths, err := extractor.Build(t.Context(), releaseworkflow.HDRPreparation{Release: resolver.subject.Release},
+				api.HDRAnalysisInstructions{
+					ProfileVersion: api.HDRAnalysisProfileVersion,
+					Release:        resolver.subject.Release,
+					TargetIDs:      []string{sidecar.Identity.TargetID},
+				},
 				"cache-plot", time.Now().UTC(), nil, nil,
 				map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{record.ID: record},
-				map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: retained}, nil)
+				map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: retained}, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
