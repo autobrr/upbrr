@@ -75,10 +75,33 @@ See [Tracker questions](../workflow/index.md#tracker-questions) for the equivale
 | Route                                                                                 | Scope            | Purpose                                                                  |
 | ------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------ |
 | `POST /api/v1/workflows/{workflowId}/hdr-analysis`                                    | `workflow:write` | Start native analysis for ordered targets in the exact prepared release. |
-| `PUT /api/v1/workflows/{workflowId}/hdr-analysis/enabled`                             | `workflow:write` | Enable complete analysis or disable description inclusion.               |
-| `GET /api/v1/workflows/{workflowId}/hdr-analysis/{analysisId}/artifacts/{artifactId}` | `workflow:read`  | Stream one retained PNG from its exact analysis revision.                |
+| `PUT /api/v1/workflows/{workflowId}/hdr-analysis/enabled`                             | `workflow:write` | Set description inclusion and current artifact selection.                |
+| `POST /api/v1/workflows/{workflowId}/hdr-analysis/comparison`                         | `workflow:write` | Bind an explicit server-local reference file to the prepared release.    |
+| `GET /api/v1/workflows/{workflowId}/hdr-analysis/{analysisId}/artifacts/{artifactId}` | `workflow:read`  | Stream a retained artifact from its exact analysis revision.             |
 
-Writes use `If-Match` and `Idempotency-Key`. Downloads require a positive `revision` query parameter and the workflow owner's authorization. Partial results remain downloadable but cannot be enabled. Composite upload requests can include `hdrAnalysis` with ordered `targetIds` and `peakSource`; all requested targets must complete. See [HDR analysis](../workflow/hdr-analysis.md) and the running OpenAPI schemas.
+Writes use `If-Match` and `Idempotency-Key`. Downloads require a positive `revision` query parameter and the workflow owner's authorization. Artifact IDs and comparison handles are opaque and belong to the exact prepared generation.
+
+The analysis request's `instructions` contains `release`, ordered `targetIds`, `peakSource`, and optional `formats`, `decoded`, `decodedRetry`, and `profileVersion`. Native formats are `auto`, `hdr10plus`, `dolby-vision`, or `both`. An omitted profile resolves to `hdr-analysis-v2`, or `hdr-analysis-v3` when bounded synchronization, all audio tracks, or a nonzero video-thread override requires it.
+
+| `decoded` option                 | Meaning                                                                                                         |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `audio: true`                    | Complete primary-audio analysis alongside native plots without picture decoding.                                |
+| `automatic: true, sampled: true` | Automatic sampled picture checks and audio. Omitting `sampled` with `automatic: true` requests full-frame work. |
+| `boundarySync: true`             | Bounded scene checks; add `audio: true` and/or `activeArea: true` explicitly.                                   |
+| `allAudioTracks: true`           | All prepared tracks, up to 64; requires audio or automatic mode.                                                |
+| `videoDecoderThreads`            | `0` for defaults or `1`–`64` for a bounded maximum; requires picture work.                                      |
+| `sceneSync`, `activeArea`        | Individual picture checks.                                                                                      |
+| `comparison`                     | Reference `sourceId`, explicit `frameOffset`, common `crop`, and `grade` and/or `colour` selection.             |
+
+Unlike the CLI and Web UI defaults, omitting `decoded` in the API requests native metadata only. Bounded mode cannot combine automatic, sampled, individual scene synchronization, or comparison checks. See the running OpenAPI schemas for the full validation contract.
+
+Comparison selection accepts `release` and `sourcePath` and returns a generation-bound reference through the workflow. Use its handle as `comparison.sourceId`; it expires and does not replace the primary source. The frame mapping is `B = A + frameOffset`, with explicit zero for aligned sources. The common crop applies without resizing or automatic alignment.
+
+`decodedRetry` identifies the current `analysisAttemptId` and explicit unsuccessful `modes`. It authorizes a new decoded pass, not native extraction. Read per-format and per-mode terminal outcomes and coverage; completed execution of bounded work does not mean whole-video picture coverage, and inconclusive evidence is not a media pass/fail verdict.
+
+The inclusion request accepts `enabled` and optional `artifactIds`. Native plots and successful selected audio assets are defaults; picture-check images require explicit selection. Native-format-aware partial results can supply usable successful assets, while legacy v1 partial results cannot be enabled. Downloads remain available for successful partial artifacts.
+
+Composite upload requests can include `hdrAnalysis` with `targetIds`, `peakSource`, `formats`, and `decoded`; all requested targets must complete. For initial comparison selection, supply `hdrComparisonSelection.path` with unresolved comparison options rather than inventing a source handle. See [HDR analysis](../workflow/hdr-analysis.md).
 
 ### Audio-analysis routes
 

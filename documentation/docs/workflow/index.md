@@ -122,7 +122,7 @@ Compatible images retain their selection and order across refresh. In the Web UI
 
 [Audio analysis](audio-analysis.md) is a separate, optional operation. It streams decoded samples from FFmpeg into Go without writing a full decoded-audio file. Its PNGs are retained for preview and download. When descriptions are generated from a completed analysis, upbrr hosts the graphs for each tracker and adds them with the statistics to the default description.
 
-[HDR analysis](hdr-analysis.md) produces HDR10+ brightness plots from supported MKV files or exact selected Blu-ray timelines. It retains complete metadata for retries and estimator changes and automatically includes completed analyses in generated descriptions. The Blu-ray playlist HDR check also renders plots during preparation.
+[HDR analysis](hdr-analysis.md) produces independent HDR10+ and Dolby Vision metadata plots. The CLI and Web UI default to metadata plots plus primary-audio analysis. Optional bounded scene checks produce colour thumbnails around selected metadata boundaries; sampled or full-frame picture checks provide additional brightness and border evidence. Native plots and audio are included by default, while picture-check images require selection. Descriptions keep **HDR plots**, **Audio Plots**, and ordinary screenshots separate. Retained metadata supports retries and estimator changes without repeating a complete native scan.
 
 ## 6. Preview immutable tracker operations
 
