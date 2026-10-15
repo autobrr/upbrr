@@ -212,6 +212,7 @@ type ExactMediaAssets struct {
 	ImageHostUploadSkipped bool
 	HDRAnalysis            *HDRAnalysisRef
 	HDRPlots               []HDRDescriptionPlot
+	HDRStats               []HDRDescriptionStats
 	HDRUploads             []UploadedImageLink
 	HDRUploadHosts         map[string]string
 	Screenshots            []ScreenshotImage
@@ -225,9 +226,26 @@ type ExactMediaAssets struct {
 }
 
 type HDRDescriptionPlot struct {
-	TargetID string
-	Label    string
-	Image    ScreenshotImage
+	AudioTrackID           string
+	MeasurementFingerprint string
+	RenderFingerprint      string
+	ArtifactID             PublicResourceID
+	Format                 HDRNativeFormat
+	Kind                   HDRArtifactKind
+	TargetID               string
+	Label                  string
+	Image                  ScreenshotImage
+}
+
+// HDRDescriptionStats carries one track's text owned by the exact HDR analysis.
+type HDRDescriptionStats struct {
+	AudioTrackID           string
+	MeasurementFingerprint string
+	RenderFingerprint      string
+	ArtifactID             PublicResourceID
+	TargetID               string
+	Label                  string
+	Text                   string
 }
 
 // AudioDescriptionTrack is a separate description channel for hosted analysis
@@ -247,6 +265,7 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	cloned := &ExactMediaAssets{
 		ImageHostUploadSkipped: a.ImageHostUploadSkipped,
 		HDRPlots:               cloneOptionalSlice(a.HDRPlots),
+		HDRStats:               cloneOptionalSlice(a.HDRStats),
 		HDRUploads:             cloneOptionalSlice(a.HDRUploads),
 		HDRUploadHosts:         maps.Clone(a.HDRUploadHosts),
 		Screenshots:            cloneOptionalSlice(a.Screenshots),

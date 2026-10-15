@@ -463,11 +463,10 @@ func ffmpegDecodeArgs(request decodeRequest, destinations []string) []string {
 		"-threads", strconv.Itoa(request.resourceLimits.DecoderThreads),
 	}
 	for _, stream := range request.streams {
-		if !codecUsesDecoderDRC(stream.codec) {
+		if !DecoderDRCDisabled(stream.codec) {
 			continue
 		}
-		args = append(args, "-drc_scale", "0")
-		break
+		args = append(args, fmt.Sprintf("-drc_scale:a:%d", stream.audioOrdinal), "0")
 	}
 	args = append(args, "-i", request.path)
 	for index, stream := range request.streams {
@@ -632,7 +631,8 @@ func parseMatchedDuration(match []string) float64 {
 	return hours*3600 + minutes*60 + seconds
 }
 
-func codecUsesDecoderDRC(codec string) bool {
+// DecoderDRCDisabled identifies codecs whose PCM analysis disables decoder DRC.
+func DecoderDRCDisabled(codec string) bool {
 	family := audioCodecFamily(codec)
 	return family == "ac3" || family == "eac3"
 }

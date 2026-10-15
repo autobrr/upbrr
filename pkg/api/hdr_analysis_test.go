@@ -3,7 +3,33 @@
 
 package api
 
-import "testing"
+import (
+	"encoding/json/v2"
+	"testing"
+)
+
+func TestHDRLegacyBrowserRetryNormalization(t *testing.T) {
+	// This is the serialized request produced by the retained/pending v1 browser retry.
+	const payload = `{"release":{"SourcePath":"Synthetic.HDR.mkv","Generation":1},"targetIds":["hdr_11111111111111111111111111111111"],"peakSource":"histogram","profileVersion":"hdr-analysis-v1"}`
+	var instructions HDRAnalysisInstructions
+	if err := json.Unmarshal([]byte(payload), &instructions); err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := instructions.Normalize()
+	if err != nil || normalized.ProfileVersion != HDRAnalysisProfileVersion || normalized.Formats != "" {
+		t.Fatalf("legacy retry changed: %#v, %v", normalized, err)
+	}
+	instructions.Formats = HDRAnalysisFormatsAuto
+	if _, err := instructions.Normalize(); err == nil {
+		t.Fatal("v1 accepted widened format selection")
+	}
+	instructions.Formats = ""
+	instructions.ProfileVersion = HDRAnalysisProfileV2
+	normalized, err = instructions.Normalize()
+	if err != nil || normalized.Formats != HDRAnalysisFormatsAuto {
+		t.Fatalf("v2 omitted format lost default: %#v, %v", normalized, err)
+	}
+}
 
 func TestDescriptionSubjectPreservesGlobalFinalGroupAuthority(t *testing.T) {
 	input := UploadSubject{DescriptionGroupsFinal: true, DescriptionGroups: []DescriptionBuilderGroup{{
@@ -54,5 +80,42 @@ func TestHDRSelectionNormalization(t *testing.T) {
 	}
 	if _, err := HDRPeakSource("unknown").Normalize(); err == nil {
 		t.Fatal("unknown estimator accepted")
+	}
+}
+
+func TestHDRFormatSelectionRejectsContradictoryOutcomes(t *testing.T) {
+	for _, selection := range []HDRAnalysisFormats{HDRAnalysisFormatsAuto, HDRAnalysisFormatsBoth, HDRAnalysisFormatsHDR10Plus, HDRAnalysisFormatsDolbyVision} {
+		t.Run(string(selection), func(t *testing.T) {
+			results := []HDRFormatResult{
+				{Format: HDRNativeHDR10Plus, State: HDRExtractionFailed},
+				{Format: HDRNativeDolbyVision, State: HDRExtractionAbsent},
+			}
+			results[0].Requested = selection == HDRAnalysisFormatsBoth || selection == HDRAnalysisFormatsHDR10Plus
+			results[1].Requested = selection == HDRAnalysisFormatsBoth || selection == HDRAnalysisFormatsDolbyVision
+			if selection == HDRAnalysisFormatsHDR10Plus {
+				results[1].State = HDRExtractionNotAnalyzed
+			}
+			if selection == HDRAnalysisFormatsDolbyVision {
+				results[0].State = HDRExtractionNotAnalyzed
+			}
+			if err := selection.ValidateResults(results); err != nil {
+				t.Fatal(err)
+			}
+			for i := range results {
+				invalid := append([]HDRFormatResult(nil), results...)
+				invalid[i].Requested = !invalid[i].Requested
+				if err := selection.ValidateResults(invalid); err == nil {
+					t.Fatal("accepted contradictory request authority")
+				}
+				invalid = append([]HDRFormatResult(nil), results...)
+				invalid[i].State = HDRExtractionNotAnalyzed
+				if results[i].State == HDRExtractionNotAnalyzed {
+					invalid[i].State = HDRExtractionAbsent
+				}
+				if err := selection.ValidateResults(invalid); err == nil {
+					t.Fatal("accepted outcome for wrong collector selection")
+				}
+			}
+		})
 	}
 }

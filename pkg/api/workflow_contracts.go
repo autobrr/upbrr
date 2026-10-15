@@ -765,7 +765,9 @@ type ReleaseWorkflow struct {
 	Dupes                  *DupeAssessmentRef                       `json:"dupes,omitempty"`
 	TrackerApproval        *TrackerApprovalSnapshotRef              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSetRef                     `json:"media,omitempty"`
+	HDRComparison          *HDRComparisonSourceRef                  `json:"hdrComparison,omitempty"`
 	HDRAnalysisEnabled     bool                                     `json:"hdrAnalysisEnabled,omitempty"`
+	HDRImages              *HDRImageSelection                       `json:"hdrImages,omitempty"`
 	HDRAnalysis            *HDRAnalysisRef                          `json:"hdrAnalysis,omitempty"`
 	AudioAnalysisEnabled   bool                                     `json:"audioAnalysisEnabled,omitempty"`
 	AudioAnalysis          *AudioAnalysisRef                        `json:"audioAnalysis,omitempty"`
@@ -796,7 +798,9 @@ type ReleaseWorkflowCurrent struct {
 	Dupes                  *DupeAssessment                       `json:"dupes,omitempty"`
 	TrackerApproval        *TrackerApprovalSnapshot              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSet                     `json:"media,omitempty"`
+	HDRComparison          *HDRComparisonSourceRef               `json:"hdrComparison,omitempty"`
 	HDRAnalysis            *HDRAnalysisResult                    `json:"hdrAnalysis,omitempty"`
+	HDRPendingRequest      *HDRAnalysisInstructions              `json:"hdrPendingRequest,omitempty"`
 	AudioAnalysis          *AudioAnalysisResult                  `json:"audioAnalysis,omitempty"`
 	Descriptions           *DescriptionSet                       `json:"descriptions,omitempty"`
 	DryRun                 *UploadDryRunResult                   `json:"dryRun,omitempty"`
