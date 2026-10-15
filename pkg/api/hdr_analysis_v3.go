@@ -75,7 +75,8 @@ func (r HDRDecodedResult) validateV3() error {
 	legacy := r
 	legacy.Coverage, legacy.AudioTracks = "", nil
 	if r.Mode == HDRDecodedBoundarySync {
-		if r.Selected > 216 || r.Profile != "hdr-boundary-pq16-v1" && r.Profile != "hdr-boundary-pq16-colour-v2" {
+		if r.Selected > 216 || r.Profile != "hdr-boundary-pq16-v1" && r.Profile != "hdr-boundary-pq16-colour-v2" &&
+			r.Profile != "hdr-boundary-pq16-colour-v3" {
 			return errors.New("invalid bounded boundary outcome")
 		}
 		legacy.Mode = HDRDecodedSceneSync

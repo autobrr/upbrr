@@ -135,6 +135,28 @@ func TestHDRDefaultDescriptionIncludesPrimaryAudio(t *testing.T) {
 	}
 }
 
+func TestHDRNoAudioPreservesNativeCompletion(t *testing.T) {
+	for _, coverage := range []HDRCoverage{"", HDRCoverageUnknown, HDRCoveragePartial} {
+		t.Run(string(coverage), func(t *testing.T) {
+			target := HDRAnalysisTargetResult{Formats: []HDRFormatResult{{State: HDRExtractionComplete}},
+				Decoded: []HDRDecodedResult{{
+					Mode: HDRDecodedAudio,
+					State: HDRDecodedNotRun,
+					Reason: "no_audio",
+					Coverage: coverage,
+				}}}
+			target.Status = target.AnalysisStatus()
+			if target.Status != StageStatusCompleted || NativeHDRAggregate([]HDRAnalysisTargetResult{target}) != StageStatusCompleted {
+				t.Fatalf("absent audio downgraded completed metadata: %s", target.Status)
+			}
+			target.Decoded[0].Reason = "unavailable"
+			if target.AnalysisStatus() != StageStatusPartial {
+				t.Fatal("unavailable audio was treated as absent")
+			}
+		})
+	}
+}
+
 func TestHDRDescriptionStatsRequireExactAuthority(t *testing.T) {
 	assets := ExactMediaAssets{HDRStats: []HDRDescriptionStats{{
 		ArtifactID: "stats",

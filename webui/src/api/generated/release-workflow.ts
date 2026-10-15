@@ -2236,7 +2236,6 @@ export type SetReleaseWorkflowAudioAnalysisEnabledRequest = Readonly<{
 }>;
 
 export type SetReleaseWorkflowHDRAnalysisEnabledRequest = Readonly<{
-  artifactIds?: readonly PublicResourceID[];
   enabled: boolean;
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;

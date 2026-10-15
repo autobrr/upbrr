@@ -136,6 +136,9 @@ func (r HDRDecodedRetry) Validate(options *HDRDecodedOptions) error {
 func (t HDRAnalysisTargetResult) AnalysisStatus() StageStatus {
 	status := t.NativeStatus()
 	for _, result := range t.Decoded {
+		if result.Mode == HDRDecodedAudio && result.State == HDRDecodedNotRun && result.Reason == "no_audio" {
+			continue
+		}
 		if result.Coverage != "" {
 			if result.State == HDRDecodedCanceled {
 				return StageStatusCanceled
@@ -150,9 +153,6 @@ func (t HDRAnalysisTargetResult) AnalysisStatus() StageStatus {
 			if result.Measured > 0 && status == StageStatusFailed {
 				status = StageStatusPartial
 			}
-			continue
-		}
-		if result.Mode == HDRDecodedAudio && result.State == HDRDecodedNotRun && result.Reason == "no_audio" {
 			continue
 		}
 		if status == StageStatusFailed && (result.State == HDRDecodedComplete ||

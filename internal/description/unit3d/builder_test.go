@@ -81,7 +81,7 @@ func TestBuildDescriptionDoesNotDeduplicateSelectedScreenshotAgainstComparison(t
 }
 
 func TestBuildDescriptionKeepsNestedSourceAudioInComparison(t *testing.T) {
-	comparison := "[spoiler=Comparisons]\n[spoiler=source_audio]copied audio[/spoiler]\n[/spoiler]"
+	comparison := "[spoiler=Comparisons]\n[spoiler=Audio Plots]copied audio[/spoiler]\n[/spoiler]"
 	description, err := BuildDescription(t.Context(), api.DescriptionSubject{}, config.Config{}, config.TrackerConfig{},
 		api.NopLogger{}, "Notes\n\n"+comparison, nil, nil)
 	if err != nil {
@@ -94,7 +94,7 @@ func TestBuildDescriptionKeepsNestedSourceAudioInComparison(t *testing.T) {
 
 func TestBuildDescriptionPlacesAudioAfterMenusBeforeScreenshots(t *testing.T) {
 	t.Parallel()
-	audio := "[spoiler=source_audio]\n[img]https://img.example/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	audio := "[spoiler=Audio Plots]\n[img]https://img.example/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
 	cfg := config.Config{}
 	cfg.Description.ThumbnailSize = 420
 	description, err := BuildDescription(t.Context(), api.DescriptionSubject{}, cfg,
@@ -109,7 +109,7 @@ func TestBuildDescriptionPlacesAudioAfterMenusBeforeScreenshots(t *testing.T) {
 	audioPos := strings.Index(description, "https://img.example/audio.png")
 	screenPos := strings.Index(description, "https://img.example/screen.png")
 	if basePos < 0 || menuPos <= basePos || audioPos <= menuPos || screenPos <= audioPos ||
-		!strings.Contains(description, "[spoiler=source_audio]") ||
+		!strings.Contains(description, "[spoiler=Audio Plots]") ||
 		!strings.Contains(description, "[img=420]https://img.example/audio.png[/img]") ||
 		!strings.Contains(description, "[img=420]https://img.example/screen.png[/img]") ||
 		!strings.Contains(description, "[code]Peak: -1 dB[/code]") {

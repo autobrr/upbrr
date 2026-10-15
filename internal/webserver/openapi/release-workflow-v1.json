@@ -9286,12 +9286,6 @@
       "SetReleaseWorkflowHDRAnalysisEnabledRequest": {
         "type": "object",
         "properties": {
-          "artifactIds": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PublicResourceID"
-            }
-          },
           "enabled": {
             "type": "boolean"
           },
@@ -14837,12 +14831,6 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "artifactIds": {
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/components/schemas/PublicResourceID"
-                    }
-                  },
                   "enabled": {
                     "type": "boolean"
                   }
