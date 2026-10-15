@@ -203,9 +203,9 @@ func (p *automaticPlot) curves(report *MeasurementReport, kind api.HDRArtifactKi
 		}
 		p.label(105, 584, name+": red maximum / dark orange average (metadata statistics)", color.Black)
 	}
-	coverage := "Every presentation frame; true picture peak"
+	coverage := "Every presentation frame; highest measured 2x2-average MaxRGB"
 	if report.Automatic.Sampling != nil {
-		coverage = fmt.Sprintf("Sampled every %d source frames; highest sampled peak", report.Automatic.Sampling.Step)
+		coverage = fmt.Sprintf("Sampled every %d source frames; highest sampled 2x2-average MaxRGB", report.Automatic.Sampling.Step)
 		p.label(85, 665, "Sample percentiles and averages; connecting lines guide the eye. Brief peaks between samples can be missed.", color.Gray{Y: 90})
 	}
 	p.label(85, 695, fmt.Sprintf("%s %.2f nits. Numeric evidence and processing details retained in the report.", coverage, peak), color.Gray{Y: 90})

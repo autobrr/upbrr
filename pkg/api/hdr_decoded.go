@@ -32,7 +32,7 @@ type HDRDecodedSourceEvidence struct {
 	FrameRateDenominator   string `json:"frameRateDenominator,omitempty"`
 }
 
-// HDRDecodedMode identifies a sampled picture check, separate from native metadata extraction.
+// HDRDecodedMode identifies audio or picture analysis, separate from native metadata extraction.
 type HDRDecodedMode string
 
 const (
@@ -173,7 +173,7 @@ func (t HDRAnalysisTargetResult) AnalysisStatus() StageStatus {
 	return status
 }
 
-// DecodedMode returns the owning picture check, or empty for native plots and reports.
+// DecodedMode returns the owning decoded analysis mode, or empty for native plots and reports.
 func (k HDRArtifactKind) DecodedMode() HDRDecodedMode {
 	switch k {
 	case HDRArtifactBoundaryDVSceneSheet, HDRArtifactBoundaryHDR10PlusSceneSheet:
@@ -297,8 +297,9 @@ const (
 	HDRDecodedNotRun       HDRDecodedState = "not_run"
 )
 
-// HDRDecodedResult describes one bounded sampling pass and its retained artifact IDs.
-// Complete requires coverage of every selected sample, not every picture in the source.
+// HDRDecodedResult describes one decoded analysis mode and its retained artifact IDs.
+// Counts refer to selected work for that mode, such as picture samples or audio tracks.
+// Coverage describes execution within that scope, including confirmed audio absence.
 type HDRDecodedResult struct {
 	Coverage    HDRCoverage           `json:"coverage,omitempty"`
 	AudioTracks []HDRAudioTrackResult `json:"audioTracks,omitempty"`

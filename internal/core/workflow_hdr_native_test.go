@@ -4,6 +4,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -11,10 +12,169 @@ import (
 	"testing"
 	"time"
 
+	dv "github.com/Audionut/go-dovi-extract/extract"
+
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/hdranalysis"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestNativeHDRRejectedCollectorsPublishTerminalResult(t *testing.T) {
+	for _, mode := range []struct {
+		name, profile string
+		decoded       *api.HDRDecodedOptions
+	}{
+		{name: "v2", profile: api.HDRAnalysisProfileV2},
+		{name: "v3", profile: api.HDRAnalysisProfileV3},
+		{
+			name:    "boundary",
+			profile: api.HDRAnalysisProfileV3,
+			decoded: &api.HDRDecodedOptions{BoundarySync: true},
+		},
+	} {
+		for _, retry := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/retry=%t", mode.name, retry), func(t *testing.T) {
+				builder, resolver, sidecar := hdrFixture(t)
+				data, err := os.ReadFile(filepath.Join("..", "services", "hdranalysis", "testdata", "single-hybrid.mkv"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Reject the codec configuration in both real native collectors.
+				at := bytes.Index(data, []byte{0x40, 1, 0x2c, 1, 0xff, 0xff, 2})
+				if at < 0 {
+					t.Fatal("authored VPS missing")
+				}
+				data[at] |= 0x80
+				source := filepath.Join(t.TempDir(), "Synthetic.Unsupported.mkv")
+				if err := os.WriteFile(source, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				resolver.subject.Targets[0].Path = source
+				release := resolver.subject.Release
+				entries := make(map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord)
+				resources := make(map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource)
+				var prior *api.HDRAnalysisResult
+				if retry {
+					native := &hdranalysis.NativeExtraction{
+						HDR10Plus:        sidecar.Extraction,
+						DolbyVisionError: dv.ErrUnsupportedInput,
+						ScanComplete:     true,
+						TrackID:          sidecar.Identity.ResolvedTrackID,
+					}
+					evidence, err := native.Evidence(api.HDRAnalysisFormatsBoth, api.HDRSourceEvidence{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer evidence.Release()
+					record, owned, err := builder.retainNativeExtraction(t.Context(), release, sidecar.Identity, api.HDRAnalysisFormatsBoth, evidence, "previous")
+					if err != nil {
+						t.Fatal(err)
+					}
+					entries[record.ID], resources[record.ID] = record, owned
+					prior = &api.HDRAnalysisResult{Release: release, Targets: []api.HDRAnalysisTargetResult{{
+						TargetID: sidecar.Identity.TargetID,
+						Status:   api.StageStatusFailed,
+						Failure:  &api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureResourceUnavailable},
+					}}}
+				}
+				result, artifacts, err := builder.Build(t.Context(), releaseworkflow.HDRPreparation{Release: release}, api.HDRAnalysisInstructions{
+					Release:        release,
+					TargetIDs:      []string{sidecar.Identity.TargetID},
+					ProfileVersion: mode.profile,
+					Decoded:        mode.decoded,
+				}, "rejected", time.Now().UTC(), prior, nil, entries, resources,
+					func(releaseworkflow.HDRExtractionRecord, releaseworkflow.RetainedHDRExtractionResource) error {
+						t.Error("rejected native scan published a checkpoint")
+						return nil
+					}, nil)
+				if err != nil || result.Status != api.StageStatusFailed || len(result.Targets) != 1 {
+					t.Fatalf("terminal rejection: result=%+v err=%v", result, err)
+				}
+				result.ID, result.WorkflowID, result.Revision = "rejected-hdr", "workflow", 1
+				if err := result.Validate(); err != nil {
+					t.Fatalf("typed parser failures cannot be published: %v", err)
+				}
+				outcome := result.Targets[0]
+				for _, format := range outcome.Formats {
+					if format.State != api.HDRExtractionFailed || format.Failure == nil {
+						t.Fatalf("typed parser failure lost: %+v", format)
+					}
+				}
+				if mode.profile == api.HDRAnalysisProfileV3 {
+					if len(outcome.Artifacts) != 0 {
+						t.Fatalf("uncheckpointed evidence published artifacts: %+v", outcome.Artifacts)
+					}
+				} else {
+					if len(outcome.Artifacts) != 1 || outcome.Artifacts[0].Kind != api.HDRArtifactStructuralReport {
+						t.Fatalf("v2 diagnostic report lost: %+v", outcome.Artifacts)
+					}
+					content, err := artifacts.OpenArtifact(t.Context(), result, outcome.Artifacts[0].ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := content.Body.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestNativeHDRV3ReportUsesCurrentCheckpoint(t *testing.T) {
+	for _, source := range []struct {
+		name, fixture string
+		state         api.HDRExtractionState
+	}{
+		{
+			name:    "present",
+			fixture: "single-hybrid.mkv",
+			state:   api.HDRExtractionComplete,
+		},
+		{
+			name:    "absent",
+			fixture: "decoded-pq-cuts.mkv",
+			state:   api.HDRExtractionAbsent,
+		},
+	} {
+		t.Run(source.name, func(t *testing.T) {
+			builder, resolver, _ := hdrFixture(t)
+			resolver.subject.Targets[0].Path = filepath.Join("..", "services", "hdranalysis", "testdata", source.fixture)
+			release := resolver.subject.Release
+			var checkpoint releaseworkflow.HDRExtractionRecord
+			result, _, err := builder.Build(t.Context(), releaseworkflow.HDRPreparation{Release: release}, api.HDRAnalysisInstructions{
+				Release:        release,
+				TargetIDs:      []string{resolver.subject.Targets[0].Target.ID},
+				ProfileVersion: api.HDRAnalysisProfileV3,
+			}, "checkpoint", time.Now().UTC(), nil, nil, nil, nil,
+				func(record releaseworkflow.HDRExtractionRecord, _ releaseworkflow.RetainedHDRExtractionResource) error {
+					checkpoint = record
+					return nil
+				}, nil)
+			if err != nil || len(result.Targets) != 1 || checkpoint.ID == "" {
+				t.Fatalf("complete native scan: result=%+v checkpoint=%+v err=%v", result, checkpoint, err)
+			}
+			result.ID, result.WorkflowID, result.Revision = "checkpoint-hdr", "workflow", 1
+			if err := result.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			outcome := result.Targets[0]
+			if outcome.Formats[0].State != source.state {
+				t.Fatalf("native HDR10+ outcome: %+v", outcome.Formats[0])
+			}
+			reportFound := false
+			for _, artifact := range outcome.Artifacts {
+				if artifact.MeasurementFingerprint != checkpoint.SHA256 {
+					t.Fatalf("artifact does not belong to current checkpoint: %+v", artifact)
+				}
+				reportFound = reportFound || artifact.Kind == api.HDRArtifactStructuralReport
+			}
+			if !reportFound {
+				t.Fatal("completed scan lost its structural report")
+			}
+		})
+	}
+}
 
 func TestNativeDiscRetrySelectsOnlyTargetsNeedingSource(t *testing.T) {
 	_, resolver, _ := hdrFixture(t)

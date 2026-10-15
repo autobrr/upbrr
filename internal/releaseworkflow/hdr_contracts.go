@@ -83,9 +83,10 @@ type RetainedHDRAnalysisResource interface {
 	LocalArtifactPath(api.HDRAnalysisResult, api.PublicResourceID) (string, error)
 }
 
-// HDRAnalysisBuilder produces terminal target outcomes and privately retained plots.
-// Its checkpoint callback durably retains complete extraction or verified absence before
-// rendering, allowing metadata reuse after a plot failure or cancellation.
+// HDRAnalysisBuilder produces terminal target outcomes and privately retained artifacts.
+// Its extraction callback checkpoints complete native metadata or verified absence;
+// HDRMeasurementStore separately checkpoints closed numeric reports before rendering.
+// Both checkpoints survive a later rendering failure or canceled terminal publication.
 type HDRAnalysisBuilder interface {
 	Build(context.Context, HDRPreparation, api.HDRAnalysisInstructions, string, time.Time, *api.HDRAnalysisResult, RetainedHDRAnalysisResource,
 		map[api.HDRExtractionID]HDRExtractionRecord, map[api.HDRExtractionID]RetainedHDRExtractionResource,

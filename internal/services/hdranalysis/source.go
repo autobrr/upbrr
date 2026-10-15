@@ -24,7 +24,11 @@ func (s *Session) ExtractNativeFile(ctx context.Context, path string, formats ap
 	return s.ExtractNativeFileWithRetained(ctx, path, formats, 0)
 }
 
-// ExtractNativeFileWithRetained charges another source against the same operation budget.
+// ExtractNativeFileWithRetained reads a local source under the held admission
+// slot, charging otherRetainedBytes for evidence still retained by the operation.
+// It closes its input, including on cancellation. Parser-specific failures remain
+// in a successful result; shared read failures return an error and no result.
+// The caller must Release a successfully returned extraction.
 func (s *Session) ExtractNativeFileWithRetained(
 	ctx context.Context,
 	path string,

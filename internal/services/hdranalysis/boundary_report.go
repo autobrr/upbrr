@@ -34,6 +34,8 @@ type HDRAudioAuthority struct {
 	DRCDisabled         bool   `json:"drcDisabled"`
 }
 
+// Validate checks required inventory identifiers, matching zero-based stream and
+// one-based track ordinals, and numeric bounds without opening source media.
 func (a HDRAudioAuthority) Validate() error {
 	if a.SourceFingerprint == "" || len(a.SourceFingerprint) > 512 || a.ResourceID == "" || len(a.ResourceID) > 128 ||
 		a.ManifestFingerprint == "" || len(a.ManifestFingerprint) > 512 || a.TrackID == "" || len(a.TrackID) > 128 ||

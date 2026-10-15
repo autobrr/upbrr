@@ -87,6 +87,8 @@ func (r *PersistentRepository) CheckpointHDRMeasurements(
 	return nil
 }
 
+// CheckpointHDRMeasurements replaces retained numeric evidence at the exact
+// workflow revision without advancing workflow intent.
 func (r *MemoryRepository) CheckpointHDRMeasurements(
 	ctx context.Context, ownerID string, workflowID api.WorkflowID, revision api.WorkflowRevision,
 	entries map[string]HDRMeasurementRecord,
@@ -142,6 +144,8 @@ func (r *PersistentRepository) CheckpointHDRRequest(
 	return nil
 }
 
+// CheckpointHDRRequest retains normalized analysis intent for the current
+// prepared generation without advancing the workflow revision.
 func (r *MemoryRepository) CheckpointHDRRequest(
 	ctx context.Context, ownerID string, workflowID api.WorkflowID, revision api.WorkflowRevision, pending PendingHDRRequest,
 ) error {

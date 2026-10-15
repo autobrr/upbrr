@@ -345,7 +345,7 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 | `--hdr-grade`                  | Compare brightness and PQ values against the selected reference.                                                         |
 | `--hdr-colour`                 | Compare colour distributions against the selected reference.                                                             |
 
-Every selected target must complete for requested upload analysis. A comparison requires source B, an explicit offset, a crop, and at least one of `--hdr-grade` or `--hdr-colour`. Bounded mode accepts audio and active-area checks, but cannot combine metadata-only, audio-only, automatic pictures, full-frame pictures, the individual scene check, or comparison options. `--hdr-boundary-audio` requires bounded mode even when explicitly false.
+For requested upload analysis, every selected target needs usable native metadata or, when audio was requested, usable audio output. Partial results can qualify; canceled and interrupted attempts cannot. A comparison requires source B, an explicit offset, a crop, and at least one of `--hdr-grade` or `--hdr-colour`. Bounded mode accepts audio and active-area checks, but cannot combine metadata-only, audio-only, automatic pictures, full-frame pictures, the individual scene check, or comparison options. `--hdr-boundary-audio` requires bounded mode even when explicitly false.
 
 Individual picture flags select manual work rather than the default audio operation. For scene checks, borders, and audio together, use `--hdr-boundary-sync --hdr-active-area`. See [HDR analysis](../workflow/hdr-analysis.md) for examples and the limits of sampled and bounded coverage.
 

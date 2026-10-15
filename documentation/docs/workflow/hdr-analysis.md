@@ -34,7 +34,7 @@ Opening the page does not start analysis. **Cancel** stops active work. **Retry*
 | **Automatic discovery**  | Discover HDR10+ and Dolby Vision independently in a shared metadata scan. This is the default. |
 | **HDR10+ only**          | Request HDR10+ metadata and its plot.                                                          |
 | **Dolby Vision only**    | Request Dolby Vision metadata and its L1 brightness plot.                                      |
-| **Require both formats** | Require both native formats; absence of either is not a complete requested result.             |
+| **Require both formats** | Analyze both native formats; a missing format prevents a complete result.                      |
 
 The HDR10+ peak estimator defaults to **Histogram**. Other choices are **Histogram 99th percentile**, **MaxSCL**, and **MaxSCL luminance**. Changing it can reuse complete retained metadata; it does not change decoded pixels or turn metadata into a picture measurement.
 
@@ -105,11 +105,11 @@ For native plots from a Blu-ray content root:
 
 Omit `--hdr-playlist` only when metadata identifies exactly one supported, non-looping primary HEVC candidate. upbrr does not choose the largest stream file. Each standalone run creates a fresh child directory under the output parent for its artifacts and JSON summary. The output parent must be outside a disc source, including through directory aliases.
 
-One eligible prepared upload target is selected automatically. For multiple targets, supply their opaque IDs in source order with `--hdr-targets <id,id>`. Requested upload analysis requires every selected target to complete. Standalone and upload analysis modes are mutually exclusive; standalone accepts exactly one source and its HDR/unattended options. See the [CLI reference](../cli/index.md#hdr-analysis-options) for all flags and retained-workflow controls.
+One eligible prepared upload target is selected automatically. For multiple targets, supply their opaque IDs in source order with `--hdr-targets <id,id>`. Every selected target needs usable native metadata or, when audio was requested, usable audio output. A partial result can satisfy this requirement; canceled and interrupted attempts cannot. Standalone and upload analysis modes are mutually exclusive; standalone accepts exactly one source and its HDR/unattended options. See the [CLI reference](../cli/index.md#hdr-analysis-options) for all flags and retained-workflow controls.
 
 ## Include results in descriptions
 
-Native plots and successful selected audio images/statistics are included by default. Picture-check images require explicit selection on **HDR Analysis**. Successful assets from partial native-format-aware results can remain usable in descriptions; that does not make a partial attempt satisfy a CLI upload request that requires complete analysis.
+Native plots and successful selected audio images/statistics are included by default. Picture-check images require explicit selection on **HDR Analysis**. Successful assets from partial results remain usable in descriptions and can satisfy requested upload analysis when every selected target has usable native metadata or requested audio output.
 
 Generated descriptions keep **HDR plots** and **Audio Plots** separate, including when audio was generated through HDR analysis. Images use each tracker's selected image host. Analysis images do not consume ordinary screenshot slots. Ordinary screenshots retain their configured screenshot header and applicable tonemapped notice.
 

@@ -466,6 +466,9 @@ func (f HDRAnalysisFormats) ValidateResults(results []HDRFormatResult) error {
 	return nil
 }
 
+// NativeHDRAggregate folds settled target statuses. The first canceled or
+// interrupted target wins; otherwise all completed yields completed, any
+// completed or partial yields partial, and no successful targets yields failed.
 func NativeHDRAggregate(targets []HDRAnalysisTargetResult) StageStatus {
 	success, all := false, len(targets) > 0
 	for _, t := range targets {

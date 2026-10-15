@@ -101,7 +101,7 @@ Comparison selection accepts `release` and `sourcePath` and returns a generation
 
 The inclusion request accepts `enabled` and optional `artifactIds`. Native plots and successful selected audio assets are defaults; picture-check images require explicit selection. Native-format-aware partial results can supply usable successful assets, while legacy v1 partial results cannot be enabled. Downloads remain available for successful partial artifacts.
 
-Composite upload requests can include `hdrAnalysis` with `targetIds`, `peakSource`, `formats`, and `decoded`; all requested targets must complete. For initial comparison selection, supply `hdrComparisonSelection.path` with unresolved comparison options rather than inventing a source handle. See [HDR analysis](../workflow/hdr-analysis.md).
+Composite upload requests can include `hdrAnalysis` with `targetIds`, `peakSource`, `formats`, and `decoded`. Every requested target must provide usable native metadata or requested audio assets. Native-format-aware partial results can qualify; canceled and interrupted results cannot. Legacy v1 results must complete. For initial comparison selection, supply `hdrComparisonSelection.path` with unresolved comparison options rather than inventing a source handle. See [HDR analysis](../workflow/hdr-analysis.md).
 
 ### Audio-analysis routes
 

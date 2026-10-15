@@ -321,11 +321,33 @@ func (b workflowHDRAnalysisBuilder) readCaptured(
 			err,
 		))
 	}
+	identity.ResolvedTrackID = target.CapturedTrackID
+	if target.CapturedNativePath != "" {
+		// Current captures store HDR10+ under the native manifest's schema and
+		// integrity authority; transfer its model before retaining a v1 sidecar.
+		evidence, err := b.readCapturedNative(ctx, target, identity, api.HDRAnalysisFormatsHDR10Plus, 0)
+		if err != nil {
+			return fail(err)
+		}
+		absent := evidence.Results[0].State == api.HDRExtractionAbsent
+		if absent != target.CapturedAbsent || !absent && evidence.HDR10Plus == nil {
+			evidence.Release()
+			return fail(releaseworkflow.ErrPrivateResourceIntegrity)
+		}
+		sidecar := hdranalysis.Sidecar{
+			Identity:   identity,
+			Extraction: evidence.HDR10Plus,
+			Timeline:   evidence.Timeline,
+			Absent:     absent,
+		}
+		evidence.HDR10Plus = nil
+		evidence.Release()
+		return sidecar, nil
+	}
 	file, err := b.openCapturedHDR(target.CapturedPath, target.CapturedSize, target.CapturedSHA256)
 	if err != nil {
 		return fail(err)
 	}
-	identity.ResolvedTrackID = target.CapturedTrackID
 	sidecar, decodeErr := hdranalysis.ReadSidecar(ctx, file, identity)
 	closeErr := file.Close()
 	if err := errors.Join(decodeErr, closeErr); err != nil {

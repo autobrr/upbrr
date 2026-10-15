@@ -69,6 +69,8 @@ func TestHDRPlaylistPreparationRendersCapturedSidecarWithoutReadingDisc(t *testi
 	}
 	target := &resolver.subject.Targets[0]
 	target.CapturedNativePath, target.CapturedNativeSize, target.CapturedNativeSHA256, target.CapturedTrackID = captured.Files["metadata"].Path, record.Size, record.SHA256, record.ResolvedTrackID
+	section := captured.Files["hdr10plus"]
+	target.CapturedPath, target.CapturedSize, target.CapturedSHA256 = section.Path, section.Size, section.SHA256
 	preparer := releaseworkflow.ReleasePreparerFunc{
 		PrepareFunc: func(context.Context, api.PrepareInput) (api.PrepareResult, error) {
 			return api.PrepareResult{Release: api.PreparedRelease{
@@ -121,6 +123,26 @@ func TestHDRPlaylistPreparationRendersCapturedSidecarWithoutReadingDisc(t *testi
 	image, err := png.DecodeConfig(content.Body)
 	if err != nil || image.Width != 3000 || image.Height != 1200 {
 		t.Fatalf("prepared image=%#v err=%v", image, err)
+	}
+	legacy, err := module.Execute(ctx, "owner", releaseworkflow.AnalyzeHDRCommand{
+		WorkflowID:       prepared.Workflow.ID,
+		ExpectedRevision: prepared.Workflow.Revision,
+		Instructions: api.HDRAnalysisInstructions{
+			Release:        release,
+			TargetIDs:      []string{targetID},
+			ProfileVersion: api.HDRAnalysisProfileVersion,
+		},
+		IdempotencyKey: "legacy-captured-playlist",
+	})
+	if err != nil || legacy.HDRAnalysis == nil || legacy.HDRAnalysis.Status != api.StageStatusCompleted || phases["reading_metadata"] {
+		t.Fatalf("v1 could not reuse current native capture: result=%#v phases=%v err=%v", legacy, phases, err)
+	}
+	if err := legacy.HDRAnalysis.Validate(); err != nil {
+		t.Fatalf("invalid v1 publication from native capture: %v", err)
+	}
+	target.CapturedAbsent = true
+	if _, err := builder.readCaptured(t.Context(), *target, sidecar.Identity); err == nil {
+		t.Fatal("native capture contradicted its prepared absence authority")
 	}
 }
 

@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Package hdranalysis extracts and renders bounded native HDR10+ metadata.
+// Package hdranalysis extracts native HDR10+ and Dolby Vision metadata and
+// retains bounded picture measurements and audio evidence for reusable rendering.
 package hdranalysis
 
 import (

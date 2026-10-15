@@ -238,7 +238,10 @@ func finiteWithin(value, low, high float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= low && value <= high
 }
 
-// WriteMeasurement validates and writes a report within MaxMeasurementBytes.
+// WriteMeasurement validates and writes a report within its schema/mode byte limit:
+// [MaxMeasurementBytes] for sampled checks, [MaxBoundaryMeasurementBytes] for v2
+// boundary reports, [MaxTrackAudioMeasurementBytes] for v2 audio reports, and
+// [MaxAutomaticMeasurementBytes] for automatic or legacy audio reports.
 // The caller owns the writer and atomic publication of any partial output.
 func WriteMeasurement(ctx context.Context, output io.Writer, report *MeasurementReport) error {
 	if err := ctx.Err(); err != nil {

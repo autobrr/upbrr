@@ -23,6 +23,8 @@ import (
 
 const MaxAutomaticMeasurementBytes = 512 << 20
 
+// AutomaticAudioImage retains one encoded PNG from the audio processor for
+// later publication without decoding the track or recomputing its plots.
 type AutomaticAudioImage struct {
 	Kind   api.HDRArtifactKind `json:"kind"`
 	Width  int                 `json:"width"`

@@ -15,6 +15,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// BoundaryVisualCandidate ranks a metadata boundary for a visual preview.
+// Candidate is the zero-based frame index after the boundary; Stratum and Rank
+// are zero-based temporal-bin and preference indices.
 type BoundaryVisualCandidate struct {
 	Candidate int  `json:"candidate"`
 	Stratum   int  `json:"stratum"`
@@ -22,6 +25,9 @@ type BoundaryVisualCandidate struct {
 	Attempted bool `json:"attempted"`
 }
 
+// BoundaryFormat retains candidates, observations and preview pairs for one
+// native format. Selected counts the union of numeric and visual candidates;
+// Measured and Coverage describe that selection, not the entire source timeline.
 type BoundaryFormat struct {
 	Format               api.HDRNativeFormat       `json:"format"`
 	NumericCandidates    []int                     `json:"numericCandidates"`
@@ -37,6 +43,9 @@ type BoundaryFormat struct {
 	Reason               string                    `json:"reason,omitempty"`
 }
 
+// BoundaryInvocation records preparation or decoding work for a finite window,
+// including compressed-clip identity, exposed timestamps and resource charges.
+// EffectiveThreads is zero for clip preparation; RequestedThreads preserves user intent.
 type BoundaryInvocation struct {
 	ClipSHA256       string                 `json:"clipSha256,omitempty"`
 	CompressedBytes  int64                  `json:"compressedBytes,omitempty"`
@@ -50,6 +59,8 @@ type BoundaryInvocation struct {
 	State            string                 `json:"state"`
 }
 
+// BoundaryWindow is an inclusive range of zero-based presentation-frame indices
+// with the receipts for its clip preparation, measurement and optional previews.
 type BoundaryWindow struct {
 	First       int                  `json:"first"`
 	Last        int                  `json:"last"`
@@ -57,6 +68,8 @@ type BoundaryWindow struct {
 	Reason      string               `json:"reason,omitempty"`
 }
 
+// BoundaryReport retains per-format evidence and the sorted union of admitted
+// frame indices. ChargedVCL counts VCL units charged to the bounded work budget.
 type BoundaryReport struct {
 	Formats              []BoundaryFormat `json:"formats"`
 	SelectedFrameIndices []int            `json:"selectedFrameIndices"`
@@ -64,6 +77,9 @@ type BoundaryReport struct {
 	ChargedVCL           int              `json:"chargedVCL"`
 }
 
+// BoundaryAreaSample records one active-area observation at Index and PTS.
+// Borders contains left, right, top and bottom widths in measurement pixels;
+// BrightEnough indicates sufficient visible content for border inference.
 type BoundaryAreaSample struct {
 	Index        int                  `json:"index"`
 	PTS          MeasurementTimestamp `json:"pts"`

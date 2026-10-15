@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+// HDRAnalysisProfileV3 identifies track-aware audio and bounded picture outcomes
+// with explicit execution coverage and independent measurement/render identities.
 const HDRAnalysisProfileV3 = "hdr-analysis-v3"
 
 // RequiresV3 reports whether the request needs the track-aware bounded profile.
@@ -95,7 +97,9 @@ func (r HDRDecodedResult) validateV3() error {
 	if r.State == HDRDecodedComplete && r.Coverage != HDRCoverageComplete {
 		return errors.New("complete outcome has incomplete execution coverage")
 	}
-	if r.Coverage == HDRCoverageComplete &&
+	noAudio := r.Mode == HDRDecodedAudio && r.State == HDRDecodedNotRun && r.Reason == "no_audio" &&
+		r.Selected == 0 && r.Measured == 0 && len(r.Artifacts) == 0 && len(r.AudioTracks) == 0
+	if r.Coverage == HDRCoverageComplete && !noAudio &&
 		(r.Selected == 0 || r.Measured != r.Selected || r.State != HDRDecodedComplete && r.State != HDRDecodedInconclusive) {
 		return errors.New("complete execution coverage lacks completed selected work")
 	}

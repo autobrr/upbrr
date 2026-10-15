@@ -265,6 +265,8 @@ func (b workflowHDRAnalysisBuilder) buildNative(
 				}
 			}
 			if !found && targetErr == nil {
+				// Fresh evidence cannot inherit a previous checkpoint's authority.
+				nativeRecord = releaseworkflow.HDRExtractionRecord{}
 				var native *hdranalysis.NativeExtraction
 				var timeline []hdranalysis.TimelineItem
 				scanComplete := false
@@ -778,7 +780,9 @@ func (b workflowHDRAnalysisBuilder) renderNativeReport(ctx context.Context, evid
 	outcome *api.HDRAnalysisTargetResult, resource hdrManagedResource, peak api.HDRPeakSource, attempt string, index int,
 	measurements []*hdranalysis.MeasurementReport, profile, measurementFingerprint, renderFingerprint string,
 ) {
-	if ctx.Err() != nil {
+	// Early parser rejection preserves typed failures without a complete native
+	// checkpoint. V3 reports require that checkpoint's measurement identity.
+	if ctx.Err() != nil || profile == api.HDRAnalysisProfileV3 && measurementFingerprint == "" {
 		return
 	}
 	report := api.HDRTypedArtifact{

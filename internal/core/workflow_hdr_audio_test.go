@@ -406,7 +406,23 @@ func TestHDRPreparedKnownAudioAbsenceKeepsNativeComplete(t *testing.T) {
 	builder, resolver, _ := hdrFixture(t)
 	target := resolver.subject.Targets[0]
 	target.Audio = &api.AudioAnalysisSubject{VideoPath: target.Path, SourceFingerprint: resolver.subject.SourceFingerprint}
-	outcome := api.HDRAnalysisTargetResult{Formats: []api.HDRFormatResult{{Format: api.HDRNativeDolbyVision, State: api.HDRExtractionComplete}}}
+	outcome := api.HDRAnalysisTargetResult{
+		TargetID: target.Target.ID,
+		Formats: []api.HDRFormatResult{
+			{
+				Format:   api.HDRNativeHDR10Plus,
+				State:    api.HDRExtractionAbsent,
+				Coverage: api.HDRCoverageAbsent,
+			},
+			{
+				Format:    api.HDRNativeDolbyVision,
+				State:     api.HDRExtractionComplete,
+				Coverage:  api.HDRCoverageComplete,
+				Frames:    1,
+				L1Samples: 1,
+			},
+		},
+	}
 	capture, err := builder.prepareHDRAudioCapture(t.Context(), nil, resolver.subject, target,
 		api.HDRAnalysisInstructions{ProfileVersion: api.HDRAnalysisProfileV3, Decoded: &api.HDRDecodedOptions{Audio: true}},
 		&releaseworkflow.HDRExtractionRecord{}, nil, &outcome, hdrManagedResource{}, "silent", 0, "")
@@ -415,5 +431,27 @@ func TestHDRPreparedKnownAudioAbsenceKeepsNativeComplete(t *testing.T) {
 	}
 	if outcome.Decoded[0].State != api.HDRDecodedNotRun || outcome.Decoded[0].Reason != "no_audio" || outcome.AnalysisStatus() != api.StageStatusCompleted {
 		t.Fatalf("known absence downgraded native completion: %+v", outcome)
+	}
+	outcome.Status = outcome.AnalysisStatus()
+	now := time.Now().UTC()
+	result := api.HDRAnalysisResult{
+		ID:                  "silent-analysis",
+		WorkflowID:          "workflow",
+		Revision:            1,
+		AttemptID:           "silent",
+		ManifestFingerprint: resolver.subject.ManifestFingerprint,
+		Release:             resolver.subject.Release,
+		CreatedAt:           now,
+		CompletedAt:         &now,
+		ProfileVersion:      api.HDRAnalysisProfileV3,
+		Formats:             api.HDRAnalysisFormatsAuto,
+		PeakSource:          api.HDRPeakHistogram,
+		Decoded:             &api.HDRDecodedOptions{Audio: true, AllAudioTracks: true},
+		TargetIDs:           []string{outcome.TargetID},
+		Targets:             []api.HDRAnalysisTargetResult{outcome},
+		Status:              outcome.Status,
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("publish known audio absence alongside completed native analysis: %v", err)
 	}
 }
