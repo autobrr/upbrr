@@ -89,6 +89,9 @@ func decodedTimeline(input DecodedInput) ([]pictureTime, error) {
 	return times, nil
 }
 
+// shortcut: cross-source alignment requires exact CFR timestamps. Container-rounded
+// fractional CFR remains unsupported until source tick precision is retained as
+// authority; a timestamp denominator alone does not prove a rounding tolerance.
 func exactCadence(times []pictureTime) (*big.Rat, error) {
 	if len(times) < 2 || !times[0].Valid || times[0].Timescale == 0 {
 		return nil, errDecodedMapping

@@ -327,7 +327,7 @@ func (d pictureDecoder) decode(ctx context.Context, request pictureDecodeRequest
 		for scanner.Scan() {
 			line := scanner.Text()
 			if diagnostics.Len()+len(line)+1 > 32<<10 {
-				diagnostics.Reset()
+				diagnostics.Next(diagnostics.Len() + len(line) + 1 - (32 << 10))
 			}
 			diagnostics.WriteString(line)
 			diagnostics.WriteByte('\n')

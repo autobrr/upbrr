@@ -9,7 +9,11 @@ import (
 	"runtime"
 )
 
+// The decoder memory bound is calibrated against this build and architecture.
+// Recalibrate allocation geometry before admitting another implementation.
 const (
+	boundaryDecoderBuild       = "a5923073bf"
+	boundaryDecoderArch        = "--arch=x86_64"
 	BoundaryMeasurementProfile = "hdr-boundary-pq16-colour-v3"
 	BoundaryAreaProfile        = "hdr-boundary-l5-v1"
 	boundaryMaxWindows         = 336

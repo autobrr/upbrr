@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,11 @@ func TestHDRDecoderChild(_ *testing.T) {
 			fmt.Fprintln(os.Stderr, "unrelated bounded diagnostic")
 		}
 	}
+	if mode == "tail-failure" {
+		for i := range 40 {
+			fmt.Fprintf(os.Stderr, "%03d:%s\n", i, strings.Repeat("x", 1019))
+		}
+	}
 	if mode == "oversized" {
 		_, _ = os.Stderr.Write(make([]byte, 9000))
 		fmt.Fprintln(os.Stderr)
@@ -104,14 +110,14 @@ func TestHDRDecoderChild(_ *testing.T) {
 	if mode == "extra" {
 		_, _ = os.Stdout.Write([]byte{1})
 	}
-	if mode == "exit-failure" {
+	if mode == "exit-failure" || mode == "tail-failure" {
 		os.Exit(1)
 	}
 	os.Exit(0)
 }
 
 func TestDecodedProcessFramingAndCancellation(t *testing.T) {
-	for _, mode := range []string{"normal", "flood", "paired-ahead", "duplicate", "wrong-pts", "truncated", "oversized", "extra", "exit-failure", "blocked"} {
+	for _, mode := range []string{"normal", "flood", "paired-ahead", "duplicate", "wrong-pts", "truncated", "oversized", "extra", "exit-failure", "tail-failure", "blocked"} {
 		t.Run(mode, func(t *testing.T) {
 			request := decodedProcessFixture()
 			if mode == "paired-ahead" {
@@ -132,12 +138,19 @@ func TestDecodedProcessFramingAndCancellation(t *testing.T) {
 			}
 			count := 0
 			err := decoder.decode(ctx, request, func(_ int, _ []byte) error { count++; return nil })
-			if mode == "normal" || mode == "flood" || mode == "paired-ahead" {
+			switch mode {
+			case "normal", "flood", "paired-ahead":
 				if err != nil || count != 2 {
 					t.Fatalf("valid process frames=%d err=%v", count, err)
 				}
-			} else if err == nil {
-				t.Fatal("invalid or canceled process completed")
+			case "tail-failure":
+				if err == nil || !strings.Contains(err.Error(), "031:") || strings.Contains(err.Error(), "000:") {
+					t.Fatalf("lost recent diagnostic tail: %v", err)
+				}
+			default:
+				if err == nil {
+					t.Fatal("invalid or canceled process completed")
+				}
 			}
 		})
 	}
@@ -284,5 +297,15 @@ func TestDecodedAuthoredPictureMapping(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBoundaryDiagnosticKeepsRecentTail(t *testing.T) {
+	d := &boundaryDiagnostic{}
+	for i := range 40 {
+		d.line(fmt.Sprintf("%03d:%s", i, strings.Repeat("x", 1019)))
+	}
+	if len(d.tail) != 32<<10 || !strings.Contains(string(d.tail), "031:") || strings.Contains(string(d.tail), "000:") {
+		t.Fatal("lost recent boundary diagnostics")
 	}
 }

@@ -67,46 +67,57 @@ func TestPreparedAudioCapturePublishesNativeBeforeOrderedTracks(t *testing.T) {
 			ChannelLayout: "mono",
 		})
 	}
-	checkpointed, count := false, 0
-	err = New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
-		native, reports, err := session.AnalyzePreparedAutomatic(t.Context(), input, nil, api.HDRDecodedOptions{Audio: true, AllAudioTracks: true},
-			api.HDRAnalysisFormatsAuto, directory, 0, PreparedAudioCapture{
-				Subject:  subject,
-				Selected: selected,
-				CheckpointNative: func(native *NativeExtraction, reports []*MeasurementReport) error {
-					if checkpointed || !native.ScanComplete || len(reports) != 0 {
-						return errors.New("invalid native checkpoint order")
-					}
-					checkpointed = true
+	for _, fallback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("metadata_only=%t", fallback), func(t *testing.T) {
+			input := input
+			if fallback {
+				input.Source.Codec = "unsupported"
+			}
+			checkpointed, count := false, 0
+			err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
+				native, reports, err := session.AnalyzePreparedAutomatic(t.Context(), input, nil, api.HDRDecodedOptions{Audio: true, AllAudioTracks: true},
+					api.HDRAnalysisFormatsAuto, directory, 0, PreparedAudioCapture{
+						Subject:  subject,
+						Selected: selected,
+						CheckpointNative: func(native *NativeExtraction, reports []*MeasurementReport) error {
+							if checkpointed || !native.ScanComplete || len(reports) != 0 {
+								return errors.New("invalid native checkpoint order")
+							}
+							checkpointed = true
+							native.Release()
+							return nil
+						},
+						Publish: func(report *MeasurementReport) error {
+							count++
+							if !checkpointed || report.AudioAuthority == nil || report.AudioAuthority.TrackID != fmt.Sprintf("prepared-%d", count) ||
+								!fallback && (report.Result.Measured != 1 || report.Result.Coverage != api.HDRCoverageComplete || len(MeasurementArtifacts(report)) != 3) {
+								return fmt.Errorf("invalid ordered track publication %d: %+v", count, report.Result)
+							}
+							if fallback && (report.Result.Measured != 0 || report.Result.State == api.HDRDecodedComplete || len(MeasurementArtifacts(report)) != 0) {
+								return errors.New("metadata-only capture fabricated audio evidence")
+							}
+							if !fallback && count == 5 && !strings.Contains(report.Processing[0], "traversals started=1") {
+								return errors.New("continuation traversal was not recorded")
+							}
+							var retained bytes.Buffer
+							if err := WriteMeasurement(t.Context(), &retained, report); err != nil {
+								return err
+							}
+							_, err := ReadMeasurement(t.Context(), &retained)
+							return err
+						},
+					})
+				if native != nil {
 					native.Release()
-					return nil
-				},
-				Publish: func(report *MeasurementReport) error {
-					count++
-					if !checkpointed || report.AudioAuthority == nil || report.AudioAuthority.TrackID != fmt.Sprintf("prepared-%d", count) ||
-						report.Result.Measured != 1 || report.Result.Coverage != api.HDRCoverageComplete || len(MeasurementArtifacts(report)) != 3 {
-						return fmt.Errorf("invalid ordered track publication %d: %+v", count, report.Result)
-					}
-					if count == 5 && !strings.Contains(report.Processing[0], "traversals started=1") {
-						return errors.New("continuation traversal was not recorded")
-					}
-					var retained bytes.Buffer
-					if err := WriteMeasurement(t.Context(), &retained, report); err != nil {
-						return err
-					}
-					_, err := ReadMeasurement(t.Context(), &retained)
-					return err
-				},
+				}
+				if err == nil && len(reports) != 0 {
+					return errors.New("audio image reports accumulated outside the incremental callback")
+				}
+				return err
 			})
-		if native != nil {
-			native.Release()
-		}
-		if err == nil && len(reports) != 0 {
-			return errors.New("audio image reports accumulated outside the incremental callback")
-		}
-		return err
-	})
-	if err != nil || count != 5 {
-		t.Fatalf("prepared capture tracks=%d: %v", count, err)
+			if err != nil || count != 5 {
+				t.Fatalf("prepared capture tracks=%d: %v", count, err)
+			}
+		})
 	}
 }

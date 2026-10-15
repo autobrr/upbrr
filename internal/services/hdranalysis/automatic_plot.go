@@ -411,6 +411,18 @@ func (p *automaticPlot) chromaticity(report *MeasurementReport) {
 			indices = append(indices, point.Index)
 		}
 	}
+	if len(indices) == 0 {
+		offset := 0
+		if report.Options.Comparison != nil && report.Options.Comparison.FrameOffset != nil {
+			offset = *report.Options.Comparison.FrameOffset
+		}
+		for _, point := range report.Automatic.Chromaticity[1] {
+			index := point.Index - offset
+			if _, exists := automaticFrameAt(report, index, false); exists && (len(indices) == 0 || indices[len(indices)-1] != index) {
+				indices = append(indices, index)
+			}
+		}
+	}
 	indices = selectAutomaticChromaticity(report, indices)
 	legend := "CIE 1931 xy | Active pixels above 0.5 nit | Blue: primary | Bounded retained pixel clouds"
 	if len(report.Automatic.Reference) > 0 {
@@ -479,7 +491,7 @@ func selectAutomaticChromaticity(report *MeasurementReport, indices []int) []int
 	if len(indices) <= 5 {
 		return indices
 	}
-	if len(report.Automatic.Reference) == 0 {
+	if len(report.Automatic.Reference) == 0 || len(report.Automatic.Chromaticity[0]) == 0 {
 		return []int{indices[0], indices[(len(indices)-1)/4], indices[(len(indices)-1)/2], indices[3*(len(indices)-1)/4], indices[len(indices)-1]}
 	}
 	deviation := func(index int) float64 {

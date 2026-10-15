@@ -69,3 +69,102 @@ func TestBoundaryFormatSelectionAndProfileExclusion(t *testing.T) {
 		}
 	}
 }
+
+func TestBoundaryTimestampQuantizationRejectsAliasing(t *testing.T) {
+	_, times := sceneFixture([]int{12, 36})
+	input := decodedProcessFixture().inputs[0]
+	for i := range times {
+		times[i] = pictureTime{
+			Value:     int64(i)*1001 + 48000,
+			Timescale: 24000,
+			Valid:     true,
+		}
+	}
+	input.Native = &NativeEvidence{DolbyVision: decodedMetadataFixture(t, times), Results: []api.HDRFormatResult{{Format: api.HDRNativeDolbyVision, State: api.HDRExtractionComplete}}}
+	plan, err := PlanBoundary(input, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.times[1].rational().Cmp(times[1].rational()) != 0 {
+		t.Fatal("source PTS changed")
+	}
+	for i := range times {
+		times[i] = pictureTime{
+			Value:     int64(i),
+			Timescale: 10000,
+			Valid:     true,
+		}
+	}
+	input.Native.DolbyVision = decodedMetadataFixture(t, times)
+	if _, err := PlanBoundary(input, false); err == nil {
+		t.Fatal("ambiguous millisecond frame identity admitted")
+	}
+}
+
+func TestComparisonRetainsExactCadenceRequirement(t *testing.T) {
+	exact := make([]pictureTime, 120)
+	rounded := make([]pictureTime, 120)
+	for i := range exact {
+		exact[i] = pictureTime{
+			Value:     int64(i) * 1001,
+			Timescale: 24000,
+			Valid:     true,
+		}
+		ms, err := boundaryMilliseconds(exact[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		rounded[i] = pictureTime{
+			Value:     ms,
+			Timescale: 1000,
+			Valid:     true,
+		}
+	}
+	if _, _, err := comparisonIndices(exact, exact, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := comparisonIndices(rounded, rounded, 0); err == nil {
+		t.Fatal("inferred CFR without source rounding authority")
+	}
+}
+
+func TestBoundaryNegativePrefixKeepsPositiveWindows(t *testing.T) {
+	_, times := sceneFixture([]int{12, 36})
+	input := decodedProcessFixture().inputs[0]
+	for i := range times {
+		times[i] = pictureTime{
+			Value:     int64(i-1) * 40,
+			Timescale: 1000,
+			Valid:     true,
+		}
+	}
+	input.Native = &NativeEvidence{DolbyVision: decodedMetadataFixture(t, times), Results: []api.HDRFormatResult{{Format: api.HDRNativeDolbyVision, State: api.HDRExtractionComplete}}}
+	if _, err := PlanBoundary(input, false); err != nil {
+		t.Fatalf("unique negative prefix blocked positive windows: %v", err)
+	}
+	if _, err := boundaryMilliseconds(times[0]); err == nil {
+		t.Fatal("negative selected window admitted")
+	}
+	times[0] = pictureTime{
+		Value:     -1,
+		Timescale: 10000,
+		Valid:     true,
+	}
+	input.Native.DolbyVision = decodedMetadataFixture(t, times)
+	if _, err := PlanBoundary(input, false); err == nil {
+		t.Fatal("negative prefix alias admitted")
+	}
+}
+
+func TestBoundarySignedTimestampRounding(t *testing.T) {
+	for _, test := range []struct{ value, want int64 }{{-15, -2}, {-14, -1}, {-5, -1}, {-4, 0}, {0, 0}, {4, 0}, {5, 1}, {14, 1}, {15, 2}} {
+		got, err := boundarySignedMilliseconds(pictureTime{
+			Value:     test.value,
+			Timescale: 10000,
+			Valid:     true,
+		})
+		if err != nil || got != test.want {
+			t.Fatalf("value=%d got=%d want=%d err=%v", test.value, got, test.want, err)
+		}
+	}
+}

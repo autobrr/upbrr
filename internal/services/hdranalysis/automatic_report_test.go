@@ -213,3 +213,23 @@ func TestAutomaticCropClaimsFollowMeasuredRegion(t *testing.T) {
 		}
 	}
 }
+
+func TestAutomaticV2RejectsForeignEvidenceBeforeTypedAllocation(t *testing.T) {
+	report, err := ProjectPictureReport(automaticReportFixture(), api.HDRAnalysisProfileV3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadMeasurement(t.Context(), bytes.NewReader(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"areaSamples":[{}]`, `"boundary":{"windows":[{}]}`} {
+		data := append(bytes.Clone(encoded[:len(encoded)-1]), []byte(","+field+"}")...)
+		if _, err := ReadMeasurement(t.Context(), bytes.NewReader(data)); err == nil || !strings.Contains(err.Error(), "observation bounds") {
+			t.Fatalf("foreign evidence reached typed decode: %s: %v", field, err)
+		}
+	}
+}

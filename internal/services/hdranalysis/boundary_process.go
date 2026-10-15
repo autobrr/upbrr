@@ -22,14 +22,29 @@ import (
 )
 
 func boundaryMilliseconds(stamp pictureTime) (int64, error) {
-	if !stamp.Valid || stamp.Timescale == 0 || stamp.Value < 0 {
+	if stamp.Value < 0 {
+		return 0, errDecodedMapping
+	}
+	return boundarySignedMilliseconds(stamp)
+}
+
+func boundarySignedMilliseconds(stamp pictureTime) (int64, error) {
+	if !stamp.Valid || stamp.Timescale == 0 {
 		return 0, errDecodedMapping
 	}
 	value := stamp.rational().Mul(stamp.rational(), big.NewRat(1000, 1))
-	if !value.IsInt() || !value.Num().IsInt64() {
+	// FFmpeg rescales packet timestamps to Matroska milliseconds using nearest
+	// rounding, with ties away from zero. Keep source rationals in the plan.
+	if value.Sign() < 0 {
+		value.Sub(value, big.NewRat(1, 2))
+	} else {
+		value.Add(value, big.NewRat(1, 2))
+	}
+	rounded := new(big.Int).Quo(value.Num(), value.Denom())
+	if !rounded.IsInt64() {
 		return 0, errDecodedMapping
 	}
-	return value.Num().Int64(), nil
+	return rounded.Int64(), nil
 }
 
 func boundarySecondsArgument(milliseconds int64) string {
@@ -107,21 +122,21 @@ func (d pictureDecoder) prepareBoundaryClip(
 		return "", proof, errDecodedMapping
 	}
 	for index := window.First; index <= window.Last; index++ {
-		wanted := plan.times[index].rational()
+		wanted, err := boundaryMilliseconds(plan.times[index])
+		if err != nil {
+			return "", proof, err
+		}
 		matches := 0
 		for _, stamp := range proof.timestamps {
-			if _, err := boundaryMilliseconds(pictureTime{
+			actual := pictureTime{
 				Value:     stamp.Value,
 				Timescale: stamp.Timescale,
 				Valid:     stamp.Valid,
-			}); err != nil {
+			}
+			if !actual.Valid || actual.Timescale == 0 {
 				return "", proof, errDecodedMapping
 			}
-			if (pictureTime{
-				Value:     stamp.Value,
-				Timescale: stamp.Timescale,
-				Valid:     true,
-			}).rational().Cmp(wanted) == 0 {
+			if actual.rational().Cmp(big.NewRat(wanted, 1000)) == 0 {
 				matches++
 			}
 		}
@@ -172,7 +187,9 @@ func (d *boundaryDiagnostic) Write(data []byte) (int, error) {
 
 func (d *boundaryDiagnostic) line(line string) {
 	if len(d.tail)+len(line)+1 > 32<<10 {
-		d.tail = d.tail[:0]
+		keep := (32 << 10) - len(line) - 1
+		copy(d.tail, d.tail[len(d.tail)-keep:])
+		d.tail = d.tail[:keep]
 	}
 	d.tail = append(d.tail, line...)
 	d.tail = append(d.tail, '\n')
@@ -236,9 +253,13 @@ func (d *boundaryDiagnostic) finish(expected []pictureTime, vcl int) error {
 		return errors.Join(errDecodedMapping, d.err)
 	}
 	for _, wanted := range expected {
+		ms, err := boundaryMilliseconds(wanted)
+		if err != nil {
+			return err
+		}
 		matches := 0
 		for _, stamp := range d.stamps {
-			if stamp.rational().Cmp(wanted.rational()) == 0 {
+			if stamp.rational().Cmp(big.NewRat(ms, 1000)) == 0 {
 				matches++
 			}
 		}

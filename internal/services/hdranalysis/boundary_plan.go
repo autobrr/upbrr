@@ -203,6 +203,16 @@ func PlanBoundary(input DecodedInput, area bool) (*BoundaryPlan, error) {
 	if len(times) < 8 {
 		return nil, errDecodedMapping
 	}
+	// Every source picture must have a unique timestamp after finite-clip
+	// quantization, including preroll outside selected windows.
+	var previous int64
+	for i, stamp := range times {
+		ms, err := boundarySignedMilliseconds(stamp)
+		if err != nil || i > 0 && ms <= previous {
+			return nil, errDecodedMapping
+		}
+		previous = ms
+	}
 	plan := &BoundaryPlan{times: times}
 	for _, native := range input.Native.Results {
 		if native.State != api.HDRExtractionComplete {

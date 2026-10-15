@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"image/png"
+	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -86,168 +88,191 @@ func TestBoundaryFiniteDecoderCalibration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
-		path := filepath.Join("testdata", "decoded-pq-cuts.mkv")
-		native, err := session.ExtractNativeFile(t.Context(), path, api.HDRAnalysisFormatsBoth)
-		if err != nil {
-			return err
-		}
-		defer native.Release()
-		evidence, err := native.Evidence(api.HDRAnalysisFormatsBoth, api.HDRSourceEvidence{})
-		if err != nil {
-			return err
-		}
-		defer evidence.Release()
-		input := DecodedInput{
-			Path:        path,
-			Fingerprint: "synthetic",
-			Native:      evidence,
-			Source: api.HDRDecodedSourceEvidence{
-				VideoStreams:           1,
-				Codec:                  "hevc",
-				Width:                  192,
-				Height:                 112,
-				BitDepth:               10,
-				PixelAspectNumerator:   1,
-				PixelAspectDenominator: 1,
-				Range:                  "limited",
-				Matrix:                 "bt2020nc",
-				Primaries:              "bt2020",
-				Transfer:               "smpte2084",
-			},
-		}
-		times, err := decodedTimeline(input)
-		if err != nil {
-			return err
-		}
-		// The encoded fixture has constant native metadata. Author known metadata
-		// cuts over its real timeline to exercise all five actual image transitions.
-		evidence.DolbyVision = decodedMetadataFixture(t, times)
-		for i := range evidence.Results {
-			if evidence.Results[i].Format == api.HDRNativeDolbyVision {
-				evidence.Results[i].State = api.HDRExtractionComplete
-			}
-		}
-		plan, err := PlanBoundary(input, true)
-		if err != nil {
-			return fmt.Errorf("plan calibration: %w", err)
-		}
-		if len(plan.report.Windows) == 0 {
-			return errors.New("calibration has no planned boundaries")
-		}
-		decoder := pictureDecoder{executable: executable}
-		for _, window := range plan.report.Windows {
-			path, proof, err := decoder.prepareBoundaryClip(t.Context(), input, plan, window, t.TempDir())
-			if err != nil {
-				return fmt.Errorf("prepare calibration %d-%d PTS=%+v: %w", window.First, window.Last, plan.times[window.First], err)
-			}
-			result := decoder.decodeBoundaryWindow(t.Context(), input, plan, window, path, proof, 2, 2, 512<<20)
-			if result.err != nil {
-				t.Log(result.diagnostics)
-				return fmt.Errorf("window %d-%d: %w", window.First, window.Last, result.err)
-			}
-			if result.invocation.ExposedPictures > proof.vcl || len(result.invocation.PTS) == 0 {
-				return errors.New("missing decode work proof")
-			}
-			for _, observation := range result.observations {
-				if observation.BestOffset != 0 || observation.Confidence != "dominant_cut" {
-					return fmt.Errorf("unexpected synthetic cut: %+v", observation)
-				}
-				indices := []int{observation.Candidate - 1, observation.Candidate}
-				colours := decoder.decodeBoundaryPictures(t.Context(), input, plan, window, path, proof, 2, 2, 512<<20, indices)
-				if colours.err != nil {
-					return fmt.Errorf("selected-pair colour decode: %w", colours.err)
-				}
-				if len(colours.previews) != 2 || len(colours.previews[indices[0]]) != sceneWidth*sceneHeight*3 ||
-					len(colours.previews[indices[1]]) != sceneWidth*sceneHeight*3 {
-					return errors.New("selected-pair colour decode returned unexpected frames")
-				}
-				limited := *plan
-				limited.report = BoundaryReport{
-					ChargedVCL: boundaryMaxVCL,
-					Windows: []BoundaryWindow{{
-						First:       window.First,
-						Last:        window.Last,
-						Invocations: []BoundaryInvocation{{State: "complete"}, result.invocation},
-					}},
-					Formats: []BoundaryFormat{{Thumbnails: result.pairs[observation.Candidate]}},
-				}
-				scratch := t.TempDir()
-				options := api.HDRDecodedOptions{BoundarySync: true, VideoDecoderThreads: 2}
-				canceled, cancel := context.WithCancel(t.Context())
-				cancel()
-				colourBoundaryPairs(canceled, decoder, input, &limited, options, scratch, 0)
-				if len(limited.report.Windows[0].Invocations) != 2 {
-					return errors.New("canceled preview started a child")
-				}
-				colourBoundaryPairs(t.Context(), decoder, input, &limited, options, scratch, 0)
-				files, err := os.ReadDir(scratch)
-				if err != nil || len(files) != 0 || limited.report.ChargedVCL != boundaryMaxVCL ||
-					len(limited.report.Windows[0].Invocations) != 3 || len(limited.report.Formats[0].Thumbnails[0].RGB) != 0 {
-					return errors.New("preview exceeded shared work budget or retained its scratch clip")
+	for _, rate := range []int{0, 1000, 1001} {
+		t.Run(strconv.Itoa(rate), func(t *testing.T) {
+			path := filepath.Join("testdata", "decoded-pq-cuts.mkv")
+			if rate != 0 {
+				source := path
+				path = filepath.Join(t.TempDir(), "Synthetic.Fractional.PQ.mp4")
+				// Author lossless copies of the known image cuts with B frames, exact
+				// 24/1 or 24000/1001 timestamps, and a nonzero presentation origin.
+				timing := fmt.Sprintf("settb=1/24000,setpts=N*%d+48000", rate)
+				output, err := exec.CommandContext(t.Context(), executable, "-hide_banner", "-nostdin", "-loglevel", "error", "-i", source,
+					"-map", "0:v:0", "-vf", timing, "-fps_mode", "passthrough", "-enc_time_base", "1/24000", "-c:v", "libx265", "-preset", "ultrafast",
+					"-x265-params", "lossless=1:pools=none:frame-threads=1:wpp=0:bframes=2:b-adapt=0:keyint=60:scenecut=0:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:range=limited:sar=1",
+					"-video_track_timescale", "24000", "-avoid_negative_ts", "disabled", path).CombinedOutput()
+				if err != nil {
+					t.Fatalf("author fractional source: %v: %s", err, output)
 				}
 			}
-		}
-		evidence.Release()
-		native.Release()
-		published := 0
-		err = session.MeasureBoundary(t.Context(), input, plan, api.HDRDecodedOptions{
-			BoundarySync:        true,
-			ActiveArea:          true,
-			VideoDecoderThreads: 2,
-		}, t.TempDir(), 0, func(report *MeasurementReport) error {
-			if err := report.Validate(); err != nil {
-				return fmt.Errorf("validate published %s: %w", report.Result.Mode, err)
-			}
-			if report.Result.Measured == 0 || report.Result.Measured != report.Result.Selected ||
-				report.Result.Mode == api.HDRDecodedActiveArea && report.Result.Coverage != api.HDRCoverageComplete {
-				return fmt.Errorf("incomplete synthetic session: %+v", report.Result)
-			}
-			published++
-			if report.Result.Mode == api.HDRDecodedBoundarySync {
-				if report.Result.Measured != 5 {
-					return fmt.Errorf("measured %d synthetic cuts, want 5", report.Result.Measured)
+			err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
+				native, err := session.ExtractNativeFile(t.Context(), path, api.HDRAnalysisFormatsBoth)
+				if err != nil {
+					return err
 				}
-				for _, format := range report.Boundary.Formats {
-					for _, thumb := range format.Thumbnails {
-						if len(thumb.RGB) != sceneWidth*sceneHeight*3 {
-							return errors.New("selected boundary frame lacks colour preview")
+				defer native.Release()
+				evidence, err := native.Evidence(api.HDRAnalysisFormatsBoth, api.HDRSourceEvidence{})
+				if err != nil {
+					return err
+				}
+				defer evidence.Release()
+				input := DecodedInput{
+					Path:        path,
+					Fingerprint: "synthetic",
+					Native:      evidence,
+					Source: api.HDRDecodedSourceEvidence{
+						VideoStreams:           1,
+						Codec:                  "hevc",
+						Width:                  192,
+						Height:                 112,
+						BitDepth:               10,
+						PixelAspectNumerator:   1,
+						PixelAspectDenominator: 1,
+						Range:                  "limited",
+						Matrix:                 "bt2020nc",
+						Primaries:              "bt2020",
+						Transfer:               "smpte2084",
+					},
+				}
+				times, err := decodedTimeline(input)
+				if err != nil {
+					return err
+				}
+				if rate != 0 {
+					if times[0].rational().Cmp(big.NewRat(2, 1)) != 0 || new(big.Rat).Sub(times[1].rational(), times[0].rational()).Cmp(big.NewRat(int64(rate), 24000)) != 0 {
+						return fmt.Errorf("author did not produce exact fractional PTS: %+v", times[:2])
+					}
+				}
+				// The encoded fixture has constant native metadata. Author known metadata
+				// cuts over its real timeline to exercise all five actual image transitions.
+				evidence.DolbyVision = decodedMetadataFixture(t, times)
+				for i := range evidence.Results {
+					if evidence.Results[i].Format == api.HDRNativeDolbyVision {
+						evidence.Results[i].State = api.HDRExtractionComplete
+					}
+				}
+				plan, err := PlanBoundary(input, true)
+				if err != nil {
+					return fmt.Errorf("plan calibration: %w", err)
+				}
+				if len(plan.report.Windows) == 0 {
+					return errors.New("calibration has no planned boundaries")
+				}
+				decoder := pictureDecoder{executable: executable}
+				for _, window := range plan.report.Windows {
+					path, proof, err := decoder.prepareBoundaryClip(t.Context(), input, plan, window, t.TempDir())
+					if err != nil {
+						return fmt.Errorf("prepare calibration %d-%d PTS=%+v: %w", window.First, window.Last, plan.times[window.First], err)
+					}
+					result := decoder.decodeBoundaryWindow(t.Context(), input, plan, window, path, proof, 2, 2, 512<<20)
+					if result.err != nil {
+						t.Log(result.diagnostics)
+						return fmt.Errorf("window %d-%d: %w", window.First, window.Last, result.err)
+					}
+					if result.invocation.ExposedPictures > proof.vcl || len(result.invocation.PTS) == 0 {
+						return errors.New("missing decode work proof")
+					}
+					for _, observation := range result.observations {
+						if observation.BestOffset != 0 || observation.Confidence != "dominant_cut" {
+							return fmt.Errorf("unexpected synthetic cut: %+v", observation)
+						}
+						indices := []int{observation.Candidate - 1, observation.Candidate}
+						colours := decoder.decodeBoundaryPictures(t.Context(), input, plan, window, path, proof, 2, 2, 512<<20, indices)
+						if colours.err != nil {
+							return fmt.Errorf("selected-pair colour decode: %w", colours.err)
+						}
+						if len(colours.previews) != 2 || len(colours.previews[indices[0]]) != sceneWidth*sceneHeight*3 ||
+							len(colours.previews[indices[1]]) != sceneWidth*sceneHeight*3 {
+							return errors.New("selected-pair colour decode returned unexpected frames")
+						}
+						limited := *plan
+						limited.report = BoundaryReport{
+							ChargedVCL: boundaryMaxVCL,
+							Windows: []BoundaryWindow{{
+								First:       window.First,
+								Last:        window.Last,
+								Invocations: []BoundaryInvocation{{State: "complete"}, result.invocation},
+							}},
+							Formats: []BoundaryFormat{{Thumbnails: result.pairs[observation.Candidate]}},
+						}
+						scratch := t.TempDir()
+						options := api.HDRDecodedOptions{BoundarySync: true, VideoDecoderThreads: 2}
+						canceled, cancel := context.WithCancel(t.Context())
+						cancel()
+						colourBoundaryPairs(canceled, decoder, input, &limited, options, scratch, 0)
+						if len(limited.report.Windows[0].Invocations) != 2 {
+							return errors.New("canceled preview started a child")
+						}
+						colourBoundaryPairs(t.Context(), decoder, input, &limited, options, scratch, 0)
+						files, err := os.ReadDir(scratch)
+						if err != nil || len(files) != 0 || limited.report.ChargedVCL != boundaryMaxVCL ||
+							len(limited.report.Windows[0].Invocations) != 3 || len(limited.report.Formats[0].Thumbnails[0].RGB) != 0 {
+							return errors.New("preview exceeded shared work budget or retained its scratch clip")
 						}
 					}
 				}
-				var retained bytes.Buffer
-				if err := WriteMeasurement(t.Context(), &retained, report); err != nil {
+				evidence.Release()
+				native.Release()
+				published := 0
+				err = session.MeasureBoundary(t.Context(), input, plan, api.HDRDecodedOptions{
+					BoundarySync:        true,
+					ActiveArea:          true,
+					VideoDecoderThreads: 2,
+				}, t.TempDir(), 0, func(report *MeasurementReport) error {
+					if err := report.Validate(); err != nil {
+						return fmt.Errorf("validate published %s: %w", report.Result.Mode, err)
+					}
+					if report.Result.Measured == 0 || report.Result.Measured != report.Result.Selected ||
+						report.Result.Mode == api.HDRDecodedActiveArea && report.Result.Coverage != api.HDRCoverageComplete {
+						return fmt.Errorf("incomplete synthetic session: %+v", report.Result)
+					}
+					published++
+					if report.Result.Mode == api.HDRDecodedBoundarySync {
+						if report.Result.Measured != 5 {
+							return fmt.Errorf("measured %d synthetic cuts, want 5", report.Result.Measured)
+						}
+						for _, format := range report.Boundary.Formats {
+							for _, thumb := range format.Thumbnails {
+								if len(thumb.RGB) != sceneWidth*sceneHeight*3 {
+									return errors.New("selected boundary frame lacks colour preview")
+								}
+							}
+						}
+						var retained bytes.Buffer
+						if err := WriteMeasurement(t.Context(), &retained, report); err != nil {
+							return err
+						}
+						restored, err := ReadMeasurement(t.Context(), &retained)
+						if err != nil || len(restored.Boundary.Formats[0].Thumbnails[0].RGB) == 0 {
+							return fmt.Errorf("colour report roundtrip: %w", err)
+						}
+						artifacts := MeasurementArtifacts(report)
+						if len(artifacts) != 1 || artifacts[0].Kind != api.HDRArtifactBoundaryDVSceneSheet {
+							return fmt.Errorf("wrong boundary artifact owners: %+v", artifacts)
+						}
+						var encoded bytes.Buffer
+						if err := session.RenderMeasurementArtifact(t.Context(), report, artifacts[0].Kind, "Synthetic boundary calibration", &encoded); err != nil {
+							return err
+						}
+						config, err := png.DecodeConfig(bytes.NewReader(encoded.Bytes()))
+						if err != nil || config.Width != 1800 || config.Height != 900 {
+							return fmt.Errorf("invalid boundary sheet dimensions: %+v %w", config, err)
+						}
+					}
+					return nil
+				})
+				if err != nil {
 					return err
 				}
-				restored, err := ReadMeasurement(t.Context(), &retained)
-				if err != nil || len(restored.Boundary.Formats[0].Thumbnails[0].RGB) == 0 {
-					return fmt.Errorf("colour report roundtrip: %w", err)
+				if published != 2 {
+					return fmt.Errorf("published %d reports, want boundary and area", published)
 				}
-				artifacts := MeasurementArtifacts(report)
-				if len(artifacts) != 1 || artifacts[0].Kind != api.HDRArtifactBoundaryDVSceneSheet {
-					return fmt.Errorf("wrong boundary artifact owners: %+v", artifacts)
-				}
-				var encoded bytes.Buffer
-				if err := session.RenderMeasurementArtifact(t.Context(), report, artifacts[0].Kind, "Synthetic boundary calibration", &encoded); err != nil {
-					return err
-				}
-				config, err := png.DecodeConfig(bytes.NewReader(encoded.Bytes()))
-				if err != nil || config.Width != 1800 || config.Height != 900 {
-					return fmt.Errorf("invalid boundary sheet dimensions: %+v %w", config, err)
-				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
 			}
-			return nil
 		})
-		if err != nil {
-			return err
-		}
-		if published != 2 {
-			return fmt.Errorf("published %d reports, want boundary and area", published)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 

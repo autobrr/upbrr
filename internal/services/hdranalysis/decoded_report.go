@@ -307,6 +307,11 @@ func ReadMeasurement(ctx context.Context, input io.Reader) (*MeasurementReport, 
 			}
 		}
 		pointer := string(decoder.StackPointer())
+		// Legacy and automatic reports cannot own boundary evidence. Reject its
+		// first child before typed decoding allocates the v2 observation slices.
+		if strings.HasPrefix(pointer, "/boundary/") || strings.HasPrefix(pointer, "/areaSamples/") {
+			return nil, errors.New("measurement JSON exceeds observation bounds")
+		}
 		for _, bound := range []struct {
 			prefix string
 			limit  int

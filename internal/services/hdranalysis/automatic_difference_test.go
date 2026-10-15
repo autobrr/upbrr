@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"strconv"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -83,6 +84,47 @@ func TestSampledDifferenceDisclosesCoverageAndEmptySamples(t *testing.T) {
 						}
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestReferenceOnlyChromaticityRendersMappedCloud(t *testing.T) {
+	for _, offset := range []int{-1, 0, 1} {
+		t.Run(strconv.Itoa(offset), func(t *testing.T) {
+			report := automaticReportFixture()
+			report.Automatic.Frames = nil
+			report.Automatic.Reference = nil
+			for i := range 12 {
+				frame := AutomaticFrame{Index: i, PTS: measurementTimestamp(pictureTime{
+					Value:     int64(i),
+					Timescale: 24,
+					Valid:     true,
+				})}
+				report.Automatic.Frames = append(report.Automatic.Frames, frame)
+				report.Automatic.Reference = append(report.Automatic.Reference, frame)
+				report.Automatic.Chromaticity[1] = append(report.Automatic.Chromaticity[1], ChromaticityPoint{
+					Index: i,
+					X:     .3,
+					Y:     .3,
+				})
+			}
+			report.Automatic.Chromaticity[0] = nil
+			report.Options.Comparison = &api.HDRComparisonOptions{FrameOffset: new(offset)}
+			canvas := image.NewRGBA(image.Rect(0, 0, 2400, 900))
+			plot, err := newAutomaticPlot(canvas)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer plot.face.Close()
+			plot.chromaticity(report)
+			// Each of the five panels must contain the retained reference pixel cloud.
+			for panel := range 5 {
+				x := 55 + panel*455 + int(.3/.75*390)
+				y := 572 - int(.3/.85*442)
+				if canvas.RGBAAt(x, y) != automaticGreen {
+					t.Fatalf("reference cloud absent at panel %d (%d,%d)", panel, x, y)
+				}
 			}
 		})
 	}

@@ -34,9 +34,11 @@ func (s *Session) MeasureBoundary(ctx context.Context, input DecodedInput, plan 
 	defer cancel()
 	boundary := newMeasurementReport(api.HDRDecodedBoundarySync, input, options)
 	boundary.Boundary = &plan.report
-	boundary.Processing = []string{"fixed numeric and ranked visual union; eight-frame PQ luma windows; metadata before/at image pairs",
-		"finite compressed clips; complete VCL/NAL/SPS validation before software decoding; exact source/remux/decode PTS; no retries",
-		"192x108 PQ luma scoring; selected pairs replayed as Reinhard SDR BT.709 colour previews, never brightness evidence"}
+	boundary.Processing = []string{
+		"fixed numeric and ranked visual union; eight-frame PQ luma windows; metadata before/at image pairs",
+		"finite compressed clips; complete VCL/NAL/SPS validation before software decoding; unique source-to-millisecond PTS mapping; exact remux/decode PTS; no retries",
+		"192x108 PQ luma scoring; selected pairs replayed as Reinhard SDR BT.709 colour previews, never brightness evidence",
+	}
 	var area *MeasurementReport
 	if options.ActiveArea {
 		area = newMeasurementReport(api.HDRDecodedActiveArea, input, options)
@@ -62,7 +64,7 @@ func (s *Session) MeasureBoundary(ctx context.Context, input DecodedInput, plan 
 			version, err := decoder.probe(stageCtx, nil, "-hide_banner", "-version")
 			if err != nil {
 				capabilityErr = err
-			} else if !strings.Contains(boundary.Decoder.Version, "a5923073bf") || !strings.Contains(string(version), "--arch=x86_64") {
+			} else if !strings.Contains(boundary.Decoder.Version, boundaryDecoderBuild) || !strings.Contains(string(version), boundaryDecoderArch) {
 				capabilityErr = errDecodedMapping
 			}
 		}

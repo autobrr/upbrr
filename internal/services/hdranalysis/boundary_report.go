@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -265,7 +266,11 @@ func (r *MeasurementReport) validateBoundary() error {
 					window.Invocations[1].State == "complete" && slices.ContainsFunc(window.Invocations[1].PTS, func(stamp MeasurementTimestamp) bool {
 					a, errA := automaticTime(stamp)
 					c, errC := automaticTime(observation.PTS)
-					return errA == nil && errC == nil && a.rational().Cmp(c.rational()) == 0
+					if errA != nil || errC != nil {
+						return false
+					}
+					ms, err := boundaryMilliseconds(c)
+					return err == nil && a.rational().Cmp(big.NewRat(ms, 1000)) == 0
 				})
 			})
 			if !proved {

@@ -97,6 +97,7 @@ func TestNativeFullFileParity(t *testing.T) {
 		t.Fatalf("Dolby Vision reference failed: %v", Classify(err))
 	}
 	dvDigest := digest(dolby)
+	dolby.Release()
 	t.Log("Dolby Vision reference completed")
 	sharedReads, sharedReader := open()
 	err = New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
