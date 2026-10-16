@@ -13,12 +13,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func automaticHDRNeedsCapture(instructions api.HDRAnalysisInstructions, native releaseworkflow.HDRExtractionRecord,
+func automaticHDRCaptureModes(ctx context.Context, instructions api.HDRAnalysisInstructions, native releaseworkflow.HDRExtractionRecord,
 	store *releaseworkflow.HDRMeasurementStore,
-) bool {
+) []api.HDRDecodedMode {
 	if instructions.Decoded == nil || !instructions.Decoded.Automatic && !instructions.Decoded.Audio {
-		return false
+		return nil
 	}
+	var modes []api.HDRDecodedMode
+	var decoder string
+	var decoderErr error
+	decoderChecked := false
 	for _, mode := range []api.HDRDecodedMode{api.HDRDecodedAutomatic, api.HDRDecodedAudio} {
 		if mode == api.HDRDecodedAudio && instructions.ProfileVersion == api.HDRAnalysisProfileV3 {
 			continue // Prepared tracks have independent, audio-only recovery below.
@@ -28,35 +32,53 @@ func automaticHDRNeedsCapture(instructions api.HDRAnalysisInstructions, native r
 		}
 		identity, err := hdrMeasurementIdentity(native, *instructions.Decoded, mode)
 		if err != nil {
-			return true
+			modes = append(modes, mode)
+			continue
 		}
 		previous := latestHDRMeasurement(store, instructions.Release, native.TargetID, identity)
 		if previous.ID == "" {
-			return true
+			modes = append(modes, mode)
+			continue
+		}
+		if previous.Decoder != "" {
+			if !decoderChecked {
+				decoder, decoderErr = hdranalysis.CurrentDecoderFingerprint(ctx)
+				decoderChecked = true
+			}
+			if decoderErr == nil && decoder != previous.Decoder {
+				modes = append(modes, mode)
+				continue
+			}
 		}
 		if retry := instructions.DecodedRetry; retry != nil {
 			for _, requested := range retry.Modes {
 				if requested == mode && (store == nil || store.RetryAfterSequence == nil || previous.Sequence <= *store.RetryAfterSequence) {
-					return true
+					modes = append(modes, mode)
+					break
 				}
 			}
 		}
 	}
-	return false
+	return modes
 }
 
 func (b workflowHDRAnalysisBuilder) captureAutomaticHDR(ctx context.Context, session *hdranalysis.Session,
 	subject api.HDRAnalysisSubject, target api.HDRAnalysisTargetSubject, instructions api.HDRAnalysisInstructions,
 	store *releaseworkflow.HDRMeasurementStore, directory string, otherBytes int64,
-	prepared *hdranalysis.PreparedAudioCapture,
+	prepared *hdranalysis.PreparedAudioCapture, modes []api.HDRDecodedMode,
 ) (*hdranalysis.NativeExtraction, []*hdranalysis.MeasurementReport, error) {
+	options := *instructions.Decoded
+	captureAudio := modes == nil || slices.Contains(modes, api.HDRDecodedAudio)
+	if modes != nil && !slices.Contains(modes, api.HDRDecodedAutomatic) {
+		options = api.HDRDecodedOptions{Audio: true, AllAudioTracks: options.AllAudioTracks}
+	}
 	input := hdranalysis.DecodedInput{Path: target.Path, Fingerprint: subject.SourceFingerprint}
 	if target.Target.Evidence.Decoded != nil {
 		input.Source = *target.Target.Evidence.Decoded
 	}
 	var reference *hdranalysis.DecodedInput
 	var referenceErr error
-	if instructions.Decoded.Comparison != nil {
+	if options.Comparison != nil {
 		if store == nil || store.Comparison == nil || store.Comparison.Ref.Release != subject.Release ||
 			store.Comparison.Ref.ID != instructions.Decoded.Comparison.SourceID {
 			referenceErr = releaseworkflow.ErrPrivateResourceUnavailable
@@ -75,14 +97,14 @@ func (b workflowHDRAnalysisBuilder) captureAutomaticHDR(ctx context.Context, ses
 			ctx,
 			input,
 			reference,
-			*instructions.Decoded,
+			options,
 			instructions.Formats,
 			directory,
 			otherBytes,
 			*prepared,
 		)
 	} else {
-		native, reports, err = session.AnalyzeAutomatic(ctx, input, reference, *instructions.Decoded, instructions.Formats, directory, otherBytes)
+		native, reports, err = session.AnalyzeAutomatic(ctx, input, reference, options, instructions.Formats, directory, otherBytes, captureAudio)
 	}
 	if err != nil {
 		return native, reports, fmt.Errorf("capture automatic HDR: %w", err)

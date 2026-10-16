@@ -60,7 +60,7 @@ func TestMetadataAudioWithoutPictureMapping(t *testing.T) {
 					Fingerprint: "synthetic-metadata-audio",
 					Source:      *facts.Decoded,
 				},
-					nil, api.HDRDecodedOptions{Audio: true}, api.HDRAnalysisFormatsBoth, directory, otherBytes)
+					nil, api.HDRDecodedOptions{Audio: true}, api.HDRAnalysisFormatsBoth, directory, otherBytes, true)
 				if otherBytes == MaxRestoreBytes {
 					if !errors.Is(err, extract.ErrResourceLimit) {
 						t.Fatalf("exhausted operation budget was not rejected: %v", err)

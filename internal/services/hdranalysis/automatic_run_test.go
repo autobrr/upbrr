@@ -24,7 +24,7 @@ import (
 func TestAutomaticWithoutDecoderRetainsNativeMetadata(t *testing.T) {
 	err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
 		input := DecodedInput{Path: filepath.Join("testdata", "reordered-hybrid.mkv"), Fingerprint: "synthetic-dual"}
-		native, reports, err := session.automaticMetadataOnly(t.Context(), input, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsBoth, 0, errors.New("decoder unavailable"))
+		native, reports, err := session.automaticMetadataOnly(t.Context(), input, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsBoth, 0, errors.New("decoder unavailable"), true)
 		if err != nil {
 			return err
 		}
@@ -41,6 +41,25 @@ func TestAutomaticWithoutDecoderRetainsNativeMetadata(t *testing.T) {
 			}
 		}
 		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAutomaticPictureOnlyFallbackOmitsAudio(t *testing.T) {
+	err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
+		input := DecodedInput{Path: filepath.Join("testdata", "reordered-hybrid.mkv"), Fingerprint: "synthetic-dual"}
+		native, reports, err := session.automaticMetadataOnly(t.Context(), input, api.HDRDecodedOptions{Automatic: true},
+			api.HDRAnalysisFormatsBoth, 0, errors.New("decoder unavailable"), false)
+		if err != nil {
+			return err
+		}
+		defer native.Release()
+		if !native.ScanComplete || len(reports) != 1 || reports[0].Result.Mode != api.HDRDecodedAutomatic || reports[0].Result.State != api.HDRDecodedUnsupported {
+			t.Fatal("picture-only fallback added an unselected audio outcome or lost native metadata")
+		}
+		return reports[0].Validate()
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +94,7 @@ func TestAutomaticSelectsUniqueHEVCAfterAnotherVideo(t *testing.T) {
 			Fingerprint: "synthetic-multiple-video",
 			Source:      *facts.Decoded,
 		},
-			nil, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsAuto, directory, 0)
+			nil, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsAuto, directory, 0, true)
 		if err != nil {
 			return err
 		}
@@ -95,12 +114,12 @@ func TestAutomaticMetadataFallbackProfile5(t *testing.T) {
 		t.Run(profile, func(t *testing.T) {
 			err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
 				input := DecodedInput{
-					Path: filepath.Join("testdata", "reordered-hybrid.mkv"),
+					Path:        filepath.Join("testdata", "reordered-hybrid.mkv"),
 					Fingerprint: "synthetic-dual",
-					Source: api.HDRDecodedSourceEvidence{DolbyVisionProfile: profile},
+					Source:      api.HDRDecodedSourceEvidence{DolbyVisionProfile: profile},
 				}
 				native, reports, err := session.automaticMetadataOnly(t.Context(), input, api.HDRDecodedOptions{Automatic: true},
-					api.HDRAnalysisFormatsBoth, 0, errors.New("decoder unavailable"))
+					api.HDRAnalysisFormatsBoth, 0, errors.New("decoder unavailable"), true)
 				if err != nil {
 					return err
 				}
@@ -214,7 +233,7 @@ func TestAutomaticReferenceAlignmentAndSelfReference(t *testing.T) {
 		Colour: true,
 	}}
 	err = New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
-		native, reports, err := session.AnalyzeAutomatic(t.Context(), input, &reference, options, api.HDRAnalysisFormatsAuto, directory, 0)
+		native, reports, err := session.AnalyzeAutomatic(t.Context(), input, &reference, options, api.HDRAnalysisFormatsAuto, directory, 0, true)
 		if err != nil {
 			return err
 		}
@@ -237,7 +256,7 @@ func TestAutomaticReferenceAlignmentAndSelfReference(t *testing.T) {
 				referenceTraversals++
 			}
 		})
-		native, reports, err = session.AnalyzeAutomatic(unsupportedContext, input, &unsupportedReference, options, api.HDRAnalysisFormatsAuto, directory, 0)
+		native, reports, err = session.AnalyzeAutomatic(unsupportedContext, input, &unsupportedReference, options, api.HDRAnalysisFormatsAuto, directory, 0, true)
 		if err != nil {
 			return err
 		}
@@ -250,7 +269,7 @@ func TestAutomaticReferenceAlignmentAndSelfReference(t *testing.T) {
 		omittedComparison.Crop = api.HDRCrop{Width: 2, Height: 2}
 		omittedOptions := options
 		omittedOptions.Comparison = &omittedComparison
-		native, reports, err = session.AnalyzeAutomatic(t.Context(), input, &input, omittedOptions, api.HDRAnalysisFormatsAuto, directory, 0)
+		native, reports, err = session.AnalyzeAutomatic(t.Context(), input, &input, omittedOptions, api.HDRAnalysisFormatsAuto, directory, 0, true)
 		if err != nil {
 			return err
 		}
@@ -270,7 +289,7 @@ func TestAutomaticReferenceAlignmentAndSelfReference(t *testing.T) {
 		if err := os.WriteFile(reference.Path, []byte("not a media stream"), 0o600); err != nil {
 			return fmt.Errorf("write invalid reference fixture: %w", err)
 		}
-		native, reports, err = session.AnalyzeAutomatic(t.Context(), input, &reference, options, api.HDRAnalysisFormatsAuto, directory, 0)
+		native, reports, err = session.AnalyzeAutomatic(t.Context(), input, &reference, options, api.HDRAnalysisFormatsAuto, directory, 0, true)
 		if err != nil {
 			return err
 		}
@@ -284,7 +303,7 @@ func TestAutomaticReferenceAlignmentAndSelfReference(t *testing.T) {
 			t.Fatal("reference process failure discarded the actual applied primary crop")
 		}
 		options.Comparison.Crop.Width = 194
-		native, reports, err = session.AnalyzeAutomatic(t.Context(), input, &reference, options, api.HDRAnalysisFormatsAuto, directory, 0)
+		native, reports, err = session.AnalyzeAutomatic(t.Context(), input, &reference, options, api.HDRAnalysisFormatsAuto, directory, 0, true)
 		if err != nil {
 			return err
 		}
@@ -327,7 +346,7 @@ func TestAutomaticAuthoredCompletePass(t *testing.T) {
 		}
 	})
 	err := New(NewAdmission(), nil).WithSession(ctx, func(session *Session) error {
-		native, reports, err := session.AnalyzeAutomatic(ctx, input, nil, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsAuto, t.TempDir(), 0)
+		native, reports, err := session.AnalyzeAutomatic(ctx, input, nil, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsAuto, t.TempDir(), 0, true)
 		if err != nil {
 			return err
 		}
@@ -393,7 +412,7 @@ func TestAutomaticRawHEVCRetainsNativeWithoutInventingTimes(t *testing.T) {
 					Fingerprint: "synthetic-raw",
 					Source:      *facts.Decoded,
 				}, nil,
-					api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsAuto, directory, 0)
+					api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsAuto, directory, 0, true)
 				if err != nil {
 					return err
 				}
@@ -449,7 +468,7 @@ func TestAutomaticAuthoredAudioAndRetainedRendering(t *testing.T) {
 		},
 	}
 	err = New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
-		native, reports, err := session.AnalyzeAutomatic(t.Context(), input, nil, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsAuto, directory, 0)
+		native, reports, err := session.AnalyzeAutomatic(t.Context(), input, nil, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsAuto, directory, 0, true)
 		if err != nil {
 			return err
 		}
@@ -541,7 +560,7 @@ func TestLegacyAutomaticRejectsV3BeforeSourceAccess(t *testing.T) {
 		{Audio: true, BoundarySync: true},
 	} {
 		err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
-			native, reports, err := session.AnalyzeAutomatic(t.Context(), DecodedInput{}, nil, options, api.HDRAnalysisFormatsAuto, "", 0)
+			native, reports, err := session.AnalyzeAutomatic(t.Context(), DecodedInput{}, nil, options, api.HDRAnalysisFormatsAuto, "", 0, true)
 			if err == nil || err.Error() != "v3 automatic analysis requires prepared audio authority" || native != nil || reports != nil {
 				t.Fatalf("new options reached legacy source traversal: native=%v reports=%v err=%v", native, reports, err)
 			}

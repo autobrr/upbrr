@@ -110,7 +110,7 @@ func TestSampledReferenceOffsetsUseSourceFrames(t *testing.T) {
 						Colour: true,
 					},
 				}
-				native, reports, err := session.AnalyzeAutomatic(t.Context(), input, &reference, options, api.HDRAnalysisFormatsAuto, directory, 0)
+				native, reports, err := session.AnalyzeAutomatic(t.Context(), input, &reference, options, api.HDRAnalysisFormatsAuto, directory, 0, true)
 				if err != nil {
 					return err
 				}

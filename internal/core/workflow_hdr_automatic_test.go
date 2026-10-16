@@ -423,7 +423,7 @@ func TestAutomaticHDRRetryKeepsSuccessfulTargetSourceFree(t *testing.T) {
 			t.Fatalf("retry lost successful target: %+v", target.Decoded)
 		}
 	}
-	if len(entries) != 3 || len(store.Records) != 6 {
+	if len(entries) != 2 || len(store.Records) != 5 {
 		t.Fatalf("retry reread successful sibling: native=%d measurements=%d", len(entries), len(store.Records))
 	}
 }

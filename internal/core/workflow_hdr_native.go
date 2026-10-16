@@ -169,6 +169,8 @@ func (b workflowHDRAnalysisBuilder) buildNative(
 			var found bool
 			var targetErr error
 			var freshMeasurements []*hdranalysis.MeasurementReport
+			var captureModes []api.HDRDecodedMode
+			reuseNative := false
 			var boundaryPlan *hdranalysis.BoundaryPlan
 			nativeRendered, nativeCheckpointed := false, false
 			prepareNativeRender := func() error {
@@ -204,6 +206,13 @@ func (b workflowHDRAnalysisBuilder) buildNative(
 			}
 			if preparedAudio != nil {
 				preparedAudio.CheckpointNative = func(native *hdranalysis.NativeExtraction, _ []*hdranalysis.MeasurementReport) error {
+					if reuseNative {
+						native.Release()
+						if err := b.resolver.ValidateHDRAnalysisSource(ctx, release); err != nil {
+							return fmt.Errorf("validate HDR source: %w", err)
+						}
+						return nil
+					}
 					var err error
 					evidence, err = native.Evidence(instructions.Formats, target.Target.Evidence)
 					identity.ResolvedTrackID = native.TrackID
@@ -239,12 +248,16 @@ func (b workflowHDRAnalysisBuilder) buildNative(
 					Message: "Retained HDR metadata is unavailable or incompatible; explicitly retry source analysis.",
 				}, targetErr)
 			}
-			if found && targetErr == nil && target.DiscRoot == "" && automaticHDRNeedsCapture(instructions, nativeRecord, measurements) {
-				// An explicit new automatic measurement (or its explicit retry)
-				// grants one combined source pass. A missing saved report remains
-				// a recovery outcome and does not silently grant another pass.
-				evidence.Release()
-				evidence, found = nil, false
+			if found && targetErr == nil && target.DiscRoot == "" {
+				captureModes = automaticHDRCaptureModes(ctx, instructions, nativeRecord, measurements)
+				if len(captureModes) > 0 {
+					// Keep the native authority so unselected sibling measurements
+					// remain restorable after this selective source pass.
+					if err := prepareNativeRender(); err != nil {
+						return err
+					}
+					reuseNative, nativeCheckpointed, found = true, true, false
+				}
 			}
 			if !found && targetErr == nil && target.CapturedFailure != nil && target.CapturedNativePath == "" && !sourceRetry {
 				targetErr = api.NewHDRAnalysisError(*target.CapturedFailure, nil)
@@ -265,8 +278,10 @@ func (b workflowHDRAnalysisBuilder) buildNative(
 				}
 			}
 			if !found && targetErr == nil {
-				// Fresh evidence cannot inherit a previous checkpoint's authority.
-				nativeRecord = releaseworkflow.HDRExtractionRecord{}
+				if !reuseNative {
+					// Fresh source analysis cannot inherit a previous checkpoint's authority.
+					nativeRecord = releaseworkflow.HDRExtractionRecord{}
+				}
 				var native *hdranalysis.NativeExtraction
 				var timeline []hdranalysis.TimelineItem
 				scanComplete := false
@@ -327,15 +342,27 @@ func (b workflowHDRAnalysisBuilder) buildNative(
 							root,
 							discBytes(),
 							preparedAudio,
+							captureModes,
 						)
 					} else {
 						native, targetErr = session.ExtractNativeFileWithRetained(ctx, target.Path, instructions.Formats, discBytes())
 					}
 				}
+				if reuseNative {
+					native.Release()
+					if err := b.resolver.ValidateHDRAnalysisSource(ctx, release); err != nil {
+						targetErr = errors.Join(targetErr, err)
+						freshMeasurements = nil
+					}
+				}
 				if nativeCheckpointed && targetErr != nil {
 					// Audio publication cannot revoke already checkpointed native
 					// metadata. Missing track outcomes are filled independently below.
-					b.service.ReportFailure(ctx, "prepared_audio", targetErr)
+					phase := "prepared_audio"
+					if reuseNative {
+						phase = "automatic_capture"
+					}
+					b.service.ReportFailure(ctx, phase, targetErr)
 					targetErr = nil
 				}
 				if native != nil && !nativeCheckpointed {

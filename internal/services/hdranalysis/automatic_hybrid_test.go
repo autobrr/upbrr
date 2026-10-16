@@ -143,7 +143,7 @@ func TestAutomaticDecodableDualMetadata(t *testing.T) {
 	directory := filepath.Dir(input.Path)
 	path := input.Path
 	err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
-		native, reports, err := session.AnalyzeAutomatic(t.Context(), input, nil, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsBoth, directory, 0)
+		native, reports, err := session.AnalyzeAutomatic(t.Context(), input, nil, api.HDRDecodedOptions{Automatic: true}, api.HDRAnalysisFormatsBoth, directory, 0, true)
 		if err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ func TestAutomaticDecodableDualMetadata(t *testing.T) {
 		full := reports[0]
 		input.Source.FrameRateNumerator, input.Source.FrameRateDenominator = "25", "1"
 		selectedNative, selected, err := session.AnalyzeAutomatic(t.Context(), input, nil,
-			api.HDRDecodedOptions{Automatic: true, Sampled: true}, api.HDRAnalysisFormatsBoth, directory, 0)
+			api.HDRDecodedOptions{Automatic: true, Sampled: true}, api.HDRAnalysisFormatsBoth, directory, 0, true)
 		if err != nil {
 			return err
 		}

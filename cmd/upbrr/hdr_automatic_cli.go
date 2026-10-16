@@ -68,7 +68,7 @@ func standaloneAutomaticHDR(ctx context.Context, session *hdranalysis.Session, o
 	if prepared != nil {
 		native, reports, err = session.AnalyzePreparedAutomatic(ctx, input, reference, *options, formats, directory, 0, *prepared)
 	} else {
-		native, reports, err = session.AnalyzeAutomatic(ctx, input, reference, *options, formats, directory, 0)
+		native, reports, err = session.AnalyzeAutomatic(ctx, input, reference, *options, formats, directory, 0, true)
 	}
 	if err != nil {
 		return native, reports, fmt.Errorf("measure standalone automatic HDR: %w", err)

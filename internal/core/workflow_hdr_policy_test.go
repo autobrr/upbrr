@@ -167,7 +167,7 @@ func TestNativeResourcePolicyRecovery(t *testing.T) {
 						Path:        source,
 						Fingerprint: resolver.subject.SourceFingerprint,
 						Source:      *facts.Decoded,
-					}, nil, api.HDRDecodedOptions{Audio: true}, formats, t.TempDir(), 0)
+					}, nil, api.HDRDecodedOptions{Audio: true}, formats, t.TempDir(), 0, true)
 					if scanErr == nil && len(reports) == 1 {
 						audioReport = reports[0]
 					}
@@ -285,7 +285,7 @@ func TestNativeResourcePolicyRecovery(t *testing.T) {
 					store.Records[next.ID], store.Resources[next.ID] = next, resource
 					return nil
 				}
-				if automaticHDRNeedsCapture(request, record, store) {
+				if len(automaticHDRCaptureModes(t.Context(), request, record, store)) > 0 {
 					t.Fatal("completed audio checkpoint does not reproduce cached-run reuse")
 				}
 			}

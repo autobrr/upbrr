@@ -77,7 +77,7 @@ func (s *Session) AnalyzePreparedAutomatic(ctx context.Context, primary DecodedI
 	}
 	prepared := &preparedAudioCapture{PreparedAudioCapture: capture, pending: append([]string(nil), capture.Selected...)}
 	defer prepared.reportTraversals(ctx, s.service)
-	native, reports, err := s.analyzeAutomatic(ctx, primary, reference, options, formats, directory, otherBytes, prepared)
+	native, reports, err := s.analyzeAutomatic(ctx, primary, reference, options, formats, directory, otherBytes, prepared, true)
 	if err == nil && native != nil && !prepared.checkpointed {
 		// Header/backend failures may still yield a complete native-only capture.
 		// They do not authorize a second source traversal or fabricated PCM.

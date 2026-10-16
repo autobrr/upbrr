@@ -170,10 +170,6 @@ func (b workflowHDRAnalysisBuilder) measureHDRTarget(ctx context.Context, sessio
 			}
 			reports = append(reports, report)
 		}
-		if !options.BoundarySync {
-			return reports, nil
-		}
-		options.Audio = false
 	}
 	var decoder string
 	var decoderErr error
@@ -183,6 +179,9 @@ func (b workflowHDRAnalysisBuilder) measureHDRTarget(ctx context.Context, sessio
 			continue // Prepared audio owns per-track restoration and aggregation.
 		}
 		if !options.Requested(mode) {
+			continue
+		}
+		if slices.ContainsFunc(reports, func(report *hdranalysis.MeasurementReport) bool { return report.Result.Mode == mode }) {
 			continue
 		}
 		identity, err := hdrMeasurementIdentity(native, *instructions.Decoded, mode)

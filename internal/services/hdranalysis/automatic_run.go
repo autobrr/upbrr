@@ -84,18 +84,19 @@ func InspectFileSource(ctx context.Context, path string) (api.HDRSourceEvidence,
 // Complete metadata, selected decoded pictures and existing primary audio analysis
 // share that traversal. Header/capability probes do not traverse complete media.
 // The caller owns returned native metadata and checkpoints it before reports.
+// captureAudio selects fresh primary audio work independently of picture work.
 // New v3 options require AnalyzePreparedAutomatic and prepared audio authority.
 func (s *Session) AnalyzeAutomatic(ctx context.Context, primary DecodedInput, reference *DecodedInput,
-	options api.HDRDecodedOptions, formats api.HDRAnalysisFormats, directory string, otherBytes int64,
+	options api.HDRDecodedOptions, formats api.HDRAnalysisFormats, directory string, otherBytes int64, captureAudio bool,
 ) (*NativeExtraction, []*MeasurementReport, error) {
 	if options.RequiresV3() {
 		return nil, nil, errors.New("v3 automatic analysis requires prepared audio authority")
 	}
-	return s.analyzeAutomatic(ctx, primary, reference, options, formats, directory, otherBytes, nil)
+	return s.analyzeAutomatic(ctx, primary, reference, options, formats, directory, otherBytes, nil, captureAudio)
 }
 
 func (s *Session) analyzeAutomatic(ctx context.Context, primary DecodedInput, reference *DecodedInput,
-	options api.HDRDecodedOptions, formats api.HDRAnalysisFormats, directory string, otherBytes int64, prepared *preparedAudioCapture,
+	options api.HDRDecodedOptions, formats api.HDRAnalysisFormats, directory string, otherBytes int64, prepared *preparedAudioCapture, captureAudio bool,
 ) (*NativeExtraction, []*MeasurementReport, error) {
 	if !options.Automatic && !options.Audio || primary.Path == "" || primary.Fingerprint == "" || directory == "" || otherBytes < 0 {
 		return nil, nil, errors.New("automatic HDR analysis lacks source authority")
@@ -108,21 +109,21 @@ func (s *Session) analyzeAutomatic(ctx context.Context, primary DecodedInput, re
 	if primary.Source.Codec == "" {
 		facts, inspectErr := InspectFileSource(ctx, primary.Path)
 		if inspectErr != nil {
-			return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, inspectErr)
+			return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, inspectErr, captureAudio)
 		}
 		if facts.Decoded != nil {
 			primary.Source = *facts.Decoded
 		}
 	}
 	if primary.Source.RawHEVC {
-		return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, errDecodedMapping)
+		return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, errDecodedMapping, captureAudio)
 	}
 	if primary.Source.Codec != "hevc" || primary.Source.VideoStreams < 1 {
-		return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, errDecodedMapping)
+		return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, errDecodedMapping, captureAudio)
 	}
 	executable, err := screenshots.ResolveFFmpegExecutable()
 	if err != nil {
-		return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, err)
+		return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, err, captureAudio)
 	}
 	decoder := pictureDecoder{executable: executable}
 	var identity DecoderIdentity
@@ -133,7 +134,7 @@ func (s *Session) analyzeAutomatic(ctx context.Context, primary DecodedInput, re
 	if identity.Fingerprint == "" {
 		version, err := decoder.probe(ctx, nil, "-hide_banner", "-version")
 		if err != nil {
-			return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, err)
+			return s.automaticMetadataOnly(ctx, primary, options, formats, otherBytes, err, captureAudio)
 		}
 		first, _, _ := strings.Cut(string(version), "\n")
 		identity.Version = first[:min(len(first), 200)]
@@ -228,7 +229,7 @@ func (s *Session) analyzeAutomatic(ctx context.Context, primary DecodedInput, re
 	var audioErr error
 	if prepared != nil {
 		audio, audioErr = prepared.prepare(ctx, audioService, audioRoot)
-	} else {
+	} else if captureAudio {
 		audio, audioErr = audioService.PrepareBatch(ctx, primary.Path, audioRoot, "automatic")
 	}
 	if audioErr == nil {
@@ -551,6 +552,9 @@ func (s *Session) analyzeAutomatic(ctx context.Context, primary DecodedInput, re
 		}
 		return native[0], reports, nil
 	}
+	if !captureAudio {
+		return native[0], reports, nil
+	}
 	audioReport := newMeasurementReport(api.HDRDecodedAudio, primary, options)
 	audioReport.Decoder, audioReport.Result.Profile = identity, api.AudioAnalysisProfileVersion
 	audioReport.Decoder.RequestedThreads, audioReport.Decoder.EffectiveThreads = 0, nil
@@ -579,7 +583,7 @@ func (s *Session) analyzeAutomatic(ctx context.Context, primary DecodedInput, re
 }
 
 func (s *Session) automaticMetadataOnly(ctx context.Context, primary DecodedInput, options api.HDRDecodedOptions,
-	formats api.HDRAnalysisFormats, otherBytes int64, decoderError error,
+	formats api.HDRAnalysisFormats, otherBytes int64, decoderError error, captureAudio bool,
 ) (*NativeExtraction, []*MeasurementReport, error) {
 	// No complete traversal has started. The existing native walker can still
 	// supply every supported metadata check in one pass without FFmpeg.
@@ -589,7 +593,7 @@ func (s *Session) automaticMetadataOnly(ctx context.Context, primary DecodedInpu
 	}
 	reports := make([]*MeasurementReport, 0, 2)
 	for _, mode := range []api.HDRDecodedMode{api.HDRDecodedAutomatic, api.HDRDecodedAudio} {
-		if !options.Requested(mode) {
+		if !options.Requested(mode) || mode == api.HDRDecodedAudio && !captureAudio {
 			continue
 		}
 		report := newMeasurementReport(mode, primary, options)
