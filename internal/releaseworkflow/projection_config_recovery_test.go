@@ -23,7 +23,7 @@ func TestProjectionContinuationRestoresConfigInvalidatedTrackerLane(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	preparer := testPreparer()
+	preparer := questionnaireTestPreparer()
 	prepare := preparer.PrepareFunc
 	prepareCalls, preflightCalls := 0, 0
 	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {

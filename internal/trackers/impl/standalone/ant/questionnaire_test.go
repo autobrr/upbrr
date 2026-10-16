@@ -4,11 +4,51 @@
 package ant
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestProjectionQuestionnaireOmitsUnsupportedContentTypes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		providerType string
+		answer       string
+	}{
+		{providerType: "tv series"},
+		{providerType: "tv mini series", answer: "Short Film"},
+		{providerType: "tvEpisode", answer: "Feature Film"},
+		{providerType: "tv short"},
+		{providerType: "tvShort", answer: "Short Film"},
+	} {
+		t.Run(test.providerType, func(t *testing.T) {
+			meta := api.UploadSubject{
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				ProviderMetadata: api.SourceScopedMetadata{
+					IMDB: &api.IMDBMetadata{Type: test.providerType},
+				},
+				TrackerQuestionnaireAnswers: map[string]map[string]string{"ANT": {"type": test.answer}},
+			}
+			questionnaire := projectionQuestionnaire(trackers.PreparationInput{Meta: meta})
+			if slices.ContainsFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool {
+				return field.Key == "type"
+			}) {
+				t.Fatalf("unsupported content must not offer a type override: %#v", questionnaire)
+			}
+			subject := api.NewTrackerValidationSubject(meta, "ANT")
+			subject.MediaInfoTextReady = true
+			failures, err := Profile().ValidationPolicy.Check(t.Context(), subject, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(failures) != 1 || failures[0].Rule != "unsupported_type" || failures[0].Disposition != api.RuleDispositionStrict {
+				t.Fatalf("explicit unsupported IMDb type must remain blocked: %+v", failures)
+			}
+		})
+	}
+}
 
 func TestProjectionQuestionnaireRetainsAnsweredFields(t *testing.T) {
 	t.Parallel()

@@ -31,7 +31,7 @@ func resolveType(meta api.UploadSubject, answers map[string]string) (string, int
 				return "Feature Film", 0
 			}
 			return "Short Film", 1
-		case "short", "tv short", "tvshort":
+		case "short":
 			return "Short Film", 1
 		}
 	}
@@ -45,11 +45,18 @@ func resolveType(meta api.UploadSubject, answers map[string]string) (string, int
 	return "Short Film", 1
 }
 
-// movieContent prefers an explicit IMDb type over the canonical category fallback.
+// movieContent requires film evidence and rejects known TMDB television records.
+// Explicit IMDb programme types take precedence over the canonical category fallback.
 func movieContent(meta api.UploadSubject) bool {
+	if tmdb := meta.ProviderMetadata.TMDB; tmdb != nil {
+		if strings.EqualFold(strings.TrimSpace(tmdb.Category), "tv") ||
+			(strings.TrimSpace(tmdb.TMDBType) != "" && !strings.EqualFold(strings.TrimSpace(tmdb.TMDBType), "Movie")) {
+			return false
+		}
+	}
 	if meta.ProviderMetadata.IMDB != nil {
 		switch strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type)) {
-		case "movie", "tv movie", "tvmovie", "short", "tv short", "tvshort":
+		case "movie", "tv movie", "tvmovie", "short":
 			return true
 		case "":
 		default:

@@ -2826,6 +2826,7 @@ export type TrackerQuestionnaireField = Readonly<{
   Key: string;
   Kind: string;
   Label: string;
+  NeedsReview?: boolean;
   Options: readonly string[];
   Placeholder: string;
   Required: boolean;
@@ -2837,6 +2838,7 @@ export type TrackerQuestionnaireRequirement = Readonly<{
   key: string;
   kind?: string;
   label: string;
+  needsReview?: boolean;
   options?: readonly string[];
   required: boolean;
   value?: string;

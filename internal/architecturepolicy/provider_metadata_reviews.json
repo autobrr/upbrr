@@ -136,8 +136,8 @@
     "sha256": "f214ae6d4b0be023d28822d94ba5b175daaf58b2edf1c8fb0547d90add5f4e8a"
   },
   "internal/trackers/impl/standalone/ant/questionnaire.go:buildQuestionnaire": {
-    "reason": "Adds optional request ID and limits type choices to films. Uses resolved tags without repopulating explicit tag or genre clears; exact-subject TMDB genres determine optional-tag requiredness. Type resolution and content eligibility share the reviewed movie gate; adult-screen answer precedence is unchanged.",
-    "sha256": "5df574f1c6705c037f6ec7dbff210a123229bf7f34b6977986e639a2390c59d2"
+    "reason": "Only eligible movie content offers film type choices or retains explicit film answers. Known TMDB TV identities, unsupported IMDb types including TV shorts, and unresolved canonical TV content suppress the selector because an answer cannot change programme eligibility or the provider ID namespace. Resolved tags preserve manual genre and tag clears. Request IDs stay optional; invalid supplied IDs require correction without changing positive-integer validation or private blank/reset acceptance. Adult-screen precedence is unchanged.",
+    "sha256": "9bbdb308b83a947f1ca2b0ad62ec2a67494d352476376b2057c69f6c9a39da8d"
   },
   "internal/trackers/impl/standalone/ant/questionnaire.go:projectionQuestionnaire": {
     "reason": "Projection reuses upload resolvers: normalized questionnaire type and tags take precedence; manual genres remain ahead of TMDB defaults. IMDb/TMDB type and adult evidence retain their existing order on the exact operation subject.",
@@ -148,16 +148,16 @@
     "sha256": "241c618ed9924a3390983d0eddfda979e6d08dd8f81e59125c365f277c31876d"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:movieContent": {
-    "reason": "Movie eligibility uses the exact prepared IMDb type, including provider overrides, before canonical identity category fallback when type is absent. Programme type is policy evidence; a questionnaire label cannot relabel series as a supported film. No title, genre or naming fallback is introduced.",
-    "sha256": "1c22156a99782d65e52a02f1dbe62c3bf4537156da83f885ce82d228b6258985"
+    "reason": "Programme eligibility uses exact prepared provider evidence. A TMDB TV category or non-Movie programme type rejects TV identity even with conflicting canonical movie or IMDb film evidence, because ANT requires a film TMDB ID. Otherwise supported IMDb movie/TV movie/movie-short types precede canonical movie fallback when IMDb type is absent. TV shorts and unresolved canonical TV content cannot be relabeled through questionnaire answers. No title, genre or naming fallback is introduced.",
+    "sha256": "9568216640322bd65023ec0bb1a02b848733fba3169ffab5f26f83e8e1528e90"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:resolveTags": {
     "reason": "Explicit tag answers, including empty values, precede manual genre corrections, including manual-empty. Only automatic resolution falls back from unusable normalized TMDB genres to IMDb genres on the exact prepared subject. Provider alias normalization and comma whitespace handling are shared with questionnaire requiredness.",
     "sha256": "15b412cb2c3f3d6089c2d3428376b3e1f61b00c1779db41cc4e992da3ac1cac2"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:resolveType": {
-    "reason": "The reviewed movie-content gate prevents questionnaire relabeling of unsupported series. Eligible films use explicit Feature/Short answers, then exact-subject IMDb type/runtime, then TMDB runtime. The prior keyword/category fallback was unreachable after the gate. Provider overrides remain authoritative inputs; removed Miniseries/Other mappings do not change title, genre or naming precedence.",
-    "sha256": "468ecd0f576304a1d33dba1b2efefdaa2c2ef10f8c511b79e5f4655866a5f617"
+    "reason": "The reviewed movie-content gate precedes answers, so a film choice cannot relabel known TV provider identities, TV shorts, unsupported IMDb programmes or unresolved canonical TV content. Eligible films retain explicit Feature/Short answers, then exact-subject IMDb movie/TV movie/movie-short type and runtime, then TMDB runtime. Title, genre and naming precedence are unchanged.",
+    "sha256": "3df9f9bfd69487f81276b642eb046acbbec9d0988f153ddd03c1f355ea1f4486"
   },
   "internal/trackers/impl/standalone/ant/upload.go:prepareUploadState": {
     "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence. Description composition consumes the same prepared subject and preserves final user-reviewed text apart from the requested ANT TMDB logo exclusion; composition errors propagate without changing metadata selectors.",
@@ -168,8 +168,8 @@
     "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1"
   },
   "internal/trackers/impl/standalone/ant/validation.go:validationPolicy": {
-    "reason": "Constructibility advances for movie-only eligibility and positive optional request IDs. Validation uses the same reviewed type/movie gate and exact questionnaire answers as upload preparation through the existing exact-subject adapter. Prepared media requirements and provider/manual metadata precedence remain unchanged.",
-    "sha256": "368b0c2419443c198786b7e6e7c77254b84f95df21a0406f9f61f9f87c4d0ff9"
+    "reason": "Constructibility advances so retained projections reject TV shorts and known TMDB TV identities explicitly. Validation uses the same reviewed movie eligibility gate and type resolver as questionnaire and payload preparation through the exact-subject adapter; answers cannot relabel ineligible or unresolved TV content. Movie shorts remain eligible. Invalid request IDs remain strict corrective input failures; prepared media and other provider/manual precedence are unchanged.",
+    "sha256": "52cee2dde186b18d7ebeb61d72d1a2cf5868b341c41fadb60dea97001b9ad5f8"
   },
   "internal/trackers/impl/standalone/ar/definition.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -372,8 +372,8 @@
     "sha256": "4bb647cc901e533a1ca7945b5c7778c5fe81b4c920fa3076c1ff1557355b1798"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validationPolicy": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "8d953776c596653d565c1d63db730f819fcf2b03df0afb02ab0e0ff46361a2a5"
+    "reason": "Questionnaire gating review: genre and overview retain explicit-answer precedence over existing finalized metadata fallbacks. Missing IMDb and poster remain independent strict failures.",
+    "sha256": "6872b678427d185bf74b0a352c1b3b4a8f40a858fb9aac15a40eb2874ed853a4"
   },
   "internal/trackers/impl/standalone/bhd/name.go:applyBHDNameQualifiers": {
     "reason": "Preserves manual alternate titles, title components and year authority. TV year decisions use current source/generation-bound matching TVDB disambiguation independently of centrally selected IMDb titles and movie years.",
@@ -492,8 +492,8 @@
     "sha256": "8c44f7534b83f381c733beddb6344ebf3bf8a8fd5560c80a7cad20be2d469892"
   },
   "internal/trackers/impl/standalone/bjs/validation.go:validationPolicy": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "454774ed72b3c2b4dd5dacc19feb85ad05e6cf250d676570b6a05a31ac516e3f"
+    "reason": "Questionnaire gating review: only missing overview is answer-correctable, preserving explicit-answer and finalized metadata precedence. Identifier and director/creator requirements remain independent strict failures.",
+    "sha256": "f22102c52538e391876bcfe00e2a2e561690fe68e23bde46b1241801ef3dfaf4"
   },
   "internal/trackers/impl/standalone/bt/definition.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -592,8 +592,8 @@
     "sha256": "e16c0f9f7b1d2e908161ea03cfdb884e62edfe49f86b0a7028c3de6963692f75"
   },
   "internal/trackers/impl/standalone/bt/validation.go:validationPolicy": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "8a208c101e9fda4be75124b6c6504c39c26dfea81c0f85e9fef1031c7501bf7a"
+    "reason": "Questionnaire gating review: overview and tags retain explicit-answer precedence over existing localized and finalized metadata fallbacks. Missing poster remains an independent strict failure.",
+    "sha256": "c6fc8d067e102989633d233f668eaadd88ff82626e930aa5f7d7b0981079ad95"
   },
   "internal/trackers/impl/standalone/btn/claims.go:*claimChecker.HasClaim": {
     "reason": "Scene classification no longer bypasses BTN claims. Provider aliases only match claim identities, and fresh unambiguous BTN ownership controls the configured internal-group bypass. HDB owns its independent claim checker.",
@@ -700,8 +700,8 @@
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence."
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Selected-resource programme eligibility review: canonical facts and questionnaire keys remain unchanged. The independent Foreign/country requirement retains explicit-answer precedence and current source/identity-bound provider evidence; naming and provider selectors are unchanged.",
-    "sha256": "300e3e30e8ee6a5cccb31174ea539c0e0f9e24c0d39183bf8b492d0dcd8ac445"
+    "reason": "Questionnaire gating review: only the primary-country answer requirement is marked actionable. Explicit-answer precedence and source/identity-bound provider evidence remain unchanged; unresolved programme evidence and other language eligibility rules stay independent.",
+    "sha256": "280bb71eb83422f5fc0cc83b203bb503ee2c7a1bd1fe8b03e472f579ae003243"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -1128,8 +1128,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "sha256": "d351f8153efcdedd25c138899336587eb9127ab8094524f1f7cc37acb0ad8c9f",
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
+    "sha256": "92093ca2ef3236282379ba8e758bfaea5b6bd044a00405202268b39e58866542",
+    "reason": "Conflicting or invalid saved subtitle answers remain strict corrective questionnaire prerequisites. Independent category, taxonomy, container, and language gates retain their finalized facts and provider precedence."
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

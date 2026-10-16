@@ -1805,6 +1805,9 @@ const (
 
 // RuleFailure describes one stable tracker-rule result.
 type RuleFailure struct {
+	// QuestionnaireInput identifies a missing or invalid tracker answer.
+	// Execution remains blocked while the corrective questionnaire stays available.
+	QuestionnaireInput bool `json:"questionnaireInput,omitempty"`
 	// DebugBypass retains an explicit tracker eligibility bypass for non-submitting debug execution.
 	DebugBypass bool `json:"debugBypass,omitempty"`
 	// EvidenceFingerprint invalidates acknowledgement when supporting evidence changes.
@@ -2508,6 +2511,8 @@ type TrackerQuestionnaire struct {
 }
 
 type TrackerQuestionnaireField struct {
+	// NeedsReview requests correction even when a previous answer is nonempty or optional.
+	NeedsReview bool `json:"NeedsReview,omitempty"`
 	Key         string
 	Label       string
 	Kind        string

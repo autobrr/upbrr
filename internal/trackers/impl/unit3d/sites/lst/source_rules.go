@@ -176,8 +176,15 @@ func compatibilityMix(subject api.TrackerValidationSubject, track api.MediaTrack
 // Compatibility checks preserve measured codec and per-mix requirements.
 // Source provenance and relative quality remain unverified advisory guidance.
 func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	failures, _ := compatibilityAssessment(subject)
+	return failures
+}
+
+func compatibilityAssessment(subject api.TrackerValidationSubject) ([]api.RuleFailure, bool) {
 	facts := subject.LanguageFacts
 	var failures []api.RuleFailure
+	var companions []trackers.CompatibilityCompanion
+	var required []api.MediaTrackFacts
 	confirmed, pending := map[string]bool{}, map[string]bool{}
 	for _, track := range subject.LanguageFacts.Tracks {
 		if track.Kind != api.MediaTrackAudio {
@@ -195,6 +202,21 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 			continue
 		}
 		answer := compatibilityMix(subject, track, candidates)
+		if track.ID != "" && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0 &&
+			(trackers.DolbyCompatibilityCodec(track.Codec) || strings.EqualFold(track.Codec, "DD+ Atmos")) {
+			companion := trackers.CompatibilityCompanion{
+				ID:         track.ID,
+				ResourceID: track.ResourceID,
+				CanCover:   true,
+				Optional:   track.Role != api.AudioRoleCompatibility,
+			}
+			for _, candidate := range candidates {
+				if candidate.ID != "" && candidate.Codec != "" {
+					companion.Mixes = append(companion.Mixes, candidate.ID)
+				}
+			}
+			companions = append(companions, companion)
+		}
 		if track.Role != api.AudioRoleCompatibility && answer == "not_compatibility" {
 			continue
 		}
@@ -237,15 +259,17 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 				pending[answer] = true
 			}
 		} else {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"compatibility_mix",
-					"source association with a TrueHD mix is unresolved for compatibility track "+track.ID,
-					trackers.LanguageUnresolved,
-				),
+			failure := trackers.LanguageRuleFailure(
+				subject,
+				"compatibility_mix",
+				"source association with a TrueHD mix is unresolved for compatibility track "+track.ID,
+				trackers.LanguageUnresolved,
 			)
+			failure.QuestionnaireInput = slices.ContainsFunc(
+				candidates,
+				func(candidate api.MediaTrackFacts) bool { return candidate.ID != "" && candidate.Codec != "" },
+			)
+			failures = append(failures, failure)
 			for _, candidate := range candidates {
 				pending[candidate.ID] = true
 			}
@@ -253,22 +277,26 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 	}
 	for _, track := range subject.LanguageFacts.Tracks {
 		if track.Kind != api.MediaTrackAudio || track.Role == api.AudioRoleCompatibility || !strings.Contains(strings.ToLower(track.Codec), "truehd") ||
-			track.EmbeddedCompatibility || confirmed[track.ID] {
+			track.EmbeddedCompatibility {
+			continue
+		}
+		required = append(required, track)
+		if confirmed[track.ID] {
 			continue
 		}
 		outcome := trackers.LanguageProhibited
 		if track.ID == "" || pending[track.ID] || subject.LanguageFacts.AudioStatus != api.MetadataEvidenceStatusComplete {
 			outcome = trackers.LanguageUnresolved
 		}
-		failures = append(
-			failures,
-			trackers.LanguageRuleFailure(
-				subject,
-				"compatibility_missing",
-				"TrueHD mix "+track.ID+" requires its DD core or a permitted WEB compatibility substitute",
-				outcome,
-			),
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"compatibility_missing",
+			"TrueHD mix "+track.ID+" requires its DD core or a permitted WEB compatibility substitute",
+			outcome,
 		)
+		failure.QuestionnaireInput = track.ID != "" && pending[track.ID] && subject.LanguageFacts.AudioStatus == api.MetadataEvidenceStatusComplete
+		failures = append(failures, failure)
 	}
-	return failures
+	review := facts.AudioStatus == api.MetadataEvidenceStatusComplete && trackers.ReviewCompatibilityAssignments(failures, required, companions, false)
+	return failures, review
 }

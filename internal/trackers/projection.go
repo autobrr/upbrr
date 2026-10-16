@@ -347,13 +347,14 @@ func ProjectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.Tracker
 	result := make([]api.TrackerQuestionnaireRequirement, len(questionnaire.Fields))
 	for index, field := range questionnaire.Fields {
 		result[index] = api.TrackerQuestionnaireRequirement{
-			Key:      strings.TrimSpace(field.Key),
-			Kind:     field.Kind,
-			Value:    field.Value,
-			Help:     field.Help,
-			Label:    strings.TrimSpace(field.Label),
-			Required: field.Required,
-			Options:  append([]string(nil), field.Options...),
+			NeedsReview: field.NeedsReview,
+			Key:         strings.TrimSpace(field.Key),
+			Kind:        field.Kind,
+			Value:       field.Value,
+			Help:        field.Help,
+			Label:       strings.TrimSpace(field.Label),
+			Required:    field.Required,
+			Options:     append([]string(nil), field.Options...),
 		}
 	}
 	return result
@@ -585,12 +586,12 @@ func (r *Registry) ProjectRelease(
 			})
 		}
 	}
-	if failure == nil {
+	if failure == nil && projection.Readiness != api.ReadinessStatusIneligible {
 		if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); ok {
 			input.Projection = &projection
 			projection.Questionnaire = ProjectQuestionnaire(provider.ProjectionQuestionnaire(input))
 			if slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
-				return field.Required && strings.TrimSpace(field.Value) == ""
+				return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
 			}) {
 				projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
 					Kind:      api.RequiredActionAnswerQuestionnaire,
@@ -712,6 +713,7 @@ func ApplyProjectionRuleFailures(
 		projection.RuleAuthorizationFingerprint = waivableFingerprint
 	}
 	hasStrict := false
+	hasQuestionnaireInput := false
 	for _, failure := range failures {
 		disposition := api.NormalizeRuleDisposition(failure.Disposition)
 		blocking := RuleFailureBlocksExecution(failure, executionMode, authorized)
@@ -719,6 +721,9 @@ func ApplyProjectionRuleFailures(
 		switch {
 		case disposition == api.RuleDispositionStrict && !blocking:
 			decision = "bypassed"
+		case disposition == api.RuleDispositionStrict && failure.QuestionnaireInput:
+			hasQuestionnaireInput = true
+			decision = "input_required"
 		case disposition == api.RuleDispositionStrict:
 			hasStrict = true
 			decision = "ineligible"
@@ -762,10 +767,19 @@ func ApplyProjectionRuleFailures(
 		})
 	}
 	if hasStrict {
+		projection.Questionnaire = nil
+		projection.RequiredActions = slices.DeleteFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
+			return action.Kind == api.RequiredActionAnswerQuestionnaire
+		})
 		projection.Readiness = api.ReadinessStatusIneligible
 		projection.DupeReady = false
 		projection.UploadReady = false
 		return nil
+	}
+	if hasQuestionnaireInput {
+		projection.Readiness = api.ReadinessStatusBlocked
+		projection.DupeReady = false
+		projection.UploadReady = false
 	}
 	if waivableFingerprint != "" && api.NormalizeWorkflowExecutionMode(executionMode) != api.WorkflowExecutionModeDebug {
 		status := api.RequiredActionStatusResolved

@@ -236,9 +236,11 @@ type TrackerArtifactRequirements struct {
 
 // TrackerQuestionnaireRequirement describes one non-secret tracker input requirement.
 type TrackerQuestionnaireRequirement struct {
+	// NeedsReview requests correction without making an optional value mandatory.
+	NeedsReview bool `json:"needsReview,omitempty"`
 	// Kind identifies the renderer; multiselect values use comma-separated option labels.
 	Kind string `json:"kind,omitempty"`
-	// Value is the validated answer or display default for this field; QuestionnaireAnswers owns exact answer intent.
+	// Value is the current answer or display default for this field; QuestionnaireAnswers owns exact answer intent.
 	Value    string   `json:"value,omitempty"`
 	Help     string   `json:"help,omitempty"`
 	Key      string   `json:"key"`

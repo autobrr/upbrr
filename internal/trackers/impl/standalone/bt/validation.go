@@ -29,10 +29,10 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				failures = append(failures, trackers.NewRuleFailure("required_poster", "missing poster URL", api.RuleDispositionStrict))
 			}
 			if metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["overview"]), resolveOverview(meta, ptBR)) == "" {
-				failures = append(failures, trackers.NewRuleFailure("required_overview", "missing overview", api.RuleDispositionStrict))
+				failures = append(failures, trackers.NewQuestionnaireRuleFailure("required_overview", "missing overview"))
 			}
 			if metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta, ptBR)) == "" {
-				failures = append(failures, trackers.NewRuleFailure("required_tags", "missing tags", api.RuleDispositionStrict))
+				failures = append(failures, trackers.NewQuestionnaireRuleFailure("required_tags", "missing tags"))
 			}
 			return failures, nil
 		},

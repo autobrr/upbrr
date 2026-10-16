@@ -98,6 +98,10 @@ func TestPTPProjectionHidesResolvedAutoSubtitleControl(t *testing.T) {
 }
 
 func TestPTPProjectionPreservesExplicitSubtitleOverridesAndConflicts(t *testing.T) {
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		answer   string
 		value    string
@@ -108,14 +112,37 @@ func TestPTPProjectionPreservesExplicitSubtitleOverridesAndConflicts(t *testing.
 		{"invalid", "", true},
 	} {
 		meta := api.UploadSubject{
+			ReleaseName: "Example.Movie.2026.1080p.BluRay.x264-GRP",
+			Release: api.ReleaseInfo{
+				Title:      "Example Movie",
+				Year:       2026,
+				Category:   "MOVIE",
+				Resolution: "1080p",
+			},
+			Identity:                    api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 123},
+			Container:                   "mkv",
+			Source:                      "BluRay",
+			Type:                        "ENCODE",
+			VideoCodec:                  "H.264",
 			AudioLanguages:              []string{"English"},
 			SubtitleLanguages:           []string{"English"},
 			LanguageFacts:               ptpLanguageSubject("English", "English").LanguageFacts,
 			TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": {"no_english_subtitles": test.answer}},
 		}
-		schema := projectionQuestionnaire(trackers.PreparationInput{Meta: meta})
-		if schema == nil || len(schema.Fields) != 1 || schema.Fields[0].Key != "no_english_subtitles" || schema.Fields[0].Value != test.value || schema.Fields[0].Required != test.required {
-			t.Fatalf("explicit subtitle answer %q lost its editable control: %+v", test.answer, schema)
+		projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: "PTP", Meta: meta}, "input", "catalog", "config")
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		if len(projection.Questionnaire) != 1 || projection.Questionnaire[0].Key != "no_english_subtitles" ||
+			projection.Questionnaire[0].Value != test.value || projection.Questionnaire[0].Required != test.required {
+			t.Fatalf("explicit subtitle answer %q lost its editable control: %+v", test.answer, projection)
+		}
+		if test.required {
+			if projection.Readiness != api.ReadinessStatusBlocked || len(projection.RequiredActions) != 1 || projection.UploadReady {
+				t.Fatalf("conflicting subtitle answer lost its corrective action: %+v", projection)
+			}
+		} else if !projection.UploadReady {
+			t.Fatalf("corrected subtitle answer did not recover: %+v", projection)
 		}
 	}
 }

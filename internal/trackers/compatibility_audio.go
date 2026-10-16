@@ -106,3 +106,134 @@ func AutomaticDolbyCompatibilityMix(facts api.LanguageFacts, companion api.Media
 	}
 	return AutomaticCompatibilityMix(companion, CompatibilityAudioMixes(facts, companion, true))
 }
+
+// CompatibilityCompanion describes measured assignment choices, independently
+// of the currently saved answer. Sites retain codec and source policy ownership.
+type CompatibilityCompanion struct {
+	ID         string
+	ResourceID string
+	Mixes      []string
+	CanCover   bool
+	Optional   bool
+}
+
+// ReviewCompatibilityAssignments keeps coverage/count conflicts and site-marked
+// removable format conflicts correctable only when measured assignments suffice.
+// It does not change strict execution or independent evidence/format failures.
+func ReviewCompatibilityAssignments(failures []api.RuleFailure, required []api.MediaTrackFacts, companions []CompatibilityCompanion, onePerMix bool) bool {
+	var conflicts []int
+	for i, failure := range failures {
+		if failure.Disposition == api.RuleDispositionStrict &&
+			(failure.Rule == "language_compatibility_missing" || failure.Rule == "language_compatibility_count" ||
+				failure.Rule == "language_compatibility_format" && failure.QuestionnaireInput) {
+			conflicts = append(conflicts, i)
+		}
+	}
+	if len(conflicts) == 0 {
+		return false
+	}
+	// An unanswered association does not establish enough physical companions.
+	for _, i := range conflicts {
+		failures[i].QuestionnaireInput = false
+	}
+	// Resources are independent. Solve them separately so a conflict in one
+	// episode cannot multiply the search over another episode's role choices.
+	byResource := map[string][]CompatibilityCompanion{}
+	requiredByResource := map[string][]string{}
+	for _, companion := range companions {
+		byResource[companion.ResourceID] = append(byResource[companion.ResourceID], companion)
+	}
+	for _, mix := range required {
+		if mix.ID == "" {
+			return false
+		}
+		requiredByResource[mix.ResourceID] = append(requiredByResource[mix.ResourceID], mix.ID)
+		if _, present := byResource[mix.ResourceID]; !present {
+			return false
+		}
+	}
+	for resource, choices := range byResource {
+		if !compatibilityAssignmentsPossible(requiredByResource[resource], choices, onePerMix) {
+			return false
+		}
+	}
+	for _, i := range conflicts {
+		failures[i].QuestionnaireInput = true
+	}
+	return true
+}
+
+func compatibilityAssignmentsPossible(required []string, companions []CompatibilityCompanion, onePerMix bool) bool {
+	// Match every required mix to a distinct usable companion. Augmenting paths
+	// preserve coverage when several mixes share the same candidate companions.
+	matches := make([]string, len(companions))
+	var cover func(string, []bool) bool
+	cover = func(mix string, seen []bool) bool {
+		for i, companion := range companions {
+			if seen[i] || !companion.CanCover || !slices.Contains(companion.Mixes, mix) {
+				continue
+			}
+			seen[i] = true
+			if matches[i] == "" || cover(matches[i], seen) {
+				matches[i] = mix
+				return true
+			}
+		}
+		return false
+	}
+	for _, mix := range required {
+		if mix == "" || !cover(mix, make([]bool, len(companions))) {
+			return false
+		}
+	}
+	// HHD also requires every explicit companion to have a distinct parent.
+	// Optional ordinary streams may instead remain non-compatibility audio.
+	var assign func(int, map[string]bool) bool
+	assign = func(index int, seen map[string]bool) bool {
+		for _, mix := range companions[index].Mixes {
+			if seen[mix] || slices.Contains(required, mix) && !companions[index].CanCover {
+				continue
+			}
+			seen[mix] = true
+			previous := slices.Index(matches, mix)
+			if previous < 0 || companions[previous].Optional || assign(previous, seen) {
+				if previous >= 0 && companions[previous].Optional {
+					matches[previous] = ""
+				}
+				matches[index] = mix
+				return true
+			}
+		}
+		return false
+	}
+	for i, companion := range companions {
+		if companion.Optional || matches[i] != "" {
+			continue
+		}
+		if len(companion.Mixes) == 0 || onePerMix && !assign(i, map[string]bool{}) {
+			return false
+		}
+	}
+	if onePerMix {
+		for i, companion := range companions {
+			if companion.ID == "" || matches[i] == "" || !slices.Contains(matches, companion.ID) {
+				continue
+			}
+			// An ordinary Dolby stream can be a source mix or a companion,
+			// but cannot occupy both roles in the proposed assignment.
+			choices := slices.Clone(companions)
+			if companion.Optional {
+				choices[i].Mixes = nil
+				if compatibilityAssignmentsPossible(required, choices, true) {
+					return true
+				}
+			}
+			choices = slices.Clone(companions)
+			for j := range choices {
+				choices[j].Mixes = slices.DeleteFunc(slices.Clone(choices[j].Mixes), func(mix string) bool { return mix == companion.ID })
+			}
+			return compatibilityAssignmentsPossible(required, choices, true)
+		}
+	}
+	return true
+}

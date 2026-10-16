@@ -84,8 +84,15 @@ func nonWebSourceVideo(subject api.TrackerValidationSubject) bool {
 // compatibilityFailures uses measured tracks for codec/count constraints and
 // explicit input only for otherwise ambiguous mix identity; provenance is advisory.
 func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	failures, _ := compatibilityAssessment(subject)
+	return failures
+}
+
+func compatibilityAssessment(subject api.TrackerValidationSubject) ([]api.RuleFailure, bool) {
 	facts := subject.LanguageFacts
 	var failures []api.RuleFailure
+	var companions []trackers.CompatibilityCompanion
+	var required []api.MediaTrackFacts
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
 		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
 	}
@@ -105,6 +112,21 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 			continue
 		}
 		mix := compatibilityMix(subject, track, candidates)
+		if track.ID != "" && track.Codec != "" && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0 &&
+			(ac3Compatibility(track) || !nonWebSourceVideo(subject)) {
+			companion := trackers.CompatibilityCompanion{
+				ID:         track.ID,
+				ResourceID: track.ResourceID,
+				CanCover:   ac3Compatibility(track) && !track.EmbeddedCompatibility && !strings.Contains(strings.ToLower(track.Title), "embedded core"),
+				Optional:   track.Role != api.AudioRoleCompatibility,
+			}
+			for _, candidate := range trackers.CompatibilityAudioMixes(facts, track, track.Role != api.AudioRoleCompatibility) {
+				if candidate.ID != "" && candidate.Codec != "" {
+					companion.Mixes = append(companion.Mixes, candidate.ID)
+				}
+			}
+			companions = append(companions, companion)
+		}
 		if track.Role != api.AudioRoleCompatibility && mix == "not_compatibility" {
 			continue
 		}
@@ -118,6 +140,11 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 		failures = append(failures, failure)
 		if track.Codec != "" && !ac3Compatibility(track) && nonWebSourceVideo(subject) {
 			add("compatibility_format", "track "+track.ID+" requires industry-standard AC-3 for non-web video", trackers.LanguageProhibited)
+			// Ordinary streams can be corrected to not_compatibility. Explicit
+			// compatibility must retain its codec restriction; coverage is proved below.
+			failures[len(failures)-1].QuestionnaireInput = track.Role != api.AudioRoleCompatibility &&
+				facts.AudioStatus == api.MetadataEvidenceStatusComplete && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0 &&
+				slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID != "" && candidate.Codec != "" })
 		}
 		if track.ID == "" || track.Codec == "" || len(trackers.KnownCompatibilityLanguages(track.Languages)) == 0 {
 			incompleteCompatibility = true
@@ -125,7 +152,17 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 			continue
 		}
 		if mix == "" || !slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID == mix && candidate.Codec != "" }) {
-			add("compatibility_mix", "source association with an identified mix is unresolved for compatibility track "+track.ID, trackers.LanguageUnresolved)
+			failure := trackers.LanguageRuleFailure(
+				subject,
+				"compatibility_mix",
+				"source association with an identified mix is unresolved for compatibility track "+track.ID,
+				trackers.LanguageUnresolved,
+			)
+			failure.QuestionnaireInput = slices.ContainsFunc(
+				candidates,
+				func(candidate api.MediaTrackFacts) bool { return candidate.ID != "" && candidate.Codec != "" },
+			)
+			failures = append(failures, failure)
 			for _, candidate := range candidates {
 				pending[candidate.ID] = true
 			}
@@ -143,19 +180,27 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 		if counts[track.ID] > 1 {
 			add("compatibility_count", "at most one compatibility track is permitted for mix "+track.ID, trackers.LanguageProhibited)
 		}
+		if strings.Contains(strings.ToLower(track.Codec), "truehd") {
+			required = append(required, track)
+		}
 		if strings.Contains(strings.ToLower(track.Codec), "truehd") && ac3Counts[track.ID] == 0 {
 			outcome := trackers.LanguageProhibited
 			if incompleteCompatibility || pending[track.ID] || facts.AudioStatus != api.MetadataEvidenceStatusComplete {
 				outcome = trackers.LanguageUnresolved
 			}
-			add(
+			failure := trackers.LanguageRuleFailure(
+				subject,
 				"compatibility_missing",
 				"TrueHD mix "+track.ID+" requires standalone industry-standard AC-3; embedded cores and HLS substitutes do not satisfy this requirement",
 				outcome,
 			)
+			failure.QuestionnaireInput = track.ID != "" && pending[track.ID] && !incompleteCompatibility &&
+				facts.AudioStatus == api.MetadataEvidenceStatusComplete
+			failures = append(failures, failure)
 		}
 	}
-	return failures
+	review := facts.AudioStatus == api.MetadataEvidenceStatusComplete && trackers.ReviewCompatibilityAssignments(failures, required, companions, true)
+	return failures, review
 }
 
 func ac3Compatibility(track api.MediaTrackFacts) bool {

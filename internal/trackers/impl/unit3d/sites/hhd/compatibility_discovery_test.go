@@ -163,6 +163,9 @@ func TestHHDAutomaticCompatibilityPreservesManualAnswers(t *testing.T) {
 			if slices.Contains(question.Fields[0].Options, answer) && question.Fields[0].Value != answer {
 				t.Fatalf("manual choice not shown: %+v", question.Fields[0])
 			}
+			if question.Fields[0].NeedsReview != (answer == "unresolved" || answer == "not_compatibility") {
+				t.Fatalf("unresolved or conflicting choice lost correction state: %+v", question.Fields[0])
+			}
 		})
 	}
 }
@@ -339,5 +342,114 @@ func TestHHDUnidentifiedDolbyLanguageRemainsPossibleSourceMix(t *testing.T) {
 			t.Fatalf("unknown-language Dolby parent silently removed: %+v", candidates)
 		}
 		requireHHDValidationFailure(t, compatibilityFailures(subject), "language_compatibility_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	}
+}
+
+func TestHHDNonWebFormatReviewPreservesIndependentRejections(t *testing.T) {
+	for _, boundary := range []string{"explicit compatibility", "missing AC-3", "unknown language", "unknown parent identity", "partial audio"} {
+		t.Run(boundary, func(t *testing.T) {
+			subject := ordinaryCompatibilitySubject()
+			subject.Type, subject.Source = "REMUX", "BluRay"
+			ordinary := subject.LanguageFacts.Tracks[1]
+			ordinary.ID, ordinary.Codec = "ordinary-ddp", "DD+"
+			switch boundary {
+			case "explicit compatibility":
+				ordinary.Role = api.AudioRoleCompatibility
+			case "missing AC-3":
+				subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[:1]
+			case "unknown language":
+				ordinary.Languages = nil
+			case "unknown parent identity":
+				subject.LanguageFacts.Tracks[0].ID = ""
+			case "partial audio":
+				subject.LanguageFacts.AudioStatus = api.MetadataEvidenceStatusPartial
+			}
+			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, ordinary)
+			hhdAnswer(&subject, "compatibility_mix_companion", "main")
+			hhdAnswer(&subject, "compatibility_mix_"+ordinary.ID, "main")
+			failures := compatibilityFailures(subject)
+			if slices.ContainsFunc(failures, func(failure api.RuleFailure) bool {
+				return failure.Rule == "language_compatibility_format" && failure.QuestionnaireInput
+			}) {
+				t.Fatalf("independent format/evidence/coverage became correctable: %+v", failures)
+			}
+			projection := api.TrackerReleaseProjection{
+				TrackerID:     "HHD",
+				Readiness:     api.ReadinessStatusReady,
+				UploadReady:   true,
+				Questionnaire: trackers.ProjectQuestionnaire(ordinaryCompatibilityQuestionnaire(subject)),
+			}
+			if err := trackers.ApplyProjectionRuleFailures(&projection, failures, api.WorkflowExecutionModeNormal, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			if projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0 || projection.UploadReady {
+				t.Fatalf("independent rejection exposed questions: %+v", projection)
+			}
+		})
+	}
+}
+
+func TestHHDCompatibilityQuestionnaireEligibility(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*api.TrackerValidationSubject)
+		input  bool
+	}{
+		{
+			name: "ambiguous source mix",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				alternate := subject.LanguageFacts.Tracks[0]
+				alternate.ID, alternate.Role = "alternate", api.AudioRoleAlternateMix
+				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, alternate)
+				companion := subject.LanguageFacts.Tracks[1]
+				companion.ID = "second-companion"
+				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, companion)
+			},
+			input: true,
+		},
+		{
+			name: "one companion cannot cover two mixes",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				alternate := subject.LanguageFacts.Tracks[0]
+				alternate.ID, alternate.Role = "alternate", api.AudioRoleAlternateMix
+				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, alternate)
+			},
+		},
+		{
+			name: "missing companion",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[:1]
+			},
+		},
+		{
+			name:   "unknown companion codec",
+			mutate: func(subject *api.TrackerValidationSubject) { subject.LanguageFacts.Tracks[1].Codec = "" },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := ordinaryCompatibilitySubject()
+			test.mutate(&subject)
+			projection := api.TrackerReleaseProjection{
+				TrackerID:     api.TrackerID(subject.Tracker),
+				Readiness:     api.ReadinessStatusReady,
+				DupeReady:     true,
+				UploadReady:   true,
+				Questionnaire: trackers.ProjectQuestionnaire(ordinaryCompatibilityQuestionnaire(subject)),
+			}
+			failures := compatibilityFailures(subject)
+			if err := trackers.ApplyProjectionRuleFailures(&projection, failures, api.WorkflowExecutionModeNormal, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			if projection.DupeReady || projection.UploadReady {
+				t.Fatalf("unresolved compatibility permitted execution: %+v", projection)
+			}
+			if test.input {
+				if projection.Readiness != api.ReadinessStatusBlocked || len(projection.Questionnaire) == 0 {
+					t.Fatalf("required source association became unreachable: %+v; failures=%+v", projection, failures)
+				}
+			} else if projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0 {
+				t.Fatalf("independent media rejection exposed questions: %+v; failures=%+v", projection, failures)
+			}
+		})
 	}
 }

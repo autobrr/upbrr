@@ -741,12 +741,28 @@ func TestProjectionQuestionnaireIsTrackerScopedAndRetained(t *testing.T) {
 type blockedQuestionnaireDefinition struct{ reviewQuestionnaireDefinition }
 
 func (blockedQuestionnaireDefinition) ValidationPolicy() ValidationPolicyBinding {
-	return ValidationPolicyBinding{ID: "questionnaire-strict-test-v1", Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
-		return []api.RuleFailure{NewRuleFailure("unrelated_strict", "unsupported source", api.RuleDispositionStrict)}, nil
-	}}
+	return ValidationPolicyBinding{
+		ID: "questionnaire-strict-test-v1",
+		Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
+			return []api.RuleFailure{
+				NewRuleFailure("unrelated_strict", "unsupported source", api.RuleDispositionStrict),
+				{
+					Rule:               "review_missing",
+					Disposition:        api.RuleDispositionStrict,
+					QuestionnaireInput: true,
+				},
+			}, nil
+		},
+	}
 }
 
-func TestProjectionQuestionnaireRemainsActionableWithStrictFailure(t *testing.T) {
+func (d blockedQuestionnaireDefinition) ProjectionQuestionnaire(input PreparationInput) *api.TrackerQuestionnaire {
+	questionnaire := d.reviewQuestionnaireDefinition.ProjectionQuestionnaire(input)
+	questionnaire.Fields = append(questionnaire.Fields, api.TrackerQuestionnaireField{Key: "requestid", Kind: "text"})
+	return questionnaire
+}
+
+func TestProjectionQuestionnaireIsOmittedWithStrictFailure(t *testing.T) {
 	registry := NewRegistry()
 	if err := registry.Register(blockedQuestionnaireDefinition{reviewQuestionnaireDefinition{stubDefinition{name: "ONE"}}}); err != nil {
 		t.Fatal(err)
@@ -757,13 +773,70 @@ func TestProjectionQuestionnaireRemainsActionableWithStrictFailure(t *testing.T)
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	if !slices.ContainsFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
+	if len(projection.Questionnaire) != 0 || slices.ContainsFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
 		return action.Kind == api.RequiredActionAnswerQuestionnaire && action.TrackerID == "ONE"
 	}) {
-		t.Fatalf("missing questionnaire action with strict failure: %+v", projection)
+		t.Fatalf("ineligible tracker must not expose required or optional questions: %+v", projection)
 	}
 	if projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady || projection.UploadReady || len(projection.Failures) == 0 {
 		t.Fatalf("questionnaire waived strict failure: %+v", projection)
+	}
+}
+
+type questionnaireInputDefinition struct{ reviewQuestionnaireDefinition }
+
+func (d questionnaireInputDefinition) ProjectionQuestionnaire(input PreparationInput) *api.TrackerQuestionnaire {
+	questionnaire := d.reviewQuestionnaireDefinition.ProjectionQuestionnaire(input)
+	questionnaire.Fields[0].NeedsReview = questionnaire.Fields[0].Value == "no"
+	return questionnaire
+}
+
+func (questionnaireInputDefinition) ValidationPolicy() ValidationPolicyBinding {
+	return ValidationPolicyBinding{
+		ID: "questionnaire-input-test-v1",
+		Check: func(_ context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
+			if subject.QuestionnaireAnswers["review"] == "yes" {
+				return nil, nil
+			}
+			return []api.RuleFailure{{
+				Rule:               "review_missing",
+				Disposition:        api.RuleDispositionStrict,
+				QuestionnaireInput: true,
+			}}, nil
+		},
+	}
+}
+
+func TestProjectionQuestionnaireInputRetainsStrictExecutionGate(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(questionnaireInputDefinition{reviewQuestionnaireDefinition{stubDefinition{name: "ONE"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, answer := range []string{"", "no", "yes"} {
+		projection, failure := registry.ProjectRelease(t.Context(), PreparationInput{
+			Tracker: "ONE",
+			Meta: api.UploadSubject{
+				ReleaseName:                 "Example.Movie.2026.1080p-GRP",
+				TrackerQuestionnaireAnswers: map[string]map[string]string{"ONE": {"review": answer}},
+			},
+		}, "input", "catalog", "config")
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		if len(projection.Questionnaire) != 1 || projection.Questionnaire[0].Value != answer {
+			t.Fatalf("corrective questionnaire unavailable: %+v", projection)
+		}
+		if answer != "yes" {
+			if projection.Readiness != api.ReadinessStatusBlocked || projection.DupeReady || projection.UploadReady ||
+				len(projection.RequiredActions) != 1 || projection.RequiredActions[0].Kind != api.RequiredActionAnswerQuestionnaire ||
+				len(projection.PolicyDecisions) == 0 || !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+				return decision.Code == "review_missing" && decision.Blocking && decision.Disposition == api.RuleDispositionStrict
+			}) {
+				t.Fatalf("missing answer lost strict execution gate: %+v", projection)
+			}
+		} else if !projection.DupeReady || !projection.UploadReady || len(projection.RequiredActions) != 0 {
+			t.Fatalf("answered questionnaire did not recover: %+v", projection)
+		}
 	}
 }
 

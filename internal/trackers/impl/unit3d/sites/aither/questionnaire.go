@@ -5,6 +5,7 @@ package aither
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -16,11 +17,15 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		return nil
 	}
 	var fields []api.TrackerQuestionnaireField
+	associationReview := additionalMainAudioAssociationReview(subject)
+	_, assignmentReview := compatibilityAssessment(subject)
+	assignmentReview = assignmentReview && api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug
 	for _, track := range subject.LanguageFacts.Tracks {
 		if !compatibilityCandidate(subject.LanguageFacts, track) {
 			continue
 		}
-		if _, inferred := resolveCompatibilityMix(subject, track); inferred {
+		answer, inferred := resolveCompatibilityMix(subject, track)
+		if inferred && !assignmentReview {
 			continue
 		}
 		options := []string{"unresolved"}
@@ -46,6 +51,10 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Help:     "Review which TrueHD mix this standalone DD/DD+ track accompanies: " + details + ". A single same-resource mix with the same known languages is associated automatically unless either stream is known commentary or a distinct mix. An embedded core cannot replace the standalone track.",
 		})
+		fields[len(fields)-1].NeedsReview = associationReview[fields[len(fields)-1].Key]
+		if inferred {
+			fields[len(fields)-1].Value = answer
+		}
 		if track.Role != api.AudioRoleCompatibility {
 			fields[len(fields)-1].Help += " Choose not_compatibility if this stream is not a companion to a TrueHD mix."
 		}
@@ -68,6 +77,9 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		if value := subject.QuestionnaireAnswers[fields[i].Key]; slices.Contains(fields[i].Options, value) {
 			fields[i].Value = value
 		}
+		fields[i].NeedsReview = fields[i].Required &&
+			(fields[i].NeedsReview || fields[i].Value == "unresolved" || assignmentReview && fields[i].Value != "" && strings.HasPrefix(fields[i].Key, "compatibility_mix_")) &&
+			api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug
 	}
 	if len(fields) == 0 {
 		return nil

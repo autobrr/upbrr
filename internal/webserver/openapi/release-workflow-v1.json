@@ -11580,6 +11580,9 @@
           "Label": {
             "type": "string"
           },
+          "NeedsReview": {
+            "type": "boolean"
+          },
           "Options": {
             "type": "array",
             "items": {
@@ -11621,6 +11624,9 @@
           },
           "label": {
             "type": "string"
+          },
+          "needsReview": {
+            "type": "boolean"
           },
           "options": {
             "type": "array",

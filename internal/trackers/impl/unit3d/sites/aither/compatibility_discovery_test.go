@@ -294,6 +294,9 @@ func TestAitherCurrentManualAssociationsRemainAuthoritativeAndEditable(t *testin
 					t.Fatalf("current choice is no longer editable: %+v", question)
 				}
 				field := question.Fields[0]
+				if field.NeedsReview != ((answer == "unresolved" || answer == "not_compatibility") && mode != api.WorkflowExecutionModeDebug) {
+					t.Fatalf("unresolved or conflicting choice lost correction state: %+v", field)
+				}
 				if field.Required != (mode != api.WorkflowExecutionModeDebug) || slices.Contains(field.Options, answer) && field.Value != answer {
 					t.Fatalf("manual choice or debug policy changed: %+v", field)
 				}
@@ -382,5 +385,139 @@ func TestAITHERUnknownCodecCannotEstablishCompatibility(t *testing.T) {
 				t.Fatalf("unknown codec offered as a confirmed source: %+v", field)
 			}
 		}
+	}
+}
+
+func TestAitherCompatibilityQuestionnaireEligibility(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*api.TrackerValidationSubject)
+		input  bool
+	}{
+		{
+			name: "ambiguous source mix",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				alternate := subject.LanguageFacts.Tracks[0]
+				alternate.ID, alternate.Role = "alternate", api.AudioRoleAlternateMix
+				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, alternate)
+				companion := subject.LanguageFacts.Tracks[1]
+				companion.ID = "second-companion"
+				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, companion)
+			},
+			input: true,
+		},
+		{
+			name: "one companion cannot cover two mixes",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				alternate := subject.LanguageFacts.Tracks[0]
+				alternate.ID, alternate.Role = "alternate", api.AudioRoleAlternateMix
+				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, alternate)
+			},
+		},
+		{
+			name: "missing companion",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[:1]
+			},
+		},
+		{
+			name:   "unknown companion codec",
+			mutate: func(subject *api.TrackerValidationSubject) { subject.LanguageFacts.Tracks[1].Codec = "" },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := ordinaryCompatibilitySubject()
+			test.mutate(&subject)
+			projection := api.TrackerReleaseProjection{
+				TrackerID:     api.TrackerID(subject.Tracker),
+				Readiness:     api.ReadinessStatusReady,
+				DupeReady:     true,
+				UploadReady:   true,
+				Questionnaire: trackers.ProjectQuestionnaire(aitherCompatibilityQuestionnaire(subject, api.WorkflowExecutionModeNormal)),
+			}
+			failures := compatibilityFailures(subject)
+			if err := trackers.ApplyProjectionRuleFailures(&projection, failures, api.WorkflowExecutionModeNormal, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			if projection.DupeReady || projection.UploadReady {
+				t.Fatalf("unresolved compatibility permitted execution: %+v", projection)
+			}
+			if test.input {
+				if projection.Readiness != api.ReadinessStatusBlocked || len(projection.Questionnaire) == 0 {
+					t.Fatalf("required source association became unreachable: %+v; failures=%+v", projection, failures)
+				}
+			} else if projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0 {
+				t.Fatalf("independent media rejection exposed questions: %+v; failures=%+v", projection, failures)
+			}
+		})
+	}
+}
+
+func TestAitherAdditionalMainAudioReviewPreservesIndependentRejections(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*api.TrackerValidationSubject)
+	}{
+		{name: "unknown parent identity", mutate: func(subject *api.TrackerValidationSubject) { subject.LanguageFacts.Tracks[1].ID = "" }},
+		{name: "separate alternate source", mutate: func(subject *api.TrackerValidationSubject) {
+			subject.LanguageFacts.Tracks[4].Role = api.AudioRoleAlternateMix
+		}},
+		{name: "unsupported ordinary codec", mutate: func(subject *api.TrackerValidationSubject) { subject.LanguageFacts.Tracks[4].Codec = "PCM" }},
+		{name: "another real English TrueHD mix", mutate: func(subject *api.TrackerValidationSubject) {
+			other := subject.LanguageFacts.Tracks[1]
+			other.ID, other.Role = "other-english", api.AudioRoleAlternateMix
+			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, other)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := aitherPassingSubject()
+			subject.LanguageFacts = aitherTestLanguageFacts("Japanese", []string{"Japanese", "English"}, []string{"English"})
+			subject.LanguageFacts.Tracks[0].Codec, subject.LanguageFacts.Tracks[1].Codec = "TrueHD", "TrueHD"
+			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks,
+				api.MediaTrackFacts{
+					ID:        "japanese-core",
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleCompatibility,
+					Codec:     "AC-3",
+					Languages: []string{"Japanese"},
+				},
+				api.MediaTrackFacts{
+					ID:        "english-dd",
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleProgramme,
+					Codec:     "AC-3",
+					Languages: []string{"English"},
+				},
+				api.MediaTrackFacts{
+					ID:        "english-core",
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleCompatibility,
+					Codec:     "AC-3",
+					Languages: []string{"English"},
+				},
+			)
+			test.mutate(&subject)
+			key := trackers.LanguageQuestionKey(subject, "compatibility_mix_english-dd")
+			subject.QuestionnaireAnswers = map[string]string{key: "not_compatibility"}
+			failures := languageAssessment(subject)
+			index := slices.IndexFunc(failures, func(failure api.RuleFailure) bool {
+				return failure.Rule == "language_additional_main_audio" && failure.Disposition == api.RuleDispositionStrict
+			})
+			if index < 0 || failures[index].QuestionnaireInput || len(additionalMainAudioAssociationReview(subject)) != 0 {
+				t.Fatalf("independent source/evidence rejection became correctable: %+v", failures)
+			}
+			projection := api.TrackerReleaseProjection{
+				Readiness:     api.ReadinessStatusReady,
+				DupeReady:     true,
+				UploadReady:   true,
+				Questionnaire: trackers.ProjectQuestionnaire(aitherCompatibilityQuestionnaire(subject, api.WorkflowExecutionModeNormal)),
+			}
+			if err := trackers.ApplyProjectionRuleFailures(&projection, failures, api.WorkflowExecutionModeNormal, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			if projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0 {
+				t.Fatalf("independent extra source published questions: %+v", projection)
+			}
+		})
 	}
 }
