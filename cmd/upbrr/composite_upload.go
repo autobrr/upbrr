@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -167,16 +168,22 @@ func (s *cliWorkflowSession) waitForCompositeUpload(
 	if current.Operation == nil || isTerminalCLIWorkflowOperation(current.Operation.Status) {
 		return current, nil
 	}
-	completed, err := s.waitForOperation(ctx, *current.Operation)
-	if err != nil {
-		return releaseworkflow.CommandResult{}, err
+	completed, waitErr := s.waitForOperation(ctx, *current.Operation)
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	latest, err := s.core.CurrentReleaseWorkflow(loadCtx, cliWorkflowOwnerID, current.Operation.WorkflowID)
+	if waitErr != nil {
+		if err == nil {
+			printCLIHDRResult(s.streams.out, latest)
+		}
+		return releaseworkflow.CommandResult{}, waitErr
 	}
-	latest, err := s.core.CurrentReleaseWorkflow(ctx, cliWorkflowOwnerID, completed.WorkflowID)
 	if err != nil {
 		return releaseworkflow.CommandResult{}, fmt.Errorf("upbrr: load composite upload workflow: %w", err)
 	}
 	latest.Operation = &completed
-	return latest, nil
+	printCLIHDRResult(s.streams.out, latest)
+	return latest, waitErr
 }
 
 func firstPendingCLICompositeAction(actions []api.RequiredAction) *api.RequiredAction {
@@ -922,7 +929,8 @@ func mapCLICompositeUploadRequest(
 			OnEvidence:  onEvidence,
 			AllowUpload: normalizeCLIWorkflowTrackerIDs(request.IgnoreDupesFor),
 		},
-		HDRAnalysis: request.Options.HDRAnalysis,
+		HDRAnalysis:            request.Options.HDRAnalysis,
+		HDRComparisonSelection: request.Options.HDRComparisonSelection,
 		Media: api.ReleaseWorkflowUploadMedia{
 			Screenshots: api.ReleaseWorkflowUploadScreenshots{
 				Count:                  &screenshotCount,

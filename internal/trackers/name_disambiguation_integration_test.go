@@ -121,7 +121,11 @@ func TestTVDBQualifiersPreserveManualYear(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					want += " S01E02 1080p WEB-DL H.265-GRP"
+					want += " S01E02 1080p WEB-DL "
+					if site.name == "AITHER" {
+						want += "None "
+					}
+					want += "H.265-GRP"
 					if name != want {
 						t.Fatalf("name = %q, want %q", name, want)
 					}

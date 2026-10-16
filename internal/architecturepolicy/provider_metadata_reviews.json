@@ -880,8 +880,8 @@
     "sha256": "0063e9bc54c2bc4cf92a8b171291e969297a9e450b7f33c67dd329221c9e306a"
   },
   "internal/trackers/impl/standalone/hdb/name.go:buildGeneratedHDBName": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "fceb66dbd7f849b84d9a7c3f7a19dccd3fe8b52cb0a37b44140c18957d3c28ea"
+    "reason": "HDB release-version review: appends only finalized Repack independently of edition labels. Original-title selection, PreferredYear manual precedence, source/generation checks, and existing technical ordering are unchanged.",
+    "sha256": "63299471d31a65e9a9d5c0695f060c103d06e9151e805d9829155d7a87c0a8d8"
   },
   "internal/trackers/impl/standalone/hdb/name.go:hdbIMDbYear": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -892,8 +892,8 @@
     "sha256": "1fcdf6010ad93147a870230d97f090c4f194cb4719b1e6c7c4293d05143ea188"
   },
   "internal/trackers/impl/standalone/hdb/name.go:resolveReleaseNames": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "a897f6e2ad17a7624e0cc6d8a5acaf46a2bdb3d544c4f2d534837b4671b09eb2"
+    "reason": "HDB release-version review: explicit complete-name instructions are preserved before provider-based generation; automatic search still resolves independently. Generated original-title and movie-year helpers retain manual precedence and current source/identity/generation checks.",
+    "sha256": "33e7abef28bb531b724f8207a18b2319c99787ff1e64b2b5a4a36343fcd4aa92"
   },
   "internal/trackers/impl/standalone/hdb/profile.go:Profile": {
     "sha256": "f12e2fe2d186d5e8c57909b25204131b0da1291ba1460ced2db4eec3e2c32566",
@@ -912,8 +912,8 @@
     "sha256": "ca303dcb536d4a16860a4a7231058775ccf4367a8ed5097942bf3c36437d780d"
   },
   "internal/trackers/impl/standalone/hdb/upload.go:buildUploadFields": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "c0a3add70723f121dc2da375fae90532f630c08a056258c983313cf3bff251d1"
+    "reason": "Preserves explicit canonical season-zero coordinates and maps canonical TV packs to episode zero; existing non-pack episode defaults and combined-episode handling remain unchanged. Reviewed upload names, provider IMDb URL resolution, canonical identity, category mapping, and manual metadata precedence remain unchanged.",
+    "sha256": "eee5a7f4a3f93139693b1bb35e41811ecfd78ed123baee32a25f642e8a9df530"
   },
   "internal/trackers/impl/standalone/hdb/upload.go:prepareUploadAt": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -940,8 +940,8 @@
     "sha256": "81567f861b320e76b0817ee0f08fbce8ae0e0cdb1a5515305d9ab43f9e58ffb7"
   },
   "internal/trackers/impl/standalone/hdb/validation.go:validationPolicy": {
-    "sha256": "7afba659c90e577b4b7d11ebe82c4ecde330dbbc228b4752459831dfc27d97b6",
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears."
+    "sha256": "b908b9df8a0790ac83c3c2d463c9f7e041d41e156c86a6590c127f5cc759785f",
+    "reason": "Advances the validation fingerprint for season-zero support without changing provider consumers, callback wiring, finalized metadata authority, manual precedence, or independent eligibility checks."
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1280,8 +1280,8 @@
     "sha256": "985ac2a8da22171745a30c68ebf0d89fa97deebf6adbc6f160337b93e4407d28"
   },
   "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
-    "reason": "Clones finalized exact-generation language facts into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced.",
-    "sha256": "43f3ca0d43d286cdc8f8d065b0c163e3db5d6d4c1e3d91241cd6b8d20a7491e4"
+    "reason": "Clones finalized exact-generation language facts and retained multi-episode membership into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced.",
+    "sha256": "e34f0c75444bacb90efe1daa65c5399dda9c19a86e7272d3d655896e4abe8eba"
   },
   "internal/trackers/impl/unit3d/additional_rules.go:Anime": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1348,8 +1348,8 @@
     "sha256": "ebb5c3a7782c66bb91a7a98fef3215afc86a9e37d50ba4cc5613b6c3659c1d15"
   },
   "internal/trackers/impl/unit3d/sites/aither/profile.go:Profile": {
-    "reason": "Duplicate-slot policy wiring review: existing namePolicy, prepared-source/generation provider evidence, and manual title/component precedence are unchanged; profile only binds the versioned duplicate policy.",
-    "sha256": "70a06824732224e94af445f9acac1d7b34c439163aa7ffeb94a36798edee3f74"
+    "reason": "Enables only canonical single season-zero validation. Existing name/provider policies and manual title/component precedence are unchanged; no provider lookup or fallback is added.",
+    "sha256": "19a7fe328e8cc8af238d8a318893ba397821cacb3a3a78932664de01dfeab103"
   },
   "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
     "reason": "Adds a canonical category-family catalog for broad duplicate gathering. The catalog reads no provider metadata; existing localized naming and upload taxonomy retain their prepared-provider and manual-precedence paths.",
@@ -1360,8 +1360,8 @@
     "sha256": "c0de5aa1e939fe09967165e368607ce3adb9fbadced810292e52af551f3678d7"
   },
   "internal/trackers/impl/unit3d/sites/dp/profile.go:Profile": {
-    "reason": "Issue 606 DP completion review: the profile binds local language validation and an evidence-bound naming questionnaire; both consume finalized language facts and preserve existing current-source TVDB/manual naming precedence.",
-    "sha256": "ed63fc3c7c82281269349920b84b9b0b2de1ab161be977578d373f901cebbcb6"
+    "reason": "Enables the shared explicit single-special predicate using finalized season, episode and source-membership facts. Existing provider selectors, manual naming and metadata precedence, site callbacks, and independent eligibility checks remain unchanged.",
+    "sha256": "af864e358546cb8697c93010987cacedcec928b1f171d269aea06baa9291e042"
   },
   "internal/trackers/impl/unit3d/sites/dvl/rules.go:ValidationPolicy": {
     "reason": "Binds checkContent, which preserves manual genres through ValidationRuleSubject and RuleGenres; TMDB keywords remain current-source policy evidence.",
@@ -1380,8 +1380,8 @@
     "sha256": "717c19d2617349a151c2d426b4d52a1deb2c8beb2da5cb9dfac0f0cb6eaebc54"
   },
   "internal/trackers/impl/unit3d/sites/hhd/profile.go:Profile": {
-    "reason": "Provider-title projection review: binds the approved title/movie-year providers independently. Shared projection respects manual metadata/components and opaque names; missing required title evidence fails on exact source/generation/ID, with TMDB category matching. Existing local formatting and explicit OTW/RMC title selection remain unchanged.",
-    "sha256": "c7a16266c9118fae644b5015f823e77edc191646809043ccb41d1a8e41ff1614"
+    "reason": "Enables the shared explicit single-special predicate using finalized season, episode and source-membership facts. Existing provider selectors, manual naming and metadata precedence, site callbacks, and independent eligibility checks remain unchanged.",
+    "sha256": "803bf0b9e6d0df8360757f3e1a782f5d47fc25e43a86cf0540637ff7ebd0ae3f"
   },
   "internal/trackers/impl/unit3d/sites/lcd/profile.go:Profile": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1408,8 +1408,8 @@
     "sha256": "cf686903ca0b5719509707e74c44830ed34e9445d4b041f3d10e0bdb6c3fb0f4"
   },
   "internal/trackers/impl/unit3d/sites/lume/profile.go:Profile": {
-    "reason": "Composes the site-owned language assessment using exact prepared facts. Existing provider-aware taxonomy, region and naming callbacks retain their precedence; the composition adds no direct provider read or fallback.",
-    "sha256": "7fb7b23bd52952e4a17724e47a965f21727df6af337bc7b3019c2d720fec0713"
+    "reason": "Enables the shared explicit single-special predicate using finalized season, episode and source-membership facts. Existing provider selectors, manual naming and metadata precedence, site callbacks, and independent eligibility checks remain unchanged.",
+    "sha256": "99faa1d9b536e36cdda64f4c8a045ed9877cc24faeaca06156c8febb8367c2cb"
   },
   "internal/trackers/impl/unit3d/sites/oe/validation.go:ValidationPolicy": {
     "sha256": "bd196b7a9987a04648aa8a6446f83fc223c5e335f598f03710f2d41ffce6544d",
@@ -1432,12 +1432,12 @@
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
-    "reason": "Provider-title projection review: binds the approved title/movie-year providers independently. Shared projection respects manual metadata/components and opaque names; missing required title evidence fails on exact source/generation/ID, with TMDB category matching. Existing local formatting and explicit OTW/RMC title selection remain unchanged.",
-    "sha256": "e990e2ab990c190f7119184fb1394fc285f3511a25c543f842a4e84e23d8b0e8"
+    "reason": "Enables the shared explicit single-special predicate using finalized season, episode and source-membership facts. Existing provider selectors, manual naming and metadata precedence, site callbacks, and independent eligibility checks remain unchanged.",
+    "sha256": "994d5a208f2e874c37d0d3edb3eb481a46b01399fc7f042514e37d7c1cdcd68a"
   },
   "internal/trackers/impl/unit3d/sites/otw/rules.go:ValidationPolicy": {
-    "sha256": "c4455eb5269938836b82b4f2f1d00dcf90540e472d823ba67cfc7641685c5fe7",
-    "reason": "Issue 606 final evidence review: consumes only the exact prepared language/track facts and existing corrected metadata. Unknown default flags and insufficient naming evidence remain explicit; selected positive evidence and manual-empty corrections retain authority. Version updates invalidate prior policy projections without adding provider lookups or raw-name fallbacks."
+    "sha256": "0c564eeefe9df1df12068dc9b34ff86496f3b0e38622e8e27709b9bafa47713c",
+    "reason": "Advances the validation fingerprint for season-zero support without changing provider consumers, callback wiring, finalized metadata authority, manual precedence, or independent eligibility checks."
   },
   "internal/trackers/impl/unit3d/sites/otw/validation.go:checkRequirements": {
     "sha256": "05a4f2deaefd5e1bafae03f0cabceb6a1265be4a9fd041f8735d24286730908d",
@@ -1536,8 +1536,8 @@
     "sha256": "c749e22235850b73d39f33dc467bc3acfdf832bc4f646db4de3e80730d775af9"
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:validationPolicy": {
-    "sha256": "a043becb3e6900180f2f316fff09bae8a44a8a6a05b6b83c1e4bc3de6c851313",
-    "reason": "Advances the validation version for compatibility assessment over finalized LanguageFacts. Region resolution, checkRules wiring, finalized technical facts, and existing provider-aware animation paths are unchanged; no provider fallback is added."
+    "sha256": "da3d2041714ae2f6d7d1297627922cbeae31c8540fd2ce4fbd7eb5fbfad33baa",
+    "reason": "Advances the validation fingerprint for season-zero support without changing provider consumers, callback wiring, finalized metadata authority, manual precedence, or independent eligibility checks."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
@@ -1548,8 +1548,8 @@
     "sha256": "280086d2412e28ae814734e5593072cdfb937ac57ee6e0baecb7c6ade728b299"
   },
   "internal/trackers/impl/unit3d/sites/yus/profile.go:Profile": {
-    "reason": "Provider-title projection review: binds the approved title/movie-year providers independently. Shared projection respects manual metadata/components and opaque names; missing required title evidence fails on exact source/generation/ID, with TMDB category matching. Existing local formatting and explicit OTW/RMC title selection remain unchanged.",
-    "sha256": "49cb33cd5abba61d9444989da2e922c043b831b638f348168e494f8f7b67dd6f"
+    "reason": "Enables the shared explicit single-special predicate using finalized season, episode and source-membership facts. Existing provider selectors, manual naming and metadata precedence, site callbacks, and independent eligibility checks remain unchanged.",
+    "sha256": "4e219a0a1e28611d102786149dc505b85879d2d818d2296b02222ba008349923"
   },
   "internal/trackers/impl/unit3d/taxonomy.go:resolveKeywords": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1564,12 +1564,12 @@
     "sha256": "d16217030214b6c4aa2e910e149e01616fa657eef98619b605115378ecaccfec"
   },
   "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "0652c9602f94ef5ed53352241d29430d558e6a46171e008fd848a681fad4c494"
+    "reason": "Carries the immutable site capability into the shared late TV metadata guard. Existing reviewed names, finalized metadata, manual precedence and payload construction are unchanged.",
+    "sha256": "315e91b6685a8bbfabd749913abc7d5a55b90773acb9f3cfdd08b2e58c5bf2c3"
   },
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
-    "reason": "Clones finalized exact-generation language facts into the detached validation mapping. Existing explicit metadata values, provenance and manual clears are preserved; no new raw provider fallback is introduced.",
-    "sha256": "ec18c6cefd71057373831866ff74b2d183a810410101be2286693ad6bc4f3c11"
+    "reason": "Preserves canonical SeasonStr and known source multiplicity in the detached validation mapping. Existing exact-generation provider metadata, explicit values and manual clears remain unchanged; no raw parser/provider fallback is added.",
+    "sha256": "1013c59ec20ce43159542a7556ab040e980f0198d52d0b0237cbd2b902a1e760"
   },
   "internal/trackers/impl/standalone/gpw/questionnaire.go:resolveDirectorFields": {
     "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1",

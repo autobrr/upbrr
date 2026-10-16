@@ -714,7 +714,7 @@ describe("InputPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm Selection" }));
     expect(facet.confirmPlaylists).toHaveBeenCalledOnce();
     expect(facet.confirmPlaylists).toHaveBeenLastCalledWith(false);
-    fireEvent.click(screen.getByLabelText("Check for HDR10+ in the selected playlists"));
+    fireEvent.click(screen.getByLabelText("Check for HDR metadata in the selected playlists"));
     rerender(
       <InputPage
         facet={{
@@ -731,11 +731,15 @@ describe("InputPage", () => {
         trackerIconSrcByName={{}}
       />,
     );
-    expect(screen.getByLabelText("Check for HDR10+ in the selected playlists")).not.toBeChecked();
-    fireEvent.click(screen.getByLabelText("Check for HDR10+ in the selected playlists"));
+    expect(
+      screen.getByLabelText("Check for HDR metadata in the selected playlists"),
+    ).not.toBeChecked();
+    fireEvent.click(screen.getByLabelText("Check for HDR metadata in the selected playlists"));
     fireEvent.click(screen.getByRole("button", { name: "Confirm Selection" }));
     expect(facet.confirmPlaylists).toHaveBeenLastCalledWith(true);
-    expect(screen.getByLabelText("Check for HDR10+ in the selected playlists")).not.toBeChecked();
+    expect(
+      screen.getByLabelText("Check for HDR metadata in the selected playlists"),
+    ).not.toBeChecked();
   });
 
   it("groups duplicate playlist names and selects opaque IDs for every disc", () => {

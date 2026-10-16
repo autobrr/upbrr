@@ -114,7 +114,7 @@ func (m *Module) PreparationForInputOpen(
 // ResetIdleInputOnStartup claims an expired foreign input, settles interrupted
 // prior-process operations, and closes the slot when it becomes idle. It waits
 // for live work leases, preserves completed checkpoints, and retains an active
-// composite workflow for an explicit retry. It waits for a foreign recovery
+// composite workflow or retained HDR analysis for an explicit retry. It waits for a foreign recovery
 // lease within a bounded deadline; other live foreign leases are deferred.
 // It does not verify source bytes or start a new workflow.
 func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
@@ -243,6 +243,16 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 				return fmt.Errorf("release workflow reload composite session on startup: %w", err)
 			}
 		}
+	}
+	if sourceState.Workflow.HDRAnalysis != nil || len(sourceState.HDRExtractions) > 0 || sourceState.HDRPendingRequest != nil {
+		if m.OwnsActiveInput(slot) {
+			authorityCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
+			if err := m.recoverAfterRestart(authorityCtx, slot.OwnerID, &sourceState); err != nil {
+				return fmt.Errorf("release workflow restore retained HDR state: %w", err)
+			}
+		}
+		m.logger.Debugf("active input: startup reset decision=retain_hdr revision=%d", slot.Revision)
+		return nil
 	}
 	if sourceState.Composite != nil {
 		if sourceState.Workflow.Status != api.WorkflowStatusCompleted && sourceState.Workflow.Status != api.WorkflowStatusCanceled &&
@@ -524,6 +534,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			}
 		}
 		if prior.SourceVersion != record.SourceVersion {
+			state.HDRPendingRequest = nil
 			state.PendingCorrectionConfirmation = nil
 			state.PendingAudioAnalysis = nil
 			state.PendingAudioAnalysisWorkflowID = ""

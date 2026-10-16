@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -43,6 +45,7 @@ func (r *workflowDescriptionReuseRepositoryFake) LoadReusableDescription(
 type workflowDescriptionReuseResolverFake struct {
 	subject api.UploadSubject
 	inputs  []api.UploadSubjectInput
+	useInputGroups bool
 }
 
 func (r *workflowDescriptionReuseResolverFake) ResolveUploadSubject(
@@ -50,7 +53,11 @@ func (r *workflowDescriptionReuseResolverFake) ResolveUploadSubject(
 	input api.UploadSubjectInput,
 ) (api.UploadSubject, error) {
 	r.inputs = append(r.inputs, input)
-	return r.subject, nil
+	subject := r.subject
+	if r.useInputGroups {
+		subject.DescriptionGroups = input.DescriptionGroups
+	}
+	return subject, nil
 }
 
 type workflowDescriptionReuseFixture struct {
@@ -529,5 +536,88 @@ func reusableDescriptionPrivateMedia(t *testing.T, root, prefix string) workflow
 			"host-screen-two": "screen-two",
 			"host-menu-one":   "menu-one",
 		},
+	}
+}
+
+func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *testing.T) {
+	for _, mode := range []string{"generated", "mixed", "final"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWorkflowDescriptionReuseFixture(t)
+			for i, name := range []api.TrackerID{"AITHER", "STC"} {
+				f.projections.Projections[i].TrackerID = name
+				f.projections.Projections[i].DescriptionGroup = "unit3d"
+				f.snapshot.Descriptions[i].TrackerIDs = []api.TrackerID{name}
+				f.snapshot.Descriptions[i].GroupKey = "unit3d|" + strings.ToLower(string(name))
+				f.snapshot.TrackerResults[i].TrackerID = name
+			}
+			f.instructions.Overrides = nil
+			if mode != "generated" {
+				f.snapshot.Descriptions[0].Source = "Final AITHER text"
+				f.snapshot.Descriptions[0].Rendered = "<p>Final AITHER text</p>"
+				f.instructions.Overrides = append(f.instructions.Overrides, api.DescriptionOverrideInput{
+					GroupKey:   "unit3d|aither",
+					TrackerIDs: []api.TrackerID{"AITHER"},
+					Source:     "Final AITHER text",
+					Final:      true,
+				})
+			}
+			if mode == "final" {
+				f.snapshot.Descriptions[1].Source = "Final STC text"
+				f.snapshot.Descriptions[1].Rendered = "<p>Final STC text</p>"
+				f.instructions.Overrides = append(f.instructions.Overrides, api.DescriptionOverrideInput{
+					GroupKey:   "unit3d|stc",
+					TrackerIDs: []api.TrackerID{"STC"},
+					Source:     "Final STC text",
+					Final:      true,
+				})
+			}
+			if err := f.recordReusableDescriptions(t, f.oldRelease, f.oldMedia, f.oldPrivate, f.snapshot); err != nil {
+				t.Fatal(err)
+			}
+			// Pre-upgrade persisted JSON has no renderer version, but the dependencies still match.
+			f.repository.value.RendererVersion = ""
+			f.resolver.subject = reusableDescriptionSubjectForFixture(f.currentRelease, 2)
+			f.resolver.useInputGroups = true
+			f.builder.trackers = trackers.NewServiceWithRegistry(f.builder.config, api.NopLogger{}, nil, trackerimpl.MustNewRegistry())
+			current := f.instructions
+			current.Overrides = nil
+			got, restored, err := f.builder.RestoreCompatibleDescriptions(t.Context(), f.currentRelease, f.projections, f.currentMedia, f.currentPrivate, current)
+			if err != nil || got.Status != api.StageStatusCompleted || !reflect.DeepEqual(restored.Overrides, f.instructions.Overrides) {
+				t.Fatalf("refresh=%+v instructions=%+v err=%v", got, restored, err)
+			}
+			for _, output := range got.Descriptions {
+				for _, tracker := range output.TrackerIDs {
+					final := mode == "final" || mode == "mixed" && tracker == "AITHER"
+					if final && output.Source != "Final "+string(tracker)+" text" {
+						t.Fatalf("final edit changed: %+v", output)
+					}
+					if !final && (!strings.Contains(output.Source, "Template v1") || strings.Contains(output.Source, "saved beta source") || strings.Contains(output.Source, "saved alpha source")) {
+						t.Fatalf("generated text not refreshed: %+v", output)
+					}
+				}
+			}
+			record, err := f.builder.PrepareReusableDescriptions(t.Context(), f.currentRelease, f.projections, f.currentMedia, f.currentPrivate, restored, got)
+			if err != nil || record == nil || record.Description.RendererVersion == "" {
+				t.Fatalf("refreshed record=%+v err=%v", record, err)
+			}
+		})
+	}
+}
+
+func TestWorkflowDescriptionFingerprintsInvalidateLegacyRenderer(t *testing.T) {
+	f := newWorkflowDescriptionReuseFixture(t)
+	_, current, err := f.builder.Fingerprints(t.Context(), f.oldRelease, f.projections, f.oldMedia, f.oldPrivate, f.instructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := api.CanonicalWorkflowFingerprint(struct {
+		Template string
+		Version  string
+	}{f.resolver.subject.DescriptionTemplate, strings.TrimSpace(f.instructions.TemplateVersion)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current == legacy {
+		t.Fatal("active snapshot from old renderer remains compatible")
 	}
 }

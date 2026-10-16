@@ -52,8 +52,10 @@ func validateSidecarHeader(header sidecarHeader) error {
 		header.Payloads < 0 || header.Payloads > MaxPayloads || header.Scenes < 0 || header.Scenes > header.Frames {
 		return extract.ErrResourceLimit
 	}
+	rawAllowed := header.Schema == api.HDRExtractionSchemaV2 && header.Dependency == NativeDependencyFingerprint &&
+		header.Identity.SelectionPolicy == "unique_hevc"
 	if header.Absent && (header.Frames != 0 || header.Payloads != 0 || header.Scenes != 0 || header.Profile != "") ||
-		!header.Absent && (header.Frames == 0 || header.Payloads == 0 || header.Identity.ResolvedTrackID == 0) {
+		!header.Absent && (header.Frames == 0 || header.Payloads == 0 || header.Identity.ResolvedTrackID == 0 && !rawAllowed) {
 		return errors.New("HDR sidecar terminal outcome is invalid")
 	}
 	allocation := int64(header.Frames)*2048 + int64(header.Payloads)*4096 + int64(header.Scenes)*16 + int64(header.Timeline)*4096
@@ -83,11 +85,19 @@ func (w *boundedWriter) Write(value []byte) (int, error) {
 // WriteSidecar streams explicit JSON arrays with one bounded record per line.
 // This versioned representation makes hostile individual records bounded before decoding.
 func WriteSidecar(ctx context.Context, output io.Writer, sidecar Sidecar) error {
+	return writeSidecar(ctx, output, sidecar, false)
+}
+
+// Native sections preserve raw HEVC's zero track identity under a separate schema.
+func writeSidecar(ctx context.Context, output io.Writer, sidecar Sidecar, native bool) error {
 	header := sidecarHeader{
 		Schema:     api.HDRExtractionSchemaVersion,
 		Dependency: DependencyFingerprint,
 		Identity:   sidecar.Identity,
 		Absent:     sidecar.Absent,
+	}
+	if native {
+		header.Schema, header.Dependency = api.HDRExtractionSchemaV2, NativeDependencyFingerprint
 	}
 	if !sidecar.Absent {
 		if sidecar.Extraction == nil || len(sidecar.Extraction.Frames) == 0 || len(sidecar.Extraction.Payloads) == 0 {
@@ -103,7 +113,10 @@ func WriteSidecar(ctx context.Context, output io.Writer, sidecar Sidecar) error 
 		return err
 	}
 	if !sidecar.Absent {
-		if err := ValidateExtraction(sidecar.Extraction, sidecar.Identity.SelectionPolicy == "unique_hevc"); err != nil {
+		if native && sidecar.Identity.SelectionPolicy == "unique_hevc" && sidecar.Extraction.Frames[0].Stream.TrackID != sidecar.Identity.ResolvedTrackID {
+			return errors.New("native HDR sidecar resolved track is invalid")
+		}
+		if err := validateExtraction(sidecar.Extraction, sidecar.Identity.SelectionPolicy == "unique_hevc", native); err != nil {
 			return fmt.Errorf("validate HDR sidecar: %w", err)
 		}
 	}
@@ -185,6 +198,10 @@ func WriteSidecar(ctx context.Context, output io.Writer, sidecar Sidecar) error 
 // ReadSidecar bounds file bytes, per-record bytes, element counts and conservative allocation.
 // JSON v2 rejects duplicate names, invalid UTF-8, unknown fields and malformed fixed arrays.
 func ReadSidecar(ctx context.Context, input io.Reader, expected ExtractionIdentity) (Sidecar, error) {
+	return readSidecarWithBudget(ctx, input, expected, MaxRestoreBytes, false)
+}
+
+func readSidecarWithBudget(ctx context.Context, input io.Reader, expected ExtractionIdentity, budget int64, native bool) (Sidecar, error) {
 	limited := &io.LimitedReader{R: input, N: MaxSidecarBytes + 1}
 	reader := bufio.NewReaderSize(limited, 8192)
 	line := func() ([]byte, error) {
@@ -221,15 +238,21 @@ func ReadSidecar(ctx context.Context, input io.Reader, expected ExtractionIdenti
 	if err := json.Unmarshal(value[len("{\"header\":"):len(value)-1], &header, json.RejectUnknownMembers(true)); err != nil {
 		return Sidecar{}, fmt.Errorf("decode HDR sidecar header: %w", err)
 	}
-	if header.Schema != api.HDRExtractionSchemaVersion || header.Dependency != DependencyFingerprint ||
+	legacySchema := header.Schema == api.HDRExtractionSchemaVersion && header.Dependency == DependencyFingerprint
+	nativeSchema := native && header.Schema == api.HDRExtractionSchemaV2 && header.Dependency == NativeDependencyFingerprint
+	if !legacySchema && !nativeSchema ||
 		header.Identity.SourceFingerprint != expected.SourceFingerprint ||
 		header.Identity.TargetID != expected.TargetID ||
 		header.Identity.SelectionPolicy != expected.SelectionPolicy ||
-		expected.ResolvedTrackID != 0 && header.Identity.ResolvedTrackID != expected.ResolvedTrackID {
+		(native || expected.ResolvedTrackID != 0) && header.Identity.ResolvedTrackID != expected.ResolvedTrackID {
 		return Sidecar{}, errors.New("HDR sidecar identity or schema is incompatible")
 	}
 	if err := validateSidecarHeader(header); err != nil {
 		return Sidecar{}, err
+	}
+	allocation := int64(header.Frames)*2048 + int64(header.Payloads)*4096 + int64(header.Scenes)*16 + int64(header.Timeline)*4096
+	if budget <= 0 || allocation > budget {
+		return Sidecar{}, extract.ErrResourceLimit
 	}
 	result := &extract.Extraction{
 		Profile:     header.Profile,
@@ -358,7 +381,7 @@ func ReadSidecar(ctx context.Context, input io.Reader, expected ExtractionIdenti
 	if err := validateTimeline(header.Identity.SelectionPolicy, timeline); err != nil {
 		return Sidecar{}, err
 	}
-	if err := ValidateExtraction(result, header.Identity.SelectionPolicy == "unique_hevc"); err != nil {
+	if err := validateExtraction(result, header.Identity.SelectionPolicy == "unique_hevc", nativeSchema); err != nil {
 		return Sidecar{}, fmt.Errorf("validate restored HDR metadata: %w", err)
 	}
 	if header.Identity.SelectionPolicy == "unique_hevc" && result.Frames[0].Stream.TrackID != header.Identity.ResolvedTrackID {

@@ -98,7 +98,7 @@ func TestDurableArtifactsBoundHistoryAndQuoteTerminalControls(t *testing.T) {
 			t.Fatal("durable local result did not preserve a safe escaped path")
 		}
 	}
-	if !strings.Contains(bridge.summary(nil), "3 artifact paths omitted") {
+	if !strings.Contains(bridge.summary(nil), "3 artifact reports omitted") {
 		t.Fatal("artifact omission was silent")
 	}
 }

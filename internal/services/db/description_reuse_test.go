@@ -25,6 +25,7 @@ func TestReusableDescriptionWorkflowStateSaveReplacesSourceRecord(t *testing.T) 
 	first := reusableDescriptionForTest("a", "first")
 	state = saveReusableDescriptionWithWorkflowState(t, repo, state, sourcePath, first)
 	second := reusableDescriptionForTest("c", "second")
+	second.RendererVersion = "description-renderer-v1"
 	second.Overrides[0].Final = true
 	second.Overrides[0].TrackerIDs = []api.TrackerID{"AITHER"}
 	_ = saveReusableDescriptionWithWorkflowState(t, repo, state, "  "+sourcePath+"  ", second)

@@ -62,6 +62,7 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		ProviderMetadata:            subject.ProviderMetadata,
 		SeasonInt:                   subject.SeasonInt,
 		EpisodeInt:                  subject.EpisodeInt,
+		MultipleEpisodes:            subject.MultipleEpisodes,
 		SeasonStr:                   subject.SeasonStr,
 		EpisodeStr:                  subject.EpisodeStr,
 		TVPack:                      subject.TVPack,

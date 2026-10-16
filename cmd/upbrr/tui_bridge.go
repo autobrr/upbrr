@@ -233,6 +233,21 @@ func (b *cliTUIBridge) RetainAudioArtifact(item uint64, ordinal int, variant api
 		pathValue = strconv.QuoteToASCII(pathValue)
 	}
 	line := fmt.Sprintf("Audio analysis resource 1 track %d %s: %s\n", ordinal, variant, pathValue)
+	b.retainArtifact(item, line)
+}
+
+func (b *cliTUIBridge) RetainHDRReport(report string) {
+	b.mu.Lock()
+	item := b.latest.Item
+	b.mu.Unlock()
+	for line := range strings.SplitSeq(report, "\n") {
+		if line != "" {
+			b.retainArtifact(item, safeTerminalText(line)+"\n")
+		}
+	}
+}
+
+func (b *cliTUIBridge) retainArtifact(item uint64, line string) {
 	if item > 0 {
 		line = fmt.Sprintf("Item %d: %s", item, line)
 	}
@@ -326,7 +341,7 @@ func (b *cliTUIBridge) summary(err error) string {
 		result.WriteString("Workflow stopped. Verify remote effects before retrying.\n")
 	}
 	if b.artifactsDropped > 0 {
-		fmt.Fprintf(&result, "%d artifact paths omitted; inspect retained audio analysis results for details.\n", b.artifactsDropped)
+		fmt.Fprintf(&result, "%d artifact reports omitted; inspect retained analysis results for details.\n", b.artifactsDropped)
 	}
 	for _, artifact := range b.artifacts {
 		result.WriteString(artifact)

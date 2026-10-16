@@ -70,13 +70,15 @@ func validateReleaseNameFactInstructions(overrides api.ReleaseNameOverrides) err
 	return nil
 }
 
-// manualSeasonEpisodeInstructionValues returns explicit valid season and
-// episode instruction values; zero means no explicit value was supplied.
-func manualSeasonEpisodeInstructionValues(overrides api.ReleaseNameOverrides) (int, int) {
+// manualSeasonEpisodeInstructionValues preserves explicit season zero separately
+// from missing, cleared, or invalid instructions. Episodes remain positive-only.
+func manualSeasonEpisodeInstructionValues(overrides api.ReleaseNameOverrides) (int, int, bool) {
 	season, episode := 0, 0
-	if overrides.Season != nil {
+	seasonSet := false
+	if overrides.Season != nil && strings.TrimSpace(*overrides.Season) != "" {
 		if value, err := seasonep.ParseSeasonInstruction(*overrides.Season); err == nil {
 			season = value
+			seasonSet = true
 		}
 	}
 	if overrides.Episode != nil {
@@ -84,7 +86,7 @@ func manualSeasonEpisodeInstructionValues(overrides api.ReleaseNameOverrides) (i
 			episode = value
 		}
 	}
-	return season, episode
+	return season, episode, seasonSet
 }
 
 // applyReleaseNameValueOverrides folds fact-producing release-name
@@ -186,6 +188,9 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 		if season, err := seasonep.ParseSeasonInstruction(*overrides.Season); err == nil {
 			meta.SeasonInt = season
 			meta.SeasonStr = seasonep.FormatSeason(season)
+			if season == 0 && strings.TrimSpace(*overrides.Season) != "" {
+				meta.SeasonStr = "S00"
+			}
 		}
 	}
 	if overrides.Episode != nil {
@@ -193,6 +198,11 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 			meta.EpisodeInt = episode
 			meta.EpisodeStr = seasonep.FormatEpisode(episode)
 		}
+	}
+	// An explicit special is episode-scoped even when its source or corrections
+	// carry a date. Persist the same scope used by its generated release name.
+	if meta.HasExplicitSeasonZero() {
+		meta.DailyEpisodeDate = ""
 	}
 
 	meta.Audio = applyAudioOverrides(meta.Audio, overrides)
@@ -231,7 +241,7 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 		req.ManualEpisodeTitle = true
 	}
 	if overrides.ManualDate != nil {
-		req.ManualDate = strings.TrimSpace(*overrides.ManualDate) != ""
+		req.ManualDate = strings.TrimSpace(*overrides.ManualDate) != "" && !strings.EqualFold(req.Season, "S00")
 	}
 	if overrides.UseSeasonEpisode != nil {
 		if *overrides.UseSeasonEpisode {

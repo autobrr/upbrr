@@ -8,13 +8,31 @@ import "errors"
 // HDRAnalysisRequest requests complete HDR analysis before hosting and descriptions.
 // An omitted target set is resolved only when one prepared target exists.
 type HDRAnalysisRequest struct {
-	TargetIDs  []string      `json:"targetIds,omitempty"`
-	PeakSource HDRPeakSource `json:"peakSource,omitempty"`
+	Decoded    *HDRDecodedOptions `json:"decoded,omitempty"`
+	Formats    HDRAnalysisFormats `json:"formats,omitempty"`
+	TargetIDs  []string           `json:"targetIds,omitempty"`
+	PeakSource HDRPeakSource      `json:"peakSource,omitempty"`
 }
 
 // Normalize validates target IDs, copies the selection and defaults the estimator.
 // An empty target selection remains deferred to prepared-target resolution.
 func (r HDRAnalysisRequest) Normalize() (HDRAnalysisRequest, error) {
+	return r.normalize(false)
+}
+
+func (r HDRAnalysisRequest) normalize(deferred bool) (HDRAnalysisRequest, error) {
+	if r.Decoded != nil {
+		decoded, err := r.Decoded.normalize(deferred)
+		if err != nil {
+			return HDRAnalysisRequest{}, err
+		}
+		r.Decoded = &decoded
+	}
+	formats, err := r.Formats.Normalize()
+	if err != nil {
+		return HDRAnalysisRequest{}, err
+	}
+	r.Formats = formats
 	peak, err := r.PeakSource.Normalize()
 	if err != nil {
 		return HDRAnalysisRequest{}, err

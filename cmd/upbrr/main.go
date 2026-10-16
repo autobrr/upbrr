@@ -271,7 +271,7 @@ func runUploadDriver(
 	if opts.Cleanup && len(paths) > 0 {
 		return exitError(2, errors.New("--cleanup does not accept input paths"))
 	}
-	if !opts.Cleanup && len(paths) == 0 {
+	if !opts.Cleanup && opts.HDRResumeWorkflow == "" && len(paths) == 0 {
 		if strings.TrimSpace(opts.SiteUpload) != "" {
 			return exitError(2, errors.New("--site-upload currently requires at least one input path in the Go CLI"))
 		}
@@ -345,6 +345,13 @@ func runUploadDriver(
 		return exitError(1, err)
 	}
 	defer func() { result = errors.Join(result, closeCLIWorkflowCore(ctx, coreSvc)) }()
+
+	if opts.HDRResumeWorkflow != "" {
+		if len(paths) != 0 {
+			return exitError(2, errors.New("--hdr-resume-workflow does not accept input paths"))
+		}
+		return runCLIHDRResume(ctx, coreSvc, opts, streams, logger)
+	}
 
 	if opts.Cleanup {
 		deleted, err := purgeCLIStoredReleases(setupCtx, coreSvc)

@@ -212,6 +212,7 @@ type ExactMediaAssets struct {
 	ImageHostUploadSkipped bool
 	HDRAnalysis            *HDRAnalysisRef
 	HDRPlots               []HDRDescriptionPlot
+	HDRStats               []HDRDescriptionStats
 	HDRUploads             []UploadedImageLink
 	HDRUploadHosts         map[string]string
 	Screenshots            []ScreenshotImage
@@ -225,9 +226,26 @@ type ExactMediaAssets struct {
 }
 
 type HDRDescriptionPlot struct {
-	TargetID string
-	Label    string
-	Image    ScreenshotImage
+	AudioTrackID           string
+	MeasurementFingerprint string
+	RenderFingerprint      string
+	ArtifactID             PublicResourceID
+	Format                 HDRNativeFormat
+	Kind                   HDRArtifactKind
+	TargetID               string
+	Label                  string
+	Image                  ScreenshotImage
+}
+
+// HDRDescriptionStats carries one track's text owned by the exact HDR analysis.
+type HDRDescriptionStats struct {
+	AudioTrackID           string
+	MeasurementFingerprint string
+	RenderFingerprint      string
+	ArtifactID             PublicResourceID
+	TargetID               string
+	Label                  string
+	Text                   string
 }
 
 // AudioDescriptionTrack is a separate description channel for hosted analysis
@@ -247,6 +265,7 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	cloned := &ExactMediaAssets{
 		ImageHostUploadSkipped: a.ImageHostUploadSkipped,
 		HDRPlots:               cloneOptionalSlice(a.HDRPlots),
+		HDRStats:               cloneOptionalSlice(a.HDRStats),
 		HDRUploads:             cloneOptionalSlice(a.HDRUploads),
 		HDRUploadHosts:         maps.Clone(a.HDRUploadHosts),
 		Screenshots:            cloneOptionalSlice(a.Screenshots),
@@ -424,6 +443,7 @@ type UploadSubject struct {
 	TrackerQuestionnaireAnswers map[string]map[string]string
 	SeasonInt                   int
 	EpisodeInt                  int
+	MultipleEpisodes            bool
 	SeasonStr                   string
 	EpisodeStr                  string
 	TVDBAiredDate               string
@@ -720,6 +740,7 @@ type TrackerValidationSubject struct {
 	SubtitleLanguages          []string
 	SeasonInt                  int
 	EpisodeInt                 int
+	MultipleEpisodes           bool
 	SeasonStr                  string
 	EpisodeStr                 string
 	TVPack                     bool
@@ -840,6 +861,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		SubtitleLanguages:           slices.Clone(subject.SubtitleLanguages),
 		SeasonInt:                   subject.SeasonInt,
 		EpisodeInt:                  subject.EpisodeInt,
+		MultipleEpisodes:            subject.MultipleEpisodes,
 		SeasonStr:                   subject.SeasonStr,
 		EpisodeStr:                  subject.EpisodeStr,
 		TVPack:                      subject.TVPack,
@@ -2249,6 +2271,8 @@ type IMDBEpisode struct {
 	ReleaseYear int
 	ReleaseDate IMDBReleaseDate
 	Season      int
+	// SeasonKnown retains provider presence; false cannot prove explicit season zero.
+	SeasonKnown bool
 	EpisodeText string
 }
 
@@ -2336,12 +2360,14 @@ type TVDBMetadata struct {
 	PosterThumbnailLookupAttempted bool
 	Aliases                        []string
 	EpisodeSeason                  int
-	EpisodeNumber                  int
-	EpisodeName                    string
-	EpisodeNameEnglish             string
-	EpisodeOverview                string
-	EpisodeOverviewEnglish         string
-	EpisodeAired                   string
+	// EpisodeSeasonKnown retains provider presence for selected text; false cannot prove season zero.
+	EpisodeSeasonKnown     bool
+	EpisodeNumber          int
+	EpisodeName            string
+	EpisodeNameEnglish     string
+	EpisodeOverview        string
+	EpisodeOverviewEnglish string
+	EpisodeAired           string
 	// EpisodeImage is the selected episode image URL when the API returned one.
 	EpisodeImage string
 	// Episodes contains fetched TVDB episode entries, usually the season needed

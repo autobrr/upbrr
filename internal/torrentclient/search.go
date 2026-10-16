@@ -6,6 +6,7 @@ package torrentclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,7 +115,8 @@ type torrentDataValidation struct {
 // clients are evaluated.
 //
 // A reusable export is stripped of announce, comment, and web-seed metadata and
-// written with mode 0600 below the configured DB temporary directory. A requested
+// retained as a content-addressed mode-0600 snapshot below the configured DB
+// temporary directory, alongside the generic export cache. A requested
 // force recheck also mutates direct qBittorrent state and waits for checking to
 // finish. Client-level failures abort the search; individual property or tracker
 // lookup failures degrade that candidate, while export failures reject only the
@@ -1397,7 +1399,7 @@ func (s *Service) selectValidTorrent(
 				}
 				if validation.reusable && strings.EqualFold(validation.infoHash, normalizedHash) {
 					s.logger.Debugf("clients: validated existing torrent for %s (piece=%d)", normalizedHash, validation.pieceSize)
-					considerReusable(normalizedHash, outputPath, nil, validation.pieceSize, dataVerifiedByHash[normalizedHash])
+					considerReusable(normalizedHash, outputPath, data, validation.pieceSize, dataVerifiedByHash[normalizedHash])
 					continue
 				}
 				if validation.reason != "" {
@@ -1444,12 +1446,9 @@ func (s *Service) selectValidTorrent(
 	if bestHash == "" {
 		return selection, nil
 	}
-	if bestData != nil {
-		path, err := writeTorrentFile(bestPath, bestData)
-		if err != nil {
-			return validatedTorrentSelection{}, err
-		}
-		bestPath = path
+	bestPath, err = writeTorrentFile(bestPath, bestData)
+	if err != nil {
+		return validatedTorrentSelection{}, err
 	}
 	selection.infoHash = bestHash
 	selection.torrentPath = bestPath
@@ -1554,15 +1553,60 @@ func exportTorrent(ctx context.Context, qbitClient *qbittorrent.Client, httpClie
 	return body, nil
 }
 
+// writeTorrentFile retains exact sanitized metainfo independently of the mutable
+// generic cache. Both stay under the release directory's existing cleanup scope.
 func writeTorrentFile(path string, data []byte) (string, error) {
 	sanitized, err := sanitizeTorrentData(data)
 	if err != nil {
 		return "", fmt.Errorf("clients: sanitize torrent: %w", err)
 	}
-	if err := os.WriteFile(path, sanitized, 0o600); err != nil {
-		return "", fmt.Errorf("clients: write torrent: %w", err)
+	snapshotDir := filepath.Join(filepath.Dir(path), "client-torrents")
+	if err := os.MkdirAll(snapshotDir, 0o700); err != nil {
+		return "", fmt.Errorf("clients: create torrent snapshot directory: %w", err)
 	}
-	return path, nil
+	// Derive a filename-safe identity from the full sanitized metainfo, because
+	// equal infohashes can still have different policy-relevant file sizes.
+	snapshotPath := filepath.Join(snapshotDir, fmt.Sprintf("%x.torrent", sha256.Sum256(sanitized)))
+	for _, outputPath := range []string{snapshotPath, path} {
+		if err := writeTorrentBytes(outputPath, sanitized); err != nil {
+			return "", err
+		}
+	}
+	return snapshotPath, nil
+}
+
+// writeTorrentBytes publishes a closed mode-0600 staged file, atomically where
+// the platform supports rename replacement. Exact existing bytes are reused so
+// readers do not block identical publication on Windows. Failed writes leave path untouched.
+func writeTorrentBytes(path string, data []byte) error {
+	if torrentBytesMatch(path, data) {
+		return nil
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".torrent-*.tmp")
+	if err != nil {
+		return fmt.Errorf("clients: create staged torrent: %w", err)
+	}
+	defer func() { _ = os.Remove(file.Name()) }()
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("clients: write staged torrent: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("clients: close staged torrent: %w", err)
+	}
+	if err := os.Rename(file.Name(), path); err != nil {
+		// A concurrent writer may have published the same bytes after our read.
+		if torrentBytesMatch(path, data) {
+			return nil
+		}
+		return fmt.Errorf("clients: publish torrent: %w", err)
+	}
+	return nil
+}
+
+func torrentBytesMatch(path string, data []byte) bool {
+	existing, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(existing, data)
 }
 
 func sanitizeTorrentData(data []byte) ([]byte, error) {

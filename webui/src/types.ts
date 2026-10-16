@@ -173,6 +173,7 @@ export type NamingFacts = {
 };
 
 export type EpisodeFacts = {
+  MultipleEpisodes: boolean;
   Season: number;
   Episode: number;
   SeasonLabel: string;
@@ -520,6 +521,8 @@ export type IMDBEpisode = {
   ReleaseYear: number;
   ReleaseDate: IMDBReleaseDate;
   Season: number;
+  /** Whether the provider supplied a season number, including zero. */
+  SeasonKnown: boolean;
   EpisodeText: string;
 };
 
@@ -588,6 +591,8 @@ export type TVDBMetadata = {
   PosterThumbnailLookupAttempted: boolean;
   Aliases: string[];
   EpisodeSeason: number;
+  /** Whether the selected episode's season was supplied by TVDB, including zero. */
+  EpisodeSeasonKnown: boolean;
   EpisodeNumber: number;
   EpisodeName: string;
   EpisodeNameEnglish: string;

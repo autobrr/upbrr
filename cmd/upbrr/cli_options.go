@@ -136,11 +136,31 @@ type cliOptions struct {
 	ComparisonIndex            int
 	MenuImages                 string
 	GetDVDMenus                bool
+	HDRResumeWorkflow          string
+	HDRRetryAttempt            string
+	HDRRetryModes              string
+	HDRImageIDs                string
+	HDRSceneSync               bool
+	HDRBoundarySync            bool
+	HDRBoundaryAudio           bool
+	HDRAllAudioTracks          bool
+	HDRDecoderThreads          int
+	HDRMetadataOnly            bool
+	HDRAudioOnly               bool
+	HDRPictures                bool
+	HDRFullFrames              bool
+	HDRActiveArea              bool
+	HDRCompareSource           string
+	HDRCompareOffset           string
+	HDRCompareCrop             string
+	HDRGrade                   bool
+	HDRColour                  bool
 	HDRAnalysis                bool
 	HDRAnalysisOnly            bool
 	HDRTargets                 string
 	HDRPlaylist                string
 	HDRPeakSource              string
+	HDRFormats                 string
 	HDROutputDir               string
 	AudioAnalysis              bool
 	AudioAnalysisOnly          bool
@@ -296,11 +316,31 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
 	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.BoolVar(&opts.GetDVDMenus, "get-dvd-menus", false, "Capture distinct menus from an extracted DVD VIDEO_TS (requires compatible FFmpeg)")
-	fs.BoolVar(&opts.HDRAnalysis, "hdr-analysis", false, "Generate retained HDR10+ plots before upload")
-	fs.BoolVar(&opts.HDRAnalysisOnly, "hdr-analysis-only", false, "Plot one MKV or disc playlist without configuration or upload")
+	fs.StringVar(&opts.HDRResumeWorkflow, "hdr-resume-workflow", "", "Resume HDR output in an exact retained active CLI workflow")
+	fs.StringVar(&opts.HDRRetryAttempt, "hdr-retry-attempt", "", "Exact retained HDR attempt authorizing a decoded retry")
+	fs.StringVar(&opts.HDRRetryModes, "hdr-retry-modes", "", "Explicit comma-separated unsuccessful decoded modes to measure again")
+	fs.StringVar(&opts.HDRImageIDs, "hdr-image-ids", "", "Exact current HDR artifact IDs to include in descriptions on workflow continuation")
+	fs.BoolVar(&opts.HDRSceneSync, "hdr-scene-sync", false, "Measure decoded scene synchronization against Dolby Vision markers")
+	fs.BoolVar(&opts.HDRBoundarySync, "hdr-boundary-sync", false, "Measure bounded picture windows at distributed HDR10+ and Dolby Vision scene boundaries")
+	fs.BoolVar(&opts.HDRBoundaryAudio, "hdr-boundary-audio", true, "Include complete audio analysis with --hdr-boundary-sync; use =false to disable")
+	fs.BoolVar(&opts.HDRAllAudioTracks, "hdr-all-audio-tracks", false, "Analyze every prepared audio track instead of the primary track")
+	fs.IntVar(&opts.HDRDecoderThreads, "hdr-decoder-threads", 0, "Video threads per decoder: 0 selects the default, 1-64 requests a bounded maximum")
+	fs.BoolVar(&opts.HDRMetadataOnly, "hdr-metadata-only", false, "Generate HDR metadata plots without automatic video and audio measurement")
+	fs.BoolVar(&opts.HDRAudioOnly, "hdr-audio-only", false, "Generate native HDR plots and primary audio analysis without picture decoding")
+	fs.BoolVar(&opts.HDRPictures, "hdr-pictures", false, "Include sampled automatic picture checks with HDR metadata and primary audio analysis")
+	fs.BoolVar(&opts.HDRFullFrames, "hdr-full-frames", false, "Measure every video frame instead of sampled HDR picture checks (slower)")
+	fs.BoolVar(&opts.HDRActiveArea, "hdr-active-area", false, "Measure decoded picture borders against Dolby Vision active areas")
+	fs.StringVar(&opts.HDRCompareSource, "hdr-compare-source", "", "Explicit local comparison source B")
+	fs.StringVar(&opts.HDRCompareOffset, "hdr-compare-offset", "", "Confirmed integer frame offset B minus A, including explicit zero")
+	fs.StringVar(&opts.HDRCompareCrop, "hdr-compare-crop", "", "Confirmed common crop left,top,width,height")
+	fs.BoolVar(&opts.HDRGrade, "hdr-grade", false, "Measure absolute brightness and PQ differences against source B")
+	fs.BoolVar(&opts.HDRColour, "hdr-colour", false, "Measure colour distribution against source B")
+	fs.BoolVar(&opts.HDRAnalysis, "hdr-analysis", false, "Generate HDR metadata plots and primary audio analysis before upload")
+	fs.BoolVar(&opts.HDRAnalysisOnly, "hdr-analysis-only", false, "Analyze one supported HDR video or disc playlist without configuration or upload")
 	fs.StringVar(&opts.HDRTargets, "hdr-targets", "", "Ordered prepared HDR target IDs for upload")
 	fs.StringVar(&opts.HDRPlaylist, "hdr-playlist", "", "Numeric MPLS playlist for standalone disc analysis")
 	fs.StringVar(&opts.HDRPeakSource, "hdr-peak-source", "", "Peak estimator: histogram, histogram99, max-scl, max-scl-luminance")
+	fs.StringVar(&opts.HDRFormats, "hdr-formats", "", "Metadata formats: auto, hdr10plus, dolby-vision, both")
 	fs.StringVar(&opts.HDROutputDir, "hdr-output-dir", "", "Parent directory for fresh standalone HDR artifacts")
 	fs.BoolVar(&opts.AudioAnalysis, "audio-analysis", false, "Generate local audio images and amplitude statistics in managed temporary storage before upload")
 	fs.BoolVar(&opts.AudioAnalysisOnly, "audio-analysis-only", false, "Analyze one media file without configuration or upload")
@@ -876,6 +916,8 @@ func cliHelpSections(name string) []helpSection {
 			"hdr-targets",
 			"hdr-playlist",
 			"hdr-peak-source",
+			"hdr-formats",
+			"hdr-metadata-only",
 			"hdr-output-dir",
 			"audio-analysis",
 			"audio-analysis-only",
@@ -994,18 +1036,19 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		Trackers:       splitCSV(opts.Trackers),
 		TrackersRemove: splitCSV(opts.TrackersRemove),
 		Options: api.UploadOptions{
-			RunLogLevel:     runLogLevel,
-			Screens:         max(screens, 0),
-			NoSeed:          opts.NoSeed,
-			SkipAutoTorrent: opts.SkipAutoTorrent,
-			KeepFolder:      opts.KeepFolder,
-			OnlyID:          opts.OnlyID,
-			CaptureDVDMenus: opts.GetDVDMenus,
-			HDRAnalysis:     cliHDRUploadRequest(opts),
-			AudioAnalysis:   opts.AudioAnalysis,
-			AudioTracks:     strings.TrimSpace(opts.AudioTracks),
-			AudioImages:     strings.TrimSpace(opts.AudioImages),
-			InteractionMode: opts.interactionMode(),
+			RunLogLevel:            runLogLevel,
+			Screens:                max(screens, 0),
+			NoSeed:                 opts.NoSeed,
+			SkipAutoTorrent:        opts.SkipAutoTorrent,
+			KeepFolder:             opts.KeepFolder,
+			OnlyID:                 opts.OnlyID,
+			CaptureDVDMenus:        opts.GetDVDMenus,
+			HDRAnalysis:            cliHDRUploadRequest(opts),
+			HDRComparisonSelection: cliHDRComparisonSelection(opts),
+			AudioAnalysis:          opts.AudioAnalysis,
+			AudioTracks:            strings.TrimSpace(opts.AudioTracks),
+			AudioImages:            strings.TrimSpace(opts.AudioImages),
+			InteractionMode:        opts.interactionMode(),
 		},
 		ReleaseNameOverrides: buildReleaseNameOverrides(visited, releaseOverrideInput{
 			Category:         opts.Category,

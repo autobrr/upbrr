@@ -266,6 +266,7 @@ type Module struct {
 	dupeBuilder               DupeAssessmentBuilder
 	mediaBuilder              MediaArtifactBuilder
 	hdrAnalysisBuilder        HDRAnalysisBuilder
+	hdrComparisonInspector    HDRComparisonInspector
 	audioAnalysisBuilder      AudioAnalysisBuilder
 	descriptionBuilder        DescriptionBuilder
 	uploadPlanBuilder         UploadPlanBuilder
@@ -452,6 +453,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 
 	priorWorkflow := state.Workflow
 	priorHDRExtractions := maps.Clone(state.HDRExtractions)
+	priorHDRMeasurements := cloneHDRMeasurements(state.HDRMeasurements)
 	priorDuplicateReuse := state.PendingDuplicateReuse
 	now := m.clock.Now().UTC()
 	nextRevision := state.Workflow.Revision + 1
@@ -505,9 +507,17 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 			return CommandResult{}, err
 		}
 	}
+	if priorWorkflow.HDRComparison != nil && (state.Workflow.HDRComparison == nil || state.Workflow.HDRComparison.ID != priorWorkflow.HDRComparison.ID) {
+		m.private.Delete(ownerID, state.Workflow.ID, hdrComparisonPrivateResourceID(priorWorkflow.HDRComparison.ID))
+	}
 	for id := range priorHDRExtractions {
 		if _, retained := state.HDRExtractions[id]; !retained {
 			m.private.Delete(ownerID, state.Workflow.ID, hdrExtractionPrivateResourceID(id))
+		}
+	}
+	for id := range priorHDRMeasurements {
+		if _, retained := state.HDRMeasurements[id]; !retained {
+			m.private.Delete(ownerID, state.Workflow.ID, hdrMeasurementPrivateResourceID(id))
 		}
 	}
 	if result.Dupes != nil {
@@ -553,6 +563,9 @@ func retainsStoppedAudioAnalysis(command mutation, result CommandResult) bool {
 
 func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkflow, result CommandResult) {
 	workflowID := prior.ID
+	if result.HDRComparison != nil && (prior.HDRComparison == nil || prior.HDRComparison.ID != result.HDRComparison.ID) {
+		m.private.Delete(ownerID, workflowID, hdrComparisonPrivateResourceID(result.HDRComparison.ID))
+	}
 	if result.Descriptions != nil && (prior.Descriptions == nil || prior.Descriptions.ID != result.Descriptions.ID) {
 		m.private.Delete(ownerID, workflowID, descriptionPrivateResourceID(result.Descriptions.ID))
 	}
@@ -789,6 +802,13 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		}
 		status.Items = compositeUploadInitialItems()
 		status.Total = len(compositeUploadStages) * 100
+	}
+	if hdrCommand, ok := command.(AnalyzeHDRCommand); ok {
+		hdrCommand.Comparison, err = m.resolveHDRComparison(ownerID, state, hdrCommand.Instructions)
+		if err != nil {
+			return api.WorkflowOperationStatus{}, err
+		}
+		command = hdrCommand
 	}
 	commandResourceID := operationCommandResourceID(status.ID)
 	if err := m.private.Put(
@@ -1201,12 +1221,18 @@ func (m *Module) runOperation(
 			}
 			if status.Operation == api.OperationKindHDRAnalysis && result.HDRAnalysis != nil {
 				for _, target := range result.HDRAnalysis.Targets {
-					if target.Failure == nil {
-						continue
+					failures := []*api.HDRAnalysisFailure{target.Failure}
+					for _, format := range target.Formats {
+						failures = append(failures, format.Failure)
 					}
-					classified := m.operationErrorClassifier(status.Operation, api.NewHDRAnalysisError(*target.Failure, nil))
-					if failure, ok := api.AsOperationFailure(classified); ok {
-						status.Failures = append(status.Failures, api.WorkflowFailure{Failure: failure})
+					for _, hdrFailure := range failures {
+						if hdrFailure == nil {
+							continue
+						}
+						classified := m.operationErrorClassifier(status.Operation, api.NewHDRAnalysisError(*hdrFailure, nil))
+						if failure, ok := api.AsOperationFailure(classified); ok {
+							status.Failures = append(status.Failures, api.WorkflowFailure{Failure: failure})
+						}
 					}
 				}
 			}
@@ -1965,7 +1991,12 @@ func (m *Module) recoverOperationAfterLease(
 	if hdrCommand, hdr := capsule.command.(AnalyzeHDRCommand); hdr && !commandCommitted {
 		m.private.Delete(current.OwnerID, current.WorkflowID, hdrAnalysisPrivateResourceID(string(current.OperationID)))
 		if cleaner, ok := m.hdrAnalysisBuilder.(HDRAnalysisAttemptCleaner); ok {
-			if err := cleaner.CleanupAttempt(hdrCommand.Instructions.Release, string(current.OperationID), state.HDRExtractions); err != nil {
+			if err := cleaner.CleanupAttempt(
+				hdrCommand.Instructions.Release,
+				string(current.OperationID),
+				state.HDRExtractions,
+				state.HDRMeasurements,
+			); err != nil {
 				return fmt.Errorf("clean interrupted HDR attempt: %w", err)
 			}
 		}
@@ -2576,6 +2607,11 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 				)
 			}
 		}
+	}
+	result.HDRComparison = state.Workflow.HDRComparison
+	if pending := state.HDRPendingRequest; pending != nil && result.Release != nil &&
+		pending.Instructions.Release == (api.ReleaseRef{SourcePath: result.Release.Release.Source.SourcePath, Generation: result.Release.Release.Generation}) {
+		result.HDRPendingRequest = &pending.Instructions
 	}
 	if ref := state.Workflow.HDRAnalysis; ref != nil {
 		result.HDRAnalysis = currentSnapshot(state.HDRAnalyses, ref.ID)
@@ -3606,6 +3642,7 @@ func newState(ownerID string, workflow api.ReleaseWorkflow) State {
 		Media:                  make(map[api.MediaArtifactSetID]api.MediaArtifactSet),
 		HDRAnalyses:            make(map[api.HDRAnalysisResultID]api.HDRAnalysisResult),
 		HDRExtractions:         make(map[api.HDRExtractionID]HDRExtractionRecord),
+		HDRMeasurements:        make(map[string]HDRMeasurementRecord),
 		AudioAnalyses:          make(map[api.AudioAnalysisResultID]api.AudioAnalysisResult),
 		Descriptions:           make(map[api.DescriptionSetID]api.DescriptionSet),
 		DryRuns:                make(map[api.UploadDryRunResultID]api.UploadDryRunResult),
@@ -3687,6 +3724,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 	case CaptureMediaCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case AnalyzeHDRCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case SelectHDRComparisonCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SetHDRAnalysisEnabledCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
@@ -3776,6 +3815,8 @@ func (m *Module) apply(
 		return m.captureMedia(ctx, ownerID, state, nextRevision, now, typed)
 	case AnalyzeHDRCommand:
 		return m.analyzeHDR(ctx, ownerID, state, nextRevision, now, typed, nil, nil)
+	case SelectHDRComparisonCommand:
+		return m.selectHDRComparison(ctx, ownerID, state, now, typed)
 	case SetHDRAnalysisEnabledCommand:
 		return CommandResult{}, m.setHDRAnalysisEnabled(ctx, state, typed)
 	case AnalyzeAudioCommand:
@@ -3833,8 +3874,14 @@ func (m *Module) invalidateWorkflowPrivateResources(
 	state *State,
 ) error {
 	var preserved []string
+	if ref := state.Workflow.HDRComparison; ref != nil {
+		preserved = append(preserved, hdrComparisonPrivateResourceID(ref.ID))
+	}
 	for id := range state.HDRExtractions {
 		preserved = append(preserved, hdrExtractionPrivateResourceID(id))
+	}
+	for id := range state.HDRMeasurements {
+		preserved = append(preserved, hdrMeasurementPrivateResourceID(id))
 	}
 	if ref := state.Workflow.HDRAnalysis; ref != nil {
 		if analysis, ok := state.HDRAnalyses[ref.ID]; ok && analysis.Revision == ref.Revision {
@@ -3889,12 +3936,15 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.TrackerApproval = nil
 	state.Workflow.Media = nil
 	state.Workflow.HDRAnalysis = nil
+	state.Workflow.HDRComparison = nil
 	state.Workflow.HDRAnalysisEnabled = false
 	state.Workflow.AudioAnalysis = nil
 	state.Workflow.AudioAnalysisEnabled = false
 	state.PendingAudioAnalysis = nil
 	state.PendingAudioAnalysisWorkflowID = ""
 	state.HDRExtractions = make(map[api.HDRExtractionID]HDRExtractionRecord)
+	state.HDRMeasurements = make(map[string]HDRMeasurementRecord)
+	state.HDRPendingRequest = nil
 	state.HDRAnalyses = make(map[api.HDRAnalysisResultID]api.HDRAnalysisResult)
 	state.PendingHDRAnalysis, state.PendingHDRAnalysisWorkflowID = nil, ""
 	state.Workflow.Descriptions = nil
@@ -4170,6 +4220,9 @@ func (m *Module) prepareRelease(
 		return CommandResult{}, err
 	}
 	var capturedHDRTargets []string
+	if pending := state.HDRPendingRequest; pending != nil && pending.Instructions.Release != ref {
+		state.HDRPendingRequest = nil
+	}
 	if command.Input.Controls.CaptureHDRMetadata && state.Composite == nil {
 		for _, target := range display.HDRTargets {
 			if target.Supported && target.SelectionPolicy == "primary_hevc_angle_zero" {
@@ -4191,6 +4244,14 @@ func (m *Module) prepareRelease(
 	for id, record := range state.HDRExtractions {
 		if record.Release != ref {
 			delete(state.HDRExtractions, id)
+		}
+	}
+	if comparison := state.Workflow.HDRComparison; comparison != nil && comparison.Release != ref {
+		state.Workflow.HDRComparison = nil
+	}
+	for id, record := range state.HDRMeasurements {
+		if record.Release != ref {
+			delete(state.HDRMeasurements, id)
 		}
 	}
 	state.Workflow.Status = api.WorkflowStatusActive
@@ -6976,7 +7037,7 @@ func (m *Module) generateDescriptions(
 		if err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow restore descriptions: %w", err)
 		}
-		if len(snapshot.Descriptions) > 0 {
+		if snapshot.Status != "" {
 			command.Instructions = instructions
 			inputFingerprint, templateFingerprint, err = m.descriptionBuilder.Fingerprints(
 				ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, instructions,
@@ -6987,7 +7048,7 @@ func (m *Module) generateDescriptions(
 			logging.FromContext(ctx, m.logger).Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
 		}
 	}
-	if len(snapshot.Descriptions) == 0 {
+	if snapshot.Status == "" {
 		snapshot, err = m.descriptionBuilder.Build(
 			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions, now,
 		)

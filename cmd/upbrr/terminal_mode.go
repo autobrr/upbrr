@@ -83,7 +83,8 @@ func runUpload(ctx context.Context, args []string, opts cliOptions, visited map[
 		return exitError(2, errors.New("--create-auth cannot prompt in unattended mode; use --uac to provide required input"))
 	}
 	// Static paths never probe a terminal or start an interactive lifetime.
-	if opts.ShowVersion || opts.Cleanup || opts.ExportConfigPath != "" || opts.ImportConfigPath != "" {
+	if opts.ShowVersion || opts.Cleanup || opts.ExportConfigPath != "" || opts.ImportConfigPath != "" ||
+		opts.HDRAnalysisOnly || opts.HDRResumeWorkflow != "" {
 		return runUploadDriver(ctx, args, opts, visited, paths, streams)
 	}
 	render := streams.out

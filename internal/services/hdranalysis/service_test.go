@@ -110,11 +110,10 @@ func TestVerifiedAbsenceSidecar(t *testing.T) {
 	}
 }
 
-func TestSidecarPublicationUsesRestoreAllocationLimit(t *testing.T) {
+func TestSidecarPublicationUsesSharedRecordLimits(t *testing.T) {
 	metadata := testExtraction()
 	frame := metadata.Frames[0]
-	metadata.Frames = make([]extract.Picture, 400000)
-	metadata.Payloads = make([]extract.Payload, 400000)
+	metadata.Frames = make([]extract.Picture, MaxFrames+1)
 	for index := range metadata.Frames {
 		metadata.Frames[index] = frame
 	}
@@ -127,8 +126,7 @@ func TestSidecarPublicationUsesRestoreAllocationLimit(t *testing.T) {
 	if err := WriteSidecar(t.Context(), &small, Sidecar{Identity: testIdentity(), Extraction: testExtraction()}); err != nil {
 		t.Fatal(err)
 	}
-	oversized := bytes.Replace(small.Bytes(), []byte(`"frames":1`), []byte(`"frames":400000`), 1)
-	oversized = bytes.Replace(oversized, []byte(`"payloads":1`), []byte(`"payloads":400000`), 1)
+	oversized := bytes.Replace(small.Bytes(), []byte(`"frames":1`), fmt.Appendf(nil, `"frames":%d`, MaxFrames+1), 1)
 	if _, err := ReadSidecar(t.Context(), bytes.NewReader(oversized), testIdentity()); !errors.Is(err, extract.ErrResourceLimit) {
 		t.Fatalf("restore allocation limit diverged: %v", err)
 	}
@@ -145,8 +143,23 @@ func TestSidecarAllowsFeatureLengthMetadataWithinBoundedRestore(t *testing.T) {
 		t.Fatalf("feature-length metadata rejected: %v", err)
 	}
 	header.Frames, header.Payloads = MaxFrames, MaxPayloads
+	if err := validateSidecarHeader(header); err != nil {
+		t.Fatalf("maximum record counts within 3 GiB rejected: %v", err)
+	}
+	header.Frames++
 	if err := validateSidecarHeader(header); !errors.Is(err, extract.ErrResourceLimit) {
-		t.Fatalf("oversized allocation accepted: %v", err)
+		t.Fatalf("oversized frame count accepted: %v", err)
+	}
+	var small bytes.Buffer
+	if err := WriteSidecar(t.Context(), &small, Sidecar{Identity: testIdentity(), Extraction: testExtraction()}); err != nil {
+		t.Fatal(err)
+	}
+	// This header fits the 3 GiB operation policy, but not the remaining
+	// restore allowance when another native source holds 1 GiB.
+	limited := bytes.Replace(small.Bytes(), []byte(`"frames":1`), []byte(`"frames":400000`), 1)
+	limited = bytes.Replace(limited, []byte(`"payloads":1`), []byte(`"payloads":400000`), 1)
+	if _, err := readSidecarWithBudget(t.Context(), bytes.NewReader(limited), testIdentity(), MaxRestoreBytes-(1<<30), false); !errors.Is(err, extract.ErrResourceLimit) {
+		t.Fatalf("restore ignored remaining allocation limit: %v", err)
 	}
 }
 

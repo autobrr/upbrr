@@ -36,7 +36,7 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 | **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
 | **Dupe Check**     | Answer tracker questions and review search results, rules, and names.    |
 | **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
-| **HDR Analysis**   | Generate, inspect, download, and include HDR10+ brightness plots.        |
+| **HDR Analysis**   | Generate native HDR plots, audio analysis, and optional picture checks.  |
 | **Screenshots**    | Generate, import, order, and select screenshots.                         |
 | **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
 | **Upload Images**  | Publish selected images through configured hosts.                        |
@@ -67,7 +67,11 @@ Each successful graph can be previewed, opened at full size, or downloaded as it
 
 See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and troubleshooting details.
 
-**HDR Analysis** appears when prepared Input contains eligible targets. MKV files require MediaInfo-confirmed HDR10+ on a unique HEVC video track. For Blu-ray, check **Check for HDR10+ in the selected playlists** during playlist selection, or use **Review selected playlists** for an already prepared disc. Confirmed playlists are plotted during preparation, ready to view on **HDR Analysis**. Opening the page does not read the source. For MKV files, select targets and a peak estimator, then click **Generate**. MKV progress shows structure discovery and metadata collection. Complete retained metadata supports estimator changes without another source scan. Completed analyses are automatically included in generated descriptions; partial plots remain inspectable. Compatible saved plots and their hosted links are restored when reopening a release. See [HDR analysis](../workflow/hdr-analysis.md).
+### Generate HDR analysis
+
+**HDR Analysis** appears when prepared Input contains eligible targets. Opening the page does not start analysis. Select targets and metadata formats, then choose a mode. **HDR metadata plots and primary audio** is the default; **Bounded scene synchronization** adds checks around selected scene boundaries, with **Analyze audio** enabled by default and optional **Active-area borders**. **Picture checks and primary audio** offers sampled checks or **Measure every video frame (slower)**. Audio-enabled modes can select **Analyze all audio tracks (up to 64)**.
+
+Click **Generate**, then inspect each format and picture/audio outcome. Native plots and selected audio images/statistics are included in descriptions by default. Select individual picture-check images to include them. Successful artifacts remain inspectable after partial attempts; a sampled or bounded result does not establish whole-video picture coverage. See [HDR analysis](../workflow/hdr-analysis.md) for source requirements, comparison sources, retries, and colour-thumbnail interpretation.
 
 ### Correct Input facts
 

@@ -1460,9 +1460,14 @@ func extractPosterThumbnailURL(artworks []artworkResponse, poster string) string
 }
 
 func episodeFromResponse(item episodeResponse) Episode {
+	season := 0
+	if item.SeasonNumber != nil {
+		season = *item.SeasonNumber
+	}
 	return Episode{
 		ID:             item.ID,
-		SeasonNumber:   item.SeasonNumber,
+		SeasonNumber:   season,
+		SeasonKnown:    item.SeasonNumber != nil,
 		Number:         item.Number,
 		AbsoluteNumber: item.AbsoluteNumber,
 		SeasonName:     item.SeasonName,
@@ -1616,6 +1621,10 @@ func isASCIIDigit(ch byte) bool {
 }
 
 func episodeIsPresent(episodes []Episode, query EpisodeQuery) bool {
+	if query.SeasonKnown && query.Season == 0 {
+		_, ok := findEpisodeMatch(episodes, query)
+		return ok
+	}
 	if len(episodes) == 0 {
 		return false
 	}
@@ -1651,6 +1660,14 @@ func episodeIsPresent(episodes []Episode, query EpisodeQuery) bool {
 
 func findEpisodeMatch(episodes []Episode, query EpisodeQuery) (EpisodeMatch, bool) {
 	if len(episodes) == 0 {
+		return EpisodeMatch{}, false
+	}
+	if query.SeasonKnown && query.Season == 0 {
+		for _, ep := range episodes {
+			if query.Episode > 0 && ep.SeasonKnown && ep.SeasonNumber == 0 && ep.Number == query.Episode {
+				return toMatch(ep), true
+			}
+		}
 		return EpisodeMatch{}, false
 	}
 	aired := strings.TrimSpace(query.AiredDate)
@@ -1692,8 +1709,10 @@ func findEpisodeMatch(episodes []Episode, query EpisodeQuery) (EpisodeMatch, boo
 	return EpisodeMatch{}, false
 }
 
-// GetSpecificEpisodeData matches by air date, season-only first episode,
-// season/episode, explicit absolute number, then Episode as an absolute fallback.
+// GetSpecificEpisodeData requires exact provider-confirmed coordinates and a
+// positive episode number for explicit season-zero queries. Other queries match
+// by air date, season-only first episode, season/episode, explicit absolute
+// number, then Episode as an absolute fallback.
 func GetSpecificEpisodeData(data EpisodesData, query EpisodeQuery) (EpisodeMatch, bool) {
 	match, ok := findEpisodeMatch(data.Episodes, query)
 	return match, ok
@@ -1705,6 +1724,7 @@ func toMatch(ep Episode) EpisodeMatch {
 		EpisodeName:   ep.Name,
 		Overview:      ep.Overview,
 		SeasonNumber:  ep.SeasonNumber,
+		SeasonKnown:   ep.SeasonKnown,
 		EpisodeNumber: ep.Number,
 		Year:          ep.Year,
 		EpisodeID:     ep.ID,
@@ -1718,12 +1738,15 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		return c.uncachedJSON(ctx, path, params, target)
 	}
 	var empty func() bool
+	domain := "tvdb.response.v1"
 	if response, ok := target.(*episodesResponse); ok {
+		// Older typed episode responses conflated missing seasons with zero.
+		domain = "tvdb.episodes.response.v2"
 		empty = func() bool { return len(response.Data.Episodes) == 0 }
 	}
 	err := evidence.JSON(
 		ctx,
-		"tvdb.response.v1",
+		domain,
 		[]any{c.baseURL, c.apiKey, path, params},
 		target,
 		errNotFound,
@@ -2038,7 +2061,7 @@ func (e *episodesDataResponse) UnmarshalJSON(data []byte) error {
 
 type episodeResponse struct {
 	ID             int         `json:"id"`
-	SeasonNumber   int         `json:"seasonNumber"`
+	SeasonNumber   *int        `json:"seasonNumber"`
 	Number         int         `json:"number"`
 	AbsoluteNumber int         `json:"absoluteNumber"`
 	SeasonName     string      `json:"seasonName"`

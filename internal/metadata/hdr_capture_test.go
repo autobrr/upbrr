@@ -42,7 +42,7 @@ func TestPreparedHDRCapturePreservesTypedFailuresAndOrdinaryReport(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			resource := preparationstate.DiscResource{Root: t.TempDir(), SelectedPlaylists: []api.PlaylistInfo{{File: "1"}, {File: "2"}}}
 			callback := capturePreparedHDR(t.Context(), &resource, filepath.Join(t.TempDir(), "disc"), "source")
-			if err := callback(test.outcome); err == nil {
+			if err := callback(&hdranalysis.NativeDiscOutcome{Outcome: test.outcome}); err == nil {
 				t.Fatal("capture failure was not reported")
 			}
 			for _, name := range []string{"00001.MPLS", "00002.MPLS"} {
@@ -115,7 +115,7 @@ func TestCombinedBDInfoScanReportsProgress(t *testing.T) {
 			service := bdinfo.New(&logger)
 			service.SetHDRService(hdranalysis.New(hdranalysis.NewAdmission(), api.NopLogger{}))
 			captured := false
-			ctx := bdinfo.WithHDRCapture(t.Context(), func(outcome *bridge.Outcome) error {
+			ctx := bdinfo.WithHDRCapture(t.Context(), func(outcome *hdranalysis.NativeDiscOutcome) error {
 				captured = outcome != nil && outcome.Report != nil && len(outcome.Report.Timelines) == 1
 				return nil
 			})

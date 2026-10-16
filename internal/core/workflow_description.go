@@ -18,6 +18,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// workflowDescriptionRendererVersion invalidates generated output when composition changes.
+const workflowDescriptionRendererVersion = "description-renderer-v1"
+
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
 }
@@ -62,9 +65,10 @@ func workflowDescriptionFingerprints(
 	exactMedia *api.ExactMediaAssets,
 ) (api.WorkflowFingerprint, api.WorkflowFingerprint, error) {
 	templateFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Template string
-		Version  string
-	}{subject.DescriptionTemplate, strings.TrimSpace(instructions.TemplateVersion)})
+		Template        string
+		Version         string
+		RendererVersion string
+	}{subject.DescriptionTemplate, strings.TrimSpace(instructions.TemplateVersion), workflowDescriptionRendererVersion})
 	if err != nil {
 		return "", "", fmt.Errorf("workflow description template fingerprint: %w", err)
 	}

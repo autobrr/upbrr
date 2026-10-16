@@ -147,10 +147,13 @@ func AsHDRAnalysisFailure(err error) (HDRAnalysisFailure, bool) {
 
 // HDRAnalysisInstructions selects ordered targets from one exact prepared generation.
 type HDRAnalysisInstructions struct {
-	Release        ReleaseRef    `json:"release"`
-	TargetIDs      []string      `json:"targetIds"`
-	PeakSource     HDRPeakSource `json:"peakSource"`
-	ProfileVersion string        `json:"profileVersion"`
+	Decoded        *HDRDecodedOptions `json:"decoded,omitempty"`
+	DecodedRetry   *HDRDecodedRetry   `json:"decodedRetry,omitempty"`
+	Formats        HDRAnalysisFormats `json:"formats,omitempty"`
+	Release        ReleaseRef         `json:"release"`
+	TargetIDs      []string           `json:"targetIds"`
+	PeakSource     HDRPeakSource      `json:"peakSource"`
+	ProfileVersion string             `json:"profileVersion"`
 }
 
 func ValidHDRTargetID(id string) bool {
@@ -188,22 +191,55 @@ func (i HDRAnalysisInstructions) Normalize() (HDRAnalysisInstructions, error) {
 		return HDRAnalysisInstructions{}, err
 	}
 	if i.ProfileVersion == "" {
-		i.ProfileVersion = HDRAnalysisProfileVersion
+		i.ProfileVersion = HDRAnalysisProfileV2
+		if i.Decoded != nil && i.Decoded.RequiresV3() {
+			i.ProfileVersion = HDRAnalysisProfileV3
+		}
 	}
-	if i.ProfileVersion != HDRAnalysisProfileVersion {
+	if i.ProfileVersion != HDRAnalysisProfileVersion && !IsNativeHDRProfile(i.ProfileVersion) {
 		return HDRAnalysisInstructions{}, errors.New("HDR analysis profile is unsupported")
+	}
+	if i.Decoded != nil && i.Decoded.RequiresV3() && i.ProfileVersion != HDRAnalysisProfileV3 {
+		return HDRAnalysisInstructions{}, errors.New("new decoded options require v3 HDR analysis")
+	}
+	if IsNativeHDRProfile(i.ProfileVersion) {
+		i.Formats, err = i.Formats.Normalize()
+		if err != nil {
+			return HDRAnalysisInstructions{}, err
+		}
+	} else if i.Formats != "" && i.Formats != HDRAnalysisFormatsHDR10Plus {
+		return HDRAnalysisInstructions{}, errors.New("v1 HDR analysis supports HDR10+ only")
+	}
+	if i.Decoded != nil {
+		if !IsNativeHDRProfile(i.ProfileVersion) {
+			return HDRAnalysisInstructions{}, errors.New("decoded checks require v2 HDR analysis")
+		}
+		decoded, err := i.Decoded.Normalize()
+		if err != nil {
+			return HDRAnalysisInstructions{}, err
+		}
+		i.Decoded = &decoded
+	}
+	if i.DecodedRetry != nil {
+		if err := i.DecodedRetry.Validate(i.Decoded); err != nil {
+			return HDRAnalysisInstructions{}, err
+		}
+		retry := *i.DecodedRetry
+		retry.Modes = slices.Clone(retry.Modes)
+		i.DecodedRetry = &retry
 	}
 	return i, nil
 }
 
 // HDRAnalysisTarget supplies safe inventory evidence; extraction establishes actual metadata presence.
 type HDRAnalysisTarget struct {
-	ID              string `json:"id"`
-	Label           string `json:"label"`
-	Playlist        string `json:"playlist,omitempty"`
-	SelectionPolicy string `json:"selectionPolicy"`
-	Supported       bool   `json:"supported"`
-	Reason          string `json:"reason,omitempty"`
+	Evidence        HDRSourceEvidence `json:"evidence,omitempty"`
+	ID              string            `json:"id"`
+	Label           string            `json:"label"`
+	Playlist        string            `json:"playlist,omitempty"`
+	SelectionPolicy string            `json:"selectionPolicy"`
+	Supported       bool              `json:"supported"`
+	Reason          string            `json:"reason,omitempty"`
 }
 
 // HDRAnalysisSubject contains private path authority for one prepared generation.
@@ -217,15 +253,21 @@ type HDRAnalysisSubject struct {
 }
 
 type HDRAnalysisTargetSubject struct {
-	Target          HDRAnalysisTarget
-	Path            string
-	DiscRoot        string
-	CapturedPath    string
-	CapturedSize    int64
-	CapturedSHA256  string
-	CapturedTrackID uint64
-	CapturedAbsent  bool
-	CapturedFailure *HDRAnalysisFailure
+	// Audio is nil for unknown scope; a non-nil subject with no tracks records
+	// inspected audio absence for this exact file and prepared generation.
+	Audio                *AudioAnalysisSubject
+	Target               HDRAnalysisTarget
+	Path                 string
+	DiscRoot             string
+	CapturedPath         string
+	CapturedNativePath   string
+	CapturedNativeSize   int64
+	CapturedNativeSHA256 string
+	CapturedSize         int64
+	CapturedSHA256       string
+	CapturedTrackID      uint64
+	CapturedAbsent       bool
+	CapturedFailure      *HDRAnalysisFailure
 }
 
 type HDRAnalysisArtifact struct {
@@ -235,18 +277,23 @@ type HDRAnalysisArtifact struct {
 }
 
 type HDRAnalysisTargetResult struct {
-	TargetID string               `json:"targetId"`
-	Label    string               `json:"label"`
-	Status   StageStatus          `json:"status"`
-	Frames   int                  `json:"frames"`
-	Scenes   int                  `json:"scenes"`
-	Profile  string               `json:"profile,omitempty"`
-	Artifact *HDRAnalysisArtifact `json:"artifact,omitempty"`
-	Failure  *HDRAnalysisFailure  `json:"failure,omitempty"`
+	Decoded   []HDRDecodedResult   `json:"decoded,omitempty"`
+	Formats   []HDRFormatResult    `json:"formats,omitempty"`
+	Artifacts []HDRTypedArtifact   `json:"artifacts,omitempty"`
+	TargetID  string               `json:"targetId"`
+	Label     string               `json:"label"`
+	Status    StageStatus          `json:"status"`
+	Frames    int                  `json:"frames"`
+	Scenes    int                  `json:"scenes"`
+	Profile   string               `json:"profile,omitempty"`
+	Artifact  *HDRAnalysisArtifact `json:"artifact,omitempty"`
+	Failure   *HDRAnalysisFailure  `json:"failure,omitempty"`
 }
 
 // HDRAnalysisResult retains terminal target outcomes and plot references for one workflow attempt.
 type HDRAnalysisResult struct {
+	Decoded             *HDRDecodedOptions        `json:"decoded,omitempty"`
+	Formats             HDRAnalysisFormats        `json:"formats,omitempty"`
 	ID                  HDRAnalysisResultID       `json:"id"`
 	WorkflowID          WorkflowID                `json:"workflowId"`
 	Revision            WorkflowRevision          `json:"revision"`
@@ -267,6 +314,13 @@ type HDRAnalysisResult struct {
 // Only a failed resource_unavailable outcome authorizes bypassing the target's retained extraction.
 func (r HDRAnalysisResult) TargetNeedsSourceRetry(id string) bool {
 	for _, target := range r.Targets {
+		if target.TargetID == id && IsNativeHDRProfile(r.ProfileVersion) {
+			for _, format := range target.Formats {
+				if format.Failure != nil && format.Failure.Code == HDRAnalysisFailureResourceUnavailable {
+					return true
+				}
+			}
+		}
 		if target.TargetID == id && target.Status == StageStatusFailed && target.Failure != nil &&
 			target.Failure.Code == HDRAnalysisFailureResourceUnavailable {
 			return true
@@ -289,15 +343,26 @@ func (r HDRAnalysisResult) Validate() error {
 		TargetIDs:      r.TargetIDs,
 		PeakSource:     r.PeakSource,
 		ProfileVersion: r.ProfileVersion,
+		Formats:        r.Formats,
+		Decoded:        r.Decoded,
 	}).Normalize(); err != nil {
 		return err
 	}
 	if len(r.Targets) != len(r.TargetIDs) {
 		return errors.New("HDR analysis requires one outcome per target")
 	}
+	if r.ProfileVersion == HDRAnalysisProfileV3 {
+		return r.validateV3Result()
+	}
+	if r.ProfileVersion == HDRAnalysisProfileV2 {
+		return r.validateNativeResult()
+	}
 	successes := 0
 	artifacts := make(map[PublicResourceID]bool)
 	for index, target := range r.Targets {
+		if len(target.Formats) != 0 || len(target.Artifacts) != 0 || len(target.Decoded) != 0 {
+			return errors.New("legacy HDR result contains v2 authority")
+		}
 		if target.TargetID != r.TargetIDs[index] {
 			return errors.New("HDR analysis target order is invalid")
 		}

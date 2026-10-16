@@ -649,3 +649,74 @@ Format : UTF-8
 Language : English
 Title : SDH`
 }
+
+func TestSplitTrailingAnalysisTitles(t *testing.T) {
+	for _, title := range []string{"Audio Plots", "HDR plots", "source_audio", "source_hdr"} {
+		t.Run(title, func(t *testing.T) {
+			block := "[spoiler=" + title + "][img]https://images.example.invalid/plot.png[/img][/spoiler]"
+			body, plots := SplitTrailingSourceAudioSpoiler("Notes\n\n" + block)
+			if body != "Notes" || plots != block {
+				t.Fatalf("body=%q plots=%q", body, plots)
+			}
+			nested := "[spoiler=Comparisons]\n" + block + "\n[/spoiler]"
+			body, plots = SplitTrailingSourceAudioSpoiler(nested)
+			if body != nested || plots != "" {
+				t.Fatalf("comparison split: %q %q", body, plots)
+			}
+		})
+	}
+}
+
+func TestSplitTrailingAnalysisPreservesUserSpoilers(t *testing.T) {
+	for _, title := range []string{"Audio Plots", "HDR plots", "source_audio", "source_hdr"} {
+		block := "[spoiler=" + title + "]evidence[/spoiler]"
+		for _, notes := range []string{
+			"[spoiler=Release notes]\n" + block + "\n[/spoiler]",
+			"[spoiler]\n" + block + "\n[/spoiler]",
+			"[SPOILER=Release notes]\n" + block + "\n[/SPOILER]",
+			"[spoiler=Release notes]\n" + block,
+			block + "\n[/spoiler]",
+		} {
+			body, plots := SplitTrailingSourceAudioSpoiler(notes)
+			if body != notes || plots != "" {
+				t.Fatalf("user spoiler moved: %q %q", body, plots)
+			}
+		}
+		notes := "[spoiler=Release notes]\n" + block + "\n[/spoiler]"
+		body, plots := SplitTrailingSourceAudioSpoiler(notes + "\n\n" + block)
+		if body != notes || plots != block {
+			t.Fatalf("generated block not separated: %q %q", body, plots)
+		}
+	}
+}
+
+func TestSplitTrailingAnalysisIgnoresLiteralSpoilers(t *testing.T) {
+	for _, title := range []string{"Audio Plots", "HDR plots", "source_audio", "source_hdr"} {
+		block := "[spoiler=" + title + "][img]https://images.example.invalid/plot.png[/img][/spoiler]"
+		for _, pair := range [][2]string{{"[code]", "[/code]"}, {"[pre]", "[/pre]"}, {"<code>", "</code>"}, {"<pre>", "</pre>"}} {
+			notes := pair[0] + "[spoiler=Example]" + pair[1]
+			body, plots := SplitTrailingSourceAudioSpoiler(notes + "\n\n" + block)
+			if body != notes || plots != block {
+				t.Fatalf("literal opener changed analysis placement: %q %q", body, plots)
+			}
+			nested := "[spoiler=Notes]" + pair[0] + "[/spoiler]" + pair[1] + "\n" + block + "\n[/spoiler]"
+			body, plots = SplitTrailingSourceAudioSpoiler(nested)
+			if body != nested || plots != "" {
+				t.Fatalf("literal closer broke nesting: %q %q", body, plots)
+			}
+		}
+	}
+}
+
+func TestRenderAnalysisTitles(t *testing.T) {
+	for _, title := range []string{"Audio Plots", "HDR plots"} {
+		for _, tag := range []string{"spoiler", "hide"} {
+			for _, quote := range []string{"", "\"", "'", " \"", " '"} {
+				got := Render("[" + tag + "=" + quote + title + strings.TrimSpace(quote) + "]Evidence[/" + tag + "]")
+				if !strings.Contains(got, "<summary>"+title+"</summary>") {
+					t.Fatalf("title truncated: %s", got)
+				}
+			}
+		}
+	}
+}

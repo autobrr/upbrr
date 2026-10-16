@@ -12,7 +12,7 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-yus-policy-v1", Check: checkNamingEvidence}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-yus-policy-v2", Check: checkNamingEvidence}
 }
 
 // checkNamingEvidence needs only enough programme evidence to decide whether

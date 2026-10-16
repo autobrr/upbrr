@@ -175,6 +175,8 @@ func validateCLILaunch(original []string, draft cliLaunchRequest) ([]string, err
 			next.ImportConfigPath != "" ||
 			next.ExportConfigPath != "" ||
 			next.AudioAnalysisOnly ||
+			next.HDRAnalysisOnly ||
+			next.HDRResumeWorkflow != "" ||
 			next.ExportConfigPlaintext {
 			return nil, errors.New("cli arguments: presentation, interaction and command route are fixed; restart to change them")
 		}

@@ -19,6 +19,10 @@ import type {
 } from "../types";
 import type {
   HDRAnalysisResult,
+  HDRAnalysisInstructions,
+  HDRComparisonSourceRef,
+  HDRDecodedOptions,
+  HDRDecodedRetry,
   HDRAnalysisTarget,
   HDRPeakSource,
   AudioAnalysisResult,
@@ -490,10 +494,14 @@ export type ReleaseSession = Readonly<{
   upload: UploadFacet;
 }>;
 
-/** Selects opaque targets from the current prepared inventory and a brightness estimator. */
+/** Selects current prepared targets, native formats and optional decoded checks for one attempt. */
 export type HDRAnalysisGenerateInput = Readonly<{
   targetIDs: readonly string[];
   peakSource: HDRPeakSource;
+  formats?: string;
+  decoded?: HDRDecodedOptions;
+  decodedRetry?: HDRDecodedRetry;
+  profileVersion?: string;
 }>;
 /** Owns HDR operation intents, retained results and artifact URLs for the active generation. */
 export type HDRAnalysisFacet = Readonly<{
@@ -503,17 +511,31 @@ export type HDRAnalysisFacet = Readonly<{
     releaseGeneration: number;
     targets: readonly HDRAnalysisTarget[];
     result: HDRAnalysisResult | null;
+    /** Exact explicit request retained across interruption, taking precedence over older results. */
+    pendingRequest: HDRAnalysisInstructions | null;
+    /** Generation-bound source B handle; its host path stays private to the backend. */
+    comparison: HDRComparisonSourceRef | null;
+    /** Selected description images only; structural JSON reports are excluded. */
+    includedArtifactIDs: readonly string[];
+    selectionRecoveryNote?: string;
     phase: string;
     message: string;
     progress: number;
     mutationBlockedReason: string;
     error: string;
   }>;
+  /** Starts analysis under the current workflow revision and prepared generation. */
   generate(input: HDRAnalysisGenerateInput): Promise<boolean>;
-  /** Reuses the retained target selection and estimator for another analysis attempt. */
+  /** Selects a backend-local comparison file without replacing the primary input. */
+  selectComparison(sourcePath: string): Promise<boolean>;
+  /** Retries unsuccessful modes from the current attempt; a pending request must be resumed first. */
+  retryDecoded(modes: readonly string[]): Promise<boolean>;
+  /** Sets explicit description-image selection; an empty list disables inclusion. */
+  setIncludedArtifacts(artifactIDs: readonly string[]): Promise<boolean>;
+  /** Resumes a pending request, otherwise reuses the retained target selection and options. */
   retry(): Promise<boolean>;
   /** Cancels the active HDR operation while retaining checkpointed metadata. */
   cancel(): Promise<boolean>;
-  /** Addresses a plot in the current retained analysis revision. */
+  /** Addresses an image or JSON report in the current retained analysis revision. */
   artifactURL(artifactID: string): string;
 }>;

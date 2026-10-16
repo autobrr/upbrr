@@ -188,11 +188,11 @@ test("HDR analysis blocks unconfirmed input after reload under a base path", asy
     app = await startApp(workspace, { baseURL: "/upbrr/" });
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "HDR10+ Brightness" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "HDR metadata analysis" })).toBeVisible();
     await expect(page.getByRole("checkbox", { name: /Video 1/ })).toBeDisabled();
     await expect(page.getByRole("checkbox", { name: /Video 1/ })).not.toBeChecked();
     await expect(page.getByRole("checkbox", { name: /Video 1/ })).toHaveAccessibleName(
-      /MediaInfo must confirm HDR10\+ on a unique HEVC video track\./,
+      /MediaInfo must identify a unique HEVC video track\./,
     );
     await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
     await expect(page.getByRole("checkbox", { name: "Include in descriptions" })).toHaveCount(0);
@@ -206,8 +206,213 @@ test("HDR analysis blocks unconfirmed input after reload under a base path", asy
       page.getByRole("button", { name: "Disable HDR inclusion", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByText("Completed HDR plots are automatically included in generated descriptions."),
+      page.getByText(
+        "Native HDR plots, selected audio images, and amplitude statistics are included by default. Select picture-check images below to include them in descriptions.",
+      ),
     ).toBeVisible();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("dual HDR retains native plots and a report when a decoded check is unsupported", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ hdrAnalysis: true });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { baseURL: "/upbrr/" });
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(page.getByRole("checkbox", { name: /Video 1/ })).toBeChecked();
+    await page.getByRole("combobox", { name: "Analysis mode", exact: true }).selectOption("manual");
+    await page.getByRole("checkbox", { name: "Scene synchronization", exact: true }).check();
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    const hdrImage = page.getByRole("img", { name: "Video 1 HDR10+ plot", exact: true });
+    const dvImage = page.getByRole("img", { name: "Video 1 Dolby Vision plot", exact: true });
+    await expect(hdrImage).toBeVisible({ timeout: 30_000 });
+    await expect(dvImage).toBeVisible();
+    await expect(page.getByText(/unsupported · Measured 0 \/ 0/)).toBeVisible();
+    const includedDV = page.getByRole("checkbox", {
+      name: "Include Video 1 Dolby Vision in descriptions",
+      exact: true,
+    });
+    await expect(includedDV).toBeChecked();
+    await includedDV.click();
+    await expect(includedDV).not.toBeChecked();
+    const reportLink = page.getByRole("link", { name: "Download structural report", exact: true });
+    const href = await reportLink.getAttribute("href");
+    const response = await page.context().request.get(new URL(href || "", app.url).toString());
+    expect(response.ok()).toBe(true);
+    expect(response.headers()["content-type"]).toContain("application/json");
+    const report = await response.json();
+    expect(report.formats.map((item: { state: string }) => item.state)).toEqual([
+      "complete",
+      "complete",
+    ]);
+    expect(report.measurements[0].result.state).toBe("unsupported");
+    expect(report.status).toBe("partial");
+    expect(report.decoded[0].state).toBe("unsupported");
+    expect(JSON.stringify(report)).not.toContain(workspace.sourcePath);
+    const downloadPromise = page.waitForEvent("download");
+    await reportLink.click();
+    expect((await downloadPromise).suggestedFilename()).toBe("hdr-analysis.json");
+    await page.reload();
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(hdrImage).toBeVisible();
+    await expect(dvImage).toBeVisible();
+    await expect(includedDV).not.toBeChecked();
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("automatic HDR and existing audio artifacts survive reload and input reopening under a base path", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ hdrAnalysis: "decoded" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { baseURL: "/upbrr/" });
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await page
+      .getByRole("combobox", { name: "Analysis mode", exact: true })
+      .selectOption("pictures_audio");
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    const picture = page.getByRole("img", {
+      name: "Video 1 Measured picture brightness plot",
+      exact: true,
+    });
+    const waveform = page.getByRole("img", { name: "Video 1 Audio waveform plot", exact: true });
+    const spectrogram = page.getByRole("img", {
+      name: "Video 1 Audio spectrogram plot",
+      exact: true,
+    });
+    await expect(picture).toBeVisible({ timeout: 30_000 });
+    await expect(waveform).toBeVisible();
+    await expect(spectrogram).toBeVisible();
+    await expect(page.getByText(/complete · Measured 5 \/ 5/)).toBeVisible();
+    const reportLink = page.getByRole("link", { name: "Download structural report", exact: true });
+    const response = await page
+      .context()
+      .request.get(new URL((await reportLink.getAttribute("href")) || "", app.url).toString());
+    expect(response.ok()).toBe(true);
+    const report = await response.json();
+    expect(report.measurements[0].automatic.frames).toHaveLength(5);
+    expect(report.measurements[0].automatic.sampling.frames[0]).toBe(120);
+    expect(report.measurements[1].audio.track.sampleFrames).toBe(230400);
+    expect(JSON.stringify(report)).not.toContain(workspace.sourcePath);
+    const statsLink = page.getByRole("link", { name: "Download audio stats", exact: true });
+    const statsURL = new URL((await statsLink.getAttribute("href")) || "", app.url).toString();
+    const stats = await page.context().request.get(statsURL);
+    expect(stats.ok()).toBe(true);
+    expect(stats.headers()["content-type"]).toBe("text/plain");
+    expect(stats.headers()["content-disposition"]).toBe('attachment; filename="audio-stats.txt"');
+    expect(await stats.text()).toContain("Num samples");
+    await page.reload();
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(picture).toBeVisible();
+    await expect(waveform).toBeVisible();
+    await expect(spectrogram).toBeVisible();
+    expect((await page.context().request.get(statsURL)).ok()).toBe(true);
+    await page.getByRole("button", { name: "Input", exact: true }).click();
+    await page.getByRole("button", { name: "Close input", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Close input", exact: true })).toBeDisabled();
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(picture).toBeVisible();
+    await expect(waveform).toBeVisible();
+    await expect(spectrogram).toBeVisible();
+    await expect(page.getByText(/complete · Measured 5 \/ 5/)).toBeVisible();
+    const reopenedStats = await page
+      .context()
+      .request.get(new URL((await statsLink.getAttribute("href")) || "", app.url).toString());
+    expect(reopenedStats.ok()).toBe(true);
+    expect(await reopenedStats.text()).toBe(await stats.text());
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("metadata-and-audio mode skips picture checks and survives reload and input reopening", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ hdrAnalysis: "metadata_audio" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { baseURL: "/upbrr/" });
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    const mode = page.getByRole("combobox", { name: "Analysis mode", exact: true });
+    await expect(mode).toHaveValue("metadata_audio");
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    const waveform = page.getByRole("img", { name: "Video 1 Audio waveform plot", exact: true });
+    await expect(waveform).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByRole("img", { name: "Video 1 Audio spectrogram plot", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("checkbox", { name: "Include Video 1 Audio waveform in descriptions" }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("checkbox", { name: "Include Video 1 Audio spectrogram in descriptions" }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("img", { name: "Video 1 Measured picture brightness plot", exact: true }),
+    ).toHaveCount(0);
+    const link = page.getByRole("link", { name: "Download structural report", exact: true });
+    const response = await page
+      .context()
+      .request.get(new URL((await link.getAttribute("href")) || "", app.url).toString());
+    expect(response.ok()).toBe(true);
+    const report = await response.json();
+    expect(report.measurements).toHaveLength(1);
+    expect(report.measurements[0].result.mode).toBe("audio");
+    expect(report.measurements[0].audio.track.sampleFrames).toBe(230400);
+    const statistics = await page
+      .context()
+      .request.get(
+        new URL(
+          (await page
+            .getByRole("link", { name: "Download audio stats", exact: true })
+            .getAttribute("href")) || "",
+          app.url,
+        ).toString(),
+      );
+    expect(statistics.ok()).toBe(true);
+    expect(await statistics.text()).toBe(report.measurements[0].audio.stats);
+    expect(report.measurements[0].audio.stats).toContain("Pk lev dB");
+    expect(report.measurements[0].automatic).toBeUndefined();
+    await page.reload();
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(mode).toHaveValue("metadata_audio");
+    await expect(waveform).toBeVisible();
+    await expect(
+      page.getByRole("checkbox", { name: "Include Video 1 Audio waveform in descriptions" }),
+    ).toBeChecked();
+    await page.getByRole("button", { name: "Input", exact: true }).click();
+    await page.getByRole("button", { name: "Close input", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Close input", exact: true })).toBeDisabled();
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(mode).toHaveValue("metadata_audio");
+    await expect(waveform).toBeVisible();
+    await expect(
+      page.getByRole("checkbox", { name: "Include Video 1 Audio waveform in descriptions" }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("img", { name: "Video 1 Measured picture brightness plot", exact: true }),
+    ).toHaveCount(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -426,3 +631,85 @@ type AudioAnalysisAPICurrent = WorkflowV1Current &
       }>[];
     }>;
   }>;
+
+test("bounded HDR mode retains native evidence and restores explicit audio-off controls", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ hdrAnalysis: true });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace, { baseURL: "/upbrr/" });
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await page.getByLabel("Analysis mode").selectOption("boundary");
+    await expect(page.getByLabel("Analyze audio", { exact: true })).toBeChecked();
+    await expect(page.getByLabel("Active-area borders")).not.toBeChecked();
+    await page.getByLabel("Analyze all audio tracks (up to 64)").check();
+    await page.getByLabel("Analyze audio", { exact: true }).uncheck();
+    await page.getByLabel("Video decoder threads (0 uses the mode default)").fill("4");
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await expect(page.getByRole("img", { name: "Video 1 HDR10+ plot", exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    const link = page.getByRole("link", { name: "Download structural report", exact: true });
+    await expect(link).toBeVisible();
+    const href = await link.getAttribute("href");
+    const response = await page.request.get(new URL(href || "", app.url).toString());
+    expect(response.ok()).toBe(true);
+    const report = await response.json();
+    expect(report.profile).toBe("hdr-analysis-v3");
+    expect(report.decoded).toHaveLength(1);
+    expect(report.decoded[0].mode).toBe("boundary_sync");
+    expect(report.decoded[0].coverage).toBe("unknown");
+    await page.reload();
+    await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+    await expect(page.getByLabel("Analysis mode")).toHaveValue("boundary");
+    await expect(page.getByLabel("Analyze audio", { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel("Video decoder threads (0 uses the mode default)")).toHaveValue(
+      "4",
+    );
+    await page.getByLabel("Analyze audio", { exact: true }).check();
+    await expect(page.getByLabel("Analyze all audio tracks (up to 64)")).not.toBeChecked();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const mode of ["light", "dark"]) {
+        await page.evaluate((mode) => {
+          const next = JSON.stringify({ version: 1, theme: "minimal", mode, accents: {} });
+          localStorage.setItem("upbrr:appearance:v1", next);
+          dispatchEvent(
+            new StorageEvent("storage", {
+              key: "upbrr:appearance:v1",
+              newValue: next,
+              storageArea: localStorage,
+            }),
+          );
+        }, mode);
+        await expect
+          .poll(() =>
+            page.locator("html").evaluate((element) => getComputedStyle(element).colorScheme),
+          )
+          .toBe(mode);
+        const content = page.locator("main.content");
+        expect(
+          await content.evaluate((element) => element.scrollWidth - element.clientWidth),
+        ).toBeLessThanOrEqual(2);
+        const style = await page.addStyleTag({
+          content:
+            ".app-shell { overflow: visible !important; } .content { max-height: none !important; overflow-y: visible !important; }",
+        });
+        try {
+          await page.screenshot({
+            path: test.info().outputPath(`hdr-boundary-${width}-${mode}.png`),
+            fullPage: true,
+            animations: "disabled",
+          });
+        } finally {
+          await style.evaluate((element) => element.remove());
+        }
+      }
+    }
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});

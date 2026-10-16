@@ -33,6 +33,8 @@ Use **Settings → Description** to control shared description builders. Tracker
 
 Header and signature values are tracker markup, commonly BBCode. Preview them before submission; malformed or unsupported markup is not made portable automatically.
 
+Generated analysis uses separate **Audio Plots** and **HDR plots** sections. Audio generated through HDR analysis stays in **Audio Plots**. Analysis images do not consume ordinary screenshot slots or replace the screenshot block: the configured **Screenshot header** and applicable **Tonemapped header** still belong with ordinary screenshots. Picture-check thumbnails are selected on **HDR Analysis**; their tone mapping is for inspection and does not change the ordinary screenshot selection.
+
 Imported comparison blocks remain in the description rather than becoming ordinary screenshots. Review the destination-specific formatting on **Descriptions**. **Save group** retains the complete edited output without appending generated sections again; use **Reset group** to rebuild the group from its generated description.
 
 :::note Compatibility fields
