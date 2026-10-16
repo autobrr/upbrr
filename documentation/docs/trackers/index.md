@@ -94,6 +94,8 @@ Automatic title and year sources can differ by destination. A required title mus
 
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or TV season/episode segment. Missing or unknown resolution stays absent, and complete manual names remain unchanged.
 
+An **Encode** with **DVD**, **PAL DVD**, or **NTSC DVD** source normally displays `DVDRip` in its generated name while keeping the selected type, source, and TV episode details. Destination naming rules may use `PAL DVD`, `NTSC DVD`, or a system-qualified `DVDRip` instead. If a destination requires PAL or NTSC, select that source explicitly or provide a known DVD resolution (`480i`/`480p` for NTSC, `576i`/`576p` for PAL), then refresh metadata and review the name. An unknown DVD system is not guessed.
+
 Missing audio tracks and unidentified audio languages are separate facts. A tracker-specific no-audio label uses inspected evidence that audio is absent. Non-linguistic audio retains its codec and channels; an unknown language does not imply that audio is absent or non-linguistic.
 
 Categories, source/type mappings, descriptions, media selection, questionnaires and authentication requirements can vary. Review the displayed requirements and consult the tracker's current rules. A successful local preparation does not prove that a remote upload will be accepted.

@@ -794,7 +794,7 @@ func mergeGeneratedNameAvailability(
 		if source, ok := available.Component(component.Role); ok {
 			component.AvailableValue = source.Value
 		}
-		component.Manual = releaseNameRoleIsManual(component.Role, meta.ReleaseNameOverrides) || releaseNameRoleUsesManualFact(component.Role, meta, request)
+		component.Manual = generatedNameRoleIsManual(component.Role, meta, request)
 	}
 	alignAudioMarkerLayout(document, available)
 }
@@ -808,7 +808,7 @@ func ensureManualGeneratedNameComponents(document *api.ReleaseNameDocument, meta
 		api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation, api.NameRoleHybrid, api.NameRoleRepack, api.NameRoleRegion, api.NameRoleSource, api.NameRoleService, api.NameRoleResolution,
 		api.NameRoleDVDSystem, api.NameRoleVideoFormat, api.NameRoleDubbed, api.NameRoleDualAudio, api.NameRoleGroup,
 	} {
-		manual := releaseNameRoleIsManual(role, meta.ReleaseNameOverrides) || releaseNameRoleUsesManualFact(role, meta, request)
+		manual := generatedNameRoleIsManual(role, meta, request)
 		if _, exists := document.Component(role); exists || !manual {
 			continue
 		}
@@ -818,6 +818,23 @@ func ensureManualGeneratedNameComponents(document *api.ReleaseNameDocument, meta
 			Manual: true,
 		})
 	}
+}
+
+// generatedNameRoleIsManual keeps DVD-encode fact corrections separate from
+// exact presentation choices. Tracker defaults may format their source/type
+// labels and known resolution; explicit resolution clears remain protected.
+func generatedNameRoleIsManual(role api.ReleaseNameRole, meta *preparationstate.State, request api.ReleaseNameRequest) bool {
+	if strings.EqualFold(strings.TrimSpace(request.Type), "ENCODE") && sourceIn(request.Source, "DVD", "PAL DVD", "NTSC DVD") {
+		if role == api.NameRoleSource || role == api.NameRoleVideoFormat {
+			return false
+		}
+		if role == api.NameRoleResolution {
+			if resolution := strings.TrimSpace(request.Resolution); resolution != "" && !strings.EqualFold(resolution, "OTHER") {
+				return false
+			}
+		}
+	}
+	return releaseNameRoleIsManual(role, meta.ReleaseNameOverrides) || releaseNameRoleUsesManualFact(role, meta, request)
 }
 
 func releaseNameRoleUsesManualFact(

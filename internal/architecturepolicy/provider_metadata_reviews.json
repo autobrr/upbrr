@@ -24,8 +24,8 @@
     "sha256": "702004bf21596e48985b7bb79575a581c6206f7f5997691f51624e43e5e09b2e"
   },
   "internal/trackers/impl/azfamily/name.go:applyCinemaZNameDefaults": {
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together.",
-    "sha256": "3e005d96d63178d1ce4e2cd6b8580becd745ea69adfca303712bc8a1959ada09"
+    "reason": "DVD-encode naming review: current-provider title/year selection, source/identity checks, manual fact/component precedence and independent search names are preserved. Only policy versions and bypass of full-DVD formatting for finalized DVD-source ENCODE changed; callers and provider-value helpers were reviewed together.",
+    "sha256": "6f5176ac810b0f93144922fe6a2d83d9a1437b212124b006ad243f0174bb65df"
   },
   "internal/trackers/impl/azfamily/name.go:avistaZEnglishTitle": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -52,8 +52,8 @@
     "sha256": "07f744464332b59a4b1f666cdecdfe9ccc6e99143f051abb5316158cbb45c7cd"
   },
   "internal/trackers/impl/azfamily/name.go:releaseNamePolicy": {
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together.",
-    "sha256": "c754e9c4a12924ddc5e3c7e2262f532d80203a61b9b17f930a63fd53edbf75d1"
+    "reason": "DVD-encode naming review: current-provider title/year selection, source/identity checks, manual fact/component precedence and independent search names are preserved. Only policy versions and bypass of full-DVD formatting for finalized DVD-source ENCODE changed; callers and provider-value helpers were reviewed together.",
+    "sha256": "785942f157be014f364b48f1950763098300d76bdc6b12e5e3e37c15f6e01611"
   },
   "internal/trackers/impl/azfamily/name.go:resolveSearchName": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",

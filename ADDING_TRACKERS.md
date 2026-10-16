@@ -138,10 +138,13 @@ the exact prepared generation. Prepared naming facts store it in `api.NamingFact
 The versioned document is retained through prepared-state persistence and transport; it is not
 reconstructed by parsing `ReleaseName`.
 
-The canonical DVDRip layout includes a known resolution after the movie year or rendered TV
-season/episode segment, while omitting the DVD/PAL/NTSC source label. Reuse these components
-instead of inserting resolution into a rendered name. Exact-name and display-title policies
-retain their own contracts; an unknown resolution must not be inferred from the source label.
+The explicit `DVDRIP` layout includes a known resolution after the movie year or rendered TV
+season/episode segment, while omitting the DVD/PAL/NTSC source label. An `ENCODE` with exactly
+`DVD`, `PAL DVD`, or `NTSC DVD` source instead presents its Source component as `DVDRip` and
+retains the ENCODE layout, including TV episode titles. Its canonical Type and Source facts
+remain unchanged. Reuse these components instead of inserting tokens into a rendered name.
+Exact-name and display-title policies retain their own contracts; an unknown resolution must
+not be inferred from the source label.
 
 Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete supported role set is:
 
@@ -265,6 +268,12 @@ manual components unchanged and skips unavailable targets. `Mandatory` runs afte
 has absolute authority over the role/aspect pairs declared in `Authority`, including conflicting
 manual values or omissions. This is a tracker-owned policy declaration, not a user-configurable
 permission switch. Undeclared aspects remain protected.
+
+DVD-encode Type, Source, and known Resolution corrections select facts, not exact display
+labels. The generated-document producer leaves those derived roles available to optional site
+formatting; an explicitly cleared or `OTHER` resolution stays protected. This exception applies
+only to `ENCODE` with the three DVD sources above. It does not clear manual flags on supplied
+components or give defaults authority over complete manual names or component omissions.
 
 For example, put this optional AKA omission in the tracker's `name.go` (using the `config`,
 `trackers`, and `api` packages):

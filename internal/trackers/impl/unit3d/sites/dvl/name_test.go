@@ -130,7 +130,7 @@ func TestDVLStructuredReleaseNamePolicy(t *testing.T) {
 			want: "Uncut Shadows 2001 480p DVDRip DD 2.0 x264-GRP",
 		},
 		{
-			name: "DVD encode without resolution keeps canonical source and edition",
+			name: "DVD encode without resolution keeps canonical rip source and edition",
 			request: api.ReleaseNameRequest{
 				Category:    "MOVIE",
 				Type:        "ENCODE",
@@ -142,7 +142,7 @@ func TestDVLStructuredReleaseNamePolicy(t *testing.T) {
 				Audio:       "DD 2.0",
 				Tag:         "-GRP",
 			},
-			want: "Example Movie 2001 Uncut DVD DD 2.0 x264-GRP",
+			want: "Example Movie 2001 Uncut DVDRip DD 2.0 x264-GRP",
 		},
 		{
 			name: "DVD disc derives PAL using the DVD system role",
