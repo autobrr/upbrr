@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -230,12 +231,17 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 	}
 	if dt, ok := legacyTrackers["default_trackers"]; ok && dt != nil {
 		out.Trackers.DefaultTrackers = nil
+		seenDefaults := make(map[string]bool)
 		for _, trackerName := range coerceToStringSlice(dt) {
 			canonicalName := canonicalTrackerName(trackerName)
 			if !knownTrackers[canonicalName] {
 				warnings = append(warnings, "skipped unsupported default tracker: "+trackerName)
 				continue
 			}
+			if seenDefaults[canonicalName] {
+				continue
+			}
+			seenDefaults[canonicalName] = true
 			out.Trackers.DefaultTrackers = append(out.Trackers.DefaultTrackers, canonicalName)
 		}
 	}
@@ -250,7 +256,14 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		}
 	}
 
-	for trackerName, raw := range legacyTrackers {
+	importedTrackers := make(map[string]bool)
+	trackerNames := make([]string, 0, len(legacyTrackers))
+	for trackerName := range legacyTrackers {
+		trackerNames = append(trackerNames, trackerName)
+	}
+	sort.Strings(trackerNames)
+	for _, trackerName := range trackerNames {
+		raw := legacyTrackers[trackerName]
 		if strings.EqualFold(strings.TrimSpace(trackerName), "THR") {
 			warnings = append(warnings, "ignored removed tracker entry: "+trackerName)
 			continue
@@ -263,11 +276,9 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 			continue
 		}
 		canonicalName := canonicalTrackerName(trackerName)
-		if canonicalName != trackerName {
-			if _, direct := legacyTrackers[canonicalName]; direct {
-				warnings = append(warnings, "skipped aliased tracker overridden by canonical entry: "+trackerName)
-				continue
-			}
+		if importedTrackers[canonicalName] && knownTrackers[canonicalName] {
+			warnings = append(warnings, "skipped duplicate tracker entry for "+canonicalName+": "+trackerName)
+			continue
 		}
 		if !knownTrackers[canonicalName] {
 			outTracker := config.TrackerConfig{Unknown: make(map[string]any)}
@@ -287,6 +298,7 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 			continue
 		}
 
+		importedTrackers[canonicalName] = true
 		templateTracker, hasTemplate := template.Trackers.Trackers[canonicalName]
 		outTracker := out.Trackers.Trackers[canonicalName]
 		for key, value := range trackerValues {
@@ -308,8 +320,8 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 }
 
 func canonicalTrackerName(name string) string {
-	trimmed := strings.TrimSpace(name)
-	if alias, ok := trackerAliases[strings.ToUpper(trimmed)]; ok {
+	trimmed := strings.ToUpper(strings.TrimSpace(name))
+	if alias, ok := trackerAliases[trimmed]; ok {
 		return alias
 	}
 	return trimmed
