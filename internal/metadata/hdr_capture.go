@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 
 	"github.com/Audionut/go-hdr10-plus/extract"
-	bridge "github.com/Audionut/go-hdr10-plus/integration/bdinfo"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
@@ -24,7 +23,7 @@ import (
 )
 
 func capturePreparedHDR(ctx context.Context, resource *preparationstate.DiscResource, artifactDir, sourceFingerprint string) bdinfo.HDRCapture {
-	return func(outcome *bridge.Outcome) error {
+	return func(outcome *hdranalysis.NativeDiscOutcome) error {
 		preparationstate.ReleaseHDRCaptures(resource.HDRCaptures)
 		captures := make(map[string]preparationstate.HDRCaptureResource)
 		resource.HDRCaptures = captures
@@ -49,20 +48,32 @@ func capturePreparedHDR(ctx context.Context, resource *preparationstate.DiscReso
 func captureHDRPlaylist(
 	ctx context.Context,
 	discRoot, name, artifactDir, sourceFingerprint string,
-	outcome *bridge.Outcome,
+	outcome *hdranalysis.NativeDiscOutcome,
 ) (capture preparationstate.HDRCaptureResource, resultErr error) {
-	sidecar, captureErr := hdranalysis.DiscExtraction(outcome, name)
-	if captureErr != nil && !errors.Is(captureErr, extract.ErrNoMetadata) {
+	native, timeline, captureErr := outcome.TakePlaylist(name, 0)
+	if captureErr != nil {
 		return capture, fmt.Errorf("collect HDR capture: %w", captureErr)
+	}
+	defer native.Release()
+	if !native.ScanComplete {
+		cause := native.HDR10PlusError
+		if cause == nil {
+			cause = native.DolbyVisionError
+		}
+		return capture, fmt.Errorf("collect native HDR capture: %w", cause)
 	}
 	identity := hdranalysis.ExtractionIdentity{
 		SourceFingerprint: sourceFingerprint,
 		TargetID:          api.HDRTargetID(filepath.Clean(discRoot), name),
 		SelectionPolicy:   "primary_hevc_angle_zero",
+		ResolvedTrackID:   native.TrackID,
 	}
-	if sidecar.Extraction != nil {
-		identity.ResolvedTrackID = sidecar.Extraction.Frames[0].Stream.TrackID
+	evidence, err := native.Evidence(api.HDRAnalysisFormatsBoth, api.HDRSourceEvidence{})
+	if err != nil {
+		return capture, fmt.Errorf("convert native HDR capture: %w", err)
 	}
+	defer evidence.Release()
+	evidence.Timeline = timeline
 	parent := filepath.Join(artifactDir, "hdr-provisional")
 	artifactRoot, err := os.OpenRoot(artifactDir)
 	if err != nil {
@@ -78,10 +89,11 @@ func captureHDRPlaylist(
 	}
 	capture = preparationstate.HDRCaptureResource{
 		Directory:         directory,
-		Path:              filepath.Join(directory, "metadata.json"),
+		Path:              filepath.Join(directory, "hdr10plus.json"),
+		NativePath:        filepath.Join(directory, "metadata.json"),
 		SourceFingerprint: sourceFingerprint,
 		TrackID:           identity.ResolvedTrackID,
-		Absent:            errors.Is(captureErr, extract.ErrNoMetadata),
+		Absent:            errors.Is(native.HDR10PlusError, extract.ErrNoMetadata),
 	}
 	defer func() {
 		if resultErr != nil {
@@ -92,9 +104,28 @@ func captureHDRPlaylist(
 	if err != nil {
 		return capture, fmt.Errorf("own HDR capture: %w", err)
 	}
-	sidecar.Identity, sidecar.Absent = identity, capture.Absent
+	manifest, metadata, err := hdranalysis.PublishNativeEvidence(ctx, directory, identity, api.HDRAnalysisFormatsBoth, evidence)
+	if err != nil {
+		return capture, fmt.Errorf("publish native HDR capture: %w", err)
+	}
+	capture.NativeSize, capture.NativeSHA256 = metadata.Size, metadata.SHA256
+	if manifest.HDR10Plus != nil {
+		capture.Size, capture.SHA256 = manifest.HDR10Plus.Size, manifest.HDR10Plus.SHA256
+		return capture, nil
+	}
+	if !capture.Absent {
+		capture.Path = ""
+		failure, _ := api.AsHDRAnalysisFailure(hdranalysis.Classify(native.HDR10PlusError))
+		capture.Failure = &failure
+		return capture, nil
+	}
+	sidecar := hdranalysis.Sidecar{
+		Identity: identity,
+		Absent:   true,
+		Timeline: timeline,
+	}
 	if err := hdranalysis.PublishFile(ctx, capture.Path, func(out io.Writer) error { return hdranalysis.WriteSidecar(ctx, out, sidecar) }); err != nil {
-		return capture, fmt.Errorf("publish HDR capture: %w", err)
+		return capture, fmt.Errorf("publish HDR absence capture: %w", err)
 	}
 	file, err := os.Open(capture.Path)
 	if err != nil {

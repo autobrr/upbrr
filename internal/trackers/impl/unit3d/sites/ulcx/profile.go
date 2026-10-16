@@ -15,6 +15,7 @@ func Profile() unit3d.Profile {
 
 func profileWithTaxonomy(site unit3d.SiteProfile) unit3d.Profile {
 	site.ProjectionQuestionnaire = languageQuestionnaire
+	site.AllowSeasonZeroEpisodes = true
 	return unit3d.Profile{
 		NameProviders:     &unit3d.NameProviders{Title: api.IdentityProviderIMDB, MovieYear: api.IdentityProviderIMDB},
 		Name:              "ULCX",

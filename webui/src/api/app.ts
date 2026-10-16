@@ -40,6 +40,8 @@ import type {
   SaveReleaseWorkflowDescriptionOverrideRequest,
   SetReleaseWorkflowMediaSelectionRequest,
   SetReleaseWorkflowAudioAnalysisEnabledRequest,
+  SetReleaseWorkflowHDRAnalysisEnabledRequest,
+  SelectReleaseWorkflowHDRComparisonRequest,
   UploadReleaseWorkflowImagesRequest,
   WorkflowResourceRef,
 } from "./generated/release-workflow";
@@ -158,6 +160,13 @@ export const releaseWorkflowClient = {
     ),
   analyzeHDR: (command: AnalyzeReleaseWorkflowHDRRequest, signal?: AbortSignal) =>
     requestApp<ReleaseWorkflowCurrent>("AnalyzeReleaseWorkflowHDR", command, { signal }),
+  selectHDRComparison: (command: SelectReleaseWorkflowHDRComparisonRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("SelectReleaseWorkflowHDRComparison", command, { signal }),
+  setHDRAnalysisEnabled: (
+    command: SetReleaseWorkflowHDRAnalysisEnabledRequest,
+    signal?: AbortSignal,
+  ) =>
+    requestApp<ReleaseWorkflowCurrent>("SetReleaseWorkflowHDRAnalysisEnabled", command, { signal }),
   hdrAnalysisURL: (
     workflowID: string,
     analysisID: string,

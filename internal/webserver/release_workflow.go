@@ -407,7 +407,9 @@ func (b *Backend) openReleaseWorkflowHDRAnalysisArtifact(
 	if err != nil {
 		return releaseworkflow.MediaArtifactContent{}, classifyReleaseWorkflowError(err)
 	}
-	if content.Body == nil || content.ContentType != "image/png" {
+	if content.Body == nil || content.ContentType != "image/png" &&
+		(content.ContentType != "application/json" || content.Filename != "hdr-analysis.json") &&
+		(content.ContentType != "text/plain" || !api.HDRArtifactAudioStats.MatchesFilename(content.Filename)) {
 		if content.Body != nil {
 			_ = content.Body.Close()
 		}

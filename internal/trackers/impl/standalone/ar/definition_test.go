@@ -27,7 +27,7 @@ func prepareDryRun(ctx context.Context, input trackers.PreparationInput) (api.Tr
 func TestAudioAnalysisPrecedesScreenshots(t *testing.T) {
 	t.Parallel()
 	got := buildDescription(api.UploadSubject{ReleaseName: "Example.Release.2026"}, "", trackers.DescriptionAssets{
-		Description: "Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
+		Description: "Notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/shot.png", ImgURL: "https://images.example.invalid/shot-thumb.png"}},
 	})
 	if strings.Index(got, "Notes") >= strings.Index(got, "audio.png") || strings.Index(got, "audio.png") >= strings.Index(got, "shot-thumb.png") {

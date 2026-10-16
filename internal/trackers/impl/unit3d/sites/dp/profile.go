@@ -16,6 +16,6 @@ func Profile() unit3d.Profile {
 		ValidationPolicy:  validationPolicy(),
 		BannedGroups:      BannedGroups(),
 		ReleaseNamePolicy: namePolicy(),
-		Site:              unit3d.SiteProfile{ProjectionQuestionnaire: manualLanguageQuestionnaire},
+		Site:              unit3d.SiteProfile{AllowSeasonZeroEpisodes: true, ProjectionQuestionnaire: manualLanguageQuestionnaire},
 	}
 }

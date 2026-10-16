@@ -34,11 +34,15 @@ func TestWorkflowDescriptionExplicitSkipReusesCachedAnalysisFromProducer(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			analysis, paths, err := extractor.Build(t.Context(), release,
-				api.HDRAnalysisInstructions{Release: release, TargetIDs: []string{sidecar.Identity.TargetID}},
+			analysis, paths, err := extractor.Build(t.Context(), releaseworkflow.HDRPreparation{Release: release},
+				api.HDRAnalysisInstructions{
+					ProfileVersion: api.HDRAnalysisProfileVersion,
+					Release:        release,
+					TargetIDs:      []string{sidecar.Identity.TargetID},
+				},
 				"skip-plot", time.Now(), nil, nil,
 				map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{record.ID: record},
-				map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: retained}, nil)
+				map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: retained}, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -13,7 +13,7 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-dp-policy-v2", Check: checkLanguageRequirements}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-dp-policy-v3", Check: checkLanguageRequirements}
 }
 
 // checkLanguageRequirements preserves audio eligibility independently of naming.

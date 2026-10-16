@@ -28,9 +28,10 @@ func Profile() unit3d.Profile {
 			}},
 		},
 		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v6",
-			ResolveTypeID:    typeID,
+			AllowSeasonZeroEpisodes: true,
+			BuildName:               buildName,
+			BuildNameVersion:        "v6",
+			ResolveTypeID:           typeID,
 		},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "otw/duplicate/v2",

@@ -51,9 +51,10 @@ func TestHDRDescriptionRecorderUsesAuthorityAtAtomicSave(t *testing.T) {
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
 			Instructions: api.HDRAnalysisInstructions{
-				Release:    release,
-				TargetIDs:  []string{api.HDRTargetID("source", string(rune('a'+index)))},
-				PeakSource: peak,
+				ProfileVersion: api.HDRAnalysisProfileVersion,
+				Release:        release,
+				TargetIDs:      []string{api.HDRTargetID("source", string(rune('a'+index)))},
+				PeakSource:     peak,
 			},
 			IdempotencyKey: "analyze-" + string(peak),
 		})

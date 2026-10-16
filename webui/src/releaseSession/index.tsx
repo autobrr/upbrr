@@ -2445,6 +2445,8 @@ export function ReleaseSessionProvider({
         (workflowView.current?.workflow.revision ?? 0))
       ? latestWorkflowOperation
       : null;
+  const pendingHDRRequest = workflowView.current?.hdrPendingRequest || null;
+  const hdrRetryRequest = pendingHDRRequest || retainedHDRAnalysis;
   const hdrCommandError =
     hdrCommandFailure &&
     workflowView.current &&
@@ -2455,7 +2457,10 @@ export function ReleaseSessionProvider({
     hdrCommandError ||
     (hdrOperation?.failures || []).map((failure) => failure.failure.Message).join(" ") ||
     retainedHDRAnalysis?.targets
-      .map((target) => target.failure?.message)
+      .flatMap((target) => [
+        target.failure?.message,
+        ...(target.formats || []).map((format) => format.failure?.message),
+      ])
       .filter(Boolean)
       .join(" ") ||
     "";
@@ -2479,7 +2484,16 @@ export function ReleaseSessionProvider({
           release: { SourcePath: release.Source.SourcePath, Generation: release.Generation },
           targetIds: [...input.targetIDs],
           peakSource: input.peakSource,
-          profileVersion: "hdr-analysis-v1",
+          profileVersion:
+            input.profileVersion ||
+            (input.decoded?.boundarySync ||
+            input.decoded?.allAudioTracks ||
+            input.decoded?.videoDecoderThreads
+              ? "hdr-analysis-v3"
+              : "hdr-analysis-v2"),
+          formats: input.formats,
+          decoded: input.decoded,
+          decodedRetry: input.decodedRetry,
         };
         return activePorts.workflow.analyzeHDR(current, instructions, commandID, signal);
       },
@@ -3167,6 +3181,31 @@ export function ReleaseSessionProvider({
         releaseGeneration: Number(preparedRelease?.Generation || 0),
         targets: workflowView.current?.release?.display.hdrTargets || [],
         result: retainedHDRAnalysis,
+        pendingRequest: pendingHDRRequest,
+        comparison: workflowView.current?.workflow.hdrComparison || null,
+        selectionRecoveryNote: workflowView.current?.workflow.hdrImages?.recoveryNote,
+        includedArtifactIDs: workflowView.current?.workflow.hdrAnalysisEnabled
+          ? workflowView.current.workflow.hdrImages?.artifactIds ||
+            retainedHDRAnalysis?.targets.flatMap((target) =>
+              (target.artifacts || [])
+                .filter(
+                  (artifact) =>
+                    artifact.kind === "hdr10plus_plot" ||
+                    artifact.kind === "dolby_vision_l1_plot" ||
+                    ((artifact.kind === "audio_waveform" ||
+                      artifact.kind === "audio_spectrogram") &&
+                      target.decoded?.some(
+                        (decoded) =>
+                          decoded.mode === "audio" &&
+                          decoded.measured > 0 &&
+                          (decoded.state === "complete" || decoded.state === "inconclusive") &&
+                          decoded.artifacts?.includes(artifact.id),
+                      )),
+                )
+                .map((artifact) => artifact.id),
+            ) ||
+            []
+          : [],
         phase: hdrOperation?.phase || "",
         message: hdrOperation?.message || "",
         progress: hdrOperation?.progress || 0,
@@ -3174,11 +3213,34 @@ export function ReleaseSessionProvider({
         error: hdrError,
       },
       generate: runHDRAnalysis,
-      retry: () =>
-        retainedHDRAnalysis
+      selectComparison: (sourcePath) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.selectHDRComparison(current, sourcePath, commandID, signal),
+        ),
+      retryDecoded: (modes) =>
+        !pendingHDRRequest && retainedHDRAnalysis?.decoded
           ? runHDRAnalysis({
               targetIDs: retainedHDRAnalysis.targetIds,
               peakSource: retainedHDRAnalysis.peakSource,
+              formats: retainedHDRAnalysis.formats,
+              profileVersion: retainedHDRAnalysis.profileVersion,
+              decoded: retainedHDRAnalysis.decoded,
+              decodedRetry: { analysisAttemptId: retainedHDRAnalysis.attemptId, modes: [...modes] },
+            })
+          : Promise.resolve(false),
+      setIncludedArtifacts: (artifactIDs) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.setHDRAnalysisEnabled(current, artifactIDs, commandID, signal),
+        ),
+      retry: () =>
+        hdrRetryRequest
+          ? runHDRAnalysis({
+              targetIDs: hdrRetryRequest.targetIds,
+              peakSource: hdrRetryRequest.peakSource,
+              formats: hdrRetryRequest.formats || undefined,
+              profileVersion: hdrRetryRequest.profileVersion,
+              decoded: hdrRetryRequest.decoded || undefined,
+              decodedRetry: pendingHDRRequest?.decodedRetry || undefined,
             })
           : Promise.resolve(false),
       cancel: cancelHDRAnalysis,

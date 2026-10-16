@@ -252,7 +252,7 @@ func mediaTrackResourceID(meta preparationstate.State) string {
 	if resource == "" {
 		resource = strings.TrimSpace(meta.SourcePath)
 	}
-	return "media_" + shortMediaTrackHash(resource)
+	return mediafacts.TrackResourceID(resource)
 }
 
 func mediaTrackManifestFingerprint(meta preparationstate.State, doc mediaInfoDoc) (string, error) {

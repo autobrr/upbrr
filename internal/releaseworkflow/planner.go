@@ -978,7 +978,7 @@ func planContinuationCommandWithReadiness(
 				IdempotencyKey:   key("analyze-hdr"),
 			}, "analyze-hdr"
 		}
-		if current.HDRAnalysis.Status != api.StageStatusCompleted || !current.Workflow.HDRAnalysisEnabled {
+		if !requestedHDRUsable(current.HDRAnalysis) || !current.Workflow.HDRAnalysisEnabled {
 			return nil, "hdr-analysis-failed"
 		}
 	}
@@ -1305,7 +1305,7 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
 	if request.Intent.HDRAnalysis != nil && workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) {
 		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
-		if err != nil || !requestedHDRMatches(current, instructions) || current.HDRAnalysis.Status != api.StageStatusCompleted ||
+		if err != nil || !requestedHDRMatches(current, instructions) || !requestedHDRUsable(current.HDRAnalysis) ||
 			!current.Workflow.HDRAnalysisEnabled {
 			return false
 		}

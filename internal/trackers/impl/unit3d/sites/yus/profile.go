@@ -15,7 +15,8 @@ func Profile() unit3d.Profile {
 		ReleaseNamePolicy: namePolicy(),
 		ValidationPolicy:  validationPolicy(),
 		Site: unit3d.SiteProfile{
-			ResolveTypeID: typeID,
+			AllowSeasonZeroEpisodes: true,
+			ResolveTypeID:           typeID,
 		},
 	}
 }

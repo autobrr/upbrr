@@ -46,11 +46,37 @@ func renderBBCode(value string) string {
 	return replaceHTMLTagPlaceholders(rendered, htmlLiteralBlocks)
 }
 
-// SplitTrailingSourceAudioSpoiler separates generated audio markup so
+var analysisSpoilerTagPattern = regexp.MustCompile(`(?i)\[(?:spoiler(?:\s*=\s*[^\]]*)?|/spoiler)\]`)
+
+// SplitTrailingSourceAudioSpoiler separates complete top-level audio and HDR markup so
 // description builders can place it before their screenshot sections.
 func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
+	value, literals := extractLiteralBlocks(strings.TrimSpace(value))
+	value, htmlLiterals := extractHTMLLiteralBlocks(value)
+	restore := func(part string) string {
+		part = replaceHTMLTagPlaceholders(part, htmlLiterals)
+		for _, block := range literals {
+			part = strings.ReplaceAll(part, block.token, block.raw)
+		}
+		return part
+	}
 	trimmed := strings.TrimSpace(value)
 	ranges := comparison.BlockRanges(trimmed)
+	ends := make(map[int]int)
+	depth, opening := 0, 0
+	for _, tag := range analysisSpoilerTagPattern.FindAllStringIndex(trimmed, -1) {
+		if trimmed[tag[0]+1] != '/' {
+			if depth == 0 {
+				opening = tag[0]
+			}
+			depth++
+		} else if depth > 0 {
+			depth--
+			if depth == 0 {
+				ends[opening] = tag[1]
+			}
+		}
+	}
 	start, end := len(trimmed), len(trimmed)
 	for end > 0 {
 		prefix := strings.TrimSpace(trimmed[:end])
@@ -58,10 +84,11 @@ func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 			break
 		}
 		index := strings.LastIndex(prefix, "[spoiler=")
-		if index < 0 || index > 0 && prefix[index-1] != '\n' {
+		if index < 0 || ends[index] != len(prefix) || index > 0 && prefix[index-1] != '\n' {
 			break
 		}
-		if !strings.HasPrefix(prefix[index:], "[spoiler=source_audio]") && !strings.HasPrefix(prefix[index:], "[spoiler=source_hdr]") {
+		if !strings.HasPrefix(prefix[index:], "[spoiler=source_audio]") && !strings.HasPrefix(prefix[index:], "[spoiler=source_hdr]") &&
+			!strings.HasPrefix(prefix[index:], "[spoiler=Audio Plots]") && !strings.HasPrefix(prefix[index:], "[spoiler=HDR plots]") {
 			break
 		}
 		insideComparison := false
@@ -77,9 +104,9 @@ func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 		start, end = index, index
 	}
 	if start == len(trimmed) {
-		return trimmed, ""
+		return restore(trimmed), ""
 	}
-	return strings.TrimSpace(trimmed[:start]), strings.TrimSpace(trimmed[start:])
+	return restore(strings.TrimSpace(trimmed[:start])), restore(strings.TrimSpace(trimmed[start:]))
 }
 
 func compileImg(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
@@ -405,7 +432,15 @@ func compileSpoiler(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	out.Name = "details"
 	summary := bbcode.NewHTMLTag("")
 	summary.Name = "summary"
-	label := node.GetOpeningTag().Value
+	opening := node.GetOpeningTag()
+	label := opening.Value
+	// Unquoted spoiler titles may contain spaces; the lexer treats later words as arguments.
+	if _, value, ok := strings.Cut(opening.Raw, "="); ok {
+		value = strings.TrimSpace(value)
+		if !strings.HasPrefix(value, "\"") && !strings.HasPrefix(value, "'") {
+			label = strings.TrimSpace(strings.TrimSuffix(value, "]"))
+		}
+	}
 	if label == "" {
 		label = "Spoiler"
 	}

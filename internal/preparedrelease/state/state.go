@@ -68,6 +68,9 @@ type DiscResource struct {
 
 // HDRCaptureResource is preparation-owned provisional metadata awaiting exact-generation adoption.
 type HDRCaptureResource struct {
+	NativePath        string
+	NativeSize        int64
+	NativeSHA256      string
 	Failure           *api.HDRAnalysisFailure
 	Lease             *HDRCaptureLease `json:"-"`
 	Directory         string
@@ -162,6 +165,7 @@ type State struct {
 	SourceSize              int64
 	MediaInfoJSONPath       string
 	HDRFileEligibility      map[string]bool
+	HDRFileEvidence         map[string]api.HDRSourceEvidence
 	MediaInfoTextPath       string
 	DVDIFOPath              string
 	DVDVOBPath              string
@@ -225,6 +229,7 @@ type State struct {
 	ReleaseNameOverrides                 api.ReleaseNameOverrides
 	SeasonInt                            int
 	EpisodeInt                           int
+	MultipleEpisodes                     bool
 	SeasonStr                            string
 	EpisodeStr                           string
 	TVDBAiredDate                        string
@@ -315,11 +320,16 @@ func (s State) CanonicalSeasonEpisode() (int, int) {
 	return s.SeasonInt, s.EpisodeInt
 }
 
+// HasExplicitSeasonZero distinguishes finalized specials from an unknown season.
+func (s State) HasExplicitSeasonZero() bool {
+	return s.SeasonInt == 0 && s.SeasonStr == "S00"
+}
+
 // SeasonEpisodeWithParsedFallback returns canonical values with independent
 // parsed-name fallback for classification and evidence lookup only.
 func (s State) SeasonEpisodeWithParsedFallback() (int, int) {
 	season, episode := s.CanonicalSeasonEpisode()
-	if season <= 0 {
+	if season <= 0 && !s.HasExplicitSeasonZero() {
 		season = s.Release.Season
 	}
 	if episode <= 0 {

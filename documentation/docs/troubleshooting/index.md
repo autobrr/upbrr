@@ -72,6 +72,21 @@ Sources with more than eight channels per selected track are unsupported. Malfor
 
 FFmpeg streams decoded float PCM directly to upbrr; no full decoded-audio file is saved. Selected tracks needing the same image types normally share one pass over the source at their native sample rate and channel layout, without normalization, resampling, or downmixing. Missing or inaccurate duration metadata can require another decode for exact spectrogram timing. If the audio changes between passes, upbrr rejects the result; re-prepare Input before trying again.
 
+## HDR analysis is partial or inconclusive
+
+Review the native-format outcomes separately from picture checks and audio tracks. A successful HDR10+ plot does not establish Dolby Vision availability, and completed native metadata does not prove that a picture check ran. **Require both formats** needs both; use automatic discovery when you want whichever native formats are present.
+
+- **Unsupported picture check:** verify FFmpeg availability and the reported colour, geometry, or timing requirement. Native metadata can still be usable; select metadata-only mode if that is the evidence you need.
+- **Inconclusive scene or border check:** inspect confidence, measured candidates, missing coverage, and the reported reason. Bounded and sampled checks can miss short events; an inconclusive result is not a pass or proof that the media is defective.
+- **Grayscale scene thumbnails:** colour previews can fall back to grayscale when unavailable. Detection uses luminance independently; consult the numeric result. SDR preview colours are not HDR brightness measurements.
+- **Audio stopped near the end:** decoding, rendering, and artifact publication are separate phases. Read the terminal result instead of treating a progress percentage as completion. A failure after decoding can leave usable retained measurements or images.
+- **Partial attempt:** preview successful artifacts and retry compatible rendering. A new measurement pass must explicitly select unsuccessful modes from the current attempt. Do not use old artifact or attempt IDs after preparing a different generation.
+- **Source changed or retained metadata is missing:** prepare Input again or follow the reported recovery requirement. Retrying decoded work does not grant a new native scan.
+
+If descriptions omit expected images, verify the selections on **HDR Analysis**. Native plots and selected audio are default assets, but picture-check images require selection. HDR-produced audio belongs under **Audio Plots**; video evidence belongs under **HDR plots**. Saved final description edits remain authoritative: inspect or reset the edited group when you want a regenerated version.
+
+See [HDR analysis](../workflow/hdr-analysis.md) for mode selection, borders, reference alignment, and retention.
+
 ## A Blu-ray scan appears stalled
 
 Enable `debug` logging to see BDInfo progress for full-disc and selected-playlist scans. In the CLI, use `--log-level debug`; in the Web UI, set the runtime level on [Logging](../web-ui/logging.md). The `--debug` upload option controls workflow behavior and is separate from log verbosity.

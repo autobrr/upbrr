@@ -276,10 +276,14 @@ func buildUploadFields(
 	if isHDBTVCategory(meta) {
 		season := meta.SeasonInt
 		episode := meta.EpisodeInt
-		if season <= 0 {
+		// Missing season metadata must not be treated as an explicit S00 special.
+		if season < 0 || season == 0 && meta.SeasonStr != "S00" {
 			season = 1
 		}
-		if episode <= 0 {
+		// HDB identifies season packs with episode zero, regardless of episode metadata.
+		if meta.TVPack {
+			episode = 0
+		} else if episode <= 0 {
 			episode = 1
 		}
 		fields["tvdb_season"] = strconv.Itoa(season)

@@ -19,16 +19,20 @@ import (
 )
 
 var (
-	seasonEpisodePattern   = regexp.MustCompile(`(?i)\bS(\d{2}|\d{4})[ ._-]*E(\d{1,3}(?:[ ._-]*E\d{1,3})*)\b`)
-	episodeTokenPattern    = regexp.MustCompile(`(?i)E(\d{1,3})`)
-	multiEpisodePattern    = regexp.MustCompile(`(?i)E\d{1,3}\s*[-+&]\s*(?:E)?\d{1,3}`)
-	seasonOnlyPattern      = regexp.MustCompile(`(?i)\bS(\d{2}|\d{4})\b`)
-	seasonWordPattern      = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d{2}|\d{4})\b`)
-	episodeOnlyPattern     = regexp.MustCompile(`(?i)\bE(\d{2,3})\b`)
-	dailyPattern           = regexp.MustCompile(`\b(19\d{2}|20\d{2})[.-](\d{2})[.-](\d{2})\b`)
-	animeResolutionPattern = regexp.MustCompile(`(?i)(?:\s-\s)?(\d{1,4})(?:v\d+)?\s*\((?:\d+[pi])\)`)
-	animeEpisodePattern    = regexp.MustCompile(`(?i)\b(?:ep|episode)\s*([0-9]{1,4})\b`)
-	animeGenericPattern    = regexp.MustCompile(`(?:^|[\s._-])(\d{1,4})(?:$|[\s._-])`)
+	seasonEpisodePattern           = regexp.MustCompile(`(?i)\bS(\d{2}|\d{4})[ ._-]*E(\d{1,3}(?:v\d+)?(?:[ ._-]*E\d{1,3}(?:v\d+)?)*)\b`)
+	episodeTokenPattern            = regexp.MustCompile(`(?i)E(\d{1,3})`)
+	multiEpisodePattern            = regexp.MustCompile(`(?i)E\d{1,3}(?:v\d+)?\s*[-+&]\s*(?:E)?\d{1,3}`)
+	multipleEpisodeEvidencePattern = regexp.MustCompile(
+		`(?i)(?:\b|_)(?:S\d+[ ._-]*)?E\d+(?:v\d+)?((?:[ ._-]*(?:S\d+[ ._-]*)?E\d+(?:v\d+)?|\s*[-+&]\s*(?:(?:S\d+[ ._-]*)?E)?\d+(?:v\d+)?(?:[.-]\d{2}[.-]\d{2})?)+)(?:\b|_)`,
+	)
+	sourceEpisodeEvidencePattern = regexp.MustCompile(`(?i)(?:\b|_)(?:S(\d+)[ ._-]*)?E(\d+)(?:v\d+)?(?:\b|_)`)
+	seasonOnlyPattern            = regexp.MustCompile(`(?i)\bS(\d{2}|\d{4})\b`)
+	seasonWordPattern            = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d{2}|\d{4})\b`)
+	episodeOnlyPattern           = regexp.MustCompile(`(?i)\bE(\d{2,3})(?:v\d+)?\b`)
+	dailyPattern                 = regexp.MustCompile(`\b(19\d{2}|20\d{2})[.-](\d{2})[.-](\d{2})\b`)
+	animeResolutionPattern       = regexp.MustCompile(`(?i)(?:\s-\s)?(\d{1,4})(?:v\d+)?\s*\((?:\d+[pi])\)`)
+	animeEpisodePattern          = regexp.MustCompile(`(?i)\b(?:ep|episode)\s*([0-9]{1,4})\b`)
+	animeGenericPattern          = regexp.MustCompile(`(?:^|[\s._-])(\d{1,4})(?:$|[\s._-])`)
 )
 
 var videoExtensions = map[string]struct{}{
@@ -47,14 +51,18 @@ var videoExtensions = map[string]struct{}{
 
 // Result contains normalized episodic signals. DailyDate uses YYYY-MM-DD;
 // MultiEpisode includes the first episode; AbsoluteEpisode is retained even
-// when it also supplies Episode.
+// when it also supplies Episode. MultipleEpisodes also retains ranges and
+// contrary source-member coordinates that are not represented by MultiEpisode.
 type Result struct {
-	Season          int
-	Episode         int
-	TVPack          bool
-	DailyDate       string
-	AbsoluteEpisode int
-	MultiEpisode    []int
+	Season int
+	// SeasonKnown distinguishes an explicit S00 token from missing season evidence.
+	SeasonKnown      bool
+	Episode          int
+	MultipleEpisodes bool
+	TVPack           bool
+	DailyDate        string
+	AbsoluteEpisode  int
+	MultiEpisode     []int
 }
 
 // Extract parses the source basename before the selected video basename, then
@@ -73,29 +81,33 @@ func Extract(path string, meta preparationstate.State) Result {
 
 	result := Result{}
 	seasonOnly := false
+	explicitSpecialEpisode := false
 
 	for _, candidate := range candidates {
 		if result.DailyDate == "" {
 			result.DailyDate = parseDailyDate(candidate)
 		}
 
-		if result.Season == 0 && result.Episode == 0 {
+		if !result.SeasonKnown && result.Season == 0 && result.Episode == 0 {
 			if season, episode, multi, ok := parseSeasonEpisode(candidate); ok {
 				result.Season = season
+				result.SeasonKnown = true
 				result.Episode = episode
+				explicitSpecialEpisode = season == 0
 				if len(multi) > 0 {
 					result.MultiEpisode = append(result.MultiEpisode[:0], multi...)
 				}
 			}
 		}
 
-		if result.Season == 0 {
+		if !result.SeasonKnown && result.Season == 0 {
 			if season, ok := parseSeasonOnly(candidate); ok {
 				result.Season = season
+				result.SeasonKnown = true
 				seasonOnly = true
 			}
 		}
-		if result.Episode == 0 && result.Season > 0 {
+		if result.Episode == 0 && (result.Season > 0 || result.SeasonKnown) && !explicitSpecialEpisode {
 			if episode, ok := parseEpisodeOnly(candidate); ok {
 				result.Episode = episode
 			}
@@ -106,17 +118,18 @@ func Extract(path string, meta preparationstate.State) Result {
 		}
 	}
 
-	if result.Season == 0 && meta.Release.Season > 0 {
+	if !result.SeasonKnown && result.Season == 0 && meta.Release.Season > 0 {
 		result.Season = meta.Release.Season
 	}
-	if result.Episode == 0 && meta.Release.Episode > 0 {
+	if result.Episode == 0 && meta.Release.Episode > 0 && !explicitSpecialEpisode {
 		result.Episode = meta.Release.Episode
 	}
 
-	// Keep the parsed absolute value available for anime remapping later.
-	if result.AbsoluteEpisode > 0 && result.Episode == 0 {
+	// Retain absolute evidence without repairing an explicitly invalid S00E00.
+	if result.AbsoluteEpisode > 0 && result.Episode == 0 && !explicitSpecialEpisode {
 		result.Episode = result.AbsoluteEpisode
 	}
+	result.MultipleEpisodes = multipleEpisodeEvidence(candidates, meta.FileList, result)
 
 	if (seasonOnly || multipleVideos) && !primaryHasSingleEpisode {
 		result.TVPack = true
@@ -129,8 +142,9 @@ func Extract(path string, meta preparationstate.State) Result {
 
 // ParseSeasonInstruction parses one explicit caller-supplied season token: a
 // bare or S-prefixed number with exactly two or four digits ("05", "S05",
-// "2026", "S2026"). An empty value means an explicit clear and returns zero. Combined,
-// ranged, zero, overflowing, or otherwise malformed values are rejected with a
+// "2026", "S2026"). "00"/"S00" identifies specials; an empty value explicitly
+// clears the season. Both return zero, so callers must preserve token presence. Combined,
+// ranged, overflowing, or otherwise malformed values are rejected with a
 // typed invalid-input error.
 func ParseSeasonInstruction(value string) (int, error) {
 	return parseInstructionToken(value, "S", 4, "season")
@@ -163,7 +177,7 @@ func parseInstructionToken(value string, prefix string, maxDigits int, label str
 		}
 	}
 	number, err := strconv.Atoi(digits)
-	if err != nil || number <= 0 {
+	if err != nil || number < 0 || number == 0 && prefix != "S" {
 		return 0, instructionTokenError(label, value, prefix)
 	}
 	return number, nil
@@ -171,7 +185,7 @@ func parseInstructionToken(value string, prefix string, maxDigits int, label str
 
 func instructionTokenError(label string, value string, prefix string) error {
 	return fmt.Errorf(
-		"%s instruction %q: expected a single positive token such as %q or %q: %w",
+		"%s instruction %q: expected a single valid token such as %q or %q: %w",
 		label,
 		value,
 		"05",
@@ -229,9 +243,6 @@ func parseSeasonEpisode(value string) (int, int, []int, bool) {
 		return 0, 0, nil, false
 	}
 	season := parseInt(match[1])
-	if season == 0 {
-		return 0, 0, nil, false
-	}
 	episodes := make([]int, 0, 4)
 	for _, episodeMatch := range episodeTokenPattern.FindAllStringSubmatch(match[0], -1) {
 		if len(episodeMatch) < 2 {
@@ -253,14 +264,10 @@ func parseSeasonEpisode(value string) (int, int, []int, bool) {
 
 func parseSeasonOnly(value string) (int, bool) {
 	if match := seasonOnlyPattern.FindStringSubmatch(value); len(match) > 1 {
-		if season := parseInt(match[1]); season > 0 {
-			return season, true
-		}
+		return parseInt(match[1]), true
 	}
 	if match := seasonWordPattern.FindStringSubmatch(value); len(match) > 1 {
-		if season := parseInt(match[1]); season > 0 {
-			return season, true
-		}
+		return parseInt(match[1]), true
 	}
 	return 0, false
 }
@@ -279,11 +286,65 @@ func hasExplicitSingleEpisodeToken(value string) bool {
 	if trimmed == "" || multiEpisodePattern.MatchString(trimmed) {
 		return false
 	}
-	if season, episode, multi, ok := parseSeasonEpisode(trimmed); ok && season > 0 && episode > 0 {
+	if _, episode, multi, ok := parseSeasonEpisode(trimmed); ok && episode > 0 {
 		return len(multi) == 0
 	}
 	_, ok := parseEpisodeOnly(trimmed)
 	return ok
+}
+
+// multipleEpisodeEvidence retains contrary source membership even when the
+// primary folder names one episode. Unknown filenames do not establish a pack.
+func multipleEpisodeEvidence(candidates, files []string, result Result) bool {
+	if len(result.MultiEpisode) > 1 {
+		return true
+	}
+	for group, names := range [][]string{candidates, files} {
+		knownSeason := strings.TrimLeft(strconv.Itoa(result.Season), "0")
+		knownEpisode := strconv.Itoa(result.Episode)
+		episodeKnown := result.Episode > 0
+		for _, name := range names {
+			base := filepath.Base(name)
+			if group == 1 {
+				if _, video := videoExtensions[strings.ToLower(filepath.Ext(base))]; !video {
+					continue
+				}
+			}
+			for _, match := range multipleEpisodeEvidencePattern.FindAllStringSubmatch(base, -1) {
+				// Only a complete hyphen-prefixed date is an annotation. A date
+				// after another member cannot erase that member's evidence.
+				suffix := strings.TrimSpace(match[1])
+				if strings.HasPrefix(suffix, "-") {
+					date := strings.ReplaceAll(strings.TrimSpace(suffix[1:]), ".", "-")
+					if date == parseDailyDate(date) {
+						continue
+					}
+				}
+				return true
+			}
+			if group == 0 && result.Episode <= 0 {
+				// A provisional folder label does not contradict one selected
+				// media file; members within each source name still must agree.
+				knownSeason = strings.TrimLeft(strconv.Itoa(result.Season), "0")
+				episodeKnown = false
+			}
+			// Unsupported widths still retain contrary membership; they do not
+			// become canonical coordinates or truncate to a valid episode prefix.
+			for _, match := range sourceEpisodeEvidencePattern.FindAllStringSubmatch(base, -1) {
+				season := knownSeason
+				if match[1] != "" {
+					season = strings.TrimLeft(match[1], "0")
+				}
+				episode := strings.TrimLeft(match[2], "0")
+				if !episodeKnown {
+					knownSeason, knownEpisode, episodeKnown = season, episode, true
+				} else if season != knownSeason || episode != knownEpisode {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func parseDailyDate(value string) string {

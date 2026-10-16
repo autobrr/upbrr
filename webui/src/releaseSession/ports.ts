@@ -54,6 +54,20 @@ export type ReleaseWorkflowPorts = Readonly<{
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
+  /** Registers a backend-local source B against the current prepared generation. */
+  selectHDRComparison(
+    current: ReleaseWorkflowCurrent,
+    sourcePath: string,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  /** Saves explicit description-image IDs; an empty selection disables inclusion. */
+  setHDRAnalysisEnabled(
+    current: ReleaseWorkflowCurrent,
+    artifactIDs: readonly string[],
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
   /** Addresses one artifact by its exact retained analysis revision. */
   hdrAnalysisURL(
     current: ReleaseWorkflowCurrent,
