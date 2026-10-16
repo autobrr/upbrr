@@ -56,13 +56,22 @@ type ActiveInputRecord struct {
 	RequestFingerprint WorkflowFingerprint
 }
 
+// ActiveInputRetention binds retained workflow authority to the exact canonical
+// generation and accepted corrections that must still be current at finalization.
+type ActiveInputRetention struct {
+	Release            ReleaseRef
+	CorrectionRevision uint64
+}
+
 // ActiveInputRepository serializes the configured database's sole input slot.
 // Reads do not acquire or renew a lease. Callers enforce owner isolation before projection.
 type ActiveInputRepository interface {
 	LoadActiveInput(context.Context) (ActiveInputRecord, error)
 	CompareAndSwapActiveInput(context.Context, ActiveInputRecord, ActiveInputRecord, time.Time) error
 	CloseIdleActiveInput(context.Context, ActiveInputRecord, time.Time) error
-	FinalizeActiveInput(context.Context, ActiveInputRecord, ActiveInputRecord, InputRecord, *ReleaseWorkflowStateRecord, time.Time) error
+	// FinalizeActiveInput atomically publishes the verified input, workflow and slot.
+	// Non-nil retention requires the exact generation and correction revision for the canonical input path.
+	FinalizeActiveInput(context.Context, ActiveInputRecord, ActiveInputRecord, InputRecord, *ReleaseWorkflowStateRecord, time.Time, *ActiveInputRetention) error
 	RenewActiveInput(context.Context, string, uint64, time.Time, time.Time) error
 	RelinquishActiveInput(context.Context, string, uint64, time.Time) error
 	LoadInputRecord(context.Context, string) (InputRecord, error)

@@ -3016,7 +3016,6 @@ export function ReleaseSessionProvider({
           duplicateOperation?.total ||
           workflowView.current?.projections?.projections.length ||
           state.selectedTrackers.length,
-        ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
         releaseNameOverrides: state.releaseNameOverrides,
         questionnaires: questionnaireSnapshotCurrent ? questionnaires : [],
@@ -3154,7 +3153,6 @@ export function ReleaseSessionProvider({
           hasReviewableEvidence &&
           ["pending", "accepted", "ignored"].includes(result.decision);
         if (!canOverride) return;
-        dispatch({ type: "dupe_ignore_changed", tracker: normalizedTracker, ignored });
         void runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
@@ -3495,7 +3493,6 @@ export function ReleaseSessionProvider({
         revision: workflowView.current?.workflow.revision ?? 0,
         selectedTrackers: state.selectedTrackers,
         projections: workflowView.current?.projections || null,
-        ignoredDupesFor: state.ignoredDupesFor,
         questionnaireDirty,
         workflowBusy: Boolean(controllers.current.workflow),
         options: uploadOptions,

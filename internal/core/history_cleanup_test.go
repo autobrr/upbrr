@@ -73,7 +73,7 @@ func (f historyActiveInputRepoFake) CloseIdleActiveInput(context.Context, api.Ac
 }
 
 func (f historyActiveInputRepoFake) FinalizeActiveInput(
-	context.Context, api.ActiveInputRecord, api.ActiveInputRecord, api.InputRecord, *api.ReleaseWorkflowStateRecord, time.Time,
+	context.Context, api.ActiveInputRecord, api.ActiveInputRecord, api.InputRecord, *api.ReleaseWorkflowStateRecord, time.Time, *api.ActiveInputRetention,
 ) error {
 	return internalerrors.ErrNotImplemented
 }
@@ -866,7 +866,7 @@ func activateHistoryInput(t *testing.T, repo *db.SQLiteRepository, sourcePath st
 	active.State, active.Revision = api.ActiveInputActive, opening.Revision+1
 	active.InputID, active.SourceVersion, active.WorkflowID = input.ID, input.SourceVersion, workflow.WorkflowID
 	active.ReservationID, active.RequestedPath = "", ""
-	if err := repo.FinalizeActiveInput(t.Context(), opening, active, input, nil, now); err != nil {
+	if err := repo.FinalizeActiveInput(t.Context(), opening, active, input, nil, now, nil); err != nil {
 		t.Fatalf("activate input: %v", err)
 	}
 }

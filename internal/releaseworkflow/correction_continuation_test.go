@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
@@ -89,7 +90,10 @@ func TestContinuationRefreshesCorrectionsChangedByAnotherWorkflow(t *testing.T) 
 				WorkflowID:       second.Workflow.ID,
 				ExpectedRevision: second.Workflow.Revision,
 				SourcePath:       input.SourcePath,
-				CorrectionPatch:  &api.ReleaseCorrectionPatch{ExpectedRevision: new(initialRevision), Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{Title: new("Shared corrected title")}}},
+				CorrectionPatch: &api.ReleaseCorrectionPatch{
+					ExpectedRevision: new(initialRevision),
+					Values:           api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{Title: new("Shared corrected title")}},
+				},
 			})
 			request := api.ContinueReleaseWorkflowRequest{
 				Authority:      &api.WorkflowAuthority{WorkflowID: first.Workflow.ID, ExpectedRevision: first.Workflow.Revision},
@@ -104,12 +108,19 @@ func TestContinuationRefreshesCorrectionsChangedByAnotherWorkflow(t *testing.T) 
 			if updated.Operation == nil {
 				t.Fatal("changed source corrections reused old preparation")
 			}
-			waitForWorkflowOperation(t, module, updated.Workflow.ID, updated.Operation.ID, func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) })
+			waitForWorkflowOperation(
+				t,
+				module,
+				updated.Workflow.ID,
+				updated.Operation.ID,
+				func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) },
+			)
 			updated, err = module.Current(t.Context(), testOwnerID, first.Workflow.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if updated.FactInstructions.CorrectionRevision != initialRevision+1 || updated.FactInstructions.Instructions.Metadata.Title == nil || *updated.FactInstructions.Instructions.Metadata.Title != "Shared corrected title" {
+			if updated.FactInstructions.CorrectionRevision != initialRevision+1 || updated.FactInstructions.Instructions.Metadata.Title == nil ||
+				*updated.FactInstructions.Instructions.Metadata.Title != "Shared corrected title" {
 				t.Fatalf("shared correction did not refresh: %#v", updated.FactInstructions)
 			}
 			request.Authority.ExpectedRevision = updated.Workflow.Revision
@@ -125,7 +136,10 @@ func TestContinuationRefreshesCorrectionsChangedByAnotherWorkflow(t *testing.T) 
 				IdempotencyKey: "patch-with-retained-input",
 				Goal:           api.WorkflowGoalPrepared,
 				Intent: api.WorkflowIntent{CorrectionPatch: &api.ReleaseCorrectionPatch{
-					ExpectedRevision: new(initialRevision + 1), Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{Title: new("Patch only title")}},
+					ExpectedRevision: new(
+						initialRevision + 1,
+					),
+					Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{Title: new("Patch only title")}},
 				}},
 			}
 			accepted, err := module.Continue(t.Context(), testOwnerID, patchOnly)
@@ -140,12 +154,20 @@ func TestContinuationRefreshesCorrectionsChangedByAnotherWorkflow(t *testing.T) 
 			if resumed.Operation == nil {
 				t.Fatal("patch-only request lost retained preparation input")
 			}
-			waitForWorkflowOperation(t, module, resumed.Workflow.ID, resumed.Operation.ID, func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) })
+			waitForWorkflowOperation(
+				t,
+				module,
+				resumed.Workflow.ID,
+				resumed.Operation.ID,
+				func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) },
+			)
 			resumed, err = module.Current(t.Context(), testOwnerID, first.Workflow.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if resumed.Release == nil || resumed.FactInstructions.CorrectionRevision != initialRevision+2 || resumed.FactInstructions.Instructions.Metadata.Title == nil || *resumed.FactInstructions.Instructions.Metadata.Title != "Patch only title" {
+			if resumed.Release == nil || resumed.FactInstructions.CorrectionRevision != initialRevision+2 ||
+				resumed.FactInstructions.Instructions.Metadata.Title == nil ||
+				*resumed.FactInstructions.Instructions.Metadata.Title != "Patch only title" {
 				t.Fatalf("patch-only request did not resume preparation: %#v", resumed.FactInstructions)
 			}
 			if resumed.Workflow.Status != api.WorkflowStatusActive || len(resumed.Workflow.RequiredActions) != 0 {
@@ -171,7 +193,10 @@ func TestContinuationRetainsInheritedCorrectionsAfterPreparation(t *testing.T) {
 		result, err := base(ctx, input.Input)
 		result.EffectiveInstructions = input.Input.Instructions
 		result.EffectiveInstructions.Metadata.Title = new("Retained title")
-		result.Corrections = api.ReleaseCorrectionsSnapshot{Revision: 3, Corrections: api.StoredReleaseCorrectionsV1{Version: 1, Metadata: api.MetadataOverrides{Title: new("Retained title")}}}
+		result.Corrections = api.ReleaseCorrectionsSnapshot{
+			Revision:    3,
+			Corrections: api.StoredReleaseCorrectionsV1{Version: 1, Metadata: api.MetadataOverrides{Title: new("Retained title")}},
+		}
 		return result, err
 	}
 	module, _ := newTestModule(t, preparer)
@@ -191,7 +216,8 @@ func TestContinuationRetainsInheritedCorrectionsAfterPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Workflow.Revision != current.Workflow.Revision || result.FactInstructions.Instructions.Metadata.Title == nil || *result.FactInstructions.Instructions.Metadata.Title != "Retained title" {
+	if result.Workflow.Revision != current.Workflow.Revision || result.FactInstructions.Instructions.Metadata.Title == nil ||
+		*result.FactInstructions.Instructions.Metadata.Title != "Retained title" {
 		t.Fatalf("continued source erased retained correction: %#v", result.FactInstructions)
 	}
 }
@@ -199,7 +225,10 @@ func TestContinuationRetainsInheritedCorrectionsAfterPreparation(t *testing.T) {
 func TestContinuationCorrectionReceiptConsumesOnlyMatchingPatch(t *testing.T) {
 	module, repository := newTestModule(t, testPreparer())
 	current := executeCommand(t, module, CreateWorkflowCommand{})
-	patch := &api.ReleaseCorrectionPatch{ExpectedRevision: new(uint64), Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{Title: new("Manual title")}}}
+	patch := &api.ReleaseCorrectionPatch{
+		ExpectedRevision: new(uint64),
+		Values:           api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{Title: new("Manual title")}},
+	}
 	command := ReplaceFactInstructionsCommand{
 		WorkflowID:       current.Workflow.ID,
 		ExpectedRevision: current.Workflow.Revision,
@@ -323,8 +352,13 @@ func TestCorrectionConfirmationCarriesOnlyApprovedFieldsUntilPreparationSucceeds
 		resolveCalls++
 		switch update.Mode {
 		case api.ReleaseCorrectionUpdatePatch:
-			if update.Confirmation == nil || !sameCorrectionFields(update.Confirmation.Fields, []api.CorrectionField{api.CorrectionFieldMetadataTitle, api.CorrectionFieldMetadataAlternateTitle}) ||
-				update.Confirmation.Revision != state.Corrections.Revision || update.Confirmation.CurrentBinding != approved {
+			if update.Confirmation == nil ||
+				!sameCorrectionFields(
+					update.Confirmation.Fields,
+					[]api.CorrectionField{api.CorrectionFieldMetadataTitle, api.CorrectionFieldMetadataAlternateTitle},
+				) ||
+				update.Confirmation.Revision != state.Corrections.Revision ||
+				update.Confirmation.CurrentBinding != approved {
 				t.Fatalf("accepted confirmation update = %#v", update)
 			}
 		case api.ReleaseCorrectionUpdateInherit:
@@ -567,8 +601,11 @@ func confirmationTestState() State {
 	corrections := api.ReleaseCorrectionsSnapshot{
 		Revision: 7,
 		Corrections: api.StoredReleaseCorrectionsV1{
-			Version:            1,
-			ContentBindings:    map[api.CorrectionField]api.ContentBinding{api.CorrectionFieldMetadataTitle: previous, api.CorrectionFieldMetadataAlternateTitle: previous},
+			Version: 1,
+			ContentBindings: map[api.CorrectionField]api.ContentBinding{
+				api.CorrectionFieldMetadataTitle:          previous,
+				api.CorrectionFieldMetadataAlternateTitle: previous,
+			},
 			StaleContentFields: []api.CorrectionField{api.CorrectionFieldMetadataTitle, api.CorrectionFieldMetadataAlternateTitle},
 		},
 	}
@@ -643,5 +680,137 @@ func confirmationTestCommand() ReplaceFactInstructionsCommand {
 			ConfirmFields:    []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataTitle}},
 			ExpectedRevision: &revision,
 		},
+	}
+}
+
+func TestContinuationNoOpCorrectionReceiptPreservesPreparedLineage(t *testing.T) {
+	t.Parallel()
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%t", explicit), func(t *testing.T) {
+			t.Parallel()
+			module, _ := newTestModule(t, testPreparer())
+			input := api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "source.mkv")}
+			preparedInput := input
+			if explicit {
+				preparedInput.Instructions.Metadata.Title = new("Saved title")
+			}
+			lineage, err := preparationLineageFingerprint(preparedInput)
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts := api.ReleaseFactInstructionSnapshot{
+
+				ID:                 "facts",
+				Revision:           1,
+				CorrectionRevision: 1,
+
+				Instructions: api.ReleaseFactInstructions{Metadata: api.MetadataOverrides{Title: new("Saved title")}},
+			}
+			state := State{
+				Workflow: api.ReleaseWorkflow{
+
+					ID:       "workflow",
+					Revision: 1,
+
+					FactInstructions: api.ReleaseFactInstructionSnapshotRef{ID: facts.ID, Revision: facts.Revision},
+				},
+				FactInstructions: map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot{facts.ID: facts},
+			}
+			patch := &api.ReleaseCorrectionPatch{
+				ExpectedRevision: new(uint64(1)),
+				Values:           api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{Title: new("Saved title")}},
+			}
+			if err := module.acceptUnchangedInputCorrections(&state, OpenInputRequest{
+
+				Input:           input,
+				CorrectionPatch: patch,
+				IdempotencyKey:  "unchanged",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			current := CommandResult{
+
+				Workflow:         state.Workflow,
+				FactInstructions: &facts,
+
+				Release: &api.ReleaseSnapshot{PreparationFingerprint: lineage},
+			}
+			request := api.ContinueReleaseWorkflowRequest{
+
+				IdempotencyKey: "unchanged",
+				Goal:           api.WorkflowGoalInputReady,
+
+				Intent: api.WorkflowIntent{Preparation: &input, CorrectionPatch: patch},
+			}
+			if continuationGoalReached(current, request) {
+				t.Fatal("fixture must require a stage beyond preparation")
+			}
+			if err := consumeAcceptedCorrectionPatch(&request, current, state); err != nil {
+				t.Fatal(err)
+			}
+			if request.Intent.CorrectionPatch != nil || !continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
+				t.Fatal("consuming the no-op receipt changed prepared lineage")
+			}
+			command, stage := module.planContinuationCommand(request, current, module.clock.Now(), 0)
+			if _, ok := command.(EvaluateInputReadinessCommand); !ok || stage != "evaluate-input-readiness" {
+				t.Fatalf("next stage = %q (%T), want input readiness without repreparation", stage, command)
+			}
+		})
+	}
+}
+
+func TestUnchangedCorrectionPreparationRequiresExactLineage(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"stripped corrections", "changed source", "changed policy", "changed search", "changed playlist", "changed lookup", "explicit metadata", "explicit identity", "explicit release name", "explicit category"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			original := api.PrepareInput{
+				SourcePath: filepath.Join(t.TempDir(), "source.mkv"),
+				Instructions: api.ReleaseFactInstructions{
+					Identity:     api.ExternalIDOverrides{TMDBID: new(123)},
+					ReleaseName:  api.ReleaseNameOverrides{Tag: new("GRP")},
+					Metadata:     api.MetadataOverrides{Title: new("Saved title")},
+					Category:     new(api.CanonicalCategoryMovie),
+					SourceLookup: "Saved lookup",
+				},
+			}
+			lineage, err := preparationLineageFingerprint(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := original
+			input.Instructions.Identity = api.ExternalIDOverrides{}
+			input.Instructions.ReleaseName = api.ReleaseNameOverrides{}
+			input.Instructions.Metadata = api.MetadataOverrides{}
+			input.Instructions.Category = nil
+			switch name {
+			case "changed source":
+				input.SourcePath = filepath.Join(t.TempDir(), "other.mkv")
+			case "changed policy":
+				input.Policy.KeepImages = true
+			case "changed search":
+				input.Search.Skip = true
+			case "changed playlist":
+				input.Instructions.Playlist = api.PlaylistInstruction{Set: true, UseAll: true}
+			case "changed lookup":
+				input.Instructions.SourceLookup = "Changed lookup"
+			case "explicit metadata":
+				input.Instructions.Metadata.Title = new("Changed title")
+			case "explicit identity":
+				input.Instructions.Identity.TMDBID = new(456)
+			case "explicit release name":
+				input.Instructions.ReleaseName.Tag = new("OTHER")
+			case "explicit category":
+				input.Instructions.Category = new(api.CanonicalCategoryTV)
+			}
+			current := &api.ReleaseSnapshot{PreparationFingerprint: lineage}
+			restored, matches := unchangedCorrectionPreparation(current, input, original.Instructions)
+			if matches != (name == "stripped corrections") {
+				t.Fatalf("matches=%t for %s", matches, name)
+			}
+			if matches && !continuationPreparationSatisfied(current, &restored) {
+				t.Fatal("restored input does not match the exact prepared lineage")
+			}
+		})
 	}
 }

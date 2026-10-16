@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -43,17 +45,18 @@ const (
 )
 
 type assessmentEntry struct {
-	tracker       string
-	binding       string
-	outcomeID     string
-	disposition   Disposition
-	code          string
-	hasDupes      bool
-	verdict       Verdict
-	authorization AuthorizationKind
-	match         api.DupeMatch
-	privateRaw    []api.DupeEntry
-	reviewReasons []api.DupeReason
+	tracker        string
+	binding        string
+	bindingSubject json.RawMessage
+	outcomeID      string
+	disposition    Disposition
+	code           string
+	hasDupes       bool
+	verdict        Verdict
+	authorization  AuthorizationKind
+	match          api.DupeMatch
+	privateRaw     []api.DupeEntry
+	reviewReasons  []api.DupeReason
 }
 
 // Assessment is immutable reusable duplicate decision state. Full public outcomes are not retained.
@@ -275,6 +278,7 @@ func newAssessmentEntry(
 		privateRaw:    cloneEntries(raw),
 		reviewReasons: append([]api.DupeReason(nil), reviewReasons...),
 	}
+	entry.bindingSubject = retainedBindingSubject(meta)
 	entry.binding = assessmentBinding(meta, entry.tracker, effectiveTrackerConfig(cfg, entry.tracker))
 	entry.outcomeID = outcomeIdentity(entry)
 	entry.verdict = defaultVerdict(entry)
@@ -408,6 +412,7 @@ func outcomeIdentity(entry assessmentEntry) string {
 }
 
 func cloneAssessmentEntry(entry assessmentEntry) assessmentEntry {
+	entry.bindingSubject = slices.Clone(entry.bindingSubject)
 	entry.match = clonePrivateMatch(entry.match)
 	entry.privateRaw = cloneEntries(entry.privateRaw)
 	entry.reviewReasons = append([]api.DupeReason(nil), entry.reviewReasons...)
@@ -460,4 +465,131 @@ func sortStrings(values []string) {
 			values[current], values[current-1] = values[current-1], values[current]
 		}
 	}
+}
+
+// retainedBindingSubject captures immutable proof inputs without tracker config
+// or cross-seed credentials. Missing proof disables cross-generation reuse.
+func retainedBindingSubject(meta api.DuplicateSubject) json.RawMessage {
+	retained := api.DuplicateSubject{
+
+		SourcePath: meta.SourcePath,
+		SourceSize: meta.SourceSize,
+		VideoPath:  meta.VideoPath,
+
+		FileList:  meta.FileList,
+		Filename:  meta.Filename,
+		SceneName: meta.SceneName,
+
+		ReleaseName:          meta.ReleaseName,
+		Release:              meta.Release,
+		ReleaseNameOverrides: meta.ReleaseNameOverrides,
+
+		Identity:         meta.Identity,
+		ProviderMetadata: meta.ProviderMetadata,
+		TrackerIDs:       meta.TrackerIDs,
+
+		DiscType: meta.DiscType,
+		Type:     meta.Type,
+		Source:   meta.Source,
+		Tag:      meta.Tag,
+
+		HDR:         meta.HDR,
+		HDRFacts:    meta.HDRFacts,
+		UHD:         meta.UHD,
+		VideoEncode: meta.VideoEncode,
+
+		SeasonInt:  meta.SeasonInt,
+		EpisodeInt: meta.EpisodeInt,
+		SeasonStr:  meta.SeasonStr,
+
+		EpisodeStr: meta.EpisodeStr,
+		TVPack:     meta.TVPack,
+		Anime:      meta.Anime,
+
+		MatchedTrackers:     meta.MatchedTrackers,
+		TrackerRuleFailures: meta.TrackerRuleFailures,
+	}
+	if projection := meta.Projection; projection != nil {
+		retained.Projection = &api.TrackerReleaseProjection{
+			ProjectorFingerprint:       projection.ProjectorFingerprint,
+			CriteriaFingerprint:        projection.CriteriaFingerprint,
+			DuplicateTargetFingerprint: projection.DuplicateTargetFingerprint,
+			DuplicateSearchFingerprint: projection.DuplicateSearchFingerprint,
+			DuplicatePolicyFingerprint: projection.DuplicatePolicyFingerprint,
+		}
+	}
+	payload, err := json.Marshal(retained)
+	if err != nil {
+		return nil
+	}
+	return payload
+}
+
+// rebindEquivalentMetadata requires a preparation-owner certificate at the caller.
+// It independently verifies the original private binding against current config
+// and permits only certified metadata authority to change within each entry.
+func (a Assessment) rebindEquivalentMetadata(
+	meta api.DuplicateSubject,
+	cfg config.Config,
+	previous api.ReleaseRef,
+	projections api.TrackerReleaseProjectionSet,
+) (Assessment, bool) {
+	current := projections.ReleaseRef
+	if previous.SourcePath == "" || previous.SourcePath != current.SourcePath || previous.Generation == 0 || current.Generation <= previous.Generation ||
+		meta.SourcePath != current.SourcePath || meta.Identity.SourcePath != current.SourcePath || meta.Identity.Generation != current.Generation ||
+		meta.ProviderMetadata.SourcePath != current.SourcePath || meta.ProviderMetadata.Generation != current.Generation {
+		return Assessment{}, false
+	}
+	byTracker := make(map[string]api.TrackerReleaseProjection, len(projections.Projections))
+	for _, projection := range projections.Projections {
+		byTracker[normalizeTracker(string(projection.TrackerID))] = projection
+	}
+	out := Assessment{entries: make(map[string]assessmentEntry, len(byTracker)), assessed: a.assessed}
+	for tracker := range byTracker {
+		entry, ok := a.entries[tracker]
+		if !ok || len(entry.bindingSubject) == 0 || entry.match.MatchedReason == "in_client" {
+			return Assessment{}, false
+		}
+		var original api.DuplicateSubject
+		if err := json.Unmarshal(entry.bindingSubject, &original); err != nil {
+			return Assessment{}, false
+		}
+		trackerConfig := effectiveTrackerConfig(cfg, tracker)
+		if original.SourcePath != previous.SourcePath || original.Identity.SourcePath != previous.SourcePath ||
+			original.Identity.Generation != previous.Generation ||
+			original.ProviderMetadata.SourcePath != previous.SourcePath ||
+			original.ProviderMetadata.Generation != previous.Generation ||
+			entry.binding == "" ||
+			assessmentBinding(original, tracker, trackerConfig) != entry.binding {
+			return Assessment{}, false
+		}
+		next, err := duplicateSubjectForProjection(meta, tracker, byTracker)
+		if err != nil || containsTracker(next.MatchedTrackers, tracker) {
+			return Assessment{}, false
+		}
+		oldIdentity, newIdentity := original.Identity, next.Identity
+		oldIdentity.Generation, newIdentity.Generation = 0, 0
+		oldIdentity.ResolvedAt, newIdentity.ResolvedAt = time.Time{}, time.Time{}
+		oldMetadata, newMetadata := original.ProviderMetadata, next.ProviderMetadata
+		oldMetadata.Generation, newMetadata.Generation = 0, 0
+		oldMetadata.UpdatedAt, newMetadata.UpdatedAt = time.Time{}, time.Time{}
+		if !reflect.DeepEqual(oldIdentity, newIdentity) || !reflect.DeepEqual(oldMetadata, newMetadata) {
+			return Assessment{}, false
+		}
+		comparison := next
+		comparison.Identity = original.Identity
+		comparison.ProviderMetadata = original.ProviderMetadata
+		comparison.ReleaseNameOverrides = original.ReleaseNameOverrides
+		if assessmentBinding(comparison, tracker, trackerConfig) != entry.binding {
+			return Assessment{}, false
+		}
+		entry = cloneAssessmentEntry(entry)
+		entry.binding = assessmentBinding(next, tracker, trackerConfig)
+		entry.bindingSubject = retainedBindingSubject(next)
+		if entry.binding == "" || len(entry.bindingSubject) == 0 {
+			return Assessment{}, false
+		}
+		out.entries[tracker] = entry
+	}
+	return out, len(out.entries) != 0
 }

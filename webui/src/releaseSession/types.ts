@@ -217,7 +217,6 @@ export type DuplicatesFacet = Readonly<{
     preflight?: TrackerPreflightAssessment | null;
     completed: number;
     total: number;
-    ignoredTrackers: readonly string[];
     selectedTrackers: readonly string[];
     questionnaires: readonly Pick<
       TrackerReleaseProjection,
@@ -421,7 +420,6 @@ export type UploadFacet = Readonly<{
     revision: number;
     selectedTrackers: readonly string[];
     projections: TrackerReleaseProjectionSet | null;
-    ignoredDupesFor: readonly string[];
     /** Local edits differ from the exact reviewed tracker answers. */
     questionnaireDirty: boolean;
     /** A workflow command currently owns execution, so another action cannot start. */

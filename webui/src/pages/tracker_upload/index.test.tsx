@@ -16,7 +16,6 @@ const uploadFacet = (
     revision: 1,
     selectedTrackers: ["EXAMPLE"],
     projections: null,
-    ignoredDupesFor: [],
     questionnaireDirty: false,
     workflowBusy: false,
     options: { noSeed: false, runLogLevel: "info" },

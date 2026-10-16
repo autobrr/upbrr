@@ -68,6 +68,7 @@ func (m *Module) Continue(
 			opened, err := m.OpenInput(ctx, ownerID, OpenInputRequest{
 				ExpectedRevision:    slot.Revision,
 				Input:               input,
+				CorrectionPatch:     request.Intent.CorrectionPatch,
 				IdempotencyKey:      request.IdempotencyKey,
 				TrackerDecisionMode: trackerDecisionModeFromContext(ctx, TrackerDecisionModePostDupeGate),
 			})
@@ -699,9 +700,14 @@ func consumeAcceptedCorrectionPatch(request *api.ContinueReleaseWorkflowRequest,
 	if request.Intent.Preparation == nil {
 		request.Intent.Preparation = state.PreparationInput
 	}
-	if current.FactInstructions != nil && request.Intent.Preparation != nil {
-		input := *request.Intent.Preparation
-		input.Instructions = current.FactInstructions.Instructions
+	// A no-op receipt may retain a generation prepared from correction-free input.
+	// Keep that matching lineage rather than replacing it with effective saved facts.
+	if current.FactInstructions != nil && request.Intent.Preparation != nil &&
+		!continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
+		input, matches := unchangedCorrectionPreparation(current.Release, *request.Intent.Preparation, current.FactInstructions.Instructions)
+		if !matches {
+			input.Instructions = current.FactInstructions.Instructions
+		}
 		request.Intent.Preparation = &input
 	}
 	return nil
@@ -1383,6 +1389,28 @@ func dryRunMatchesIntent(dryRun *api.UploadDryRunResult, noSeed bool, trackerIDs
 				normalizeContinuationTrackerIDs(dryRun.TrackerIDs),
 				normalizeContinuationTrackerIDs(trackerIDs),
 			))
+}
+
+// unchangedCorrectionPreparation restores only correction fields omitted by a
+// patch adapter, and only when the resulting exact lineage matches the retained
+// release. The caller must independently prove that the patch changes no facts.
+func unchangedCorrectionPreparation(current *api.ReleaseSnapshot, input api.PrepareInput, facts api.ReleaseFactInstructions) (api.PrepareInput, bool) {
+	if continuationPreparationSatisfied(current, &input) {
+		return input, true
+	}
+	values := api.ReleaseCorrectionValues{
+		Identity:    input.Instructions.Identity,
+		ReleaseName: input.Instructions.ReleaseName,
+		Metadata:    input.Instructions.Metadata,
+	}
+	if input.Instructions.Category != nil || len(values.Fields()) != 0 {
+		return input, false
+	}
+	input.Instructions.Identity = facts.Identity
+	input.Instructions.ReleaseName = facts.ReleaseName
+	input.Instructions.Metadata = facts.Metadata
+	input.Instructions.Category = facts.Category
+	return input, continuationPreparationSatisfied(current, &input)
 }
 
 func continuationPreparationSatisfied(current *api.ReleaseSnapshot, desired *api.PrepareInput) bool {

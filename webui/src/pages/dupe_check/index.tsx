@@ -241,7 +241,6 @@ function WorkflowDupeAssessmentView({
   assessment,
   preflight,
   projections,
-  ignoredTrackers,
   releaseNameOverrides,
   busy,
   confirmReleaseName,
@@ -252,7 +251,6 @@ function WorkflowDupeAssessmentView({
   assessment: DupeAssessment | null;
   preflight: TrackerPreflightAssessment | null;
   projections: TrackerReleaseProjectionSet | null;
-  ignoredTrackers: ReadonlySet<string>;
   releaseNameOverrides: Readonly<Record<string, string>>;
   busy: boolean;
   confirmReleaseName(tracker: string, value: string): void;
@@ -511,7 +509,7 @@ function WorkflowDupeAssessmentView({
                   checked={
                     result?.requiresStaffToken
                       ? result.decision === "ignored" && result.staffTokenConfirmed === true
-                      : result?.decision === "ignored" || ignoredTrackers.has(trackerID)
+                      : result?.decision === "ignored"
                   }
                   disabled={busy}
                   onChange={(event) => setIgnored(trackerID, event.target.checked)}
@@ -552,7 +550,6 @@ export default function DupeCheckPage({
   const preflight = view.preflight || null;
   const projections = view.projections || null;
   const trackerIDs = workflowTrackerIDs(assessment, preflight, projections);
-  const ignoredTrackers = new Set(view.ignoredTrackers);
   const selectedTrackers = new Set(view.selectedTrackers);
   const questionnaireProjections = view.questionnaires.filter(
     (projection) => selectedTrackers.has(projection.trackerId) && projection.questionnaire?.length,
@@ -857,7 +854,6 @@ export default function DupeCheckPage({
           assessment={assessment}
           busy={questionsBusy}
           confirmReleaseName={facet.confirmReleaseName}
-          ignoredTrackers={ignoredTrackers}
           acknowledgeRules={facet.acknowledgeRules}
           preflight={preflight}
           projections={projections}
