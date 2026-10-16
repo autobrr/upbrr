@@ -43,15 +43,265 @@ func (f workflowUploadResolverFixed) ResolveUploadSubject(context.Context, api.U
 }
 
 type workflowTorrentServiceCapture struct {
-	subject api.TorrentSubject
-	result  api.TorrentResult
-	calls   int
+	subject  api.TorrentSubject
+	subjects []api.TorrentSubject
+	result   api.TorrentResult
+	results  []api.TorrentResult
+	calls    int
 }
 
 type workflowSubmissionFenceRepositoryFake struct {
 	records map[string]api.SubmissionFenceRecord
 }
 
+// TestWorkflowCBRTorrentRootName keeps CBR-only torrents separate from shared artifacts.
+func TestWorkflowCBRTorrentRootName(t *testing.T) {
+	t.Parallel()
+	if got, want := workflowCBRTorrentRootName([]api.TrackerReleaseProjection{{
+		TrackerID: "CBR", UploadReleaseName: "Scissor Seven S01 1080p WEB-DL-Mys",
+	}}), "Scissor.Seven.S01.1080p.WEB-DL-Mys"; got != want {
+		t.Fatalf("CBR root name = %q, want %q", got, want)
+	}
+	if got := workflowCBRTorrentRootName([]api.TrackerReleaseProjection{{TrackerID: "CBR"}, {TrackerID: "OTHER"}}); got != "" {
+		t.Fatalf("multiple trackers root name = %q, want empty", got)
+	}
+}
+
+func TestWorkflowRejectCBRTorrentRootKeepsIndependentTrackers(t *testing.T) {
+	t.Parallel()
+
+	remaining, rejected := workflowRejectCBRTorrentRoot([]api.TrackerReleaseProjection{{TrackerID: "CBR"}, {TrackerID: "OTHER"}})
+	if !rejected || len(remaining) != 1 || remaining[0].TrackerID != "OTHER" {
+		t.Fatalf("remaining=%+v rejected=%t", remaining, rejected)
+	}
+	remaining, rejected = workflowRejectCBRTorrentRoot([]api.TrackerReleaseProjection{{TrackerID: "OTHER"}})
+	if rejected || len(remaining) != 1 || remaining[0].TrackerID != "OTHER" {
+		t.Fatalf("non-CBR remaining=%+v rejected=%t", remaining, rejected)
+	}
+}
+
+func TestWorkflowUploadPlanRejectsSharedCBRTorrentRoot(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	otherTorrent := filepath.Join(tempDir, "other.torrent")
+	if err := os.WriteFile(otherTorrent, []byte("exact torrent"), 0o600); err != nil {
+		t.Fatalf("write other torrent: %v", err)
+	}
+	torrents := &workflowTorrentServiceCapture{}
+	trackerService := &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{
+		"OTHER": otherTorrent,
+	}}
+	builder := workflowUploadPlanBuilder{
+		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{SourcePath: filepath.Join(tempDir, "Example.Release.2026")}},
+		trackers: trackerService,
+		torrents: torrents,
+	}
+	plan, execution, err := builder.Build(
+		context.Background(),
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+			{
+				TrackerID:         "CBR",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+				UploadReleaseName: "Scissor Seven S01 1080p WEB-DL-Mys",
+			},
+			{
+				TrackerID:         "OTHER",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+				UploadReleaseName: "Example.Release.2026",
+			},
+		}},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+			{
+				TrackerID: "CBR",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
+			{
+				TrackerID: "OTHER",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
+		}},
+		workflowDupePrivateEvidence{},
+		api.MediaArtifactSet{CaptureFingerprint: workflowTestFingerprint(t, "cbr-shared-media")},
+		workflowMediaPrivateArtifacts{},
+		api.DescriptionSet{InputFingerprint: workflowTestFingerprint(t, "cbr-shared-descriptions")},
+		api.DescriptionInstructions{},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build shared CBR plan: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	if torrents.calls != 1 || torrents.subject.RootName != "" {
+		t.Fatalf("shared create root=%q calls=%d", torrents.subject.RootName, torrents.calls)
+	}
+	if len(trackerService.projections) != 1 || trackerService.projections[0].TrackerID != "OTHER" {
+		t.Fatalf("retained projections = %#v", trackerService.projections)
+	}
+	var cbr, other *api.UploadPlanTracker
+	for index := range plan.Trackers {
+		switch plan.Trackers[index].TrackerID {
+		case "CBR":
+			cbr = &plan.Trackers[index]
+		case "OTHER":
+			other = &plan.Trackers[index]
+		}
+	}
+	if cbr == nil || cbr.Eligible || cbr.Status != api.StageStatusFailed || len(cbr.Failures) == 0 {
+		t.Fatalf("CBR lane = %#v", cbr)
+	}
+	if other == nil || !other.Eligible || other.Status != api.StageStatusReady {
+		t.Fatalf("OTHER lane = %#v", other)
+	}
+}
+
+func TestWorkflowUploadPlanAppliesCBRRootNameForSingleTracker(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	cbrTorrent := filepath.Join(tempDir, "cbr.torrent")
+	if err := os.WriteFile(cbrTorrent, []byte("exact torrent"), 0o600); err != nil {
+		t.Fatalf("write CBR torrent: %v", err)
+	}
+	torrents := &workflowTorrentServiceCapture{}
+	builder := workflowUploadPlanBuilder{
+		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{SourcePath: filepath.Join(tempDir, "Example.Release.2026")}},
+		trackers: &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{"CBR": cbrTorrent}},
+		torrents: torrents,
+	}
+	plan, execution, err := builder.Build(
+		context.Background(),
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+			{
+				TrackerID:         "CBR",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+				UploadReleaseName: "Scissor Seven S01 1080p WEB-DL-Mys",
+			},
+		}},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+			{
+				TrackerID: "CBR",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
+		}},
+		workflowDupePrivateEvidence{},
+		api.MediaArtifactSet{CaptureFingerprint: workflowTestFingerprint(t, "cbr-only-media")},
+		workflowMediaPrivateArtifacts{},
+		api.DescriptionSet{InputFingerprint: workflowTestFingerprint(t, "cbr-only-descriptions")},
+		api.DescriptionInstructions{},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build CBR-only plan: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	if torrents.calls != 1 || torrents.subject.RootName != "Scissor.Seven.S01.1080p.WEB-DL-Mys" {
+		t.Fatalf("CBR-only create root=%q calls=%d", torrents.subject.RootName, torrents.calls)
+	}
+	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 1 || !plan.Trackers[0].Eligible {
+		t.Fatalf("CBR-only plan = %#v", plan)
+	}
+}
+
+func TestWorkflowUploadPlanRecreatesCBRRootAfterSkipIfRehash(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	cbrTorrent := filepath.Join(tempDir, "cbr.torrent")
+	if err := os.WriteFile(cbrTorrent, []byte("exact torrent"), 0o600); err != nil {
+		t.Fatalf("write CBR torrent: %v", err)
+	}
+	sharedPath := filepath.Join(tempDir, "shared.torrent")
+	cbrOnlyPath := filepath.Join(tempDir, "cbr-only.torrent")
+	torrents := &workflowTorrentServiceCapture{results: []api.TorrentResult{
+		{
+			Path:            sharedPath,
+			SkippedTrackers: []string{"OTHER"},
+		},
+		{
+			Path: cbrOnlyPath,
+		},
+	}}
+	builder := workflowUploadPlanBuilder{
+		config: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"OTHER": {SkipIfRehash: true},
+		}}},
+		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{SourcePath: filepath.Join(tempDir, "Example.Release.2026")}},
+		trackers: &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{"CBR": cbrTorrent}},
+		torrents: torrents,
+	}
+	plan, execution, err := builder.Build(
+		context.Background(),
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+			{
+				TrackerID:         "CBR",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+				UploadReleaseName: "Scissor Seven S01 1080p WEB-DL-Mys",
+			},
+			{
+				TrackerID:         "OTHER",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+				UploadReleaseName: "Example.Release.2026",
+			},
+		}},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+			{
+				TrackerID: "CBR",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
+			{
+				TrackerID: "OTHER",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
+		}},
+		workflowDupePrivateEvidence{},
+		api.MediaArtifactSet{CaptureFingerprint: workflowTestFingerprint(t, "cbr-recreate-media")},
+		workflowMediaPrivateArtifacts{},
+		api.DescriptionSet{InputFingerprint: workflowTestFingerprint(t, "cbr-recreate-descriptions")},
+		api.DescriptionInstructions{},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build CBR recreate plan: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	if torrents.calls != 2 || len(torrents.subjects) != 2 {
+		t.Fatalf("create calls=%d subjects=%d", torrents.calls, len(torrents.subjects))
+	}
+	if torrents.subjects[0].RootName != "" || torrents.subjects[1].RootName != "Scissor.Seven.S01.1080p.WEB-DL-Mys" {
+		t.Fatalf("create roots = %q then %q", torrents.subjects[0].RootName, torrents.subjects[1].RootName)
+	}
+	var cbr, other *api.UploadPlanTracker
+	for index := range plan.Trackers {
+		switch plan.Trackers[index].TrackerID {
+		case "CBR":
+			cbr = &plan.Trackers[index]
+		case "OTHER":
+			other = &plan.Trackers[index]
+		}
+	}
+	if cbr == nil || !cbr.Eligible || cbr.Status != api.StageStatusReady {
+		t.Fatalf("CBR lane = %#v", cbr)
+	}
+	if other == nil || other.Eligible || other.Status != api.StageStatusSkipped {
+		t.Fatalf("OTHER lane = %#v", other)
+	}
+}
+
+// LoadSubmissionFence returns the fake's fence record for one tracker identity.
 func (f workflowSubmissionFenceRepositoryFake) LoadSubmissionFence(
 	_ context.Context,
 	identity api.SubmissionContentIdentity,
@@ -73,7 +323,11 @@ func (f workflowSubmissionTrackerRegistryFake) LookupDescriptor(name string) (tr
 
 func (f *workflowTorrentServiceCapture) Create(_ context.Context, subject api.TorrentSubject) (api.TorrentResult, error) {
 	f.subject = subject
+	f.subjects = append(f.subjects, subject)
 	f.calls++
+	if f.calls <= len(f.results) {
+		return f.results[f.calls-1], nil
+	}
 	if f.result.Path == "" && len(f.result.SkippedTrackers) == 0 {
 		return api.TorrentResult{Path: "prepared.torrent"}, nil
 	}

@@ -301,7 +301,7 @@ func TestUnit3DProviderNamesPreserveSiteTitlePaths(t *testing.T) {
 			case "RHD":
 				subject.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"de": "Deutsches Signal"}
 				want = "Deutsches Signal 2001 "
-			case "CBR", "LCD":
+			case "LCD":
 				subject.ProviderMetadata.TMDB.OriginalLanguage = "pt"
 				subject.GeneratedName.Components = append(subject.GeneratedName.Components, api.ReleaseNameComponent{
 					Role:    api.NameRoleAlternateTitle,
@@ -311,6 +311,17 @@ func TestUnit3DProviderNamesPreserveSiteTitlePaths(t *testing.T) {
 				})
 				subject.ReleaseName = subject.GeneratedName.Render().Name
 				want = "Sinal Português 2001 "
+			case "CBR":
+				// CBR keeps the generated title and omits generic title/year providers.
+				subject.ProviderMetadata.TMDB.OriginalLanguage = "pt"
+				subject.GeneratedName.Components = append(subject.GeneratedName.Components, api.ReleaseNameComponent{
+					Role:    api.NameRoleAlternateTitle,
+					Value:   "AKA Sinal Português",
+					Present: true,
+					Join:    " ",
+				})
+				subject.ReleaseName = subject.GeneratedName.Render().Name
+				want = "Sinal Português 1998 "
 			}
 			prepared := prepareProviderName(t, registry, tracker, subject, nil)
 			if !strings.HasPrefix(prepared.Projection.UploadReleaseName, want) {
