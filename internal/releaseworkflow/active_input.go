@@ -622,7 +622,7 @@ func (m *Module) canRetainActiveInput(
 ) (bool, error) {
 	input := request.Input
 	if prior.SourceVersion != record.SourceVersion || request.Composite != nil || state.Composite != nil ||
-		!ordinaryMetadataRefresh(input) {
+		!ordinaryMetadataRefresh(input) || completedInputCanReopen(state) {
 		return false, nil
 	}
 	release, err := currentReleaseSnapshot(&state)
@@ -686,6 +686,39 @@ func (m *Module) canRetainActiveInput(
 		return m.privateResourceAvailable(owner, state.Workflow.ID, dupePrivateResourceID(dupes.ID), m.clock.Now())
 	}
 	return true, nil
+}
+
+// completedInputCanReopen limits refresh reopening to successful terminal work.
+// Failed submissions and client-only retries keep their retained authority.
+func completedInputCanReopen(state State) bool {
+	if state.Workflow.Status != api.WorkflowStatusCompleted {
+		return false
+	}
+	ref := state.Workflow.UploadResult
+	if ref == nil {
+		if !state.Workflow.AllSelectedTrackersAlreadyUploaded() {
+			return false
+		}
+		for _, exclusion := range state.Workflow.SubmissionExclusions {
+			if exclusion.Reason != "already_uploaded" {
+				return false
+			}
+		}
+		return true
+	}
+	result, ok := state.UploadResults[ref.ID]
+	if !ok || result.ID != ref.ID || result.Revision != ref.Revision || result.Status != api.StageStatusCompleted {
+		return false
+	}
+	confirmed := false
+	for _, tracker := range result.Results {
+		status := tracker.DerivedStatus()
+		if status != api.StageStatusCompleted && status != api.StageStatusSkipped {
+			return false
+		}
+		confirmed = confirmed || tracker.EffectiveSubmissionStatus() == api.StageStatusCompleted
+	}
+	return confirmed
 }
 
 // acceptUnchangedInputCorrections records a proven no-op using the ordinary

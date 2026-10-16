@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -975,6 +976,246 @@ func TestClosedInputWorkflowSourceAssociatesTerminalHistoryPurge(t *testing.T) {
 			}
 			if _, err := repo.LoadReleaseWorkflowState(t.Context(), testOwnerID, active.WorkflowID); !errors.Is(err, api.ErrReleaseWorkflowStateNotFound) {
 				t.Fatalf("workflow after purge = %v", err)
+			}
+		})
+	}
+}
+
+func TestRefreshCompletedInputPreservesRetryAuthorityAndConfirmedExclusions(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"successful upload", "all excluded", "failed upload", "partial client injection", "blocked", "failed workflow"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "terminal-refresh.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			persistent, err := NewPersistentRepository(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			preparer := testPreparer()
+			prepare := preparer.PrepareFunc
+			preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+				result, err := prepare(ctx, input)
+				if err != nil {
+					return result, err
+				}
+				return persistActiveInputTestRelease(ctx, repo, result)
+			}
+			module, err := New(persistent, NewMemoryPrivateResourceStore(), preparer,
+				WithSubmissionHistoryFilter(confirmedSubmissionFilter{}),
+				WithActiveInputs(repo, func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+					return api.InputRecord{
+						CanonicalPath: input.SourcePath,
+						SourceVersion: "verified",
+						Manifest:      []byte(`{"identity":{"digest":"verified"}}`),
+					}, nil
+				}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				module.activeMu.Lock()
+				cancel, done := module.activeCancel, module.activeDone
+				module.activeMu.Unlock()
+				if cancel != nil {
+					cancel()
+					<-done
+				}
+			})
+			input := api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "source.mkv")}
+			admitted, err := module.OpenInput(t.Context(), testOwnerID, OpenInputRequest{Input: input, IdempotencyKey: "open"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, err := module.Current(t.Context(), testOwnerID, admitted.WorkflowID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opened, err := module.Execute(t.Context(), testOwnerID, PrepareReleaseCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+				Input:            input,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if opened.Release == nil || opened.Workflow.Release == nil {
+				t.Fatalf("fixture did not prepare verified input: %#v", opened)
+			}
+			state, err := persistent.Load(t.Context(), testOwnerID, opened.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := state.Workflow.Revision
+			state.Workflow.Revision++
+			state.Workflow.Status = api.WorkflowStatusCompleted
+			state.Workflow.SubmissionExclusions = []api.SubmissionExclusion{{TrackerID: "ALPHA", Reason: "already_uploaded"}}
+			dupes := api.DupeAssessment{
+				ID:        "terminal-dupes",
+				Revision:  state.Workflow.Revision,
+				ExpiresAt: module.clock.Now().Add(time.Hour),
+				Results:   []api.TrackerDupeAssessment{{TrackerID: "ALPHA", Decision: api.DupeDecisionIgnored}},
+			}
+			state.Dupes[dupes.ID] = dupes
+			state.Workflow.Dupes = &api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision}
+			if err := module.private.Put(testOwnerID, state.Workflow.ID, dupePrivateResourceID(dupes.ID), "evidence", dupes.ExpiresAt); err != nil {
+				t.Fatal(err)
+			}
+			upload := api.UploadResult{
+				ID:       "terminal-upload",
+				Revision: state.Workflow.Revision,
+				Status:   api.StageStatusCompleted,
+				Results: []api.UploadTrackerResult{{
+					TrackerID:             "ALPHA",
+					SubmissionStatus:      api.StageStatusCompleted,
+					ClientInjectionStatus: api.StageStatusCompleted,
+				}},
+			}
+			switch name {
+			case "failed upload":
+				upload.Status = api.StageStatusFailed
+				upload.Results[0].SubmissionStatus = api.StageStatusFailed
+			case "partial client injection":
+				upload.Status = api.StageStatusPartial
+				upload.Results[0].ClientInjectionStatus = api.StageStatusFailed
+			case "blocked":
+				state.Workflow.Status = api.WorkflowStatusBlocked
+				state.Workflow.RequiredActions = []api.RequiredAction{{
+					ID:               "reconcile-client",
+					Kind:             api.RequiredActionReconcileSubmission,
+					Status:           api.RequiredActionStatusPending,
+					WorkflowRevision: state.Workflow.Revision,
+					TrackerID:        "ALPHA",
+					EffectKind:       api.WorkflowExternalEffectClientInjection,
+					EffectScopeID:    "upload:ALPHA",
+					Prompt:           "Verify client injection outcome.",
+					CreatedAt:        module.clock.Now().UTC(),
+				}}
+			case "failed workflow":
+				state.Workflow.Status = api.WorkflowStatusFailed
+			case "all excluded":
+				state.Workflow.Dupes = nil
+			}
+			if name != "all excluded" {
+				state.UploadResults[upload.ID] = upload
+				state.Workflow.UploadResult = &api.UploadResultRef{ID: upload.ID, Revision: upload.Revision}
+			}
+			ctx, err := module.activeMutationContext(t.Context(), testOwnerID, state.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := persistent.Save(ctx, testOwnerID, expected, state); err != nil {
+				t.Fatal(err)
+			}
+			active, err := module.ActiveInput(t.Context(), testOwnerID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refreshed, err := module.OpenInput(t.Context(), testOwnerID, OpenInputRequest{
+				ExpectedRevision: active.Revision,
+				Input:            input,
+				IdempotencyKey:   "refresh",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, err := persistent.Load(t.Context(), testOwnerID, refreshed.WorkflowID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(after.Workflow.SubmissionExclusions) != 1 || after.Workflow.SubmissionExclusions[0] != state.Workflow.SubmissionExclusions[0] {
+				t.Fatalf("refresh lost confirmed submission exclusions: %#v", after.Workflow.SubmissionExclusions)
+			}
+			if name != "successful upload" && name != "all excluded" {
+				if after.Workflow.Status != state.Workflow.Status || after.Workflow.Revision != state.Workflow.Revision ||
+					after.Workflow.Dupes == nil || *after.Workflow.Dupes != *state.Workflow.Dupes ||
+					after.Workflow.UploadResult == nil || *after.Workflow.UploadResult != *state.Workflow.UploadResult {
+					t.Fatalf("refresh discarded retry authority: %#v", after.Workflow)
+				}
+				if !reflect.DeepEqual(after.Workflow.RequiredActions, state.Workflow.RequiredActions) {
+					t.Fatalf("refresh changed pending reconciliation: %#v", after.Workflow.RequiredActions)
+				}
+				if retained := after.Dupes[dupes.ID]; retained.Results[0].Decision != api.DupeDecisionIgnored || !retained.ExpiresAt.Equal(dupes.ExpiresAt) {
+					t.Fatalf("refresh changed acknowledged assessment: %#v", retained)
+				}
+				if _, err := module.private.Get(testOwnerID, state.Workflow.ID, dupePrivateResourceID(dupes.ID), module.clock.Now()); err != nil {
+					t.Fatalf("refresh lost duplicate evidence: %v", err)
+				}
+				return
+			}
+			if after.Workflow.Status != api.WorkflowStatusDraft || after.Workflow.Release != nil || after.Workflow.Dupes != nil ||
+				after.Workflow.Media != nil || after.Workflow.UploadResult != nil {
+				t.Fatalf("successful refresh did not reopen safely: %#v", after.Workflow)
+			}
+			prepared, err := module.Execute(t.Context(), testOwnerID, PrepareReleaseCommand{
+				WorkflowID:       after.Workflow.ID,
+				ExpectedRevision: after.Workflow.Revision,
+				Input:            input,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			projected, err := module.Execute(t.Context(), testOwnerID, ProjectTrackersCommand{
+				WorkflowID:       prepared.Workflow.ID,
+				ExpectedRevision: prepared.Workflow.Revision,
+				TrackerIDs:       []api.TrackerID{"ALPHA"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !projected.Workflow.AllSelectedTrackersAlreadyUploaded() || projected.Workflow.Dupes != nil ||
+				projected.Workflow.Media != nil || projected.Workflow.UploadResult != nil || projected.Projections != nil {
+				t.Fatalf("confirmed success was not excluded before downstream work: %#v", projected)
+			}
+		})
+	}
+}
+
+func TestCompletedInputReopeningRequiresExactSuccessfulResult(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"success", "missing result", "wrong ID", "wrong revision", "empty results", "failed submission", "failed injection", "unconfirmed exclusion"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			result := api.UploadResult{
+				ID:       "upload",
+				Revision: 2,
+				Status:   api.StageStatusCompleted,
+				Results: []api.UploadTrackerResult{{
+					TrackerID:             "ALPHA",
+					SubmissionStatus:      api.StageStatusCompleted,
+					ClientInjectionStatus: api.StageStatusCompleted,
+				}},
+			}
+			state := State{Workflow: api.ReleaseWorkflow{
+				Status:       api.WorkflowStatusCompleted,
+				UploadResult: &api.UploadResultRef{ID: result.ID, Revision: result.Revision},
+			}}
+			switch name {
+			case "wrong ID":
+				result.ID = "other"
+			case "wrong revision":
+				result.Revision++
+			case "empty results":
+				result.Results = nil
+			case "failed submission":
+				result.Results[0].SubmissionStatus = api.StageStatusFailed
+			case "failed injection":
+				result.Results[0].ClientInjectionStatus = api.StageStatusFailed
+			case "unconfirmed exclusion":
+				state.Workflow.UploadResult = nil
+				state.Workflow.SubmissionExclusions = []api.SubmissionExclusion{{TrackerID: "ALPHA", Reason: "not_confirmed"}}
+			}
+			if name != "missing result" {
+				state.UploadResults = map[api.UploadResultID]api.UploadResult{"upload": result}
+			}
+			if got := completedInputCanReopen(state); got != (name == "success") {
+				t.Fatalf("completed input reopening = %t", got)
 			}
 		})
 	}

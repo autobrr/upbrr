@@ -5,10 +5,13 @@ package preparedrelease
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -141,4 +144,115 @@ func (sourceCorrectionCollector) Collect(ctx context.Context, request preparatio
 		facts.Naming.Source = *source
 	}
 	return facts, err
+}
+
+func TestPrepareEquivalentMetadataUsesCompletePublishedPredecessor(t *testing.T) {
+	for _, name := range []string{
+		"unchanged availability", "changed availability", "missing published predecessor", "advanced stored generation",
+		"hydrated missing availability", "transferred complete", "transferred incomplete",
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "prepared.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			resolver := &availabilityIdentityResolver{source: "original"}
+			module, err := New(repo, resolver, sourceCorrectionCollector{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := api.PrepareInput{SourcePath: writePreparedTestFile(t, "Example.2026.mkv", "synthetic media")}
+			verified, err := VerifyInputSource(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input.VerifiedSource = &verified
+			first, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(first.Release.ProviderMetadata.ProviderAvailability) != 1 || len(stored.ProviderMetadata.ProviderAvailability) != 0 {
+				t.Fatal("fixture did not exercise provider availability omitted by persistence")
+			}
+			switch name {
+			case "changed availability":
+				resolver.source = "changed"
+			case "missing published predecessor":
+				module.Invalidate(input.SourcePath)
+			case "advanced stored generation":
+				stored.Generation++
+				stored.Identity.Generation = stored.Generation
+				stored.ProviderMetadata.Generation = stored.Generation
+				if err := repo.CommitPreparedRelease(t.Context(), stored); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if name == "hydrated missing availability" || name == "transferred incomplete" {
+				module.Invalidate(input.SourcePath)
+				hydrated, err := module.Prepare(t.Context(), input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if hydrated.Release.Generation != first.Release.Generation || len(hydrated.Release.ProviderMetadata.ProviderAvailability) != 0 {
+					t.Fatal("fixture did not hydrate the persisted incomplete generation")
+				}
+				resolver.source = ""
+			}
+			if name == "transferred complete" || name == "transferred incomplete" {
+				seed, err := module.Export(t.Context(), api.ReleaseRef{SourcePath: input.SourcePath, Generation: first.Release.Generation})
+				if err != nil {
+					t.Fatal(err)
+				}
+				module, err = New(repo, resolver, sourceCorrectionCollector{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := module.Import(t.Context(), seed); err != nil {
+					t.Fatal(err)
+				}
+			}
+			input.Instructions.ReleaseName.Source = new(first.Release.Media.Source)
+			second, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := second.EquivalentPreviousRelease != nil, name == "unchanged availability" || name == "transferred complete"; got != want {
+				t.Fatalf("equivalent predecessor = %#v, want present %v", second.EquivalentPreviousRelease, want)
+			}
+			if second.Corrections.Revision <= first.Corrections.Revision || second.Release.Generation <= first.Release.Generation {
+				t.Fatal("equivalence did not publish new correction and generation authority")
+			}
+			if second.EquivalentPreviousRelease != nil && *second.EquivalentPreviousRelease != (api.ReleaseRef{
+				SourcePath: input.SourcePath, Generation: first.Release.Generation,
+			}) {
+				t.Fatal("certificate identifies a different predecessor")
+			}
+		})
+	}
+}
+
+type availabilityIdentityResolver struct{ source string }
+
+func (r *availabilityIdentityResolver) Resolve(ctx context.Context, request externalidentity.Request) (externalidentity.Result, error) {
+	result, err := (staticIdentityResolver{}).Resolve(ctx, request)
+	if r.source != "" {
+		result.ProviderMetadata.ProviderAvailability = []api.ProviderAvailabilityEvidence{{
+			Provider: api.IdentityProviderTMDB,
+			Status:   api.ProviderAvailabilityStatusAvailable,
+			Source:   r.source,
+		}}
+	}
+	return result, err
+}
+
+func (sourceCorrectionCollector) HydratePrivateResources(_ context.Context, request preparationstate.Request) (CollectedResources, error) {
+	return CollectedResources{SourcePath: request.Manifest.SourcePath}, nil
 }

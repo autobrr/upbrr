@@ -426,16 +426,16 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() &&
 		input.ExternalFreshness != api.ExternalFreshnessLoad && !forceClientRefresh &&
 		!input.Controls.CaptureHDRMetadata && !input.Controls.ConfirmBDMVRescan && verifiedSource.Version != "" {
-		// Persisted projections omit private source samples; only the published
-		// predecessor can supply the identity that was actually verified for it.
+		// Persistence omits private source samples and provider availability.
+		// Compare the complete published predecessor only while its exact stored
+		// generation, source and compatibility remain current.
 		m.mu.RLock()
 		prior, published := m.envelopes[canonicalSourceKey(input.SourcePath)]
-		if published && prior.result.Release.Generation == current.Generation {
-			current.SourceIdentity = prior.result.Release.SourceIdentity
-		}
 		m.mu.RUnlock()
-		if published && prior.result.Release.Generation == current.Generation && current.SourceIdentity.Version != "" &&
-			equivalentPreparedFacts(current, release) {
+		previous := prior.result.Release
+		if published && prior.completeFacts && previous.Generation == current.Generation && previous.Source.SourcePath == current.Source.SourcePath &&
+			previous.Compatibility == current.Compatibility && previous.SourceIdentity.Version != "" &&
+			equivalentPreparedFacts(previous, release) {
 			expectedPreviousGeneration = &current.Generation
 			equivalentPrevious = &api.ReleaseRef{SourcePath: current.Source.SourcePath, Generation: current.Generation}
 		}
@@ -462,6 +462,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	diagnostics := append([]api.PreparationDiagnostic(nil), collected.Diagnostics...)
 	diagnostics = append(diagnostics, identityResult.Diagnostics...)
 	owned := envelope{
+		completeFacts: true,
 		result: api.PrepareResult{
 			EquivalentPreviousRelease: equivalentPrevious,
 			Release:                   release,
@@ -974,8 +975,10 @@ func cloneInt(value *int) *int {
 }
 
 type envelope struct {
-	result    api.PrepareResult
-	resources preparationResources
+	// completeFacts distinguishes freshly resolved authority from lossy persisted hydration.
+	completeFacts bool
+	result        api.PrepareResult
+	resources     preparationResources
 }
 
 type preparationResources struct {
@@ -1071,7 +1074,8 @@ func cloneEnvelope(value envelope) (envelope, error) {
 		return envelope{}, fmt.Errorf("prepared release: clone envelope: %w", err)
 	}
 	cloned := envelope{
-		result: clonedResult,
+		completeFacts: value.completeFacts,
+		result:        clonedResult,
 		resources: preparationResources{
 			policy:              value.resources.policy,
 			sourcePath:          value.resources.sourcePath,
