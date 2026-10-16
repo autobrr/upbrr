@@ -15,7 +15,7 @@ import (
 )
 
 // ValidationContractID versions shared eligibility semantics independently of site policies.
-const ValidationContractID = "tracker-validation-primary-programme-v2"
+const ValidationContractID = "tracker-validation-primary-programme-v3"
 
 // ValidationCheck returns keyed tracker-specific constructibility or policy
 // failures without performing I/O or reading runtime secrets.

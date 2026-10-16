@@ -1222,9 +1222,17 @@ and question requiredness separately when the destination can supply an omitted 
 same normalized defaults with upload preparation, preserve explicit values and deliberate clears,
 and only fall back between providers when no usable primary-provider value remains. The projection's exact
 `QuestionnaireAnswers` map owns accepted answers for descriptions and upload. An allocated empty
-map clears earlier answers; an omitted legacy map has no new answer authority. The
-projector emits a tracker-scoped questionnaire action even alongside an unrelated strict failure;
-answering the questionnaire never waives that failure. Preflight publication must use the same
+map clears earlier answers; an omitted legacy map has no new answer authority. Independent
+eligibility or preparation failures suppress questionnaire fields and answer actions. For a strict
+failure that a questionnaire answer can correct, use `NewQuestionnaireRuleFailure` and provide the
+matching pure schema. Mark rejected populated or optional fields `NeedsReview` so CLI and WebUI can
+offer corrections. The projector also emits a tracker-scoped answer action for an `input_required`
+policy decision, even when a field's review flag is missing; this fallback does not supply a missing
+schema or identify the rejected field. The CLI stops with an error rather than resubmitting retained
+answers when that action has no reviewable fields. Execution stays blocked until validation accepts
+the answer.
+Optional multiselect answers may be cleared; nonempty choices still require valid options.
+Preflight publication must use the same
 stamped action IDs, workflow revision and expiry in the aggregate assessment and each tracker
 projection; tracker lanes must not retain stale or duplicate unstamped questions.
 Do not turn an upload review into a global

@@ -898,3 +898,52 @@ func TestPreparedProjectionPreservesAndValidatesEditionFeatures(t *testing.T) {
 		t.Fatalf("legacy projection without catalogue failed: %v", err)
 	}
 }
+
+// These fixtures deliberately omit review flags or the questionnaire provider.
+// Rule-level input requirements must still publish the pending action.
+type unflaggedQuestionnaireInputDefinition struct{ reviewQuestionnaireDefinition }
+
+func (unflaggedQuestionnaireInputDefinition) ValidationPolicy() ValidationPolicyBinding {
+	return questionnaireInputDefinition{}.ValidationPolicy()
+}
+
+type schemalessQuestionnaireInputDefinition struct{ stubDefinition }
+
+func (schemalessQuestionnaireInputDefinition) ValidationPolicy() ValidationPolicyBinding {
+	return questionnaireInputDefinition{}.ValidationPolicy()
+}
+
+func TestProjectionQuestionnaireInputAlwaysPublishesAction(t *testing.T) {
+	for _, definition := range []Definition{
+		unflaggedQuestionnaireInputDefinition{reviewQuestionnaireDefinition{stubDefinition{name: "ONE"}}},
+		schemalessQuestionnaireInputDefinition{stubDefinition{name: "ONE"}},
+	} {
+		t.Run(fmt.Sprintf("%T", definition), func(t *testing.T) {
+			registry := NewRegistry()
+			if err := registry.Register(definition); err != nil {
+				t.Fatal(err)
+			}
+			for _, answer := range []string{"no", "yes"} {
+				projection, failure := registry.ProjectRelease(t.Context(), PreparationInput{
+					Tracker: "ONE",
+					Meta: api.UploadSubject{
+						ReleaseName:                 "Example.Movie.2026.1080p-GRP",
+						TrackerQuestionnaireAnswers: map[string]map[string]string{"ONE": {"review": answer}},
+					},
+				}, "input", "catalog", "config")
+				if failure != nil {
+					t.Fatal(failure)
+				}
+				if answer == "no" {
+					if projection.Readiness != api.ReadinessStatusBlocked || projection.DupeReady || projection.UploadReady ||
+						len(projection.RequiredActions) != 1 || projection.RequiredActions[0].Kind != api.RequiredActionAnswerQuestionnaire ||
+						projection.RequiredActions[0].TrackerID != "ONE" {
+						t.Fatalf("input-required policy lost pending action: %+v", projection)
+					}
+				} else if !projection.DupeReady || !projection.UploadReady || len(projection.RequiredActions) != 0 {
+					t.Fatalf("corrected policy retained pending action: %+v", projection)
+				}
+			}
+		})
+	}
+}

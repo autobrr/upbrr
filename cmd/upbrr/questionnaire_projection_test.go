@@ -666,3 +666,142 @@ func nativeCompatibilityProjectionSubject(t *testing.T) api.UploadSubject {
 	}
 	return base
 }
+
+func TestCLIQuestionnaireOptionalMultiselectCorrection(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		answer    string
+		required  bool
+		want      string
+		wantError bool
+	}{
+		{
+			name:   "blank optional",
+			answer: "",
+			want:   "",
+		},
+		{
+			name:   "whitespace optional",
+			answer: "  ",
+			want:   "",
+		},
+		{
+			name:   "empty choices optional",
+			answer: ", ,",
+			want:   "",
+		},
+		{
+			name:   "nonempty choices optional",
+			answer: "1, Second, 1",
+			want:   "First,Second",
+		},
+		{
+			name:      "invalid optional",
+			answer:    "Unknown",
+			wantError: true,
+		},
+		{
+			name:      "blank required",
+			answer:    "",
+			required:  true,
+			wantError: true,
+		},
+		{
+			name:      "empty choice required",
+			answer:    "1,",
+			required:  true,
+			wantError: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			projection := api.TrackerReleaseProjection{
+				TrackerID:            "EXAMPLE",
+				QuestionnaireAnswers: map[string]string{"choices": "Old"},
+				Questionnaire: []api.TrackerQuestionnaireRequirement{{
+					Key:         "choices",
+					Kind:        "multiselect",
+					Required:    test.required,
+					NeedsReview: true,
+					Value:       "Old",
+					Options:     []string{"First", "Second"},
+				}},
+			}
+			instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
+			changed, err := collectCLIWorkflowQuestionnaires(
+				bufio.NewReader(strings.NewReader(test.answer+"\n")), io.Discard,
+				api.InteractionModeUnattendedConfirm,
+				&api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{projection}}, instructions,
+			)
+			if test.wantError {
+				if err == nil || changed {
+					t.Fatalf("invalid answer accepted: changed=%t error=%v", changed, err)
+				}
+			} else {
+				answer := instructions["EXAMPLE"].Questionnaire["choices"]
+				if err != nil || !changed || answer == nil || *answer != test.want {
+					t.Fatalf("correction rejected: changed=%t error=%v answer=%v", changed, err, answer)
+				}
+			}
+			if projection.QuestionnaireAnswers["choices"] != "Old" {
+				t.Fatal("mutated published questionnaire answers")
+			}
+		})
+	}
+}
+
+func TestCLIQuestionnaireActionRequiresCollectedAnswer(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		fields    []api.TrackerQuestionnaireRequirement
+		collected bool
+	}{
+		{name: "missing schema"},
+		{name: "unflagged populated field", fields: []api.TrackerQuestionnaireRequirement{{
+			Key:      "review",
+			Kind:     "select",
+			Required: true,
+			Value:    "no",
+			Options:  []string{"yes", "no"},
+		}}},
+		{
+			name:      "explicitly collected unchanged answer",
+			collected: true,
+			fields: []api.TrackerQuestionnaireRequirement{{
+				Key:         "review",
+				Kind:        "select",
+				Required:    true,
+				Value:       "no",
+				NeedsReview: true,
+				Options:     []string{"yes", "no"},
+			}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			projection := api.TrackerReleaseProjection{
+				TrackerID:            "EXAMPLE",
+				Questionnaire:        test.fields,
+				QuestionnaireAnswers: map[string]string{"review": "no"},
+			}
+			session := &cliWorkflowSession{
+				streams: cliIO{out: io.Discard},
+				intent:  cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+				current: releaseworkflow.CommandResult{
+					Projections: &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{projection}},
+				},
+			}
+			feedback, declined, err := session.collectCompositeTrackerFeedback(
+				bufio.NewReader(strings.NewReader("no\n")),
+				api.RequiredAction{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: "EXAMPLE"},
+				api.ReleaseWorkflowUploadFeedback{},
+			)
+			if test.collected {
+				if err != nil || declined || feedback.Response.Questionnaire == nil ||
+					feedback.Response.Questionnaire.Answers["review"] == nil || *feedback.Response.Questionnaire.Answers["review"] != "no" {
+					t.Fatalf("explicit answer rejected: feedback=%+v declined=%t error=%v", feedback, declined, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "no reviewable fields") || declined || feedback.Response.Questionnaire != nil {
+				t.Fatalf("unprompted retained answer was resubmitted: feedback=%+v declined=%t error=%v", feedback, declined, err)
+			}
+		})
+	}
+}

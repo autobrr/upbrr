@@ -1106,6 +1106,9 @@ func collectCLIWorkflowQuestionnaires(
 				selected := make([]string, 0)
 				for item := range strings.SplitSeq(answer, ",") {
 					item = strings.TrimSpace(item)
+					if item == "" && !field.Required {
+						continue
+					}
 					if index, err := strconv.Atoi(item); err == nil && index > 0 && index <= len(field.Options) {
 						item = field.Options[index-1]
 					}

@@ -590,20 +590,21 @@ func (r *Registry) ProjectRelease(
 		if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); ok {
 			input.Projection = &projection
 			projection.Questionnaire = ProjectQuestionnaire(provider.ProjectionQuestionnaire(input))
-			if slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
-				return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
-			}) {
-				projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
-					Kind:      api.RequiredActionAnswerQuestionnaire,
-					TrackerID: projection.TrackerID,
-					Prompt:    "Review tracker inputs for " + projection.DisplayName + ".",
-				})
-				projection.UploadReady = false
-				projection.DupeReady = false
-				if projection.Readiness != api.ReadinessStatusIneligible {
-					projection.Readiness = api.ReadinessStatusBlocked
-				}
-			}
+		}
+		inputRequired := slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+			return decision.Decision == "input_required"
+		})
+		if inputRequired || slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+			return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
+		}) {
+			projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+				Kind:      api.RequiredActionAnswerQuestionnaire,
+				TrackerID: projection.TrackerID,
+				Prompt:    "Review tracker inputs for " + projection.DisplayName + ".",
+			})
+			projection.UploadReady = false
+			projection.DupeReady = false
+			projection.Readiness = api.ReadinessStatusBlocked
 		}
 	}
 	return projection, failure
