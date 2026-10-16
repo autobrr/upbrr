@@ -19,6 +19,49 @@ type MediaInfoDocument struct {
 	} `json:"media"`
 }
 
+// HDR10PlusTrackFromMediaInfo requires one HEVC video track with explicit HDR10+ evidence.
+// Container track IDs remain private to the native extractor.
+func HDR10PlusTrackFromMediaInfo(doc MediaInfoDocument) bool {
+	evidence := HDRSourceFromMediaInfo(doc)
+	return evidence.UniqueHEVC && evidence.HDR10Plus
+}
+
+// HDRSourceFromMediaInfo retains advertised formats for the unique HEVC track.
+// The native producer resolves its actual container ID independently.
+func HDRSourceFromMediaInfo(doc MediaInfoDocument) api.HDRSourceEvidence {
+	count := 0
+	videos := 0
+	videoOrdinal := 0
+	raw := false
+	var selected map[string]any
+	evidence := api.HDRSourceEvidence{}
+	for _, track := range doc.Media.Track {
+		if strings.EqualFold(mediaInfoValue(track, "@type"), "general") && strings.EqualFold(mediaInfoValue(track, "Format"), "HEVC") {
+			raw = true
+		}
+		if !strings.EqualFold(mediaInfoValue(track, "@type"), "video") {
+			continue
+		}
+		videos++
+		if !strings.EqualFold(mediaInfoValue(track, "Format"), "HEVC") {
+			continue
+		}
+		count++
+		videoOrdinal = videos - 1
+		selected = track
+		formats := hdrFromMediaInfoTrack(track).Formats
+		evidence.HDR10Plus = slices.Contains(formats, api.HDRFormatHDR10Plus)
+		evidence.DolbyVision = slices.Contains(formats, api.HDRFormatDolbyVision)
+	}
+	evidence.UniqueHEVC = count == 1
+	if evidence.UniqueHEVC {
+		evidence.Decoded = decodedSourceFromMediaInfo(selected, videos)
+		evidence.Decoded.VideoStreamOrdinal = videoOrdinal
+		evidence.Decoded.RawHEVC = raw
+	}
+	return evidence
+}
+
 var (
 	mediaInfoSectionPattern        = regexp.MustCompile(`(?i)^(general|video|audio|text)(?:\s*#\d+)?$`)
 	mediaInfoWhitespacePattern     = regexp.MustCompile(`\s+`)

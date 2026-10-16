@@ -37,6 +37,7 @@ var uiRoutePaths = map[string]struct{}{
 	"/input":             {},
 	"/tracker-data":      {},
 	"/bluray-candidates": {},
+	"/hdr-analysis":      {},
 	"/audio-analysis":    {},
 	"/duplicates":        {},
 	"/screenshots":       {},

@@ -59,6 +59,7 @@ const (
 	e2eMediaKindEnv     = "UPBRR_E2E_MEDIA_KIND"
 	e2eNamingModeEnv    = "UPBRR_E2E_NAMING_MODE"
 	e2eAudioAnalysisEnv = "UPBRR_E2E_AUDIO_ANALYSIS"
+	e2eHDRAnalysisEnv   = "UPBRR_E2E_HDR_ANALYSIS"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -311,31 +312,65 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			Resolution:   resolution,
 			EpisodeTitle: episodeTitle,
 		},
+		EffectiveMetadata: api.EffectiveMetadata{
+			OriginalLanguage:           "English",
+			OriginalLanguageProvenance: api.FactProvenanceAutomatic,
+		},
 		DescriptionTemplate: "E2E description fixture.",
 	}
+	const (
+		audioResourceID = "e2e-audio-resource"
+		audioTrackID    = "e2e-audio-track-primary"
+	)
+	meta.MediaTracks = []api.MediaTrackFacts{{
+		ID:                  audioTrackID,
+		Kind:                api.MediaTrackAudio,
+		ResourceID:          audioResourceID,
+		ManifestFingerprint: "e2e-audio-manifest-v1",
+		Ordinal:             1,
+		Codec:               "AC-3",
+		ChannelLayout:       "L R C LFE Ls Rs",
+		Channels:            6,
+		SampleRate:          48_000,
+		DetectedLanguages:   []string{"English"},
+		Languages:           []string{"English"},
+		LanguageProvenance:  api.FactProvenanceAutomatic,
+		Default:             true,
+		Role:                api.AudioRoleProgramme,
+	}}
+	meta.PrimaryAudioTrackID = audioTrackID
+	meta.TrackCoverageComplete = true
+	if mode := os.Getenv(e2eHDRAnalysisEnv); mode == "1" || mode == "decoded" {
+		meta.HDRFileEvidence = map[string]api.HDRSourceEvidence{
+			sourcePath: {
+				UniqueHEVC:  true,
+				HDR10Plus:   mode == "1",
+				DolbyVision: mode == "1",
+			},
+		}
+		if mode == "decoded" {
+			evidence := meta.HDRFileEvidence[sourcePath]
+			evidence.Decoded = &api.HDRDecodedSourceEvidence{
+				VideoStreams:           1,
+				Codec:                  "hevc",
+				Width:                  192,
+				Height:                 112,
+				BitDepth:               10,
+				PixelAspectNumerator:   1,
+				PixelAspectDenominator: 1,
+				Range:                  "limited",
+				Matrix:                 "bt2020nc",
+				Transfer:               "smpte2084",
+				Primaries:              "bt2020",
+			}
+			meta.HDRFileEvidence[sourcePath] = evidence
+		}
+	}
 	if value := strings.TrimSpace(os.Getenv(e2eAudioAnalysisEnv)); value == "1" || strings.EqualFold(value, "true") {
-		const (
-			audioResourceID = "e2e-audio-resource"
-			audioTrackID    = "e2e-audio-track-primary"
-		)
 		meta.VideoPath = sourcePath
-		meta.MediaTracks = []api.MediaTrackFacts{{
-			ID:                  audioTrackID,
-			Kind:                api.MediaTrackAudio,
-			ResourceID:          audioResourceID,
-			ManifestFingerprint: "e2e-audio-manifest-v1",
-			Ordinal:             1,
-			Codec:               "PCM",
-			ChannelLayout:       "stereo",
-			Channels:            2,
-			SampleRate:          48_000,
-			DetectedLanguages:   []string{"English"},
-			Languages:           []string{"English"},
-			LanguageProvenance:  api.FactProvenanceAutomatic,
-			Default:             true,
-		}}
-		meta.PrimaryAudioTrackID = audioTrackID
-		meta.TrackCoverageComplete = true
+		meta.MediaTracks[0].Codec = "PCM"
+		meta.MediaTracks[0].ChannelLayout = "stereo"
+		meta.MediaTracks[0].Channels = 2
 	}
 	if namingFixture {
 		meta.Edition = "Uncut"

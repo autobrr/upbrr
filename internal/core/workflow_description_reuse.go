@@ -41,6 +41,7 @@ func (b workflowDescriptionBuilder) PrepareReusableDescriptions(
 		return nil, nil
 	}
 	reusable := api.ReusableDescription{
+		RendererVersion:          workflowDescriptionRendererVersion,
 		CompatibilityFingerprint: compatibilityFingerprint,
 		Descriptions:             cloneWorkflowRenderedDescriptions(snapshot.Descriptions),
 		TrackerResults:           slices.Clone(snapshot.TrackerResults),
@@ -91,6 +92,11 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 
 	restoredInstructions := instructions
 	restoredInstructions.Overrides = slices.Clone(reusable.Overrides)
+	if reusable.RendererVersion != workflowDescriptionRendererVersion {
+		// Keep compatible explicit edits while rebuilding output from an older renderer.
+		snapshot, buildErr := b.Build(ctx, release, projections, media, privateMedia, restoredInstructions, time.Time{})
+		return snapshot, restoredInstructions, buildErr
+	}
 	inputFingerprint, templateFingerprint, err := b.Fingerprints(
 		ctx, release, projections, media, privateMedia, restoredInstructions,
 	)
@@ -131,7 +137,14 @@ func (b workflowDescriptionBuilder) reusableDescriptionInputs(
 	if !binding.Valid() || !binding.CompatibilityKey.Valid() {
 		return "", "", false, nil
 	}
-	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
+	resourceSubject := subject
+	if len(instructions.Overrides) > 0 {
+		resourceSubject, err = b.resolveSubject(ctx, release, projections, instructions)
+		if err != nil {
+			return "", "", false, err
+		}
+	}
+	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, resourceSubject, privateMedia, media)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -216,7 +229,7 @@ func workflowReusableDescriptionFingerprint(
 		LocalResources   workflowReusableDescriptionLocalResources
 		ExactMedia       workflowReusableDescriptionMedia
 	}{
-		Version:          "description-reuse-v1",
+		Version:          "description-reuse-v2",
 		Config:           cfg,
 		CompatibilityKey: compatibilityKey,
 		Projections:      reusableDescriptionProjections(projections.Projections),
@@ -325,6 +338,11 @@ func normalizeReusableDescriptionMedia(
 ) (workflowReusableDescriptionMedia, bool, error) {
 	if exact == nil {
 		return workflowReusableDescriptionMedia{}, true, nil
+	}
+	// Automatic HDR output must rebuild against its current exact authority.
+	// All-final editor text resolves no HDR assets and remains reusable.
+	if exact.HDRAnalysis != nil || len(exact.HDRPlots) > 0 {
+		return workflowReusableDescriptionMedia{}, false, nil
 	}
 	normalized := workflowReusableDescriptionMedia{
 		Screenshots: make([]workflowReusableDescriptionImage, 0, len(exact.Screenshots)),

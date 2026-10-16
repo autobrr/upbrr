@@ -15,7 +15,7 @@ import (
 
 // ValidationPolicy returns RF's source-backed package, media, and asset policy.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-rf-policy-v2", Check: checkEvidenceRules}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-rf-policy-v5", Check: checkEvidenceRules}
 }
 
 func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -60,6 +60,7 @@ func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubjec
 			subject.ProvenanceFacts.Status,
 		))
 	}
+	failures = append(failures, languageFailures(subject)...)
 	return failures, nil
 }
 

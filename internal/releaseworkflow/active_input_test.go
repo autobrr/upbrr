@@ -5,13 +5,70 @@ package releaseworkflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestInputSourcePathPreservesVerifiedCasingAndRejectsDetachedAuthority(t *testing.T) {
+	repo, err := db.Open(filepath.Join(t.TempDir(), "source-path.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "Synthetic.HDR.2026.mkv")
+	canonical := source
+	if runtime.GOOS == "windows" {
+		canonical = strings.ToLower(source)
+	}
+	verified := api.VerifiedInputSource{Manifest: api.SourceManifest{SourcePath: source}, Identity: api.SourceContentIdentity{Digest: "version"}}
+	manifest, err := json.Marshal(verified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
+		ID:            "verified-source",
+		CanonicalPath: canonical,
+		SourceVersion: "version",
+		Manifest:      manifest,
+		UpdatedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := &Module{activeInputs: repo}
+	path, err := module.InputSourcePath(t.Context(), record.ID)
+	if err != nil || path != source {
+		t.Fatalf("verified display path=%q err=%v", path, err)
+	}
+	verified.Identity.Digest = "other-version"
+	manifest, err = json.Marshal(verified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
+		ID:            record.ID,
+		CanonicalPath: canonical,
+		SourceVersion: "version",
+		Manifest:      manifest,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := module.InputSourcePath(t.Context(), record.ID); !errors.Is(err, api.ErrActiveInputChanged) {
+		t.Fatalf("detached input authority accepted: %v", err)
+	}
+}
 
 func TestActiveInputOpenRefreshRollbackAndOwnerIsolation(t *testing.T) {
 	t.Parallel()

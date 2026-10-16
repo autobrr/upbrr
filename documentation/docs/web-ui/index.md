@@ -34,8 +34,9 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 | **Input**          | Choose the source path, trackers, metadata IDs, and preparation options. |
 | **Tracker Data**   | Review tracker-derived metadata when available.                          |
 | **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
-| **Dupe Check**     | Review per-tracker search results, rules, and candidate upload names.    |
+| **Dupe Check**     | Answer tracker questions and review search results, rules, and names.    |
 | **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
+| **HDR Analysis**   | Generate native HDR plots, audio analysis, and optional picture checks.  |
 | **Screenshots**    | Generate, import, order, and select screenshots.                         |
 | **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
 | **Upload Images**  | Publish selected images through configured hosts.                        |
@@ -50,6 +51,12 @@ On **Input**, focus **Source path** to choose a recently used path from this bro
 
 After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
 
+### Reuse tracker images
+
+With **Settings → Metadata → Keep images** enabled, preparation can retain validated screenshots from tracker data. Inspect the imported description and images on **Tracker Data**, then open **Screenshots**. When **Saved tracker images** appears, choose **Use saved images** to include those images in the workflow. upbrr can capture additional frames when the retained images do not meet the requested count or tracker requirements.
+
+Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Imported comparison blocks remain part of the description and do not count as ordinary screenshots. See [image-host requirements](./settings/image-hosting.md).
+
 ### Generate audio analysis
 
 **Audio Analysis** appears after Input has produced authoritative audio-track facts. Opening the page does not start FFmpeg. Choose the primary track, all tracks, or specific tracks; select waveform, spectrogram, or both; then click **Generate**.
@@ -60,11 +67,17 @@ Each successful graph can be previewed, opened at full size, or downloaded as it
 
 See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and troubleshooting details.
 
+### Generate HDR analysis
+
+**HDR Analysis** appears when prepared Input contains eligible targets. Opening the page does not start analysis. Select targets and metadata formats, then choose a mode. **HDR metadata plots and primary audio** is the default; **Bounded scene synchronization** adds checks around selected scene boundaries, with **Analyze audio** enabled by default and optional **Active-area borders**. **Picture checks and primary audio** offers sampled checks or **Measure every video frame (slower)**. Audio-enabled modes can select **Analyze all audio tracks (up to 64)**.
+
+Click **Generate**, then inspect each format and picture/audio outcome. Native plots and selected audio images/statistics are included in descriptions by default. Select individual picture-check images to include them. Successful artifacts remain inspectable after partial attempts; a sampled or bounded result does not establish whole-video picture coverage. See [HDR analysis](../workflow/hdr-analysis.md) for source requirements, comparison sources, retries, and colour-thumbnail interpretation.
+
 ### Correct Input facts
 
 Use **Input** to correct provider IDs, genre, release naming fields, and languages before duplicate checking. **Title** and **Original title** are read-only; **Manual year** is editable for movies and locked for TV. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
 
-**Category**, **Type**, **Source**, and **Resolution** accept only the supported dropdown choices. They have no custom-entry or blank option. If a current value is missing or unsupported, a disabled placeholder keeps it visible without creating a correction; choose a supported value or use **Auto**. **Service**, **Region**, and **Distributor** (under **Metadata and languages**) offer searchable suggestions: focus the field or use its browse button to see all choices, then type a partial name or code to filter. Service choices show the full name and acronym, and selecting one stores the recognized acronym. Distributor suggestions come from the shared UNIT3D publisher catalog; selecting one keeps the publisher name so each tracker can resolve its own ID. Region suggestions include the shared country codes. Custom names and explicit numeric tracker IDs remain editable. Use the arrow keys and **Enter** to select a suggestion, or **Escape** to dismiss the list. Clearing a searchable field keeps an explicit blank correction; use **Auto** to restore automatic detection.
+**Category**, **Type**, **Source**, and **Resolution** accept only the supported dropdown choices. They have no custom-entry or blank option. If a current value is missing or unsupported, a disabled placeholder keeps it visible without creating a correction; choose a supported value or use **Auto**. **Service**, **Region**, and **Distributor** (under **Metadata and languages**) offer searchable suggestions: focus the field or use its browse button to see all choices, then type a partial name or code to filter. Service choices show the full name and acronym, and selecting one stores the recognized acronym. Distributor suggestions come from the supported publisher catalog; selecting one keeps the publisher name so each tracker can resolve its own ID. Region suggestions include the shared country codes. Custom names and explicit numeric tracker IDs remain editable. Use the arrow keys and **Enter** to select a suggestion, or **Escape** to dismiss the list. Clearing a searchable field keeps an explicit blank correction; use **Auto** to restore automatic detection.
 
 Edited fields show a pending change until you apply **Refresh metadata**. Applied overrides remain marked **Manual value · Applied** after refresh. **Auto** clears the local draft and queues removal of the saved correction; the field shows **Auto reset pending** until refresh derives the automatic value. The previous prepared value may remain visible while that reset is pending.
 
@@ -80,9 +93,11 @@ A complete manual name has no reliable component boundaries. If a mandatory rule
 
 The **Edition** field shows the detected cut, edition, and presentation labels, or just `2in1` for a two-edition set. Replace or clear this field to override those automatic labels, or set **No edition** to **Yes** to omit them. Apply **Refresh metadata**; choose **Auto** on the edited control to restore automatic handling.
 
+A solitary Theatrical cut or edition is ignored; compound editions retain it. Review the effective selections and supporting evidence alongside the payload preview. See [editions and commentary](../trackers/index.md#editions-and-commentary) for manual corrections.
+
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
 
-Audio, subtitle, and hardcoded-subtitle fields accept comma-separated languages. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
+Audio languages accept comma-separated values. Subtitle and hardcoded-subtitle languages use editable, searchable rows with **Remove** controls and an empty row for adding another language; custom names and comma-separated entries are accepted. Hardcoded English choices distinguish **English (Full)** from **English (Forced)**. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
 
 Changing Movie/TV with the same TMDB ID loads metadata from the correct category. If the source or provider identity changes, saved content corrections may require confirmation, replacement, or reset. A changed track manifest requires selecting a current track again.
 
@@ -90,7 +105,7 @@ Input preparation stops after facts and local readiness. It does not run duplica
 
 ### Clear a metadata provider
 
-On **Input**, open **Edit Release Details** and find **External IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MAL. You can also delete an existing ID from its field.
+On **Input**, open **Edit Release Details** and find **Provider IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MAL. You can also delete an existing ID from its field.
 
 Click **Refresh metadata** to apply the change. The provider's ID and metadata are removed from the prepared release, and automatic lookups cannot restore them. Other providers remain available.
 
@@ -130,7 +145,7 @@ Use [Appearance](./settings/appearance.md) to choose a bundled theme and light o
 
 Opening a historical input checks its local source before adopting reusable content. Deleting an idle active release closes its input automatically; running work still prevents deletion. Deletion removes associated workflow, effect, reusable-media, and submission records, plus generated files managed by upbrr, even if the original source folder is missing. Local repeat-submission protection is removed with those records. Shared generated files and their directories are kept while another retained release still references them. Remote uploads and source media are unchanged.
 
-Restarting the application leaves the previous idle input closed. Its History and saved corrections remain available when you explicitly reopen it. Reloading a browser tab while the application keeps running restores the current input.
+Restarting the application leaves the previous idle input closed. Its History and saved corrections remain available when you explicitly reopen it. Unfinished operations are interrupted rather than automatically resumed; completed checkpoints are retained. Before retrying an interrupted upload, check the tracker and torrent client because startup can clear the local block on an unresolved attempt. See [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart). Reloading a browser tab while the application keeps running restores the current input.
 
 ## Logging
 
@@ -141,6 +156,18 @@ Logs are designed for safer sharing, but inspect them before posting. Never incl
 See [Logging](./logging.md) for persistence, filtering, rotation, and buffer behavior.
 
 ## Host browser
+
+On **Input**, choose **Browse file** or **Browse folder**. **Roots** shows every allowed browse root, even when only one is configured. **Search all browse roots** finds matching names in the roots and their nested folders, including the roots themselves. Each result shows its exact path so you can distinguish identically named files or folders.
+
+Inside a folder, **Filter this directory** searches only the entries already listed there. Both scopes ignore case, treat common separators such as dots, underscores, hyphens, and brackets as spaces, and match query words in any order. For example, `Beacon Voyage` matches `Beacon.Voyage` and `Beacon_Voyage`. A restricted ordered-character match also finds close abbreviations; it does not correct arbitrary typos.
+
+Choose **Open** to enter a folder or **Select** to apply that exact path to Input. File browsing continues to show only recognized video files alongside folders. **Clear search** restores the root listing or removes the current directory filter; opening another folder also clears the search.
+
+Root searches return at most 200 matches and inspect at most 100,000 entries. They check a two-second search budget between filesystem calls; a slow or unavailable filesystem can keep a call blocked longer. If the results are marked incomplete, open a root and browse directly. A narrower query can help with the match limit, but does not reduce how many filenames must be inspected. Unreadable directories can also leave results incomplete.
+
+Searches can use two workers when every browse root is on a recognized local filesystem. Within each worker, separate roots are visited before their subdirectories, so a deep library does not have to finish before another root gets searched. A single large directory can still use up the search budget. If roots overlap, each root is traversed in order to preserve its access boundary. If any root is on network storage or a filesystem cannot be identified, the search uses one worker. Filesystem identities do not guarantee separate physical disks. When a search reaches a limit, repeated searches may return different subsets of matching paths.
+
+Typing another query, navigating, or closing the browser cancels the previous request, and late replies cannot replace newer results. Each browser request has a 15-second timeout that includes network time and any authentication refresh. A timeout or busy message offers **Retry**; requests are not automatically repeated after network failures. The server allows at most two host-browser operations at once and keeps an operation's slot until its filesystem work actually returns, even after cancellation.
 
 The host browser lists only configured roots unless unrestricted browsing was explicitly enabled. If a valid folder is missing:
 

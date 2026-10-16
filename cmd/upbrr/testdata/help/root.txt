@@ -140,12 +140,8 @@ Release Overrides:
       Remove dual-audio tag from audio name
   -dual-audio, --dual-audio
       Add dual-audio tag to audio name
-  -title, --title string
-      Override title
   -alternate-title, --alternate-title string
       Override alternate title
-  -original-title, --original-title string
-      Override original title
   -genres, --genres string
       Override genres (comma-separated)
   -audio-languages, --audio-languages string
@@ -234,6 +230,22 @@ Screenshots and Images:
       Override image host
   -skip-imagehost-upload, --skip-imagehost-upload, -siu
       Skip automatic image host uploads
+  -hdr-analysis, --hdr-analysis
+      Generate HDR metadata plots and primary audio analysis before upload
+  -hdr-analysis-only, --hdr-analysis-only
+      Analyze one supported HDR video or disc playlist without configuration or upload
+  -hdr-targets, --hdr-targets string
+      Ordered prepared HDR target IDs for upload
+  -hdr-playlist, --hdr-playlist string
+      Numeric MPLS playlist for standalone disc analysis
+  -hdr-peak-source, --hdr-peak-source string
+      Peak estimator: histogram, histogram99, max-scl, max-scl-luminance
+  -hdr-formats, --hdr-formats string
+      Metadata formats: auto, hdr10plus, dolby-vision, both
+  -hdr-metadata-only, --hdr-metadata-only
+      Generate HDR metadata plots without automatic video and audio measurement
+  -hdr-output-dir, --hdr-output-dir string
+      Parent directory for fresh standalone HDR artifacts
   -audio-analysis, --audio-analysis
       Generate local audio images and amplitude statistics in managed temporary storage before upload
   -audio-analysis-only, --audio-analysis-only
@@ -274,3 +286,41 @@ Client and Torrent:
       Reuse existing torrents only without generating a new one
   -rehash, --rehash, -rh
       Force generation of a fresh torrent
+
+Other:
+  -hdr-active-area, --hdr-active-area
+      Measure decoded picture borders against Dolby Vision active areas
+  -hdr-all-audio-tracks, --hdr-all-audio-tracks
+      Analyze every prepared audio track instead of the primary track
+  -hdr-audio-only, --hdr-audio-only
+      Generate native HDR plots and primary audio analysis without picture decoding
+  -hdr-boundary-audio, --hdr-boundary-audio
+      Include complete audio analysis with --hdr-boundary-sync; use =false to disable
+  -hdr-boundary-sync, --hdr-boundary-sync
+      Measure bounded picture windows at distributed HDR10+ and Dolby Vision scene boundaries
+  -hdr-colour, --hdr-colour
+      Measure colour distribution against source B
+  -hdr-compare-crop, --hdr-compare-crop string
+      Confirmed common crop left,top,width,height
+  -hdr-compare-offset, --hdr-compare-offset string
+      Confirmed integer frame offset B minus A, including explicit zero
+  -hdr-compare-source, --hdr-compare-source string
+      Explicit local comparison source B
+  -hdr-decoder-threads, --hdr-decoder-threads int
+      Video threads per decoder: 0 selects the default, 1-64 requests a bounded maximum
+  -hdr-full-frames, --hdr-full-frames
+      Measure every video frame instead of sampled HDR picture checks (slower)
+  -hdr-grade, --hdr-grade
+      Measure absolute brightness and PQ differences against source B
+  -hdr-image-ids, --hdr-image-ids string
+      Exact current HDR artifact IDs to include in descriptions on workflow continuation
+  -hdr-pictures, --hdr-pictures
+      Include sampled automatic picture checks with HDR metadata and primary audio analysis
+  -hdr-resume-workflow, --hdr-resume-workflow string
+      Resume HDR output in an exact retained active CLI workflow
+  -hdr-retry-attempt, --hdr-retry-attempt string
+      Exact retained HDR attempt authorizing a decoded retry
+  -hdr-retry-modes, --hdr-retry-modes string
+      Explicit comma-separated unsuccessful decoded modes to measure again
+  -hdr-scene-sync, --hdr-scene-sync
+      Measure decoded scene synchronization against Dolby Vision markers

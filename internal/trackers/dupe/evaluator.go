@@ -17,6 +17,7 @@ import (
 type Evaluation struct {
 	Candidates     []CandidateEvaluation
 	SetFindings    []SetFinding
+	ReviewReasons  []api.DupeReason
 	RequiresAction bool
 	Blocks         bool
 	Complete       bool
@@ -45,20 +46,18 @@ func Evaluate(
 	search SearchEvidence,
 ) Evaluation {
 	targetFacts := normalizeTargetFacts(target)
-	if policy.ExactMatchOnly {
-		targetFacts.Content = exactOnlyContentScope(targetFacts.Content, parseBestTitle(target.Names).Content)
-	}
 	targetFacts.Edition = editionFromNamingContract(targetFacts.Edition, target.Names, targetFacts.Resolution, policy.DefaultTitleEdition)
 	effectiveComplete := search.EffectiveComplete()
-	evaluation := Evaluation{Complete: effectiveComplete, TargetFacts: targetFacts}
+	evaluation := Evaluation{
+		Complete:      effectiveComplete,
+		TargetFacts:   targetFacts,
+		ReviewReasons: targetReviewReasons(targetFacts, policy),
+	}
 	setCandidates := make([]TrackerCandidate, 0, len(candidates))
 	setCandidateFacts := make([]normalizedFacts, 0, len(candidates))
 	setCandidateIndexes := make([]int, 0, len(candidates))
 	for _, candidate := range candidates {
 		facts := normalizeCandidateFacts(candidate)
-		if policy.ExactMatchOnly {
-			facts.Content = exactOnlyContentScope(facts.Content, parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content)
-		}
 		facts.Edition = editionFromNamingContract(facts.Edition, []string{candidate.Name}, facts.Resolution, policy.DefaultTitleEdition)
 		if configuredOtherGroup(target, candidate, facts, policy.GroupRestriction) {
 			evaluation.Candidates = append(evaluation.Candidates, candidateResult(candidate, facts, nil, api.DupeRelationCoexists, "configured_other_group"))
@@ -97,7 +96,7 @@ func Evaluate(
 		case api.DupeRelationCoexists:
 		}
 	}
-	if !effectiveComplete {
+	if !effectiveComplete || len(evaluation.ReviewReasons) > 0 {
 		evaluation.RequiresAction = true
 	}
 	if evaluation.Blocks {
@@ -378,6 +377,12 @@ func winningRuleID(findings []RuleFinding, relation api.DupeRelation, reason str
 
 func dupeReasonMessage(reason string, relation api.DupeRelation) string {
 	switch strings.TrimSpace(reason) {
+	case "ordinary_slot_unproven":
+		return "The required ordinary-slot eligibility is unproven; review technical evidence and tracker justification."
+	case "ordinary_slot_contradictory":
+		return "Technical evidence conflicts and cannot establish an ordinary slot."
+	case "distinct_ordinary_slot":
+		return "Complete technical evidence establishes distinct ordinary tracker slots."
 	case "exact_identity":
 		return "Candidate has identical release or file identity."
 	case "configured_other_group":
@@ -388,6 +393,8 @@ func dupeReasonMessage(reason string, relation api.DupeRelation) string {
 		return "Existing season pack contains the proposed episode slot."
 	case "proposed_season_pack":
 		return "Proposed season pack may supersede the existing episode slot."
+	case "pack_audio_languages_unverified":
+		return "Audio-language matching is unverified. You may acknowledge this warning and continue the upload; this does not establish matching content or trump eligibility."
 	case "target_hdr_contradictory":
 		return "Proposed HDR metadata contradicts fallback naming evidence."
 	case "hdr_evidence_missing", "target_hdr_missing", "candidate_hdr_missing":

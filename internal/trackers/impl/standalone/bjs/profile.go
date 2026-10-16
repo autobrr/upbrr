@@ -20,6 +20,7 @@ func Profile() standalone.Profile {
 		LocalizedMetadataLocale: "pt-BR",
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
+		ProjectionQuestionnaire: projectionQuestionnaire,
 		ReleaseNamePolicy: trackers.WithMovieYearProvider(
 			trackers.CanonicalReleaseNamePolicy(),
 			api.IdentityProviderTMDB,

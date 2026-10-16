@@ -1,12 +1,170 @@
 package lume
 
 import (
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 	"testing"
 )
+
+func TestLumeLanguageMarkersCountKnownProgrammeLanguages(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		languages []string
+		wantAudio string
+	}{
+		{
+			name:      "unknown language is not a second language",
+			languages: []string{"Japanese", "Unknown language"},
+			wantAudio: "DD 2.0",
+		},
+		{
+			name:      "undetermined language is not a second language",
+			languages: []string{"Japanese", "und"},
+			wantAudio: "DD 2.0",
+		},
+		{
+			name:      "aggregate label is not a second language",
+			languages: []string{"Japanese", "mul"},
+			wantAudio: "DD 2.0",
+		},
+		{
+			name:      "original and English remain dual with unknown language",
+			languages: []string{"Japanese", "English", "Unknown language"},
+			wantAudio: "DD 2.0 Dual-Audio",
+		},
+		{
+			name:      "aliases do not inflate the language count",
+			languages: []string{"Japanese", "jpn", "English", "eng"},
+			wantAudio: "DD 2.0 Dual-Audio",
+		},
+		{
+			name:      "unknown language leaves non-English composition unresolved",
+			languages: []string{"Japanese", "German", "Unknown language"},
+			wantAudio: "DD 2.0",
+		},
+		{
+			name:      "two established non-English languages remain multi",
+			languages: []string{"Japanese", "German"},
+			wantAudio: "Multi DD 2.0",
+		},
+		{
+			name:      "three established languages remain multi",
+			languages: []string{"Japanese", "English", "German"},
+			wantAudio: "Multi DD 2.0",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			media := api.MediaFacts{
+				OriginalLanguage:      "Japanese",
+				TrackCoverageComplete: true,
+			}
+			for _, language := range test.languages {
+				media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleProgramme,
+					Languages: []string{language},
+				})
+			}
+			subject := lumeSubject(t, api.ReleaseNameRequest{
+				Category: "MOVIE",
+				Type:     "WEBDL",
+				Title:    "Example",
+				Year:     2026,
+				Audio:    "DD 2.0",
+				Tag:      "-GRP",
+			})
+			subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+			if got, want := lumeName(t, subject, nil), "Example 2026 WEB-DL "+test.wantAudio+"-GRP"; got != want {
+				t.Fatalf("programme name = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLumeLanguageMarkersPreserveManualAndDiscNames(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		manual      bool
+		releaseType string
+		discType    string
+	}{
+		{
+			name:        "manual marker",
+			manual:      true,
+			releaseType: "WEBDL",
+		},
+		{
+			name:        "full disc",
+			releaseType: "DISC",
+			discType:    "BDMV",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := lumeSubject(t, api.ReleaseNameRequest{
+				Category: "MOVIE",
+				Type:     test.releaseType,
+				DiscType: test.discType,
+				Title:    "Example",
+				Year:     2026,
+				Audio:    "Dual-Audio DD 2.0",
+				Tag:      "-GRP",
+			})
+			subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+				OriginalLanguage: "Japanese",
+				AudioLanguages:   []string{"Japanese", "Unknown language"},
+			})
+			for index := range subject.GeneratedName.Components {
+				if subject.GeneratedName.Components[index].Role == api.NameRoleDualAudio {
+					subject.GeneratedName.Components[index].Manual = test.manual
+				}
+			}
+			if got := lumeName(t, subject, nil); got != subject.ReleaseName {
+				t.Fatalf("preserved name = %q, want %q", got, subject.ReleaseName)
+			}
+		})
+	}
+}
+
+func TestLumeMultiNameRequiresConsistentProgrammeFacts(t *testing.T) {
+	media := api.MediaFacts{
+		OriginalLanguage:         "Japanese",
+		TrackCoverageComplete:    true,
+		AudioLanguages:           []string{"Japanese", "German"},
+		AudioLanguagesProvenance: api.FactProvenanceManual,
+		Tracks: []api.MediaTrackFacts{{
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Languages: []string{"Japanese"},
+		}},
+	}
+	subject := lumeSubject(t, api.ReleaseNameRequest{
+		Category: "MOVIE",
+		Type:     "WEBDL",
+		Title:    "Example",
+		Year:     2026,
+		Audio:    "DD 2.0",
+		Tag:      "-GRP",
+	})
+	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+	if subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
+		t.Fatal("fixture must retain the aggregate/track contradiction")
+	}
+	if got, want := lumeName(t, subject, nil), "Example 2026 WEB-DL DD 2.0-GRP"; got != want {
+		t.Fatalf("contradictory programme name = %q, want %q", got, want)
+	}
+	media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+		Kind:      api.MediaTrackAudio,
+		Role:      api.AudioRoleProgramme,
+		Languages: []string{"German"},
+	})
+	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+	if got, want := lumeName(t, subject, nil), "Example 2026 WEB-DL Multi DD 2.0-GRP"; got != want {
+		t.Fatalf("consistent programme name = %q, want %q", got, want)
+	}
+}
 
 func TestLumeStructuredName(t *testing.T) {
 	s := lumeSubject(t, api.ReleaseNameRequest{
@@ -64,7 +222,7 @@ func TestLumeOmitsExactHi10PWithoutOverwritingManualComponent(t *testing.T) {
 }
 func TestLumePolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/lume/v3" || p.Structured == nil {
+	if p.ID != "unit3d/lume/v5" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }
@@ -86,7 +244,16 @@ func TestLumeTVDBRejectsStaleMetadata(t *testing.T) {
 	s.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: s.SourcePath,
 		Generation: 1,
-		TVDB:       &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{CanonicalName: "Series", IncludeYear: true}},
+		TVDB: &api.TVDBMetadata{
+			TVDBID:      1,
+			NameEnglish: "TVDB Series",
+			NameDisambiguation: api.TVDBNameDisambiguation{
+				CanonicalName: "TVDB Series",
+				Status:        api.MetadataEvidenceStatusComplete,
+				Source:        "tvdb-name/v1",
+				IncludeYear:   true,
+			},
+		},
 	}
 	if got, want := lumeName(t, s, nil), "Series CA AKA Alt 2026 S01E02 1080p WEB-DL H.265-GRP"; got != want {
 		t.Fatalf("TVDB name = %q, want %q", got, want)
@@ -110,6 +277,7 @@ func lumeSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 		Identity: api.ExternalIdentity{
 			SourcePath: "lume",
 			Generation: 1,
+			TVDBID:     1,
 			Category:   api.CanonicalCategory(r.Category),
 		},
 		Release: api.ReleaseInfo{
@@ -132,7 +300,7 @@ func lumeName(t *testing.T, s api.UploadSubject, o *string) string {
 		Tracker:             "LUME",
 		Meta:                s,
 		RequestedUploadName: o,
-	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
+	}, namePolicy())
 	if f != nil {
 		t.Fatal(f)
 	}

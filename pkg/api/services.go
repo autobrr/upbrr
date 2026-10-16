@@ -207,14 +207,45 @@ const (
 // their hosted variants. Audio tracks, uploads, and host choices require an
 // AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
-	Screenshots       []ScreenshotImage
-	DVDMenus          []DVDMenuCaptureImage
-	ScreenshotUploads []UploadedImageLink
-	DVDMenuUploads    []UploadedImageLink
-	AudioAnalysis     *AudioAnalysisRef
-	AudioTracks       []AudioDescriptionTrack
-	AudioUploads      []UploadedImageLink
-	AudioUploadHosts  map[string]string
+	// ImageHostUploadSkipped preserves the workflow's explicit upload opt-out.
+	// Compatible cached links remain usable, but missing variants must not trigger uploads.
+	ImageHostUploadSkipped bool
+	HDRAnalysis            *HDRAnalysisRef
+	HDRPlots               []HDRDescriptionPlot
+	HDRStats               []HDRDescriptionStats
+	HDRUploads             []UploadedImageLink
+	HDRUploadHosts         map[string]string
+	Screenshots            []ScreenshotImage
+	DVDMenus               []DVDMenuCaptureImage
+	ScreenshotUploads      []UploadedImageLink
+	DVDMenuUploads         []UploadedImageLink
+	AudioAnalysis          *AudioAnalysisRef
+	AudioTracks            []AudioDescriptionTrack
+	AudioUploads           []UploadedImageLink
+	AudioUploadHosts       map[string]string
+}
+
+type HDRDescriptionPlot struct {
+	AudioTrackID           string
+	MeasurementFingerprint string
+	RenderFingerprint      string
+	ArtifactID             PublicResourceID
+	Format                 HDRNativeFormat
+	Kind                   HDRArtifactKind
+	TargetID               string
+	Label                  string
+	Image                  ScreenshotImage
+}
+
+// HDRDescriptionStats carries one track's text owned by the exact HDR analysis.
+type HDRDescriptionStats struct {
+	AudioTrackID           string
+	MeasurementFingerprint string
+	RenderFingerprint      string
+	ArtifactID             PublicResourceID
+	TargetID               string
+	Label                  string
+	Text                   string
 }
 
 // AudioDescriptionTrack is a separate description channel for hosted analysis
@@ -226,18 +257,28 @@ type AudioDescriptionTrack struct {
 }
 
 // Clone returns a detached exact-media bundle while preserving nil slices.
+// It retains the hosting opt-out and returns nil for a nil receiver.
 func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	if a == nil {
 		return nil
 	}
 	cloned := &ExactMediaAssets{
-		Screenshots:       cloneOptionalSlice(a.Screenshots),
-		DVDMenus:          cloneOptionalSlice(a.DVDMenus),
-		ScreenshotUploads: cloneOptionalSlice(a.ScreenshotUploads),
-		DVDMenuUploads:    cloneOptionalSlice(a.DVDMenuUploads),
-		AudioTracks:       cloneOptionalSlice(a.AudioTracks),
-		AudioUploads:      cloneOptionalSlice(a.AudioUploads),
-		AudioUploadHosts:  maps.Clone(a.AudioUploadHosts),
+		ImageHostUploadSkipped: a.ImageHostUploadSkipped,
+		HDRPlots:               cloneOptionalSlice(a.HDRPlots),
+		HDRStats:               cloneOptionalSlice(a.HDRStats),
+		HDRUploads:             cloneOptionalSlice(a.HDRUploads),
+		HDRUploadHosts:         maps.Clone(a.HDRUploadHosts),
+		Screenshots:            cloneOptionalSlice(a.Screenshots),
+		DVDMenus:               cloneOptionalSlice(a.DVDMenus),
+		ScreenshotUploads:      cloneOptionalSlice(a.ScreenshotUploads),
+		DVDMenuUploads:         cloneOptionalSlice(a.DVDMenuUploads),
+		AudioTracks:            cloneOptionalSlice(a.AudioTracks),
+		AudioUploads:           cloneOptionalSlice(a.AudioUploads),
+		AudioUploadHosts:       maps.Clone(a.AudioUploadHosts),
+	}
+	if a.HDRAnalysis != nil {
+		ref := *a.HDRAnalysis
+		cloned.HDRAnalysis = &ref
 	}
 	if a.AudioAnalysis != nil {
 		ref := *a.AudioAnalysis
@@ -311,7 +352,10 @@ func (a *ExactMediaAssets) Validate() error {
 			return errors.New("exact media audio upload host mapping is invalid")
 		}
 	}
-	return validateExactMediaUploads("audio analysis", a.AudioUploads, audioPaths)
+	if err := validateExactMediaUploads("audio analysis", a.AudioUploads, audioPaths); err != nil {
+		return err
+	}
+	return a.validateHDRAssets()
 }
 
 func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allowedPaths map[string]struct{}) error {
@@ -331,6 +375,10 @@ func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allo
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
 type UploadSubject struct {
+	MediaFileFacts             MediaFileFacts
+	StaffUploadTokens          map[string]StaffUploadToken `json:"-"`
+	TrackerTitleSearchEvidence map[string]TrackerTitleSearchEvidence
+	LanguageFacts              LanguageFacts
 	// SourceIdentity is private verified source evidence used to derive exact
 	// submission and media reuse identities. It must not enter transport JSON.
 	SourceIdentity SourceContentIdentity `json:"-"`
@@ -343,6 +391,7 @@ type UploadSubject struct {
 	ManualLanguages            ManualLanguageFacts
 	HardcodedSubs              bool
 	HardcodedSubtitleLanguages []string
+	HardcodedSubtitleCoverage  []SubtitleLanguageCoverage
 	MediaBinding               PreparedMediaBinding
 	SourcePath                 string
 	Paths                      []string
@@ -394,6 +443,7 @@ type UploadSubject struct {
 	TrackerQuestionnaireAnswers map[string]map[string]string
 	SeasonInt                   int
 	EpisodeInt                  int
+	MultipleEpisodes            bool
 	SeasonStr                   string
 	EpisodeStr                  string
 	TVDBAiredDate               string
@@ -427,6 +477,7 @@ type UploadSubject struct {
 	VideoEncode                 string
 	HasEncodeSettings           bool
 	BitDepth                    string
+	ReleaseFeatures             []ReleaseFeature
 	EditionSet                  string
 	Cut                         string
 	Presentation                string
@@ -489,10 +540,14 @@ func NewImageHostingSubject(subject UploadSubject) ImageHostingSubject {
 // RuleSubject contains only stable facts used by generic and tracker-specific
 // eligibility rules.
 type RuleSubject struct {
+	MediaFileFacts             MediaFileFacts
+	TitleSearchEvidence        TrackerTitleSearchEvidence
+	LanguageFacts              LanguageFacts
 	EffectiveMetadata          EffectiveMetadata
 	ManualLanguages            ManualLanguageFacts
 	HardcodedSubs              bool
 	HardcodedSubtitleLanguages []string
+	HardcodedSubtitleCoverage  []SubtitleLanguageCoverage
 	SourcePath                 string
 	VideoPath                  string
 	FileList                   []string
@@ -573,6 +628,10 @@ type PackageFacts struct {
 // MediaFileFact contains normalized technical and language facts for one
 // media file. Empty values and zero track counts mean unknown.
 type MediaFileFact struct {
+	// Complete with an empty language list records inspected track absence;
+	// partial or unavailable must never be interpreted as absence.
+	AudioStatus       MetadataEvidenceStatus
+	SubtitleStatus    MetadataEvidenceStatus
 	FileName          string
 	Primary           bool
 	Container         string
@@ -595,6 +654,16 @@ type MediaFileFacts struct {
 	ExpectedFileCount int
 	OriginalLanguage  string
 	Files             []MediaFileFact
+}
+
+// Clone detaches per-file language lists from their prepared generation.
+func (f MediaFileFacts) Clone() MediaFileFacts {
+	f.Files = slices.Clone(f.Files)
+	for i := range f.Files {
+		f.Files[i].AudioLanguages = slices.Clone(f.Files[i].AudioLanguages)
+		f.Files[i].SubtitleLanguages = slices.Clone(f.Files[i].SubtitleLanguages)
+	}
+	return f
 }
 
 // AssetEvidence records exact readiness for one prepared asset channel.
@@ -643,11 +712,14 @@ type ProvenanceFacts struct {
 // tracker answers, and prepared-resource readiness used by side-effect-free
 // pre-duplicate validation.
 type TrackerValidationSubject struct {
+	TitleSearchEvidence        TrackerTitleSearchEvidence
+	LanguageFacts              LanguageFacts
 	Tracker                    string
 	EffectiveMetadata          EffectiveMetadata
 	ManualLanguages            ManualLanguageFacts
 	HardcodedSubs              bool
 	HardcodedSubtitleLanguages []string
+	HardcodedSubtitleCoverage  []SubtitleLanguageCoverage
 	SourcePath                 string
 	VideoPath                  string
 	FileList                   []string
@@ -668,6 +740,7 @@ type TrackerValidationSubject struct {
 	SubtitleLanguages          []string
 	SeasonInt                  int
 	EpisodeInt                 int
+	MultipleEpisodes           bool
 	SeasonStr                  string
 	EpisodeStr                 string
 	TVPack                     bool
@@ -734,7 +807,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		maps.Copy(answers, values)
 		break
 	}
-	descriptionOverride := trackerDescriptionOverride(subject, tracker)
+	descriptionOverride, descriptionFinal := subject.TrackerDescriptionOverride(tracker)
 	bdInfoEvidence := preparedBDInfoAssetEvidence(subject)
 	dvdVOBMediaInfoEvidence := preparedDVDVOBMediaInfoAssetEvidence(subject)
 	resourceFingerprint, _ := CanonicalWorkflowFingerprint(struct {
@@ -760,11 +833,14 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 	availabilityFacts := deriveValidationAvailabilityFacts(subject.ProviderMetadata)
 	provenanceFacts := deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata)
 	return TrackerValidationSubject{
+		TitleSearchEvidence:         subject.TrackerTitleSearchEvidence[tracker],
 		Tracker:                     tracker,
+		LanguageFacts:               subject.LanguageFacts.Clone(),
 		EffectiveMetadata:           cloneTrackerValidationValue(subject.EffectiveMetadata),
 		ManualLanguages:             cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:               subject.HardcodedSubs,
 		HardcodedSubtitleLanguages:  slices.Clone(subject.HardcodedSubtitleLanguages),
+		HardcodedSubtitleCoverage:   slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                  subject.SourcePath,
 		VideoPath:                   subject.VideoPath,
 		FileList:                    slices.Clone(subject.FileList),
@@ -785,6 +861,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		SubtitleLanguages:           slices.Clone(subject.SubtitleLanguages),
 		SeasonInt:                   subject.SeasonInt,
 		EpisodeInt:                  subject.EpisodeInt,
+		MultipleEpisodes:            subject.MultipleEpisodes,
 		SeasonStr:                   subject.SeasonStr,
 		EpisodeStr:                  subject.EpisodeStr,
 		TVPack:                      subject.TVPack,
@@ -823,7 +900,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		TrackerSiteOverrides:        cloneTrackerValidationValue(subject.TrackerSiteOverrides),
 		ReleaseNameOverrides:        cloneTrackerValidationValue(subject.ReleaseNameOverrides),
 		DescriptionOverride:         descriptionOverride,
-		DescriptionGroupsFinal:      subject.DescriptionGroupsFinal,
+		DescriptionGroupsFinal:      descriptionFinal,
 		MediaInfoJSONReady:          strings.TrimSpace(subject.MediaInfoJSONPath) != "",
 		MediaInfoTextReady:          strings.TrimSpace(subject.MediaInfoTextPath) != "",
 		DVDVOBMediaInfoReady:        dvdVOBMediaInfoEvidence.Ready,
@@ -837,13 +914,10 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 	}
 }
 
-// trackerDescriptionOverride prefers explicit direct content, then selects the
-// first non-empty prepared description assigned to tracker.
-func trackerDescriptionOverride(subject UploadSubject, tracker string) string {
-	if description := strings.TrimSpace(subject.DescriptionOverride); description != "" {
-		return description
-	}
-	for _, group := range subject.DescriptionGroups {
+// TrackerDescriptionOverride selects the editable group source and its finality
+// before falling back to direct content, matching prepared upload selection.
+func (s UploadSubject) TrackerDescriptionOverride(tracker string) (string, bool) {
+	for _, group := range s.DescriptionGroups {
 		matchesTracker := false
 		for _, candidate := range group.Trackers {
 			if strings.EqualFold(strings.TrimSpace(candidate), tracker) {
@@ -854,14 +928,11 @@ func trackerDescriptionOverride(subject UploadSubject, tracker string) string {
 		if !matchesTracker {
 			continue
 		}
-		if description := strings.TrimSpace(group.Description); description != "" {
-			return description
-		}
-		if description := strings.TrimSpace(group.RawDescription); description != "" {
-			return description
+		if description := strings.TrimSpace(group.Source()); description != "" {
+			return description, s.DescriptionGroupsFinal || group.Final
 		}
 	}
-	return ""
+	return strings.TrimSpace(s.DescriptionOverride), s.DescriptionGroupsFinal
 }
 
 func cloneTrackerValidationValue[T any](value T) T {
@@ -1101,6 +1172,9 @@ func collectValidationSeasonEpisodes(fileName string, detected map[int]map[int]s
 }
 
 func deriveValidationMediaFileFacts(subject UploadSubject, expectedFileCount int) MediaFileFacts {
+	if len(subject.MediaFileFacts.Files) > 0 {
+		return subject.MediaFileFacts.Clone()
+	}
 	return buildValidationMediaFileFacts(
 		subject.VideoPath,
 		subject.FileList,
@@ -1118,6 +1192,9 @@ func deriveValidationMediaFileFacts(subject UploadSubject, expectedFileCount int
 }
 
 func deriveValidationRuleMediaFileFacts(subject RuleSubject, expectedFileCount int) MediaFileFacts {
+	if len(subject.MediaFileFacts.Files) > 0 {
+		return subject.MediaFileFacts.Clone()
+	}
 	return buildValidationMediaFileFacts(
 		subject.VideoPath,
 		subject.FileList,
@@ -1415,11 +1492,14 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
 	mediaFacts := deriveValidationRuleMediaFileFacts(subject, packageFacts.MediaFileCount)
 	return TrackerValidationSubject{
+		TitleSearchEvidence:        subject.TitleSearchEvidence,
 		Tracker:                    strings.ToUpper(strings.TrimSpace(tracker)),
+		LanguageFacts:              subject.LanguageFacts.Clone(),
 		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),
 		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:              subject.HardcodedSubs,
 		HardcodedSubtitleLanguages: slices.Clone(subject.HardcodedSubtitleLanguages),
+		HardcodedSubtitleCoverage:  slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                 subject.SourcePath,
 		VideoPath:                  subject.VideoPath,
 		FileList:                   slices.Clone(subject.FileList),
@@ -1467,10 +1547,13 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 func NewRuleSubject(subject UploadSubject) RuleSubject {
 	dvdVOBMediaInfoReady := preparedDVDVOBMediaInfoAssetEvidence(subject).Ready
 	return RuleSubject{
+		MediaFileFacts:             subject.MediaFileFacts.Clone(),
+		LanguageFacts:              subject.LanguageFacts.Clone(),
 		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),
 		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:              subject.HardcodedSubs,
 		HardcodedSubtitleLanguages: slices.Clone(subject.HardcodedSubtitleLanguages),
+		HardcodedSubtitleCoverage:  slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                 subject.SourcePath,
 		VideoPath:                  subject.VideoPath,
 		FileList:                   append([]string(nil), subject.FileList...),
@@ -1521,6 +1604,7 @@ type DescriptionSubject struct {
 	ManualLanguages             ManualLanguageFacts
 	HardcodedSubs               bool
 	HardcodedSubtitleLanguages  []string
+	HardcodedSubtitleCoverage   []SubtitleLanguageCoverage
 	MediaBinding                PreparedMediaBinding
 	SourcePath                  string
 	DiscType                    string
@@ -1565,6 +1649,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		ManualLanguages:             cloneTrackerValidationValue(subject.ManualLanguages),
 		HardcodedSubs:               subject.HardcodedSubs,
 		HardcodedSubtitleLanguages:  slices.Clone(subject.HardcodedSubtitleLanguages),
+		HardcodedSubtitleCoverage:   slices.Clone(subject.HardcodedSubtitleCoverage),
 		MediaBinding:                subject.MediaBinding,
 		SourcePath:                  subject.SourcePath,
 		DiscType:                    subject.DiscType,
@@ -1596,6 +1681,11 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		ImageHost:                   subject.ImageHostOverrides,
 		TrackerData:                 append([]TrackerMetadata(nil), subject.TrackerData...),
 		ExactMedia:                  subject.ExactMedia.Clone(),
+	}
+	if subject.DescriptionGroupsFinal {
+		for index := range projected.DescriptionGroups {
+			projected.DescriptionGroups[index].Final = true
+		}
 	}
 	cloned, err := clonePreparedValue(projected)
 	if err != nil {
@@ -1715,9 +1805,13 @@ const (
 
 // RuleFailure describes one stable tracker-rule result.
 type RuleFailure struct {
-	Rule        string
-	Reason      string
-	Disposition RuleDisposition
+	// DebugBypass retains an explicit tracker eligibility bypass for non-submitting debug execution.
+	DebugBypass bool `json:"debugBypass,omitempty"`
+	// EvidenceFingerprint invalidates acknowledgement when supporting evidence changes.
+	EvidenceFingerprint WorkflowFingerprint `json:"evidenceFingerprint,omitempty"`
+	Rule                string
+	Reason              string
+	Disposition         RuleDisposition
 	// EvidenceStatus describes the completeness of the facts supporting this
 	// result; an empty value denotes a legacy result.
 	EvidenceStatus MetadataEvidenceStatus `json:"evidenceStatus,omitempty"`
@@ -2177,6 +2271,8 @@ type IMDBEpisode struct {
 	ReleaseYear int
 	ReleaseDate IMDBReleaseDate
 	Season      int
+	// SeasonKnown retains provider presence; false cannot prove explicit season zero.
+	SeasonKnown bool
 	EpisodeText string
 }
 
@@ -2264,12 +2360,14 @@ type TVDBMetadata struct {
 	PosterThumbnailLookupAttempted bool
 	Aliases                        []string
 	EpisodeSeason                  int
-	EpisodeNumber                  int
-	EpisodeName                    string
-	EpisodeNameEnglish             string
-	EpisodeOverview                string
-	EpisodeOverviewEnglish         string
-	EpisodeAired                   string
+	// EpisodeSeasonKnown retains provider presence for selected text; false cannot prove season zero.
+	EpisodeSeasonKnown     bool
+	EpisodeNumber          int
+	EpisodeName            string
+	EpisodeNameEnglish     string
+	EpisodeOverview        string
+	EpisodeOverviewEnglish string
+	EpisodeAired           string
 	// EpisodeImage is the selected episode image URL when the API returned one.
 	EpisodeImage string
 	// Episodes contains fetched TVDB episode entries, usually the season needed

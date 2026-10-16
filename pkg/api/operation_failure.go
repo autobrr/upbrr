@@ -19,6 +19,7 @@ const (
 	OperationKindMedia           OperationKind = "media"
 	OperationKindDescription     OperationKind = "description"
 	OperationKindImageHosting    OperationKind = "image_hosting"
+	OperationKindHDRAnalysis     OperationKind = "analyze_hdr"
 	OperationKindAudioAnalysis   OperationKind = "analyze_audio"
 )
 
@@ -45,6 +46,7 @@ const (
 	OperationFailureDryRunClientInjection    OperationFailureCode = "dry_run_client_injection_failed"
 	OperationFailureClientInjection          OperationFailureCode = "client_injection_failed"
 	OperationFailureImageHostUnavailable     OperationFailureCode = "image_host_unavailable"
+	OperationFailureHDRAnalysis              OperationFailureCode = "hdr_analysis_failed"
 	OperationFailureAudioAnalysis            OperationFailureCode = "audio_analysis_failed"
 	OperationFailureUnknownOutcome           OperationFailureCode = "unknown_submission_outcome"
 	OperationFailureInternal                 OperationFailureCode = "internal"
@@ -71,6 +73,7 @@ const (
 type OperationFailure struct {
 	Code              OperationFailureCode
 	Operation         OperationKind
+	HDRAnalysisCode   HDRAnalysisFailureCode   `json:"HDRAnalysisCode,omitempty"`
 	AudioAnalysisCode AudioAnalysisFailureCode `json:"AudioAnalysisCode,omitempty"`
 	Message           string
 	Recovery          OperationRecovery

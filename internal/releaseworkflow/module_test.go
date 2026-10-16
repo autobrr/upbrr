@@ -2145,7 +2145,12 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 				FreshUntil:            now.Add(time.Hour),
 			}
 			if index == 0 {
-				result.Matches = []api.DupeMatchProjection{{ID: "123", Name: "Example.Release.2026.ALPHA-GRP"}}
+				result.RequiresStaffToken = true
+				result.Matches = []api.DupeMatchProjection{{
+					ID:       "123",
+					Name:     "Example.Release.2026.ALPHA-GRP",
+					Relation: api.DupeRelationExactDuplicate,
+				}}
 				result.Decision = api.DupeDecisionAccepted
 			} else {
 				result.Matches = []api.DupeMatchProjection{{
@@ -2235,14 +2240,47 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	if repeated.Dupes == nil || repeated.Dupes.ID != checked.Dupes.ID || checks != 1 {
 		t.Fatalf("repeated dupes = %#v checks=%d", repeated, checks)
 	}
-	decided := executeCommand(t, module, DecideDuplicatesCommand{
-		WorkflowID:       checked.Workflow.ID,
-		ExpectedRevision: checked.Workflow.Revision,
-		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
-	})
+
+	for _, confirmation := range []api.DupeAssessmentID{"", "stale-assessment"} {
+		_, err := module.Execute(t.Context(), testOwnerID, DecideDuplicatesCommand{
+			WorkflowID:              checked.Workflow.ID,
+			ExpectedRevision:        checked.Workflow.Revision,
+			Decisions:               map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+			StaffTokenConfirmations: map[api.TrackerID]api.DupeAssessmentID{"ALPHA": confirmation},
+		})
+		if !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("unconfirmed staff-token override = %v", err)
+		}
+	}
+	decisionCommand := DecideDuplicatesCommand{
+		WorkflowID:              checked.Workflow.ID,
+		ExpectedRevision:        checked.Workflow.Revision,
+		Decisions:               map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+		StaffTokenConfirmations: map[api.TrackerID]api.DupeAssessmentID{"ALPHA": checked.Dupes.ID},
+		IdempotencyKey:          "confirm-staff-token",
+	}
+	decided := executeCommand(t, module, decisionCommand)
 	if decided.Dupes == nil || decided.Dupes.Status != api.StageStatusCompleted ||
-		decided.Dupes.Results[0].Decision != api.DupeDecisionIgnored || checks != 1 {
+		decided.Dupes.Results[0].Decision != api.DupeDecisionIgnored || !decided.Dupes.Results[0].StaffTokenConfirmed || checks != 1 {
 		t.Fatalf("decided dupes = %#v checks=%d", decided, checks)
+	}
+	if replay := executeCommand(t, module, decisionCommand); replay.Dupes.ID != decided.Dupes.ID {
+		t.Fatal("unchanged confirmed decision replay did not retain its receipt")
+	}
+	for _, confirmations := range []map[api.TrackerID]api.DupeAssessmentID{nil, {"ALPHA": ""}, {"ALPHA": "stale-assessment"}} {
+		replay := decisionCommand
+		replay.StaffTokenConfirmations = confirmations
+		if _, err := module.Execute(t.Context(), testOwnerID, replay); !errors.Is(err, ErrIdempotencyConflict) {
+			t.Fatalf("changed confirmation replay = %v, want idempotency conflict", err)
+		}
+	}
+	decided = executeCommand(t, module, DecideDuplicatesCommand{
+		WorkflowID:       decided.Workflow.ID,
+		ExpectedRevision: decided.Workflow.Revision,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"BETA": api.DupeDecisionAccepted},
+	})
+	if !decided.Dupes.Results[0].StaffTokenConfirmed {
+		t.Fatal("decision-only sibling publication discarded a valid confirmation")
 	}
 	_, err := module.Execute(context.Background(), testOwnerID, DecideDuplicatesCommand{
 		WorkflowID:       decided.Workflow.ID,
@@ -2417,6 +2455,27 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	})
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("repeat direct upload error = %v, want %v", err, ErrInvalidTransition)
+	}
+}
+
+func TestDuplicateDecisionFingerprintPreservesLegacyNoConfirmation(t *testing.T) {
+	command := DecideDuplicatesCommand{
+		ExpectedRevision: 7,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+	}
+	legacy, err := canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Decisions        map[api.TrackerID]api.DupeDecision
+	}{command.ExpectedRevision, command.Decisions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, confirmations := range []map[api.TrackerID]api.DupeAssessmentID{nil, {}} {
+		command.StaffTokenConfirmations = confirmations
+		got, err := command.commandFingerprint()
+		if err != nil || got != legacy {
+			t.Fatalf("absent confirmation changed durable legacy receipt: %s != %s (%v)", got, legacy, err)
+		}
 	}
 }
 
@@ -3678,7 +3737,7 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 				ID:       "artifact-1",
 				Kind:     api.MediaArtifactScreenshot,
 				Purpose:  api.ScreenshotPurposeFinal,
-				Selected: true,
+				Selected: false,
 			}},
 			Status: api.StageStatusCompleted,
 		}, privateMedia, nil
@@ -3761,9 +3820,21 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 		Instructions:     api.MediaCaptureInstructions{ScreenshotCount: 1, Purpose: api.ScreenshotPurposeFinal},
 	})
 	mediaRef := *result.Workflow.Media
+	result = executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            mediaRef,
+		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
+		SkipUpload:       true,
+	})
+	if result.Media == nil || !result.Media.ImageRequirementsPrepared || !result.Media.ImageHostUploadSkipped || !result.Media.Artifacts[0].Selected {
+		t.Fatalf("skipped image hosting did not satisfy the media barrier: %#v", result.Media)
+	}
+	mediaRef = *result.Workflow.Media
 	result = executeCommand(t, module, GenerateDescriptionsCommand{
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
+		Instructions:     api.DescriptionInstructions{ImageHost: api.ImageHostOverrides{SkipUpload: new(true)}},
 	})
 	result = executeCommand(t, module, DryRunUploadsCommand{
 		WorkflowID:       result.Workflow.ID,
@@ -3879,6 +3950,187 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	replayed := executeCommand(t, module, retry)
 	if replayed.Media == nil || replayed.Media.ID != deleted.Media.ID || privateMedia.stats.deletions != 2 {
 		t.Fatalf("idempotent delete = %#v deletions=%d", replayed.Media, privateMedia.stats.deletions)
+	}
+}
+
+func TestSelectExplicitMediaArtifactsSelectsOnlyRequestedLocalMedia(t *testing.T) {
+	snapshot := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{
+		{ID: "screen", Kind: api.MediaArtifactScreenshot},
+		{ID: "menu", Kind: api.MediaArtifactDVDMenu},
+		{ID: "other", Kind: api.MediaArtifactHostedImage},
+	}}
+
+	selectExplicitMediaArtifacts(&snapshot, []api.PublicResourceID{"screen"})
+
+	if !snapshot.Artifacts[0].Selected || snapshot.Artifacts[1].Selected || snapshot.Artifacts[2].Selected {
+		t.Fatalf("explicit artifact selection: %#v", snapshot.Artifacts)
+	}
+}
+
+type hostSpecificMediaMutator struct {
+	mediaArtifactBuilderFunc
+	host string
+}
+
+func (m *hostSpecificMediaMutator) Attach(
+	_ context.Context,
+	_ api.ReleaseRef,
+	_ api.TrackerReleaseProjectionSet,
+	_ *api.MediaArtifactSet,
+	_ any,
+	_ []StagedMediaAttachment,
+	_ time.Time,
+) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	return api.MediaArtifactSet{}, nil, errors.New("attach is not used by host-specific skip exit test")
+}
+
+func (m *hostSpecificMediaMutator) UploadImages(
+	_ context.Context,
+	_ api.ReleaseRef,
+	_ api.TrackerReleaseProjectionSet,
+	snapshot api.MediaArtifactSet,
+	retained any,
+	artifactIDs []api.PublicResourceID,
+	host string,
+	_ bool,
+	_ time.Time,
+) (api.MediaArtifactSet, RetainedMediaResource, []api.HostedImageAttempt, error) {
+	if host == "" {
+		host = m.host
+	}
+	updated := snapshot
+	updated.Artifacts = append(slices.Clone(snapshot.Artifacts), api.MediaArtifact{
+		ID:       api.PublicResourceID("hosted-" + host),
+		Kind:     api.MediaArtifactHostedImage,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Selected: true,
+		Source:   string(artifactIDs[0]),
+		Host:     host,
+		URL:      "https://images.example/" + host + ".png",
+	})
+	resource, _ := retained.(RetainedMediaResource)
+	return updated, resource, []api.HostedImageAttempt{{
+		Host:        host,
+		ArtifactIDs: slices.Clone(artifactIDs),
+		Results:     []api.MediaArtifact{updated.Artifacts[len(updated.Artifacts)-1]},
+	}}, nil
+}
+
+func (m *hostSpecificMediaMutator) RemoveHostedImages(
+	_ context.Context,
+	_ api.ReleaseRef,
+	_ api.MediaArtifactSet,
+	_ any,
+	_ []api.PublicResourceID,
+	_ time.Time,
+) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	return api.MediaArtifactSet{}, nil, errors.New("remove hosted is not used by host-specific skip exit test")
+}
+
+func TestUploadMediaImagesClearsPreparationWhenLeavingSkipViaHost(t *testing.T) {
+	t.Parallel()
+
+	privateMedia := &retainedMediaResourceFake{stats: &retainedMediaResourceStats{}}
+	mediaBuilder := &hostSpecificMediaMutator{
+		host: "alpha-host",
+		mediaArtifactBuilderFunc: mediaArtifactBuilderFunc(func(
+			_ context.Context,
+			_ api.ReleaseRef,
+			projections api.TrackerReleaseProjectionSet,
+			_ api.MediaCaptureInstructions,
+			_ time.Time,
+		) (api.MediaArtifactSet, any, error) {
+			fingerprint, err := mediaRequirementsFingerprint(projections.Projections)
+			if err != nil {
+				return api.MediaArtifactSet{}, nil, err
+			}
+			return api.MediaArtifactSet{
+				RequirementsFingerprint: fingerprint,
+				CaptureFingerprint:      testFingerprint(t, "leave-skip-host"),
+				Status:                  api.StageStatusCompleted,
+				Artifacts: []api.MediaArtifact{{
+					ID:       "artifact-1",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Selected: true,
+				}},
+			}, privateMedia, nil
+		}),
+	}
+	module, _ := newTestModule(
+		t,
+		testPreparer(),
+		WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+		WithDupeAssessmentBuilder(readyDupeBuilder(t)),
+		WithMediaArtifactBuilder(mediaBuilder),
+	)
+	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-leave-skip-host"})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: `C:\releases\Example.Release.2026.1080p-GRP`},
+	})
+	result = executeTestPublication(t, module, trackerContextPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Catalog:          testCatalog(t),
+		Runtime:          testRuntime(t),
+		Selection:        api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}},
+	})
+	projectionSet := testProjectionSet(t)
+	for index := range projectionSet.Projections {
+		projectionSet.Projections[index].Artifacts.ScreenshotCount = 1
+	}
+	result = executeTestPublication(t, module, projectionSetPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Snapshot:         projectionSet,
+	})
+	result = executeCommand(t, module, PreflightTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CheckDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CaptureMediaCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Instructions:     api.MediaCaptureInstructions{ScreenshotCount: 1, Purpose: api.ScreenshotPurposeFinal},
+	})
+	mediaRef := *result.Workflow.Media
+	result = executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            mediaRef,
+		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
+		SkipUpload:       true,
+	})
+	if result.Media == nil || !result.Media.ImageRequirementsPrepared || !result.Media.ImageHostUploadSkipped {
+		t.Fatalf("skipped media barrier: %#v", result.Media)
+	}
+	mediaRef = *result.Workflow.Media
+	result = executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            mediaRef,
+		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
+		Host:             "alpha-host",
+	})
+	if result.Media == nil {
+		t.Fatal("host-specific upload returned no media")
+	}
+	if result.Media.ImageHostUploadSkipped {
+		t.Fatalf("host-specific upload retained skip flag: %#v", result.Media)
+	}
+	if result.Media.ImageRequirementsPrepared {
+		t.Fatalf("leaving skip via host-specific upload retained full preparation: %#v", result.Media)
+	}
+	if !slices.ContainsFunc(result.Media.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.Kind == api.MediaArtifactHostedImage && artifact.Host == "alpha-host"
+	}) {
+		t.Fatalf("host-specific upload missing hosted artifact: %#v", result.Media.Artifacts)
 	}
 }
 
@@ -5420,4 +5672,57 @@ func testFingerprint(t *testing.T, value string) api.WorkflowFingerprint {
 		t.Fatalf("fingerprint %q: %v", value, err)
 	}
 	return fingerprint
+}
+
+func TestUploadDryRunReportsPreserveLateQuestionnaireAndRecoveryAction(t *testing.T) {
+	questionnaire := []api.TrackerQuestionnaireRequirement{{
+		Key:      "channel",
+		Kind:     "select",
+		Label:    "Channel",
+		Value:    "unknown",
+		Required: true,
+		Options:  []string{"unknown", "1"},
+	}}
+	tracker := api.UploadPlanTracker{
+		TrackerID:       "SPD",
+		Status:          api.StageStatusFailed,
+		Questionnaire:   questionnaire,
+		RequiredActions: []api.RequiredAction{{Kind: api.RequiredActionAnswerQuestionnaire, Prompt: "Choose a valid channel"}},
+	}
+	reports := uploadDryRunReports([]api.UploadPlanTracker{tracker})
+	if len(reports) != 1 || len(reports[0].Questionnaire) != 1 || reports[0].Questionnaire[0].Value != "unknown" || !reports[0].Questionnaire[0].Required {
+		t.Fatalf("late questionnaire missing from failed report: %+v", reports)
+	}
+	reports[0].Questionnaire[0].Options[0] = "changed"
+	if questionnaire[0].Options[0] != "unknown" {
+		t.Fatal("report shares questionnaire options")
+	}
+	module, _ := newTestModule(t, testPreparer())
+	actions, err := module.stampUploadPlanActions(api.UploadPlan{Trackers: []api.UploadPlanTracker{tracker}, ExpiresAt: time.Now().Add(time.Hour)}, 2, time.Now())
+	if err != nil || len(actions) != 1 || actions[0].Kind != api.RequiredActionAnswerQuestionnaire || actions[0].TrackerID != "SPD" || actions[0].Status != api.RequiredActionStatusPending {
+		t.Fatalf("late questionnaire recovery action=%+v error=%v", actions, err)
+	}
+}
+
+func TestUploadDryRunReportsPreserveEditionFeatures(t *testing.T) {
+	t.Parallel()
+	features := []api.TrackerEditionFeature{{
+		Label:    "With Commentary",
+		Category: "Feature",
+		Selected: true,
+		Evidence: "Effective commentary",
+	}, {Label: "Remastered", Category: "Edition"}}
+	reports := uploadDryRunReports([]api.UploadPlanTracker{{
+		TrackerID:       "EXAMPLE",
+		Status:          api.StageStatusReady,
+		EditionFeatures: features,
+		Fields:          []api.UploadPlanField{{Key: "remaster_title", Value: "With Commentary"}},
+	}})
+	if len(reports) != 1 || !slices.Equal(reports[0].EditionFeatures, features) || reports[0].Fields[0].Value != "With Commentary" {
+		t.Fatal("dry-run report lost review catalogue or wire payload")
+	}
+	reports[0].EditionFeatures[0].Selected = false
+	if !features[0].Selected {
+		t.Fatal("dry-run report aliases retained review catalogue")
+	}
 }

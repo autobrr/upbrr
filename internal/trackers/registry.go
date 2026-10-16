@@ -92,10 +92,19 @@ func (r *Registry) Register(def Definition) error {
 			descriptor.Family = provider.TrackerFamily()
 		}
 		descriptor.ProjectorVersion = strings.ToLower(string(descriptor.Family)) + "-v2"
+		if _, ok := def.(ProjectionQuestionnaireProvider); ok {
+			descriptor.ProjectorVersion += "-questionnaire-v2"
+		}
+		if _, ok := def.(TrackerAnswerSchemaProvider); ok {
+			descriptor.ProjectorVersion += "-answer-schema-v1"
+		}
 		if provider, ok := def.(ReleaseNamePolicyProvider); ok {
 			descriptor.ReleaseNamePolicy = provider.ReleaseNamePolicy()
 		} else {
 			descriptor.ReleaseNamePolicy = defaultReleaseNamePolicy(descriptor.Family)
+		}
+		if provider, ok := def.(EditionFeatureProvider); ok {
+			descriptor.EditionFeatures = provider.EditionFeatureResolver()
 		}
 		if provider, ok := def.(LocalizedMetadataProvider); ok {
 			descriptor.MetadataLocale = strings.TrimSpace(provider.LocalizedMetadataLocale())
@@ -372,6 +381,14 @@ func cloneDupePolicy(policy DupePolicy) DupePolicy {
 	policy.PrecedenceRules = cloneDupeRules(policy.PrecedenceRules)
 	policy.ManualReviewRules = cloneDupeRules(policy.ManualReviewRules)
 	policy.SetRules = cloneDupeSetRules(policy.SetRules)
+	policy.Slots = append([]DupeSlot(nil), policy.Slots...)
+	for index := range policy.Slots {
+		policy.Slots[index].Predicates = cloneDupeSetPredicates(policy.Slots[index].Predicates)
+	}
+	policy.TargetReviewRules = append([]DupeTargetReview(nil), policy.TargetReviewRules...)
+	for index := range policy.TargetReviewRules {
+		policy.TargetReviewRules[index].Predicates = cloneDupeSetPredicates(policy.TargetReviewRules[index].Predicates)
+	}
 	policy.SizeVarianceResolutions = append([]string(nil), policy.SizeVarianceResolutions...)
 	policy.SizeVarianceTypes = append([]string(nil), policy.SizeVarianceTypes...)
 	return policy
@@ -397,6 +414,7 @@ func cloneDupeSetPredicates(predicates []DupeSetPredicate) []DupeSetPredicate {
 	result := make([]DupeSetPredicate, len(predicates))
 	for index, predicate := range predicates {
 		predicate.Values = append([]string(nil), predicate.Values...)
+		predicate.ValueTokens = append([]string(nil), predicate.ValueTokens...)
 		predicate.ExcludedValues = append([]string(nil), predicate.ExcludedValues...)
 		result[index] = predicate
 	}
@@ -674,12 +692,22 @@ func validateDupePolicy(policy DupePolicy) error {
 		return errors.New("policy ID is empty")
 	}
 	isCompatibility := strings.Contains(strings.ToLower(policy.ID), "/duplicate-compat/")
-	if policy.ExactMatchOnly ||
+	if policy.ExactMatchOnly || policy.PackContainmentRequiresReview ||
 		!isCompatibility && (len(policy.SlotDimensions) > 0 || len(policy.OptionalSlotDimensions) > 0 || len(policy.CompleteSlotDimensions) > 0 ||
 			len(policy.RequiredDimensions) > 0 || len(policy.SuppressGeneralCoexistence) > 0 || len(policy.CoexistenceRules) > 0 ||
-			len(policy.PrecedenceRules) > 0 || len(policy.SetRules) > 0 || policy.SizeVariancePercent > 0) {
+			len(policy.PrecedenceRules) > 0 || len(policy.SetRules) > 0 || len(policy.Slots) > 0 || len(policy.TargetReviewRules) > 0 || policy.SizeVariancePercent > 0) {
 		if strings.TrimSpace(policy.EvidenceID) == "" {
 			return errors.New("automatic policy has no evidence ID")
+		}
+	}
+	for _, slot := range policy.Slots {
+		if strings.TrimSpace(slot.ID) == "" || len(slot.Predicates) == 0 {
+			return errors.New("slot has no ID or predicates")
+		}
+	}
+	for _, review := range policy.TargetReviewRules {
+		if strings.TrimSpace(review.ID) == "" || strings.TrimSpace(review.Reason) == "" || len(review.Predicates) == 0 {
+			return errors.New("target review has no ID, reason, or predicates")
 		}
 	}
 	seenRuleIDs := make(map[string]struct{})

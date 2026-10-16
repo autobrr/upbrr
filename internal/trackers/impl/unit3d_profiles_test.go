@@ -181,7 +181,25 @@ func TestExplicitUnit3DProfilesPreserveResolvers(t *testing.T) {
 		VideoEncode: "XVID",
 		Tag:         "-GRP",
 	}, nil)
+	sourcePath := t.TempDir()
 	aitherMeta := api.UploadSubject{
+		SourcePath: sourcePath,
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			Generation: 1,
+			Category:   api.CanonicalCategoryMovie,
+			TMDBID:     4242,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			Generation: 1,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   4242,
+				Category: "MOVIE",
+				Title:    "Example Release",
+				Year:     2020,
+			},
+		},
 		ReleaseName:   generated.Name,
 		GeneratedName: generated.GeneratedName,
 		Release:       api.ReleaseInfo{Year: 2020, Resolution: "480p"},

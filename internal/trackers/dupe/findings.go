@@ -82,8 +82,7 @@ func collectCandidateFindings(
 	findings = append(findings, collectExactFindings(target, candidate)...)
 	targetTitleScope := parseBestTitle(target.Names).Content
 	candidateTitleScope := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content
-	if contentScopesContradict(exactOnlyContentScope(targetFacts.Content, targetTitleScope), targetTitleScope) ||
-		contentScopesContradict(exactOnlyContentScope(candidateFacts.Content, candidateTitleScope), candidateTitleScope) {
+	if contentScopesContradict(targetFacts.Content, targetTitleScope) || contentScopesContradict(candidateFacts.Content, candidateTitleScope) {
 		findings = append(findings, RuleFinding{
 			RuleID:         GeneralPolicyID + "/content_scope",
 			Source:         "general",
@@ -94,11 +93,55 @@ func collectCandidateFindings(
 			Priority:       findingPriorityContentConflict,
 		})
 	}
-	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, policy, workScope)...)
+	generalPolicy := policy
+	if policy.TargetSlot != nil {
+		generalPolicy.SuppressGeneralCoexistence = append(slices.Clone(policy.SuppressGeneralCoexistence),
+			trackerspkg.DupeDimensionResolution, trackerspkg.DupeDimensionMediaClass, trackerspkg.DupeDimensionHDR,
+			trackerspkg.DupeDimensionEdition, trackerspkg.DupeDimensionRegion, trackerspkg.DupeDimensionThreeD)
+	}
+	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, generalPolicy, workScope)...)
+	if policy.TargetSlot != nil {
+		finding := RuleFinding{
+			RuleID:     policy.ID + "/native_slot",
+			EvidenceID: policy.EvidenceID,
+			Source:     "tracker",
+			Status:     RuleFindingIndeterminate,
+			Relation:   api.DupeRelationManualReview,
+			ReasonCode: "ordinary_slot_unproven",
+			Priority:   findingPrioritySlotMissing,
+		}
+		contradictory := targetFacts.HDR.Status == api.HDREvidenceContradictory || candidateFacts.HDR.Status == api.HDREvidenceContradictory
+		for _, fact := range []Fact{
+			targetFacts.Resolution, candidateFacts.Resolution, targetFacts.Source, candidateFacts.Source,
+			targetFacts.Codec, candidateFacts.Codec,
+			dimensionFact(targetFacts, trackerspkg.DupeDimensionMediaClass), dimensionFact(candidateFacts, trackerspkg.DupeDimensionMediaClass),
+		} {
+			contradictory = contradictory || fact.Status == FactContradictory
+		}
+		if contradictory {
+			finding.ReasonCode = "native_slot_contradictory"
+			finding.Contradictions = []string{"native_slot"}
+			finding.Priority = findingPriorityTrackerMatched
+		} else if policy.CompareSlots != nil {
+			finding.Relation = policy.CompareSlots(target.TrackerSlot, candidate.TrackerSlot, target.Names, candidate.Name)
+			if finding.Relation == api.DupeRelationSameSlot || finding.Relation == api.DupeRelationCoexists {
+				finding.Status = RuleFindingMatched
+				finding.Priority = findingPriorityTrackerMatched
+				finding.ReasonCode = "same_slot"
+				if finding.Relation == api.DupeRelationCoexists {
+					finding.ReasonCode = "distinct_ordinary_slot"
+				}
+			}
+		}
+		findings = append(findings, finding)
+	}
 	if policy.ExactMatchOnly {
 		findings = append(findings, collectExactOnlyFinding(target, targetFacts, candidate, candidateFacts, policy))
 	}
 	findings = append(findings, collectTrackerRules(target, targetFacts, candidate, candidateFacts, policy)...)
+	if len(policy.Slots) > 0 {
+		findings = append(findings, collectConditionalSlotFinding(targetFacts, candidateFacts, policy))
+	}
 	if finding, ok := collectTrackerSlotFinding(target, targetFacts, candidate, candidateFacts, policy); ok {
 		findings = append(findings, finding)
 	}
@@ -119,6 +162,13 @@ func collectCandidateFindings(
 			ReasonCode: "candidate_trumpable",
 			Priority:   priority,
 		})
+	}
+	// A review-only containment finding must never suppress a proved distinct
+	// variant, including lower-priority general or tracker coexistence findings.
+	if policy.PackContainmentRequiresReview && slices.ContainsFunc(findings, func(finding RuleFinding) bool {
+		return finding.Status == RuleFindingMatched && finding.Relation == api.DupeRelationCoexists
+	}) {
+		findings = slices.DeleteFunc(findings, func(finding RuleFinding) bool { return finding.ReasonCode == "pack_audio_languages_unverified" })
 	}
 	findings = append(findings, sameSlotFallbackFinding())
 	return findings
@@ -186,18 +236,6 @@ func collectExactOnlyFinding(
 	return finding
 }
 
-// The prepared target and candidate adapters retain only the first episode.
-// Recover a matching title range before comparing scopes, without changing
-// the default policy or accepting a conflicting season or first episode.
-func exactOnlyContentScope(structured contentScope, title contentScope) contentScope {
-	if structured.Kind == contentScopeEpisode && title.Kind == contentScopeEpisodeRange &&
-		structured.Season > 0 && structured.Season == title.Season &&
-		structured.EpisodeStart == title.EpisodeStart && title.EpisodeEnd >= title.EpisodeStart {
-		return title
-	}
-	return structured
-}
-
 func contentScopesContradict(structured contentScope, title contentScope) bool {
 	if structured.Kind == contentScopeWork || structured.Kind == contentScopeUnknownTV ||
 		title.Kind == contentScopeWork || title.Kind == contentScopeUnknownTV {
@@ -255,6 +293,15 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 	// title-fallback search.
 	if workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup {
 		if finding, ok := collectPackContainmentFinding(target.Content, candidate.Content); ok {
+			if policy.PackContainmentRequiresReview && target.MediaClass != mediaClassFullDisc && candidate.MediaClass != mediaClassFullDisc {
+				finding.RuleID = policy.ID + "/pack_comparison_review"
+				finding.EvidenceID = policy.EvidenceID
+				finding.Source = "tracker"
+				finding.Status = RuleFindingIndeterminate
+				finding.Relation = api.DupeRelationManualReview
+				finding.ReasonCode = "pack_audio_languages_unverified"
+				finding.Manual = true
+			}
 			findings = append(findings, finding)
 		}
 	}
@@ -265,7 +312,9 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 		findings = append(findings, generalFinding("resolution", "resolution_differs", findingPriorityGeneral))
 	}
 	if !generalDimensionSuppressed(policy, trackerspkg.DupeDimensionMediaClass) && target.MediaClass != mediaClassUnknown &&
-		candidate.MediaClass != mediaClassUnknown && target.MediaClass != candidate.MediaClass {
+		candidate.MediaClass != mediaClassUnknown && target.MediaClass != candidate.MediaClass &&
+		dimensionFact(target, trackerspkg.DupeDimensionMediaClass).Status == FactComplete &&
+		dimensionFact(candidate, trackerspkg.DupeDimensionMediaClass).Status == FactComplete {
 		findings = append(findings, generalFinding("media_class", "media_class_differs", findingPriorityGeneral))
 	}
 	for _, dimension := range []struct {
@@ -452,6 +501,9 @@ func evaluateTrackerRule(
 			candidateFacts,
 			condition.Dimension,
 		)
+		if condition.Optional && targetFact.Status == FactMissing && candidateFact.Status == FactMissing {
+			continue
+		}
 		comparison := compareDimensionFacts(condition.Dimension, targetFact, candidateFact)
 		finding.comparisons = append(finding.comparisons, factComparison{
 			Dimension: condition.Dimension,
@@ -459,6 +511,13 @@ func evaluateTrackerRule(
 			Candidate: candidateFact,
 			Result:    comparison,
 		})
+		// A known operand can disprove a directional rule independently of the
+		// other operand's completeness; an unrelated rule must not veto capacity.
+		if targetFact.Status == FactComplete && len(condition.TargetValues) > 0 && !containsFold(condition.TargetValues, targetFact.Value) ||
+			candidateFact.Status == FactComplete && len(condition.CandidateValues) > 0 && !containsFold(condition.CandidateValues, candidateFact.Value) {
+			disproved = true
+			continue
+		}
 		if targetFact.Status == FactContradictory || candidateFact.Status == FactContradictory {
 			finding.Contradictions = append(finding.Contradictions, string(condition.Dimension))
 			continue

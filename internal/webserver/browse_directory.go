@@ -144,6 +144,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 		ParentPath:  parentPathWithinRoots(current, root, roots),
 		Mode:        mode,
 		Entries:     items,
+		Scope:       "directory",
 	}, nil
 }
 
@@ -235,6 +236,7 @@ func browseConfiguredRoots(mode string, roots []string) api.BrowseDirectoryRespo
 		ParentPath:  "",
 		Mode:        mode,
 		Entries:     entries,
+		Scope:       "roots",
 	}
 }
 
@@ -293,6 +295,7 @@ func browseWindowsRoots(mode string) api.BrowseDirectoryResponse {
 		ParentPath:  "",
 		Mode:        mode,
 		Entries:     entries,
+		Scope:       "roots",
 	}
 }
 

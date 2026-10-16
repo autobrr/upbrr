@@ -35,4 +35,6 @@ This choice does not save the global logging setting or change another operation
 - With **Auto-scroll** enabled, the browser retains the latest 1,000 entries. With it disabled, the buffer can grow to 10,000 entries before dropping the oldest entries and showing a warning.
 - A muted pattern hides exact whole-message matches in the viewer. Adding, clicking, or removing a mute persists it immediately without **Save**; it does not suppress the underlying log event.
 
+Torrent-client connection diagnostics omit configured private endpoints and retain safe operation and failure context.
+
 The viewer receives centrally sanitized messages, but inspect entries before sharing them. Never publish credentials, cookies, tokens, announce URLs, filesystem details, or private tracker data.

@@ -117,6 +117,7 @@ const inputFacet = (): InputFacet => ({
   },
   updateSourceDraft: vi.fn(),
   selectSource: vi.fn(),
+  reviewPlaylists: vi.fn(),
   changeSourceLookupURL: vi.fn(),
   changeIdentity: vi.fn(),
   changeMetadata: vi.fn(),
@@ -691,11 +692,13 @@ describe("InputPage", () => {
       ...facet,
       view: {
         ...facet.view,
+        selectedSource: "",
+        sourceDraft: "C:\\media\\Synthetic Disc A",
         playlist: { ...facet.view.playlist, selected: ["disc-one:00001.mpls"] },
       },
     };
     cleanup();
-    render(
+    const { rerender } = render(
       <InputPage
         facet={selectedFacet}
         sourcePathHistory={[]}
@@ -710,6 +713,33 @@ describe("InputPage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Confirm Selection" }));
     expect(facet.confirmPlaylists).toHaveBeenCalledOnce();
+    expect(facet.confirmPlaylists).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByLabelText("Check for HDR metadata in the selected playlists"));
+    rerender(
+      <InputPage
+        facet={{
+          ...selectedFacet,
+          view: { ...selectedFacet.view, sourceDraft: "C:\\media\\Synthetic Disc B" },
+        }}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+    expect(
+      screen.getByLabelText("Check for HDR metadata in the selected playlists"),
+    ).not.toBeChecked();
+    fireEvent.click(screen.getByLabelText("Check for HDR metadata in the selected playlists"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Selection" }));
+    expect(facet.confirmPlaylists).toHaveBeenLastCalledWith(true);
+    expect(
+      screen.getByLabelText("Check for HDR metadata in the selected playlists"),
+    ).not.toBeChecked();
   });
 
   it("groups duplicate playlist names and selects opaque IDs for every disc", () => {
@@ -1350,7 +1380,12 @@ describe("InputPage", () => {
         intent: {
           ...base.view.intent,
           identity: { TMDBID: 0 },
-          metadata: { OriginalLanguage: "", AudioLanguages: [], HardcodedSubs: false },
+          metadata: {
+            OriginalLanguage: "",
+            AudioLanguages: [],
+            HardcodedSubs: false,
+            HardcodedSubtitleLanguages: ["English (Full)"],
+          },
         },
       },
     };
@@ -1359,7 +1394,7 @@ describe("InputPage", () => {
       "identity.tmdb",
       "metadata.original_language",
       "metadata.audio_languages",
-      "metadata.hardcoded_subs",
+      "metadata.hardcoded_subtitle_languages",
     ]) {
       expect(
         within(
@@ -1371,7 +1406,8 @@ describe("InputPage", () => {
     expect(screen.getByRole("button", { name: "Remove TMDB ID" })).toBeDisabled();
     expect(screen.getByLabelText("Original language")).toHaveValue("");
     expect(screen.getByLabelText("Audio languages")).toHaveValue("");
-    expect(screen.getByLabelText("Hardcoded subtitles")).toHaveValue("no");
+    expect(screen.queryByLabelText("Hardcoded subtitles")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Hardcoded subtitle languages")).toHaveValue("");
   });
 
   it("clears only the selected language-list draft on Auto", () => {
@@ -1412,6 +1448,25 @@ describe("InputPage", () => {
     expect(screen.queryByText(/Metadata changes are pending/)).not.toBeInTheDocument();
   });
 
+  it("uses hardcoded language choices as the sole control and resets legacy state on Auto", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = { ...base, view: { ...base.view, release: preparedRelease() } };
+    render(<InputCorrectionEditor facet={facet} />);
+    expect(screen.queryByLabelText("Hardcoded subtitles")).not.toBeInTheDocument();
+    const input = screen.getByRole("combobox", { name: "Hardcoded subtitle languages" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "English (Forced)" } });
+    expect(facet.changeMetadata).toHaveBeenLastCalledWith({
+      HardcodedSubtitleLanguages: ["English (Forced)"],
+      HardcodedSubs: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Auto Hardcoded subtitle languages" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({
+      field: "metadata.hardcoded_subtitle_languages",
+    });
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "metadata.hardcoded_subs" });
+  });
+
   it("keeps explicit false, empty, and Auto correction intents distinct", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {
@@ -1425,10 +1480,15 @@ describe("InputPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Enter digits only.");
     expect(facet.changeIdentity).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByLabelText("Hardcoded subtitles"), {
-      target: { value: "no" },
+    fireEvent.focus(screen.getByLabelText("Hardcoded subtitle languages"));
+    fireEvent.change(screen.getByLabelText("Hardcoded subtitle languages"), {
+      target: { value: "Spanish" },
     });
-    expect(facet.changeMetadata).toHaveBeenCalledWith({ HardcodedSubs: false });
+    fireEvent.click(screen.getByRole("button", { name: "Remove Hardcoded subtitle languages 1" }));
+    expect(facet.changeMetadata).toHaveBeenCalledWith({
+      HardcodedSubs: false,
+      HardcodedSubtitleLanguages: [],
+    });
 
     fireEvent.change(screen.getByLabelText("Original language"), { target: { value: "" } });
     expect(facet.changeMetadata).toHaveBeenCalledWith({ OriginalLanguage: "" });
@@ -1712,7 +1772,6 @@ describe("InputPage", () => {
       "metadata.web_dv",
       "metadata.stream_optimized",
       "metadata.anime",
-      "metadata.hardcoded_subs",
     ]);
   });
 
@@ -1734,6 +1793,35 @@ describe("InputPage", () => {
 
     expect(screen.getByLabelText("Service")).toHaveValue("");
     expect(screen.getByText("No inspected audio or subtitle tracks.")).toBeInTheDocument();
+  });
+
+  it("shows inspected disc audio provenance without deriving commentary from hidden tracks", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Media.Tracks[0] = {
+      ...release.Media.Tracks[0],
+      DiscID: "disc-1",
+      PlaylistID: "00800.MPLS",
+      NativeID: "",
+      BitrateBitsPerSecond: 640000,
+      Hidden: true,
+      Commentary: false,
+    };
+    render(<InputCorrectionEditor facet={{ ...base, view: { ...base.view, release } }} />);
+    expect(
+      screen.getByText(
+        /Disc: disc-1 · Playlist: 00800.MPLS · Ordinal: 1 · Bitrate: 640000 bps · Hidden: yes · Commentary: no/,
+      ),
+    ).toBeInTheDocument();
+    expect(base.changeMetadata).not.toHaveBeenCalled();
+  });
+
+  it("does not invent BDInfo bitrate or hidden evidence for file audio tracks", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    render(<InputCorrectionEditor facet={{ ...base, view: { ...base.view, release } }} />);
+    expect(screen.queryByText(/Hidden:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Bitrate:/)).not.toBeInTheDocument();
   });
 
   it("binds track corrections and source options to their typed facet commands", () => {

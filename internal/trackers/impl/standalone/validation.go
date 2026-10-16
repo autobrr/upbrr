@@ -22,6 +22,7 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		answers[tracker] = cloneAnswers(subject.QuestionnaireAnswers)
 	}
 	return api.UploadSubject{
+		LanguageFacts: subject.LanguageFacts.Clone(),
 		EffectiveMetadata: api.EffectiveMetadata{
 			Title:                      subject.EffectiveMetadata.Title,
 			AlternateTitle:             subject.EffectiveMetadata.AlternateTitle,
@@ -45,6 +46,7 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		},
 		HardcodedSubs:               subject.HardcodedSubs,
 		HardcodedSubtitleLanguages:  append([]string(nil), subject.HardcodedSubtitleLanguages...),
+		HardcodedSubtitleCoverage:   append([]api.SubtitleLanguageCoverage(nil), subject.HardcodedSubtitleCoverage...),
 		SourcePath:                  subject.SourcePath,
 		VideoPath:                   subject.VideoPath,
 		FileList:                    append([]string(nil), subject.FileList...),
@@ -60,6 +62,7 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		ProviderMetadata:            subject.ProviderMetadata,
 		SeasonInt:                   subject.SeasonInt,
 		EpisodeInt:                  subject.EpisodeInt,
+		MultipleEpisodes:            subject.MultipleEpisodes,
 		SeasonStr:                   subject.SeasonStr,
 		EpisodeStr:                  subject.EpisodeStr,
 		TVPack:                      subject.TVPack,
@@ -132,9 +135,6 @@ func ValidatePreparation(
 	input trackers.PreparationInput,
 	policy trackers.ValidationPolicyBinding,
 ) error {
-	if policy.Check == nil {
-		return nil
-	}
 	subject := api.NewTrackerValidationSubject(input.Meta, input.Tracker)
 	if strings.EqualFold(strings.TrimSpace(input.Meta.DiscType), "BDMV") &&
 		!subject.BDInfoReady &&
@@ -145,7 +145,7 @@ func ValidatePreparation(
 		// prepared BDInfo summary from the release temp directory.
 		subject.BDInfoReady = true
 	}
-	failures, err := policy.Check(ctx, subject, input.Logger)
+	failures, err := trackers.EvaluatePreparationRules(ctx, input, subject, policy)
 	if err != nil {
 		return fmt.Errorf("trackers: %s constructibility: %w", strings.ToUpper(strings.TrimSpace(input.Tracker)), err)
 	}

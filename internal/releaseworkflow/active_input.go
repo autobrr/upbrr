@@ -66,12 +66,22 @@ func (m *Module) OwnsActiveInput(slot api.ActiveInputRecord) bool {
 	return m != nil && slot.State != api.ActiveInputEmpty && slot.Fence != 0 && slot.CoordinatorID == m.processEpoch
 }
 
-// InputSourcePath reads the canonical source for an already authorized input ID.
+// InputSourcePath reads the verified source path for an already authorized input ID.
 // Callers must enforce input ownership before projecting the path to a client.
 func (m *Module) InputSourcePath(ctx context.Context, inputID string) (string, error) {
 	record, err := m.activeInputs.LoadInputRecordByID(ctx, inputID)
 	if err != nil {
 		return "", fmt.Errorf("release workflow read input source: %w", err)
+	}
+	var verified api.VerifiedInputSource
+	if err := json.Unmarshal(record.Manifest, &verified); err != nil {
+		return "", fmt.Errorf("release workflow decode input source: %w", err)
+	}
+	if verified.Manifest.SourcePath != "" {
+		if verified.Identity.Digest != record.SourceVersion || !pathing.SamePath(verified.Manifest.SourcePath, record.CanonicalPath) {
+			return "", api.ErrActiveInputChanged
+		}
+		return verified.Manifest.SourcePath, nil
 	}
 	return record.CanonicalPath, nil
 }
@@ -104,7 +114,7 @@ func (m *Module) PreparationForInputOpen(
 // ResetIdleInputOnStartup claims an expired foreign input, settles interrupted
 // prior-process operations, and closes the slot when it becomes idle. It waits
 // for live work leases, preserves completed checkpoints, and retains an active
-// composite workflow for an explicit retry. It waits for a foreign recovery
+// composite workflow or retained HDR analysis for an explicit retry. It waits for a foreign recovery
 // lease within a bounded deadline; other live foreign leases are deferred.
 // It does not verify source bytes or start a new workflow.
 func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
@@ -233,6 +243,16 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 				return fmt.Errorf("release workflow reload composite session on startup: %w", err)
 			}
 		}
+	}
+	if sourceState.Workflow.HDRAnalysis != nil || len(sourceState.HDRExtractions) > 0 || sourceState.HDRPendingRequest != nil {
+		if m.OwnsActiveInput(slot) {
+			authorityCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
+			if err := m.recoverAfterRestart(authorityCtx, slot.OwnerID, &sourceState); err != nil {
+				return fmt.Errorf("release workflow restore retained HDR state: %w", err)
+			}
+		}
+		m.logger.Debugf("active input: startup reset decision=retain_hdr revision=%d", slot.Revision)
+		return nil
 	}
 	if sourceState.Composite != nil {
 		if sourceState.Workflow.Status != api.WorkflowStatusCompleted && sourceState.Workflow.Status != api.WorkflowStatusCanceled &&
@@ -411,7 +431,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		}
 		workflow = created.Workflow.ID
 		if lookupErr == nil && previousInput.SourceVersion == record.SourceVersion {
-			priorWorkflowID, migratedAudioID, associationErr := m.activeInputs.LoadInputWorkflowAssociation(
+			association, associationErr := m.activeInputs.LoadInputWorkflowAssociation(
 				ctx,
 				record.CanonicalPath,
 				owner,
@@ -420,6 +440,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			if associationErr != nil {
 				return api.ActiveInputRecord{}, fmt.Errorf("release workflow load input workflow association: %w", associationErr)
 			}
+			priorWorkflowID, migratedAudioID := association.WorkflowID, association.AudioAnalysisID
 			if priorWorkflowID != "" {
 				priorState, loadErr := m.repository.Load(ctx, owner, priorWorkflowID)
 				if loadErr != nil && !errors.Is(loadErr, ErrWorkflowNotFound) {
@@ -438,13 +459,25 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 							pendingWorkflow = priorState.Workflow.ID
 						}
 					}
-					if pending != nil {
+					if pending != nil || priorState.Workflow.HDRAnalysis != nil || association.HDRAnalysisID != "" || len(priorState.HDRExtractions) > 0 ||
+						priorState.PendingHDRAnalysisWorkflowID != "" {
 						state, loadErr := m.repository.Load(ctx, owner, workflow)
 						if loadErr != nil {
 							return api.ActiveInputRecord{}, fmt.Errorf("release workflow load new input workflow: %w", loadErr)
 						}
 						state.PendingAudioAnalysis = pending
 						state.PendingAudioAnalysisWorkflowID = pendingWorkflow
+						state.PendingHDRAnalysis = priorState.Workflow.HDRAnalysis
+						state.PendingHDRAnalysisWorkflowID = priorState.Workflow.ID
+						if state.PendingHDRAnalysis == nil && association.HDRAnalysisID != "" {
+							if analysis, exists := priorState.HDRAnalyses[association.HDRAnalysisID]; exists {
+								state.PendingHDRAnalysis = &api.HDRAnalysisRef{ID: analysis.ID, Revision: analysis.Revision}
+							}
+						}
+						if state.PendingHDRAnalysis == nil && priorState.PendingHDRAnalysisWorkflowID != "" {
+							state.PendingHDRAnalysis = priorState.PendingHDRAnalysis
+							state.PendingHDRAnalysisWorkflowID = priorState.PendingHDRAnalysisWorkflowID
+						}
 						state.Workflow.Revision++
 						state.Workflow.UpdatedAt = m.clock.Now()
 						encoded, encodeErr := workflowStateRecord(owner, state)
@@ -499,12 +532,22 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			}
 		}
 		if prior.SourceVersion != record.SourceVersion {
+			state.HDRPendingRequest = nil
 			state.PendingCorrectionConfirmation = nil
 			state.PendingAudioAnalysis = nil
 			state.PendingAudioAnalysisWorkflowID = ""
+			state.PendingHDRAnalysis = nil
+			state.PendingHDRAnalysisWorkflowID = ""
 		} else if state.Workflow.AudioAnalysis != nil {
 			state.PendingAudioAnalysis = state.Workflow.AudioAnalysis
 			state.PendingAudioAnalysisWorkflowID = state.Workflow.ID
+		}
+		// Prefer current results or newly owned checkpoints. Repeated verification
+		// must preserve the result already pending in this workflow after invalidation.
+		if prior.SourceVersion == record.SourceVersion && (state.Workflow.HDRAnalysis != nil ||
+			(len(state.HDRExtractions) > 0 && state.PendingHDRAnalysisWorkflowID != state.Workflow.ID)) {
+			state.PendingHDRAnalysis = state.Workflow.HDRAnalysis
+			state.PendingHDRAnalysisWorkflowID = state.Workflow.ID
 		}
 		state.PendingDuplicateReuse = nil
 		invalidatePreparedAndDownstream(&state.Workflow)

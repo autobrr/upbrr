@@ -238,7 +238,10 @@ func TestCLIDoesNotReleasePreexistingInputAfterInitialContinuation(t *testing.T)
 	}}
 	core.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return current, nil }
 	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
-	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalPrepared}); err != nil {
+	if err := session.executeContinuation(
+		t.Context(),
+		api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalPrepared},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if session.inputClaim.workflowID != "" {
@@ -261,7 +264,10 @@ func TestCLIClaimsFreshInputAfterPreviousProcessRecovery(t *testing.T) {
 		return releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-new"}}, nil
 	}
 	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
-	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady}); err != nil {
+	if err := session.executeContinuation(
+		t.Context(),
+		api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if session.inputClaim.workflowID != "workflow-new" || session.inputClaim.revision != 9 {
@@ -286,7 +292,10 @@ func TestCLIDoesNotClaimRestoredPriorInputAfterFailedOpen(t *testing.T) {
 		return releaseworkflow.CommandResult{}, errors.New("synthetic verifier failure")
 	}
 	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
-	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady}); err == nil {
+	if err := session.executeContinuation(
+		t.Context(),
+		api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady},
+	); err == nil {
 		t.Fatal("expected failed open")
 	}
 	if session.inputClaim.workflowID != "" {
@@ -295,6 +304,36 @@ func TestCLIDoesNotClaimRestoredPriorInputAfterFailedOpen(t *testing.T) {
 	session.releaseActiveInput(t.Context())
 	if len(core.releaseRequests) != 0 {
 		t.Fatalf("released restored prior input %#v", core.releaseRequests)
+	}
+}
+
+func TestCLIRetainsOwnedHDRWorkflowAfterInitialInvocation(t *testing.T) {
+	for _, status := range []api.StageStatus{api.StageStatusCompleted, api.StageStatusFailed, api.StageStatusCanceled, api.StageStatusInterrupted} {
+		t.Run(string(status), func(t *testing.T) {
+			core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{
+				State:    api.ActiveInputActive,
+				Revision: 9,
+				Current: &api.ReleaseWorkflowCurrent{
+					Workflow:    api.ReleaseWorkflow{ID: "retained-hdr"},
+					HDRAnalysis: &api.HDRAnalysisResult{Status: status},
+				},
+			}}
+			if status == api.StageStatusInterrupted {
+				core.activeInput.Current.HDRAnalysis = nil
+				core.activeInput.Current.HDRPendingRequest = &api.HDRAnalysisInstructions{}
+			}
+			session := &cliWorkflowSession{
+				core:       core,
+				logger:     api.NopLogger{},
+				inputClaim: cliInputSlotClaim{workflowID: "retained-hdr", revision: 9},
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			session.releaseActiveInput(ctx)
+			if len(core.releaseRequests) != 0 {
+				t.Fatal("initial CLI cleanup closed the resumable HDR workflow")
+			}
+		})
 	}
 }
 
@@ -309,7 +348,10 @@ func TestCLIReleasesCommittedInputAfterPreviousProcessPostOpenFailure(t *testing
 		return releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-new"}}, errors.New("synthetic post-open failure")
 	}
 	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
-	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady}); err == nil {
+	if err := session.executeContinuation(
+		t.Context(),
+		api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady},
+	); err == nil {
 		t.Fatal("expected post-open failure")
 	}
 	if session.inputClaim.workflowID != "workflow-new" || session.inputClaim.revision != 9 {
@@ -327,7 +369,11 @@ func (f *cliWorkflowCoreFake) GetInputHistory(context.Context, string) (api.Inpu
 	return f.inputHistory, f.inputHistoryErr
 }
 
-func (f *cliWorkflowCoreFake) StartLiveTestReleaseWorkflowUpload(ctx context.Context, owner string, request api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+func (f *cliWorkflowCoreFake) StartLiveTestReleaseWorkflowUpload(
+	ctx context.Context,
+	owner string,
+	request api.CreateReleaseWorkflowUploadRequest,
+) (releaseworkflow.CommandResult, error) {
 	f.liveStarts++
 	return f.StartReleaseWorkflowUpload(ctx, owner, request)
 }
@@ -519,6 +565,28 @@ func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("upload dry-run output missing %q: %q", expected, output)
+		}
+	}
+}
+
+func TestPrintCLIWorkflowProjectionsShowsPassiveWarningsWithoutDetailedOutput(t *testing.T) {
+	for _, readiness := range []api.ReadinessStatus{api.ReadinessStatusReady, api.ReadinessStatusIneligible} {
+		output := captureWriter(func(output io.Writer) {
+			printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{
+				Projections: []api.TrackerReleaseProjection{{
+					DisplayName: "Example",
+					Readiness:   readiness,
+					PolicyDecisions: []api.TrackerPolicyDecision{{
+						Code:        "source_history",
+						Decision:    "advisory",
+						Disposition: api.RuleDispositionAdvisory,
+						Message:     "Check the source history when relevant.",
+					}},
+				}},
+			}, nil, false)
+		})
+		if !strings.Contains(output, "Example warning: Check the source history when relevant.") || strings.Contains(output, "acknowledge") {
+			t.Fatalf("passive warning output = %q", output)
 		}
 	}
 }
@@ -1330,6 +1398,8 @@ func TestCLIWorkflowUnattendedDefersQuestionnaireToCentralPolicy(t *testing.T) {
 			TrackerID: "ALPHA",
 			Questionnaire: []api.TrackerQuestionnaireRequirement{{
 				Key:      "edition",
+				Kind:     "select",
+				Options:  []string{"yes", "no"},
 				Required: true,
 			}},
 		}}},
@@ -1711,36 +1781,51 @@ func TestCLIInputOnlyReportsReadiness(t *testing.T) {
 }
 
 func TestCLITrackerInputPreservesSetAndAutoIntent(t *testing.T) {
-	for _, value := range []string{"yes", "no", "auto", "Source: Example WEB-DL; HDR10"} {
-		t.Run(value, func(t *testing.T) {
+	for _, test := range []struct{ tracker, field, value string }{
+		{"PTP", "no_english_subtitles", "yes"}, {"PTP", "no_english_subtitles", "no"}, {"PTP", "no_english_subtitles", "auto"},
+		{"OE", "source_notes", "Source: Example WEB-DL; HDR10"}, {"OE", "encoding_settings", "SVT-AV1 preset=4 crf=20"}, {"OE", "source_notes", "auto"},
+	} {
+		t.Run(test.tracker+"/"+test.field+"/"+test.value, func(t *testing.T) {
+			opts, visited, _, err := parseCLIOptions([]string{"--tracker-input", test.tracker + ":" + test.field + "=" + test.value, "example.mkv"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			uploadRequest, err := buildCLIRequest(opts, visited, []string{"example.mkv"}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			projected, exists := cliProjectionInstructions(uploadRequest)[api.TrackerID(test.tracker)].Questionnaire[test.field]
+			if (test.value == "auto" && exists) || (test.value != "auto" && (!exists || projected == nil || *projected != test.value)) {
+				t.Fatalf("downstream CLI answer/reset=%+v", cliProjectionInstructions(uploadRequest))
+			}
 			current := releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-1", Revision: 1}}
 			coreSvc := &cliWorkflowCoreFake{current: current}
 			coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return current, nil }
 			session := &cliWorkflowSession{
 				core:          coreSvc,
 				current:       current,
-				uploadRequest: api.Request{Trackers: []string{"OE"}},
+				uploadRequest: api.Request{Trackers: []string{test.tracker}},
 			}
-			if err := applyCLITrackerInput(t.Context(), session, []string{"OE:source_notes=" + value}); err != nil {
+			if err := applyCLITrackerInput(t.Context(), session, []string{test.tracker + ":" + test.field + "=" + test.value}); err != nil {
 				t.Fatal(err)
 			}
 			if len(coreSvc.continuations) != 1 {
-				t.Fatalf("continuations = %d", len(coreSvc.continuations))
+				t.Fatalf("continuations=%d", len(coreSvc.continuations))
 			}
 			request := coreSvc.continuations[0]
-			answer, exists := request.Intent.TrackerInputAnswers["OE"]["source_notes"]
-			if !exists || (value == "auto" && answer != nil) || (value != "auto" && (answer == nil || *answer != value)) {
-				t.Fatalf("answer patch = %#v", request.Intent.TrackerInputAnswers)
+			answer, exists := request.Intent.TrackerInputAnswers[api.TrackerID(test.tracker)][test.field]
+			if !exists || (test.value == "auto" && answer != nil) || (test.value != "auto" && (answer == nil || *answer != test.value)) {
+				t.Fatalf("staged answer=%+v", request.Intent.TrackerInputAnswers)
 			}
 			if request.Goal != api.WorkflowGoalInputReady || request.Intent.CorrectionPatch != nil || request.Intent.FactInstructions != nil {
-				t.Fatalf("tracker input crossed correction boundary: %#v", request)
+				t.Fatalf("staging crossed canonical boundary: %+v", request)
 			}
 		})
 	}
 }
 
 func TestCLIInputOnlyDoesNotStartCompositeUpload(t *testing.T) {
-	opts, visited, _, err := parseCLIOptions([]string{"--input-only", "example.mkv"})
+	opts, visited, _, err := parseCLIOptions([]string{"--input-only", "--tracker-input", "OE:source_notes=Example source", "example.mkv"})
 	if err != nil {
 		t.Fatalf("parse input-only: %v", err)
 	}
@@ -1758,13 +1843,32 @@ func TestCLIInputOnlyDoesNotStartCompositeUpload(t *testing.T) {
 		return coreSvc.current, nil
 	}
 	var output strings.Builder
-	if err := runCLIWorkflowInteractive(t.Context(), coreSvc, []string{"--input-only", "example.mkv"}, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0, config.Config{}, cliIO{in: strings.NewReader(""), out: &output}, api.NopLogger{}); err != nil {
+	if err := runCLIWorkflowInteractive(
+		t.Context(),
+		coreSvc,
+		[]string{"--input-only", "--tracker-input", "OE:source_notes=Example source", "example.mkv"},
+		opts,
+		visited,
+		"example.mkv",
+		api.PlaylistInstruction{},
+		0,
+		config.Config{},
+		cliIO{in: strings.NewReader(""), out: &output},
+		api.NopLogger{},
+	); err != nil {
 		t.Fatalf("run input-only workflow: %v", err)
+	}
+	if !slices.ContainsFunc(coreSvc.continuations, func(request api.ContinueReleaseWorkflowRequest) bool {
+		answer := request.Intent.TrackerInputAnswers["OE"]["source_notes"]
+		return answer != nil && *answer == "Example source"
+	}) {
+		t.Fatalf("input-only dropped explicit tracker answers: %+v", coreSvc.continuations)
 	}
 	if len(coreSvc.uploadRequests) != 0 {
 		t.Fatalf("input-only started composite upload: %#v", coreSvc.uploadRequests)
 	}
-	if len(coreSvc.continuations) < 2 || coreSvc.continuations[0].Goal != api.WorkflowGoalPrepared || coreSvc.continuations[len(coreSvc.continuations)-1].Goal != api.WorkflowGoalInputReady {
+	if len(coreSvc.continuations) < 2 || coreSvc.continuations[0].Goal != api.WorkflowGoalPrepared ||
+		coreSvc.continuations[len(coreSvc.continuations)-1].Goal != api.WorkflowGoalInputReady {
 		t.Fatalf("input-only continuations = %#v", coreSvc.continuations)
 	}
 }
@@ -1853,7 +1957,8 @@ func TestCLIInputCorrectionUsesCurrentRevision(t *testing.T) {
 		t.Fatalf("continuations = %#v", coreSvc.continuations)
 	}
 	request := coreSvc.continuations[0]
-	if request.Goal != api.WorkflowGoalPrepared || request.Intent.CorrectionPatch == nil || request.Intent.CorrectionPatch.ExpectedRevision == nil || *request.Intent.CorrectionPatch.ExpectedRevision != 7 {
+	if request.Goal != api.WorkflowGoalPrepared || request.Intent.CorrectionPatch == nil || request.Intent.CorrectionPatch.ExpectedRevision == nil ||
+		*request.Intent.CorrectionPatch.ExpectedRevision != 7 {
 		t.Fatalf("correction continuation = %#v", request)
 	}
 	if request.Intent.Preparation != nil {
@@ -2025,5 +2130,187 @@ func TestCLIConfirmInputUsesCanonicalSourceForNoTrackerCompletion(t *testing.T) 
 	}
 	if len(coreSvc.uploadRequests) != 1 || coreSvc.uploadRequests[0].Source.Path != rawSource {
 		t.Fatalf("composite source = %#v", coreSvc.uploadRequests)
+	}
+}
+
+func TestCLIWorkflowCollectsBackendMultiselectAndRetainsPriorDecision(t *testing.T) {
+	projections := &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID:            "PTP",
+		QuestionnaireAnswers: map[string]string{"review": "yes"},
+		Questionnaire: []api.TrackerQuestionnaireRequirement{
+			{
+				Key:      "review",
+				Label:    "Review",
+				Required: true,
+				Value:    "yes",
+				Options:  []string{"yes", "no"},
+			},
+			{
+				Key:      "choices",
+				Label:    "Choices",
+				Required: true,
+				Kind:     "multiselect",
+				Options:  []string{"First", "Second", "Third"},
+			},
+		},
+	}}}
+	instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
+	var output strings.Builder
+	changed, err := collectCLIWorkflowQuestionnaires(
+		bufio.NewReader(strings.NewReader("1,3,1\n")),
+		&output,
+		api.InteractionModeInteractive,
+		projections,
+		instructions,
+	)
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if got := instructions["PTP"].Questionnaire; got["review"] == nil || *got["review"] != "yes" || got["choices"] == nil || *got["choices"] != "First,Third" {
+		t.Fatalf("answers=%#v", got)
+	}
+	if strings.Contains(output.String(), "PTP Review:") {
+		t.Fatal("repeated saved decision")
+	}
+}
+
+func TestCLIQuestionnaireDoesNotPromoteDisplayedDefaults(t *testing.T) {
+	instructions := map[api.TrackerID]api.TrackerProjectionInstructions{}
+	projections := &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID:            "FL",
+		QuestionnaireAnswers: map[string]string{},
+		Questionnaire: []api.TrackerQuestionnaireRequirement{{
+			Key:      "name",
+			Kind:     "text",
+			Value:    "Opaque.Scene.Name-GRP",
+			Required: true,
+		}},
+	}}}
+	var output bytes.Buffer
+	changed, err := collectCLIWorkflowQuestionnaires(bufio.NewReader(strings.NewReader("")), &output, api.InteractionModeInteractive, projections, instructions)
+	if err != nil || changed || len(instructions["FL"].Questionnaire) != 0 || output.Len() != 0 {
+		t.Fatalf("displayed default became explicit or prompted: %+v changed=%t output=%q error=%v", instructions, changed, output.String(), err)
+	}
+}
+
+func TestCLIQuestionnaireYesNoShorthand(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		answer  string
+		options []string
+		kind    string
+		want    string
+	}{
+		{"yes shorthand", "y", []string{"yes", "no"}, "select", "yes"},
+		{"no shorthand", "n", []string{"yes", "no"}, "select", "no"},
+		{"yes word", "yes", []string{"yes", "no"}, "select", "yes"},
+		{"no word", "no", []string{"yes", "no"}, "select", "no"},
+		{"case and whitespace", " YEs ", []string{"no", "yes"}, "select", "yes"},
+		{"uppercase shorthand", " N ", []string{"yes", "no"}, "select", "no"},
+		{"invalid boolean", "maybe", []string{"yes", "no"}, "select", ""},
+		{"required blank", "", []string{"yes", "no"}, "select", ""},
+		{"unrelated select", "y", []string{"yellow", "blue"}, "select", ""},
+		{"three options", "y", []string{"yes", "no", "auto"}, "select", ""},
+		{"multiselect unchanged", "y", []string{"yes", "no"}, "multiselect", ""},
+		{"text unchanged", "y", nil, "text", "y"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
+			projections := &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+				TrackerID: "PTP",
+				Questionnaire: []api.TrackerQuestionnaireRequirement{{
+					Key:      "trumpable_review",
+					Kind:     test.kind,
+					Options:  test.options,
+					Required: true,
+				}},
+			}}}
+			changed, err := collectCLIWorkflowQuestionnaires(
+				bufio.NewReader(strings.NewReader(test.answer+"\n")),
+				io.Discard,
+				api.InteractionModeInteractive,
+				projections,
+				instructions,
+			)
+			if test.want == "" {
+				if err == nil || changed || len(instructions) != 0 {
+					t.Fatalf("invalid answer accepted: changed=%v err=%v instructions=%#v", changed, err, instructions)
+				}
+				return
+			}
+			if err != nil || !changed {
+				t.Fatalf("answer rejected: changed=%v err=%v", changed, err)
+			}
+			got := instructions["PTP"].Questionnaire["trumpable_review"]
+			if got == nil || *got != test.want {
+				t.Fatalf("canonical answer = %v, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCLIInteractiveCommentaryCorrectionUsesExistingLoop(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"example.mkv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-commentary", Revision: 1},
+		Release: &api.ReleaseSnapshot{
+			Release: api.PreparedRelease{
+				Generation: 1,
+				Source:     api.SourceManifest{SourcePath: "example.mkv"},
+				Media:      api.MediaFacts{Commentary: true},
+			},
+			Display: api.PreparedReleaseDisplay{Commentary: true},
+		},
+		FactInstructions: &api.ReleaseFactInstructionSnapshot{CorrectionRevision: 1},
+	}
+	corrected := initial
+	corrected.Workflow.Revision = 2
+	corrected.Release = &api.ReleaseSnapshot{
+		Release: api.PreparedRelease{
+			Generation: 2,
+			Source:     api.SourceManifest{SourcePath: "example.mkv"},
+			Media:      api.MediaFacts{Commentary: false},
+		},
+		Display: api.PreparedReleaseDisplay{Commentary: false},
+	}
+	corrected.Selection = &api.TrackerSelection{}
+	coreSvc := &cliWorkflowCoreFake{current: initial}
+	corrections := 0
+	coreSvc.continueFn = func(request api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		if instructions := request.Intent.FactInstructions; instructions != nil && instructions.Metadata.Commentary != nil {
+			if *instructions.Metadata.Commentary {
+				t.Fatal("commentary=false correction was lost")
+			}
+			if coreSvc.current.Release.Release.Generation == 1 {
+				corrections++
+			}
+			coreSvc.current = corrected
+		}
+		return coreSvc.current, nil
+	}
+	var output strings.Builder
+	err = runCLIWorkflowInteractive(
+		t.Context(),
+		coreSvc,
+		[]string{"example.mkv"},
+		opts,
+		visited,
+		"example.mkv",
+		api.PlaylistInstruction{},
+		0,
+		config.Config{},
+		cliIO{in: strings.NewReader("n\n--commentary=false\ny\n"), out: &output},
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("run correction: %v, corrections=%d output=%q", err, corrections, output.String())
+	}
+	if corrections != 1 || !strings.Contains(output.String(), "Commentary: true") || !strings.Contains(output.String(), "Commentary: false") {
+		t.Fatalf("commentary correction loop = %d corrections, output %q", corrections, output.String())
 	}
 }

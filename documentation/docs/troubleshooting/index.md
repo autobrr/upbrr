@@ -42,6 +42,14 @@ If HTML loads but assets, login, API calls, or live progress fail under `/upbrr/
 
 See the [reverse proxy guide](../configuration/web-server.md#path-prefix-proxy).
 
+## An operation was interrupted by restart
+
+Startup retains completed operation checkpoints and marks unfinished operations interrupted. It can wait for prior-process input and work leases to expire before cleanup. It does not automatically repeat the interrupted command. Reopen the retained input from **History**, or explicitly continue a workflow that was waiting for feedback.
+
+For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup marks unresolved external attempts failed locally and clears their retry blocks after leases expire; a local failure is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
+
+If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
+
 ## FFmpeg is not found
 
 Run `ffmpeg -version` in the same environment that starts upbrr. On Windows, add FFmpeg's directory to `PATH` before starting upbrr or its service. Containers already include FFmpeg.
@@ -63,6 +71,27 @@ For a failed track or image:
 Sources with more than eight channels per selected track are unsupported. Malformed or truncated decoded sample data is rejected rather than rendered. Cancellation can leave a partial result; successful PNGs remain visible while failed or missing variants can be retried.
 
 FFmpeg streams decoded float PCM directly to upbrr; no full decoded-audio file is saved. Selected tracks needing the same image types normally share one pass over the source at their native sample rate and channel layout, without normalization, resampling, or downmixing. Missing or inaccurate duration metadata can require another decode for exact spectrogram timing. If the audio changes between passes, upbrr rejects the result; re-prepare Input before trying again.
+
+## HDR analysis is partial or inconclusive
+
+Review the native-format outcomes separately from picture checks and audio tracks. A successful HDR10+ plot does not establish Dolby Vision availability, and completed native metadata does not prove that a picture check ran. **Require both formats** needs both; use automatic discovery when you want whichever native formats are present.
+
+- **Unsupported picture check:** verify FFmpeg availability and the reported colour, geometry, or timing requirement. Native metadata can still be usable; select metadata-only mode if that is the evidence you need.
+- **Inconclusive scene or border check:** inspect confidence, measured candidates, missing coverage, and the reported reason. Bounded and sampled checks can miss short events; an inconclusive result is not a pass or proof that the media is defective.
+- **Grayscale scene thumbnails:** colour previews can fall back to grayscale when unavailable. Detection uses luminance independently; consult the numeric result. SDR preview colours are not HDR brightness measurements.
+- **Audio stopped near the end:** decoding, rendering, and artifact publication are separate phases. Read the terminal result instead of treating a progress percentage as completion. A failure after decoding can leave usable retained measurements or images.
+- **Partial attempt:** preview successful artifacts and retry compatible rendering. A new measurement pass must explicitly select unsuccessful modes from the current attempt. Do not use old artifact or attempt IDs after preparing a different generation.
+- **Source changed or retained metadata is missing:** prepare Input again or follow the reported recovery requirement. Retrying decoded work does not grant a new native scan.
+
+If descriptions omit expected images, verify the selections on **HDR Analysis**. Native plots and selected audio are default assets, but picture-check images require selection. HDR-produced audio belongs under **Audio Plots**; video evidence belongs under **HDR plots**. Saved final description edits remain authoritative: inspect or reset the edited group when you want a regenerated version.
+
+See [HDR analysis](../workflow/hdr-analysis.md) for mode selection, borders, reference alignment, and retention.
+
+## A Blu-ray scan appears stalled
+
+Enable `debug` logging to see BDInfo progress for full-disc and selected-playlist scans. In the CLI, use `--log-level debug`; in the Web UI, set the runtime level on [Logging](../web-ui/logging.md). The `--debug` upload option controls workflow behavior and is separate from log verbosity.
+
+BDInfo logs each crossed 5% threshold through 95%, with the scan stage, source path, and selected playlist (empty for a full-disc scan). Percentages restart for each stage and scan; stream scanning uses processed bytes, while other measured stages use completed item counts. These are stage percentages, not an estimate of total elapsed time. A jump can produce several threshold entries at once, but repeated callbacks within the same interval do not repeat them. The final `stage=done percent=100%` entry appears only after processing and report persistence succeed. Failed or canceled scans, including reports with recorded scanner errors, do not emit it. Progress logging also works when no CLI or Web UI progress display is attached.
 
 ## A multi-disc source is rejected
 
@@ -93,19 +122,21 @@ Check tracker eligibility after the change. A tracker that requires the missing 
 
 ## Tracker authentication is blocked
 
-1. Open the tracker in **Settings**.
-2. confirm every required field is present;
-3. import a current cookie or use the supported login flow;
-4. complete 2FA when requested;
-5. run the tracker auth test;
-6. retry preparation.
+1. Open **Settings → Trackers**, confirm every required field is present, and save changes.
+2. For cookie-file authentication, follow the [Firefox export and import walkthrough](../web-ui/settings/tracker-auth.md#export-and-import-cookies), or use the tracker's supported login flow.
+3. Complete 2FA when requested.
+4. Open **Settings → Tracker Auth**, inspect the stored cookie status/count, and select **Check Auth** where supported.
+5. Retry preparation after resolving the reported auth requirement.
 
-Upload preflight does not silently log in or mutate auth state. Fix auth on the dedicated Settings surface.
+Stored cookies do not prove a valid remote session. See [Cookie troubleshooting](../web-ui/settings/tracker-auth.md#cookie-troubleshooting) for wrong Firefox containers, expired sessions, rejected formats, missing folder imports, and tracker-side failures. For **Storage unavailable**, follow [Storage recovery](../web-ui/settings/tracker-auth.md#storage-recovery); do not delete the database or auth key material.
+
+Upload preflight can validate sessions and perform tracker-supported automatic login or refresh, including storing a refreshed session. If authentication remains blocked or requires manual 2FA, resolve it under **Settings → Tracker Auth** before retrying preparation.
 
 ## No screenshots or image links
 
 - Confirm FFmpeg access and screenshot count.
-- Confirm the chosen image host is configured and allowed by the tracker.
+- For imported screenshots, enable **Settings → Metadata → Keep images**, inspect **Tracker Data**, and use **Saved tracker images → Use saved images** on **Screenshots** when offered. Only usable validated images are eligible; an imported comparison block alone does not supply ordinary screenshots.
+- Confirm the chosen image host is configured and allowed by the tracker. Images tied to their source tracker may need downloading and rehosting, even when they display correctly in the original description.
 - Review host-specific failure messages without copying credentials or raw responses.
 - Check `min_successful_image_uploads`: zero requires the whole batch to succeed; a positive value permits a partially successful batch only after that many images publish.
 - Use `--skip-imagehost-upload` only when you will supply valid hosted images another way.

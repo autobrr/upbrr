@@ -6,6 +6,7 @@ package discparse
 import (
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -13,6 +14,8 @@ import (
 )
 
 var playlistReportHeaderPattern = regexp.MustCompile(`(?m)^\*{20}\r?\nPLAYLIST:\s+([^\r\n]+)\r?\n\*{20}`)
+var audioBitratePattern = regexp.MustCompile(`(?i)^(\d+(?:\.\d+)?)\s*(k|m)?bps$`)
+var audioBitrateSlashUnitPattern = regexp.MustCompile(`(?i)b\s*/\s*s\b`)
 
 // PlaylistReport preserves one raw BDInfo playlist block together with its
 // extracted quick-summary, files, and extended-summary sections.
@@ -218,7 +221,9 @@ func ParseBDInfoSummary(summary string, files string, path string) *BDInfo {
 	for raw := range strings.SplitSeq(summary, "\n") {
 		line := strings.TrimSpace(raw)
 		lower := strings.ToLower(line)
+		hidden := false
 		if after, ok := strings.CutPrefix(lower, "*"); ok {
+			hidden = true
 			lower = strings.TrimSpace(after)
 			line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
 		}
@@ -244,7 +249,9 @@ func ParseBDInfoSummary(summary string, files string, path string) *BDInfo {
 		case strings.HasPrefix(lower, "video:"):
 			info.Video = append(info.Video, parseVideoLine(line))
 		case strings.HasPrefix(lower, "audio:"):
-			info.Audio = append(info.Audio, parseAudioLine(line))
+			audio := parseAudioLine(line)
+			audio.Hidden = hidden
+			info.Audio = append(info.Audio, audio)
 		case strings.HasPrefix(lower, "subtitle:"):
 			value := strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
 			parts := strings.Split(value, "/")
@@ -299,7 +306,8 @@ func parseAudioLine(line string) BDAudio {
 	if strings.Contains(value, "(") {
 		value = strings.SplitN(value, "(", 2)[0]
 	}
-	parts := strings.Split(value, "/")
+	// Keep slash-style bitrate units from becoming separate audio fields.
+	parts := strings.Split(audioBitrateSlashUnitPattern.ReplaceAllString(value, "bps"), "/")
 	index := 0
 	atmos := ""
 	if len(parts) > 2 && strings.Contains(parts[2], "Atmos") {
@@ -308,14 +316,36 @@ func parseAudioLine(line string) BDAudio {
 	}
 
 	return BDAudio{
-		Language:   safeTrim(parts, 0),
-		Codec:      safeTrim(parts, 1),
-		Channels:   safeTrim(parts, index+2),
-		SampleRate: safeTrim(parts, index+3),
-		Bitrate:    safeTrim(parts, index+4),
-		BitDepth:   safeTrim(parts, index+5),
-		Atmos:      atmos,
+		Language:             safeTrim(parts, 0),
+		Codec:                safeTrim(parts, 1),
+		Channels:             safeTrim(parts, index+2),
+		SampleRate:           safeTrim(parts, index+3),
+		Bitrate:              safeTrim(parts, index+4),
+		BitDepth:             safeTrim(parts, index+5),
+		Atmos:                atmos,
+		BitrateBitsPerSecond: parseAudioBitrate(safeTrim(parts, index+4)),
 	}
+}
+
+func parseAudioBitrate(value string) int64 {
+	match := audioBitratePattern.FindStringSubmatch(strings.ReplaceAll(strings.TrimSpace(value), ",", ""))
+	if len(match) == 0 {
+		return 0
+	}
+	bits, err := strconv.ParseFloat(match[1], 64)
+	if err != nil {
+		return 0
+	}
+	switch strings.ToLower(match[2]) {
+	case "k":
+		bits *= 1_000
+	case "m":
+		bits *= 1_000_000
+	}
+	if bits <= 0 || bits >= math.MaxInt64 {
+		return 0
+	}
+	return int64(bits)
 }
 
 func safeTrim(parts []string, idx int) string {

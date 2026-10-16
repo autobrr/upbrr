@@ -25,6 +25,7 @@ import (
 	"syscall"
 
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -46,8 +47,11 @@ type Artifact struct {
 
 // TrackResult is one decoded track and its retained private artifacts.
 type TrackResult struct {
-	Public    api.AudioAnalysisTrackResult
-	Artifacts []Artifact
+	// PCMComplete is independent of image/statistics publication failures.
+	PCMComplete      bool
+	CorrectiveDecode bool
+	Public           api.AudioAnalysisTrackResult
+	Artifacts        []Artifact
 }
 
 // Service owns FFmpeg binding, bounded single-pass PCM analysis, and managed PNG publication.
@@ -124,44 +128,17 @@ func (s *Service) AnalyzeFile(
 	if len(streams) == 0 {
 		return nil, audioAnalysisError(api.AudioAnalysisFailureNoAudio, "the source contains no decodable audio streams", errNoInspectedAudioStreams)
 	}
-	primaryOrdinal := 1
-	for index, stream := range streams {
-		if !stream.secondaryTitle && !isSecondaryAudioTitle(stream.title) {
-			primaryOrdinal = index + 1
-			break
-		}
-	}
 	selected := make([]string, 0, len(streams))
-	subject := api.AudioAnalysisSubject{
-		Release:        api.ReleaseRef{SourcePath: sourcePath, Generation: 1},
-		SourcePath:     sourcePath,
-		VideoPath:      sourcePath,
-		ResourceID:     "standalone",
-		PrimaryTrackID: fmt.Sprintf("audio-%d", primaryOrdinal),
-		Tracks:         make([]api.MediaTrackFacts, 0, len(streams)),
-	}
+	subject := standaloneAudioSubject(sourcePath, streams)
 	wanted := make(map[int]bool, len(ordinals))
 	for _, ordinal := range ordinals {
 		wanted[ordinal] = true
 	}
-	for index, stream := range streams {
-		ordinal := index + 1
-		trackID := fmt.Sprintf("audio-%d", ordinal)
-		subject.Tracks = append(subject.Tracks, api.MediaTrackFacts{
-			ID:            trackID,
-			Kind:          api.MediaTrackAudio,
-			ResourceID:    subject.ResourceID,
-			Ordinal:       ordinal,
-			Title:         stream.title,
-			Codec:         stream.codec,
-			ChannelLayout: stream.layout,
-			Channels:      stream.channels,
-			SampleRate:    stream.sampleRate,
-		})
-		if selection == api.AudioAnalysisSelectionAll || selection == api.AudioAnalysisSelectionPrimary && ordinal == primaryOrdinal ||
-			selection == api.AudioAnalysisSelectionSelected && wanted[ordinal] {
-			selected = append(selected, trackID)
-			delete(wanted, ordinal)
+	for _, track := range subject.Tracks {
+		if selection == api.AudioAnalysisSelectionAll || selection == api.AudioAnalysisSelectionPrimary && track.ID == subject.PrimaryTrackID ||
+			selection == api.AudioAnalysisSelectionSelected && wanted[track.Ordinal] {
+			selected = append(selected, track.ID)
+			delete(wanted, track.Ordinal)
 		}
 	}
 	if len(wanted) != 0 || len(selected) == 0 {
@@ -194,6 +171,72 @@ func (s *Service) AnalyzeFile(
 		Variants:       variants,
 		ProfileVersion: api.AudioAnalysisProfileVersion,
 	}, "standalone", runRoot)
+}
+
+func standaloneAudioSubject(path string, streams []inspectedStream) api.AudioAnalysisSubject {
+	primary := 1
+	for i, stream := range streams {
+		if !stream.secondaryTitle && !isSecondaryAudioTitle(stream.title) {
+			primary = i + 1
+			break
+		}
+	}
+	subject := api.AudioAnalysisSubject{
+		Release:        api.ReleaseRef{SourcePath: path, Generation: 1},
+		SourcePath:     path,
+		VideoPath:      path,
+		ResourceID:     "standalone",
+		PrimaryTrackID: fmt.Sprintf("audio-%d", primary),
+		Tracks:         make([]api.MediaTrackFacts, 0, len(streams)),
+	}
+	for i, stream := range streams {
+		subject.Tracks = append(subject.Tracks, api.MediaTrackFacts{
+			ID:            fmt.Sprintf("audio-%d", i+1),
+			Kind:          api.MediaTrackAudio,
+			ResourceID:    subject.ResourceID,
+			Ordinal:       i + 1,
+			Title:         stream.title,
+			Codec:         stream.codec,
+			ChannelLayout: stream.layout,
+			Channels:      stream.channels,
+			SampleRate:    stream.sampleRate,
+		})
+	}
+	return subject
+}
+
+// InspectFileSubject freezes a standalone file's original audio inventory using
+// the ordinary decoder/primary-selection policy, without decoding PCM. The caller
+// supplies and revalidates sourceFingerprint before and after the capture.
+func (s *Service) InspectFileSubject(ctx context.Context, path, sourceFingerprint string) (api.AudioAnalysisSubject, error) {
+	if sourceFingerprint == "" {
+		return api.AudioAnalysisSubject{}, errors.New("standalone audio inventory lacks source authority")
+	}
+	decoder, err := s.analysisDecoder()
+	if err != nil {
+		return api.AudioAnalysisSubject{}, err
+	}
+	streams, err := decoder.Inspect(ctx, path)
+	if err != nil {
+		return api.AudioAnalysisSubject{}, fmt.Errorf("inspect standalone audio inventory: %w", err)
+	}
+	subject := standaloneAudioSubject(path, streams)
+	subject.SourceFingerprint, subject.ResourceID = sourceFingerprint, mediafacts.TrackResourceID(path)
+	for i := range subject.Tracks {
+		subject.Tracks[i].ResourceID = subject.ResourceID
+	}
+	manifest, err := api.CanonicalWorkflowFingerprint(struct {
+		Source string
+		Tracks []api.MediaTrackFacts
+	}{sourceFingerprint, subject.Tracks})
+	if err != nil {
+		return api.AudioAnalysisSubject{}, fmt.Errorf("fingerprint standalone audio inventory: %w", err)
+	}
+	subject.ManifestFingerprint = string(manifest)
+	for i := range subject.Tracks {
+		subject.Tracks[i].ManifestFingerprint = subject.ManifestFingerprint
+	}
+	return subject, nil
 }
 
 // Analyze streams selected tracks into the requested image or statistics
@@ -402,6 +445,9 @@ func audioCodecsCompatible(prepared string, inspected string) bool {
 	}
 	if strings.TrimSpace(inspected) == "" {
 		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(prepared), strings.TrimSpace(inspected)) {
+		return true
 	}
 	preparedFamily := audioCodecFamily(prepared)
 	inspectedFamily := audioCodecFamily(inspected)
@@ -646,9 +692,6 @@ func (s *Service) analyzeTracks(
 				}
 				s.logger.Infof("audioanalysis: state=retrying phase=decode track_ordinal=%d reason=batch_incomplete", analysis.binding.track.Ordinal)
 				retry := newTrackAnalysis(analysis.binding, variants)
-				if analysis.needsGeometryRetry {
-					retry.totalFrames = analysis.frames
-				}
 				retryRequest := decodeRequest{
 					path: sourcePath,
 					streams: []decodeStreamRequest{{
@@ -657,19 +700,13 @@ func (s *Service) analyzeTracks(
 					}},
 					resourceLimits: limits,
 				}
-				retryErr := selectedDecoder.Decode(ctx, retryRequest, []func(io.Reader) error{
-					func(reader io.Reader) error { return retry.consume(ctx, s.logger, reader) },
-				})
+				var retryErr error
 				if analysis.needsGeometryRetry {
-					changed := retryErr == nil && (retry.frames != analysis.frames || retry.digest != analysis.digest) ||
-						errors.Is(retryErr, errSpectrogramGeometryChanged) && retry.frames != analysis.frames
-					if changed {
-						retryErr = audioAnalysisError(
-							api.AudioAnalysisFailureStaleSource,
-							"decoded audio changed between analysis passes",
-							errDecodedSourceChanged,
-						)
-					}
+					retry, retryErr = s.retryGeometry(ctx, selectedDecoder, sourcePath, analysis, variants, limits)
+				} else {
+					retryErr = selectedDecoder.Decode(ctx, retryRequest, []func(io.Reader) error{
+						func(reader io.Reader) error { return retry.consume(ctx, s.logger, reader) },
+					})
 				}
 				analyses[index] = retry
 				trackErrors[index] = retryErr

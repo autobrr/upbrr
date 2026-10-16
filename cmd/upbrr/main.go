@@ -176,6 +176,9 @@ func runUpload(
 		showCLIVersion(ctx, streams.out)
 		return nil
 	}
+	if opts.HDRAnalysisOnly {
+		return runHDRAnalysisOnly(ctx, opts, paths, streams)
+	}
 	if opts.AudioAnalysisOnly {
 		return runAudioAnalysisOnly(ctx, opts, visitedFlags, paths, streams)
 	}
@@ -245,7 +248,7 @@ func runUpload(
 	if opts.Cleanup && len(paths) > 0 {
 		return exitError(2, errors.New("--cleanup does not accept input paths"))
 	}
-	if !opts.Cleanup && len(paths) == 0 {
+	if !opts.Cleanup && opts.HDRResumeWorkflow == "" && len(paths) == 0 {
 		if strings.TrimSpace(opts.SiteUpload) != "" {
 			return exitError(2, errors.New("--site-upload currently requires at least one input path in the Go CLI"))
 		}
@@ -319,6 +322,13 @@ func runUpload(
 		return exitError(1, err)
 	}
 	defer closeCLIWorkflowCore(ctx, coreSvc, streams.errOut)
+
+	if opts.HDRResumeWorkflow != "" {
+		if len(paths) != 0 {
+			return exitError(2, errors.New("--hdr-resume-workflow does not accept input paths"))
+		}
+		return runCLIHDRResume(ctx, coreSvc, opts, streams, logger)
+	}
 
 	if opts.Cleanup {
 		deleted, err := purgeCLIStoredReleases(setupCtx, coreSvc)

@@ -66,11 +66,12 @@ See [Configuration](../configuration/index.md) for storage, import, export, and 
 1. Open **Input**.
 2. Select `D:\releases\Example.Release.2026.1080p-GRP` or enter its path.
 3. Select the intended trackers.
-4. fetch metadata;
-5. review the parsed media fields and generated release name;
-6. continue through duplicate checks, screenshots, image uploads, and descriptions;
-7. use **Dry Run** or payload preview on the upload stage;
-8. do not submit until every tracker view matches its current rules.
+4. Fetch metadata.
+5. Review the parsed media fields and generated release name.
+6. On **Dupe Check**, expand any tracker-question panels and answer the required questions before running checks.
+7. Continue through duplicate checks, screenshots, image uploads, and descriptions.
+8. On **Upload**, select **Skip client injection**, then use **Dry Run** or review the payload preview.
+9. Do not submit until every tracker view matches its current rules.
 
 ## 5. Try the CLI safety path
 

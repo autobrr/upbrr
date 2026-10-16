@@ -21,7 +21,7 @@ func TestEditionLabelPreservesStructuredParts(t *testing.T) {
 			Cut:          "Extended",
 			Edition:      "Collector's",
 			Presentation: "Open Matte",
-		}, "Extended Edition"},
+		}, "Extended Edition / Collector's Open Matte"},
 		{"presentation only", "Open Matte", api.UploadSubject{Presentation: "Open Matte"}, "Open Matte"},
 	}
 	for _, test := range tests {

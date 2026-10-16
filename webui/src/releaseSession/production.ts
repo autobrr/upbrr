@@ -61,6 +61,48 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
       releaseWorkflowClient.operation(workflowID, operationID, signal),
     cancelOperation: (workflowID, operationID, signal) =>
       releaseWorkflowClient.cancelOperation(workflowID, operationID, signal),
+    analyzeHDR: (current, instructions, idempotencyKey, signal) =>
+      releaseWorkflowClient.analyzeHDR(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          instructions,
+          idempotencyKey,
+        },
+        signal,
+      ),
+    selectHDRComparison: (current, sourcePath, idempotencyKey, signal) => {
+      const release = current.release?.release;
+      if (!release) throw new Error("Prepare the release before selecting a comparison source.");
+      return releaseWorkflowClient.selectHDRComparison(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          release: { SourcePath: release.Source.SourcePath, Generation: release.Generation },
+          sourcePath,
+          idempotencyKey,
+        },
+        signal,
+      );
+    },
+    setHDRAnalysisEnabled: (current, artifactIDs, idempotencyKey, signal) =>
+      releaseWorkflowClient.setHDRAnalysisEnabled(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          enabled: artifactIDs.length > 0,
+          artifactIds: [...artifactIDs],
+          idempotencyKey,
+        },
+        signal,
+      ),
+    hdrAnalysisURL: (current, analysisID, analysisRevision, artifactID) =>
+      releaseWorkflowClient.hdrAnalysisURL(
+        current.workflow.id,
+        analysisID,
+        analysisRevision,
+        artifactID,
+      ),
     analyzeAudio: (current, instructions, idempotencyKey, signal) =>
       releaseWorkflowClient.analyzeAudio(
         {

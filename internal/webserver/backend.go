@@ -280,13 +280,17 @@ func (b *Backend) BrowseDirectoryWithinRoot(path string, mode string, root strin
 	return wrapWebResult(BrowseDirectoryWithinRoot(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, root))
 }
 
-// BrowseDirectoryWithinRoots lists a directory only when it remains within an authorized host root.
-func (b *Backend) BrowseDirectoryWithinRoots(path string, mode string, roots []string) (api.BrowseDirectoryResponse, error) {
+// BrowseDirectoryWithinRoots lists or searches host paths within the authorized roots.
+// An empty roots list permits unrestricted browsing; the caller owns authorization.
+// Recursive searches return usable partial results when an internal bound is reached,
+// but return an error on caller cancellation. Filesystem calls already in progress
+// must finish before the search returns.
+func (b *Backend) BrowseDirectoryWithinRoots(ctx context.Context, req api.BrowseDirectoryRequest, roots []string) (api.BrowseDirectoryResponse, error) {
 	if b == nil {
 		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
 	}
 	fallback := BrowseDirectoryFallback(b.currentConfig().MainSettings.DBPath)
-	return wrapWebResult(BrowseDirectoryWithinRoots(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, roots))
+	return wrapWebResult(browsePathsWithinRoots(ctx, req, fallback, roots))
 }
 
 // GetConfig returns the current exportable config as JSON with encrypted

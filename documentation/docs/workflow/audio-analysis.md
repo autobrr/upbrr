@@ -5,7 +5,9 @@ description: Generate waveform and spectrogram PNGs and amplitude statistics tex
 
 # Audio analysis
 
-Audio analysis generates waveform and spectrogram PNGs from media audio tracks. In the upload workflow, upbrr hosts each tracker's complete set of generated graphs on its selected image host and adds them to the default description in a `[spoiler=source_audio]` block, with statistics in a `[code]` block below the graphs. `--audio-analysis-only` saves the PNGs and statistics files locally without uploading them.
+Audio analysis generates waveform and spectrogram PNGs from media audio tracks. In the upload workflow, upbrr hosts each tracker's complete set of generated graphs on its selected image host and adds them to the default description under **Audio Plots**, with statistics in a code block below the graphs. `--audio-analysis-only` saves the PNGs and statistics files locally without uploading them.
+
+[HDR analysis](hdr-analysis.md) includes primary-audio analysis by default, and can analyze all prepared audio tracks. Those results also belong under **Audio Plots**, separately from **HDR plots**. Use the separate audio operation described here when you need individual track ordinals or only one image type.
 
 ## Requirements
 

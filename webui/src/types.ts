@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { MediaFileFacts, SubtitleLanguageCoverage } from "./api/generated/release-workflow";
+
 /** Editable identity projection derived from the canonical prepared release. */
 export type ExternalIdentityDraft = {
   TMDBID: number;
@@ -171,6 +173,7 @@ export type NamingFacts = {
 };
 
 export type EpisodeFacts = {
+  MultipleEpisodes: boolean;
   Season: number;
   Episode: number;
   SeasonLabel: string;
@@ -189,6 +192,7 @@ export type EpisodeFacts = {
 };
 
 export type MediaFacts = {
+  MediaFileFacts?: MediaFileFacts;
   AudioLanguages: string[];
   SubtitleLanguages: string[];
   TrackAudioLanguages: string[];
@@ -199,6 +203,7 @@ export type MediaFacts = {
   SubtitleLanguagesProvenance: FactProvenance;
   HardcodedSubs: boolean;
   HardcodedSubtitleLanguages: string[];
+  HardcodedSubtitleCoverage?: readonly SubtitleLanguageCoverage[];
   HardcodedSubsProvenance: FactProvenance;
   HardcodedSubtitleLanguagesProvenance: FactProvenance;
   OriginalLanguage: string;
@@ -219,6 +224,17 @@ export type MediaFacts = {
   VideoEncode: string;
   HasEncodeSettings: boolean;
   BitDepth: string;
+  ReleaseFeatures?: Array<
+    | "two_disc_set"
+    | "4k_restoration"
+    | "4k_remaster"
+    | "extras"
+    | "2d_3d_edition"
+    | "3d_anaglyph"
+    | "3d_full_sbs"
+    | "3d_half_ou"
+    | "3d_half_sbs"
+  >;
   EditionSet: string;
   Cut: string;
   Presentation: string;
@@ -234,6 +250,12 @@ export type MediaFacts = {
 
 export type MediaTrackFacts = {
   ID: string;
+  BitDepth?: number;
+  ChannelsKnown?: boolean;
+  DiscID?: string;
+  PlaylistID?: string;
+  BitrateBitsPerSecond?: number;
+  Hidden?: boolean;
   Kind: "audio" | "subtitle" | string;
   ResourceID: string;
   ManifestFingerprint: string;
@@ -324,6 +346,7 @@ export type PrepareInput = {
   Search?: { Skip: boolean; Client?: string | null };
   Controls?: {
     Interaction: "interactive" | "unattended" | "unattended_confirm";
+    CaptureHDRMetadata?: boolean;
     ConfirmBDMVRescan: boolean;
     ForceRecheck?: boolean | null;
   };
@@ -498,6 +521,8 @@ export type IMDBEpisode = {
   ReleaseYear: number;
   ReleaseDate: IMDBReleaseDate;
   Season: number;
+  /** Whether the provider supplied a season number, including zero. */
+  SeasonKnown: boolean;
   EpisodeText: string;
 };
 
@@ -566,6 +591,8 @@ export type TVDBMetadata = {
   PosterThumbnailLookupAttempted: boolean;
   Aliases: string[];
   EpisodeSeason: number;
+  /** Whether the selected episode's season was supplied by TVDB, including zero. */
+  EpisodeSeasonKnown: boolean;
   EpisodeNumber: number;
   EpisodeName: string;
   EpisodeNameEnglish: string;
@@ -879,6 +906,7 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  Commentary?: boolean;
   ReleaseName: string;
   Providers: ProviderDisplay[];
   TrackerData?: TrackerPreview[];
@@ -965,6 +993,10 @@ export type TrackerPreview = {
 
 /** Upload rule failure attached to a tracker before dupe checking or upload. */
 export type RuleFailure = {
+  /** Backend-owned opt-in for non-submitting debug eligibility checks. */
+  debugBypass?: boolean;
+  /** Opaque identity of the evidence bound to this warning. */
+  evidenceFingerprint?: string;
   Rule: string;
   Reason: string;
   /** Empty legacy values are waivable; unknown non-empty values fail closed. */
@@ -1232,7 +1264,7 @@ export type ScreenshotLinkedImage = {
 export type UploadedImageLink = {
   SourcePath: string;
   ImagePath: string;
-  Purpose?: "preview" | "final" | "menu" | "audio_analysis";
+  Purpose?: "preview" | "final" | "menu" | "audio_analysis" | "hdr_analysis";
   Host: string;
   UsageScope: string;
   ImgURL: string;
@@ -1533,22 +1565,39 @@ export type PlaylistSelection = {
   UpdatedAt: string;
 };
 
+/** A selectable or navigable host filesystem path, rather than a browser-local file. */
 export type BrowseDirectoryEntry = {
   name: string;
   path: string;
   isDir: boolean;
+  /** Filesystem-reported size in bytes; virtual root entries use zero. */
   size: number;
+  /** UTC RFC3339 timestamp, or empty for a virtual root entry. */
   modifiedAt: string;
 };
 
+/** A directory listing, root listing, or bounded recursive search result. */
 export type BrowseDirectoryResponse = {
+  /** The returned view; an initial directory request can resolve to roots. */
+  scope: "roots" | "directory";
+  /** Search hit a time, entry, or result limit, or could not inspect a directory or matching entry. */
+  incomplete?: boolean;
+  /** Listed host directory; empty for root listings and recursive searches. */
   currentPath: string;
+  /** Navigable host parent; empty for roots scope or at an authorized root boundary. */
   parentPath: string;
   mode: "file" | "folder";
   entries: BrowseDirectoryEntry[];
 };
 
+/** Selects host directory contents or recursive name matches across authorized roots. */
 export type BrowseDirectoryRequest = {
+  /** Roots scope lists or searches roots; omission preserves initial-path fallback and root selection. */
+  scope?: "roots" | "directory";
+  /** Roots-only name query, at most 1024 UTF-8 bytes; normalized-empty queries list roots. */
+  query?: string;
+  /** Host path or file whose parent is listed; must be empty in roots scope. */
   path: string;
+  /** File mode includes recognized video files alongside directories. */
   mode: "file" | "folder";
 };

@@ -10,6 +10,7 @@ import (
 // resolution-mismatch rejection, rules, and banned groups.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
+		NameProviders:    &unit3d.NameProviders{MovieYear: api.IdentityProviderTMDB},
 		Name:             "OTW",
 		BaseURL:          "https://oldtoons.world",
 		ValidationPolicy: ValidationPolicy(),
@@ -27,9 +28,10 @@ func Profile() unit3d.Profile {
 			}},
 		},
 		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v5",
-			ResolveTypeID:    typeID,
+			AllowSeasonZeroEpisodes: true,
+			BuildName:               buildName,
+			BuildNameVersion:        "v6",
+			ResolveTypeID:           typeID,
 		},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "otw/duplicate/v2",

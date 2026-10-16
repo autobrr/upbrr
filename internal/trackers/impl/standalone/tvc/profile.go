@@ -16,13 +16,14 @@ import (
 // including strict metadata, UHD, BDMV-disc, and remux restrictions.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:               "TVC",
-		BaseURL:            "https://tvchaosuk.com",
-		DescriptionGroup:   "tvc",
-		UploadContentMode:  trackers.UploadContentModeDescription,
-		AuthCapability:     authcontract.APIKeyCapability("TVC"),
-		PrepareDescription: prepareDescription,
-		PrepareUpload:      prepareUpload,
+		Name:                    "TVC",
+		BaseURL:                 "https://tvchaosuk.com",
+		DescriptionGroup:        "tvc",
+		UploadContentMode:       trackers.UploadContentModeDescription,
+		AuthCapability:          authcontract.APIKeyCapability("TVC"),
+		PrepareDescription:      prepareDescription,
+		PrepareUpload:           prepareUpload,
+		ProjectionQuestionnaire: projectionQuestionnaire,
 		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/tvc/v3", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			if input.RequestedName != nil {
 				return trackers.ResolvedReleaseNames{Upload: strings.TrimSpace(*input.RequestedName)}, nil

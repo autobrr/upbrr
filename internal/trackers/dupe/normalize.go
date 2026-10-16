@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/rls"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -183,8 +184,11 @@ type parsedTitleFacts struct {
 }
 
 var (
-	titleEpisodeRangePattern = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:-(?:S\d{1,3})?E?(\d{1,4}))?\b`)
-	titleSeasonPackPattern   = regexp.MustCompile(`(?i)\bS(\d{1,3})(?:[.\-_ ]|$)`)
+	titleEpisodeRangePattern = regexp.MustCompile(
+		`(?i)\bS(\d+)E(\d+)(?:v\d+)?(?:-(?:S(\d+))?E?(\d+)(?:v\d+)?)?((?:[ ._-]*(?:S\d+)?E\d+(?:v\d+)?|\s*[-+&]\s*(?:S\d+)?E?\d+(?:v\d+)?)*)\b`,
+	)
+	titleAdditionalEpisodePattern = regexp.MustCompile(`(?i)\bE\d{1,4}`)
+	titleSeasonPackPattern        = regexp.MustCompile(`(?i)\bS(\d{1,3})(?:[.\-_ ]|$)`)
 )
 
 func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
@@ -278,6 +282,10 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 		),
 	}
+	if target.VideoEncode != "" && target.VideoCodec != "" && canonicalCodec(target.VideoEncode) != canonicalCodec(target.VideoCodec) {
+		facts.Codec.Status = FactContradictory
+		facts.Codec.Contradictions = append(facts.Codec.Contradictions, canonicalCodec(target.VideoCodec))
+	}
 	if target.SizeBytes > 0 {
 		facts.Size = Fact{
 			Value:        strconv.FormatInt(target.SizeBytes, 10),
@@ -299,11 +307,7 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 		facts.Files = missingFact()
 	}
 	facts.MediaKind, facts.MediaClass, facts.SourceFamily = deriveMediaFacts(
-		facts.Type.Value,
-		facts.Source.Value,
-		facts.Container.Value,
-		target.VideoEncode,
-		title.MediaKind,
+		facts.Type.Value, facts.Source.Value, facts.Container.Value, target.VideoEncode, title.MediaKind,
 	)
 	facts.HDR = mergeHDRWithTitle(facts.HDR, title.HDR)
 	return facts
@@ -406,6 +410,11 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 		),
 	}
+	// Coordinate enrichment remains useful for scope comparison, but a title
+	// cannot prove complete collection membership for an automatic vacant slot.
+	if candidate.contentFromTitle {
+		facts.Content.Origin = FactOriginTrackerTitle
+	}
 	if candidate.SizeKnown && candidate.SizeBytes > 0 {
 		facts.Size = Fact{
 			Value:        strconv.FormatInt(candidate.SizeBytes, 10),
@@ -435,11 +444,7 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 		facts.Files = missingFact()
 	}
 	facts.MediaKind, facts.MediaClass, facts.SourceFamily = deriveMediaFacts(
-		facts.Type.Value,
-		facts.Source.Value,
-		facts.Container.Value,
-		"",
-		title.MediaKind,
+		facts.Type.Value, facts.Source.Value, facts.Container.Value, "", title.MediaKind,
 	)
 	facts.HDR = mergeHDRWithTitle(facts.HDR, title.HDR)
 	return facts
@@ -519,10 +524,17 @@ func parseBestTitle(names []string) parsedTitleFacts {
 // spelling so resolution, HDR10+, and HDR profile evidence are not synthesized or lost.
 func TrackerTitleMetadata(release rls.Release) (string, bool) {
 	var metadata strings.Builder
+	name := release.String()
+	groupSeparator := -1
+	rawGroupSeparator := -1
+	rawOffset := 0
 	bounded := false
 	yearPrefix := false
 	seriesPrefix := false
 	for _, tag := range release.Tags() {
+		original := fmt.Sprintf("%o", tag)
+		tagOffset := rawOffset
+		rawOffset += len(original)
 		if tag.Is(rls.TagTypeDate) || tag.Is(rls.TagTypeSeries) {
 			bounded = true
 			if tag.Is(rls.TagTypeSeries) {
@@ -533,8 +545,12 @@ func TrackerTitleMetadata(release rls.Release) (string, bool) {
 		if tag.Is(rls.TagTypeGroup) {
 			break
 		}
+		if tag.Is(rls.TagTypeExt) {
+			name = strings.TrimSuffix(name, original)
+		} else if tag.Is(rls.TagTypeContainer) {
+			name = strings.TrimSuffix(name, "."+original)
+		}
 		if !bounded {
-			original := fmt.Sprintf("%o", tag)
 			if tag.Is(rls.TagTypeText) && len(original) == 4 {
 				if _, err := strconv.Atoi(original); err == nil {
 					yearPrefix = true
@@ -552,13 +568,23 @@ func TrackerTitleMetadata(release rls.Release) (string, bool) {
 				return "", false
 			}
 		}
+		if tag.Is(rls.TagTypeDelim) && tag.Delim() == "-" {
+			groupSeparator = metadata.Len()
+			rawGroupSeparator = tagOffset
+		}
 		if tag.Is(rls.TagTypeCut) {
 			metadata.WriteString(tag.Normalize())
 		} else {
-			fmt.Fprintf(&metadata, "%o", tag)
+			metadata.WriteString(original)
 		}
 	}
-	return metadata.String(), bounded
+	text := metadata.String()
+	// Known tag words can obscure a final group from the parser. Use the same
+	// explicit suffix fallback as group normalization, only at a delimiter tag.
+	if release.Group == "" && groupSeparator >= 0 && rawGroupSeparator == strings.LastIndex(name, "-") && groupFromTitle(name) != "" {
+		text = text[:groupSeparator]
+	}
+	return text, bounded
 }
 
 // TrackerTitleHasSourceAndCodec reports whether bounded release metadata has
@@ -596,12 +622,12 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 		Source:     canonicalSource(release.Source),
 		Codec:      canonicalCodec(firstNonEmpty(release.Codec...)),
 		Container:  canonicalContainer(firstNonEmpty(release.Container, release.Ext)),
-		Provider:   canonicalProvider(release.Collection),
+		Provider:   titleProvider(release),
 		Group:      canonicalGroup(release.Group),
 		Edition:    edition,
 		Metadata:   metadata,
 		Region:     canonicalRegion(release.Region),
-		Content:    contentScope{Kind: contentScopeWork, Origin: origin},
+		Content:    contentScopeFromTitle(name, origin),
 		HDR:        hdrFactsFromCandidateTitle(name),
 	}
 	if parsed.Source == "" {
@@ -631,45 +657,80 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 	if tokenPresent(upper, "3D") {
 		parsed.ThreeD = "3d"
 	}
-	if match := candidateDailyDatePattern.FindStringSubmatch(name); len(match) == 4 {
-		parsed.Content = contentScope{
+	return parsed
+}
+
+func contentScopeFromTitle(name string, origin FactOrigin) contentScope {
+	upper := strings.ToUpper(name)
+	// Underscores delimit release tokens but are word characters to the regexp.
+	// Normalize only the episode view so complete range endpoints remain visible.
+	episodeName := strings.ReplaceAll(name, "_", ".")
+	episodeMatches := titleEpisodeRangePattern.FindAllStringSubmatch(episodeName, 2)
+	var episodeMatch []string
+	season, start := 0, 0
+	ambiguousEpisodes := len(episodeMatches) > 1
+	if len(episodeMatches) > 0 {
+		episodeMatch = episodeMatches[0]
+		// Consume the whole raw expression before applying supported coordinate
+		// widths; unsupported members cannot prove a disjoint matching prefix.
+		ambiguousEpisodes = ambiguousEpisodes || len(episodeMatch[1]) > 3 || len(episodeMatch[2]) > 4 ||
+			len(episodeMatch[3]) > 3 || len(episodeMatch[4]) > 4
+		season, _ = strconv.Atoi(episodeMatch[1])
+		start, _ = strconv.Atoi(episodeMatch[2])
+		ambiguousEpisodes = ambiguousEpisodes || episodeMatch[5] != ""
+		// Bare episode tokens outside this expression also retain membership,
+		// regardless of their delimiter or an endpoint's version suffix.
+		matchStart := strings.Index(episodeName, episodeMatch[0])
+		matchEnd := matchStart + len(episodeMatch[0])
+		ambiguousEpisodes = ambiguousEpisodes || titleAdditionalEpisodePattern.MatchString(episodeName[:matchStart]) ||
+			titleAdditionalEpisodePattern.MatchString(episodeName[matchEnd:])
+		if episodeMatch[3] != "" {
+			endSeason, _ := strconv.Atoi(episodeMatch[3])
+			ambiguousEpisodes = ambiguousEpisodes || endSeason != season
+		}
+	}
+	// Canonical S00 episodes use coordinates; their dates are annotations.
+	// Other dated titles retain daily scope, including unresolved season packs.
+	special := len(episodeMatch) > 0 && episodeMatch[1] == "00" && start > 0 && !ambiguousEpisodes
+	if match := candidateDailyDatePattern.FindStringSubmatch(name); len(match) == 4 && !special {
+		return contentScope{
 			Kind:   contentScopeDaily,
 			Date:   strings.Join(match[1:], "-"),
 			Origin: origin,
 		}
-		return parsed
 	}
 	if strings.Contains(upper, "COMPLETE") && strings.Contains(upper, "SERIES") {
-		parsed.Content = contentScope{Kind: contentScopeCompleteSeries, Origin: origin}
-		return parsed
+		return contentScope{Kind: contentScopeCompleteSeries, Origin: origin}
 	}
-	if match := titleEpisodeRangePattern.FindStringSubmatch(name); len(match) >= 3 {
-		season, _ := strconv.Atoi(match[1])
-		start, _ := strconv.Atoi(match[2])
+	// One season and one contiguous range cannot represent mixed seasons or
+	// additional members. Do not use a matching prefix to prove disjointness.
+	if ambiguousEpisodes {
+		return contentScope{Kind: contentScopeUnknownTV, Origin: origin}
+	}
+	if match := episodeMatch; len(match) > 0 {
 		end := start
 		kind := contentScopeEpisode
-		if len(match) > 3 && match[3] != "" {
-			end, _ = strconv.Atoi(match[3])
+		if match[4] != "" {
+			end, _ = strconv.Atoi(match[4])
 			kind = contentScopeEpisodeRange
 		}
-		parsed.Content = contentScope{
+		return contentScope{
 			Kind:         kind,
 			Season:       season,
 			EpisodeStart: start,
 			EpisodeEnd:   end,
 			Origin:       origin,
 		}
-		return parsed
 	}
 	if match := titleSeasonPackPattern.FindStringSubmatch(name); len(match) == 2 {
 		season, _ := strconv.Atoi(match[1])
-		parsed.Content = contentScope{
+		return contentScope{
 			Kind:   contentScopeSeasonPack,
 			Season: season,
 			Origin: origin,
 		}
 	}
-	return parsed
+	return contentScope{Kind: contentScopeWork, Origin: origin}
 }
 
 func (facts parsedTitleFacts) hasEvidence() bool {
@@ -877,14 +938,77 @@ func canonicalContainer(value string) string {
 		return "ts"
 	case "iso", "avi":
 		return normalized
-	case "":
+	case "", "torrent":
 		return ""
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
 }
 
+var providerServiceCodes = metautil.ServiceCodeMap()
+
+// titleProvider accepts only recognized services from parsed collection tags.
+// Other collections, including IMAX, remain available as presentation evidence.
+func titleProvider(release rls.Release) string {
+	for _, tag := range release.Tags() {
+		if tag.Is(rls.TagTypeGroup) {
+			break
+		}
+		if !tag.Is(rls.TagTypeCollection) {
+			continue
+		}
+		// Preserve explicit service codes before the parser rewrites aliases.
+		if service := providerService(fmt.Sprintf("%o", tag)); service != "" {
+			return canonicalProvider(service)
+		}
+		info := tag.Info()
+		if info == nil {
+			continue
+		}
+		for alias, service := range providerServiceCodes {
+			if info.Match(alias) || info.Match(service) {
+				return canonicalProvider(tag.Normalize())
+			}
+		}
+	}
+	return ""
+}
+
+// providerService resolves known services without discarding meaningful punctuation.
+// Canonical codes take precedence over case-insensitive aliases; unknown values are empty.
+func providerService(value string) string {
+	value = strings.TrimSpace(value)
+	for _, service := range providerServiceCodes {
+		if strings.EqualFold(value, service) {
+			return service
+		}
+	}
+	for alias, service := range providerServiceCodes {
+		if strings.EqualFold(value, alias) {
+			return service
+		}
+	}
+	// These rls collection spellings are absent from the service dictionary.
+	switch strings.ToLower(value) {
+	case "bravo":
+		return "BRAV"
+	case "iplayer":
+		return "iP"
+	case "youtube":
+		return "YT"
+	case "criterion.collection":
+		return "CRIT"
+	default:
+		return ""
+	}
+}
+
+// canonicalProvider gives title and structured aliases one identity while preserving
+// custom structured codes that are absent from the service dictionary.
 func canonicalProvider(value string) string {
+	if service := providerService(value); service != "" {
+		value = service
+	}
 	normalized := compactAlphaNumeric(value)
 	switch normalized {
 	//nolint:misspell // ADN is the Animation Digital Network provider code.
@@ -1008,7 +1132,7 @@ func codecFromTitle(upper string) string {
 }
 
 func containerFromTitle(upper string) string {
-	for _, token := range []string{"MKV", "MP4", "M2TS", "VOB_IFO", "VIDEO_TS", "ISO", "AVI"} {
+	for _, token := range []string{"MKV", "MP4", "M2TS", "VOBIFO", "VOB_IFO", "VIDEO_TS", "ISO", "AVI"} {
 		if tokenPresent(upper, token) || strings.HasSuffix(upper, "."+token) {
 			return canonicalContainer(token)
 		}
@@ -1082,6 +1206,11 @@ func contentScopeFromValues(
 			Origin: origin,
 		}
 	}
+	// Title-only adapters may enrich just the first episode. That coordinate
+	// cannot resolve membership the title parser explicitly left unknown.
+	if fallback.Kind == contentScopeUnknownTV {
+		return fallback
+	}
 	switch {
 	case pack && season > 0:
 		return contentScope{
@@ -1094,6 +1223,12 @@ func contentScopeFromValues(
 	case pack:
 		return contentScope{Kind: contentScopeUnknownTV, Origin: origin}
 	case episode > 0:
+		// Adapters retain the first episode. A matching title range supplies
+		// membership without overriding a conflicting season or first episode.
+		if fallback.Kind == contentScopeEpisodeRange && season == fallback.Season &&
+			episode == fallback.EpisodeStart && fallback.EpisodeEnd >= episode {
+			return fallback
+		}
 		return contentScope{
 			Kind:         contentScopeEpisode,
 			Season:       season,
@@ -1330,11 +1465,11 @@ func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) F
 	case trackerspkg.DupeDimensionSource:
 		return facts.Source
 	case trackerspkg.DupeDimensionMediaKind:
-		return canonicalFact(string(facts.MediaKind))
+		return derivedMediaFact(facts, dimension, string(facts.MediaKind))
 	case trackerspkg.DupeDimensionMediaClass:
-		return canonicalFact(string(facts.MediaClass))
+		return derivedMediaFact(facts, dimension, string(facts.MediaClass))
 	case trackerspkg.DupeDimensionSourceFamily:
-		return canonicalFact(string(facts.SourceFamily))
+		return derivedMediaFact(facts, dimension, string(facts.SourceFamily))
 	case trackerspkg.DupeDimensionResolution:
 		return facts.Resolution
 	case trackerspkg.DupeDimensionCodec:
@@ -1380,4 +1515,41 @@ func canonicalFact(value string) Fact {
 		Status: FactComplete,
 		Origin: FactOriginTrackerPolicy,
 	}
+}
+
+// derivedMediaFact retains partial provenance when classification depends on a
+// title. Only independently sufficient structured facts establish completeness.
+func derivedMediaFact(facts normalizedFacts, dimension trackerspkg.DupeDimension, value string) Fact {
+	result := canonicalFact(value)
+	if result.Status == FactMissing {
+		return result
+	}
+	for _, fact := range []Fact{facts.Type, facts.Source, facts.Container} {
+		if fact.Status == FactContradictory {
+			result.Status = FactContradictory
+			return result
+		}
+	}
+	structured := func(fact Fact) string {
+		if fact.Status == FactComplete {
+			return fact.Value
+		}
+		return ""
+	}
+	kind, class, family := deriveMediaFacts(structured(facts.Type), structured(facts.Source), structured(facts.Container), "", mediaKindUnknown)
+	var authoritative string
+	if dimension == trackerspkg.DupeDimensionMediaKind {
+		authoritative = string(kind)
+	}
+	if dimension == trackerspkg.DupeDimensionMediaClass {
+		authoritative = string(class)
+	}
+	if dimension == trackerspkg.DupeDimensionSourceFamily {
+		authoritative = string(family)
+	}
+	if authoritative != value {
+		result.Status = FactPartial
+		result.Origin = FactOriginTrackerTitle
+	}
+	return result
 }

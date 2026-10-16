@@ -36,6 +36,7 @@ type cliReleaseWorkflowCore interface {
 	StartLiveTestReleaseWorkflowUpload(context.Context, string, api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
 	ContinueReleaseWorkflow(context.Context, string, api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
 	StartReleaseWorkflow(context.Context, string, releaseworkflow.Command) (api.WorkflowOperationStatus, error)
+	ExecuteReleaseWorkflow(context.Context, string, releaseworkflow.Command) (releaseworkflow.CommandResult, error)
 	StartReleaseWorkflowUpload(
 		context.Context,
 		string,
@@ -115,6 +116,10 @@ func (s *cliWorkflowSession) releaseActiveInput(ctx context.Context) {
 	active, err := s.core.GetActiveInput(cleanup, cliWorkflowOwnerID)
 	if err == nil && active.State == api.ActiveInputActive && active.Revision == s.inputClaim.revision &&
 		active.Current != nil && active.Current.Workflow.ID == s.inputClaim.workflowID {
+		if active.Current.HDRAnalysis != nil || active.Current.HDRPendingRequest != nil {
+			s.logger.Debugf("workflow: state=retained_hdr decision=keep")
+			return
+		}
 		_, err = s.core.ReleaseActiveInput(cleanup, cliWorkflowOwnerID, api.ReleaseActiveInputRequest{ExpectedRevision: s.inputClaim.revision})
 	}
 	if err != nil {
@@ -1043,11 +1048,24 @@ func collectCLIWorkflowQuestionnaires(
 	}
 	changed := false
 	for _, projection := range projections.Projections {
-		instruction := instructions[projection.TrackerID]
+		instruction, retained := instructions[projection.TrackerID]
+		if projection.QuestionnaireAnswers != nil {
+			instruction.Questionnaire = nil
+			for key, value := range projection.QuestionnaireAnswers {
+				if instruction.Questionnaire == nil {
+					instruction.Questionnaire = make(map[string]*string)
+				}
+				instruction.Questionnaire[key] = new(value)
+			}
+			if retained || len(instruction.Questionnaire) > 0 {
+				instructions[projection.TrackerID] = instruction
+			}
+		}
 		for _, field := range projection.Questionnaire {
-			if !field.Required || instruction.Questionnaire[field.Key] != nil {
+			if !field.Required || field.Value != "" {
 				continue
 			}
+
 			if interaction == api.InteractionModeUnattended {
 				continue
 			}
@@ -1058,7 +1076,15 @@ func collectCLIWorkflowQuestionnaires(
 			if label == "" {
 				label = field.Key
 			}
-			if len(field.Options) > 0 {
+			if field.Help != "" {
+				fmt.Fprintln(output, field.Help)
+			}
+			if field.Kind == "multiselect" {
+				for index, option := range field.Options {
+					fmt.Fprintf(output, "  %d. %s\n", index+1, option)
+				}
+				label += " (comma-separated numbers or labels)"
+			} else if len(field.Options) > 0 {
 				label += " [" + strings.Join(field.Options, "/") + "]"
 			}
 			answer, err := promptLine(reader, output, fmt.Sprintf("%s %s: ", projection.TrackerID, label))
@@ -1067,6 +1093,32 @@ func collectCLIWorkflowQuestionnaires(
 			}
 			if strings.TrimSpace(answer) == "" {
 				return false, fmt.Errorf("upbrr: tracker input %s for %s is required", field.Key, projection.TrackerID)
+			}
+			if field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no") {
+				switch strings.ToLower(strings.TrimSpace(answer)) {
+				case "y", "yes":
+					answer = "yes"
+				case "n", "no":
+					answer = "no"
+				}
+			}
+			if field.Kind == "multiselect" {
+				selected := make([]string, 0)
+				for item := range strings.SplitSeq(answer, ",") {
+					item = strings.TrimSpace(item)
+					if index, err := strconv.Atoi(item); err == nil && index > 0 && index <= len(field.Options) {
+						item = field.Options[index-1]
+					}
+					if !slices.Contains(field.Options, item) {
+						return false, fmt.Errorf("upbrr: invalid option for %s", field.Key)
+					}
+					if !slices.Contains(selected, item) {
+						selected = append(selected, item)
+					}
+				}
+				answer = strings.Join(selected, ",")
+			} else if len(field.Options) > 0 && !slices.Contains(field.Options, answer) {
+				return false, fmt.Errorf("upbrr: invalid option for %s", field.Key)
 			}
 			value := answer
 			instruction.Questionnaire[field.Key] = &value
@@ -1111,6 +1163,9 @@ func printCLIWorkflowProjections(
 		for _, decision := range projection.PolicyDecisions {
 			if strings.HasPrefix(decision.Code, "release_name_override") && decision.Message != "" {
 				fmt.Fprintf(output, "  %s naming: %s\n", projection.DisplayName, decision.Message)
+			}
+			if !includePolicyDetails && !decision.Blocking && decision.Disposition == api.RuleDispositionAdvisory && decision.Message != "" {
+				fmt.Fprintf(output, "  %s warning: %s\n", projection.DisplayName, decision.Message)
 			}
 		}
 		if !includePolicyDetails && (readiness == api.ReadinessStatusBlocked || readiness == api.ReadinessStatusIneligible) {

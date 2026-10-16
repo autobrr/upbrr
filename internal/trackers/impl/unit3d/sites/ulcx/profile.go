@@ -5,6 +5,7 @@ package ulcx
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns ULCX's naming, duplicate, validation, and banned-group policy.
@@ -13,7 +14,10 @@ func Profile() unit3d.Profile {
 }
 
 func profileWithTaxonomy(site unit3d.SiteProfile) unit3d.Profile {
+	site.ProjectionQuestionnaire = languageQuestionnaire
+	site.AllowSeasonZeroEpisodes = true
 	return unit3d.Profile{
+		NameProviders:     &unit3d.NameProviders{Title: api.IdentityProviderIMDB, MovieYear: api.IdentityProviderIMDB},
 		Name:              "ULCX",
 		BaseURL:           "https://upload.cx",
 		Rules:             Rules(),

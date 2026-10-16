@@ -369,7 +369,7 @@ func TestFFmpegDecodeArgsStreamFloatPCMToStdoutWithoutTemporaryOutput(t *testing
 	if !slices.Equal(args[len(args)-len(wantTail):], wantTail) {
 		t.Fatalf("decode args = %v", args)
 	}
-	if !slices.Contains(args, "-nostdin") || !slices.Contains(args, "-drc_scale") {
+	if !slices.Contains(args, "-nostdin") || !slices.Contains(args, fmt.Sprintf("-drc_scale:a:%d", request.streams[0].audioOrdinal)) {
 		t.Fatalf("decode args missing stdin/DRC safety: %v", args)
 	}
 	if !slices.Contains(args, "-threads") || slices.Contains(args, "-readrate") {
@@ -410,7 +410,7 @@ func TestFFmpegDecodeArgsDisableDolbyDecoderDRCForPreparedAliases(t *testing.T) 
 			request.path = "input.mkv"
 			request.streams[0].codec = codec
 			args := ffmpegDecodeArgs(request, []string{"pipe:1"})
-			if !slices.Contains(args, "-drc_scale") {
+			if !slices.Contains(args, fmt.Sprintf("-drc_scale:a:%d", request.streams[0].audioOrdinal)) {
 				t.Fatalf("decode args for %q omit DRC disable: %v", codec, args)
 			}
 		})
@@ -418,7 +418,7 @@ func TestFFmpegDecodeArgsDisableDolbyDecoderDRCForPreparedAliases(t *testing.T) 
 	request := decodeRequestForTest()
 	request.path = "input.mkv"
 	request.streams[0].codec = "FLAC"
-	if args := ffmpegDecodeArgs(request, []string{"pipe:1"}); slices.Contains(args, "-drc_scale") {
+	if args := ffmpegDecodeArgs(request, []string{"pipe:1"}); slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "-drc_scale") }) {
 		t.Fatalf("FLAC decode args unexpectedly change DRC: %v", args)
 	}
 }

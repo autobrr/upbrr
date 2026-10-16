@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestMultipartTorrentFilename(t *testing.T) {
@@ -75,6 +77,143 @@ func TestMultipartTorrentFilename(t *testing.T) {
 			}
 			if !bytes.Equal(got, content) {
 				t.Fatal("torrent content changed")
+			}
+		})
+	}
+}
+
+func TestBuildUploadFieldsPreservesOnlyExplicitSeasonZero(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		season     int
+		label      string
+		wantSeason string
+	}{
+		{
+			name:       "explicit special",
+			label:      "S00",
+			wantSeason: "0",
+		},
+		{name: "unknown season", wantSeason: "1"},
+		{
+			name:       "conflicting season label",
+			label:      "S02",
+			wantSeason: "1",
+		},
+		{
+			name:       "negative season",
+			season:     -1,
+			label:      "S00",
+			wantSeason: "1",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fields := buildUploadFields(api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 765432},
+				SeasonInt:  test.season,
+				SeasonStr:  test.label,
+				EpisodeInt: 3,
+			}, false, 2, 5, 6, "description", "Example.Series.S00E03.1080p-GRP")
+			if got := fields["tvdb_season"]; got != test.wantSeason {
+				t.Fatalf("tvdb_season = %q, want %q", got, test.wantSeason)
+			}
+			if got := fields["tvdb_episode"]; got != "3" {
+				t.Fatalf("tvdb_episode = %q, want 3", got)
+			}
+		})
+	}
+}
+
+func TestBuildUploadFieldsTVEpisodeCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name             string
+		season           int
+		seasonLabel      string
+		episode          int
+		pack             bool
+		multipleEpisodes bool
+		wantSeason       string
+		wantEpisode      string
+	}{
+		{
+			name:        "ordinary pack",
+			season:      2,
+			seasonLabel: "S02",
+			pack:        true,
+			wantSeason:  "2",
+			wantEpisode: "0",
+		},
+		{
+			name:        "specials pack",
+			seasonLabel: "S00",
+			pack:        true,
+			wantSeason:  "0",
+			wantEpisode: "0",
+		},
+		{
+			name:        "pack with stale episode",
+			season:      2,
+			seasonLabel: "S02",
+			episode:     3,
+			pack:        true,
+			wantSeason:  "2",
+			wantEpisode: "0",
+		},
+		{
+			name:        "single special",
+			seasonLabel: "S00",
+			episode:     3,
+			wantSeason:  "0",
+			wantEpisode: "3",
+		},
+		{
+			name:        "single missing episode",
+			season:      2,
+			seasonLabel: "S02",
+			wantSeason:  "2",
+			wantEpisode: "1",
+		},
+		{
+			name:        "single negative episode",
+			season:      2,
+			seasonLabel: "S02",
+			episode:     -1,
+			wantSeason:  "2",
+			wantEpisode: "1",
+		},
+		{
+			name:             "combined non-pack episodes",
+			season:           2,
+			seasonLabel:      "S02",
+			episode:          3,
+			multipleEpisodes: true,
+			wantSeason:       "2",
+			wantEpisode:      "3",
+		},
+		{
+			name:             "combined non-pack missing episode",
+			seasonLabel:      "S00",
+			multipleEpisodes: true,
+			wantSeason:       "0",
+			wantEpisode:      "1",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fields := buildUploadFields(api.UploadSubject{
+				Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 765432},
+				SeasonInt:        test.season,
+				SeasonStr:        test.seasonLabel,
+				EpisodeInt:       test.episode,
+				TVPack:           test.pack,
+				MultipleEpisodes: test.multipleEpisodes,
+			}, false, 2, 5, 6, "description", "Example.Series.1080p-GRP")
+			if got := fields["tvdb_season"]; got != test.wantSeason {
+				t.Errorf("tvdb_season = %q, want %q", got, test.wantSeason)
+			}
+			if got := fields["tvdb_episode"]; got != test.wantEpisode {
+				t.Errorf("tvdb_episode = %q, want %q", got, test.wantEpisode)
 			}
 		})
 	}

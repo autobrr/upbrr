@@ -14,6 +14,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// reusableWorkflowDupes retains fresh evidence only when its projection and
+// execution inputs remain compatible. Retained staff-required lanes need new
+// confirmation; their original evidence lifetime is not extended.
 func reusableWorkflowDupes(
 	reuse *releaseworkflow.DuplicateAssessmentReuse,
 	projections api.TrackerReleaseProjectionSet,
@@ -44,8 +47,10 @@ func reusableWorkflowDupes(
 	for _, projection := range projections.Projections {
 		prior, projectionOK := previous[projection.TrackerID]
 		result, resultOK := results[projection.TrackerID]
+		ready := projection.Readiness == api.ReadinessStatusReady && projection.DupeReady
+		unchangedSkippedLane := reuse.QuestionnaireOnly && result.Decision == api.DupeDecisionSkipped && !ready
 		if !projectionOK || !resultOK || slices.Contains(reuse.InvalidatedTrackers, projection.TrackerID) ||
-			projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady || result.Decision == api.DupeDecisionSkipped ||
+			((!ready || result.Decision == api.DupeDecisionSkipped) && !unchangedSkippedLane) ||
 			!result.FreshUntil.After(now) || inClient(projection.TrackerID) ||
 			slices.ContainsFunc(result.Matches, func(match api.DupeMatchProjection) bool {
 				return strings.EqualFold(strings.TrimSpace(match.Reason), "in_client")
@@ -59,26 +64,34 @@ func reusableWorkflowDupes(
 		if result.ProjectionFingerprint != boundFingerprint {
 			continue
 		}
-		previousFingerprint, err := reusableDupeProjectionFingerprint(prior)
+		previousFingerprint, err := reusableDupeProjectionFingerprint(prior, reuse.QuestionnaireOnly)
 		if err != nil {
 			return nil, workflowDupePrivateEvidence{}, err
 		}
-		currentFingerprint, err := reusableDupeProjectionFingerprint(projection)
+		currentFingerprint, err := reusableDupeProjectionFingerprint(projection, reuse.QuestionnaireOnly)
 		if err != nil {
 			return nil, workflowDupePrivateEvidence{}, err
 		}
 		if previousFingerprint == currentFingerprint {
 			result.RequiredActions = slices.Clone(result.RequiredActions)
+			if result.RequiresStaffToken {
+				releaseworkflow.RequireStaffTokenReview(&result)
+			}
 			retained[projection.TrackerID] = result
 		}
 	}
 	return retained, evidence, nil
 }
 
-// A rule toggle changes the set-wide input hash and action publication stamps.
+// Scoped edits change the set-wide input hash and action publication stamps.
+// Questionnaire-only transitions may also ignore answer and display-schema data.
 // All tracker-local policy, configuration, readiness and action content must match.
-func reusableDupeProjectionFingerprint(projection api.TrackerReleaseProjection) (api.WorkflowFingerprint, error) {
+func reusableDupeProjectionFingerprint(projection api.TrackerReleaseProjection, questionnaireOnly bool) (api.WorkflowFingerprint, error) {
 	projection.InputFingerprint = ""
+	if questionnaireOnly {
+		projection.Questionnaire = nil
+		projection.QuestionnaireAnswers = nil
+	}
 	projection.RequiredActions = slices.Clone(projection.RequiredActions)
 	for index := range projection.RequiredActions {
 		action := &projection.RequiredActions[index]

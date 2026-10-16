@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  HDRAnalysisInstructions,
   AudioAnalysisInstructions,
   DescriptionInstructions,
   ContinueReleaseWorkflowRequest,
@@ -29,7 +30,12 @@ import type {
 } from "../api/generated/release-workflow";
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
-import { initialSessionState, pendingCorrectionReview, sessionReducer } from "./reducer";
+import {
+  initialSessionState,
+  pendingCorrectionReview,
+  sessionReducer,
+  type SessionState,
+} from "./reducer";
 import { canExecuteUpload } from "./uploadEligibility";
 import { routeAccess, type TrackerWorkflowRequirements } from "./navigation";
 import {
@@ -53,9 +59,11 @@ import {
   workflowPrepareInput,
   workflowSelectedInputTrackers,
   workflowViewValue,
+  workflowQuestionnaires,
   type PendingInputUpdate,
 } from "./projections";
 import type {
+  HDRAnalysisGenerateInput,
   AudioAnalysisGenerateInput,
   PreparationIntent,
   ReleaseRoute,
@@ -81,7 +89,8 @@ type BackendCommandAuthority = Readonly<{
   workflowID: string;
   workflowRevision: number;
 }>;
-type WorkflowCommandFailureAuthority = Omit<BackendCommandAuthority, "commandID">;
+type WorkflowCommandFailureAuthority = Omit<BackendCommandAuthority, "commandID"> &
+  Readonly<{ current: ReleaseWorkflowCurrent }>;
 type WorkflowCommandCallbacks = Readonly<{
   onAbort?: (authority: BackendCommandAuthority) => void;
   onError?: (error: unknown, authority: BackendCommandAuthority) => void;
@@ -133,6 +142,7 @@ const withWorkflowCommandFailureAuthority = (
 ) =>
   Object.assign(error, {
     [workflowCommandFailureAuthority]: {
+      current,
       operationID: operation.id,
       operationSequence: operation.sequence,
       workflowID: current.workflow.id,
@@ -168,6 +178,17 @@ const waitForWorkflowPoll = (signal: AbortSignal, delay = 1000) =>
     signal.addEventListener("abort", onAbort, { once: true });
   });
 
+const questionnaireSnapshotKey = (state: SessionState) =>
+  JSON.stringify([
+    state.activeInput.inputID,
+    state.activeInput.sourceVersion,
+    state.workflowView.current?.workflow.id,
+    state.workflowView.current?.release?.id,
+    state.workflowView.current?.release?.revision,
+    state.inputEditRevision,
+    state.selectedTrackers,
+  ]);
+
 const workflowStorageKey = "upbrr.activeReleaseWorkflow";
 
 const timestampedCommandID = (prefix: string, revision?: number) =>
@@ -197,6 +218,14 @@ export function ReleaseSessionProvider({
   children: ReactNode;
 }>) {
   const [state, dispatch] = useReducer(sessionReducer, undefined, initialSessionState);
+  const [hdrCommandFailure, setHDRCommandFailure] = useState<Readonly<{
+    workflowID: string;
+    workflowRevision: number;
+    commandID: string;
+    operationID: string;
+    operationSequence: number;
+    message: string;
+  }> | null>(null);
   const [audioCommandFailure, setAudioCommandFailure] = useState<Readonly<{
     workflowID: string;
     workflowRevision: number;
@@ -214,6 +243,11 @@ export function ReleaseSessionProvider({
     status: "running" | "error";
     message: string;
   }> | null>(null);
+  const [questionnaireRefresh, setQuestionnaireRefresh] = useState<Readonly<{
+    key: string;
+    status: "running" | "ready" | "error";
+    error: string;
+  }> | null>(null);
   const liveTest = testRuntime?.mode === "live_test";
   const mutationsAllowed = runtimeInfoReady && !liveTest;
   const uploadOptions = { ...state.uploadOptions, noSeed: liveTest || state.uploadOptions.noSeed };
@@ -221,6 +255,7 @@ export function ReleaseSessionProvider({
     () => normalizedNames(defaultTrackers),
     [defaultTrackers],
   );
+  const questionnaireController = useRef<AbortController | null>(null);
   const controllers = useRef<Partial<Record<ControllerKey, AbortController>>>({});
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -237,11 +272,13 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset";
     sourcePath: string;
     intent: PreparationIntent;
+    captureHDRMetadata?: boolean;
   } | null>(null);
   const workflowRevisions = useRef<Partial<Record<WorkflowFacet, number>>>({});
   const lastWorkflowError = useRef<unknown>(null);
   const activePorts = useMemo(() => ports ?? productionReleaseSessionPorts(), [ports]);
   const workflowView = state.workflowView;
+  const questionnaireKey = questionnaireSnapshotKey(state);
 
   const backendCommandAuthority = (
     commandID: string,
@@ -396,6 +433,9 @@ export function ReleaseSessionProvider({
     if (selectedTrackers) {
       dispatch({ type: "trackers_received", trackers: selectedTrackers });
     }
+    setHDRCommandFailure((failure) =>
+      failure && commandFailureSuperseded(failure, current) ? null : failure,
+    );
     setAudioCommandFailure((failure) =>
       failure && commandFailureSuperseded(failure, current) ? null : failure,
     );
@@ -817,9 +857,10 @@ export function ReleaseSessionProvider({
       } else {
         const failureAuthority = commandFailureAuthorityFromError(error);
         if (failureAuthority?.workflowID === commandAuthority.workflowID) {
+          const { current: _failedCurrent, ...authority } = failureAuthority;
           commandAuthority = {
             commandID,
-            ...failureAuthority,
+            ...authority,
           };
         }
         callbacks.onError?.(error, commandAuthority);
@@ -925,7 +966,9 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const checkBackendDuplicates = async (): Promise<boolean> => {
+  const checkBackendDuplicates = async (
+    goal: "trackers_assessed" | "duplicates_decided" = "duplicates_decided",
+  ): Promise<boolean> => {
     if (
       !workflowView.current ||
       controllers.current.workflow ||
@@ -960,12 +1003,12 @@ export function ReleaseSessionProvider({
           return [
             tracker,
             {
-              questionnaire: Object.fromEntries(
-                Object.entries(state.questionnaireAnswers[tracker] || {}).map(([key, value]) => [
-                  key,
-                  value,
-                ]),
-              ),
+              questionnaire: {
+                ...workflowView.current?.projectionInstructions?.instructions[tracker]
+                  ?.questionnaire,
+                ...projection?.questionnaireAnswers,
+                ...state.questionnaireAnswers[tracker],
+              },
               ...(confirmedName !== undefined ? { uploadReleaseName: confirmedName } : {}),
             },
           ];
@@ -973,7 +1016,7 @@ export function ReleaseSessionProvider({
       );
       const current = await continueBackendGoal(
         workflowView.current,
-        "duplicates_decided",
+        goal,
         {
           trackerIds: [...state.selectedTrackers],
           projectionInstructions,
@@ -985,6 +1028,13 @@ export function ReleaseSessionProvider({
       releaseWorkflowController(controller);
       if (controller.signal.aborted) return false;
       acceptWorkflowCurrent(current);
+      // Acknowledged submissions yield to the returned validation; later user edits remain drafts.
+      dispatch({
+        type: "questionnaire_answers_applied",
+        current,
+        submitted: state.questionnaireAnswers,
+      });
+      setQuestionnaireRefresh({ key: questionnaireKey, status: "ready", error: "" });
       return true;
     } catch (error) {
       releaseWorkflowController(controller);
@@ -992,6 +1042,115 @@ export function ReleaseSessionProvider({
       return false;
     } finally {
       releaseWorkflowController(controller);
+    }
+  };
+
+  const refreshQuestionnaires = async (): Promise<boolean> => {
+    const initial = workflowView.current;
+    if (
+      !initial ||
+      controllers.current.workflow ||
+      isActiveWorkflowOperation(initial.operation) ||
+      !state.selectedTrackers.length
+    )
+      return false;
+    if (state.correctionDirty || !initial.release) {
+      setQuestionnaireRefresh({
+        key: questionnaireKey,
+        status: "error",
+        error:
+          "Apply Input changes and prepare the selected source before reviewing tracker questions.",
+      });
+      return false;
+    }
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    questionnaireController.current = controller;
+    setQuestionnaireRefresh({ key: questionnaireKey, status: "running", error: "" });
+    const expectedInputContentRevision =
+      state.inputEditRevision - state.trackerSelectionEditRevision;
+    const trackers = [...state.selectedTrackers];
+    try {
+      const current = await continueBackendGoal(
+        initial,
+        "trackers_projected",
+        {
+          trackerIds: trackers,
+          // Selection discovers schemas; only explicit Apply/Run may submit local drafts.
+          projectionInstructions: Object.fromEntries(
+            trackers.map((tracker) => [
+              tracker,
+              {
+                ...initial.projectionInstructions?.instructions[tracker],
+                questionnaire: {
+                  ...initial.projectionInstructions?.instructions[tracker]?.questionnaire,
+                  ...initial.projections?.projections.find(
+                    (projection) => projection.trackerId === tracker,
+                  )?.questionnaireAnswers,
+                },
+              },
+            ]),
+          ),
+        },
+        timestampedCommandID("workflow-questions", initial.workflow.revision),
+        controller.signal,
+      );
+      if (controller.signal.aborted) return false;
+      releaseWorkflowController(controller);
+      acceptWorkflowCurrent(current);
+      if (
+        !current.projections &&
+        !trackers.every((tracker) =>
+          current.workflow.submissionExclusions?.some(
+            (exclusion) => exclusion.trackerId === tracker,
+          ),
+        )
+      ) {
+        setQuestionnaireRefresh({
+          key: questionnaireKey,
+          status: "error",
+          error: "Prepare the selected source before reviewing tracker questions.",
+        });
+        return false;
+      }
+      const latest = stateRef.current;
+      const inputChanged =
+        expectedInputContentRevision !==
+        latest.inputEditRevision - latest.trackerSelectionEditRevision;
+      setQuestionnaireRefresh({
+        key:
+          inputChanged || sameNames(trackers, latest.selectedTrackers)
+            ? questionnaireSnapshotKey(latest)
+            : questionnaireKey,
+        status: inputChanged ? "error" : "ready",
+        error: inputChanged
+          ? "Apply Input changes and prepare the selected source before reviewing tracker questions."
+          : "",
+      });
+      return !inputChanged;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setQuestionnaireRefresh({
+          key: questionnaireKey,
+          status: "error",
+          error:
+            operationFailureFromError(error)?.Message ||
+            "Tracker questions could not be loaded. Retry or prepare the selected source again.",
+        });
+        // Settle the exact failure snapshot; queued reducer updates can be newer than stateRef.
+        dispatch({
+          type: "workflow_current_published",
+          status: "ready",
+          current:
+            commandFailureAuthorityFromError(error)?.current ||
+            stateRef.current.workflowView.current ||
+            initial,
+        });
+      }
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+      if (questionnaireController.current === controller) questionnaireController.current = null;
     }
   };
 
@@ -1139,7 +1298,11 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset" | "candidate",
     sourcePath: string,
     intent: PreparationIntent,
-    controls: Readonly<{ confirmBDMVRescan: boolean; acceptPendingInput?: boolean }>,
+    controls: Readonly<{
+      confirmBDMVRescan: boolean;
+      captureHDRMetadata?: boolean;
+      acceptPendingInput?: boolean;
+    }>,
     commandRevision: number,
     correlationID: string,
     controller: AbortController,
@@ -1147,7 +1310,12 @@ export function ReleaseSessionProvider({
     releaseID = "",
   ): Promise<boolean> => {
     try {
-      const input = preparationInputForWorkflow(sourcePath, intent, controls.confirmBDMVRescan);
+      const input = preparationInputForWorkflow(
+        sourcePath,
+        intent,
+        controls.confirmBDMVRescan,
+        controls.captureHDRMetadata,
+      );
       const pendingPlaylist = workflowView.current?.workflow.requiredActions?.some(
         (action) => action.kind === "select_playlist" && action.status === "pending",
       );
@@ -1292,7 +1460,11 @@ export function ReleaseSessionProvider({
     operation: "prepare" | "reset",
     requestedSource: string,
     requestedIntent: PreparationIntent,
-    controls: Readonly<{ confirmBDMVRescan: boolean; acceptPendingInput?: boolean }> = {
+    controls: Readonly<{
+      confirmBDMVRescan: boolean;
+      captureHDRMetadata?: boolean;
+      acceptPendingInput?: boolean;
+    }> = {
       confirmBDMVRescan: false,
     },
   ): Promise<boolean> => {
@@ -1334,7 +1506,12 @@ export function ReleaseSessionProvider({
         ? [...normalizedDefaultTrackers]
         : [...state.selectedTrackers],
     };
-    lastPreparation.current = { operation, sourcePath, intent };
+    lastPreparation.current = {
+      operation,
+      sourcePath,
+      intent,
+      captureHDRMetadata: controls.captureHDRMetadata,
+    };
     dispatch({
       type: "preparation_started",
       sourcePath,
@@ -1899,8 +2076,19 @@ export function ReleaseSessionProvider({
     );
   };
 
+  const questionnaires = workflowQuestionnaires(workflowView.current);
+  const questionnaireDirty = state.selectedTrackers.some((tracker) => {
+    const accepted = questionnaires.find(
+      (projection) => projection.trackerId === tracker,
+    )?.questionnaireAnswers;
+    return Object.entries(state.questionnaireAnswers[tracker] || {}).some(
+      ([key, draft]) => draft.trim() !== (accepted?.[key] ?? "").trim(),
+    );
+  });
+
   const runDryRun = async (): Promise<boolean> => {
-    if (!workflowView.current || !hasDryRunCandidate(workflowView.current)) return false;
+    if (!workflowView.current || questionnaireDirty || !hasDryRunCandidate(workflowView.current))
+      return false;
     return runBackendWorkflow((current, commandID, signal) =>
       continueBackendGoal(
         current,
@@ -1913,7 +2101,7 @@ export function ReleaseSessionProvider({
   };
 
   const executeExactUpload = async (): Promise<boolean> => {
-    if (!mutationsAllowed) return false;
+    if (!mutationsAllowed || questionnaireDirty) return false;
     if (
       !workflowView.current ||
       controllers.current.workflow ||
@@ -1966,7 +2154,34 @@ export function ReleaseSessionProvider({
   const workflowDupeAssessment = workflowView.current?.dupes || null;
   const workflowDupeSelection =
     workflowView.current?.projections?.projections.map((projection) => projection.trackerId) || [];
-  const duplicateAssessmentCurrent = sameNames(workflowDupeSelection, state.selectedTrackers);
+  const submittedTrackers = new Set(
+    (workflowView.current?.workflow.submissionExclusions || []).map(
+      (exclusion) => exclusion.trackerId,
+    ),
+  );
+  const duplicateAssessmentCurrent = sameNames(
+    workflowDupeSelection,
+    state.selectedTrackers.filter((tracker) => !submittedTrackers.has(tracker)),
+  );
+  const questionnaireRefreshPending =
+    questionnaireRefresh?.status === "running" &&
+    controllers.current.workflow === questionnaireController.current &&
+    Boolean(questionnaireController.current);
+  const questionnaireRefreshCurrent = questionnaireRefresh?.key === questionnaireKey;
+  const questionnaireStatus = questionnaireRefreshPending
+    ? "running"
+    : questionnaireRefreshCurrent && questionnaireRefresh.status === "error"
+      ? "error"
+      : duplicateAssessmentCurrent &&
+          ((questionnaireRefreshCurrent && questionnaireRefresh.status === "ready") ||
+            (state.selectedTrackers.length > 0 &&
+              state.selectedTrackers.every((tracker) => submittedTrackers.has(tracker))))
+        ? "ready"
+        : "idle";
+  const questionnaireSnapshotCurrent =
+    duplicateAssessmentCurrent &&
+    questionnaireStatus !== "error" &&
+    (!questionnaireRefreshPending || questionnaireRefreshCurrent);
   const duplicateOperation =
     workflowView.current?.operation?.operation === "duplicate_check"
       ? workflowView.current.operation
@@ -1991,6 +2206,7 @@ export function ReleaseSessionProvider({
       ? {
           input: { available: true, reason: "" },
           trackerData: { available: false, reason: "Resolve recovery actions first." },
+          hdrAnalysis: { available: false, reason: "Resolve recovery actions first." },
           audioAnalysis: { available: false, reason: "Resolve recovery actions first." },
           duplicates: { available: false, reason: "Resolve recovery actions first." },
           screenshots: { available: false, reason: "Resolve recovery actions first." },
@@ -2008,6 +2224,7 @@ export function ReleaseSessionProvider({
               (track) => track.Kind === "audio",
             ),
           ),
+          Boolean(workflowView.current?.release?.display.hdrTargets?.length),
         );
   const workflowMedia = workflowView.current?.media;
   const workflowMediaURL = (artifactID: string) =>
@@ -2205,6 +2422,107 @@ export function ReleaseSessionProvider({
       : "";
   const trackerInputAnswers = state.trackerInputAnswers;
 
+  const retainedHDRAnalysis = (() => {
+    const current = workflowView.current;
+    const result = current?.hdrAnalysis;
+    const reference = current?.workflow.hdrAnalysis;
+    if (
+      !current?.release ||
+      !result ||
+      !reference ||
+      reference.id !== result.id ||
+      reference.revision !== result.revision ||
+      result.release.Generation !== current.release.release.Generation ||
+      result.release.SourcePath !== current.release.release.Source.SourcePath
+    )
+      return null;
+    return result;
+  })();
+  const hdrOperation =
+    latestWorkflowOperation?.operation === "analyze_hdr" &&
+    (latestWorkflowOperationIsActive ||
+      (latestWorkflowOperation.resultRevision ?? latestWorkflowOperation.revision) >=
+        (workflowView.current?.workflow.revision ?? 0))
+      ? latestWorkflowOperation
+      : null;
+  const pendingHDRRequest = workflowView.current?.hdrPendingRequest || null;
+  const hdrRetryRequest = pendingHDRRequest || retainedHDRAnalysis;
+  const hdrCommandError =
+    hdrCommandFailure &&
+    workflowView.current &&
+    !commandFailureSuperseded(hdrCommandFailure, workflowView.current)
+      ? hdrCommandFailure.message
+      : "";
+  const hdrError =
+    hdrCommandError ||
+    (hdrOperation?.failures || []).map((failure) => failure.failure.Message).join(" ") ||
+    retainedHDRAnalysis?.targets
+      .flatMap((target) => [
+        target.failure?.message,
+        ...(target.formats || []).map((format) => format.failure?.message),
+      ])
+      .filter(Boolean)
+      .join(" ") ||
+    "";
+  const hdrStatus = isActiveWorkflowOperation(hdrOperation ?? undefined)
+    ? "running"
+    : hdrError
+      ? "error"
+      : retainedHDRAnalysis
+        ? "ready"
+        : "idle";
+  const hdrMutationBlockedReason =
+    activeWorkflowOperation && !isActiveWorkflowOperation(hdrOperation ?? undefined)
+      ? "Wait for the running workflow operation before changing HDR analysis."
+      : "";
+  const runHDRAnalysis = (input: HDRAnalysisGenerateInput): Promise<boolean> =>
+    runBackendWorkflow(
+      (current, commandID, signal) => {
+        const release = current.release?.release;
+        if (!release) throw new Error("Prepare the release before generating HDR analysis.");
+        const instructions: HDRAnalysisInstructions = {
+          release: { SourcePath: release.Source.SourcePath, Generation: release.Generation },
+          targetIds: [...input.targetIDs],
+          peakSource: input.peakSource,
+          profileVersion:
+            input.profileVersion ||
+            (input.decoded?.boundarySync ||
+            input.decoded?.allAudioTracks ||
+            input.decoded?.videoDecoderThreads
+              ? "hdr-analysis-v3"
+              : "hdr-analysis-v2"),
+          formats: input.formats,
+          decoded: input.decoded,
+          decodedRetry: input.decodedRetry,
+        };
+        return activePorts.workflow.analyzeHDR(current, instructions, commandID, signal);
+      },
+      {
+        onStart: () => setHDRCommandFailure(null),
+        onError: (error, authority) => {
+          const failedCurrent = commandFailureAuthorityFromError(error)?.current;
+          const analysis = failedCurrent?.hdrAnalysis;
+          const retainedFailure =
+            analysis?.attemptId === authority.operationID &&
+            failedCurrent?.workflow.hdrAnalysis?.id === analysis.id &&
+            failedCurrent.workflow.hdrAnalysis.revision === analysis.revision
+              ? analysis.targets
+                  .map((target) => target.failure?.message)
+                  .filter(Boolean)
+                  .join(" ")
+              : "";
+          setHDRCommandFailure({
+            ...authority,
+            message:
+              operationFailureFromError(error)?.Message ||
+              retainedFailure ||
+              (failedCurrent
+                ? "HDR analysis did not complete. Retry the failed work."
+                : "HDR analysis could not start. Retry the request."),
+          });
+        },
+      },
+    );
   const runAudioAnalysis = (input: AudioAnalysisGenerateInput): Promise<boolean> =>
     runBackendWorkflow(
       (current, commandID, signal) => {
@@ -2237,6 +2555,49 @@ export function ReleaseSessionProvider({
         onStart: () => setAudioCommandFailure(null),
       },
     );
+
+  const cancelHDRAnalysis = async (): Promise<boolean> => {
+    const current = stateRef.current.workflowView.current;
+    const operation = current?.operation;
+    if (
+      !current ||
+      operation?.operation !== "analyze_hdr" ||
+      !isActiveWorkflowOperation(operation)
+    ) {
+      return false;
+    }
+    abortController("workflow");
+    setHDRCommandFailure(null);
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    dispatch({ type: "active_input_loading" });
+    const commandID = `hdr-analysis-cancel-${operation.id}`;
+    try {
+      const canceled = await activePorts.workflow.cancelOperation(
+        current.workflow.id,
+        operation.id,
+        controller.signal,
+      );
+      await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
+      const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(latest);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setHDRCommandFailure({
+          ...backendCommandAuthority(commandID, current),
+          message:
+            operationFailureFromError(error)?.Message ||
+            "HDR analysis could not be canceled. Retry the request.",
+        });
+        failBackendWorkflow(error);
+      }
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
 
   const cancelAudioAnalysis = async (): Promise<boolean> => {
     const current = stateRef.current.workflowView.current;
@@ -2525,17 +2886,30 @@ export function ReleaseSessionProvider({
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
       choosePlaylists: (playlists, useAll) =>
         dispatch({ type: "playlist_draft_changed", playlists, useAll }),
-      confirmPlaylists: () => {
+      reviewPlaylists: () => {
+        const release = workflowView.current?.release?.release;
+        if (
+          activeWorkflowOperation ||
+          state.preparation.status !== "ready" ||
+          !release?.Source.SelectedPlaylists?.length
+        )
+          return;
+        dispatch({
+          type: "playlist_reviewed",
+          candidates: release.Source.SelectedPlaylists.map((candidate) => ({
+            ...candidate,
+            items: [...candidate.items],
+          })),
+        });
+      },
+      confirmPlaylists: (captureHDRMetadata = false) => {
         if (
           !state.playlist.required ||
           !playlistSelectionComplete(state.playlist.candidates, state.playlist.selected) ||
-          !state.preparation.correlationID
+          activeWorkflowOperation
         ) {
           return Promise.resolve(false);
         }
-        abortController("preparation");
-        const controller = new AbortController();
-        controllers.current.preparation = controller;
         const intent = cloneIntent({
           ...state.preparationIntent,
           playlist: {
@@ -2544,11 +2918,21 @@ export function ReleaseSessionProvider({
             UseAll: state.playlist.useAll,
           },
         });
+        if (state.preparation.status === "ready") {
+          return runPreparationFor("prepare", state.selectedSource, intent, {
+            confirmBDMVRescan: false,
+            captureHDRMetadata,
+          });
+        }
+        if (!state.preparation.correlationID) return Promise.resolve(false);
+        abortController("preparation");
+        const controller = new AbortController();
+        controllers.current.preparation = controller;
         const sourcePath = state.preparation.sourcePath;
         const commandRevision = state.commandRevision;
         const correlationID = state.preparation.correlationID;
         const operation = lastPreparation.current?.operation || "prepare";
-        lastPreparation.current = { operation, sourcePath, intent };
+        lastPreparation.current = { operation, sourcePath, intent, captureHDRMetadata };
         dispatch({
           type: "playlist_resumed",
           sourcePath,
@@ -2560,7 +2944,7 @@ export function ReleaseSessionProvider({
           operation,
           sourcePath,
           intent,
-          { confirmBDMVRescan: false },
+          { confirmBDMVRescan: false, captureHDRMetadata },
           commandRevision,
           correlationID,
           controller,
@@ -2602,6 +2986,7 @@ export function ReleaseSessionProvider({
           return Promise.resolve(false);
         return runPreparationFor(retry.operation, retry.sourcePath, retry.intent, {
           confirmBDMVRescan: true,
+          captureHDRMetadata: retry.captureHDRMetadata,
         });
       },
       selectCandidate,
@@ -2609,7 +2994,9 @@ export function ReleaseSessionProvider({
     duplicates: {
       view: {
         status:
-          duplicateStartPending || workflowView.status === "running"
+          (duplicateStartPending &&
+            !(questionnaireRefreshPending && duplicateOperation?.command === "project_trackers")) ||
+          (workflowView.status === "running" && !questionnaireRefreshPending)
             ? "running"
             : duplicatesReady
               ? "ready"
@@ -2632,6 +3019,17 @@ export function ReleaseSessionProvider({
         ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
         releaseNameOverrides: state.releaseNameOverrides,
+        questionnaires: questionnaireSnapshotCurrent ? questionnaires : [],
+        preparationQuestionnaires: questionnaireSnapshotCurrent
+          ? questionnaires.map((projection) => ({
+              ...projection,
+              questionnaire: projection.preparationQuestionnaire,
+            }))
+          : [],
+        questionnaireStatus,
+        questionnaireError: questionnaireRefreshCurrent ? questionnaireRefresh.error : "",
+        questionnaireAnswers: state.questionnaireAnswers,
+        questionnaireDirty,
         error: workflowView.failure?.Message || state.duplicatesError || "",
       },
       run: async () => {
@@ -2664,6 +3062,13 @@ export function ReleaseSessionProvider({
         return completed;
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
+      refreshQuestionnaires,
+      answerQuestionnaire: (tracker, key, value) =>
+        dispatch({ type: "questionnaire_answered", tracker, key, value }),
+      applyQuestionnaireAnswers: async () => {
+        if (!access.duplicates.available || !duplicateAssessmentCurrent) return false;
+        return checkBackendDuplicates("trackers_assessed");
+      },
       confirmReleaseName: (tracker, value) =>
         dispatch({ type: "release_name_confirmed", tracker, value }),
       acknowledgeReleaseName: async (tracker, acknowledged) => {
@@ -2758,12 +3163,96 @@ export function ReleaseSessionProvider({
               duplicateDecisions: {
                 [normalizedTracker]: ignored ? "ignored" : "accepted",
               },
+              staffTokenConfirmations:
+                ignored && result.requiresStaffToken && workflowDupeAssessment
+                  ? { [normalizedTracker]: workflowDupeAssessment.id }
+                  : undefined,
             },
             commandID,
             signal,
           ),
         );
       },
+    },
+    hdrAnalysis: {
+      view: {
+        available: access.hdrAnalysis.available,
+        status: hdrStatus,
+        releaseGeneration: Number(preparedRelease?.Generation || 0),
+        targets: workflowView.current?.release?.display.hdrTargets || [],
+        result: retainedHDRAnalysis,
+        pendingRequest: pendingHDRRequest,
+        comparison: workflowView.current?.workflow.hdrComparison || null,
+        selectionRecoveryNote: workflowView.current?.workflow.hdrImages?.recoveryNote,
+        includedArtifactIDs: workflowView.current?.workflow.hdrAnalysisEnabled
+          ? workflowView.current.workflow.hdrImages?.artifactIds ||
+            retainedHDRAnalysis?.targets.flatMap((target) =>
+              (target.artifacts || [])
+                .filter(
+                  (artifact) =>
+                    artifact.kind === "hdr10plus_plot" ||
+                    artifact.kind === "dolby_vision_l1_plot" ||
+                    ((artifact.kind === "audio_waveform" ||
+                      artifact.kind === "audio_spectrogram") &&
+                      target.decoded?.some(
+                        (decoded) =>
+                          decoded.mode === "audio" &&
+                          decoded.measured > 0 &&
+                          (decoded.state === "complete" || decoded.state === "inconclusive") &&
+                          decoded.artifacts?.includes(artifact.id),
+                      )),
+                )
+                .map((artifact) => artifact.id),
+            ) ||
+            []
+          : [],
+        phase: hdrOperation?.phase || "",
+        message: hdrOperation?.message || "",
+        progress: hdrOperation?.progress || 0,
+        mutationBlockedReason: hdrMutationBlockedReason,
+        error: hdrError,
+      },
+      generate: runHDRAnalysis,
+      selectComparison: (sourcePath) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.selectHDRComparison(current, sourcePath, commandID, signal),
+        ),
+      retryDecoded: (modes) =>
+        !pendingHDRRequest && retainedHDRAnalysis?.decoded
+          ? runHDRAnalysis({
+              targetIDs: retainedHDRAnalysis.targetIds,
+              peakSource: retainedHDRAnalysis.peakSource,
+              formats: retainedHDRAnalysis.formats,
+              profileVersion: retainedHDRAnalysis.profileVersion,
+              decoded: retainedHDRAnalysis.decoded,
+              decodedRetry: { analysisAttemptId: retainedHDRAnalysis.attemptId, modes: [...modes] },
+            })
+          : Promise.resolve(false),
+      setIncludedArtifacts: (artifactIDs) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.setHDRAnalysisEnabled(current, artifactIDs, commandID, signal),
+        ),
+      retry: () =>
+        hdrRetryRequest
+          ? runHDRAnalysis({
+              targetIDs: hdrRetryRequest.targetIds,
+              peakSource: hdrRetryRequest.peakSource,
+              formats: hdrRetryRequest.formats || undefined,
+              profileVersion: hdrRetryRequest.profileVersion,
+              decoded: hdrRetryRequest.decoded || undefined,
+              decodedRetry: pendingHDRRequest?.decodedRetry || undefined,
+            })
+          : Promise.resolve(false),
+      cancel: cancelHDRAnalysis,
+      artifactURL: (id) =>
+        workflowView.current && retainedHDRAnalysis
+          ? activePorts.workflow.hdrAnalysisURL(
+              workflowView.current,
+              retainedHDRAnalysis.id,
+              retainedHDRAnalysis.revision,
+              id,
+            )
+          : "",
     },
     audioAnalysis: {
       view: {
@@ -3007,7 +3496,8 @@ export function ReleaseSessionProvider({
         selectedTrackers: state.selectedTrackers,
         projections: workflowView.current?.projections || null,
         ignoredDupesFor: state.ignoredDupesFor,
-        questionnaireAnswers: state.questionnaireAnswers,
+        questionnaireDirty,
+        workflowBusy: Boolean(controllers.current.workflow),
         options: uploadOptions,
         liveTest,
         mutationsAllowed: mutationsAllowed && state.activeInput.state !== "recovering",
@@ -3020,8 +3510,6 @@ export function ReleaseSessionProvider({
         error: workflowView.failure?.Message || workflowView.error || state.uploadError || "",
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
-      answerQuestionnaire: (tracker, key, value) =>
-        dispatch({ type: "questionnaire_answered", tracker, key, value }),
       changeOptions: (options: Partial<UploadRunOptions>) =>
         dispatch({
           type: "upload_options_changed",
@@ -3054,7 +3542,7 @@ export function ReleaseSessionProvider({
         return cancelBackendWorkflow("upload canceled");
       },
       retry: async () => {
-        if (!mutationsAllowed) return false;
+        if (!mutationsAllowed || questionnaireDirty) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
           .filter((item) => item.submissionStatus === "failed")

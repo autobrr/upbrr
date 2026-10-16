@@ -6,16 +6,98 @@ package tvdb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestNewClientWithoutApplicationDefault(t *testing.T) {
+	palette := clientPalette
+	clientPalette = nil
+	t.Cleanup(func() { clientPalette = palette })
+
+	client := NewClient(&http.Client{Transport: tvdbRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("unexpected HTTP request without an application default")
+		return nil, context.Canceled
+	})}, nil, " \t ", "")
+	if client.apiKey != "" {
+		t.Fatal("expected an empty application default")
+	}
+	if _, err := client.GetSeriesMetadata(t.Context(), 123); err == nil || err.Error() != "tvdb: api key missing" {
+		t.Fatalf("expected missing API key error, got %v", err)
+	}
+}
+
+func TestSpecialSeasonPresenceRefetchesLegacyCaches(t *testing.T) {
+	t.Parallel()
+	for _, season := range []string{"null", "0"} {
+		t.Run(season, func(t *testing.T) {
+			t.Parallel()
+			var episodeRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/login":
+					_, _ = w.Write([]byte(`{"data":{"token":"synthetic-token"}}`))
+				case "/series/555001/episodes/default":
+					episodeRequests.Add(1)
+					_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":555002,"seasonNumber":` + season + `,"number":1,"name":"The Special Signal"}]}}`))
+				case "/series/555001/extended":
+					_, _ = w.Write([]byte(`{"data":{"id":555001,"name":"Example Series"}}`))
+				default:
+					_, _ = w.Write([]byte(`{"data":{}}`))
+				}
+			}))
+			t.Cleanup(server.Close)
+			repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "metadata.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			ctx, scope := evidence.WithScope(t.Context(), repo, filepath.Join(t.TempDir(), "source.mkv"), "fingerprint", api.ExternalFreshnessReuse, api.NopLogger{})
+			client := NewClient(server.Client(), api.NopLogger{}, "synthetic-key", t.TempDir())
+			client.baseURL = server.URL
+			query := EpisodeQuery{SeasonKnown: true, Episode: 1}
+			cachePath := client.cachePath("", 555001, "eng")
+			if err := os.WriteFile(cachePath, []byte(`{"SeriesTitle":"Example Series","Episodes":[{"ID":555002,"SeasonNumber":0,"Number":1,"Name":"Legacy episode"}]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			// Seed the old typed response namespace as well as the disk cache.
+			legacy := episodesResponse{Data: episodesDataResponse{Episodes: []episodeResponse{{
+				ID:           555002,
+				SeasonNumber: new(0),
+				Number:       1,
+			}}}}
+			params := client.languageParamsFor(map[string]string{"page": "0"}, "eng")
+			if err := evidence.JSON(ctx, "tvdb.response.v1", []any{client.baseURL, client.apiKey, "/series/555001/episodes/default", params}, &legacy, errNotFound, nil, func() error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			data, _, err := client.GetEpisodesWithLanguage(ctx, 555001, query, "eng")
+			if err != nil || episodeRequests.Load() != 1 {
+				t.Fatalf("legacy cache was not recollected: requests=%d error=%v", episodeRequests.Load(), err)
+			}
+			_, matched := GetSpecificEpisodeData(data, query)
+			if matched != (season == "0") {
+				t.Fatalf("provider season presence was lost: episodes=%+v matched=%t", data.Episodes, matched)
+			}
+			if err := scope.Err(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestBuildNameDisambiguationFixtures(t *testing.T) {
 	tests := []struct {
@@ -504,6 +586,48 @@ func TestFindEpisodeMatch(t *testing.T) {
 	}
 }
 
+func TestExplicitSpecialEpisodeCachePresenceRequiresExactCoordinates(t *testing.T) {
+	t.Parallel()
+	ordinary := Episode{
+		SeasonNumber:   2,
+		Number:         1,
+		AbsoluteNumber: 1,
+		Aired:          "2026-01-01",
+	}
+	special := Episode{
+		SeasonNumber: 0,
+		SeasonKnown:  true,
+		Number:       1,
+	}
+	query := EpisodeQuery{
+		SeasonKnown: true,
+		Episode:     1,
+		Absolute:    1,
+		AiredDate:   ordinary.Aired,
+	}
+	if episodeIsPresent([]Episode{ordinary}, query) {
+		t.Fatal("ordinary episode sharing date and absolute number satisfied an explicit special query")
+	}
+	if episodeIsPresent([]Episode{{SeasonNumber: 0, Number: 1}}, query) {
+		t.Fatal("legacy zero without provider presence satisfied an explicit special query")
+	}
+	if !episodeIsPresent([]Episode{ordinary, special}, query) {
+		t.Fatal("exact special episode did not satisfy the cache query")
+	}
+	match, ok := GetSpecificEpisodeData(EpisodesData{Episodes: []Episode{ordinary, special}}, query)
+	if !ok || match.SeasonNumber != 0 || match.EpisodeNumber != 1 {
+		t.Fatalf("explicit special remapped to ordinary episode: %+v", match)
+	}
+	query.SeasonKnown = false
+	if !episodeIsPresent([]Episode{ordinary}, query) {
+		t.Fatal("unknown season lost its existing date/absolute cache match")
+	}
+	match, ok = GetSpecificEpisodeData(EpisodesData{Episodes: []Episode{ordinary}}, query)
+	if !ok || match.SeasonNumber != 2 {
+		t.Fatalf("unknown season lost its existing date/absolute match: %+v", match)
+	}
+}
+
 func TestEpisodesResponseUnmarshal(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -638,6 +762,102 @@ func TestSearchSeriesDecodesStringAliases(t *testing.T) {
 	}
 	if results[0].Aliases[0].Name != "Example Quest (2011)" || results[0].Aliases[0].Language != "" {
 		t.Fatalf("expected unlabelled string alias, got %#v", results[0].Aliases[0])
+	}
+}
+
+func TestGetJSONUnauthorizedRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		retryStatus  int
+		refreshFails bool
+		wantRequests int
+		wantErr      string
+	}{
+		{
+			name:         "successful retry",
+			retryStatus:  http.StatusOK,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry unauthorized",
+			retryStatus:  http.StatusUnauthorized,
+			wantRequests: 2,
+			wantErr:      "http 401",
+		},
+		{
+			name:         "refresh fails",
+			refreshFails: true,
+			wantRequests: 1,
+			wantErr:      "login http 401",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var bodies []*tvdbTrackingBody
+			requests, refreshes := 0, 0
+			client := NewClient(&http.Client{Transport: tvdbRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				for _, body := range bodies {
+					if !body.closed {
+						t.Error("response body still open before the next request")
+					}
+				}
+				switch req.URL.Path {
+				case "/login":
+					refreshes++
+					if tc.refreshFails || refreshes > 1 {
+						return tvdbTestResponse(http.StatusUnauthorized, ""), nil
+					}
+					return tvdbTestResponse(http.StatusOK, `{"data":{"token":"refreshed-token"}}`), nil
+				case "/series/123":
+					requests++
+					if requests > 2 {
+						t.Error("unexpected extra metadata request")
+						return nil, context.Canceled
+					}
+					wantAuth := "Bearer expired-token"
+					status := http.StatusUnauthorized
+					if requests == 2 {
+						wantAuth = "Bearer refreshed-token"
+						status = tc.retryStatus
+					}
+					if req.Header.Get("Authorization") != wantAuth {
+						t.Errorf("unexpected authorization token for metadata request %d", requests)
+					}
+					if req.URL.Query().Get("lang") != "eng" || req.Header.Get("Accept") != "application/json" {
+						t.Error("request lost query or Accept header")
+					}
+					resp := tvdbTestResponse(status, `{"status":"success"}`)
+					body := &tvdbTrackingBody{ReadCloser: resp.Body}
+					bodies = append(bodies, body)
+					resp.Body = body
+					return resp, nil
+				default:
+					t.Errorf("unexpected request path %q", req.URL.Path)
+					return nil, context.Canceled
+				}
+			})}, nil, "api-key", "")
+			client.baseURL = "https://tvdb.test"
+			client.authToken = "expired-token"
+
+			var target struct {
+				Status string `json:"status"`
+			}
+			err := client.getJSON(t.Context(), "/series/123", map[string]string{"lang": "eng"}, &target)
+			if tc.wantErr == "" {
+				if err != nil || target.Status != "success" {
+					t.Fatalf("retry result = %+v, error = %v", target, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) || target.Status != "" {
+				t.Fatalf("expected %q with no decoded result, got target = %+v, error = %v", tc.wantErr, target, err)
+			}
+			if requests != tc.wantRequests || refreshes != 1 {
+				t.Errorf("metadata requests = %d, refreshes = %d; want %d and 1", requests, refreshes, tc.wantRequests)
+			}
+			for _, body := range bodies {
+				if !body.closed {
+					t.Error("response body still open after return")
+				}
+			}
+		})
 	}
 }
 
@@ -1304,6 +1524,19 @@ type tvdbRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f tvdbRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type tvdbTrackingBody struct {
+	io.ReadCloser
+	closed bool
+}
+
+func (b *tvdbTrackingBody) Close() error {
+	b.closed = true
+	if err := b.ReadCloser.Close(); err != nil {
+		return fmt.Errorf("close tracked response body: %w", err)
+	}
+	return nil
 }
 
 func tvdbTestResponse(status int, body string) *http.Response {

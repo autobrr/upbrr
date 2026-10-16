@@ -66,6 +66,7 @@ func TestUploadGuideValidation(t *testing.T) {
 		{
 			name: "single season pack needs airing confirmation",
 			mutate: func(s *api.TrackerValidationSubject) {
+				s.Identity.Category = api.CanonicalCategoryTV
 				s.TVPack = true
 				s.PackageFacts.DetectedSeasons = []int{1}
 			},
@@ -379,5 +380,30 @@ func TestDescriptionValidationAcceptsReformattedFinalEvidence(t *testing.T) {
 	failures, err := checkDescriptionRequirements(t.Context(), api.NewTrackerValidationSubject(meta, "OE"), api.NopLogger{})
 	if err != nil || len(failures) != 0 {
 		t.Fatalf("reformatted evidence must remain valid: %+v %v", failures, err)
+	}
+}
+
+func TestOESeasonAiringAcknowledgementRequiresTVCategory(t *testing.T) {
+	for _, category := range []api.CanonicalCategory{api.CanonicalCategoryMovie, api.CanonicalCategoryTV} {
+		subject := oeValidationSubject()
+		subject.Identity.Category = category
+		subject.TVPack = true
+		subject.PackageFacts.DetectedSeasons = []int{1}
+		failures, err := checkRules(t.Context(), subject, api.NopLogger{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, failure := range failures {
+			if failure.Rule == "oe_season_finished_airing" {
+				found = true
+				if failure.Disposition != api.RuleDispositionWaivable {
+					t.Fatalf("TV acknowledgement changed: %+v", failure)
+				}
+			}
+		}
+		if found != (category == api.CanonicalCategoryTV) {
+			t.Fatalf("category=%s airing acknowledgement=%t", category, found)
+		}
 	}
 }

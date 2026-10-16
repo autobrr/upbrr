@@ -13,6 +13,8 @@ import (
 // be materialized into a later workflow. It deliberately excludes runtime
 // configuration, credentials, and generation instructions.
 type ReusableDescription struct {
+	// RendererVersion identifies the generated output format; empty records predate versioning.
+	RendererVersion          string                     `json:"rendererVersion,omitempty"`
 	CompatibilityFingerprint WorkflowFingerprint        `json:"compatibilityFingerprint"`
 	Descriptions             []RenderedDescription      `json:"descriptions"`
 	TrackerResults           []DescriptionTrackerResult `json:"trackerResults,omitempty"`

@@ -27,6 +27,13 @@ export type AnalyzeReleaseWorkflowAudioRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type AnalyzeReleaseWorkflowHDRRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  instructions: HDRAnalysisInstructions;
+  workflowId: WorkflowID;
+}>;
+
 export type AniListAiringEpisode = Readonly<{
   AiringAt: number;
   Episode: number;
@@ -184,6 +191,8 @@ export type AudioAnalysisTrackResult = Readonly<{
 
 export type AudioAnalysisVariant = string;
 
+export type AudioTrackRole = string;
+
 export type BlurayDiscSpec = Readonly<{
   Count: number;
   Format: string;
@@ -318,6 +327,8 @@ export type CreateReleaseWorkflowUploadRequest = Readonly<{
   descriptions?: ReleaseWorkflowUploadDescriptions;
   duplicates?: ReleaseWorkflowUploadDuplicates;
   execution?: ReleaseWorkflowUploadExecution;
+  hdrAnalysis?: HDRAnalysisRequest | null;
+  hdrComparisonSelection?: HDRComparisonSelection | null;
   imageHosting?: ReleaseWorkflowUploadImageHosting;
   media?: ReleaseWorkflowUploadMedia;
   preparation?: ReleaseWorkflowUploadPreparation;
@@ -415,6 +426,7 @@ export type DiscItemFacts = Readonly<{
 }>;
 
 export type DiscReportFacts = Readonly<{
+  HDR10PlusConfirmed: boolean;
   Playlist: PlaylistInfo;
   Summary: string;
 }>;
@@ -506,6 +518,7 @@ export type EpisodeFacts = Readonly<{
   DateMatched: boolean;
   Episode: number;
   EpisodeLabel: string;
+  MultipleEpisodes: boolean;
   Overview: string;
   Pack: boolean;
   Season: number;
@@ -595,9 +608,199 @@ export type GoalAvailability = Readonly<{
   reasonCode?: string;
 }>;
 
+export type HDRAnalysisArtifact = Readonly<{
+  height: number;
+  id: PublicResourceID;
+  width: number;
+}>;
+
+export type HDRAnalysisFailure = Readonly<{
+  code: HDRAnalysisFailureCode;
+  message: string;
+}>;
+
+export type HDRAnalysisFailureCode = string;
+
+export type HDRAnalysisFormats = string;
+
+export type HDRAnalysisInstructions = Readonly<{
+  decoded?: HDRDecodedOptions | null;
+  decodedRetry?: HDRDecodedRetry | null;
+  formats?: HDRAnalysisFormats;
+  peakSource: HDRPeakSource;
+  profileVersion: string;
+  release: ReleaseRef;
+  targetIds: readonly string[];
+}>;
+
+export type HDRAnalysisRef = Readonly<{
+  id: HDRAnalysisResultID;
+  revision: WorkflowRevision;
+}>;
+
+export type HDRAnalysisRequest = Readonly<{
+  decoded?: HDRDecodedOptions | null;
+  formats?: HDRAnalysisFormats;
+  peakSource?: HDRPeakSource;
+  targetIds?: readonly string[];
+}>;
+
+export type HDRAnalysisResult = Readonly<{
+  attemptId: string;
+  completedAt?: string;
+  createdAt: string;
+  decoded?: HDRDecodedOptions | null;
+  formats?: HDRAnalysisFormats;
+  id: HDRAnalysisResultID;
+  manifestFingerprint: string;
+  peakSource: HDRPeakSource;
+  profileVersion: string;
+  release: ReleaseRef;
+  renderFingerprint?: string;
+  revision: WorkflowRevision;
+  status: StageStatus;
+  targetIds: readonly string[];
+  targets: readonly HDRAnalysisTargetResult[];
+  workflowId: WorkflowID;
+}>;
+
+export type HDRAnalysisResultID = string;
+
+export type HDRAnalysisTarget = Readonly<{
+  evidence?: HDRSourceEvidence;
+  id: string;
+  label: string;
+  playlist?: string;
+  reason?: string;
+  selectionPolicy: string;
+  supported: boolean;
+}>;
+
+export type HDRAnalysisTargetResult = Readonly<{
+  artifact?: HDRAnalysisArtifact | null;
+  artifacts?: readonly HDRTypedArtifact[];
+  decoded?: readonly HDRDecodedResult[];
+  failure?: HDRAnalysisFailure | null;
+  formats?: readonly HDRFormatResult[];
+  frames: number;
+  label: string;
+  profile?: string;
+  scenes: number;
+  status: StageStatus;
+  targetId: string;
+}>;
+
+export type HDRArtifactKind = string;
+
+export type HDRAudioTrackResult = Readonly<{
+  artifacts: readonly PublicResourceID[];
+  channelLayout: string;
+  channels: number;
+  codec: string;
+  failure?: AudioAnalysisFailure | null;
+  language?: string;
+  ordinal: number;
+  pcmMeasured: boolean;
+  sampleFrames: number;
+  sampleRate: number;
+  state: HDRDecodedState;
+  trackId: string;
+}>;
+
+export type HDRCheckResult = Readonly<{
+  code: string;
+  message: string;
+  state: HDRCheckState;
+}>;
+
+export type HDRCheckState = string;
+
+export type HDRComparisonOptions = Readonly<{
+  colour: boolean;
+  crop: HDRCrop;
+  frameOffset?: number | null;
+  grade: boolean;
+  sourceId: string;
+}>;
+
+export type HDRComparisonSelection = Readonly<{
+  path: string;
+}>;
+
+export type HDRComparisonSourceRef = Readonly<{
+  expiresAt: string;
+  fingerprint: string;
+  id: string;
+  release: ReleaseRef;
+}>;
+
+export type HDRCoverage = string;
+
+export type HDRCrop = Readonly<{
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+}>;
+
+export type HDRDecodedMode = string;
+
+export type HDRDecodedOptions = Readonly<{
+  activeArea: boolean;
+  allAudioTracks?: boolean;
+  audio?: boolean;
+  automatic?: boolean;
+  boundarySync?: boolean;
+  comparison?: HDRComparisonOptions | null;
+  sampled?: boolean;
+  sceneSync: boolean;
+  videoDecoderThreads?: number;
+}>;
+
+export type HDRDecodedResult = Readonly<{
+  artifacts: readonly PublicResourceID[];
+  audioTracks?: readonly HDRAudioTrackResult[];
+  checks?: readonly HDRCheckResult[];
+  coverage?: HDRCoverage;
+  measured: number;
+  mode: HDRDecodedMode;
+  profile: string;
+  reason?: string;
+  selected: number;
+  state: HDRDecodedState;
+}>;
+
+export type HDRDecodedRetry = Readonly<{
+  analysisAttemptId: string;
+  modes: readonly HDRDecodedMode[];
+}>;
+
+export type HDRDecodedSourceEvidence = Readonly<{
+  bitDepth: number;
+  codec: string;
+  dolbyVisionProfile?: string;
+  frameRateDenominator?: string;
+  frameRateNumerator?: string;
+  height: number;
+  matrix: string;
+  pixelAspectDenominator: number;
+  pixelAspectNumerator: number;
+  primaries: string;
+  range: string;
+  rawHEVC: boolean;
+  transfer: string;
+  videoStreamOrdinal?: number;
+  videoStreams: number;
+  width: number;
+}>;
+
+export type HDRDecodedState = string;
+
 export type HDREvidenceOrigin = string;
 
 export type HDREvidenceStatus = string;
+
+export type HDRExtractionState = string;
 
 export type HDRFacts = Readonly<{
   contradictions?: readonly string[];
@@ -610,6 +813,54 @@ export type HDRFacts = Readonly<{
 }>;
 
 export type HDRFormat = string;
+
+export type HDRFormatResult = Readonly<{
+  advertised: boolean;
+  checks: readonly HDRCheckResult[];
+  coverage: HDRCoverage;
+  failure?: HDRAnalysisFailure | null;
+  format: HDRNativeFormat;
+  frames: number;
+  l1Samples: number;
+  missing: number;
+  observed: number;
+  profile?: string;
+  requested: boolean;
+  retained: number;
+  scenes: number;
+  state: HDRExtractionState;
+  suppressed: number;
+  trackId?: string;
+}>;
+
+export type HDRImageSelection = Readonly<{
+  artifactIds: readonly PublicResourceID[];
+  recoveryNote?: string;
+}>;
+
+export type HDRNativeFormat = string;
+
+export type HDRPeakSource = string;
+
+export type HDRSourceEvidence = Readonly<{
+  decoded?: HDRDecodedSourceEvidence | null;
+  dolbyVision: boolean;
+  hdr10plus: boolean;
+  uniqueHEVC: boolean;
+}>;
+
+export type HDRTypedArtifact = Readonly<{
+  audioTrackId?: string;
+  format?: HDRNativeFormat;
+  height: number;
+  id: PublicResourceID;
+  kind: HDRArtifactKind;
+  measurementFingerprint?: string;
+  mime: string;
+  profile: string;
+  renderFingerprint?: string;
+  width: number;
+}>;
 
 export type HostedImageAttempt = Readonly<{
   artifactIds: readonly PublicResourceID[];
@@ -645,6 +896,7 @@ export type IMDBEpisode = Readonly<{
   ReleaseDate: IMDBReleaseDate;
   ReleaseYear: number;
   Season: number;
+  SeasonKnown: boolean;
   Title: string;
 }>;
 
@@ -795,6 +1047,21 @@ export type InvalidateReleaseWorkflowTrackersRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type LanguageFacts = Readonly<{
+  AudioAbsent: boolean;
+  AudioStatus: MetadataEvidenceStatus;
+  FullSubtitleLanguages: readonly string[];
+  OriginalLanguages: readonly string[];
+  OriginalLanguagesKnown: boolean;
+  PrimaryAudioTrackID: string;
+  ProgrammeLanguages: readonly string[];
+  ProgrammeStatus: MetadataEvidenceStatus;
+  SubtitleLanguages: readonly string[];
+  SubtitleStatus: MetadataEvidenceStatus;
+  TrackCoverageComplete: boolean;
+  Tracks: readonly MediaTrackFacts[];
+}>;
+
 export type MediaArtifact = Readonly<{
   discId?: string;
   discName?: string;
@@ -823,6 +1090,7 @@ export type MediaArtifactSet = Readonly<{
   failures?: readonly WorkflowFailure[];
   hostAttempts?: readonly HostedImageAttempt[];
   id: MediaArtifactSetID;
+  imageHostUploadSkipped?: boolean;
   imageRequirementsPrepared: boolean;
   projectionSet: TrackerReleaseProjectionSetRef;
   release: ReleaseSnapshotRef;
@@ -879,6 +1147,7 @@ export type MediaDiscPlan = Readonly<{
 export type MediaFacts = Readonly<{
   Anime: boolean;
   Audio: string;
+  AudioAbsent: boolean;
   AudioLanguages: readonly string[];
   AudioLanguagesProvenance: FactProvenance;
   BitDepth: string;
@@ -894,15 +1163,19 @@ export type MediaFacts = Readonly<{
   HDRFacts: HDRFacts;
   HardcodedSubs: boolean;
   HardcodedSubsProvenance: FactProvenance;
+  HardcodedSubtitleCoverage?: readonly SubtitleLanguageCoverage[];
   HardcodedSubtitleLanguages: readonly string[];
   HardcodedSubtitleLanguagesProvenance: FactProvenance;
   HasEncodeSettings: boolean;
+  LanguageFacts: LanguageFacts;
+  MediaFileFacts: MediaFileFacts;
   MediaInfoUniqueID: string;
   OriginalLanguage: string;
   OriginalLanguageProvenance: FactProvenance;
   Presentation: string;
   PrimaryAudioTrackID: string;
   Region: string;
+  ReleaseFeatures?: readonly ReleaseFeature[];
   Repack: string;
   Service: string;
   ServiceLongName: string;
@@ -920,6 +1193,31 @@ export type MediaFacts = Readonly<{
   VideoCodec: string;
   VideoEncode: string;
   WebDV: boolean;
+}>;
+
+export type MediaFileFact = Readonly<{
+  AudioLanguages: readonly string[];
+  AudioStatus: MetadataEvidenceStatus;
+  BitDepth: string;
+  Container: string;
+  FileName: string;
+  Primary: boolean;
+  Resolution: string;
+  Source: string;
+  SubtitleLanguages: readonly string[];
+  SubtitleStatus: MetadataEvidenceStatus;
+  VideoCodec: string;
+  VideoEncode: string;
+  VideoTrackCount: number;
+}>;
+
+export type MediaFileFacts = Readonly<{
+  ExpectedFileCount: number;
+  Files: readonly MediaFileFact[];
+  LanguageStatus: MetadataEvidenceStatus;
+  OriginalLanguage: string;
+  Status: MetadataEvidenceStatus;
+  TechnicalStatus: MetadataEvidenceStatus;
 }>;
 
 export type MediaPlan = Readonly<{
@@ -949,12 +1247,21 @@ export type MediaPlanSavedImage = Readonly<{
 }>;
 
 export type MediaTrackFacts = Readonly<{
+  AudioLabel: string;
+  BitDepth?: number;
+  BitrateBitsPerSecond: number;
   ChannelLayout: string;
   Channels: number;
+  ChannelsKnown?: boolean;
   Codec: string;
   Commentary: boolean;
   Default: boolean;
+  DefaultKnown: boolean;
   DetectedLanguages: readonly string[];
+  DiscID: string;
+  EmbeddedCompatibility: boolean;
+  Forced: boolean;
+  Hidden: boolean;
   ID: string;
   Kind: MediaTrackKind;
   LanguageProvenance: FactProvenance;
@@ -962,8 +1269,12 @@ export type MediaTrackFacts = Readonly<{
   ManifestFingerprint: string;
   NativeID: string;
   Ordinal: number;
+  PlaylistID: string;
   ResourceID: string;
+  Role: AudioTrackRole;
   SampleRate: number;
+  StreamOrder: number;
+  StreamOrderKnown: boolean;
   Title: string;
 }>;
 
@@ -1080,6 +1391,7 @@ export type Operation = Readonly<{
 export type OperationFailure = Readonly<{
   AudioAnalysisCode?: AudioAnalysisFailureCode;
   Code: OperationFailureCode;
+  HDRAnalysisCode?: HDRAnalysisFailureCode;
   Message: string;
   Operation: OperationKind;
   Recovery: OperationRecovery;
@@ -1125,6 +1437,7 @@ export type PreparationCompatibility = Readonly<{
 }>;
 
 export type PreparationControls = Readonly<{
+  CaptureHDRMetadata?: boolean;
   ConfirmBDMVRescan: boolean;
   ForceRecheck?: boolean | null;
   Interaction: InteractionMode;
@@ -1174,10 +1487,12 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  Commentary?: boolean;
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
   TrackerData: readonly TrackerPreview[];
+  hdrTargets?: readonly HDRAnalysisTarget[];
 }>;
 
 export type PreviewReleaseWorkflowFrameRequest = Readonly<{
@@ -1316,6 +1631,8 @@ export type ReleaseFactInstructions = Readonly<{
   TrackerIDs: Readonly<Record<string, string>>;
 }>;
 
+export type ReleaseFeature = string;
+
 export type ReleaseNameComponent = Readonly<{
   AttachTo?: readonly ReleaseNameRole[];
   AvailableValue: string;
@@ -1409,6 +1726,10 @@ export type ReleaseWorkflow = Readonly<{
   dupes?: DupeAssessmentRef | null;
   factInstructions: ReleaseFactInstructionSnapshotRef;
   failures?: readonly WorkflowFailure[];
+  hdrAnalysis?: HDRAnalysisRef | null;
+  hdrAnalysisEnabled?: boolean;
+  hdrComparison?: HDRComparisonSourceRef | null;
+  hdrImages?: HDRImageSelection | null;
   id: WorkflowID;
   inputReadiness?: InputReadinessSnapshotRef | null;
   media?: MediaArtifactSetRef | null;
@@ -1476,6 +1797,9 @@ export type ReleaseWorkflowCurrent = Readonly<{
   dryRun?: UploadDryRunResult | null;
   dupes?: DupeAssessment | null;
   factInstructions?: ReleaseFactInstructionSnapshot | null;
+  hdrAnalysis?: HDRAnalysisResult | null;
+  hdrComparison?: HDRComparisonSourceRef | null;
+  hdrPendingRequest?: HDRAnalysisInstructions | null;
   inputReadiness?: InputReadinessSnapshot | null;
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
@@ -1548,6 +1872,7 @@ export type ReleaseWorkflowUploadDescriptions = Readonly<{
 
 export type ReleaseWorkflowUploadDuplicateReview = Readonly<{
   decision: DupeDecision;
+  staffTokenConfirmed?: boolean;
   trackerId?: TrackerID;
 }>;
 
@@ -1897,7 +2222,23 @@ export type ScreenshotSelection = Readonly<{
   TimestampSeconds: number;
 }>;
 
+export type SelectReleaseWorkflowHDRComparisonRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  release: ReleaseRef;
+  sourcePath: string;
+  workflowId: WorkflowID;
+}>;
+
 export type SetReleaseWorkflowAudioAnalysisEnabledRequest = Readonly<{
+  enabled: boolean;
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  workflowId: WorkflowID;
+}>;
+
+export type SetReleaseWorkflowHDRAnalysisEnabledRequest = Readonly<{
+  artifactIds?: readonly PublicResourceID[];
   enabled: boolean;
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -1970,6 +2311,13 @@ export type SubmissionExclusion = Readonly<{
   confirmedAt: string;
   reason: string;
   trackerId: TrackerID;
+}>;
+
+export type SubtitleCoverage = string;
+
+export type SubtitleLanguageCoverage = Readonly<{
+  Coverage: SubtitleCoverage;
+  Language: string;
 }>;
 
 export type TIKOverrides = Readonly<{
@@ -2074,6 +2422,7 @@ export type TVDBMetadata = Readonly<{
   EpisodeOverview: string;
   EpisodeOverviewEnglish: string;
   EpisodeSeason: number;
+  EpisodeSeasonKnown: boolean;
   Episodes: readonly TVDBEpisodeMetadata[];
   FirstAired: string;
   Genres: string;
@@ -2264,11 +2613,13 @@ export type TrackerDerivedFlag = Readonly<{
 export type TrackerDryRunReport = Readonly<{
   clientInjection: ClientInjectionOutcome;
   displayName: string;
+  editionFeatures?: readonly TrackerEditionFeature[];
   endpoint?: string;
   failures?: readonly WorkflowFailure[];
   fields?: readonly UploadPlanField[];
   files?: readonly UploadPlanFile[];
   preparedOperationId?: PublicResourceID;
+  questionnaire?: readonly TrackerQuestionnaireRequirement[];
   semanticFingerprint: WorkflowFingerprint;
   status: StageStatus;
   torrentArtifactId?: PublicResourceID;
@@ -2291,8 +2642,11 @@ export type TrackerDupeAssessment = Readonly<{
   policyId: string;
   projectionFingerprint: WorkflowFingerprint;
   requiredActions?: readonly RequiredAction[];
+  requiresStaffToken?: boolean;
+  reviewReasons?: readonly DupeReason[];
   search: DupeSearchEvidence;
   searchFingerprint: WorkflowFingerprint;
+  staffTokenConfirmed?: boolean;
   status: StageStatus;
   targetFingerprint: WorkflowFingerprint;
   trackerId: TrackerID;
@@ -2333,9 +2687,17 @@ export type TrackerDuplicateTarget = Readonly<{
   sizeBytes?: number;
   source?: string;
   threeD?: string;
+  trackerSlot?: string;
   type?: string;
   videoCodec?: string;
   videoEncode?: string;
+}>;
+
+export type TrackerEditionFeature = Readonly<{
+  category: string;
+  evidence?: string;
+  label: string;
+  selected: boolean;
 }>;
 
 export type TrackerID = string;
@@ -2471,10 +2833,13 @@ export type TrackerQuestionnaireField = Readonly<{
 }>;
 
 export type TrackerQuestionnaireRequirement = Readonly<{
+  help?: string;
   key: string;
+  kind?: string;
   label: string;
   options?: readonly string[];
   required: boolean;
+  value?: string;
 }>;
 
 export type TrackerReleaseName = Readonly<{
@@ -2501,6 +2866,7 @@ export type TrackerReleaseProjection = Readonly<{
   duplicateSearchFingerprint: WorkflowFingerprint;
   duplicateTarget: TrackerDuplicateTarget;
   duplicateTargetFingerprint: WorkflowFingerprint;
+  editionFeatures?: readonly TrackerEditionFeature[];
   episodeTitleMode: EpisodeTitleMode;
   failures?: readonly WorkflowFailure[];
   inputFingerprint: WorkflowFingerprint;
@@ -2513,10 +2879,12 @@ export type TrackerReleaseProjection = Readonly<{
   projectorFingerprint: WorkflowFingerprint;
   providerIds?: readonly TrackerProviderID[];
   questionnaire?: readonly TrackerQuestionnaireRequirement[];
+  questionnaireAnswers?: Readonly<Record<string, string>>;
   readiness: ReadinessStatus;
   requiredActions?: readonly RequiredAction[];
   ruleAuthorizationFingerprint?: WorkflowFingerprint;
   taxonomy: TrackerTaxonomy;
+  titleSearchEvidence?: TrackerTitleSearchEvidence | null;
   trackerId: TrackerID;
   uploadReady: boolean;
   uploadReleaseName: string;
@@ -2612,6 +2980,17 @@ export type TrackerTaxonomyValue = Readonly<{
   label: string;
 }>;
 
+export type TrackerTitleSearchEvidence = Readonly<{
+  checkedAt: string;
+  configFingerprint: WorkflowFingerprint;
+  freshUntil: string;
+  policyId: string;
+  resultFingerprint: WorkflowFingerprint;
+  status: MetadataEvidenceStatus;
+  titleFingerprint: WorkflowFingerprint;
+  torrentCount: number;
+}>;
+
 export type UniqueIDStatus = string;
 
 /** @deprecated */
@@ -2655,6 +3034,8 @@ export type UploadOptions = Readonly<{
   AudioImages: string;
   AudioTracks: string;
   CaptureDVDMenus: boolean;
+  HDRAnalysis?: HDRAnalysisRequest | null;
+  HDRComparisonSelection?: HDRComparisonSelection | null;
   InteractionMode: InteractionMode;
   KeepFolder: boolean;
   KeepImages: boolean;
@@ -2794,7 +3175,7 @@ export type WorkflowFailure = Readonly<{
 
 export type WorkflowFingerprint = string;
 
-export type WorkflowGoal = string;
+export type WorkflowGoal = "prepared" | "input_ready" | "trackers_projected" | "trackers_assessed" | "duplicates_decided" | "media_ready" | "descriptions_ready" | "upload_reviewed" | "dry_run" | "uploaded";
 
 export type WorkflowID = string;
 
@@ -2805,13 +3186,16 @@ export type WorkflowIntent = Readonly<{
   duplicateDecisions?: Readonly<Record<string, DupeDecision>>;
   executionMode?: WorkflowExecutionMode;
   factInstructions?: ReleaseFactInstructions | null;
+  hdrAnalysis?: HDRAnalysisRequest | null;
   interaction?: InteractionMode;
   media?: MediaCaptureInstructions | null;
   mediaSelection?: WorkflowMediaSelection | null;
   noSeed?: boolean;
   preparation?: PrepareInput | null;
   projectionInstructions?: Readonly<Record<string, TrackerProjectionInstructions>>;
+  skipImageHostUpload?: boolean;
   skipRemoteDuplicates?: boolean;
+  staffTokenConfirmations?: Readonly<Record<string, DupeAssessmentID>>;
   trackerIds?: readonly TrackerID[];
   trackerInputAnswers?: Readonly<Record<string, Readonly<Record<string, string | null>>>>;
   uploadTrackerIds?: readonly TrackerID[];

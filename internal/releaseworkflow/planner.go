@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -147,6 +148,7 @@ func (m *Module) Continue(
 	if err := m.acceptContinuationIntent(ctx, ownerID, authority.WorkflowID, request); err != nil {
 		return CommandResult{}, err
 	}
+	request.Intent.TrackerIDs = workflowTrackerScope(&state, request.Intent.TrackerIDs)
 	if request.Approval != nil { //nolint:staticcheck // Reject retained v1 authority explicitly.
 		return CommandResult{}, fmt.Errorf("%w: final upload approval is no longer accepted", ErrInvalidTransition)
 	}
@@ -155,6 +157,9 @@ func (m *Module) Continue(
 	}
 	if current.Workflow.Status == api.WorkflowStatusCanceled {
 		return current, nil
+	}
+	if request.Goal == api.WorkflowGoalTrackersProjected {
+		return m.continueTrackerProjection(ctx, ownerID, request, current)
 	}
 	if request.Intent.Preparation != nil && request.Intent.Preparation.Force && current.Release != nil &&
 		!continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
@@ -260,6 +265,9 @@ func (m *Module) Continue(
 	}
 	command, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), 0)
 	if command == nil {
+		if stage == "hdr-selection-required" || stage == "hdr-analysis-failed" {
+			return CommandResult{}, requestedHDRFailure(stage, current, request.Intent.HDRAnalysis)
+		}
 		return current, nil
 	}
 	if current.Release != nil && request.Intent.Preparation != nil &&
@@ -280,6 +288,23 @@ func (m *Module) Continue(
 		return CommandResult{}, fmt.Errorf("release workflow continue %s: %w", stage, err)
 	}
 	return m.Current(ctx, ownerID, operation.WorkflowID)
+}
+
+// workflowTrackerScope resolves omitted IDs without reviving invalidated evidence.
+// Older persisted workflows recover their scope from the current selection.
+func workflowTrackerScope(state *State, requested []api.TrackerID) []api.TrackerID {
+	if len(requested) > 0 {
+		return slices.Clone(requested)
+	}
+	if len(state.TrackerScope) > 0 {
+		return slices.Clone(state.TrackerScope)
+	}
+	if ref := state.Workflow.Selection; ref != nil {
+		if selection, ok := state.Selections[ref.ID]; ok && selection.Revision == ref.Revision {
+			return slices.Clone(selection.TrackerIDs)
+		}
+	}
+	return nil
 }
 
 func (m *Module) planSelectionDemandRefresh(
@@ -311,6 +336,11 @@ func (m *Module) planSelectionDemandRefresh(
 		slices.EqualFunc(state.PreparationDemand.Requirements, normalized.Requirements, func(left, right api.MetadataRequirement) bool {
 			return left.Scope == right.Scope && left.Disposition == right.Disposition && slices.Equal(left.AnyOf, right.AnyOf)
 		}) {
+		return PrepareReleaseCommand{}, "", false, nil
+	}
+	if current.FactInstructions != nil && metadata.PreparedRequirementsSatisfied(normalized, current.Release.Release, current.FactInstructions.Instructions) {
+		// Keep the original demand for exact-generation hydration. A selection
+		// change alone must not replace sufficient facts or their rule authority.
 		return PrepareReleaseCommand{}, "", false, nil
 	}
 	input := request.Intent.Preparation
@@ -432,6 +462,7 @@ func (m *Module) hydrateContinuationPreparedRelease(
 	input.RequirePrepared = true
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
+	input.Controls.CaptureHDRMetadata = false
 	if err := m.attachVerifiedInput(ctx, ownerID, current.Workflow.ID, &input); err != nil {
 		return err
 	}
@@ -770,6 +801,9 @@ func (m *Module) planContinuationCommand(
 	return planContinuationCommandWithReadiness(request, current, now, true, attemptRevision)
 }
 
+// planContinuationCommandWithReadiness chooses the next command or reports the
+// stage needing input. Goals after local capture prepare images for the requested
+// hosting mode before reusing downstream descriptions or upload reviews.
 func planContinuationCommandWithReadiness(
 	request api.ContinueReleaseWorkflowRequest,
 	current CommandResult,
@@ -781,6 +815,10 @@ func planContinuationCommandWithReadiness(
 	revision := current.Workflow.Revision
 	key := func(stage string) string {
 		return continuationIdempotencyKey(request.IdempotencyKey, stage, revision)
+	}
+	if request.Goal == api.WorkflowGoalTrackersProjected &&
+		(current.Release == nil || !continuationPreparationSatisfied(current.Release, request.Intent.Preparation)) {
+		return nil, "preparation-required"
 	}
 	if current.Release == nil {
 		if request.Intent.Preparation == nil {
@@ -810,7 +848,8 @@ func planContinuationCommandWithReadiness(
 	if len(trackerIDs) == 0 && current.Selection != nil {
 		trackerIDs = append(trackerIDs, current.Selection.TrackerIDs...)
 	}
-	if includeInputReadiness && (len(request.Intent.TrackerInputAnswers) > 0 || !inputReadinessMatches(current.InputReadiness, current, trackerIDs)) {
+	if includeInputReadiness && request.Goal != api.WorkflowGoalTrackersProjected &&
+		(len(request.Intent.TrackerInputAnswers) > 0 || !inputReadinessMatches(current.InputReadiness, current, trackerIDs)) {
 		if inputReadinessBlocked(current.InputReadiness) && len(request.Intent.TrackerInputAnswers) == 0 {
 			return nil, "input-not-ready"
 		}
@@ -828,7 +867,8 @@ func planContinuationCommandWithReadiness(
 		}
 		return nil, ""
 	}
-	if current.Projections == nil || !trackerIntentMatches(request.Intent, current) {
+	if current.Projections == nil || !trackerIntentMatches(request.Intent, current) ||
+		(request.Goal == api.WorkflowGoalTrackersProjected && !trackerProjectionGoalSatisfied(current)) {
 		return ProjectTrackersCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
@@ -838,17 +878,22 @@ func planContinuationCommandWithReadiness(
 			IdempotencyKey:   key("project-trackers"),
 		}, "project-trackers"
 	}
+	if request.Goal == api.WorkflowGoalTrackersProjected {
+		return nil, ""
+	}
 	interaction := continuationInteractionMode(request.Intent)
 	if !continuationPreflightCurrent(current, now) ||
 		(interaction == api.InteractionModeUnattended &&
 			preflightRequiresManualAction(current.Preflight, current.Projections)) {
 		return PreflightTrackersCommand{
-			WorkflowID:       workflowID,
-			ExpectedRevision: revision,
-			InputFingerprint: current.Projections.InputFingerprint,
-			Interaction:      interaction,
-			ExecutionMode:    request.Intent.ExecutionMode,
-			IdempotencyKey:   key("preflight-trackers"),
+			SkipRemoteDuplicates: request.Intent.SkipRemoteDuplicates,
+			DuplicateCheckCount:  request.Intent.DuplicateCheckCount,
+			WorkflowID:           workflowID,
+			ExpectedRevision:     revision,
+			InputFingerprint:     current.Projections.InputFingerprint,
+			Interaction:          interaction,
+			ExecutionMode:        request.Intent.ExecutionMode,
+			IdempotencyKey:       key("preflight-trackers"),
 		}, "preflight-trackers"
 	}
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalTrackersAssessed) {
@@ -885,10 +930,11 @@ func planContinuationCommandWithReadiness(
 	}
 	if len(decisions) > 0 {
 		return DecideDuplicatesCommand{
-			WorkflowID:       workflowID,
-			ExpectedRevision: revision,
-			Decisions:        decisions,
-			IdempotencyKey:   key("decide-duplicates"),
+			StaffTokenConfirmations: request.Intent.StaffTokenConfirmations,
+			WorkflowID:              workflowID,
+			ExpectedRevision:        revision,
+			Decisions:               decisions,
+			IdempotencyKey:          key("decide-duplicates"),
 		}, "decide-duplicates"
 	}
 	if !duplicateDecisionsComplete(current.Dupes) {
@@ -919,7 +965,24 @@ func planContinuationCommandWithReadiness(
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalMediaReady) {
 		return nil, ""
 	}
-	if !mediaRequirementsPrepared(current.Media) {
+	if request.Intent.HDRAnalysis != nil {
+		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
+		if err != nil {
+			return nil, "hdr-selection-required"
+		}
+		if !requestedHDRMatches(current, instructions) {
+			return AnalyzeHDRCommand{
+				WorkflowID:       workflowID,
+				ExpectedRevision: revision,
+				Instructions:     instructions,
+				IdempotencyKey:   key("analyze-hdr"),
+			}, "analyze-hdr"
+		}
+		if !requestedHDRUsable(current.HDRAnalysis) || !current.Workflow.HDRAnalysisEnabled {
+			return nil, "hdr-analysis-failed"
+		}
+	}
+	if !mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload) {
 		var artifactIDs []api.PublicResourceID
 		if request.Intent.MediaSelection != nil {
 			artifactIDs = append(artifactIDs, request.Intent.MediaSelection.ArtifactIDs...)
@@ -929,6 +992,7 @@ func planContinuationCommandWithReadiness(
 			ExpectedRevision: revision,
 			Media:            api.MediaArtifactSetRef{ID: current.Media.ID, Revision: current.Media.Revision},
 			ArtifactIDs:      artifactIDs,
+			SkipUpload:       request.Intent.SkipImageHostUpload,
 			IdempotencyKey:   key("prepare-image-requirements"),
 		}, "prepare-image-requirements"
 	}
@@ -1076,7 +1140,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return stageSucceeded(current.Media.Status)
 	case api.ScreenshotPurposePreview:
 		return false
-	case api.ScreenshotPurposeAudioAnalysis:
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
 		return false
 	}
 	return false
@@ -1088,7 +1152,7 @@ func workflowGoalRank(goal api.WorkflowGoal) int {
 		return 1
 	case api.WorkflowGoalInputReady:
 		return 2
-	case api.WorkflowGoalTrackersAssessed:
+	case api.WorkflowGoalTrackersProjected, api.WorkflowGoalTrackersAssessed:
 		return 3
 	case api.WorkflowGoalDuplicatesDecided:
 		return 4
@@ -1236,7 +1300,16 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 	return normalized
 }
 
+// continuationGoalReached checks retained results against the requested intent.
+// Goals after media capture also require preparation for the requested hosting mode.
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
+	if request.Intent.HDRAnalysis != nil && workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) {
+		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
+		if err != nil || !requestedHDRMatches(current, instructions) || !requestedHDRUsable(current.HDRAnalysis) ||
+			!current.Workflow.HDRAnalysisEnabled {
+			return false
+		}
+	}
 	if current.Workflow.AllSelectedTrackersAlreadyUploaded() &&
 		len(withoutConfirmedSubmissions(request.Intent.TrackerIDs, current.Workflow.SubmissionExclusions)) == 0 {
 		return true
@@ -1249,11 +1322,16 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 		return false
 	}
 
+	if workflowGoalRank(request.Goal) >= workflowGoalRank(api.WorkflowGoalTrackersProjected) && !trackerIntentMatches(request.Intent, current) {
+		return false
+	}
 	switch request.Goal {
 	case api.WorkflowGoalPrepared:
 		return current.Release != nil && continuationPreparationSatisfied(current.Release, request.Intent.Preparation)
 	case api.WorkflowGoalInputReady:
 		return inputReadinessGoalSatisfied(current.InputReadiness, current, request.Intent.TrackerIDs)
+	case api.WorkflowGoalTrackersProjected:
+		return trackerProjectionGoalSatisfied(current)
 	case api.WorkflowGoalTrackersAssessed:
 		return current.Preflight != nil && current.Projections != nil
 	case api.WorkflowGoalDuplicatesDecided:
@@ -1265,11 +1343,14 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 			stageSucceeded(current.Media.Status) &&
 			continuationMediaCaptureSatisfied(current, request.Intent.Media)
 	case api.WorkflowGoalDescriptionsReady:
-		return descriptionsHaveViableTracker(current.Descriptions)
+		return descriptionsHaveViableTracker(current.Descriptions) &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
-		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs)
+		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	case api.WorkflowGoalUploaded:
-		return current.UploadResult != nil
+		return current.UploadResult != nil &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	default:
 		return false
 	}
@@ -1326,6 +1407,7 @@ func preparationLineageFingerprint(input api.PrepareInput) (api.WorkflowFingerpr
 	input.Controls.Interaction = ""
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
+	input.Controls.CaptureHDRMetadata = false
 	if len(input.Instructions.TrackerIDs) == 0 {
 		input.Instructions.TrackerIDs = nil
 	}
@@ -1371,6 +1453,27 @@ func duplicateDecisionsComplete(dupes *api.DupeAssessment) bool {
 	})
 }
 
+// mediaRequirementsPreparedForIntent requires successful media preparation and
+// matching hosting mode. Requesting skip on prepared media with no selected local
+// images needs no new barrier; leaving skip mode still requires hosting preparation.
+func mediaRequirementsPreparedForIntent(media *api.MediaArtifactSet, skipImageHostUpload bool) bool {
+	if !mediaRequirementsPrepared(media) {
+		return false
+	}
+	return !media.ImageRequirementsPrepared || media.ImageHostUploadSkipped == skipImageHostUpload ||
+		(skipImageHostUpload && !mediaHasSelectedLocalImages(media))
+}
+
+// mediaHasSelectedLocalImages reports whether selected screenshots or DVD menus
+// need image preparation; hosted variants do not count.
+func mediaHasSelectedLocalImages(media *api.MediaArtifactSet) bool {
+	return media != nil && slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
+	})
+}
+
+// mediaRequirementsPrepared accepts successful media with a completed hosting
+// barrier, including explicit skip, or with no selected local images to prepare.
 func mediaRequirementsPrepared(media *api.MediaArtifactSet) bool {
 	if media == nil || !stageSucceeded(media.Status) {
 		return false
@@ -1378,7 +1481,5 @@ func mediaRequirementsPrepared(media *api.MediaArtifactSet) bool {
 	if media.ImageRequirementsPrepared {
 		return true
 	}
-	return !slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
-		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
-	})
+	return !mediaHasSelectedLocalImages(media)
 }

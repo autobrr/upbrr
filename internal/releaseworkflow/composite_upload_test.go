@@ -53,6 +53,89 @@ func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadHDRFailureReleasesSessionForRetry(t *testing.T) {
+	for _, supported := range []bool{false, true} {
+		t.Run(fmt.Sprintf("supported=%t", supported), func(t *testing.T) {
+			module, repository, _ := newCompositeUploadTestModule(t)
+			preparer := testPreparer()
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "hdr-unmet")
+			target := api.HDRTargetID(request.Source.Path, "")
+			preparer.DisplayFunc = func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
+				return api.PreparedReleaseDisplay{HDRTargets: []api.HDRAnalysisTarget{{ID: target, Supported: supported}}}, nil
+			}
+			module.preparer = preparer
+			module.hdrAnalysisBuilder = &hdrBuilderFixture{unavailable: true}
+			request.HDRAnalysis = &api.HDRAnalysisRequest{}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			current := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-hdr-unmet")
+			if current.Operation.Status != api.StageStatusFailed || current.Descriptions != nil || current.DryRun != nil {
+				t.Fatalf("HDR requirement status=%s descriptions=%t dryRun=%t", current.Operation.Status, current.Descriptions != nil, current.DryRun != nil)
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.Composite == nil || state.Composite.ActiveOperationID != "" || state.Composite.TerminalReason != "hdr_requirement_unmet" {
+				t.Fatalf("HDR failure retained composite admission: %#v", state.Composite)
+			}
+			request.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision}
+			request.HDRAnalysis = nil
+			request.IdempotencyKey = "hdr-disabled-retry"
+			retry, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("HDR failure blocked retry: %v", err)
+			}
+			retryApproval := waitCompositeUploadTestOperation(t, module, retry)
+			finished := approveCompositeUploadTrackers(t, module, retryApproval, []api.TrackerID{"ALPHA", "BETA"}, "approve-hdr-disabled-retry")
+			if finished.Operation.Status != api.StageStatusCompleted || finished.DryRun == nil {
+				t.Fatalf("retry status=%s dryRun=%t", finished.Operation.Status, finished.DryRun != nil)
+			}
+		})
+	}
+}
+
+func TestCompositeUploadCombinedAudioWithoutNativeMetadata(t *testing.T) {
+	for _, missingSibling := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missingSibling=%t", missingSibling), func(t *testing.T) {
+			module, _, _ := newCompositeUploadTestModule(t)
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "combined-audio")
+			ids := []string{api.HDRTargetID(request.Source.Path, "")}
+			if missingSibling {
+				ids = append(ids, api.HDRTargetID(request.Source.Path, "second"))
+			}
+			preparer := testPreparer()
+			preparer.DisplayFunc = func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
+				targets := make([]api.HDRAnalysisTarget, 0, len(ids))
+				for _, id := range ids {
+					targets = append(targets, api.HDRAnalysisTarget{ID: id, Supported: true})
+				}
+				return api.PreparedReleaseDisplay{HDRTargets: targets}, nil
+			}
+			module.preparer = preparer
+			module.hdrAnalysisBuilder = &hdrBuilderFixture{decodedOnly: true, partial: missingSibling}
+			request.HDRAnalysis = &api.HDRAnalysisRequest{TargetIDs: ids, Decoded: &api.HDRDecodedOptions{Audio: true}}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			current := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-combined-audio")
+			if missingSibling {
+				if current.Operation.Status != api.StageStatusFailed || current.Descriptions != nil || current.DryRun != nil {
+					t.Fatalf("missing target outputs bypassed HDR requirement: %+v", current)
+				}
+			} else if current.Operation.Status != api.StageStatusCompleted || current.Descriptions == nil || current.DryRun == nil ||
+				!current.Workflow.HDRAnalysisEnabled {
+				t.Fatalf("combined audio could not reach descriptions: %+v", current)
+			}
+		})
+	}
+}
+
 func TestCompositeUploadInitialOpenRequestsExternalProviderLoad(t *testing.T) {
 	t.Parallel()
 	module, _, _ := newCompositeUploadTestModule(t)
@@ -1107,36 +1190,158 @@ func TestCompositeUploadStrictExcludesAuthBlockedSibling(t *testing.T) {
 
 func TestCompositeUploadStrictExcludesDuplicateBlockedSibling(t *testing.T) {
 	t.Parallel()
+	for _, staffToken := range []bool{false, true} {
+		t.Run(fmt.Sprintf("staff_token_%t", staffToken), func(t *testing.T) {
+			module, _, uploads := newCompositeUploadTestModule(t)
+			module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", "same release")
+			if staffToken {
+				base := module.dupeBuilder
+				module.dupeBuilder = dupeAssessmentBuilderFunc(func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet, preflight api.TrackerPreflightAssessment, now time.Time, skip bool) (api.DupeAssessment, any, error) {
+					assessment, private, err := base.Build(ctx, subject, projections, preflight, now, skip)
+					if err != nil {
+						return assessment, private, fmt.Errorf("build staff-token blocked assessment: %w", err)
+					}
+					for index := range assessment.Results {
+						if assessment.Results[index].TrackerID == "BETA" {
+							assessment.Results[index].RequiresStaffToken = true
+							RequireStaffTokenReview(&assessment.Results[index])
+						}
+					}
+					return assessment, private, nil
+				})
+			}
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-dupe-sibling")
 
-	module, _, uploads := newCompositeUploadTestModule(t)
-	module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", "same release")
-	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-dupe-sibling")
+			started, err := module.StartUpload(context.Background(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("start duplicate-blocked composite upload: %v", err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			if slices.ContainsFunc(blocked.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+				return action.TrackerID == "BETA" && action.Kind == api.RequiredActionReviewDuplicates
+			}) {
+				t.Fatal("blocked tracker must not ask for staff confirmation")
+			}
+			if staffToken && (blocked.Dupes == nil || slices.ContainsFunc(blocked.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
+				return result.TrackerID == "BETA" && (result.Decision != api.DupeDecisionAccepted || result.StaffTokenConfirmed)
+			})) {
+				t.Fatal("blocked tracker gained override authority")
+			}
+			current := approveCompositeUploadTrackers(
+				t,
+				module,
+				blocked,
+				[]api.TrackerID{"ALPHA"},
+				"approve-dupe-filtered-trackers",
+			)
+			if current.Operation == nil || current.Operation.Status != api.StageStatusExecuted ||
+				current.UploadResult == nil || uploads.execution == nil ||
+				!slices.Equal(uploads.execution.selected, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf(
+					"duplicate-blocked composite result: status=%v upload=%t execution=%#v",
+					current.Operation,
+					current.UploadResult != nil,
+					uploads.execution,
+				)
+			}
+			if current.TrackerApproval == nil ||
+				!slices.Equal(current.TrackerApproval.ApprovedTrackerIDs, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf("duplicate-blocked tracker authority = %#v", current.TrackerApproval)
+			}
+		})
+	}
+}
 
-	started, err := module.StartUpload(context.Background(), testOwnerID, request)
-	if err != nil {
-		t.Fatalf("start duplicate-blocked composite upload: %v", err)
-	}
-	blocked := waitCompositeUploadTestOperation(t, module, started)
-	current := approveCompositeUploadTrackers(
-		t,
-		module,
-		blocked,
-		[]api.TrackerID{"ALPHA"},
-		"approve-dupe-filtered-trackers",
-	)
-	if current.Operation == nil || current.Operation.Status != api.StageStatusExecuted ||
-		current.UploadResult == nil || uploads.execution == nil ||
-		!slices.Equal(uploads.execution.selected, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf(
-			"duplicate-blocked composite result: status=%v upload=%t execution=%#v",
-			current.Operation,
-			current.UploadResult != nil,
-			uploads.execution,
-		)
-	}
-	if current.TrackerApproval == nil ||
-		!slices.Equal(current.TrackerApproval.ApprovedTrackerIDs, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf("duplicate-blocked tracker authority = %#v", current.TrackerApproval)
+func TestCompositeUploadRequiresStaffTokenDespiteAutomaticUploadDisposition(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		allowUpload bool
+		checkCount  int
+	}{
+		{name: "automatic upload disposition", checkCount: 1},
+		{
+			name:        "explicit allowUpload",
+			allowUpload: true,
+			checkCount:  1,
+		},
+		{name: "renewed duplicate check", checkCount: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			module, _, uploads := newCompositeUploadTestModule(t)
+			base := module.dupeBuilder
+			module.dupeBuilder = dupeAssessmentBuilderFunc(
+				func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet, preflight api.TrackerPreflightAssessment, now time.Time, skip bool) (api.DupeAssessment, any, error) {
+					assessment, private, err := base.Build(ctx, subject, projections, preflight, now, skip)
+					if err != nil {
+						return assessment, private, fmt.Errorf("build staff-token duplicate assessment: %w", err)
+					}
+					result := &assessment.Results[0]
+					result.RequiresStaffToken = true
+					result.Decision = api.DupeDecisionPending
+					result.Status = api.StageStatusBlocked
+					result.Matches = []api.DupeMatchProjection{{Name: "Example.Movie.2026.1080p-GRP", Relation: api.DupeRelationExactDuplicate}}
+					result.RequiredActions = []api.RequiredAction{{
+						Kind:      api.RequiredActionReviewDuplicates,
+						Status:    api.RequiredActionStatusPending,
+						TrackerID: result.TrackerID,
+						Prompt:    "Confirm staff-issued token",
+					}}
+					return assessment, private, nil
+				},
+			)
+			request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "staff-token-auto-upload")
+			request.Trackers.Include = []api.TrackerID{"ALPHA"}
+			request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateUpload
+			request.Duplicates.CheckCount = &tc.checkCount
+			if tc.allowUpload {
+				request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateAsk
+				request.Duplicates.AllowUpload = []api.TrackerID{"ALPHA"}
+			}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			for ordinal := 1; ordinal <= tc.checkCount; ordinal++ {
+				if blocked.Operation == nil || blocked.Operation.Status != api.StageStatusBlocked {
+					t.Fatalf("staff confirmation must pause without failing: operation=%+v", blocked.Operation)
+				}
+				if blocked.Dupes == nil || blocked.Dupes.Results[0].Decision != api.DupeDecisionPending || uploads.execution != nil {
+					t.Fatal("automatic disposition bypassed staff confirmation")
+				}
+				actionIndex := slices.IndexFunc(
+					blocked.Workflow.RequiredActions,
+					func(action api.RequiredAction) bool { return action.Kind == api.RequiredActionReviewDuplicates },
+				)
+				if actionIndex < 0 {
+					t.Fatal("missing explicit duplicate review")
+				}
+				action := blocked.Workflow.RequiredActions[actionIndex]
+				resumed, err := module.SubmitUploadFeedback(t.Context(), testOwnerID, blocked.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+					Action: api.ReleaseWorkflowUploadActionIdentity{ID: action.ID, WorkflowRevision: blocked.Workflow.Revision},
+					Response: api.ReleaseWorkflowUploadFeedbackResponse{
+						Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
+						DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
+							TrackerID:           "ALPHA",
+							Decision:            api.DupeDecisionIgnored,
+							StaffTokenConfirmed: true,
+						},
+					},
+					IdempotencyKey: fmt.Sprintf("staff-token-confirmed-%d", ordinal),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				blocked = waitCompositeUploadTestOperation(t, module, resumed)
+			}
+			if blocked.Dupes == nil || !blocked.Dupes.Results[0].StaffTokenConfirmed {
+				t.Fatal("confirmation was not retained")
+			}
+			completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA"}, "approve-token-upload")
+			if completed.UploadResult == nil || uploads.execution == nil {
+				t.Fatal("confirmed staff token did not allow upload")
+			}
+		})
 	}
 }
 
@@ -2423,5 +2628,31 @@ func TestCompositeUploadFactInstructionsReleaseVersion(t *testing.T) {
 	got, err := compositeUploadFactInstructions(api.ReleaseWorkflowUploadFacts{}, nil)
 	if err != nil || got.ReleaseName.Repack != nil {
 		t.Fatalf("automatic=%#v error=%v", got.ReleaseName, err)
+	}
+}
+
+func TestNormalizeCompositeUploadRequestPropagatesSkipImageHostUpload(t *testing.T) {
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "skip-image-host-upload")
+	request.ImageHosting.SkipUpload = new(true)
+
+	session, _, err := normalizeCompositeUploadRequest(request)
+	if err != nil {
+		t.Fatalf("normalize composite upload request: %v", err)
+	}
+	if !session.Intent.SkipImageHostUpload {
+		t.Fatalf("skip image-host upload was not retained in workflow intent: %#v", session.Intent)
+	}
+}
+
+func TestNormalizeCompositeUploadRequestPreservesImageHostingWhenNotSkipped(t *testing.T) {
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "host-images")
+	request.ImageHosting.SkipUpload = new(false)
+
+	session, _, err := normalizeCompositeUploadRequest(request)
+	if err != nil {
+		t.Fatalf("normalize composite upload request: %v", err)
+	}
+	if session.Intent.SkipImageHostUpload {
+		t.Fatalf("image-host upload was skipped for an explicit false request: %#v", session.Intent)
 	}
 }

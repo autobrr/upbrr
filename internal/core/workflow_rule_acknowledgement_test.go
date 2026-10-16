@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/oe"
@@ -88,6 +89,17 @@ func testContinueRuleAcknowledgementDuplicateScope(t *testing.T, tracker api.Tra
 				ReleaseName: releaseName,
 				Source:      "Web",
 				Type:        "WEBDL",
+				LanguageFacts: mediafacts.ResolveLanguages(api.MediaFacts{
+					OriginalLanguage:      "English",
+					TrackCoverageComplete: true,
+					PrimaryAudioTrackID:   "main",
+					Tracks: []api.MediaTrackFacts{{
+						ID:        "main",
+						Kind:      api.MediaTrackAudio,
+						Role:      api.AudioRoleProgramme,
+						Languages: []string{"English"},
+					}},
+				}),
 				Identity: api.ExternalIdentity{
 					SourcePath: input.Release.SourcePath,
 					Generation: input.Release.Generation,

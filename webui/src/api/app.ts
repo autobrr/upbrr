@@ -3,6 +3,7 @@
 
 import type {
   ApplicationInfo,
+  BrowseDirectoryRequest,
   BrowseDirectoryResponse,
   HistoryEntry,
   HistoryOverview,
@@ -14,6 +15,7 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  AnalyzeReleaseWorkflowHDRRequest,
   AnalyzeReleaseWorkflowAudioRequest,
   AttachReleaseWorkflowMediaRequest,
   CancelReleaseWorkflowRequest,
@@ -38,6 +40,8 @@ import type {
   SaveReleaseWorkflowDescriptionOverrideRequest,
   SetReleaseWorkflowMediaSelectionRequest,
   SetReleaseWorkflowAudioAnalysisEnabledRequest,
+  SetReleaseWorkflowHDRAnalysisEnabledRequest,
+  SelectReleaseWorkflowHDRComparisonRequest,
   UploadReleaseWorkflowImagesRequest,
   WorkflowResourceRef,
 } from "./generated/release-workflow";
@@ -124,8 +128,9 @@ const selectTextFile = (accept: string) =>
 
 /** Host filesystem browsing exposed through the authenticated WebUI route. */
 export const hostBrowser = {
-  list: (path: string, mode: "file" | "folder") =>
-    requestApp<BrowseDirectoryResponse>("BrowseDirectory", { path, mode }),
+  /** Lists or searches authorized roots; cancellation includes response reads, auth refresh and retry. */
+  list: (request: BrowseDirectoryRequest, signal?: AbortSignal) =>
+    requestApp<BrowseDirectoryResponse>("BrowseDirectory", request, { signal }),
 };
 
 /** Application build and runtime capability information. */
@@ -153,6 +158,29 @@ export const releaseWorkflowClient = {
       { workflowId: workflowID },
       { signal },
     ),
+  analyzeHDR: (command: AnalyzeReleaseWorkflowHDRRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("AnalyzeReleaseWorkflowHDR", command, { signal }),
+  selectHDRComparison: (command: SelectReleaseWorkflowHDRComparisonRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("SelectReleaseWorkflowHDRComparison", command, { signal }),
+  setHDRAnalysisEnabled: (
+    command: SetReleaseWorkflowHDRAnalysisEnabledRequest,
+    signal?: AbortSignal,
+  ) =>
+    requestApp<ReleaseWorkflowCurrent>("SetReleaseWorkflowHDRAnalysisEnabled", command, { signal }),
+  hdrAnalysisURL: (
+    workflowID: string,
+    analysisID: string,
+    analysisRevision: number,
+    artifactID: string,
+  ) => {
+    const query = new URLSearchParams({
+      workflowId: workflowID,
+      analysisId: analysisID,
+      analysisRevision: String(analysisRevision),
+      artifactId: artifactID,
+    });
+    return withBasePath(`/api/app/release-workflow-hdr-analysis?${query.toString()}`);
+  },
   analyzeAudio: (command: AnalyzeReleaseWorkflowAudioRequest, signal?: AbortSignal) =>
     requestApp<ReleaseWorkflowCurrent>("AnalyzeReleaseWorkflowAudio", command, { signal }),
   setAudioAnalysisEnabled: (

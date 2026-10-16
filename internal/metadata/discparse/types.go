@@ -72,6 +72,10 @@ type BDAudio struct {
 	Bitrate    string
 	BitDepth   string
 	Atmos      string
+	// BitrateBitsPerSecond is zero when the reported bitrate is missing or invalid.
+	BitrateBitsPerSecond int64
+	// Hidden records BDInfo's asterisk marker independently of commentary detection.
+	Hidden bool
 }
 
 type BDFile struct {

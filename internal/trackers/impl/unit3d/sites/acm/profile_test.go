@@ -133,7 +133,8 @@ func TestACMStructuredReleaseNamePolicy(t *testing.T) {
 				Tag:         "-GRP",
 			},
 			configure: func(subject *api.UploadSubject) {
-				subject.ProviderMetadata.TMDB = &api.TMDBMetadata{OriginalTitle: "TMDB Original", RetrievedAKA: "TMDB AKA"}
+				subject.ProviderMetadata.TMDB.OriginalTitle = "TMDB Original"
+				subject.ProviderMetadata.TMDB.RetrievedAKA = "TMDB AKA"
 				subject.ProviderMetadata.IMDB = &api.IMDBMetadata{AKA: "IMDb AKA"}
 			},
 			want: "Example / TMDB Original \u202A 2024 1080p BluRay DD 5.1 x264-GRP [No subs]",
@@ -153,7 +154,7 @@ func TestACMStructuredReleaseNamePolicy(t *testing.T) {
 				Tag:         "-GRP",
 			},
 			configure: func(subject *api.UploadSubject) {
-				subject.ProviderMetadata.TMDB = &api.TMDBMetadata{RetrievedAKA: "AKA TMDB AKA"}
+				subject.ProviderMetadata.TMDB.RetrievedAKA = "AKA TMDB AKA"
 				subject.ProviderMetadata.IMDB = &api.IMDBMetadata{AKA: "IMDb AKA"}
 			},
 			want: "Example / TMDB AKA \u202A 2024 1080p BluRay DD 5.1 x264-GRP [No subs]",
@@ -229,7 +230,7 @@ func TestACMStructuredPolicyPreservesManualAndOpaqueNames(t *testing.T) {
 	manualAlternate.GeneratedName = manualAlternate.GeneratedName.Clone()
 	markACMManual(t, manualAlternate.GeneratedName, api.NameRoleAlternateTitle)
 	manualAlternate.ReleaseName = manualAlternate.GeneratedName.Render().Name
-	manualAlternate.ProviderMetadata.TMDB = &api.TMDBMetadata{OriginalTitle: "Provider Original"}
+	manualAlternate.ProviderMetadata.TMDB.OriginalTitle = "Provider Original"
 	if got, want := acmReviewedName(t, manualAlternate, nil), "Example Manual Original 2024 1080p BluRay DD 5.1 x264-GRP [No subs]"; got != want {
 		t.Fatalf("manual alternate name = %q, want %q", got, want)
 	}
@@ -246,7 +247,7 @@ func TestACMStructuredPolicyPreservesManualAndOpaqueNames(t *testing.T) {
 		Tag:         "-GRP",
 	}, nil)
 	manualOriginal.EffectiveMetadata = api.EffectiveMetadata{OriginalTitle: "Manual Original", OriginalTitleProvenance: api.FactProvenanceManual}
-	manualOriginal.ProviderMetadata.TMDB = &api.TMDBMetadata{OriginalTitle: "Provider Original"}
+	manualOriginal.ProviderMetadata.TMDB.OriginalTitle = "Provider Original"
 	if got, want := acmReviewedName(t, manualOriginal, nil), "Example / Manual Original \u202A 2024 1080p BluRay DD 5.1 x264-GRP [No subs]"; got != want {
 		t.Fatalf("manual original name = %q, want %q", got, want)
 	}
@@ -312,7 +313,23 @@ func acmGeneratedSubject(t *testing.T, request api.ReleaseNameRequest, subtitles
 		ReleaseName:      generated.Name,
 		ReleaseNameNoTag: generated.NameNoTag,
 		GeneratedName:    generated.GeneratedName,
-		Identity:         api.ExternalIdentity{Category: category},
+		SourcePath:       "acm-source",
+		Identity: api.ExternalIdentity{
+			SourcePath: "acm-source",
+			Generation: 1,
+			TMDBID:     1,
+			Category:   category,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "acm-source",
+			Generation: 1,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   1,
+				Category: request.Category,
+				Title:    request.Title,
+				Year:     request.Year,
+			},
+		},
 		Release: api.ReleaseInfo{
 			Category:   request.Category,
 			Title:      request.Title,

@@ -193,6 +193,8 @@ type TrackerDuplicateCriteria struct {
 // TrackerDuplicateTarget is the projection-bound proposed release used only
 // for local duplicate policy evaluation.
 type TrackerDuplicateTarget struct {
+	// TrackerSlot is opaque native slot evidence resolved from this prepared generation.
+	TrackerSlot   string   `json:"trackerSlot,omitempty"`
 	Names         []string `json:"names,omitempty"`
 	Category      string   `json:"category,omitempty"`
 	Type          string   `json:"type,omitempty"`
@@ -234,6 +236,11 @@ type TrackerArtifactRequirements struct {
 
 // TrackerQuestionnaireRequirement describes one non-secret tracker input requirement.
 type TrackerQuestionnaireRequirement struct {
+	// Kind identifies the renderer; multiselect values use comma-separated option labels.
+	Kind string `json:"kind,omitempty"`
+	// Value is the validated answer or display default for this field; QuestionnaireAnswers owns exact answer intent.
+	Value    string   `json:"value,omitempty"`
+	Help     string   `json:"help,omitempty"`
 	Key      string   `json:"key"`
 	Label    string   `json:"label"`
 	Required bool     `json:"required"`
@@ -265,10 +272,16 @@ type TrackerPolicyDecision struct {
 
 // TrackerReleaseProjection is one exact tracker-local interpretation of a release.
 type TrackerReleaseProjection struct {
+	// TitleSearchEvidence retains tracker-scoped, generation-bound rule evidence.
+	TitleSearchEvidence *TrackerTitleSearchEvidence `json:"titleSearchEvidence,omitempty"`
+	// QuestionnaireAnswers owns exact tracker-scoped answers after projection instructions.
+	// An empty object clears prior answers; nil identifies a legacy projection without this authority.
+	QuestionnaireAnswers map[string]string        `json:"questionnaireAnswers,omitzero"`
 	TrackerID            TrackerID                `json:"trackerId"`
 	DisplayName          string                   `json:"displayName"`
 	CanonicalReleaseName string                   `json:"canonicalReleaseName"`
 	UploadReleaseName    string                   `json:"uploadReleaseName"`
+	EditionFeatures      []TrackerEditionFeature  `json:"editionFeatures,omitempty"`
 	AdditionalNames      []TrackerReleaseName     `json:"additionalNames,omitempty"`
 	Taxonomy             TrackerTaxonomy          `json:"taxonomy"`
 	ProviderIDs          []TrackerProviderID      `json:"providerIds,omitempty"`
@@ -438,6 +451,11 @@ type DupeMatchProjection struct {
 
 // TrackerDupeAssessment is one retained projection-bound duplicate result.
 type TrackerDupeAssessment struct {
+	// RequiresStaffToken blocks overrides until the owner explicitly attests possession.
+	RequiresStaffToken bool `json:"requiresStaffToken,omitempty"`
+	// StaffTokenConfirmed retains attestation for this projection; reprojecting clears it.
+	// It records possession only, never the token contents.
+	StaffTokenConfirmed   bool                     `json:"staffTokenConfirmed,omitempty"`
 	TrackerID             TrackerID                `json:"trackerId"`
 	UploadReleaseName     string                   `json:"uploadReleaseName"`
 	ProjectionFingerprint WorkflowFingerprint      `json:"projectionFingerprint"`
@@ -454,14 +472,16 @@ type TrackerDupeAssessment struct {
 	// EvidenceFingerprint identifies the retained search/evaluation evidence.
 	EvidenceFingerprint WorkflowFingerprint `json:"evidenceFingerprint,omitempty"`
 	// Search records safe completion and warning state for the tracker search.
-	Search          DupeSearchEvidence    `json:"search"`
-	Matches         []DupeMatchProjection `json:"matches,omitempty"`
-	Decision        DupeDecision          `json:"decision"`
-	Status          StageStatus           `json:"status"`
-	RequiredActions []RequiredAction      `json:"requiredActions,omitempty"`
-	Failures        []WorkflowFailure     `json:"failures,omitempty"`
-	CheckedAt       time.Time             `json:"checkedAt" ts_type:"string"`
-	FreshUntil      time.Time             `json:"freshUntil" ts_type:"string"`
+	Search  DupeSearchEvidence    `json:"search"`
+	Matches []DupeMatchProjection `json:"matches,omitempty"`
+	// ReviewReasons describe target-level policy risks bound to this assessment.
+	ReviewReasons   []DupeReason      `json:"reviewReasons,omitempty"`
+	Decision        DupeDecision      `json:"decision"`
+	Status          StageStatus       `json:"status"`
+	RequiredActions []RequiredAction  `json:"requiredActions,omitempty"`
+	Failures        []WorkflowFailure `json:"failures,omitempty"`
+	CheckedAt       time.Time         `json:"checkedAt" ts_type:"string"`
+	FreshUntil      time.Time         `json:"freshUntil" ts_type:"string"`
 }
 
 // DupeAssessment retains duplicate results for exact projection and preflight revisions.
@@ -557,16 +577,21 @@ type MediaArtifactSet struct {
 	TrackerApproval    *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
 	CaptureFingerprint WorkflowFingerprint            `json:"captureFingerprint"`
 	// SavedImagePlanID retains the reviewed import plan across workflow continuation.
-	SavedImagePlanID          MediaPlanID          `json:"savedImagePlanId,omitempty"`
-	RequirementsFingerprint   WorkflowFingerprint  `json:"requirementsFingerprint"`
-	Artifacts                 []MediaArtifact      `json:"artifacts"`
-	HostAttempts              []HostedImageAttempt `json:"hostAttempts,omitempty"`
-	FailedHosts               []string             `json:"failedHosts,omitempty"`
-	ImageRequirementsPrepared bool                 `json:"imageRequirementsPrepared"`
-	Status                    StageStatus          `json:"status"`
-	RequiredActions           []RequiredAction     `json:"requiredActions,omitempty"`
-	Failures                  []WorkflowFailure    `json:"failures,omitempty"`
-	CreatedAt                 time.Time            `json:"createdAt" ts_type:"string"`
+	SavedImagePlanID        MediaPlanID          `json:"savedImagePlanId,omitempty"`
+	RequirementsFingerprint WorkflowFingerprint  `json:"requirementsFingerprint"`
+	Artifacts               []MediaArtifact      `json:"artifacts"`
+	HostAttempts            []HostedImageAttempt `json:"hostAttempts,omitempty"`
+	FailedHosts             []string             `json:"failedHosts,omitempty"`
+	// ImageRequirementsPrepared records that required image preparation is satisfied
+	// through hosting or explicit skip. Status still determines overall media readiness.
+	ImageRequirementsPrepared bool `json:"imageRequirementsPrepared"`
+	// ImageHostUploadSkipped records preparation without new host uploads. Cached
+	// links remain reusable, and unknown external outcomes still require reconciliation.
+	ImageHostUploadSkipped bool              `json:"imageHostUploadSkipped,omitempty"`
+	Status                 StageStatus       `json:"status"`
+	RequiredActions        []RequiredAction  `json:"requiredActions,omitempty"`
+	Failures               []WorkflowFailure `json:"failures,omitempty"`
+	CreatedAt              time.Time         `json:"createdAt" ts_type:"string"`
 }
 
 // DescriptionOverrideInput is one explicit user-authored group description.
@@ -646,26 +671,28 @@ type UploadPlanFile struct {
 
 // UploadPlanTracker is the sanitized semantic projection of one retained prepared operation.
 type UploadPlanTracker struct {
-	TrackerID              TrackerID            `json:"trackerId"`
-	DisplayName            string               `json:"displayName"`
-	UploadReleaseName      string               `json:"uploadReleaseName"`
-	Taxonomy               TrackerTaxonomy      `json:"taxonomy"`
-	DescriptionGroup       string               `json:"descriptionGroup,omitempty"`
-	Endpoint               string               `json:"endpoint,omitempty"`
-	Fields                 []UploadPlanField    `json:"fields,omitempty"`
-	Files                  []UploadPlanFile     `json:"files,omitempty"`
-	Eligible               bool                 `json:"eligible"`
-	Status                 StageStatus          `json:"status,omitempty"`
-	ClientInjectionStatus  StageStatus          `json:"clientInjectionStatus,omitempty"`
-	ClientInjectionMessage string               `json:"clientInjectionMessage,omitempty"`
-	Warnings               []string             `json:"warnings,omitempty"`
-	RequiredActions        []RequiredAction     `json:"requiredActions,omitempty"`
-	Failures               []WorkflowFailure    `json:"failures,omitempty"`
-	PreparedOperationID    PublicResourceID     `json:"preparedOperationId,omitempty"`
-	TorrentArtifactID      PublicResourceID     `json:"torrentArtifactId,omitempty"`
-	TorrentFingerprint     WorkflowFingerprint  `json:"torrentFingerprint,omitempty"`
-	ClientFailureCode      OperationFailureCode `json:"clientFailureCode,omitempty"`
-	SemanticFingerprint    WorkflowFingerprint  `json:"semanticFingerprint"`
+	Questionnaire          []TrackerQuestionnaireRequirement `json:"questionnaire,omitempty"`
+	TrackerID              TrackerID                         `json:"trackerId"`
+	DisplayName            string                            `json:"displayName"`
+	UploadReleaseName      string                            `json:"uploadReleaseName"`
+	Taxonomy               TrackerTaxonomy                   `json:"taxonomy"`
+	DescriptionGroup       string                            `json:"descriptionGroup,omitempty"`
+	Endpoint               string                            `json:"endpoint,omitempty"`
+	Fields                 []UploadPlanField                 `json:"fields,omitempty"`
+	Files                  []UploadPlanFile                  `json:"files,omitempty"`
+	Eligible               bool                              `json:"eligible"`
+	Status                 StageStatus                       `json:"status,omitempty"`
+	ClientInjectionStatus  StageStatus                       `json:"clientInjectionStatus,omitempty"`
+	ClientInjectionMessage string                            `json:"clientInjectionMessage,omitempty"`
+	Warnings               []string                          `json:"warnings,omitempty"`
+	RequiredActions        []RequiredAction                  `json:"requiredActions,omitempty"`
+	Failures               []WorkflowFailure                 `json:"failures,omitempty"`
+	PreparedOperationID    PublicResourceID                  `json:"preparedOperationId,omitempty"`
+	TorrentArtifactID      PublicResourceID                  `json:"torrentArtifactId,omitempty"`
+	TorrentFingerprint     WorkflowFingerprint               `json:"torrentFingerprint,omitempty"`
+	ClientFailureCode      OperationFailureCode              `json:"clientFailureCode,omitempty"`
+	SemanticFingerprint    WorkflowFingerprint               `json:"semanticFingerprint"`
+	EditionFeatures        []TrackerEditionFeature           `json:"editionFeatures,omitempty"`
 }
 
 // UploadPlan is a safe projection of exact retained private prepared operations.
@@ -738,6 +765,10 @@ type ReleaseWorkflow struct {
 	Dupes                  *DupeAssessmentRef                       `json:"dupes,omitempty"`
 	TrackerApproval        *TrackerApprovalSnapshotRef              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSetRef                     `json:"media,omitempty"`
+	HDRComparison          *HDRComparisonSourceRef                  `json:"hdrComparison,omitempty"`
+	HDRAnalysisEnabled     bool                                     `json:"hdrAnalysisEnabled,omitempty"`
+	HDRImages              *HDRImageSelection                       `json:"hdrImages,omitempty"`
+	HDRAnalysis            *HDRAnalysisRef                          `json:"hdrAnalysis,omitempty"`
 	AudioAnalysisEnabled   bool                                     `json:"audioAnalysisEnabled,omitempty"`
 	AudioAnalysis          *AudioAnalysisRef                        `json:"audioAnalysis,omitempty"`
 	Descriptions           *DescriptionSetRef                       `json:"descriptions,omitempty"`
@@ -767,6 +798,9 @@ type ReleaseWorkflowCurrent struct {
 	Dupes                  *DupeAssessment                       `json:"dupes,omitempty"`
 	TrackerApproval        *TrackerApprovalSnapshot              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSet                     `json:"media,omitempty"`
+	HDRComparison          *HDRComparisonSourceRef               `json:"hdrComparison,omitempty"`
+	HDRAnalysis            *HDRAnalysisResult                    `json:"hdrAnalysis,omitempty"`
+	HDRPendingRequest      *HDRAnalysisInstructions              `json:"hdrPendingRequest,omitempty"`
 	AudioAnalysis          *AudioAnalysisResult                  `json:"audioAnalysis,omitempty"`
 	Descriptions           *DescriptionSet                       `json:"descriptions,omitempty"`
 	DryRun                 *UploadDryRunResult                   `json:"dryRun,omitempty"`

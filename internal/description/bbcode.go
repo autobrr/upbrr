@@ -46,30 +46,67 @@ func renderBBCode(value string) string {
 	return replaceHTMLTagPlaceholders(rendered, htmlLiteralBlocks)
 }
 
-// SplitTrailingSourceAudioSpoiler separates generated audio markup so
+var analysisSpoilerTagPattern = regexp.MustCompile(`(?i)\[(?:spoiler(?:\s*=\s*[^\]]*)?|/spoiler)\]`)
+
+// SplitTrailingSourceAudioSpoiler separates complete top-level audio and HDR markup so
 // description builders can place it before their screenshot sections.
 func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
-	trimmed := strings.TrimSpace(value)
-	const opening = "[spoiler=source_audio]"
-	start := strings.LastIndex(trimmed, "\n"+opening)
-	switch {
-	case start >= 0:
-		start++
-	case strings.HasPrefix(trimmed, opening):
-		start = 0
-	default:
-		return trimmed, ""
+	value, literals := extractLiteralBlocks(strings.TrimSpace(value))
+	value, htmlLiterals := extractHTMLLiteralBlocks(value)
+	restore := func(part string) string {
+		part = replaceHTMLTagPlaceholders(part, htmlLiterals)
+		for _, block := range literals {
+			part = strings.ReplaceAll(part, block.token, block.raw)
+		}
+		return part
 	}
-	for _, block := range comparison.BlockRanges(trimmed) {
-		if start >= block[0] && start < block[1] {
-			return trimmed, ""
+	trimmed := strings.TrimSpace(value)
+	ranges := comparison.BlockRanges(trimmed)
+	ends := make(map[int]int)
+	depth, opening := 0, 0
+	for _, tag := range analysisSpoilerTagPattern.FindAllStringIndex(trimmed, -1) {
+		if trimmed[tag[0]+1] != '/' {
+			if depth == 0 {
+				opening = tag[0]
+			}
+			depth++
+		} else if depth > 0 {
+			depth--
+			if depth == 0 {
+				ends[opening] = tag[1]
+			}
 		}
 	}
-	block := strings.TrimSpace(trimmed[start:])
-	if !strings.HasSuffix(block, "[/spoiler]") {
-		return trimmed, ""
+	start, end := len(trimmed), len(trimmed)
+	for end > 0 {
+		prefix := strings.TrimSpace(trimmed[:end])
+		if !strings.HasSuffix(prefix, "[/spoiler]") {
+			break
+		}
+		index := strings.LastIndex(prefix, "[spoiler=")
+		if index < 0 || ends[index] != len(prefix) || index > 0 && prefix[index-1] != '\n' {
+			break
+		}
+		if !strings.HasPrefix(prefix[index:], "[spoiler=source_audio]") && !strings.HasPrefix(prefix[index:], "[spoiler=source_hdr]") &&
+			!strings.HasPrefix(prefix[index:], "[spoiler=Audio Plots]") && !strings.HasPrefix(prefix[index:], "[spoiler=HDR plots]") {
+			break
+		}
+		insideComparison := false
+		for _, block := range ranges {
+			if index >= block[0] && index < block[1] {
+				insideComparison = true
+				break
+			}
+		}
+		if insideComparison {
+			break
+		}
+		start, end = index, index
 	}
-	return strings.TrimSpace(trimmed[:start]), block
+	if start == len(trimmed) {
+		return restore(trimmed), ""
+	}
+	return restore(strings.TrimSpace(trimmed[:start])), restore(strings.TrimSpace(trimmed[start:]))
 }
 
 func compileImg(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
@@ -116,6 +153,17 @@ type codeBlockPlaceholder struct {
 	value string
 	raw   string
 	pre   bool
+}
+
+// MapOutsideLiteralBlocks transforms BBCode without rewriting complete code and
+// pre blocks. The transform must preserve the opaque placeholders in its input.
+func MapOutsideLiteralBlocks(value string, transform func(string) string) string {
+	normalized, blocks := extractLiteralBlocks(value)
+	replacements := make([]string, 0, 2*len(blocks))
+	for _, block := range blocks {
+		replacements = append(replacements, block.token, block.raw)
+	}
+	return strings.NewReplacer(replacements...).Replace(transform(normalized))
 }
 
 func extractLiteralBlocks(value string) (string, []codeBlockPlaceholder) {
@@ -384,7 +432,15 @@ func compileSpoiler(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	out.Name = "details"
 	summary := bbcode.NewHTMLTag("")
 	summary.Name = "summary"
-	label := node.GetOpeningTag().Value
+	opening := node.GetOpeningTag()
+	label := opening.Value
+	// Unquoted spoiler titles may contain spaces; the lexer treats later words as arguments.
+	if _, value, ok := strings.Cut(opening.Raw, "="); ok {
+		value = strings.TrimSpace(value)
+		if !strings.HasPrefix(value, "\"") && !strings.HasPrefix(value, "'") {
+			label = strings.TrimSpace(strings.TrimSuffix(value, "]"))
+		}
+	}
 	if label == "" {
 		label = "Spoiler"
 	}
