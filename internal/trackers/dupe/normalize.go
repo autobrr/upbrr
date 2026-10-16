@@ -225,9 +225,9 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
-		AudioCodec:     audioFact(target.AudioCodecs, FactOriginTargetMedia, "audioCodecs", canonicalAudioCodec),
-		AudioChannels:  audioFact(target.AudioChannels, FactOriginTargetMedia, "audioChannels", canonicalAudioChannels),
-		AudioLanguages: audioFact(target.AudioLanguages, FactOriginTargetMedia, "audioLanguages", languageutil.NormalizeLanguageCode),
+		AudioCodec:     audioFact(target.AudioCodecs, target.AudioCodecsComplete, FactOriginTargetMedia, "audioCodecs", canonicalAudioCodec),
+		AudioChannels:  audioFact(target.AudioChannels, target.AudioChannelsComplete, FactOriginTargetMedia, "audioChannels", canonicalAudioChannels),
+		AudioLanguages: audioFact(target.AudioLanguages, target.AudioLanguagesComplete, FactOriginTargetMedia, "audioLanguages", languageutil.NormalizeLanguageCode),
 		Container: mergeStructuredAndTitleFact(
 			canonicalContainer(target.Container),
 			"container",
@@ -356,9 +356,9 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
-		AudioCodec:     audioFact(candidate.AudioCodecs, FactOriginTrackerAPI, "audioCodecs", canonicalAudioCodec),
-		AudioChannels:  audioFact(candidate.AudioChannels, FactOriginTrackerAPI, "audioChannels", canonicalAudioChannels),
-		AudioLanguages: audioFact(candidate.AudioLanguages, FactOriginTrackerAPI, "audioLanguages", languageutil.NormalizeLanguageCode),
+		AudioCodec:     audioFact(candidate.AudioCodecs, candidate.AudioCodecsComplete, FactOriginTrackerAPI, "audioCodecs", canonicalAudioCodec),
+		AudioChannels:  audioFact(candidate.AudioChannels, candidate.AudioChannelsComplete, FactOriginTrackerAPI, "audioChannels", canonicalAudioChannels),
+		AudioLanguages: audioFact(candidate.AudioLanguages, candidate.AudioLanguagesComplete, FactOriginTrackerAPI, "audioLanguages", languageutil.NormalizeLanguageCode),
 		Container: mergeStructuredAndTitleFact(
 			canonicalContainer(candidate.Container),
 			"container",
@@ -1468,7 +1468,7 @@ func mergeHDRWithTitle(structured api.HDRFacts, title api.HDRFacts) api.HDRFacts
 	return structured
 }
 
-func audioFact(values []string, origin FactOrigin, source string, normalize func(string) string) Fact {
+func audioFact(values []string, complete bool, origin FactOrigin, source string, normalize func(string) string) Fact {
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		if value = normalize(value); value != "" {
@@ -1483,6 +1483,14 @@ func audioFact(values []string, origin FactOrigin, source string, normalize func
 		normalized = append(normalized, value)
 	}
 	slices.Sort(normalized)
+	if !complete {
+		return Fact{
+			Value:        strings.Join(normalized, "+"),
+			Status:       FactPartial,
+			Origin:       origin,
+			SourceFields: []string{source},
+		}
+	}
 	return completeFact(strings.Join(normalized, "+"), origin, source)
 }
 

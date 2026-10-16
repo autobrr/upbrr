@@ -109,9 +109,21 @@ func AudioLanguagesFromMediaInfoText(value string) []string {
 	return mediaInfoAudioValues(value, "Language", "Language_String")
 }
 
+// AudioLanguagesFromMediaInfoTextWithCoverage returns the language declared by
+// each audio section and whether every audio track declared a language.
+func AudioLanguagesFromMediaInfoTextWithCoverage(value string) ([]string, bool) {
+	return mediaInfoAudioValuesWithCoverage(value, "Language", "Language_String")
+}
+
 // AudioCodecsFromMediaInfoText returns the format declared by each audio track.
 func AudioCodecsFromMediaInfoText(value string) []string {
 	return mediaInfoAudioValues(value, "Format")
+}
+
+// AudioCodecsFromMediaInfoTextWithCoverage returns the format declared by each
+// audio track and whether every audio track declared a format.
+func AudioCodecsFromMediaInfoTextWithCoverage(value string) ([]string, bool) {
+	return mediaInfoAudioValuesWithCoverage(value, "Format")
 }
 
 // AudioChannelsFromMediaInfoText returns the channel layout declared by each audio track.
@@ -119,15 +131,34 @@ func AudioChannelsFromMediaInfoText(value string) []string {
 	return mediaInfoAudioValues(value, "Channel(s)", "Channel(s)_Original")
 }
 
+// AudioChannelsFromMediaInfoTextWithCoverage returns the channel layout
+// declared by each audio track and whether every audio track declared channels.
+func AudioChannelsFromMediaInfoTextWithCoverage(value string) ([]string, bool) {
+	return mediaInfoAudioValuesWithCoverage(value, "Channel(s)", "Channel(s)_Original")
+}
+
 // mediaInfoAudioValues collects one declared value from each audio track.
 func mediaInfoAudioValues(value string, keys ...string) []string {
+	values, _ := mediaInfoAudioValuesWithCoverage(value, keys...)
+	return values
+}
+
+// mediaInfoAudioValuesWithCoverage collects one declared value from each audio
+// track and reports whether every audio track declared the requested field.
+// When any audio track lacks the field, the returned complete flag is false so
+// callers can treat the dimension as partial rather than complete evidence.
+func mediaInfoAudioValuesWithCoverage(value string, keys ...string) ([]string, bool) {
 	values := make([]string, 0)
+	total := 0
+	matched := 0
 	for _, track := range mediaInfoTextTracks(value, "audio") {
-		if value := mediaInfoValue(track, keys...); value != "" {
-			values = append(values, value)
+		total++
+		if v := mediaInfoValue(track, keys...); v != "" {
+			values = append(values, v)
+			matched++
 		}
 	}
-	return values
+	return values, total == 0 || matched == total
 }
 
 func firstMediaInfoTextVideoTrack(value string) map[string]any {
