@@ -63,7 +63,7 @@ func HDRSourceFromMediaInfo(doc MediaInfoDocument) api.HDRSourceEvidence {
 }
 
 var (
-	mediaInfoSectionPattern        = regexp.MustCompile(`(?i)^(general|video|audio|text)(?:\s*#\d+)?$`)
+	mediaInfoSectionPattern        = regexp.MustCompile(`(?i)^(general|video|audio|text|menu)(?:\s*#\d+)?$`)
 	mediaInfoWhitespacePattern     = regexp.MustCompile(`\s+`)
 	dolbyVisionNamedProfilePattern = regexp.MustCompile(`(?i)\bprofile(?:\s+id)?[\s:]+(\d+(?:\.\d+)?)`)
 	dolbyVisionCodecProfilePattern = regexp.MustCompile(`(?i)\bdvhe\.(\d{2})`)
@@ -103,6 +103,64 @@ func VideoCodecFromMediaInfoText(value string) string {
 	return format
 }
 
+// AudioLanguagesFromMediaInfoText returns the language declared by each audio
+// section in a MediaInfo text dump.
+func AudioLanguagesFromMediaInfoText(value string) []string {
+	return mediaInfoAudioValues(value, "Language", "Language_String")
+}
+
+// AudioLanguagesFromMediaInfoTextWithCoverage returns the language declared by
+// each audio section and whether every audio track declared a language.
+func AudioLanguagesFromMediaInfoTextWithCoverage(value string) ([]string, bool) {
+	return mediaInfoAudioValuesWithCoverage(value, "Language", "Language_String")
+}
+
+// AudioCodecsFromMediaInfoText returns the format declared by each audio track.
+func AudioCodecsFromMediaInfoText(value string) []string {
+	return mediaInfoAudioValues(value, "Format")
+}
+
+// AudioCodecsFromMediaInfoTextWithCoverage returns the format declared by each
+// audio track and whether every audio track declared a format.
+func AudioCodecsFromMediaInfoTextWithCoverage(value string) ([]string, bool) {
+	return mediaInfoAudioValuesWithCoverage(value, "Format")
+}
+
+// AudioChannelsFromMediaInfoText returns the channel layout declared by each audio track.
+func AudioChannelsFromMediaInfoText(value string) []string {
+	return mediaInfoAudioValues(value, "Channel(s)", "Channel(s)_Original")
+}
+
+// AudioChannelsFromMediaInfoTextWithCoverage returns the channel layout
+// declared by each audio track and whether every audio track declared channels.
+func AudioChannelsFromMediaInfoTextWithCoverage(value string) ([]string, bool) {
+	return mediaInfoAudioValuesWithCoverage(value, "Channel(s)", "Channel(s)_Original")
+}
+
+// mediaInfoAudioValues collects one declared value from each audio track.
+func mediaInfoAudioValues(value string, keys ...string) []string {
+	values, _ := mediaInfoAudioValuesWithCoverage(value, keys...)
+	return values
+}
+
+// mediaInfoAudioValuesWithCoverage collects one declared value from each audio
+// track and reports whether every audio track declared the requested field.
+// When any audio track lacks the field, the returned complete flag is false so
+// callers can treat the dimension as partial rather than complete evidence.
+func mediaInfoAudioValuesWithCoverage(value string, keys ...string) ([]string, bool) {
+	values := make([]string, 0)
+	total := 0
+	matched := 0
+	for _, track := range mediaInfoTextTracks(value, "audio") {
+		total++
+		if v := mediaInfoValue(track, keys...); v != "" {
+			values = append(values, v)
+			matched++
+		}
+	}
+	return values, total == 0 || matched == total
+}
+
 func firstMediaInfoTextVideoTrack(value string) map[string]any {
 	var track map[string]any
 	inFirstVideo := false
@@ -135,6 +193,39 @@ func firstMediaInfoTextVideoTrack(value string) map[string]any {
 		}
 	}
 	return track
+}
+
+// mediaInfoTextTracks parses the sections of one requested MediaInfo track kind.
+func mediaInfoTextTracks(value string, kind string) []map[string]any {
+	var tracks []map[string]any
+	var current map[string]any
+	for line := range strings.SplitSeq(strings.ReplaceAll(value, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(strings.ReplaceAll(strings.TrimSuffix(line, "\r"), "\u00a0", " "))
+		if trimmed == "" {
+			continue
+		}
+		if match := mediaInfoSectionPattern.FindStringSubmatch(trimmed); len(match) == 2 {
+			current = nil
+			if strings.EqualFold(match[1], kind) {
+				current = map[string]any{"@type": kind}
+				tracks = append(tracks, current)
+			}
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		key, fieldValue, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		key = normalizeMediaInfoKey(key)
+		fieldValue = strings.TrimSpace(fieldValue)
+		if key != "" && fieldValue != "" {
+			current[key] = fieldValue
+		}
+	}
+	return tracks
 }
 
 func hdrFromMediaInfoTrack(track map[string]any) api.HDRFacts {

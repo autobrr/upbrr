@@ -2668,6 +2668,12 @@ export type TrackerDuplicateCriteria = Readonly<{
 }>;
 
 export type TrackerDuplicateTarget = Readonly<{
+  audioChannels?: readonly string[];
+  audioChannelsComplete?: boolean;
+  audioCodecs?: readonly string[];
+  audioCodecsComplete?: boolean;
+  audioLanguages?: readonly string[];
+  audioLanguagesComplete?: boolean;
   category?: string;
   container?: string;
   date?: string;

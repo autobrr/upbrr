@@ -11015,6 +11015,33 @@
       "TrackerDuplicateTarget": {
         "type": "object",
         "properties": {
+          "audioChannels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audioChannelsComplete": {
+            "type": "boolean"
+          },
+          "audioCodecs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audioCodecsComplete": {
+            "type": "boolean"
+          },
+          "audioLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audioLanguagesComplete": {
+            "type": "boolean"
+          },
           "category": {
             "type": "string"
           },

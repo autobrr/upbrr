@@ -14,6 +14,8 @@ func Profile() unit3d.Profile {
 		Name:              "SAM",
 		BaseURL:           "https://samaritano.cc",
 		ReleaseNamePolicy: namePolicy(),
+		ValidationPolicy:  ValidationPolicy(),
+		DupePolicy:        duplicatePolicy(),
 		ImageHost: &trackers.ImageHostPolicy{
 			ConditionalHost:        "samaritano",
 			OwnedHosts:             []string{"samaritano"},

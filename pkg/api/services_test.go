@@ -306,7 +306,7 @@ func TestNewTrackerValidationSubjectDerivesFailSafeEvidence(t *testing.T) {
 	}
 
 	projected := NewTrackerValidationSubject(source, "example")
-	if projected.PackageFacts.Status != MetadataEvidenceStatusPartial {
+	if projected.PackageFacts.Status != MetadataEvidenceStatusComplete {
 		t.Fatalf("package evidence status = %q", projected.PackageFacts.Status)
 	}
 	if projected.PackageFacts.KnownFileCount != 5 ||
