@@ -1062,7 +1062,7 @@ func collectCLIWorkflowQuestionnaires(
 			}
 		}
 		for _, field := range projection.Questionnaire {
-			if !field.NeedsReview && (!field.Required || field.Value != "") {
+			if !field.NeedsReview && (!field.Required || strings.TrimSpace(field.Value) != "") {
 				continue
 			}
 

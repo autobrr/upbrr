@@ -764,6 +764,17 @@ func TestCLIQuestionnaireActionRequiresCollectedAnswer(t *testing.T) {
 			Options:  []string{"yes", "no"},
 		}}},
 		{
+			name:      "required whitespace-only answer",
+			collected: true,
+			fields: []api.TrackerQuestionnaireRequirement{{
+				Key:      "review",
+				Kind:     "select",
+				Required: true,
+				Value:    " \t ",
+				Options:  []string{"yes", "no"},
+			}},
+		},
+		{
 			name:      "explicitly collected unchanged answer",
 			collected: true,
 			fields: []api.TrackerQuestionnaireRequirement{{
