@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -134,6 +135,24 @@ var torrentClientKeyAliases = map[string]string{
 	"VERIFY_WEBUI_CERTIFICATE": "verify_webui_certificate",
 }
 
+var trackerAliases = map[string]string{
+	"AMIGOSSHARE":     "ASC",
+	"BITHDTV":         "BHDTV",
+	"DARKPEERS":       "DP",
+	"DIGITALCORE":     "DC",
+	"HDSPACE":         "HDS",
+	"RACING4EVERYONE": "R4E",
+	"IMMORTALSEED":    "IS",
+	"LUMINARR":        "LUME",
+	"MIDNIGHTSCENE":   "MNS",
+	"PASSTHEPOPCORN":  "PTP",
+	"POLISHTORRENT":   "PTT",
+	"SAMARITANO":      "SAM",
+	"TORRENTLEECH":    "TL",
+	"YUSCENE":         "YUS",
+	"ZENITH":          "ZNTH",
+}
+
 // Convert transforms a parsed legacy config into a new Config using the
 // embedded template for structure and type information. It returns the
 // converted config and a list of warnings for skipped/unmapped items.
@@ -206,21 +225,45 @@ func Convert(legacy *Config, template *config.Config) (*config.Config, []string,
 func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out *config.Config) []string {
 	var warnings []string
 
-	if dt, ok := legacyTrackers["default_trackers"]; ok && dt != nil {
-		out.Trackers.DefaultTrackers = coerceToStringSlice(dt)
-	}
-
-	if pt, ok := legacyTrackers["preferred_tracker"]; ok && pt != nil {
-		out.Trackers.PreferredTracker = strings.TrimSpace(fmt.Sprintf("%v", pt))
-	}
-
-	// Get known tracker names from the template.
 	knownTrackers := make(map[string]bool)
 	for name := range template.Trackers.Trackers {
 		knownTrackers[name] = true
 	}
+	if dt, ok := legacyTrackers["default_trackers"]; ok && dt != nil {
+		out.Trackers.DefaultTrackers = nil
+		seenDefaults := make(map[string]bool)
+		for _, trackerName := range coerceToStringSlice(dt) {
+			canonicalName := canonicalTrackerName(trackerName)
+			if !knownTrackers[canonicalName] {
+				warnings = append(warnings, "skipped unsupported default tracker: "+trackerName)
+				continue
+			}
+			if seenDefaults[canonicalName] {
+				continue
+			}
+			seenDefaults[canonicalName] = true
+			out.Trackers.DefaultTrackers = append(out.Trackers.DefaultTrackers, canonicalName)
+		}
+	}
 
-	for trackerName, raw := range legacyTrackers {
+	if pt, ok := legacyTrackers["preferred_tracker"]; ok && pt != nil {
+		preferred := canonicalTrackerName(strings.TrimSpace(fmt.Sprintf("%v", pt)))
+		if preferred != "" && !knownTrackers[preferred] {
+			out.Trackers.PreferredTracker = ""
+			warnings = append(warnings, "skipped unsupported preferred tracker: "+preferred)
+		} else {
+			out.Trackers.PreferredTracker = preferred
+		}
+	}
+
+	importedTrackers := make(map[string]bool)
+	trackerNames := make([]string, 0, len(legacyTrackers))
+	for trackerName := range legacyTrackers {
+		trackerNames = append(trackerNames, trackerName)
+	}
+	sort.Strings(trackerNames)
+	for _, trackerName := range trackerNames {
+		raw := legacyTrackers[trackerName]
 		if strings.EqualFold(strings.TrimSpace(trackerName), "THR") {
 			warnings = append(warnings, "ignored removed tracker entry: "+trackerName)
 			continue
@@ -232,7 +275,12 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		if !ok {
 			continue
 		}
-		if !knownTrackers[trackerName] {
+		canonicalName := canonicalTrackerName(trackerName)
+		if importedTrackers[canonicalName] && knownTrackers[canonicalName] {
+			warnings = append(warnings, "skipped duplicate tracker entry for "+canonicalName+": "+trackerName)
+			continue
+		}
+		if !knownTrackers[canonicalName] {
 			outTracker := config.TrackerConfig{Unknown: make(map[string]any)}
 			for key, value := range trackerValues {
 				if strings.EqualFold(strings.TrimSpace(key), "url") {
@@ -250,10 +298,9 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 			continue
 		}
 
-		// Get the template tracker config for field/type reference.
-		templateTracker, hasTemplate := template.Trackers.Trackers[trackerName]
-		outTracker := out.Trackers.Trackers[trackerName]
-
+		importedTrackers[canonicalName] = true
+		templateTracker, hasTemplate := template.Trackers.Trackers[canonicalName]
+		outTracker := out.Trackers.Trackers[canonicalName]
 		for key, value := range trackerValues {
 			if strings.EqualFold(strings.TrimSpace(key), "url") {
 				warnings = append(warnings, fmt.Sprintf("ignored deprecated tracker URL: trackers.%s.%s", trackerName, key))
@@ -266,11 +313,18 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 			}
 			setTrackerField(&outTracker, key, coerceValue(value, templateValue))
 		}
-
-		out.Trackers.Trackers[trackerName] = outTracker
+		out.Trackers.Trackers[canonicalName] = outTracker
 	}
 
 	return warnings
+}
+
+func canonicalTrackerName(name string) string {
+	trimmed := strings.ToUpper(strings.TrimSpace(name))
+	if alias, ok := trackerAliases[trimmed]; ok {
+		return alias
+	}
+	return trimmed
 }
 
 // migrateTorrentClients copies torrent client settings from the legacy config.
