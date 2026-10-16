@@ -149,6 +149,10 @@ type MediaTrackFacts struct {
 	BitrateBitsPerSecond int64
 	// Hidden records BDInfo's hidden-stream marker, not a commentary classification.
 	Hidden bool
+	// BitDepth is the inspected audio sample depth; zero means unavailable or invalid.
+	BitDepth int `json:",omitempty"`
+	// ChannelsKnown distinguishes an exact positive count from a partial channel value.
+	ChannelsKnown bool `json:",omitempty"`
 }
 
 // ManualLanguageFacts contains the resolved manual lists used in generated descriptions.

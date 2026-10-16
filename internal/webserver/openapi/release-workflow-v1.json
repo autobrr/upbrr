@@ -1350,6 +1350,16 @@
               }
             ]
           },
+          "hdrComparisonSelection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRComparisonSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "imageHosting": {
             "$ref": "#/components/schemas/ReleaseWorkflowUploadImageHosting"
           },
@@ -2012,6 +2022,9 @@
           "EpisodeLabel": {
             "type": "string"
           },
+          "MultipleEpisodes": {
+            "type": "boolean"
+          },
           "Overview": {
             "type": "string"
           },
@@ -2041,6 +2054,7 @@
           "DateMatched",
           "Episode",
           "EpisodeLabel",
+          "MultipleEpisodes",
           "Overview",
           "Pack",
           "Season",
@@ -2377,9 +2391,35 @@
       "HDRAnalysisFailureCode": {
         "type": "string"
       },
+      "HDRAnalysisFormats": {
+        "type": "string"
+      },
       "HDRAnalysisInstructions": {
         "type": "object",
         "properties": {
+          "decoded": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRDecodedOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decodedRetry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRDecodedRetry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "formats": {
+            "$ref": "#/components/schemas/HDRAnalysisFormats"
+          },
           "peakSource": {
             "$ref": "#/components/schemas/HDRPeakSource"
           },
@@ -2421,6 +2461,19 @@
       "HDRAnalysisRequest": {
         "type": "object",
         "properties": {
+          "decoded": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRDecodedOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "formats": {
+            "$ref": "#/components/schemas/HDRAnalysisFormats"
+          },
           "peakSource": {
             "$ref": "#/components/schemas/HDRPeakSource"
           },
@@ -2443,6 +2496,19 @@
           },
           "createdAt": {
             "type": "string"
+          },
+          "decoded": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRDecodedOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "formats": {
+            "$ref": "#/components/schemas/HDRAnalysisFormats"
           },
           "id": {
             "$ref": "#/components/schemas/HDRAnalysisResultID"
@@ -2505,6 +2571,9 @@
       "HDRAnalysisTarget": {
         "type": "object",
         "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/HDRSourceEvidence"
+          },
           "id": {
             "type": "string"
           },
@@ -2544,6 +2613,18 @@
               }
             ]
           },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRTypedArtifact"
+            }
+          },
+          "decoded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRDecodedResult"
+            }
+          },
           "failure": {
             "anyOf": [
               {
@@ -2553,6 +2634,12 @@
                 "type": "null"
               }
             ]
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRFormatResult"
+            }
           },
           "frames": {
             "type": "integer"
@@ -2581,10 +2668,381 @@
           "targetId"
         ]
       },
+      "HDRArtifactKind": {
+        "type": "string"
+      },
+      "HDRAudioTrackResult": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicResourceID"
+            }
+          },
+          "channelLayout": {
+            "type": "string"
+          },
+          "channels": {
+            "type": "integer"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioAnalysisFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "language": {
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer"
+          },
+          "pcmMeasured": {
+            "type": "boolean"
+          },
+          "sampleFrames": {
+            "type": "integer"
+          },
+          "sampleRate": {
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HDRDecodedState"
+          },
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifacts",
+          "channelLayout",
+          "channels",
+          "codec",
+          "ordinal",
+          "pcmMeasured",
+          "sampleFrames",
+          "sampleRate",
+          "state",
+          "trackId"
+        ]
+      },
+      "HDRCheckResult": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HDRCheckState"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "state"
+        ]
+      },
+      "HDRCheckState": {
+        "type": "string"
+      },
+      "HDRComparisonOptions": {
+        "type": "object",
+        "properties": {
+          "colour": {
+            "type": "boolean"
+          },
+          "crop": {
+            "$ref": "#/components/schemas/HDRCrop"
+          },
+          "frameOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grade": {
+            "type": "boolean"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "colour",
+          "crop",
+          "grade",
+          "sourceId"
+        ]
+      },
+      "HDRComparisonSelection": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "HDRComparisonSourceRef": {
+        "type": "object",
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseRef"
+          }
+        },
+        "required": [
+          "expiresAt",
+          "fingerprint",
+          "id",
+          "release"
+        ]
+      },
+      "HDRCoverage": {
+        "type": "string"
+      },
+      "HDRCrop": {
+        "type": "object",
+        "properties": {
+          "height": {
+            "type": "integer"
+          },
+          "left": {
+            "type": "integer"
+          },
+          "top": {
+            "type": "integer"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "height",
+          "left",
+          "top",
+          "width"
+        ]
+      },
+      "HDRDecodedMode": {
+        "type": "string"
+      },
+      "HDRDecodedOptions": {
+        "type": "object",
+        "properties": {
+          "activeArea": {
+            "type": "boolean"
+          },
+          "allAudioTracks": {
+            "type": "boolean"
+          },
+          "audio": {
+            "type": "boolean"
+          },
+          "automatic": {
+            "type": "boolean"
+          },
+          "boundarySync": {
+            "type": "boolean"
+          },
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRComparisonOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sampled": {
+            "type": "boolean"
+          },
+          "sceneSync": {
+            "type": "boolean"
+          },
+          "videoDecoderThreads": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "activeArea",
+          "sceneSync"
+        ]
+      },
+      "HDRDecodedResult": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicResourceID"
+            }
+          },
+          "audioTracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRAudioTrackResult"
+            }
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRCheckResult"
+            }
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/HDRCoverage"
+          },
+          "measured": {
+            "type": "integer"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/HDRDecodedMode"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "selected": {
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HDRDecodedState"
+          }
+        },
+        "required": [
+          "artifacts",
+          "measured",
+          "mode",
+          "profile",
+          "selected",
+          "state"
+        ]
+      },
+      "HDRDecodedRetry": {
+        "type": "object",
+        "properties": {
+          "analysisAttemptId": {
+            "type": "string"
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRDecodedMode"
+            }
+          }
+        },
+        "required": [
+          "analysisAttemptId",
+          "modes"
+        ]
+      },
+      "HDRDecodedSourceEvidence": {
+        "type": "object",
+        "properties": {
+          "bitDepth": {
+            "type": "integer"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "dolbyVisionProfile": {
+            "type": "string"
+          },
+          "frameRateDenominator": {
+            "type": "string"
+          },
+          "frameRateNumerator": {
+            "type": "string"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "matrix": {
+            "type": "string"
+          },
+          "pixelAspectDenominator": {
+            "type": "integer"
+          },
+          "pixelAspectNumerator": {
+            "type": "integer"
+          },
+          "primaries": {
+            "type": "string"
+          },
+          "range": {
+            "type": "string"
+          },
+          "rawHEVC": {
+            "type": "boolean"
+          },
+          "transfer": {
+            "type": "string"
+          },
+          "videoStreamOrdinal": {
+            "type": "integer"
+          },
+          "videoStreams": {
+            "type": "integer"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bitDepth",
+          "codec",
+          "height",
+          "matrix",
+          "pixelAspectDenominator",
+          "pixelAspectNumerator",
+          "primaries",
+          "range",
+          "rawHEVC",
+          "transfer",
+          "videoStreams",
+          "width"
+        ]
+      },
+      "HDRDecodedState": {
+        "type": "string"
+      },
       "HDREvidenceOrigin": {
         "type": "string"
       },
       "HDREvidenceStatus": {
+        "type": "string"
+      },
+      "HDRExtractionState": {
         "type": "string"
       },
       "HDRFacts": {
@@ -2632,8 +3090,178 @@
       "HDRFormat": {
         "type": "string"
       },
+      "HDRFormatResult": {
+        "type": "object",
+        "properties": {
+          "advertised": {
+            "type": "boolean"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRCheckResult"
+            }
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/HDRCoverage"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRAnalysisFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "format": {
+            "$ref": "#/components/schemas/HDRNativeFormat"
+          },
+          "frames": {
+            "type": "integer"
+          },
+          "l1Samples": {
+            "type": "integer"
+          },
+          "missing": {
+            "type": "integer"
+          },
+          "observed": {
+            "type": "integer"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "requested": {
+            "type": "boolean"
+          },
+          "retained": {
+            "type": "integer"
+          },
+          "scenes": {
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HDRExtractionState"
+          },
+          "suppressed": {
+            "type": "integer"
+          },
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "advertised",
+          "checks",
+          "coverage",
+          "format",
+          "frames",
+          "l1Samples",
+          "missing",
+          "observed",
+          "requested",
+          "retained",
+          "scenes",
+          "state",
+          "suppressed"
+        ]
+      },
+      "HDRImageSelection": {
+        "type": "object",
+        "properties": {
+          "artifactIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicResourceID"
+            }
+          },
+          "recoveryNote": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifactIds"
+        ]
+      },
+      "HDRNativeFormat": {
+        "type": "string"
+      },
       "HDRPeakSource": {
         "type": "string"
+      },
+      "HDRSourceEvidence": {
+        "type": "object",
+        "properties": {
+          "decoded": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRDecodedSourceEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dolbyVision": {
+            "type": "boolean"
+          },
+          "hdr10plus": {
+            "type": "boolean"
+          },
+          "uniqueHEVC": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dolbyVision",
+          "hdr10plus",
+          "uniqueHEVC"
+        ]
+      },
+      "HDRTypedArtifact": {
+        "type": "object",
+        "properties": {
+          "audioTrackId": {
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/HDRNativeFormat"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "id": {
+            "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HDRArtifactKind"
+          },
+          "measurementFingerprint": {
+            "type": "string"
+          },
+          "mime": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "renderFingerprint": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "height",
+          "id",
+          "kind",
+          "mime",
+          "profile",
+          "width"
+        ]
       },
       "HostedImageAttempt": {
         "type": "object",
@@ -2764,6 +3392,9 @@
           "Season": {
             "type": "integer"
           },
+          "SeasonKnown": {
+            "type": "boolean"
+          },
           "Title": {
             "type": "string"
           }
@@ -2774,6 +3405,7 @@
           "ReleaseDate",
           "ReleaseYear",
           "Season",
+          "SeasonKnown",
           "Title"
         ]
       },
@@ -3492,6 +4124,9 @@
           "id": {
             "$ref": "#/components/schemas/MediaArtifactSetID"
           },
+          "imageHostUploadSkipped": {
+            "type": "boolean"
+          },
           "imageRequirementsPrepared": {
             "type": "boolean"
           },
@@ -4106,6 +4741,9 @@
           "AudioLabel": {
             "type": "string"
           },
+          "BitDepth": {
+            "type": "integer"
+          },
           "BitrateBitsPerSecond": {
             "type": "integer"
           },
@@ -4114,6 +4752,9 @@
           },
           "Channels": {
             "type": "integer"
+          },
+          "ChannelsKnown": {
+            "type": "boolean"
           },
           "Codec": {
             "type": "string"
@@ -6130,6 +6771,26 @@
           "hdrAnalysisEnabled": {
             "type": "boolean"
           },
+          "hdrComparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRComparisonSourceRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hdrImages": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRImageSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "$ref": "#/components/schemas/WorkflowID"
           },
@@ -6499,6 +7160,26 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/HDRAnalysisResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hdrComparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRComparisonSourceRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hdrPendingRequest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRAnalysisInstructions"
               },
               {
                 "type": "null"
@@ -8560,6 +9241,33 @@
           "TimestampSeconds"
         ]
       },
+      "SelectReleaseWorkflowHDRComparisonRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseRef"
+          },
+          "sourcePath": {
+            "type": "string"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "idempotencyKey",
+          "release",
+          "sourcePath",
+          "workflowId"
+        ]
+      },
       "SetReleaseWorkflowAudioAnalysisEnabledRequest": {
         "type": "object",
         "properties": {
@@ -8586,6 +9294,12 @@
       "SetReleaseWorkflowHDRAnalysisEnabledRequest": {
         "type": "object",
         "properties": {
+          "artifactIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicResourceID"
+            }
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -9336,6 +10050,9 @@
           "EpisodeSeason": {
             "type": "integer"
           },
+          "EpisodeSeasonKnown": {
+            "type": "boolean"
+          },
           "Episodes": {
             "type": "array",
             "items": {
@@ -9416,6 +10133,7 @@
           "EpisodeOverview",
           "EpisodeOverviewEnglish",
           "EpisodeSeason",
+          "EpisodeSeasonKnown",
           "Episodes",
           "FirstAired",
           "Genres",
@@ -11651,6 +12369,16 @@
               }
             ]
           },
+          "HDRComparisonSelection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HDRComparisonSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "InteractionMode": {
             "$ref": "#/components/schemas/InteractionMode"
           },
@@ -12277,6 +13005,9 @@
               "$ref": "#/components/schemas/TrackerProjectionInstructions"
             }
           },
+          "skipImageHostUpload": {
+            "type": "boolean"
+          },
           "skipRemoteDuplicates": {
             "type": "boolean"
           },
@@ -12806,6 +13537,16 @@
                     "anyOf": [
                       {
                         "$ref": "#/components/schemas/HDRAnalysisRequest"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "hdrComparisonSelection": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/HDRComparisonSelection"
                       },
                       {
                         "type": "null"
@@ -13971,6 +14712,119 @@
         ]
       }
     },
+    "/workflows/{workflowId}/hdr-analysis/comparison": {
+      "post": {
+        "description": "Verifies a separate local source and retains private comparison authority for this prepared generation.",
+        "operationId": "selectWorkflowHDRComparison",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "release": {
+                    "$ref": "#/components/schemas/ReleaseRef"
+                  },
+                  "sourcePath": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "release",
+                  "sourcePath"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Workflow state with the opaque comparison source reference.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Select comparison source B",
+        "tags": [
+          "HDR Analysis"
+        ]
+      }
+    },
     "/workflows/{workflowId}/hdr-analysis/enabled": {
       "put": {
         "description": "Enables or disables the optional hdr-analysis page without starting source reads.",
@@ -14013,6 +14867,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "artifactIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PublicResourceID"
+                    }
+                  },
                   "enabled": {
                     "type": "boolean"
                   }

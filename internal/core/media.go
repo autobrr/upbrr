@@ -677,6 +677,9 @@ func appendUniqueNormalizedTracker(trackersList []string, tracker string) []stri
 	return append(trackersList, name)
 }
 
+// uploadImagesToTarget reuses compatible retained or persisted links before
+// uploading missing images. Exact-media skip returns the reusable subset without
+// uploading; analysis reuse also requires matching purpose and host account.
 func (m *mediaModule) uploadImagesToTarget(
 	ctx context.Context,
 	meta api.UploadSubject,
@@ -737,7 +740,7 @@ func (m *mediaModule) uploadImagesToTarget(
 		return image.Purpose.IsAnalysis()
 	})
 	progressCtx = api.WithImageUploadProgressTarget(ctx, progressTarget)
-	if len(missing) == 0 {
+	if len(missing) == 0 || (meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped) {
 		m.logger.Tracef(
 			"core: reusing uploaded images host=%s tracker=%s scope=%s trackers=%v count=%d",
 			target.Host,

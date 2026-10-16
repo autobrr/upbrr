@@ -138,15 +138,20 @@ func TestHDRFileInventoryRequiresPerTargetMediaInfoConfirmation(t *testing.T) {
 	}
 }
 
-func TestHDRInventoryUsesOriginalMKVsAndStaleGenerationIsTyped(t *testing.T) {
+func TestHDRInventoryUsesSupportedFilesAndStaleGenerationIsTyped(t *testing.T) {
 	owned := envelope{}
 	owned.result.Release.Source.Entries = []api.SourceManifestEntry{
 		{Type: api.SourceEntryTypeFile, Path: "Synthetic.A.MKV"},
 		{Type: api.SourceEntryTypeFile, Path: "Synthetic.B.mkv"},
 		{Type: api.SourceEntryTypeFile, Path: "largest.m2ts"},
+		{Type: api.SourceEntryTypeFile, Path: "Synthetic.C.mp4"},
+		{Type: api.SourceEntryTypeFile, Path: "Synthetic.D.ts"},
+		{Type: api.SourceEntryTypeFile, Path: "unsupported.avi"},
 	}
 	targets := hdrTargetSubjects(owned)
-	if len(targets) != 2 || targets[0].Path != "Synthetic.A.MKV" || targets[1].Path != "Synthetic.B.mkv" || targets[0].Target.SelectionPolicy != "unique_hevc" {
+	if len(targets) != 5 || targets[0].Path != "Synthetic.A.MKV" || targets[1].Path != "Synthetic.B.mkv" ||
+		targets[2].Path != "largest.m2ts" || targets[3].Path != "Synthetic.C.mp4" || targets[4].Path != "Synthetic.D.ts" ||
+		targets[0].Target.SelectionPolicy != "unique_hevc" {
 		t.Fatalf("prepared file inventory=%#v", targets)
 	}
 	module := &Module{envelopes: make(map[string]envelope)}

@@ -642,6 +642,9 @@ func (p *RetainedUploadPlan) Release() error {
 	return errors.Join(errs...)
 }
 
+// preparationInput applies tracker group policy and description language facts.
+// It exposes image uploading only when a host and service are available and the
+// exact media snapshot has not opted out of hosting.
 func (s *Service) preparationInput(
 	ctx context.Context,
 	intent PreparationIntent,
@@ -661,6 +664,7 @@ func (s *Service) preparationInput(
 		Runtime: PreparationRuntime{
 			DBPath:      s.cfg.MainSettings.DBPath,
 			Description: s.cfg.Description,
+			ToneMap:     s.cfg.ScreenshotHandling.ToneMap,
 			Internal:    groupPolicy.Internal,
 			BTNAPIToken: config.ResolveBTNAPIToken(s.cfg),
 		},
@@ -673,7 +677,7 @@ func (s *Service) preparationInput(
 		return input
 	}
 	input.SelectedImageHost = strings.ToLower(strings.TrimSpace(selectedHost))
-	if s.images != nil && input.SelectedImageHost != "" {
+	if s.images != nil && input.SelectedImageHost != "" && (meta.ExactMedia == nil || !meta.ExactMedia.ImageHostUploadSkipped) {
 		host := input.SelectedImageHost
 		input.UploadImages = func(ctx context.Context, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			return s.images.Upload(ctx, imageHostingSubject(meta), host, usageScopeForHost(s.registry, host), append([]api.ScreenshotImage(nil), images...))

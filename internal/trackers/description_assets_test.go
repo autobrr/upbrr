@@ -429,7 +429,7 @@ func TestAudioAnalysisDescriptionKeepsGraphsOutOfScreenshots(t *testing.T) {
 	if len(assets.Screenshots) != 0 || len(assets.MenuImages) != 0 || len(assets.Slots) != 0 {
 		t.Fatalf("audio graph entered screenshot channels: %#v", assets)
 	}
-	if !strings.Contains(assets.Description, "[spoiler=source_audio]") ||
+	if !strings.Contains(assets.Description, "[spoiler=Audio Plots]") ||
 		!strings.Contains(assets.Description, "[img]https://img.example/audio.png[/img]") ||
 		!strings.Contains(assets.Description, "[code]Audio track 2\nPeak: -1.0 dB\n&#91;/code][/code]") ||
 		strings.Index(assets.Description, "[img]") > strings.Index(assets.Description, "[code]") {
@@ -441,7 +441,7 @@ func TestAudioAnalysisDescriptionKeepsGraphsOutOfScreenshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve edited audio description: %v", err)
 	}
-	if !strings.Contains(edited.Description, "Edited body") || strings.Count(edited.Description, "[spoiler=source_audio]") != 1 {
+	if !strings.Contains(edited.Description, "Edited body") || strings.Count(edited.Description, "[spoiler=Audio Plots]") != 1 {
 		t.Fatalf("edited description duplicated audio section: %q", edited.Description)
 	}
 	comparison := "[spoiler=Comparisons]\n[spoiler=source_audio]copied audio[/spoiler]\n[/spoiler]"
@@ -451,7 +451,7 @@ func TestAudioAnalysisDescriptionKeepsGraphsOutOfScreenshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve edited comparison audio description: %v", err)
 	}
-	if !strings.Contains(editedComparison.Description, comparison) || strings.Count(editedComparison.Description, "[spoiler=source_audio]") != 2 {
+	if !strings.Contains(editedComparison.Description, comparison) || strings.Count(editedComparison.Description, "[spoiler=Audio Plots]") != 1 {
 		t.Fatalf("copied comparison audio block changed: %q", editedComparison.Description)
 	}
 	exact.AudioUploads[0].Host = "imgbb"

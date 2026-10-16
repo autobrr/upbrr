@@ -14,7 +14,7 @@ func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		NameProviders:     &unit3d.NameProviders{Title: api.IdentityProviderIMDB, MovieYear: api.IdentityProviderIMDB},
 		Name:              "HHD",
-		Site:              unit3d.SiteProfile{ProjectionQuestionnaire: languageQuestionnaire},
+		Site:              unit3d.SiteProfile{AllowSeasonZeroEpisodes: true, ProjectionQuestionnaire: languageQuestionnaire},
 		BaseURL:           "https://homiehelpdesk.net",
 		Rules:             Rules(),
 		ValidationPolicy:  validationPolicy(),

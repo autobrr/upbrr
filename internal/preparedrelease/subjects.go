@@ -74,6 +74,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		TrackerQuestionnaireAnswers: cloneAnswers(input.QuestionnaireAnswers),
 		SeasonInt:                   release.Episode.Season,
 		EpisodeInt:                  release.Episode.Episode,
+		MultipleEpisodes:            release.Episode.MultipleEpisodes,
 		SeasonStr:                   release.Episode.SeasonLabel,
 		EpisodeStr:                  release.Episode.EpisodeLabel,
 		TVDBAiredDate:               release.Episode.AiredDate,

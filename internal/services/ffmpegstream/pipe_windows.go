@@ -3,7 +3,7 @@
 
 //go:build windows
 
-package audioanalysis
+package ffmpegstream
 
 import (
 	"context"
@@ -18,7 +18,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type pcmOutput struct {
+// Pipe owns one child-authenticated output stream. Do not copy it after use begins.
+type Pipe struct {
 	path       string
 	handle     windows.Handle
 	event      windows.Handle
@@ -27,18 +28,20 @@ type pcmOutput struct {
 	connected  bool
 }
 
-func newPCMOutputs(count int) ([]pcmOutput, error) {
-	outputs := make([]pcmOutput, 0, count)
+// NewPipes creates and arms count private listeners before the child starts.
+// The caller must release them with ClosePipes.
+func NewPipes(count int) ([]Pipe, error) {
+	outputs := make([]Pipe, 0, count)
 	for range count {
 		var nonce [16]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
-			closePCMOutputs(outputs)
+			ClosePipes(outputs)
 			return nil, fmt.Errorf("name PCM pipe: %w", err)
 		}
 		path := `\\.\pipe\upbrr-audio-` + hex.EncodeToString(nonce[:])
 		name, err := windows.UTF16PtrFromString(path)
 		if err != nil {
-			closePCMOutputs(outputs)
+			ClosePipes(outputs)
 			return nil, fmt.Errorf("encode PCM pipe name: %w", err)
 		}
 		handle, err := windows.CreateNamedPipe(name,
@@ -46,27 +49,31 @@ func newPCMOutputs(count int) ([]pcmOutput, error) {
 			windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT|windows.PIPE_REJECT_REMOTE_CLIENTS,
 			1, 0, 256<<10, 0, nil)
 		if err != nil {
-			closePCMOutputs(outputs)
+			ClosePipes(outputs)
 			return nil, fmt.Errorf("create PCM pipe: %w", err)
 		}
-		outputs = append(outputs, pcmOutput{path: path, handle: handle})
+		outputs = append(outputs, Pipe{path: path, handle: handle})
 		// Arm acceptance before the child starts, so a short output cannot close first.
 		if err := outputs[len(outputs)-1].listen(); err != nil {
-			closePCMOutputs(outputs)
+			ClosePipes(outputs)
 			return nil, err
 		}
 	}
 	return outputs, nil
 }
 
-func attachPCMOutputs(*exec.Cmd, []pcmOutput) {}
+// AttachPipes is a no-op on Windows, where the child opens named destinations.
+func AttachPipes(*exec.Cmd, []Pipe) {}
 
-func (p *pcmOutput) destination() string { return p.path }
+func (p *Pipe) Destination() string { return p.path }
 
-func (p *pcmOutput) started() {}
+// Started is a no-op because Windows listeners are armed by NewPipes.
+func (p *Pipe) Started() {}
 
-// reader accepts PCM only from the FFmpeg child; the random pipe name is not an authentication boundary.
-func (p *pcmOutput) reader(ctx context.Context, ffmpegPID int) (io.ReadCloser, error) {
+// Reader accepts bytes only from ffmpegPID and transfers the connected handle
+// to the returned reader. ctx cancels acceptance; callers own read cancellation.
+// The random pipe name is not an authentication boundary.
+func (p *Pipe) Reader(ctx context.Context, ffmpegPID int) (io.ReadCloser, error) {
 	for {
 		if err := p.connect(ctx); err != nil {
 			return nil, err
@@ -94,7 +101,7 @@ func (p *pcmOutput) reader(ctx context.Context, ffmpegPID int) (io.ReadCloser, e
 	}
 }
 
-func (p *pcmOutput) listen() error {
+func (p *Pipe) listen() error {
 	event, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
 		return fmt.Errorf("create PCM pipe event: %w", err)
@@ -115,7 +122,7 @@ func (p *pcmOutput) listen() error {
 	return nil
 }
 
-func (p *pcmOutput) connect(ctx context.Context) error {
+func (p *Pipe) connect(ctx context.Context) error {
 	for {
 		if p.connected {
 			return nil
@@ -157,7 +164,7 @@ func (p *pcmOutput) connect(ctx context.Context) error {
 	}
 }
 
-func (p *pcmOutput) cancelPending() {
+func (p *Pipe) cancelPending() {
 	if p.pending {
 		cancelErr := windows.CancelIoEx(p.handle, p.overlapped)
 		var transferred uint32
@@ -171,7 +178,7 @@ func (p *pcmOutput) cancelPending() {
 	p.closeEvent()
 }
 
-func (p *pcmOutput) closeEvent() {
+func (p *Pipe) closeEvent() {
 	if p.event != 0 {
 		_ = windows.CloseHandle(p.event)
 		p.event = 0
@@ -179,7 +186,7 @@ func (p *pcmOutput) closeEvent() {
 	p.overlapped = nil
 }
 
-func (p *pcmOutput) close() {
+func (p *Pipe) Close() {
 	p.cancelPending()
 	if p.handle != 0 {
 		_ = windows.CloseHandle(p.handle)

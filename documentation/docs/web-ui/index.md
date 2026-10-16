@@ -36,7 +36,7 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 | **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
 | **Dupe Check**     | Answer tracker questions and review search results, rules, and names.    |
 | **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
-| **HDR Analysis**   | Generate, inspect, download, and include HDR10+ brightness plots.        |
+| **HDR Analysis**   | Generate native HDR plots, audio analysis, and optional picture checks.  |
 | **Screenshots**    | Generate, import, order, and select screenshots.                         |
 | **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
 | **Upload Images**  | Publish selected images through configured hosts.                        |
@@ -67,7 +67,11 @@ Each successful graph can be previewed, opened at full size, or downloaded as it
 
 See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and troubleshooting details.
 
-**HDR Analysis** appears when prepared Input contains eligible targets. MKV files require MediaInfo-confirmed HDR10+ on a unique HEVC video track. For Blu-ray, check **Check for HDR10+ in the selected playlists** during playlist selection, or use **Review selected playlists** for an already prepared disc. Confirmed playlists are plotted during preparation, ready to view on **HDR Analysis**. Opening the page does not read the source. For MKV files, select targets and a peak estimator, then click **Generate**. MKV progress shows structure discovery and metadata collection. Complete retained metadata supports estimator changes without another source scan. Completed analyses are automatically included in generated descriptions; partial plots remain inspectable. Compatible saved plots and their hosted links are restored when reopening a release. See [HDR analysis](../workflow/hdr-analysis.md).
+### Generate HDR analysis
+
+**HDR Analysis** appears when prepared Input contains eligible targets. Opening the page does not start analysis. Select targets and metadata formats, then choose a mode. **HDR metadata plots and primary audio** is the default; **Bounded scene synchronization** adds checks around selected scene boundaries, with **Analyze audio** enabled by default and optional **Active-area borders**. **Picture checks and primary audio** offers sampled checks or **Measure every video frame (slower)**. Audio-enabled modes can select **Analyze all audio tracks (up to 64)**.
+
+Click **Generate**, then inspect each format and picture/audio outcome. Native plots and selected audio images/statistics are included in descriptions by default. Select individual picture-check images to include them. Successful artifacts remain inspectable after partial attempts; a sampled or bounded result does not establish whole-video picture coverage. See [HDR analysis](../workflow/hdr-analysis.md) for source requirements, comparison sources, retries, and colour-thumbnail interpretation.
 
 ### Correct Input facts
 
@@ -152,6 +156,18 @@ Logs are designed for safer sharing, but inspect them before posting. Never incl
 See [Logging](./logging.md) for persistence, filtering, rotation, and buffer behavior.
 
 ## Host browser
+
+On **Input**, choose **Browse file** or **Browse folder**. **Roots** shows every allowed browse root, even when only one is configured. **Search all browse roots** finds matching names in the roots and their nested folders, including the roots themselves. Each result shows its exact path so you can distinguish identically named files or folders.
+
+Inside a folder, **Filter this directory** searches only the entries already listed there. Both scopes ignore case, treat common separators such as dots, underscores, hyphens, and brackets as spaces, and match query words in any order. For example, `Beacon Voyage` matches `Beacon.Voyage` and `Beacon_Voyage`. A restricted ordered-character match also finds close abbreviations; it does not correct arbitrary typos.
+
+Choose **Open** to enter a folder or **Select** to apply that exact path to Input. File browsing continues to show only recognized video files alongside folders. **Clear search** restores the root listing or removes the current directory filter; opening another folder also clears the search.
+
+Root searches return at most 200 matches and inspect at most 100,000 entries. They check a two-second search budget between filesystem calls; a slow or unavailable filesystem can keep a call blocked longer. If the results are marked incomplete, open a root and browse directly. A narrower query can help with the match limit, but does not reduce how many filenames must be inspected. Unreadable directories can also leave results incomplete.
+
+Searches can use two workers when every browse root is on a recognized local filesystem. Within each worker, separate roots are visited before their subdirectories, so a deep library does not have to finish before another root gets searched. A single large directory can still use up the search budget. If roots overlap, each root is traversed in order to preserve its access boundary. If any root is on network storage or a filesystem cannot be identified, the search uses one worker. Filesystem identities do not guarantee separate physical disks. When a search reaches a limit, repeated searches may return different subsets of matching paths.
+
+Typing another query, navigating, or closing the browser cancels the previous request, and late replies cannot replace newer results. Each browser request has a 15-second timeout that includes network time and any authentication refresh. A timeout or busy message offers **Retry**; requests are not automatically repeated after network failures. The server allows at most two host-browser operations at once and keeps an operation's slot until its filesystem work actually returns, even after cancellation.
 
 The host browser lists only configured roots unless unrestricted browsing was explicitly enabled. If a valid folder is missing:
 

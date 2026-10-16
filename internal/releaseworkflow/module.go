@@ -265,6 +265,7 @@ type Module struct {
 	dupeBuilder               DupeAssessmentBuilder
 	mediaBuilder              MediaArtifactBuilder
 	hdrAnalysisBuilder        HDRAnalysisBuilder
+	hdrComparisonInspector    HDRComparisonInspector
 	audioAnalysisBuilder      AudioAnalysisBuilder
 	descriptionBuilder        DescriptionBuilder
 	uploadPlanBuilder         UploadPlanBuilder
@@ -451,6 +452,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 
 	priorWorkflow := state.Workflow
 	priorHDRExtractions := maps.Clone(state.HDRExtractions)
+	priorHDRMeasurements := cloneHDRMeasurements(state.HDRMeasurements)
 	priorDuplicateReuse := state.PendingDuplicateReuse
 	now := m.clock.Now().UTC()
 	nextRevision := state.Workflow.Revision + 1
@@ -504,9 +506,17 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 			return CommandResult{}, err
 		}
 	}
+	if priorWorkflow.HDRComparison != nil && (state.Workflow.HDRComparison == nil || state.Workflow.HDRComparison.ID != priorWorkflow.HDRComparison.ID) {
+		m.private.Delete(ownerID, state.Workflow.ID, hdrComparisonPrivateResourceID(priorWorkflow.HDRComparison.ID))
+	}
 	for id := range priorHDRExtractions {
 		if _, retained := state.HDRExtractions[id]; !retained {
 			m.private.Delete(ownerID, state.Workflow.ID, hdrExtractionPrivateResourceID(id))
+		}
+	}
+	for id := range priorHDRMeasurements {
+		if _, retained := state.HDRMeasurements[id]; !retained {
+			m.private.Delete(ownerID, state.Workflow.ID, hdrMeasurementPrivateResourceID(id))
 		}
 	}
 	if result.Dupes != nil {
@@ -552,6 +562,9 @@ func retainsStoppedAudioAnalysis(command mutation, result CommandResult) bool {
 
 func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkflow, result CommandResult) {
 	workflowID := prior.ID
+	if result.HDRComparison != nil && (prior.HDRComparison == nil || prior.HDRComparison.ID != result.HDRComparison.ID) {
+		m.private.Delete(ownerID, workflowID, hdrComparisonPrivateResourceID(result.HDRComparison.ID))
+	}
 	if result.Descriptions != nil && (prior.Descriptions == nil || prior.Descriptions.ID != result.Descriptions.ID) {
 		m.private.Delete(ownerID, workflowID, descriptionPrivateResourceID(result.Descriptions.ID))
 	}
@@ -787,6 +800,13 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		}
 		status.Items = compositeUploadInitialItems()
 		status.Total = len(compositeUploadStages) * 100
+	}
+	if hdrCommand, ok := command.(AnalyzeHDRCommand); ok {
+		hdrCommand.Comparison, err = m.resolveHDRComparison(ownerID, state, hdrCommand.Instructions)
+		if err != nil {
+			return api.WorkflowOperationStatus{}, err
+		}
+		command = hdrCommand
 	}
 	commandResourceID := operationCommandResourceID(status.ID)
 	if err := m.private.Put(
@@ -1187,12 +1207,18 @@ func (m *Module) runOperation(
 			}
 			if status.Operation == api.OperationKindHDRAnalysis && result.HDRAnalysis != nil {
 				for _, target := range result.HDRAnalysis.Targets {
-					if target.Failure == nil {
-						continue
+					failures := []*api.HDRAnalysisFailure{target.Failure}
+					for _, format := range target.Formats {
+						failures = append(failures, format.Failure)
 					}
-					classified := m.operationErrorClassifier(status.Operation, api.NewHDRAnalysisError(*target.Failure, nil))
-					if failure, ok := api.AsOperationFailure(classified); ok {
-						status.Failures = append(status.Failures, api.WorkflowFailure{Failure: failure})
+					for _, hdrFailure := range failures {
+						if hdrFailure == nil {
+							continue
+						}
+						classified := m.operationErrorClassifier(status.Operation, api.NewHDRAnalysisError(*hdrFailure, nil))
+						if failure, ok := api.AsOperationFailure(classified); ok {
+							status.Failures = append(status.Failures, api.WorkflowFailure{Failure: failure})
+						}
 					}
 				}
 			}
@@ -1920,7 +1946,12 @@ func (m *Module) recoverOperationAfterLease(
 	if hdrCommand, hdr := capsule.command.(AnalyzeHDRCommand); hdr && !commandCommitted {
 		m.private.Delete(current.OwnerID, current.WorkflowID, hdrAnalysisPrivateResourceID(string(current.OperationID)))
 		if cleaner, ok := m.hdrAnalysisBuilder.(HDRAnalysisAttemptCleaner); ok {
-			if err := cleaner.CleanupAttempt(hdrCommand.Instructions.Release, string(current.OperationID), state.HDRExtractions); err != nil {
+			if err := cleaner.CleanupAttempt(
+				hdrCommand.Instructions.Release,
+				string(current.OperationID),
+				state.HDRExtractions,
+				state.HDRMeasurements,
+			); err != nil {
 				return fmt.Errorf("clean interrupted HDR attempt: %w", err)
 			}
 		}
@@ -2531,6 +2562,11 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 				)
 			}
 		}
+	}
+	result.HDRComparison = state.Workflow.HDRComparison
+	if pending := state.HDRPendingRequest; pending != nil && result.Release != nil &&
+		pending.Instructions.Release == (api.ReleaseRef{SourcePath: result.Release.Release.Source.SourcePath, Generation: result.Release.Release.Generation}) {
+		result.HDRPendingRequest = &pending.Instructions
 	}
 	if ref := state.Workflow.HDRAnalysis; ref != nil {
 		result.HDRAnalysis = currentSnapshot(state.HDRAnalyses, ref.ID)
@@ -3561,6 +3597,7 @@ func newState(ownerID string, workflow api.ReleaseWorkflow) State {
 		Media:                  make(map[api.MediaArtifactSetID]api.MediaArtifactSet),
 		HDRAnalyses:            make(map[api.HDRAnalysisResultID]api.HDRAnalysisResult),
 		HDRExtractions:         make(map[api.HDRExtractionID]HDRExtractionRecord),
+		HDRMeasurements:        make(map[string]HDRMeasurementRecord),
 		AudioAnalyses:          make(map[api.AudioAnalysisResultID]api.AudioAnalysisResult),
 		Descriptions:           make(map[api.DescriptionSetID]api.DescriptionSet),
 		DryRuns:                make(map[api.UploadDryRunResultID]api.UploadDryRunResult),
@@ -3642,6 +3679,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 	case CaptureMediaCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case AnalyzeHDRCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case SelectHDRComparisonCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SetHDRAnalysisEnabledCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
@@ -3731,6 +3770,8 @@ func (m *Module) apply(
 		return m.captureMedia(ctx, ownerID, state, nextRevision, now, typed)
 	case AnalyzeHDRCommand:
 		return m.analyzeHDR(ctx, ownerID, state, nextRevision, now, typed, nil, nil)
+	case SelectHDRComparisonCommand:
+		return m.selectHDRComparison(ctx, ownerID, state, now, typed)
 	case SetHDRAnalysisEnabledCommand:
 		return CommandResult{}, m.setHDRAnalysisEnabled(ctx, state, typed)
 	case AnalyzeAudioCommand:
@@ -3788,8 +3829,14 @@ func (m *Module) invalidateWorkflowPrivateResources(
 	state *State,
 ) error {
 	var preserved []string
+	if ref := state.Workflow.HDRComparison; ref != nil {
+		preserved = append(preserved, hdrComparisonPrivateResourceID(ref.ID))
+	}
 	for id := range state.HDRExtractions {
 		preserved = append(preserved, hdrExtractionPrivateResourceID(id))
+	}
+	for id := range state.HDRMeasurements {
+		preserved = append(preserved, hdrMeasurementPrivateResourceID(id))
 	}
 	if ref := state.Workflow.HDRAnalysis; ref != nil {
 		if analysis, ok := state.HDRAnalyses[ref.ID]; ok && analysis.Revision == ref.Revision {
@@ -3844,12 +3891,15 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.TrackerApproval = nil
 	state.Workflow.Media = nil
 	state.Workflow.HDRAnalysis = nil
+	state.Workflow.HDRComparison = nil
 	state.Workflow.HDRAnalysisEnabled = false
 	state.Workflow.AudioAnalysis = nil
 	state.Workflow.AudioAnalysisEnabled = false
 	state.PendingAudioAnalysis = nil
 	state.PendingAudioAnalysisWorkflowID = ""
 	state.HDRExtractions = make(map[api.HDRExtractionID]HDRExtractionRecord)
+	state.HDRMeasurements = make(map[string]HDRMeasurementRecord)
+	state.HDRPendingRequest = nil
 	state.HDRAnalyses = make(map[api.HDRAnalysisResultID]api.HDRAnalysisResult)
 	state.PendingHDRAnalysis, state.PendingHDRAnalysisWorkflowID = nil, ""
 	state.Workflow.Descriptions = nil
@@ -4125,6 +4175,9 @@ func (m *Module) prepareRelease(
 		return CommandResult{}, err
 	}
 	var capturedHDRTargets []string
+	if pending := state.HDRPendingRequest; pending != nil && pending.Instructions.Release != ref {
+		state.HDRPendingRequest = nil
+	}
 	if command.Input.Controls.CaptureHDRMetadata && state.Composite == nil {
 		for _, target := range display.HDRTargets {
 			if target.Supported && target.SelectionPolicy == "primary_hevc_angle_zero" {
@@ -4146,6 +4199,14 @@ func (m *Module) prepareRelease(
 	for id, record := range state.HDRExtractions {
 		if record.Release != ref {
 			delete(state.HDRExtractions, id)
+		}
+	}
+	if comparison := state.Workflow.HDRComparison; comparison != nil && comparison.Release != ref {
+		state.Workflow.HDRComparison = nil
+	}
+	for id, record := range state.HDRMeasurements {
+		if record.Release != ref {
+			delete(state.HDRMeasurements, id)
 		}
 	}
 	state.Workflow.Status = api.WorkflowStatusActive
@@ -5739,6 +5800,9 @@ func (m *Module) publishDupes(
 	return CommandResult{Dupes: &snapshot}, nil
 }
 
+// captureMedia publishes local media for the current authorized tracker set.
+// Retained captures clear skip mode so continuation can prepare images again;
+// pending external-effect reconciliation prevents capture from replacing its evidence.
 func (m *Module) captureMedia(
 	ctx context.Context,
 	ownerID string,
@@ -5763,6 +5827,11 @@ func (m *Module) captureMedia(
 		return CommandResult{}, fmt.Errorf("%w: invalid media capture purpose", ErrInvalidTransition)
 	}
 	workflow := state.Workflow
+	if slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
+	}) {
+		return CommandResult{}, fmt.Errorf("%w: reconcile the pending external effect before capturing media", ErrInvalidTransition)
+	}
 	if workflow.Release == nil || workflow.TrackerProjections == nil || workflow.Dupes == nil {
 		return CommandResult{}, fmt.Errorf("%w: media dependencies are incomplete", ErrInvalidTransition)
 	}
@@ -5824,6 +5893,14 @@ func (m *Module) captureMedia(
 	requirementsFingerprint, err := mediaRequirementsFingerprint(eligibleProjections.Projections)
 	if err != nil {
 		return CommandResult{}, err
+	}
+	// Stale prep flags from priorMedia would skip UploadMediaImages / MediaSelection.
+	// Fresh builds keep any ImageRequirementsPrepared set by the builder.
+	if priorMedia != nil {
+		if snapshot.ImageHostUploadSkipped || snapshot.RequirementsFingerprint != requirementsFingerprint {
+			snapshot.ImageRequirementsPrepared = false
+		}
+		snapshot.ImageHostUploadSkipped = false
 	}
 	if snapshot.RequirementsFingerprint != requirementsFingerprint {
 		return CommandResult{}, errors.New("release workflow build media artifacts: requirements fingerprint mismatch")
@@ -6005,6 +6082,8 @@ func uploadPlanPrivateResourceID(id api.UploadDryRunResultID) string {
 	return "upload-plan:" + string(id)
 }
 
+// setMediaSelection updates the requested artifact selections in the exact media
+// revision, clears image preparation and skip mode, and publishes revised readiness.
 func (m *Module) setMediaSelection(
 	ctx context.Context,
 	ownerID string,
@@ -6027,6 +6106,7 @@ func (m *Module) setMediaSelection(
 		}
 	}
 	snapshot.ImageRequirementsPrepared = false
+	snapshot.ImageHostUploadSkipped = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
 }
 
@@ -6060,6 +6140,9 @@ func (m *Module) reorderMediaArtifacts(
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
 }
 
+// attachMediaArtifacts resolves staged attachments against the current media
+// context and publishes replacement resources. New attachments clear image
+// preparation and skip mode so continuation reassesses the selected images.
 func (m *Module) attachMediaArtifacts(
 	ctx context.Context,
 	ownerID string,
@@ -6119,9 +6202,14 @@ func (m *Module) attachMediaArtifacts(
 	}
 	refreshMutatedMediaStatus(&updated, eligible.Projections, projections.Projections)
 	updated.ImageRequirementsPrepared = false
+	updated.ImageHostUploadSkipped = false
 	return m.publishMediaReplacement(ownerID, state, nextRevision, now, updated, retained)
 }
 
+// uploadMediaImages prepares selected artifacts through required or explicit-host
+// uploads, or records skip without calling the mutator. Unknown external outcomes
+// retain a reconciliation action; leaving skip through one host does not mark all
+// required hosts prepared.
 func (m *Module) uploadMediaImages(
 	ctx context.Context,
 	ownerID string,
@@ -6130,10 +6218,6 @@ func (m *Module) uploadMediaImages(
 	now time.Time,
 	command UploadMediaImagesCommand,
 ) (CommandResult, error) {
-	mutator, ok := m.mediaBuilder.(MediaArtifactMutator)
-	if !ok {
-		return CommandResult{}, fmt.Errorf("%w: workflow image hosting is unavailable", ErrInvalidTransition)
-	}
 	artifactIDs := append([]api.PublicResourceID(nil), command.ArtifactIDs...)
 	if len(artifactIDs) == 0 {
 		selectedArtifactIDs, selectionErr := selectedLocalMediaArtifactIDs(state, command.Media)
@@ -6147,18 +6231,19 @@ func (m *Module) uploadMediaImages(
 		return CommandResult{}, err
 	}
 	if strings.TrimSpace(command.Host) == "" && len(command.ArtifactIDs) > 0 {
-		selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
-		for _, artifactID := range artifactIDs {
-			selected[artifactID] = struct{}{}
-		}
-		for index := range snapshot.Artifacts {
-			if snapshot.Artifacts[index].Kind != api.MediaArtifactScreenshot &&
-				snapshot.Artifacts[index].Kind != api.MediaArtifactDVDMenu {
-				continue
-			}
-			_, snapshot.Artifacts[index].Selected = selected[snapshot.Artifacts[index].ID]
-		}
+		selectExplicitMediaArtifacts(&snapshot, artifactIDs)
 	}
+	if command.SkipUpload {
+		snapshot.ImageRequirementsPrepared = true
+		snapshot.ImageHostUploadSkipped = true
+		return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, retained)
+	}
+	mutator, ok := m.mediaBuilder.(MediaArtifactMutator)
+	if !ok {
+		return CommandResult{}, fmt.Errorf("%w: workflow image hosting is unavailable", ErrInvalidTransition)
+	}
+	leavingSkipMode := snapshot.ImageHostUploadSkipped
+	snapshot.ImageHostUploadSkipped = false
 	release, _, eligible, _, _, err := m.mediaExtensionContext(ctx, ownerID, state, &command.Media, now)
 	if err != nil {
 		return CommandResult{}, err
@@ -6201,8 +6286,13 @@ func (m *Module) uploadMediaImages(
 		return CommandResult{}, fmt.Errorf("release workflow upload media images: %w", err)
 	}
 	updated.HostAttempts = append(updated.HostAttempts, attempts...)
-	if strings.TrimSpace(command.Host) == "" {
+	switch {
+	case strings.TrimSpace(command.Host) == "":
 		updated.ImageRequirementsPrepared = true
+	case leavingSkipMode:
+		// Host-specific upload after skip must not retain full preparation, or
+		// partial host coverage can block other trackers before required hosting runs.
+		updated.ImageRequirementsPrepared = false
 	}
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, updated, nextRetained)
 }
@@ -6241,6 +6331,24 @@ func selectedLocalMediaArtifactIDs(state *State, mediaRef api.MediaArtifactSetRe
 	return artifactIDs, nil
 }
 
+// selectExplicitMediaArtifacts replaces local screenshot and DVD-menu selection
+// with the requested IDs while preserving hosted-artifact selection. Callers
+// validate the requested IDs against the exact media revision before mutation.
+func selectExplicitMediaArtifacts(snapshot *api.MediaArtifactSet, artifactIDs []api.PublicResourceID) {
+	selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
+	for _, artifactID := range artifactIDs {
+		selected[artifactID] = struct{}{}
+	}
+	for index := range snapshot.Artifacts {
+		if snapshot.Artifacts[index].Kind != api.MediaArtifactScreenshot && snapshot.Artifacts[index].Kind != api.MediaArtifactDVDMenu {
+			continue
+		}
+		_, snapshot.Artifacts[index].Selected = selected[snapshot.Artifacts[index].ID]
+	}
+}
+
+// removeHostedImages removes requested hosted variants from the exact media
+// revision and clears preparation and skip mode before publishing revised readiness.
 func (m *Module) removeHostedImages(
 	ctx context.Context,
 	ownerID string,
@@ -6266,6 +6374,7 @@ func (m *Module) removeHostedImages(
 		return CommandResult{}, fmt.Errorf("release workflow remove hosted images: %w", err)
 	}
 	updated.ImageRequirementsPrepared = false
+	updated.ImageHostUploadSkipped = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, updated, nextRetained)
 }
 
@@ -6347,6 +6456,8 @@ func validateMediaRequirementsFingerprint(snapshot api.MediaArtifactSet, project
 	return nil
 }
 
+// deleteMediaArtifacts removes requested artifacts from retained media and clears
+// preparation and skip mode before publishing the remaining selection's readiness.
 func (m *Module) deleteMediaArtifacts(
 	ctx context.Context,
 	ownerID string,
@@ -6375,6 +6486,7 @@ func (m *Module) deleteMediaArtifacts(
 	}
 	snapshot.Artifacts = artifacts
 	snapshot.ImageRequirementsPrepared = false
+	snapshot.ImageHostUploadSkipped = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
 }
 
@@ -6427,6 +6539,8 @@ func (m *Module) currentMutableMedia(
 	return snapshot, resource, nil
 }
 
+// publishMediaMutation recomputes readiness and tracker authority before publishing
+// a fingerprinted media revision, retaining its private resources for 24 hours.
 func (m *Module) publishMediaMutation(
 	ownerID string,
 	state *State,
@@ -6457,12 +6571,14 @@ func (m *Module) publishMediaMutation(
 		HostAttempts              []api.HostedImageAttempt
 		FailedHosts               []string
 		ImageRequirementsPrepared bool
+		ImageHostUploadSkipped    bool
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
 		snapshot.HostAttempts,
 		snapshot.FailedHosts,
 		snapshot.ImageRequirementsPrepared,
+		snapshot.ImageHostUploadSkipped,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media mutation: %w", err)
@@ -6487,6 +6603,9 @@ func (m *Module) publishMediaMutation(
 	return result, nil
 }
 
+// publishMediaReplacement binds current tracker authority and the mutation
+// fingerprint to a new media revision, retaining replacement resources for 24 hours.
+// Callers compute media readiness before publication.
 func (m *Module) publishMediaReplacement(
 	ownerID string,
 	state *State,
@@ -6506,12 +6625,14 @@ func (m *Module) publishMediaReplacement(
 		HostAttempts              []api.HostedImageAttempt
 		FailedHosts               []string
 		ImageRequirementsPrepared bool
+		ImageHostUploadSkipped    bool
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
 		snapshot.HostAttempts,
 		snapshot.FailedHosts,
 		snapshot.ImageRequirementsPrepared,
+		snapshot.ImageHostUploadSkipped,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media replacement: %w", err)
@@ -6564,7 +6685,8 @@ func (m *Module) refreshPersistedMediaStatus(
 
 // refreshMutatedMediaStatus recomputes media readiness after a mutation while
 // retaining image-host failures and pending reconciliation actions. Before
-// required hosting runs, selected local assets determine readiness; afterward,
+// required hosting runs and during explicit skip, selected local assets determine
+// readiness. After normal hosting preparation,
 // each surviving tracker must have enough applicable hosted screenshot sources.
 // The full known projection set distinguishes an excluded tracker's retained
 // failure from an unscoped or unknown-tracker failure that must still block.
@@ -6578,7 +6700,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	readinessProjections := projections
 	allTrackerHostsFailed := false
 	unmatchedTrackerHostFailure := false
-	if snapshot.ImageRequirementsPrepared {
+	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
 		unmatchedTrackerHostFailure = mediaHasUnscopedOrUnknownImageHostFailure(*snapshot, knownProjections)
 		readinessProjections = slices.DeleteFunc(
 			append([]api.TrackerReleaseProjection(nil), projections...),
@@ -6615,7 +6737,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	snapshot.Failures = hostFailures
 	snapshot.RequiredActions = reconcileActions
 	screenshotsReady := selectedScreenshots >= requiredScreenshots
-	if snapshot.ImageRequirementsPrepared {
+	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
 		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
 			hostedScreenshotRequirementsMet(*snapshot, readinessProjections)
 	}
@@ -6870,7 +6992,7 @@ func (m *Module) generateDescriptions(
 		if err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow restore descriptions: %w", err)
 		}
-		if len(snapshot.Descriptions) > 0 {
+		if snapshot.Status != "" {
 			command.Instructions = instructions
 			inputFingerprint, templateFingerprint, err = m.descriptionBuilder.Fingerprints(
 				ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, instructions,
@@ -6881,7 +7003,7 @@ func (m *Module) generateDescriptions(
 			logging.FromContext(ctx, m.logger).Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
 		}
 	}
-	if len(snapshot.Descriptions) == 0 {
+	if snapshot.Status == "" {
 		snapshot, err = m.descriptionBuilder.Build(
 			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions, now,
 		)

@@ -85,6 +85,7 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		streamOrder, streamOrderKnown := mediaTrackStreamOrder(track)
 		streamOrderKnown = streamOrderKnown && streamOrderCounts[streamOrder] == 1
 		defaultValue := strings.ToLower(trackString(track, "Default", "Default/String"))
+		channels, channelsKnown := mediaTrackChannels(track)
 		facts := api.MediaTrackFacts{
 			ID:                  opaqueMediaTrackID(resourceID, kind, trackKey),
 			Kind:                kind,
@@ -98,8 +99,10 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			Codec:               strings.TrimSpace(normalizeAudioFormat(track)),
 			AudioLabel:          trackAudioLabel,
 			ChannelLayout:       trackString(track, "ChannelLayout", "ChannelLayout_Original", "ChannelPositions", "ChannelPositions_Original"),
-			Channels:            mediaTrackPositiveInt(track, "Channels_Original", "Channels", "Channel_s_", "Channel_s__Original"),
+			Channels:            channels,
+			ChannelsKnown:       channelsKnown,
 			SampleRate:          mediaTrackPositiveInt(track, "SamplingRate", "SamplingRate_String"),
+			BitDepth:            mediaTrackBitDepth(track),
 			DetectedLanguages:   append([]string(nil), detected...),
 			Languages:           append([]string(nil), detected...),
 			LanguageProvenance:  api.FactProvenanceAutomatic,
@@ -191,6 +194,27 @@ func isBDInfoCommentary(track discparse.BDAudio) bool {
 		languageutil.NormalizeLanguageLabel(track.Language) != ""
 }
 
+// mediaTrackBitDepth accepts only an unambiguous positive MediaInfo sample depth.
+func mediaTrackBitDepth(track map[string]any) int {
+	value, err := strconv.Atoi(trackString(track, "BitDepth"))
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
+}
+
+// mediaTrackChannels preserves the existing first-positive channel count while
+// recording whether its selected MediaInfo value is an exact positive integer.
+func mediaTrackChannels(track map[string]any) (int, bool) {
+	for _, key := range []string{"Channels_Original", "Channels", "Channel_s_", "Channel_s__Original"} {
+		if value, ok := trackFirstInt(track, key); ok && value > 0 {
+			exact, err := strconv.Atoi(trackString(track, key))
+			return value, err == nil && exact > 0
+		}
+	}
+	return 0, false
+}
+
 func mediaTrackPositiveInt(track map[string]any, keys ...string) int {
 	for _, key := range keys {
 		if value, ok := trackFirstInt(track, key); ok && value > 0 {
@@ -228,7 +252,7 @@ func mediaTrackResourceID(meta preparationstate.State) string {
 	if resource == "" {
 		resource = strings.TrimSpace(meta.SourcePath)
 	}
-	return "media_" + shortMediaTrackHash(resource)
+	return mediafacts.TrackResourceID(resource)
 }
 
 func mediaTrackManifestFingerprint(meta preparationstate.State, doc mediaInfoDoc) (string, error) {

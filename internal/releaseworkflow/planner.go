@@ -801,6 +801,9 @@ func (m *Module) planContinuationCommand(
 	return planContinuationCommandWithReadiness(request, current, now, true, attemptRevision)
 }
 
+// planContinuationCommandWithReadiness chooses the next command or reports the
+// stage needing input. Goals after local capture prepare images for the requested
+// hosting mode before reusing downstream descriptions or upload reviews.
 func planContinuationCommandWithReadiness(
 	request api.ContinueReleaseWorkflowRequest,
 	current CommandResult,
@@ -975,11 +978,11 @@ func planContinuationCommandWithReadiness(
 				IdempotencyKey:   key("analyze-hdr"),
 			}, "analyze-hdr"
 		}
-		if current.HDRAnalysis.Status != api.StageStatusCompleted || !current.Workflow.HDRAnalysisEnabled {
+		if !requestedHDRUsable(current.HDRAnalysis) || !current.Workflow.HDRAnalysisEnabled {
 			return nil, "hdr-analysis-failed"
 		}
 	}
-	if !mediaRequirementsPrepared(current.Media) {
+	if !mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload) {
 		var artifactIDs []api.PublicResourceID
 		if request.Intent.MediaSelection != nil {
 			artifactIDs = append(artifactIDs, request.Intent.MediaSelection.ArtifactIDs...)
@@ -989,6 +992,7 @@ func planContinuationCommandWithReadiness(
 			ExpectedRevision: revision,
 			Media:            api.MediaArtifactSetRef{ID: current.Media.ID, Revision: current.Media.Revision},
 			ArtifactIDs:      artifactIDs,
+			SkipUpload:       request.Intent.SkipImageHostUpload,
 			IdempotencyKey:   key("prepare-image-requirements"),
 		}, "prepare-image-requirements"
 	}
@@ -1296,10 +1300,12 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 	return normalized
 }
 
+// continuationGoalReached checks retained results against the requested intent.
+// Goals after media capture also require preparation for the requested hosting mode.
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
 	if request.Intent.HDRAnalysis != nil && workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) {
 		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
-		if err != nil || !requestedHDRMatches(current, instructions) || current.HDRAnalysis.Status != api.StageStatusCompleted ||
+		if err != nil || !requestedHDRMatches(current, instructions) || !requestedHDRUsable(current.HDRAnalysis) ||
 			!current.Workflow.HDRAnalysisEnabled {
 			return false
 		}
@@ -1337,11 +1343,14 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 			stageSucceeded(current.Media.Status) &&
 			continuationMediaCaptureSatisfied(current, request.Intent.Media)
 	case api.WorkflowGoalDescriptionsReady:
-		return descriptionsHaveViableTracker(current.Descriptions)
+		return descriptionsHaveViableTracker(current.Descriptions) &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
-		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs)
+		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	case api.WorkflowGoalUploaded:
-		return current.UploadResult != nil
+		return current.UploadResult != nil &&
+			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
 	default:
 		return false
 	}
@@ -1444,6 +1453,27 @@ func duplicateDecisionsComplete(dupes *api.DupeAssessment) bool {
 	})
 }
 
+// mediaRequirementsPreparedForIntent requires successful media preparation and
+// matching hosting mode. Requesting skip on prepared media with no selected local
+// images needs no new barrier; leaving skip mode still requires hosting preparation.
+func mediaRequirementsPreparedForIntent(media *api.MediaArtifactSet, skipImageHostUpload bool) bool {
+	if !mediaRequirementsPrepared(media) {
+		return false
+	}
+	return !media.ImageRequirementsPrepared || media.ImageHostUploadSkipped == skipImageHostUpload ||
+		(skipImageHostUpload && !mediaHasSelectedLocalImages(media))
+}
+
+// mediaHasSelectedLocalImages reports whether selected screenshots or DVD menus
+// need image preparation; hosted variants do not count.
+func mediaHasSelectedLocalImages(media *api.MediaArtifactSet) bool {
+	return media != nil && slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
+	})
+}
+
+// mediaRequirementsPrepared accepts successful media with a completed hosting
+// barrier, including explicit skip, or with no selected local images to prepare.
 func mediaRequirementsPrepared(media *api.MediaArtifactSet) bool {
 	if media == nil || !stageSucceeded(media.Status) {
 		return false
@@ -1451,7 +1481,5 @@ func mediaRequirementsPrepared(media *api.MediaArtifactSet) bool {
 	if media.ImageRequirementsPrepared {
 		return true
 	}
-	return !slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
-		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
-	})
+	return !mediaHasSelectedLocalImages(media)
 }

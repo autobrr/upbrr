@@ -173,6 +173,7 @@ export type NamingFacts = {
 };
 
 export type EpisodeFacts = {
+  MultipleEpisodes: boolean;
   Season: number;
   Episode: number;
   SeasonLabel: string;
@@ -249,6 +250,8 @@ export type MediaFacts = {
 
 export type MediaTrackFacts = {
   ID: string;
+  BitDepth?: number;
+  ChannelsKnown?: boolean;
   DiscID?: string;
   PlaylistID?: string;
   BitrateBitsPerSecond?: number;
@@ -518,6 +521,8 @@ export type IMDBEpisode = {
   ReleaseYear: number;
   ReleaseDate: IMDBReleaseDate;
   Season: number;
+  /** Whether the provider supplied a season number, including zero. */
+  SeasonKnown: boolean;
   EpisodeText: string;
 };
 
@@ -586,6 +591,8 @@ export type TVDBMetadata = {
   PosterThumbnailLookupAttempted: boolean;
   Aliases: string[];
   EpisodeSeason: number;
+  /** Whether the selected episode's season was supplied by TVDB, including zero. */
+  EpisodeSeasonKnown: boolean;
   EpisodeNumber: number;
   EpisodeName: string;
   EpisodeNameEnglish: string;
@@ -1558,22 +1565,39 @@ export type PlaylistSelection = {
   UpdatedAt: string;
 };
 
+/** A selectable or navigable host filesystem path, rather than a browser-local file. */
 export type BrowseDirectoryEntry = {
   name: string;
   path: string;
   isDir: boolean;
+  /** Filesystem-reported size in bytes; virtual root entries use zero. */
   size: number;
+  /** UTC RFC3339 timestamp, or empty for a virtual root entry. */
   modifiedAt: string;
 };
 
+/** A directory listing, root listing, or bounded recursive search result. */
 export type BrowseDirectoryResponse = {
+  /** The returned view; an initial directory request can resolve to roots. */
+  scope: "roots" | "directory";
+  /** Search hit a time, entry, or result limit, or could not inspect a directory or matching entry. */
+  incomplete?: boolean;
+  /** Listed host directory; empty for root listings and recursive searches. */
   currentPath: string;
+  /** Navigable host parent; empty for roots scope or at an authorized root boundary. */
   parentPath: string;
   mode: "file" | "folder";
   entries: BrowseDirectoryEntry[];
 };
 
+/** Selects host directory contents or recursive name matches across authorized roots. */
 export type BrowseDirectoryRequest = {
+  /** Roots scope lists or searches roots; omission preserves initial-path fallback and root selection. */
+  scope?: "roots" | "directory";
+  /** Roots-only name query, at most 1024 UTF-8 bytes; normalized-empty queries list roots. */
+  query?: string;
+  /** Host path or file whose parent is listed; must be empty in roots scope. */
   path: string;
+  /** File mode includes recognized video files alongside directories. */
   mode: "file" | "folder";
 };

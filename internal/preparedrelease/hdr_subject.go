@@ -8,13 +8,90 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func hdrTargetID(pathValue, playlist string) string {
 	return api.HDRTargetID(filepath.Clean(pathValue), playlist)
+}
+
+// ResolveRetainedHDRAnalysisSubject checks the current persisted generation without
+// accessing source media. The target facts must come from the owner's exact workflow
+// snapshot; paths are reconstructed only from that generation's source manifest.
+func (m *Module) ResolveRetainedHDRAnalysisSubject(
+	ctx context.Context,
+	instructions api.HDRAnalysisInstructions,
+	targets []api.HDRAnalysisTarget,
+) (api.HDRAnalysisSubject, error) {
+	normalized, err := instructions.Normalize()
+	if err != nil {
+		return api.HDRAnalysisSubject{}, fmt.Errorf("normalize retained HDR selection: %w", err)
+	}
+	release, err := m.hdrGeneration(ctx, normalized.Release)
+	if err != nil {
+		return api.HDRAnalysisSubject{}, err
+	}
+	m.mu.RLock()
+	owned, ok := m.envelopes[canonicalSourceKey(release.Source.SourcePath)]
+	m.mu.RUnlock()
+	var inventory []api.HDRAnalysisTargetSubject
+	if ok && owned.result.Release.Generation == release.Generation {
+		inventory = hdrTargetSubjects(owned)
+	} else {
+		for _, target := range targets {
+			for _, entry := range release.Source.Entries {
+				candidate := api.HDRAnalysisTargetSubject{Target: target}
+				if target.Playlist == "" && entry.Type == api.SourceEntryTypeFile && hdrTargetID(entry.Path, "") == target.ID {
+					candidate.Path = entry.Path
+				} else if target.Playlist != "" && entry.Disc == "BDMV" && entry.Type == api.SourceEntryTypePlaylist &&
+					strings.EqualFold(entry.Playlist, target.Playlist) {
+					root := filepath.Dir(filepath.Dir(entry.Path))
+					if hdrTargetID(root, target.Playlist) == target.ID {
+						candidate.DiscRoot = root
+					}
+				}
+				if candidate.Path != "" || candidate.DiscRoot != "" {
+					inventory = append(inventory, candidate)
+					break
+				}
+			}
+		}
+	}
+	return resolveHDRSelection(normalized, release, inventory)
+}
+
+func (m *Module) hdrGeneration(ctx context.Context, ref api.ReleaseRef) (api.PreparedRelease, error) {
+	if m == nil || m.store == nil || ctx == nil {
+		return api.PreparedRelease{}, errors.New("prepared HDR generation is unavailable")
+	}
+	release, found, err := m.loadCurrent(ctx, ref.SourcePath)
+	if err != nil {
+		return api.PreparedRelease{}, err
+	}
+	if !found || release.Generation != ref.Generation || ref.Generation == 0 {
+		return api.PreparedRelease{}, fmt.Errorf("resolve retained HDR generation: %w", api.NewHDRAnalysisError(api.HDRAnalysisFailure{
+			Code: api.HDRAnalysisFailureStaleSource, Message: "the prepared HDR generation is no longer current",
+		}, &StalePreparationError{
+			SourcePath: ref.SourcePath,
+			Generation: ref.Generation,
+			Reason:     StaleReasonGeneration,
+		}))
+	}
+	return release, nil
+}
+
+// ValidateHDRAnalysisSource verifies media only when an operation needs new native
+// evidence or decoded measurements. Retained rendering uses generation authority.
+func (m *Module) ValidateHDRAnalysisSource(ctx context.Context, ref api.ReleaseRef) error {
+	release, err := m.hdrGeneration(ctx, ref)
+	if err != nil {
+		return err
+	}
+	return validateSeedSource(ctx, envelopeFromPersisted(release, api.PrepareInput{SourcePath: ref.SourcePath}))
 }
 
 func hdrTargetSubjects(owned envelope) []api.HDRAnalysisTargetSubject {
@@ -34,7 +111,7 @@ func hdrTargetSubjects(owned envelope) []api.HDRAnalysisTargetSubject {
 					Label:           fmt.Sprintf("Disc %d · %s", discIndex+1, name),
 					Playlist:        name,
 					SelectionPolicy: "primary_hevc_angle_zero",
-					Reason:          "Check for HDR10+ when selecting the Blu-ray playlists first.",
+					Reason:          "Collect native HDR evidence when selecting the Blu-ray playlists first.",
 				},
 				DiscRoot: disc.Root,
 			})
@@ -60,10 +137,15 @@ func hdrTargetSubjects(owned envelope) []api.HDRAnalysisTargetSubject {
 				}
 				target.CapturedPath, target.CapturedSize, target.CapturedSHA256 = captured.Path, captured.Size, captured.SHA256
 				target.CapturedTrackID, target.CapturedAbsent = captured.TrackID, captured.Absent
+				target.CapturedNativePath, target.CapturedNativeSize, target.CapturedNativeSHA256 = captured.NativePath, captured.NativeSize, captured.NativeSHA256
 				if captured.Failure != nil {
 					failure := *captured.Failure
 					target.CapturedFailure = &failure
 					target.Target.Reason = failure.Message
+				}
+				if captured.NativePath != "" {
+					target.Target.Supported = true
+					target.Target.Reason = ""
 				}
 			}
 		}
@@ -72,7 +154,8 @@ func hdrTargetSubjects(owned envelope) []api.HDRAnalysisTargetSubject {
 		return targets
 	}
 	for _, entry := range owned.result.Release.Source.Entries {
-		if entry.Type != api.SourceEntryTypeFile || !strings.EqualFold(filepath.Ext(entry.Path), ".mkv") {
+		extension := strings.ToLower(filepath.Ext(entry.Path))
+		if entry.Type != api.SourceEntryTypeFile || extension != ".mkv" && extension != ".mp4" && extension != ".ts" && extension != ".m2ts" {
 			continue
 		}
 		targets = append(targets, api.HDRAnalysisTargetSubject{
@@ -80,12 +163,14 @@ func hdrTargetSubjects(owned envelope) []api.HDRAnalysisTargetSubject {
 				ID:              hdrTargetID(entry.Path, ""),
 				Label:           fmt.Sprintf("Video %d", len(targets)+1),
 				SelectionPolicy: "unique_hevc",
-				Supported:       owned.resources.hdrFileEligibility[canonicalSourceKey(entry.Path)],
+				Supported: owned.resources.hdrFileEligibility[canonicalSourceKey(entry.Path)] ||
+					owned.resources.hdrFileEvidence[canonicalSourceKey(entry.Path)].UniqueHEVC,
+				Evidence: owned.resources.hdrFileEvidence[canonicalSourceKey(entry.Path)],
 			},
 			Path: entry.Path,
 		})
 		if !targets[len(targets)-1].Target.Supported {
-			targets[len(targets)-1].Target.Reason = "MediaInfo must confirm HDR10+ on a unique HEVC video track."
+			targets[len(targets)-1].Target.Reason = "MediaInfo must identify a unique HEVC video track."
 		}
 	}
 	return targets
@@ -113,16 +198,23 @@ func (m *Module) ResolveHDRAnalysisSubject(ctx context.Context, instructions api
 			api.NewHDRAnalysisError(api.HDRAnalysisFailure{Code: code, Message: "the prepared HDR source must be refreshed"}, err),
 		)
 	}
-	inventory := hdrTargetSubjects(owned)
-	binding, err := owned.result.Release.MediaBinding()
+	return resolveHDRSelection(normalized, owned.result.Release, hdrTargetSubjects(owned))
+}
+
+func resolveHDRSelection(
+	normalized api.HDRAnalysisInstructions,
+	release api.PreparedRelease,
+	inventory []api.HDRAnalysisTargetSubject,
+) (api.HDRAnalysisSubject, error) {
+	binding, err := release.MediaBinding()
 	if err != nil {
 		return api.HDRAnalysisSubject{}, fmt.Errorf("resolve HDR media binding: %w", err)
 	}
 	subject := api.HDRAnalysisSubject{
 		Release:           normalized.Release,
-		SourceFingerprint: owned.result.Release.Compatibility.SourceFingerprint,
+		SourceFingerprint: release.Compatibility.SourceFingerprint,
 		MediaBinding:      binding,
-		Title:             owned.result.Release.Naming.ReleaseName,
+		Title:             release.Naming.ReleaseName,
 	}
 	last := -1
 	for _, id := range normalized.TargetIDs {
@@ -143,6 +235,28 @@ func (m *Module) ResolveHDRAnalysisSubject(ctx context.Context, instructions api
 			))
 		}
 		if !inventory[found].Target.Supported {
+			if api.IsNativeHDRProfile(normalized.ProfileVersion) && inventory[found].Target.Evidence.UniqueHEVC {
+				inventory[found].Target.Supported = true
+				inventory[found].Target.Reason = ""
+			}
+		}
+		if normalized.ProfileVersion == api.HDRAnalysisProfileVersion && inventory[found].Path != "" &&
+			(!strings.EqualFold(filepath.Ext(inventory[found].Path), ".mkv") || inventory[found].Target.Evidence.UniqueHEVC && !inventory[found].Target.Evidence.HDR10Plus) {
+			return api.HDRAnalysisSubject{}, fmt.Errorf(
+				"legacy HDR eligibility: %w",
+				api.NewHDRAnalysisError(
+					api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureUnsupportedInput, Message: "HDR analysis v1 requires advertised HDR10+."},
+					nil,
+				),
+			)
+		}
+		if normalized.ProfileVersion == api.HDRAnalysisProfileVersion && inventory[found].DiscRoot != "" &&
+			(inventory[found].CapturedAbsent || inventory[found].CapturedFailure != nil) {
+			return api.HDRAnalysisSubject{}, fmt.Errorf("legacy HDR disc eligibility: %w", api.NewHDRAnalysisError(api.HDRAnalysisFailure{
+				Code: api.HDRAnalysisFailureUnsupportedInput, Message: "HDR analysis v1 requires complete HDR10+ metadata.",
+			}, nil))
+		}
+		if !inventory[found].Target.Supported {
 			if failure := inventory[found].CapturedFailure; failure != nil {
 				return api.HDRAnalysisSubject{}, fmt.Errorf("resolve HDR target: %w", api.NewHDRAnalysisError(*failure, nil))
 			}
@@ -151,7 +265,9 @@ func (m *Module) ResolveHDRAnalysisSubject(ctx context.Context, instructions api
 				Message: inventory[found].Target.Reason,
 			}, nil))
 		}
-		subject.Targets = append(subject.Targets, inventory[found])
+		target := inventory[found]
+		target.Audio = hdrTargetAudioSubject(release, normalized.Release, binding, target)
+		subject.Targets = append(subject.Targets, target)
 		last = found
 	}
 	identities := make([]string, len(subject.Targets))
@@ -167,6 +283,56 @@ func (m *Module) ResolveHDRAnalysisSubject(ctx context.Context, instructions api
 	}
 	subject.ManifestFingerprint = string(fingerprint)
 	return subject, nil
+}
+
+// hdrTargetAudioSubject projects persisted inventory only. Pack siblings without
+// their own inspected resource and disc ordinals never borrow another file's tracks.
+func hdrTargetAudioSubject(
+	release api.PreparedRelease,
+	ref api.ReleaseRef,
+	binding api.PreparedMediaBinding,
+	target api.HDRAnalysisTargetSubject,
+) *api.AudioAnalysisSubject {
+	if target.Path == "" || target.DiscRoot != "" || !release.Media.TrackCoverageComplete {
+		return nil
+	}
+	resource := mediafacts.TrackResourceID(target.Path)
+	subject := &api.AudioAnalysisSubject{
+		Release:           ref,
+		MediaBinding:      binding,
+		SourcePath:        release.Source.SourcePath,
+		VideoPath:         target.Path,
+		SourceFingerprint: release.Compatibility.SourceFingerprint,
+		ResourceID:        resource,
+	}
+	for _, track := range release.Media.Tracks {
+		if track.ResourceID != resource || track.Kind != api.MediaTrackAudio {
+			continue
+		}
+		if track.DiscID != "" || track.PlaylistID != "" || track.ID == "" || track.ManifestFingerprint == "" || track.Ordinal != len(subject.Tracks)+1 {
+			return nil
+		}
+		if len(subject.Tracks) == 0 {
+			subject.ManifestFingerprint = track.ManifestFingerprint
+		}
+		if track.ManifestFingerprint != subject.ManifestFingerprint ||
+			slices.ContainsFunc(subject.Tracks, func(previous api.MediaTrackFacts) bool { return previous.ID == track.ID }) {
+			return nil
+		}
+		track.Languages = slices.Clone(track.Languages)
+		track.DetectedLanguages = slices.Clone(track.DetectedLanguages)
+		subject.Tracks = append(subject.Tracks, track)
+		if track.ID == release.Media.PrimaryAudioTrackID {
+			subject.PrimaryTrackID = track.ID
+		}
+	}
+	if len(subject.Tracks) == 0 {
+		inventory := hdrTargetSubjects(envelopeFromPersisted(release, api.PrepareInput{}))
+		if !release.Media.AudioAbsent || len(inventory) != 1 || canonicalSourceKey(inventory[0].Path) != canonicalSourceKey(target.Path) {
+			return nil
+		}
+	}
+	return subject
 }
 
 // HDRAnalysisTargets exposes selection policy and opaque target IDs for one exact generation.

@@ -13,7 +13,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestPrepareReusesV37PartialPackLanguageFactsAfterRestart(t *testing.T) {
+func TestPrepareReusesCurrentPartialPackLanguageFactsAfterRestart(t *testing.T) {
 	path := t.TempDir()
 	files := []string{filepath.Join(path, "Example.S01E01.mkv"), filepath.Join(path, "Example.S01E02.mkv")}
 	for _, file := range files {
@@ -58,10 +58,10 @@ func TestPrepareReusesV37PartialPackLanguageFactsAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if previous.Release.Compatibility.ContractVersion != "prepared-release-v37" ||
+	if previous.Release.Compatibility.ContractVersion != ContractVersion ||
 		previous.Release.Media.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusPartial ||
 		previous.Release.Media.TrackCoverageComplete || previous.Release.Media.LanguageFacts.TrackCoverageComplete {
-		t.Fatalf("fixture lost existing v37 partial pack evidence: %+v", previous.Release)
+		t.Fatalf("fixture lost current partial pack evidence: %+v", previous.Release)
 	}
 	restartedCollector := &clientEvidenceTestCollector{}
 	restarted := newTestModule(t, store, restartedCollector)
@@ -71,7 +71,7 @@ func TestPrepareReusesV37PartialPackLanguageFactsAfterRestart(t *testing.T) {
 	}
 	if restartedCollector.collectCount() != 0 || reused.Release.Generation != previous.Release.Generation ||
 		reused.Release.Compatibility != previous.Release.Compatibility || !reflect.DeepEqual(reused.Release.Media, previous.Release.Media) {
-		t.Fatalf("tracker eligibility upgrade recollected or changed v37 facts: calls=%d release=%+v", restartedCollector.collectCount(), reused.Release)
+		t.Fatalf("restart recollected or changed current facts: calls=%d release=%+v", restartedCollector.collectCount(), reused.Release)
 	}
 	subject, err := restarted.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{
 		Release: api.ReleaseRef{SourcePath: path, Generation: reused.Release.Generation},

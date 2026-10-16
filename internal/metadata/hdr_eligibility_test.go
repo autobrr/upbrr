@@ -103,7 +103,11 @@ func TestHDRTrackEligibilityUsesEachPackFilesOwnMediaInfo(t *testing.T) {
 	}{{first, true}, {second, false}, {sanitizedHDR, true}, {sanitizedStatic, false}} {
 		subject, err := module.ResolveHDRAnalysisSubject(
 			t.Context(),
-			api.HDRAnalysisInstructions{Release: ref, TargetIDs: []string{api.HDRTargetID(test.path, "")}},
+			api.HDRAnalysisInstructions{
+				Release:        ref,
+				TargetIDs:      []string{api.HDRTargetID(test.path, "")},
+				ProfileVersion: api.HDRAnalysisProfileVersion,
+			},
 		)
 		if test.eligible {
 			if err != nil || len(subject.Targets) != 1 {
@@ -114,6 +118,16 @@ func TestHDRTrackEligibilityUsesEachPackFilesOwnMediaInfo(t *testing.T) {
 			if !ok || failure.Code != api.HDRAnalysisFailureUnsupportedInput {
 				t.Fatalf("unconfirmed track gained authority: %v", err)
 			}
+		}
+		// V2 scans any uniquely selected HEVC source for both formats. Advertised
+		// HDR10+ stays bound to the exact file rather than the pack's filename.
+		native, nativeErr := module.ResolveHDRAnalysisSubject(t.Context(), api.HDRAnalysisInstructions{
+			Release:        ref,
+			TargetIDs:      []string{api.HDRTargetID(test.path, "")},
+			ProfileVersion: api.HDRAnalysisProfileV2,
+		})
+		if nativeErr != nil || len(native.Targets) != 1 || !native.Targets[0].Target.Evidence.UniqueHEVC || native.Targets[0].Target.Evidence.HDR10Plus != test.eligible {
+			t.Fatalf("native per-file authority: subject=%+v err=%v", native, nativeErr)
 		}
 	}
 }

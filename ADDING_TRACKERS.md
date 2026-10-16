@@ -753,6 +753,12 @@ Change its version when validation semantics change. Unit3D composes the site bi
 family constructibility; a site without custom validation omits the field and still receives the
 family policy.
 
+`SiteProfile.AllowSeasonZeroEpisodes` is false by default. Enable it only when the site
+accepts individual specials, and bump the site validation policy version. The shared
+preflight and payload predicate requires canonical `SeasonStr == "S00"`, season zero,
+a positive episode, no pack, and no known `MultipleEpisodes` source membership.
+Do not infer specials from a release name or relax other sites' season requirements.
+
 Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;
@@ -1274,6 +1280,12 @@ exception to independent measured constraints. Use inspected languages, titles, 
 flags and container order before asking for genuinely missing upload input. Use an advisory
 `guidance_` rule code for non-language guidance that should appear in the collapsed WebUI
 Guidance panel; language guidance retains its existing `language_` codes.
+
+Audio sample-depth guidance uses the inspected track's `BitDepth`, codec and channel
+count, never video bit depth or an aggregate naming label. Zero sample depth is unknown;
+`ChannelsKnown` is false when the retained channel count came from partial evidence.
+Advice about primary programme audio must use an unambiguous inspected primary track
+and exclude secondary roles. Missing facts produce no speculative recommendation.
 
 Origin-country defaults must use current, source-bound provider evidence and the inspected primary
 original-language audio. Normalize supported country codes and names, retain all co-production

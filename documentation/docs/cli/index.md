@@ -164,11 +164,11 @@ Exit code `0` means Input is ready. Exit code `2` means required input prevents 
 
 ### Correct descriptive fields and languages
 
+Title and original title are read-only provider values. Use `--alternate-title` to correct the alternate title.
+
 | Option                                            | Purpose                                                                                                |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--title <text>`                                  | Override the resolved title.                                                                           |
 | `--alternate-title <text>`                        | Override the alternate title.                                                                          |
-| `--original-title <text>`                         | Override the original title.                                                                           |
 | `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                             |
 | `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                         |
 | `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                            |
@@ -210,6 +210,10 @@ The review is tracker-specific. Strict `--unattended` never prompts and skips a 
 ### Naming fields
 
 Season tokens require exactly two or four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized; use `S01E05` instead.
+
+Specials can use `S00E01` in a source name or `--season S00 --episode 01`. An explicit season zero is distinct from an unknown season; episode zero is invalid. Use `--season=` to clear the season or `--reset-input release_name.season` to restore automatic detection. Tracker eligibility still determines whether a special or a pack can be uploaded. Changing the episode coordinates does not remove known multi-episode source membership.
+
+Existing prepared releases are rebuilt after this update. Older binaries do not support saved season-zero corrections.
 
 | Option                        | Aliases                                           | Purpose                                                                                     |
 | ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -320,16 +324,45 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 
 ### HDR analysis options
 
-| Option                      | Purpose                                                                               |
-| --------------------------- | ------------------------------------------------------------------------------------- |
-| `--hdr-analysis`            | Generate HDR10+ plots during upload.                                                  |
-| `--hdr-analysis-only`       | Analyze one MKV or Blu-ray content root without configuration or upload.              |
-| `--hdr-targets <id,id>`     | Select prepared opaque target IDs in source order for upload.                         |
-| `--hdr-playlist <number>`   | Select a numeric MPLS basename in standalone disc mode.                               |
-| `--hdr-peak-source <value>` | Choose `histogram` (default), `histogram99`, `max-scl`, or `max-scl-luminance`.       |
-| `--hdr-output-dir <path>`   | Required output parent for standalone mode; each run creates a fresh child directory. |
+| Option                         | Purpose                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `--hdr-analysis`               | Generate native HDR plots and primary-audio analysis before upload.                                                      |
+| `--hdr-analysis-only`          | Analyze one supported HDR file or Blu-ray content root without configuration or upload.                                  |
+| `--hdr-targets <id,id>`        | Select prepared opaque target IDs in source order for upload.                                                            |
+| `--hdr-playlist <number>`      | Select a numeric MPLS basename in standalone disc mode.                                                                  |
+| `--hdr-peak-source <value>`    | Choose `histogram` (default), `histogram99`, `max-scl`, or `max-scl-luminance`.                                          |
+| `--hdr-output-dir <path>`      | Required output parent for standalone mode; each run creates a fresh child directory.                                    |
+| `--hdr-formats <value>`        | Select `auto` (default), `hdr10plus`, `dolby-vision`, or `both`.                                                         |
+| `--hdr-metadata-only`          | Generate native plots without automatic audio or picture measurement.                                                    |
+| `--hdr-audio-only`             | Explicitly request native plots and primary audio without pictures, the default mode.                                    |
+| `--hdr-pictures`               | Add sampled automatic picture checks to native metadata and audio.                                                       |
+| `--hdr-full-frames`            | Select full-frame automatic picture checks instead of sampling; slower.                                                  |
+| `--hdr-boundary-sync`          | Decode bounded windows at selected HDR10+ and Dolby Vision scene boundaries.                                             |
+| `--hdr-boundary-audio=false`   | Disable audio in bounded mode; audio is otherwise enabled there by default.                                              |
+| `--hdr-all-audio-tracks`       | Analyze all prepared audio tracks instead of the primary track; maximum 64. Requires an audio-enabled mode.              |
+| `--hdr-decoder-threads <n>`    | Video threads: `0` uses the mode default; `1`–`64` requests a maximum subject to resource limits. Requires picture work. |
+| `--hdr-scene-sync`             | Select the individual decoded scene check against Dolby Vision markers.                                                  |
+| `--hdr-active-area`            | Check decoded picture borders against Dolby Vision active areas.                                                         |
+| `--hdr-compare-source <path>`  | Explicit local reference source B for grade or colour checks.                                                            |
+| `--hdr-compare-offset <n>`     | Confirm the frame mapping `B = A + n`; explicit zero is required for aligned sources.                                    |
+| `--hdr-compare-crop <l,t,w,h>` | Common coded-pixel crop for both sources; positive even width and height must fit both.                                  |
+| `--hdr-grade`                  | Compare brightness and PQ values against the selected reference.                                                         |
+| `--hdr-colour`                 | Compare colour distributions against the selected reference.                                                             |
 
-Every selected target must complete for requested upload analysis. See [HDR analysis](../workflow/hdr-analysis.md) for supported inputs, local examples, retained metadata, and recovery.
+For requested upload analysis, every selected target needs usable native metadata or, when audio was requested, usable audio output. Partial results can qualify; canceled and interrupted attempts cannot. A comparison requires source B, an explicit offset, a crop, and at least one of `--hdr-grade` or `--hdr-colour`. Bounded mode accepts audio and active-area checks, but cannot combine metadata-only, audio-only, automatic pictures, full-frame pictures, the individual scene check, or comparison options. `--hdr-boundary-audio` requires bounded mode even when explicitly false.
+
+Individual picture flags select manual work rather than the default audio operation. For scene checks, borders, and audio together, use `--hdr-boundary-sync --hdr-active-area`. See [HDR analysis](../workflow/hdr-analysis.md) for examples and the limits of sampled and bounded coverage.
+
+#### Retained HDR workflows
+
+| Option                       | Purpose                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--hdr-resume-workflow <id>` | Resume the exact retained active CLI workflow without replacing its request.                                     |
+| `--hdr-retry-attempt <id>`   | Identify the retained analysis attempt for a new decoded measurement pass. Requires retry modes.                 |
+| `--hdr-retry-modes <list>`   | Explicit unsuccessful decoded modes to measure again, from the current retained request. Requires an attempt ID. |
+| `--hdr-image-ids <id,id>`    | Select exact current HDR artifact IDs for descriptions on continuation.                                          |
+
+Retry and image-selection flags require `--hdr-resume-workflow`; do not combine resume with either new-analysis flag. Retry measurements before selecting their new artifact IDs, in separate invocations. Resume accepts configuration, logging, and unattended options but cannot change the retained analysis request. Use IDs from the retained workflow; they are opaque. A decoded retry does not authorize a native metadata rescan.
 
 ### Audio analysis
 

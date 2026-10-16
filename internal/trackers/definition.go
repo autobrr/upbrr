@@ -114,6 +114,8 @@ type PreparationRuntime struct {
 	DBPath string
 	// Description contains projected description-layout settings only.
 	Description config.DescriptionSettingsConfig
+	// ToneMap preserves the screenshot setting used by description notices.
+	ToneMap bool
 	// Internal reports whether the release group is internal for the target tracker.
 	Internal bool
 	// BTNAPIToken is the resolved BTN API credential used only by the BTN adapter.
@@ -125,13 +127,14 @@ func PreparationRuntimeFromConfig(cfg config.Config) PreparationRuntime {
 	return PreparationRuntime{
 		DBPath:      cfg.MainSettings.DBPath,
 		Description: cfg.Description,
+		ToneMap:     cfg.ScreenshotHandling.ToneMap,
 		BTNAPIToken: config.ResolveBTNAPIToken(cfg),
 	}
 }
 
 // DescriptionConfig returns a configuration containing only projected description layout settings.
 func (r PreparationRuntime) DescriptionConfig() config.Config {
-	return config.Config{Description: r.Description}
+	return config.Config{Description: r.Description, ScreenshotHandling: config.ScreenshotHandlingConfig{ToneMap: r.ToneMap}}
 }
 
 // Definition is the required preparation contract for a registered tracker.

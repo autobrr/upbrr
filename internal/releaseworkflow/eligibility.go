@@ -489,8 +489,9 @@ func normalizeDownstreamTrackerID(value api.TrackerID) api.TrackerID {
 	return api.TrackerID(strings.ToUpper(strings.TrimSpace(string(value))))
 }
 
-// TrackerImageHostFailure returns the terminal image-host failure that blocks
-// one tracker in the retained media snapshot.
+// TrackerImageHostFailure returns the image-host failure that blocks one tracker
+// in the retained media snapshot. Explicit skip ignores known failures but keeps
+// unknown external outcomes blocked until reconciliation.
 func TrackerImageHostFailure(media api.MediaArtifactSet, trackerID api.TrackerID) (api.WorkflowFailure, bool) {
 	trackerID = normalizeDownstreamTrackerID(trackerID)
 	if trackerID == "" {
@@ -500,6 +501,9 @@ func TrackerImageHostFailure(media api.MediaArtifactSet, trackerID api.TrackerID
 		if failure.Failure.Operation != api.OperationKindImageHosting {
 			continue
 		}
+		if skippedTerminalImageHostFailure(media, failure) {
+			continue
+		}
 		if normalizeDownstreamTrackerID(failure.TrackerID) == trackerID {
 			return failure, true
 		}
@@ -507,8 +511,16 @@ func TrackerImageHostFailure(media api.MediaArtifactSet, trackerID api.TrackerID
 	return api.WorkflowFailure{}, false
 }
 
+// skippedTerminalImageHostFailure identifies retained hosting failures that an
+// explicit skip can bypass; unknown external outcomes remain authoritative.
+func skippedTerminalImageHostFailure(media api.MediaArtifactSet, failure api.WorkflowFailure) bool {
+	return media.ImageHostUploadSkipped && failure.Failure.Operation == api.OperationKindImageHosting &&
+		failure.Failure.Code != api.OperationFailureUnknownOutcome
+}
+
 // DownstreamEligibleProjectionsAfterMedia removes trackers with terminal
 // tracker-scoped image-host failures from the regular post-dupe eligible set.
+// Explicit skip preserves eligibility for known failures, never unknown outcomes.
 func DownstreamEligibleProjectionsAfterMedia(
 	projections api.TrackerReleaseProjectionSet,
 	dupes api.DupeAssessment,

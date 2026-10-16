@@ -257,6 +257,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		Episode: api.EpisodeFacts{
 			Season:            meta.SeasonInt,
 			Episode:           meta.EpisodeInt,
+			MultipleEpisodes:  meta.MultipleEpisodes,
 			SeasonLabel:       meta.SeasonStr,
 			EpisodeLabel:      meta.EpisodeStr,
 			DailyDate:         meta.DailyEpisodeDate,
@@ -355,6 +356,10 @@ func singletonFact(value string) []string {
 }
 
 func collectedResources(meta preparationstate.State) CollectedResources {
+	hdrEvidence := make(map[string]api.HDRSourceEvidence, len(meta.HDRFileEvidence))
+	for path, evidence := range meta.HDRFileEvidence {
+		hdrEvidence[canonicalSourceKey(path)] = evidence
+	}
 	hdrFiles := make(map[string]bool, len(meta.HDRFileEligibility))
 	for path, eligible := range meta.HDRFileEligibility {
 		hdrFiles[canonicalSourceKey(path)] = eligible
@@ -365,6 +370,7 @@ func collectedResources(meta preparationstate.State) CollectedResources {
 		FileList:              append([]string(nil), meta.FileList...),
 		MediaInfoJSONPath:     meta.MediaInfoJSONPath,
 		HDRFileEligibility:    hdrFiles,
+		HDRFileEvidence:       hdrEvidence,
 		MediaInfoTextPath:     meta.MediaInfoTextPath,
 		DVDIFOPath:            meta.DVDIFOPath,
 		DVDVOBPath:            meta.DVDVOBPath,

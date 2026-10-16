@@ -2417,14 +2417,17 @@ for (const size of [
         const imageBox = await image.boundingBox();
         expect(imageBox?.width).toBe(size.width);
         expect(imageBox?.height).toBe(size.height);
-        await scrollArea.evaluate((element) => element.scrollTo(0, 0));
-        const start = await scrollArea.evaluate((element) => {
-          const box = element.getBoundingClientRect();
-          const img = element.querySelector("img")!.getBoundingClientRect();
-          return { left: img.left - box.left, top: img.top - box.top };
-        });
-        expect(start.left).toBeGreaterThanOrEqual(0);
-        expect(start.top).toBe(0);
+        // Keyboard scrolling can still animate after the viewport changes.
+        await expect
+          .poll(async () => {
+            await scrollArea.evaluate((element) => element.scrollTo(0, 0));
+            return scrollArea.evaluate((element) => {
+              const box = element.getBoundingClientRect();
+              const img = element.querySelector("img")!.getBoundingClientRect();
+              return { leftInBounds: img.left >= box.left, top: img.top - box.top };
+            });
+          })
+          .toEqual({ leftInBounds: true, top: 0 });
         const overflow = await scrollArea.evaluate((element) => ({
           x: element.scrollWidth > element.clientWidth,
           y: element.scrollHeight > element.clientHeight,
@@ -2440,19 +2443,21 @@ for (const size of [
             .poll(() => scrollArea.evaluate((element) => element.scrollTop))
             .toBeGreaterThan(0);
         }
-        await scrollArea.evaluate((element) =>
-          element.scrollTo(element.scrollWidth, element.scrollHeight),
-        );
-        const end = await scrollArea.evaluate((element) => {
-          const box = element.getBoundingClientRect();
-          const img = element.querySelector("img")!.getBoundingClientRect();
-          return {
-            right: img.right - (box.left + element.clientWidth),
-            bottom: img.bottom - (box.top + element.clientHeight),
-          };
-        });
-        expect(end.right).toBeLessThanOrEqual(1);
-        expect(end.bottom).toBeLessThanOrEqual(1);
+        await expect
+          .poll(async () => {
+            await scrollArea.evaluate((element) =>
+              element.scrollTo(element.scrollWidth, element.scrollHeight),
+            );
+            return scrollArea.evaluate((element) => {
+              const box = element.getBoundingClientRect();
+              const img = element.querySelector("img")!.getBoundingClientRect();
+              return {
+                rightInBounds: img.right - (box.left + element.clientWidth) <= 1,
+                bottomInBounds: img.bottom - (box.top + element.clientHeight) <= 1,
+              };
+            });
+          })
+          .toEqual({ rightInBounds: true, bottomInBounds: true });
         await expect(close).toBeInViewport();
       }
       await close.click();

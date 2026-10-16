@@ -3737,7 +3737,7 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 				ID:       "artifact-1",
 				Kind:     api.MediaArtifactScreenshot,
 				Purpose:  api.ScreenshotPurposeFinal,
-				Selected: true,
+				Selected: false,
 			}},
 			Status: api.StageStatusCompleted,
 		}, privateMedia, nil
@@ -3820,9 +3820,21 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 		Instructions:     api.MediaCaptureInstructions{ScreenshotCount: 1, Purpose: api.ScreenshotPurposeFinal},
 	})
 	mediaRef := *result.Workflow.Media
+	result = executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            mediaRef,
+		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
+		SkipUpload:       true,
+	})
+	if result.Media == nil || !result.Media.ImageRequirementsPrepared || !result.Media.ImageHostUploadSkipped || !result.Media.Artifacts[0].Selected {
+		t.Fatalf("skipped image hosting did not satisfy the media barrier: %#v", result.Media)
+	}
+	mediaRef = *result.Workflow.Media
 	result = executeCommand(t, module, GenerateDescriptionsCommand{
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
+		Instructions:     api.DescriptionInstructions{ImageHost: api.ImageHostOverrides{SkipUpload: new(true)}},
 	})
 	result = executeCommand(t, module, DryRunUploadsCommand{
 		WorkflowID:       result.Workflow.ID,
@@ -3938,6 +3950,187 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	replayed := executeCommand(t, module, retry)
 	if replayed.Media == nil || replayed.Media.ID != deleted.Media.ID || privateMedia.stats.deletions != 2 {
 		t.Fatalf("idempotent delete = %#v deletions=%d", replayed.Media, privateMedia.stats.deletions)
+	}
+}
+
+func TestSelectExplicitMediaArtifactsSelectsOnlyRequestedLocalMedia(t *testing.T) {
+	snapshot := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{
+		{ID: "screen", Kind: api.MediaArtifactScreenshot},
+		{ID: "menu", Kind: api.MediaArtifactDVDMenu},
+		{ID: "other", Kind: api.MediaArtifactHostedImage},
+	}}
+
+	selectExplicitMediaArtifacts(&snapshot, []api.PublicResourceID{"screen"})
+
+	if !snapshot.Artifacts[0].Selected || snapshot.Artifacts[1].Selected || snapshot.Artifacts[2].Selected {
+		t.Fatalf("explicit artifact selection: %#v", snapshot.Artifacts)
+	}
+}
+
+type hostSpecificMediaMutator struct {
+	mediaArtifactBuilderFunc
+	host string
+}
+
+func (m *hostSpecificMediaMutator) Attach(
+	_ context.Context,
+	_ api.ReleaseRef,
+	_ api.TrackerReleaseProjectionSet,
+	_ *api.MediaArtifactSet,
+	_ any,
+	_ []StagedMediaAttachment,
+	_ time.Time,
+) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	return api.MediaArtifactSet{}, nil, errors.New("attach is not used by host-specific skip exit test")
+}
+
+func (m *hostSpecificMediaMutator) UploadImages(
+	_ context.Context,
+	_ api.ReleaseRef,
+	_ api.TrackerReleaseProjectionSet,
+	snapshot api.MediaArtifactSet,
+	retained any,
+	artifactIDs []api.PublicResourceID,
+	host string,
+	_ bool,
+	_ time.Time,
+) (api.MediaArtifactSet, RetainedMediaResource, []api.HostedImageAttempt, error) {
+	if host == "" {
+		host = m.host
+	}
+	updated := snapshot
+	updated.Artifacts = append(slices.Clone(snapshot.Artifacts), api.MediaArtifact{
+		ID:       api.PublicResourceID("hosted-" + host),
+		Kind:     api.MediaArtifactHostedImage,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Selected: true,
+		Source:   string(artifactIDs[0]),
+		Host:     host,
+		URL:      "https://images.example/" + host + ".png",
+	})
+	resource, _ := retained.(RetainedMediaResource)
+	return updated, resource, []api.HostedImageAttempt{{
+		Host:        host,
+		ArtifactIDs: slices.Clone(artifactIDs),
+		Results:     []api.MediaArtifact{updated.Artifacts[len(updated.Artifacts)-1]},
+	}}, nil
+}
+
+func (m *hostSpecificMediaMutator) RemoveHostedImages(
+	_ context.Context,
+	_ api.ReleaseRef,
+	_ api.MediaArtifactSet,
+	_ any,
+	_ []api.PublicResourceID,
+	_ time.Time,
+) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	return api.MediaArtifactSet{}, nil, errors.New("remove hosted is not used by host-specific skip exit test")
+}
+
+func TestUploadMediaImagesClearsPreparationWhenLeavingSkipViaHost(t *testing.T) {
+	t.Parallel()
+
+	privateMedia := &retainedMediaResourceFake{stats: &retainedMediaResourceStats{}}
+	mediaBuilder := &hostSpecificMediaMutator{
+		host: "alpha-host",
+		mediaArtifactBuilderFunc: mediaArtifactBuilderFunc(func(
+			_ context.Context,
+			_ api.ReleaseRef,
+			projections api.TrackerReleaseProjectionSet,
+			_ api.MediaCaptureInstructions,
+			_ time.Time,
+		) (api.MediaArtifactSet, any, error) {
+			fingerprint, err := mediaRequirementsFingerprint(projections.Projections)
+			if err != nil {
+				return api.MediaArtifactSet{}, nil, err
+			}
+			return api.MediaArtifactSet{
+				RequirementsFingerprint: fingerprint,
+				CaptureFingerprint:      testFingerprint(t, "leave-skip-host"),
+				Status:                  api.StageStatusCompleted,
+				Artifacts: []api.MediaArtifact{{
+					ID:       "artifact-1",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Selected: true,
+				}},
+			}, privateMedia, nil
+		}),
+	}
+	module, _ := newTestModule(
+		t,
+		testPreparer(),
+		WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+		WithDupeAssessmentBuilder(readyDupeBuilder(t)),
+		WithMediaArtifactBuilder(mediaBuilder),
+	)
+	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-leave-skip-host"})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: `C:\releases\Example.Release.2026.1080p-GRP`},
+	})
+	result = executeTestPublication(t, module, trackerContextPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Catalog:          testCatalog(t),
+		Runtime:          testRuntime(t),
+		Selection:        api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}},
+	})
+	projectionSet := testProjectionSet(t)
+	for index := range projectionSet.Projections {
+		projectionSet.Projections[index].Artifacts.ScreenshotCount = 1
+	}
+	result = executeTestPublication(t, module, projectionSetPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Snapshot:         projectionSet,
+	})
+	result = executeCommand(t, module, PreflightTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CheckDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CaptureMediaCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Instructions:     api.MediaCaptureInstructions{ScreenshotCount: 1, Purpose: api.ScreenshotPurposeFinal},
+	})
+	mediaRef := *result.Workflow.Media
+	result = executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            mediaRef,
+		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
+		SkipUpload:       true,
+	})
+	if result.Media == nil || !result.Media.ImageRequirementsPrepared || !result.Media.ImageHostUploadSkipped {
+		t.Fatalf("skipped media barrier: %#v", result.Media)
+	}
+	mediaRef = *result.Workflow.Media
+	result = executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            mediaRef,
+		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
+		Host:             "alpha-host",
+	})
+	if result.Media == nil {
+		t.Fatal("host-specific upload returned no media")
+	}
+	if result.Media.ImageHostUploadSkipped {
+		t.Fatalf("host-specific upload retained skip flag: %#v", result.Media)
+	}
+	if result.Media.ImageRequirementsPrepared {
+		t.Fatalf("leaving skip via host-specific upload retained full preparation: %#v", result.Media)
+	}
+	if !slices.ContainsFunc(result.Media.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.Kind == api.MediaArtifactHostedImage && artifact.Host == "alpha-host"
+	}) {
+		t.Fatalf("host-specific upload missing hosted artifact: %#v", result.Media.Artifacts)
 	}
 }
 

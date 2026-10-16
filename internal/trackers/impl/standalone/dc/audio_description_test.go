@@ -14,7 +14,7 @@ import (
 func TestAudioAnalysisFallsBetweenMenusAndScreenshots(t *testing.T) {
 	t.Parallel()
 	got := buildDescription(trackers.PreparationInput{}, trackers.DescriptionAssets{
-		Description: "Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
+		Description: "Notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		MenuImages:  []api.ScreenshotImage{{WebURL: "https://images.example.invalid/menu", RawURL: "https://images.example.invalid/menu.png"}},
 		Screenshots: []api.ScreenshotImage{{WebURL: "https://images.example.invalid/shot", RawURL: "https://images.example.invalid/shot.png"}},
 	})

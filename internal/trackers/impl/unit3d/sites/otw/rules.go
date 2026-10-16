@@ -16,7 +16,7 @@ import (
 // ValidationPolicy returns OTW's content restrictions, package checks and
 // metadata requirements, including unresolved audio naming evidence.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v5", Check: checkRequirements}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v6", Check: checkRequirements}
 }
 
 func checkGenres(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {

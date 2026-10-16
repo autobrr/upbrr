@@ -98,6 +98,44 @@ func TestCompositeUploadHDRFailureReleasesSessionForRetry(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadCombinedAudioWithoutNativeMetadata(t *testing.T) {
+	for _, missingSibling := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missingSibling=%t", missingSibling), func(t *testing.T) {
+			module, _, _ := newCompositeUploadTestModule(t)
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "combined-audio")
+			ids := []string{api.HDRTargetID(request.Source.Path, "")}
+			if missingSibling {
+				ids = append(ids, api.HDRTargetID(request.Source.Path, "second"))
+			}
+			preparer := testPreparer()
+			preparer.DisplayFunc = func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
+				targets := make([]api.HDRAnalysisTarget, 0, len(ids))
+				for _, id := range ids {
+					targets = append(targets, api.HDRAnalysisTarget{ID: id, Supported: true})
+				}
+				return api.PreparedReleaseDisplay{HDRTargets: targets}, nil
+			}
+			module.preparer = preparer
+			module.hdrAnalysisBuilder = &hdrBuilderFixture{decodedOnly: true, partial: missingSibling}
+			request.HDRAnalysis = &api.HDRAnalysisRequest{TargetIDs: ids, Decoded: &api.HDRDecodedOptions{Audio: true}}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			current := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-combined-audio")
+			if missingSibling {
+				if current.Operation.Status != api.StageStatusFailed || current.Descriptions != nil || current.DryRun != nil {
+					t.Fatalf("missing target outputs bypassed HDR requirement: %+v", current)
+				}
+			} else if current.Operation.Status != api.StageStatusCompleted || current.Descriptions == nil || current.DryRun == nil ||
+				!current.Workflow.HDRAnalysisEnabled {
+				t.Fatalf("combined audio could not reach descriptions: %+v", current)
+			}
+		})
+	}
+}
+
 func TestCompositeUploadInitialOpenRequestsExternalProviderLoad(t *testing.T) {
 	t.Parallel()
 	module, _, _ := newCompositeUploadTestModule(t)
@@ -2590,5 +2628,31 @@ func TestCompositeUploadFactInstructionsReleaseVersion(t *testing.T) {
 	got, err := compositeUploadFactInstructions(api.ReleaseWorkflowUploadFacts{}, nil)
 	if err != nil || got.ReleaseName.Repack != nil {
 		t.Fatalf("automatic=%#v error=%v", got.ReleaseName, err)
+	}
+}
+
+func TestNormalizeCompositeUploadRequestPropagatesSkipImageHostUpload(t *testing.T) {
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "skip-image-host-upload")
+	request.ImageHosting.SkipUpload = new(true)
+
+	session, _, err := normalizeCompositeUploadRequest(request)
+	if err != nil {
+		t.Fatalf("normalize composite upload request: %v", err)
+	}
+	if !session.Intent.SkipImageHostUpload {
+		t.Fatalf("skip image-host upload was not retained in workflow intent: %#v", session.Intent)
+	}
+}
+
+func TestNormalizeCompositeUploadRequestPreservesImageHostingWhenNotSkipped(t *testing.T) {
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "host-images")
+	request.ImageHosting.SkipUpload = new(false)
+
+	session, _, err := normalizeCompositeUploadRequest(request)
+	if err != nil {
+		t.Fatalf("normalize composite upload request: %v", err)
+	}
+	if session.Intent.SkipImageHostUpload {
+		t.Fatalf("image-host upload was skipped for an explicit false request: %#v", session.Intent)
 	}
 }

@@ -14,6 +14,9 @@ import (
 
 // SiteProfile contains site-owned Unit3D taxonomy and preparation callbacks.
 type SiteProfile struct {
+	// AllowSeasonZeroEpisodes admits explicitly identified individual specials.
+	// Packs, missing season evidence, and known multiple episodes remain blocked.
+	AllowSeasonZeroEpisodes bool
 	// AdjustTitleSearchParams broadens only the dedicated preflight title lookup.
 	// Ordinary duplicate searches retain AdjustSearchParams behavior.
 	AdjustTitleSearchParams func(url.Values)

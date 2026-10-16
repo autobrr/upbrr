@@ -28,6 +28,7 @@ const (
 )
 
 type compositeUploadSession struct {
+	ComparisonSelection      *api.HDRComparisonSelection                 `json:"comparisonSelection,omitempty"`
 	Version                  int                                         `json:"version"`
 	RequestFingerprint       api.WorkflowFingerprint                     `json:"requestFingerprint"`
 	Intent                   api.WorkflowIntent                          `json:"intent"`
@@ -360,6 +361,8 @@ func (m *Module) adoptCompositeInput(
 	return current, true, err
 }
 
+// normalizeCompositeUploadRequest resolves upload choices into retained continuation
+// intent and release facts. An absent image-host skip choice defaults to hosting.
 func normalizeCompositeUploadRequest(
 	request api.CreateReleaseWorkflowUploadRequest,
 ) (*compositeUploadSession, api.ReleaseFactInstructions, error) {
@@ -441,6 +444,7 @@ func normalizeCompositeUploadRequest(
 		DuplicateDecisions:     decisions,
 		Media:                  &media,
 		MediaSelection:         selection,
+		SkipImageHostUpload:    optionalBool(request.ImageHosting.SkipUpload),
 		Descriptions:           &descriptions,
 		NoSeed:                 optionalBool(request.Client.NoSeed),
 	}
@@ -457,6 +461,7 @@ func normalizeCompositeUploadRequest(
 		}
 	}
 	session := &compositeUploadSession{
+		ComparisonSelection:      request.HDRComparisonSelection,
 		Version:                  compositeUploadSessionVersion,
 		RequestFingerprint:       fingerprint,
 		Intent:                   intent,
@@ -1015,6 +1020,7 @@ func (m *Module) runCompositeUpload(
 				Recovery:  api.OperationRecoverySelectTrackers,
 			}, errors.New("release workflow composite upload has no remaining trackers"))
 		}
+
 		intent := compositeContinuationIntent(initial, session)
 		request := api.ContinueReleaseWorkflowRequest{
 			Authority: &api.WorkflowAuthority{
@@ -1074,6 +1080,20 @@ func (m *Module) runCompositeUpload(
 			continue
 		}
 		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), command.ExpectedRevision+1)
+		if session.ComparisonSelection != nil && current.Release != nil && stage == "hdr-selection-required" {
+			release := current.Release.Release
+			if _, err := m.execute(ctx, ownerID, SelectHDRComparisonCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+				Release:          api.ReleaseRef{SourcePath: release.Source.SourcePath, Generation: release.Generation},
+				SourcePath:       session.ComparisonSelection.Path,
+				ForComposite:     true,
+				IdempotencyKey:   compositeUploadOperationKey(string(session.RequestFingerprint)+":comparison", uint64(current.Workflow.Revision)),
+			}); err != nil {
+				return CommandResult{}, fmt.Errorf("select composite HDR comparison: %w", err)
+			}
+			continue
+		}
 		if next == nil {
 			if stage == "hdr-selection-required" || stage == "hdr-analysis-failed" {
 				if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "hdr_requirement_unmet"); err != nil {

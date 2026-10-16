@@ -1224,6 +1224,20 @@ func TestWorkflowUploadPlanFailsTerminalImageHostTrackerAndRestoresAfterRetry(t 
 		t.Fatalf("failed image-host upload plan = %#v", failed)
 	}
 
+	media.ImageHostUploadSkipped = true
+	skippedPlan, skippedExecution, err := builder.Build(
+		t.Context(), projections, dupes, workflowDupePrivateEvidence{}, media, workflowMediaPrivateArtifacts{}, descriptions,
+		api.DescriptionInstructions{Options: api.UploadOptions{SkipAutoTorrent: true}}, releaseworkflow.UploadPlanBuildOptions{}, time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build upload plan after explicit host skip: %v", err)
+	}
+	defer func() { _ = skippedExecution.Release() }()
+	if len(skippedPlan.Trackers) != 2 || !skippedPlan.Trackers[1].Eligible || len(service.projections) != 2 ||
+		service.subject.ExactMedia == nil || !service.subject.ExactMedia.ImageHostUploadSkipped {
+		t.Fatalf("skip retained upload exclusion or lost upload opt-out: plan=%+v subject=%+v", skippedPlan, service.subject)
+	}
+	media.ImageHostUploadSkipped = false
 	media.Failures = nil
 	retryPlan, retryExecution, err := builder.Build(
 		context.Background(),

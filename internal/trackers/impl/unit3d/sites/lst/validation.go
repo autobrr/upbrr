@@ -15,7 +15,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "unit3d-lst-payload-v8",
+		ID: "unit3d-lst-payload-v9",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
@@ -31,6 +31,7 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				}
 			}
 			failures = append(failures, lstDeterministicFailures(subject)...)
+			failures = append(failures, encodeAudioGuidance(subject)...)
 			return failures, nil
 		},
 	}

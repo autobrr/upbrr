@@ -394,8 +394,183 @@ func aitherTVDBEvidence() *api.TVDBMetadata {
 func TestAitherProfileUsesStructuredPolicy(t *testing.T) {
 	t.Parallel()
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/aither/v7" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/aither/v8" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("AITHER policy = %#v", policy)
+	}
+}
+
+func TestAitherHDDVDNumbering(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, category, season, episode, want string
+		manualOmission                        bool
+	}{
+		{
+			name:     "TV episode",
+			category: "TV",
+			season:   "S02",
+			episode:  "E03",
+			want:     "Example Release S02E03 1080p HDDVD VC-1 DD+ 5.1-GRP",
+		},
+		{
+			name:     "TV season",
+			category: "TV",
+			season:   "S02",
+			want:     "Example Release S02 1080p HDDVD VC-1 DD+ 5.1-GRP",
+		},
+		{
+			name:     "unknown numbering",
+			category: "TV",
+			want:     "Example Release 1080p HDDVD VC-1 DD+ 5.1-GRP",
+		},
+		{
+			name:           "manual omission",
+			category:       "TV",
+			season:         "S02",
+			episode:        "E03",
+			manualOmission: true,
+			want:           "Example Release 1080p HDDVD VC-1 DD+ 5.1-GRP",
+		},
+		{
+			name:     "movie",
+			category: "MOVIE",
+			season:   "S02",
+			episode:  "E03",
+			want:     "Example Release 1080p HDDVD VC-1 DD+ 5.1-GRP",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:   test.category,
+				Type:       "DISC",
+				DiscType:   "HDDVD",
+				Source:     "HDDVD",
+				Title:      "Example Release",
+				Season:     test.season,
+				Episode:    test.episode,
+				Resolution: "1080p",
+				VideoCodec: "VC-1",
+				Audio:      "DD+ 5.1",
+				Tag:        "-GRP",
+			}, []string{"English"})
+			if test.manualOmission {
+				markAitherManual(t, subject.GeneratedName, api.NameRoleSeason)
+				markAitherManual(t, subject.GeneratedName, api.NameRoleEpisode)
+			}
+			if got := aitherReviewedName(t, subject, nil); got != test.want {
+				t.Fatalf("reviewed name = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestAitherAbsentAudioPreservesManualAndUnknownNames(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, audio, want string
+		absent, manual    bool
+	}{
+		{name: "unknown audio", want: "Example Film 2026 576p WEB-DL H.264-GRP"},
+		{
+			name:   "manual audio",
+			audio:  "Custom Audio 2.0",
+			absent: true,
+			manual: true,
+			want:   "Example Film 2026 576p WEB-DL Custom Audio 2.0 H.264-GRP",
+		},
+		{
+			name:   "manual omission",
+			absent: true,
+			manual: true,
+			want:   "Example Film 2026 576p WEB-DL H.264-GRP",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "WEBDL",
+				Title:       "Example Film",
+				Year:        2026,
+				Resolution:  "576p",
+				Audio:       test.audio,
+				VideoEncode: "H.264",
+				Tag:         "-GRP",
+			}, nil)
+			subject.LanguageFacts.AudioAbsent = test.absent
+			if test.manual {
+				markAitherManual(t, subject.GeneratedName, api.NameRoleAudio)
+			}
+			if got := aitherReviewedName(t, subject, nil); got != test.want {
+				t.Fatalf("reviewed name = %q, want %q", got, test.want)
+			}
+			override := "Exact Manual Name-GRP"
+			if got := aitherReviewedName(t, subject, &override); got != override {
+				t.Fatalf("manual name = %q, want %q", got, override)
+			}
+		})
+	}
+}
+
+func TestAitherOrdinaryTVFormats(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, releaseType, discType, source, want string
+	}{
+		{"WEB download", "WEBDL", "", "", "1080p WEB-DL DD 5.1 x264"},
+		{"WEB rip", "WEBRIP", "", "", "1080p WEBRip DD 5.1 x264"},
+		{"encode", "ENCODE", "", "BluRay", "1080p BluRay DD 5.1 x264"},
+		{"Blu-ray remux", "REMUX", "", "BluRay", "1080p BluRay REMUX AVC DD 5.1"},
+		{"HDDVD remux", "REMUX", "", "HDDVD", "1080p HDDVD REMUX AVC DD 5.1"},
+		{"Blu-ray disc", "DISC", "BDMV", "BluRay", "1080p BluRay AVC DD 5.1"},
+		{"DVD remux", "REMUX", "", "PAL DVD", "576p PAL DVD REMUX MPEG-2 DD 5.1"},
+		{"DVD disc", "DISC", "DVD", "PAL DVD", "576p PAL DVD9 MPEG-2 DD 5.1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolution, codec := "1080p", "AVC"
+			if test.source == "PAL DVD" {
+				resolution, codec = "576p", "MPEG-2"
+			}
+			subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:    "TV",
+				Type:        test.releaseType,
+				DiscType:    test.discType,
+				Source:      test.source,
+				Title:       "Example Series",
+				Season:      "S02",
+				Episode:     "E03",
+				Resolution:  resolution,
+				DVDSize:     "DVD9",
+				VideoCodec:  codec,
+				VideoEncode: "x264",
+				Audio:       "DD 5.1",
+				Tag:         "-GRP",
+			}, []string{"English"})
+			if got, want := aitherReviewedName(t, subject, nil), "Example Series S02E03 "+test.want+"-GRP"; got != want {
+				t.Fatalf("reviewed name = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestAitherAutomaticDualAudioPreservesManualComponents(t *testing.T) {
+	t.Parallel()
+	for _, role := range []api.ReleaseNameRole{api.NameRoleAudio, api.NameRoleDualAudio, api.NameRoleVideoEncode} {
+		t.Run(string(role), func(t *testing.T) {
+			subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "DVDRIP",
+				Title:       "Example Film",
+				Year:        2026,
+				Resolution:  "480p",
+				Audio:       "Dual-Audio DD 5.1",
+				VideoEncode: "x264",
+				Tag:         "-GRP",
+			}, []string{"Japanese", "English"})
+			markAitherManual(t, subject.GeneratedName, role)
+			if got, want := aitherReviewedName(t, subject, nil), "Example Film 2026 480p DVDRip Dual-Audio DD 5.1 x264-GRP"; got != want {
+				t.Fatalf("reviewed name = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

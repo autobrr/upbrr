@@ -5,6 +5,7 @@ package lst
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -12,6 +13,46 @@ import (
 
 // Rules retains LST's independent MediaInfo requirement.
 func Rules() *trackers.RuleSet { return &trackers.RuleSet{RequireValidMISetting: true} }
+
+// encodeAudioGuidance recommends sample-depth reduction only for an inspected
+// primary programme track. Unknown evidence never creates a recommendation.
+func encodeAudioGuidance(subject api.TrackerValidationSubject) []api.RuleFailure {
+	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) || !strings.EqualFold(subject.Type, "ENCODE") ||
+		!strings.EqualFold(subject.Release.Resolution, "1080p") || subject.LanguageFacts.PrimaryAudioTrackID == "" {
+		return nil
+	}
+	var primary *api.MediaTrackFacts
+	for i := range subject.LanguageFacts.Tracks {
+		track := &subject.LanguageFacts.Tracks[i]
+		if track.ID != subject.LanguageFacts.PrimaryAudioTrackID {
+			continue
+		}
+		if primary != nil {
+			return nil
+		}
+		primary = track
+	}
+	if primary == nil || primary.Kind != api.MediaTrackAudio || primary.Role != api.AudioRoleProgramme || primary.Commentary ||
+		!primary.StreamOrderKnown || primary.StreamOrder < 0 || !strings.EqualFold(primary.Codec, "FLAC") || primary.BitDepth != 24 ||
+		!primary.ChannelsKnown || (primary.Channels != 1 && primary.Channels != 2) {
+		return nil
+	}
+	for _, track := range subject.LanguageFacts.Tracks {
+		if track.Kind != api.MediaTrackAudio || track.ID == primary.ID || track.ResourceID != primary.ResourceID ||
+			track.Commentary || track.Role == api.AudioRoleCommentary || track.Role == api.AudioRoleCompatibility {
+			continue
+		}
+		if !track.StreamOrderKnown || track.StreamOrder <= primary.StreamOrder {
+			return nil
+		}
+	}
+	return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
+		"guidance_lst_flac_bit_depth",
+		"For a 1080p encode, LST recommends dithering the primary 24-bit mono/stereo FLAC audio to 16-bit.",
+		api.RuleDispositionAdvisory,
+		api.MetadataEvidenceStatusComplete,
+	)}
+}
 
 func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {

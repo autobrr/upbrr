@@ -265,19 +265,21 @@ func resolveDescriptionAssets(
 	} else {
 		description = sanitizeTrackerDescription(tracker, description, registry)
 	}
-	audioBlock, err := exactAudioDescriptionBlock(tracker, meta.ExactMedia)
-	if err != nil {
-		return DescriptionAssets{}, err
-	}
-	if audioBlock != "" && !final {
-		// An edited generated description may already include the previous block.
-		// Replace that owned section while preserving literal examples and surrounding text.
-		description = descriptiontext.MapOutsideLiteralBlocks(description, func(value string) string {
-			return comparison.MapOutsideBlocks(value, func(fragment string) string {
-				return sourceAudioBlockPattern.ReplaceAllString(fragment, "")
+	if !final {
+		audioBlock, err := exactAudioDescriptionBlock(tracker, meta.ExactMedia)
+		if err != nil {
+			return DescriptionAssets{}, err
+		}
+		if audioBlock != "" || meta.ExactMedia != nil {
+			// An edited generated description may already include the previous block.
+			// Replace that owned section while preserving literal examples and surrounding text.
+			description = descriptiontext.MapOutsideLiteralBlocks(description, func(value string) string {
+				return comparison.MapOutsideBlocks(value, func(fragment string) string {
+					return sourceAudioBlockPattern.ReplaceAllString(fragment, "")
+				})
 			})
-		})
-		description = strings.TrimSpace(strings.Join([]string{description, audioBlock}, "\n\n"))
+			description = strings.TrimSpace(strings.Join([]string{description, audioBlock}, "\n\n"))
+		}
 	}
 	if !final && meta.ExactMedia != nil {
 		hdrBlock, hdrErr := exactHDRDescriptionBlock(tracker, meta.ExactMedia)
@@ -302,31 +304,43 @@ func resolveDescriptionAssets(
 	}, nil
 }
 
-var sourceAudioBlockPattern = regexp.MustCompile(`(?is)\[spoiler=source_audio\].*?\[/spoiler\]`)
+var sourceAudioBlockPattern = regexp.MustCompile(`(?is)\[spoiler=(?:source_audio|Audio Plots)\].*?\[/spoiler\]`)
 
+// exactAudioDescriptionBlock renders exact hosted graphs and textual statistics
+// for one tracker. Missing graph variants are errors unless hosting was explicitly
+// skipped, in which case compatible graphs and statistics are still rendered.
 func exactAudioDescriptionBlock(tracker string, exact *api.ExactMediaAssets) (string, error) {
-	if exact == nil || len(exact.AudioTracks) == 0 {
+	if exact == nil {
 		return "", nil
 	}
 	images := make([]string, 0)
 	stats := make([]string, 0)
 	selectedHost := strings.TrimSpace(exact.AudioUploadHosts[strings.ToUpper(strings.TrimSpace(tracker))])
-	if len(exact.AudioUploadHosts) > 0 && selectedHost == "" {
+	hostUnavailable := len(exact.AudioTracks) > 0 && len(exact.AudioUploadHosts) > 0 && selectedHost == ""
+	if hostUnavailable && !exact.ImageHostUploadSkipped {
 		return "", fmt.Errorf("trackers: hosted audio analysis image is unavailable for %s", tracker)
 	}
 	for _, track := range exact.AudioTracks {
 		label := fmt.Sprintf("Audio track %d", track.Ordinal)
-		if len(track.Images) > 0 {
-			images = append(images, "[b]"+label+"[/b]")
-		}
+		labeled := false
 		for _, image := range track.Images {
+			if hostUnavailable {
+				continue
+			}
 			upload, ok := exactUploadedVariant(tracker, image.Path, exact.AudioUploads, selectedHost)
 			graphURL := strings.TrimSpace(upload.RawURL)
 			if graphURL == "" {
 				graphURL = strings.TrimSpace(upload.ImgURL)
 			}
 			if !ok || graphURL == "" {
+				if exact.ImageHostUploadSkipped {
+					continue
+				}
 				return "", fmt.Errorf("trackers: hosted audio analysis image is unavailable for %s", tracker)
+			}
+			if !labeled {
+				images = append(images, "[b]"+label+"[/b]")
+				labeled = true
 			}
 			images = append(images, "[img]"+graphURL+"[/img]")
 		}
@@ -338,10 +352,15 @@ func exactAudioDescriptionBlock(tracker string, exact *api.ExactMediaAssets) (st
 	if len(stats) > 0 {
 		parts = append(parts, "[code]"+strings.Join(stats, "\n\n")+"[/code]")
 	}
+	hdrAudio, err := exactHDRDescriptionParts(tracker, exact, true)
+	if err != nil {
+		return "", err
+	}
+	parts = append(parts, hdrAudio...)
 	if len(parts) == 0 {
 		return "", nil
 	}
-	return "[spoiler=source_audio]\n" + strings.Join(parts, "\n") + "\n[/spoiler]", nil
+	return "[spoiler=Audio Plots]\n" + strings.Join(parts, "\n") + "\n[/spoiler]", nil
 }
 
 func applyResolvedDescriptionScreenshots(
