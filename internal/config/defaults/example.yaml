@@ -247,6 +247,11 @@ trackers:
     passkey: ""
     uploader_name: ""
     anon: false
+  FLD:
+    link_dir_name: ""
+    api_key: ""
+    announce_url: ""
+    anon: false
   FRIKI:
     link_dir_name: ""
     api_key: ""

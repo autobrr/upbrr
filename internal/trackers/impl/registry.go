@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/dc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ff"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/fl"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/fld"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/gpw"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdb"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hds"
@@ -164,6 +165,7 @@ func standaloneDefinitions() []trackers.Definition {
 		dc.New(),
 		ff.New(),
 		fl.New(),
+		fld.New(),
 		gpw.New(),
 		hds.New(),
 		hdt.New(),
