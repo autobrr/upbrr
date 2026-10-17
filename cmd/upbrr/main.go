@@ -66,7 +66,23 @@ func printCLIError(output io.Writer, err error) {
 }
 
 func formatCLIError(err error) string {
-	if failure, ok := api.AsOperationFailure(err); ok {
+	if operationErr, ok := errors.AsType[*api.OperationError](err); ok {
+		// Format joined siblings separately, but never descend into an
+		// OperationError's private cause.
+		for current := err; current != nil; current = errors.Unwrap(current) {
+			if current == operationErr { //nolint:errorlint // Stop at the exact structured error to keep its private cause hidden.
+				break
+			}
+			if joined, ok := current.(interface{ Unwrap() []error }); ok {
+				causes := joined.Unwrap()
+				messages := make([]string, 0, len(causes))
+				for _, cause := range causes {
+					messages = append(messages, formatCLIError(cause))
+				}
+				return strings.Join(messages, "\n")
+			}
+		}
+		failure := operationErr.Failure()
 		message := logging.SanitizeMessage(failure.Message)
 		if failure.Recovery != "" && failure.Recovery != api.OperationRecoveryNone {
 			return fmt.Sprintf("%s (recovery: %s)", message, failure.Recovery)
