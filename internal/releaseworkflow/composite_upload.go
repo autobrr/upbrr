@@ -100,7 +100,10 @@ func (c CompositeUploadCommand) operationKind() api.OperationKind {
 	if c.Goal == api.WorkflowGoalDryRun {
 		return api.OperationKindUploadDryRun
 	}
-	return api.OperationKindUploadExecute
+	if c.Goal == api.WorkflowGoalUploaded {
+		return api.OperationKindUploadExecute
+	}
+	return api.OperationKindUnknown
 }
 func (c CompositeUploadCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
 	return canonicalCommandFingerprint(struct {
@@ -1177,7 +1180,8 @@ func compositeMissingGlobalInputMessage(snapshot *api.InputReadinessSnapshot) st
 	if snapshot != nil {
 		for _, field := range snapshot.Fields {
 			if len(field.TrackerIDs) != 0 ||
-				(field.Status != api.InputReadinessFieldMissing && field.Status != api.InputReadinessFieldInvalid) {
+				(field.Status != api.InputReadinessFieldMissing && field.Status != api.InputReadinessFieldInvalid) ||
+				api.NormalizeRuleDisposition(field.Disposition) == api.RuleDispositionAdvisory {
 				continue
 			}
 			switch field.Key {

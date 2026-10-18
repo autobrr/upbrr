@@ -53,6 +53,69 @@ func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadCommandRejectsUnsupportedGoals(t *testing.T) {
+	t.Parallel()
+	for _, goal := range []api.WorkflowGoal{
+		"", "unsupported", api.WorkflowGoalPrepared, api.WorkflowGoalInputReady,
+		api.WorkflowGoalTrackersProjected, api.WorkflowGoalTrackersAssessed,
+		api.WorkflowGoalDuplicatesDecided, api.WorkflowGoalMediaReady,
+		api.WorkflowGoalDescriptionsReady, api.WorkflowGoalUploadReviewed,
+	} {
+		t.Run(string(goal), func(t *testing.T) {
+			t.Parallel()
+			module, repository, _ := newCompositeUploadTestModule(t)
+			command := CompositeUploadCommand{
+				WorkflowID:     "unsupported-goal",
+				Goal:           goal,
+				IdempotencyKey: "unsupported-goal",
+			}
+			operation, err := module.Start(t.Context(), testOwnerID, command)
+			if !errors.Is(err, ErrInvalidTransition) || operation.ID != "" {
+				t.Fatalf("unsupported goal admission = %#v, %v", operation, err)
+			}
+			if count := compositeUploadTestOperationCount(repository, command.WorkflowID); count != 0 {
+				t.Fatalf("unsupported goal created %d operations", count)
+			}
+		})
+	}
+	for goal, want := range map[api.WorkflowGoal]api.OperationKind{
+		api.WorkflowGoalDryRun:   api.OperationKindUploadDryRun,
+		api.WorkflowGoalUploaded: api.OperationKindUploadExecute,
+	} {
+		if got, ok := CommandOperationKind(CompositeUploadCommand{Goal: goal}); !ok || got != want {
+			t.Fatalf("supported goal %s operation kind = %s, %v", goal, got, ok)
+		}
+	}
+}
+
+func TestCompositeMissingGlobalInputMessageExcludesAdvisoryFields(t *testing.T) {
+	t.Parallel()
+	for _, disposition := range []api.RuleDisposition{api.RuleDispositionAdvisory, "warning"} {
+		t.Run(string(disposition), func(t *testing.T) {
+			t.Parallel()
+			snapshot := &api.InputReadinessSnapshot{Fields: []api.InputReadinessFieldOutcome{
+				{
+					Key:         "source",
+					Status:      api.InputReadinessFieldMissing,
+					Disposition: disposition,
+				},
+				{
+					Key:         "type",
+					Status:      api.InputReadinessFieldInvalid,
+					Disposition: api.RuleDispositionStrict,
+				},
+			}}
+			if !inputReadinessBlocked(snapshot) {
+				t.Fatal("strict invalid type should block input readiness")
+			}
+			want := "Required input is missing or invalid: Release type. Edit the input and retry."
+			if got := compositeMissingGlobalInputMessage(snapshot); got != want {
+				t.Fatalf("missing input message = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestCompositeUploadMissingGlobalInputReportsOriginalBlocker(t *testing.T) {
 	t.Parallel()
 
