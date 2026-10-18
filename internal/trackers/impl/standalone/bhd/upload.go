@@ -105,27 +105,29 @@ func submitPreparedUpload(
 			message = "upload failed"
 		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: BHD api error: %s", message)
-	case 1:
-		return api.UploadSummary{Uploaded: 1, PendingPublication: true}, nil
-	case 2:
-		// Live uploads require the registered torrent ID handled below.
+	case 1, 2:
+		// Draft and live uploads both authorize retention for client injection.
 	default:
 		return api.UploadSummary{}, fmt.Errorf("trackers: BHD unsupported upload status code %d", response.StatusCode)
 	}
 
-	torrentID := extractTorrentID(response.StatusMessage)
-	if torrentID == "" {
-		return api.UploadSummary{}, errors.New("trackers: BHD upload succeeded but torrent id was not returned")
+	var torrentID, torrentURL, downloadURL string
+	if response.StatusCode == 2 {
+		torrentID = extractTorrentID(response.StatusMessage)
+		if torrentID == "" {
+			return api.UploadSummary{}, errors.New("trackers: BHD upload succeeded but torrent id was not returned")
+		}
+		torrentURL = strings.TrimRight(bhdBaseURL, "/") + "/details/" + torrentID
+		downloadURL = strings.TrimRight(bhdBaseURL, "/") + "/torrent/download/" + torrentID
 	}
-	torrentURL := strings.TrimRight(bhdBaseURL, "/") + "/details/" + torrentID
-	downloadURL := strings.TrimRight(bhdBaseURL, "/") + "/torrent/download/" + torrentID
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
 		req.Logger, "BHD", state.torrentPath, artifactPath, announceURL, "BHD",
 	)
 
 	return api.UploadSummary{
-		Uploaded: 1,
+		Uploaded:           1,
+		PendingPublication: response.StatusCode == 1,
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "BHD",
 			TorrentID:   torrentID,

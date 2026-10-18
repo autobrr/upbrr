@@ -1092,6 +1092,12 @@ use `trackers.LogRegisteredTorrentUnavailable` and leave the successful remote u
 Client injection consumes this registered authority; never substitute the pre-upload prepared
 torrent as if it were tracker-registered.
 
+A successful draft may retain registered authority before publication. BHD returns
+`PendingPublication: true` with an `UploadedTorrents` entry and reconstructs the personalized
+artifact after confirmed draft success. Leave unavailable remote IDs and URLs empty. A matching
+entry enables normal client injection, including actionable artifact failures; pending summaries
+without that authority remain deferred. Explicit skip-client-injection options still apply.
+
 ### 4. Keep category/type handling local
 
 Map the standalone protocol's categories, types, resolutions, sources, codecs, audio/languages,

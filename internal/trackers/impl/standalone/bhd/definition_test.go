@@ -4,6 +4,7 @@
 package bhd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -12,6 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/go-torrent/bencode"
+	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -483,12 +487,6 @@ func TestUploadClassifiesDraftAndLiveResponses(t *testing.T) {
 			}
 			if summary.Uploaded != 1 || summary.PendingPublication != test.wantPendingPublish {
 				t.Fatalf("unexpected upload summary: %#v", summary)
-			}
-			if test.wantID == "" {
-				if len(summary.UploadedTorrents) != 0 {
-					t.Fatalf("draft must not return registered torrent authority: %#v", summary.UploadedTorrents)
-				}
-				return
 			}
 			if len(summary.UploadedTorrents) != 1 || summary.UploadedTorrents[0].TorrentID != test.wantID {
 				t.Fatalf("unexpected uploaded torrent: %#v", summary.UploadedTorrents)
@@ -974,5 +972,80 @@ func TestDefinitionDVDRipDryRunIncludesResolution(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestDraftUploadRetainsPersonalizedTorrent(t *testing.T) {
+	t.Parallel()
+	for _, artifactState := range []string{"valid", "missing source", "corrupt source", "unwritable destination"} {
+		t.Run(artifactState, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			source := filepath.Join(dir, "prepared.torrent")
+			output := filepath.Join(dir, "draft.torrent")
+			infoBytes, err := bencode.Marshal(metainfo.Info{
+				Name:        "Example.Release.2026",
+				PieceLength: 16384,
+				Pieces:      make([]byte, 20),
+				Length:      1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload bytes.Buffer
+			if err := (&metainfo.MetaInfo{InfoBytes: infoBytes}).Write(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if artifactState == "corrupt source" {
+				payload.Reset()
+				payload.WriteString("invalid")
+			}
+			if artifactState != "missing source" {
+				if err := os.WriteFile(source, payload.Bytes(), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if artifactState == "unwritable destination" {
+				if err := os.Mkdir(output, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"status_code":1,"status_message":"Torrent saved as draft"}`)
+			}))
+			defer server.Close()
+			summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{Logger: api.NopLogger{}}, uploadState{torrentPath: source}, server.URL, nil, "application/octet-stream", "https://tracker.invalid/announce", output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if summary.Uploaded != 1 || !summary.PendingPublication || len(summary.UploadedTorrents) != 1 {
+				t.Fatal("draft lost successful pending submission authority")
+			}
+			uploaded := summary.UploadedTorrents[0]
+			if uploaded.Tracker != "BHD" || uploaded.TorrentID != "" || uploaded.TorrentURL != "" || uploaded.DownloadURL != "" {
+				t.Fatal("draft returned incorrect or fabricated remote identity")
+			}
+			if artifactState != "valid" {
+				if uploaded.TorrentPath != "" {
+					t.Fatal("failed retention returned artifact authority")
+				}
+				return
+			}
+			if uploaded.TorrentPath != output || uploaded.TorrentPath == source {
+				t.Fatal("draft did not retain a separate registered artifact")
+			}
+			retained, err := metainfo.LoadFromFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := retained.UnmarshalInfo()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if retained.Announce != "https://tracker.invalid/announce" || info.Source != "BHD" || info.Name != "Example.Release.2026" {
+				t.Fatal("draft artifact was not correctly personalized")
+			}
+		})
 	}
 }

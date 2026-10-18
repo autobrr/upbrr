@@ -2502,7 +2502,8 @@ type TagOverride struct {
 type UploadSummary struct {
 	Uploaded         int
 	UploadedTorrents []UploadedTorrent
-	// PendingPublication reports that a successful submission has no registered torrent until the tracker publishes it.
+	// PendingPublication reports a successful submission awaiting tracker publication.
+	// UploadedTorrents may still authorize client injection before publication.
 	PendingPublication bool
 }
 

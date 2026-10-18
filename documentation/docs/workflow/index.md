@@ -152,6 +152,8 @@ Deleting a release from History removes its associated local workflow, effect, a
 
 Client injection is enabled by default when configured. Disable it explicitly with CLI `--no-seed` or the corresponding Web UI upload option.
 
+A successful draft can be injected before publication when the tracker integration supplies registered torrent authority. It remains unpublished on the tracker. If that artifact is unavailable or injection fails, the result reports the local failure separately from the completed submission.
+
 Check save path, category, tags, automatic management, staging mode, and source-file access. Hardlink, reflink, and symlink staging have filesystem-specific requirements.
 
 ## Debug and unattended modes
