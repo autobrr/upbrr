@@ -3,6 +3,8 @@ title: Upload workflow
 description: How upbrr turns one source into reviewed tracker operations and registered torrent artifacts.
 ---
 
+{/* Modified 2026-10-14 for #625: clarify composite upload stop and recovery. */}
+
 # Upload workflow
 
 upbrr separates source preparation, tracker decisions, media work, payload review, submission, and post-upload effects. Each stage consumes the exact prepared state approved by earlier stages.
@@ -61,6 +63,8 @@ Overrides change the prepared generation. Later operations must use that exact g
 Web UI refresh verifies the source and reuses provider evidence whose lookup inputs still match. When finalized metadata is unchanged, ordinary refresh preserves valid duplicate decisions, including corrections that resolve to the same facts. Refreshing a successfully completed workflow reopens preparation; confirmed uploads remain excluded from resubmission. A correction can still produce a new prepared generation: earlier decisions return only after the backend verifies equivalent finalized facts, compatible tracker projections and current private evidence. Missing or expired evidence, changed metadata, changed tracker policy or incompatible preparation inputs requires fresh review; rebinding does not extend the original evidence lifetime. Staff-token attestations are renewed when evidence is rebound. Explicit fresh-provider preparation also renews the prepared generation and its dependent review, even when the provider returns the same values. It preserves compatible screenshot content and hosted links. Reset requests a new preparation of the source; source or capture changes can make earlier images incompatible. A provider failure is reported rather than presenting old provider data as fresh.
 
 Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
+
+If a composite upload stops because a required global source or type is missing, its operation reports an input failure rather than a completed upload. Edit the missing fields on Input, then retry from the latest workflow state. If another stage stops without a next action, review its retained stop reason before retrying; a stopped operation is not proof of a successful tracker submission.
 
 Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year still follows eligible TVDB alias evidence.
 

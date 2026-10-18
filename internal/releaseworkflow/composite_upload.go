@@ -1,5 +1,6 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Modified 2026-10-14 for #625: retain composite upload stop reasons and terminal failures.
 
 package releaseworkflow
 
@@ -1118,10 +1119,38 @@ func (m *Module) runCompositeUpload(
 					errors.New("release workflow composite upload has no eligible tracker lanes"),
 				)
 			}
-			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "no_viable_transition"); err != nil {
+			if stage == "input-not-ready" {
+				failure := api.OperationFailure{
+					Code:      api.OperationFailureInvalidInput,
+					Operation: command.operationKind(),
+					Message:   compositeMissingGlobalInputMessage(current.InputReadiness),
+					Recovery:  api.OperationRecoveryEditInput,
+				}
+				if err := m.failCompositeSession(ctx, ownerID, command.WorkflowID, operationID, stage, failure); err != nil {
+					return CommandResult{}, err
+				}
+				return CommandResult{}, api.NewOperationError(failure, ErrInvalidTransition)
+			}
+			if stage == "" && compositeUploadTerminalDuplicateResult(current) {
+				if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "terminal_duplicate"); err != nil {
+					return CommandResult{}, err
+				}
+				return m.Current(ctx, ownerID, command.WorkflowID)
+			}
+			reason := stage
+			if reason == "" {
+				reason = "no_viable_transition"
+			}
+			failure := api.OperationFailure{
+				Code:      api.OperationFailureMissingPrerequisite,
+				Operation: command.operationKind(),
+				Message:   "Upload stopped before completion at " + reason + ". Review the workflow state and retry.",
+				Recovery:  api.OperationRecoveryReviewAgain,
+			}
+			if err := m.failCompositeSession(ctx, ownerID, command.WorkflowID, operationID, reason, failure); err != nil {
 				return CommandResult{}, err
 			}
-			return m.Current(ctx, ownerID, command.WorkflowID)
+			return CommandResult{}, api.NewOperationError(failure, ErrInvalidTransition)
 		}
 		m.reportCompositeStage(ctx, ownerID, command.WorkflowID, operationID, current, stage, api.StageStatusRunning, 0)
 		if _, err := m.execute(ctx, ownerID, next); err != nil {
@@ -1142,6 +1171,28 @@ func (m *Module) runCompositeUpload(
 		Message:   "The upload exceeded its defensive transition limit.",
 		Recovery:  api.OperationRecoveryRetry,
 	}, errors.New("release workflow composite upload transition limit exceeded"))
+}
+
+func compositeMissingGlobalInputMessage(snapshot *api.InputReadinessSnapshot) string {
+	var missing []string
+	if snapshot != nil {
+		for _, field := range snapshot.Fields {
+			if len(field.TrackerIDs) != 0 ||
+				(field.Status != api.InputReadinessFieldMissing && field.Status != api.InputReadinessFieldInvalid) {
+				continue
+			}
+			switch field.Key {
+			case "source":
+				missing = append(missing, "Release source")
+			case "type":
+				missing = append(missing, "Release type")
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return "Required release input is missing or invalid. Edit the input and retry."
+	}
+	return "Required input is missing or invalid: " + strings.Join(missing, ", ") + ". Edit the input and retry."
 }
 
 func compositeContinuationIntent(initial CommandResult, session *compositeUploadSession) api.WorkflowIntent {
@@ -1788,9 +1839,12 @@ func compositeUploadTerminalStatus(result CommandResult) api.StageStatus {
 	if result.DryRun != nil {
 		return api.StageStatusCompleted
 	}
+	if compositeUploadTerminalDuplicateResult(result) {
+		return api.StageStatusCompleted
+	}
 	terminalProjection := result
 	terminalProjection.Operation = nil
-	disposition := terminalProjection.Continuation.Disposition
+	disposition := projectWorkflowContinuation(terminalProjection).Disposition
 	switch disposition {
 	case api.WorkflowDispositionNeedsAction:
 		return api.StageStatusBlocked
@@ -1801,12 +1855,27 @@ func compositeUploadTerminalStatus(result CommandResult) api.StageStatus {
 	case api.WorkflowDispositionCanceled:
 		return api.StageStatusCanceled
 	case api.WorkflowDispositionSucceeded, api.WorkflowDispositionNone:
-		if result.UploadResult != nil {
-			return api.StageStatusExecuted
+		if compositeUploadResult(result) != nil {
+			return api.StageStatusCompleted
 		}
-		return api.StageStatusCompleted
+		return api.StageStatusFailed
 	}
-	return api.StageStatusCompleted
+	return api.StageStatusFailed
+}
+
+func compositeUploadTerminalDuplicateResult(result CommandResult) bool {
+	if result.Selection == nil || result.Dupes == nil || len(result.Selection.TrackerIDs) == 0 {
+		return false
+	}
+	descriptor := compositeUploadResult(result)
+	if descriptor == nil || descriptor.Kind != api.WorkflowOperationResultDupes {
+		return false
+	}
+	return !slices.ContainsFunc(result.Selection.TrackerIDs, func(trackerID api.TrackerID) bool {
+		return !slices.ContainsFunc(result.Dupes.Results, func(assessment api.TrackerDupeAssessment) bool {
+			return assessment.TrackerID == trackerID && assessment.Decision == api.DupeDecisionAccepted
+		})
+	})
 }
 
 // compositeUploadResult identifies a completed upload or dry run, an already-uploaded

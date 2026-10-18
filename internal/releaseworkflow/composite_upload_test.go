@@ -1,5 +1,6 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Modified 2026-10-14 for #625: cover input recovery and terminal stop classification.
 
 package releaseworkflow
 
@@ -50,6 +51,151 @@ func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	if state.Composite == nil || state.Composite.ActiveOperationID != "" ||
 		state.Composite.TerminalReason != "feedback_required" || state.Workflow.TrackerApproval != nil {
 		t.Fatalf("composite terminal session = %#v", state.Composite)
+	}
+}
+
+func TestCompositeUploadMissingGlobalInputReportsOriginalBlocker(t *testing.T) {
+	t.Parallel()
+
+	module, repository, uploads := newCompositeUploadTestModule(t)
+	preparer := testPreparer()
+	inputsCorrected := false
+	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+		subject := api.UploadSubject{
+			SourcePath:  input.Release.SourcePath,
+			ReleaseName: "Example.Release.2026.1080p-GRP",
+			Trackers:    append([]string(nil), input.Trackers...),
+		}
+		if inputsCorrected {
+			subject.Source = "bluray"
+			subject.Type = "movie"
+		}
+		return subject, nil
+	}
+	module.preparer = preparer
+
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "missing-global-input")
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start composite upload: %v", err)
+	}
+	current := waitCompositeUploadTestOperation(t, module, started)
+	if current.Operation.Status != api.StageStatusFailed || len(current.Operation.Failures) != 1 {
+		t.Fatalf("missing input operation = %#v", current.Operation)
+	}
+	failure := current.Operation.Failures[0].Failure
+	if failure.Code != api.OperationFailureInvalidInput || failure.Recovery != api.OperationRecoveryEditInput ||
+		!strings.Contains(failure.Message, "Release source") || !strings.Contains(failure.Message, "Release type") {
+		t.Fatalf("missing input failure = %#v", failure)
+	}
+	if current.InputReadiness == nil ||
+		!inputReadinessFieldMissing(current.InputReadiness.Fields, "source") ||
+		!inputReadinessFieldMissing(current.InputReadiness.Fields, "type") ||
+		current.Projections != nil || current.Dupes != nil || current.UploadResult != nil || uploads.execution != nil {
+		t.Fatalf("missing input reached upload path: %#v; execution=%#v", current, uploads.execution)
+	}
+	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load composite upload state: %v", err)
+	}
+	if state.Composite == nil || state.Composite.ActiveOperationID != "" || state.Composite.TerminalReason != "input-not-ready" {
+		t.Fatalf("missing input terminal session = %#v", state.Composite)
+	}
+	if state.Workflow.Status != api.WorkflowStatusFailed || len(state.Workflow.Failures) != 1 ||
+		state.Workflow.Failures[0].Failure != failure {
+		t.Fatalf("missing input persisted workflow status=%s failures=%#v", state.Workflow.Status, state.Workflow.Failures)
+	}
+	readback, err := module.Operation(t.Context(), testOwnerID, current.Workflow.ID, current.Operation.ID)
+	if err != nil || readback.Status != api.StageStatusFailed || len(readback.Failures) != 1 ||
+		readback.Failures[0].Failure != failure {
+		t.Fatalf("missing input operation readback = %#v, %v", readback, err)
+	}
+	workflowReadback, err := module.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("read missing input workflow: %v", err)
+	}
+	if workflowReadback.Workflow.Status != api.WorkflowStatusFailed ||
+		len(workflowReadback.Workflow.Failures) != 1 || workflowReadback.Workflow.Failures[0].Failure != failure {
+		t.Fatalf("missing input workflow readback status=%s failures=%#v",
+			workflowReadback.Workflow.Status, workflowReadback.Workflow.Failures)
+	}
+
+	inputsCorrected = true
+	request.Authority = &api.WorkflowAuthority{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+	}
+	request.IdempotencyKey = "corrected-global-input"
+	resumed, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("resume after correcting input: %v", err)
+	}
+	next := waitCompositeUploadTestOperation(t, module, resumed)
+	if next.InputReadiness == nil || inputReadinessBlocked(next.InputReadiness) ||
+		next.Projections == nil || next.Operation.Status != api.StageStatusBlocked || uploads.execution != nil {
+		t.Fatalf("corrected input did not resume to tracker approval: %#v; execution=%#v", next, uploads.execution)
+	}
+}
+
+func TestCompositeUploadUnexpectedNoTransitionRetainsFailure(t *testing.T) {
+	t.Parallel()
+
+	fixture := prepareCompletedCompositeUploadFixture(t)
+	module, repository, workflowID := newPersistedCompositeMediaFixture(t, fixture)
+	repository.mu.Lock()
+	state := repository.states[workflowID]
+	state.Workflow.Media = nil
+	state.Workflow.Descriptions = nil
+	state.Workflow.DryRun = nil
+	state.Workflow.UploadResult = nil
+	state.Workflow.Status = api.WorkflowStatusActive
+	state.Workflow.RequiredActions = nil
+	state.Workflow.Failures = nil
+	state.Composite.Goal = api.WorkflowGoalUploaded
+	state.Composite.Intent.Media = nil
+	state.Composite.ActiveOperationID = ""
+	state.Composite.TerminalReason = ""
+	repository.states[workflowID] = state
+	repository.mu.Unlock()
+
+	started, err := module.Start(t.Context(), testOwnerID, CompositeUploadCommand{
+		WorkflowID:         workflowID,
+		ExpectedRevision:   state.Workflow.Revision,
+		SessionFingerprint: state.Composite.RequestFingerprint,
+		Goal:               api.WorkflowGoalUploaded,
+		IdempotencyKey:     "missing-media-instructions",
+	})
+	if err != nil {
+		t.Fatalf("start no-transition composite upload: %v", err)
+	}
+	operation := waitForWorkflowOperation(t, module, workflowID, started.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	if operation.Status != api.StageStatusFailed || len(operation.Failures) != 1 {
+		t.Fatalf("no-transition operation = %#v", operation)
+	}
+	failure := operation.Failures[0].Failure
+	if failure.Code != api.OperationFailureMissingPrerequisite || failure.Recovery != api.OperationRecoveryReviewAgain ||
+		!strings.Contains(failure.Message, "capture-media") {
+		t.Fatalf("no-transition failure = %#v", failure)
+	}
+	retained, err := repository.Load(t.Context(), testOwnerID, workflowID)
+	if err != nil {
+		t.Fatalf("load no-transition workflow: %v", err)
+	}
+	if retained.Composite == nil {
+		t.Fatal("no-transition session was not retained")
+	}
+	if retained.Composite.ActiveOperationID != "" || retained.Composite.TerminalReason != "capture-media" ||
+		retained.Workflow.Status != api.WorkflowStatusFailed ||
+		len(retained.Workflow.Failures) != 1 || retained.Workflow.Failures[0].Failure.Code != failure.Code {
+		t.Fatalf("no-transition persisted status=%s reason=%q active=%q failures=%#v",
+			retained.Workflow.Status, retained.Composite.TerminalReason, retained.Composite.ActiveOperationID, retained.Workflow.Failures)
+	}
+	readback, err := module.Operation(t.Context(), testOwnerID, workflowID, started.ID)
+	if err != nil || readback.Status != api.StageStatusFailed || len(readback.Failures) != 1 ||
+		readback.Failures[0].Failure != failure {
+		t.Fatalf("no-transition operation readback = %#v, %v", readback, err)
 	}
 }
 
@@ -650,7 +796,7 @@ func TestCompositeUploadStrictDuplicateSupersedesSingleTrackerNameReview(t *test
 		t.Fatalf("start strict-duplicate name review: %v", err)
 	}
 	completed := waitCompositeUploadTestOperation(t, module, started)
-	if completed.Operation.Status == api.StageStatusBlocked || completed.Operation.Result == nil ||
+	if completed.Operation.Status != api.StageStatusCompleted || completed.Operation.Result == nil ||
 		completed.Operation.Result.Kind != api.WorkflowOperationResultDupes || completed.Dupes == nil {
 		t.Fatalf("strict-duplicate name review result = %#v", completed)
 	}
@@ -2606,6 +2752,45 @@ func TestCompositeUploadResultFallsBackToDuplicateAssessment(t *testing.T) {
 	result.Continuation.RequiredActions = []api.RequiredAction{{Status: api.RequiredActionStatusPending}}
 	if got := compositeUploadResult(result); got != nil {
 		t.Fatalf("blocked duplicate composite result = %#v, want nil", got)
+	}
+}
+
+func TestCompositeUploadTerminalStatusIgnoresRunningProjection(t *testing.T) {
+	tests := []struct {
+		name     string
+		workflow api.ReleaseWorkflow
+		want     api.StageStatus
+	}{
+		{
+			name: "pending action",
+			workflow: api.ReleaseWorkflow{RequiredActions: []api.RequiredAction{{
+				Status: api.RequiredActionStatusPending,
+			}}},
+			want: api.StageStatusBlocked,
+		},
+		{
+			name:     "failed workflow",
+			workflow: api.ReleaseWorkflow{Status: api.WorkflowStatusFailed},
+			want:     api.StageStatusFailed,
+		},
+		{
+			name: "no terminal result",
+			want: api.StageStatusFailed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CommandResult{
+				Workflow:  tt.workflow,
+				Operation: &api.WorkflowOperationStatus{Status: api.StageStatusRunning},
+				Continuation: api.WorkflowContinuation{
+					Disposition: api.WorkflowDispositionNone,
+				},
+			}
+			if got := compositeUploadTerminalStatus(result); got != tt.want {
+				t.Fatalf("terminal status = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }
 
