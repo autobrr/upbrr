@@ -286,7 +286,12 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		if latest.Revision != resolved.Corrections.Revision {
 			return api.PrepareResult{}, api.ErrCorrectionConflict
 		}
+		owned, err := m.resolveEnvelope(ctx, api.ReleaseRef{SourcePath: current.Source.SourcePath, Generation: current.Generation})
+		if err != nil {
+			return api.PrepareResult{}, err
+		}
 		return cloneResult(api.PrepareResult{
+			Diagnostics:           sourceSeasonDiagnostics(owned),
 			Release:               current,
 			EffectiveInstructions: input.Instructions,
 			Corrections:           resolved.Corrections,
@@ -472,6 +477,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		},
 		resources: mergePreparationResources(resourcesFromManifest(manifest, input), resourcesFromCollected(collected.Resources)),
 	}
+	owned.result.Diagnostics = append(owned.result.Diagnostics, sourceSeasonDiagnostics(owned)...)
 	m.publish(owned)
 	capturesPublished = true
 	commitFinish(nil)

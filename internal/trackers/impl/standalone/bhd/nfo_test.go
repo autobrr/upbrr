@@ -119,6 +119,7 @@ func TestPreparedUploadCapturesSceneNFO(t *testing.T) {
 					SourcePath:        filepath.Join(tmp, "Example.mkv"),
 					TorrentPath:       torrentPath,
 					MediaInfoTextPath: mediaInfoPath,
+					LanguageFacts:     bhdTestLanguageFacts("English", []string{"English"}, []string{"English"}),
 					Identity: api.ExternalIdentity{
 						TMDBID:   123,
 						IMDBID:   456,
