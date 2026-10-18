@@ -30,6 +30,66 @@ func TestCLICompositeDupeEvidenceIncludesBackendWarning(t *testing.T) {
 	}
 }
 
+func TestCLICompositeFailurePreservesInvalidInputRecovery(t *testing.T) {
+	t.Parallel()
+
+	for _, initialStatus := range []api.StageStatus{api.StageStatusQueued, api.StageStatusFailed} {
+		t.Run(string(initialStatus), func(t *testing.T) {
+			t.Parallel()
+			failure := api.OperationFailure{
+				Code:      api.OperationFailureInvalidInput,
+				Operation: api.OperationKindUploadExecute,
+				Message:   "Required input is missing or invalid: Release source. Edit the input and retry.",
+				Recovery:  api.OperationRecoveryEditInput,
+			}
+			operation := api.WorkflowOperationStatus{
+				ID:         "operation-invalid-input",
+				WorkflowID: "workflow-invalid-input",
+				Command:    "composite_upload",
+				Operation:  api.OperationKindUploadExecute,
+				Status:     api.StageStatusFailed,
+				Failures:   []api.WorkflowFailure{{Failure: failure}},
+			}
+			current := releaseworkflow.CommandResult{
+				Workflow: api.ReleaseWorkflow{
+					ID:       operation.WorkflowID,
+					Revision: 2,
+					Status:   api.WorkflowStatusFailed,
+				},
+				Operation: &operation,
+				Selection: &api.TrackerSelection{},
+			}
+			coreSvc := &cliWorkflowCoreFake{current: current, operation: operation}
+			coreSvc.startUploadFn = func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+				initial := operation
+				initial.Status = initialStatus
+				current.Operation = &initial
+				return current, nil
+			}
+			var output strings.Builder
+			session := &cliWorkflowSession{
+				core: coreSvc,
+				uploadRequest: api.Request{
+					SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+					Options:    api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+				},
+				streams: cliIO{out: &output},
+			}
+			uploaded, err := session.completeComposite(t.Context(), false, bufio.NewReader(strings.NewReader("")), config.Config{}, api.NopLogger{})
+			got, ok := api.AsOperationFailure(err)
+			if uploaded != 0 || !ok || got != failure {
+				t.Fatalf("composite failure = uploaded:%d failure:%#v err:%v", uploaded, got, err)
+			}
+			if got, want := formatCLIError(err), failure.Message+" (recovery: edit_input)"; got != want {
+				t.Fatalf("CLI failure = %q, want %q", got, want)
+			}
+			if strings.Contains(output.String(), "No trackers configured") {
+				t.Fatalf("failed composite reported a successful empty selection: %q", output.String())
+			}
+		})
+	}
+}
+
 func TestCLICompositeMediaUsesConfiguredScreenshotsUnlessOverridden(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

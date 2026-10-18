@@ -223,7 +223,10 @@ func (s *cliWorkflowSession) executeContinuation(
 	// Retain ownership before polling so canceled waits can close the exact input.
 	s.current = current
 	s.publishPresentation(ctx)
-	if current.Operation != nil && !isTerminalCLIWorkflowOperation(current.Operation.Status) {
+	if current.Operation != nil && isTerminalCLIWorkflowOperation(current.Operation.Status) {
+		return cliWorkflowOperationError(*current.Operation)
+	}
+	if current.Operation != nil {
 		completed, waitErr := s.waitForOperation(ctx, *current.Operation)
 		if waitErr != nil {
 			return waitErr
@@ -332,22 +335,31 @@ func (s *cliWorkflowSession) waitForOperation(
 			return api.WorkflowOperationStatus{}, err
 		}
 	}
+	if err := cliWorkflowOperationError(operation); err != nil {
+		return api.WorkflowOperationStatus{}, err
+	}
+	return operation, nil
+}
+
+// cliWorkflowOperationError preserves recovery metadata for terminal failures,
+// whether the operation was retained initially or completed during polling.
+func cliWorkflowOperationError(operation api.WorkflowOperationStatus) error {
 	if operation.Status == api.StageStatusCompleted ||
 		operation.Status == api.StageStatusBlocked ||
 		operation.Status == api.StageStatusPartial ||
 		operation.Status == api.StageStatusExecuted {
-		return operation, nil
+		return nil
 	}
 	if operation.Operation == api.OperationKindAudioAnalysis && operation.Status == api.StageStatusFailed && operation.Result != nil {
-		return operation, nil
+		return nil
 	}
 	if len(operation.Failures) > 0 {
-		return api.WorkflowOperationStatus{}, fmt.Errorf(
-			"upbrr: release workflow command: %s",
-			operation.Failures[0].Failure.Message,
+		return fmt.Errorf(
+			"upbrr: release workflow command: %w",
+			api.NewOperationError(operation.Failures[0].Failure, nil),
 		)
 	}
-	return api.WorkflowOperationStatus{}, fmt.Errorf(
+	return fmt.Errorf(
 		"upbrr: release workflow command ended with status %s",
 		operation.Status,
 	)

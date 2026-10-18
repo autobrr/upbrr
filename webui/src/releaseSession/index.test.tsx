@@ -4130,67 +4130,78 @@ describe("useReleaseSession", () => {
     }
   });
 
-  it("surfaces the safe failure retained by a terminal workflow operation", async () => {
-    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-failed");
-    const startedAt = "2026-07-20T00:00:00Z";
-    const queued = {
-      id: "operation-failed",
-      workflowId: "workflow-failed",
-      revision: 1,
-      sequence: 1,
-      command: "prepare",
-      operation: "preparation",
-      status: "queued",
-      progress: 0,
-      completed: 0,
-      total: 1,
-      startedAt,
-      updatedAt: startedAt,
-    } as const;
-    const failed = {
-      ...queued,
-      sequence: 2,
-      status: "failed",
-      progress: 100,
-      completed: 1,
-      message: "Operation failed.",
-      failures: [
-        {
-          failure: {
-            Code: "source_unavailable",
-            Operation: "preparation",
-            Message: "The source path is unavailable.",
-            Recovery: "edit_input",
+  it.each([
+    ["prepare", "preparation", "source_unavailable", "The source path is unavailable."],
+    [
+      "composite_upload",
+      "upload_execute",
+      "invalid_input",
+      "Required input is missing or invalid: Release source. Edit the input and retry.",
+    ],
+  ])(
+    "surfaces the safe failure retained by a terminal %s operation",
+    async (command, kind, code, message) => {
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-failed");
+      const startedAt = "2026-07-20T00:00:00Z";
+      const queued = {
+        id: "operation-failed",
+        workflowId: "workflow-failed",
+        revision: 1,
+        sequence: 1,
+        command,
+        operation: kind,
+        status: "queued",
+        progress: 0,
+        completed: 0,
+        total: 1,
+        startedAt,
+        updatedAt: startedAt,
+      } as const;
+      const failed = {
+        ...queued,
+        sequence: 2,
+        status: "failed",
+        progress: 100,
+        completed: 1,
+        message: "Operation failed.",
+        failures: [
+          {
+            failure: {
+              Code: code,
+              Operation: kind,
+              Message: message,
+              Recovery: "edit_input",
+            },
           },
-        },
-      ],
-      completedAt: startedAt,
-    } as const;
-    const current = vi
-      .fn()
-      .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: queued })
-      .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: failed });
-    const operation = vi.fn().mockResolvedValue(failed);
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          resumeWorkflowID: "workflow-failed",
-          workflow: workflowPorts({ current, operation }),
-        }),
-      ),
-    });
+        ],
+        completedAt: startedAt,
+      } as const;
+      const current = vi
+        .fn()
+        .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: queued })
+        .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: failed });
+      const operation = vi.fn().mockResolvedValue(failed);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: "workflow-failed",
+            workflow: workflowPorts({ current, operation }),
+          }),
+        ),
+      });
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
-      timeout: 3000,
-    });
-    expect(result.current.workflow.view.error).toBe(
-      "The source path is unavailable. Recovery: edit input.",
-    );
-    expect(result.current.workflow.view.failure?.Code).toBe("source_unavailable");
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
+        timeout: 3000,
+      });
+      expect(result.current.workflow.view.error).toBe(`${message} Recovery: edit input.`);
+      expect(result.current.workflow.view.failure).toEqual(failed.failures[0].failure);
+      expect(result.current.workflow.view.current?.operation?.status).toBe("failed");
+      expect(result.current.workflow.view.current?.operation?.result).toBeUndefined();
 
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
-  });
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
 
   it.each(["C:\\media\\Next.Release.2026.mkv", ""])(
     "preserves an unsubmitted source path %j until the active input changes",

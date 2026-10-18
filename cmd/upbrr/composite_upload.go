@@ -165,8 +165,11 @@ func (s *cliWorkflowSession) waitForCompositeUpload(
 	ctx context.Context,
 	current releaseworkflow.CommandResult,
 ) (releaseworkflow.CommandResult, error) {
-	if current.Operation == nil || isTerminalCLIWorkflowOperation(current.Operation.Status) {
+	if current.Operation == nil {
 		return current, nil
+	}
+	if isTerminalCLIWorkflowOperation(current.Operation.Status) {
+		return current, cliWorkflowOperationError(*current.Operation)
 	}
 	completed, waitErr := s.waitForOperation(ctx, *current.Operation)
 	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
