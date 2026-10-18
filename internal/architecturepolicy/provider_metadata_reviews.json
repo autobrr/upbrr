@@ -1096,8 +1096,8 @@
     "sha256": "e62b2547dbb023be8c4bfa8e89aa03e908ef2e830218d56eb631c1d8d0cfd205"
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:editionFeatures": {
-    "sha256": "818417e8e45f89d5790e0c8c96e0617f0674a778e81ca2fc5a7596ff6565e809",
-    "reason": "Independent manual-feature review: explicit ReleaseFeatures controls block only legacy catalogue-feature inference from opaque edition wording. Typed prepared features, distributor/manual provenance, physical disc evidence, Rifftrax and unrelated technical mappings remain unchanged. Regression coverage verifies explicit None versus typed selection and preserves opaque residual wording."
+    "sha256": "a282b8d95b01b7b3885aadd9a5ba40533589e84ba39a93eb3657faadca6d5a24",
+    "reason": "Independent manual-feature review: explicit ReleaseFeatures controls block legacy catalogue-feature inference from opaque edition wording. Already-selected typed feature labels are removed from residual display to avoid duplicates; explicit None retains opaque wording. Typed prepared features, distributor/manual provenance, physical disc evidence, Rifftrax and unrelated technical mappings remain unchanged. Fail-before/pass-after regression covers the selected-feature residual path."
   },
   "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveRemasterTitle": {
     "sha256": "0a52594a4722713c1bf718503b28aed50d1e84b5a6b16979262998862de80deb",

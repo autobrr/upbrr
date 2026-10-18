@@ -583,6 +583,10 @@ func editionFeatures(meta api.UploadSubject) []api.TrackerEditionFeature {
 			if meta.ReleaseNameOverrides.ReleaseFeatures != nil {
 				switch option.label {
 				case "2-Disc Set", "4K Restoration", "4K Remaster", "Extras", "2D/3D Edition", "3D Anaglyph", "3D Full SBS", "3D Half OU", "3D Half SBS":
+					if selected[option.label] != "" && option.pattern.MatchString(value.text) {
+						matched = true
+						residue = option.pattern.ReplaceAllString(residue, "")
+					}
 					continue
 				}
 			}

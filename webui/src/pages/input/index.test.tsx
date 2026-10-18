@@ -1855,6 +1855,29 @@ describe("InputPage", () => {
     },
   );
 
+  it("keeps features selected when their group caption is clicked", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: {
+          ...base.view.intent,
+          releaseName: { ReleaseFeatures: ["hybrid", "4k_restoration"] },
+        },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    fireEvent.click(screen.getByText("Release features", { exact: true }));
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    const group = screen.getByRole("group", { name: "Release features" });
+    expect(within(group).getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
+    expect(within(group).getByRole("checkbox", { name: "4K Restoration" })).toBeChecked();
+    fireEvent.click(within(group).getByRole("button", { name: "None Release features" }));
+    expect(facet.changeReleaseName).toHaveBeenCalledExactlyOnceWith({ ReleaseFeatures: [] });
+  });
+
   it("preserves unsupported presentation and features until explicitly corrected", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {

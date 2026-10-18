@@ -101,13 +101,11 @@ function ReleaseFeaturesInput({
       .map((feature) => ({ value: feature, label: `Unsupported current value: ${feature}` })),
   ];
   return (
-    <fieldset className="grid gap-2" aria-label="Release features">
-      <Button
-        id="correction-release_name.release_features-value"
-        type="button"
-        aria-label="None Release features"
-        onClick={() => onChange([])}
-      >
+    <fieldset
+      className="grid gap-2"
+      aria-labelledby="correction-release_name.release_features-label"
+    >
+      <Button type="button" aria-label="None Release features" onClick={() => onChange([])}>
         None
       </Button>
       {options.map((option) => (
@@ -190,6 +188,7 @@ function CorrectionRow({
   status,
   stale,
   trackId,
+  grouped = false,
   readOnly = false,
   onAuto,
   onConfirm,
@@ -200,6 +199,7 @@ function CorrectionRow({
   status: string;
   stale: boolean;
   trackId?: string;
+  grouped?: boolean;
   readOnly?: boolean;
   onAuto: () => void;
   onConfirm: () => void;
@@ -211,9 +211,15 @@ function CorrectionRow({
       data-correction-field={field}
       {...(trackId ? { "data-track-id": trackId } : {})}
     >
-      <label className="font-medium" htmlFor={`correction-${field}-${trackId || "value"}`}>
-        {label}
-      </label>
+      {grouped ? (
+        <span className="font-medium" id={`correction-${field}-label`}>
+          {label}
+        </span>
+      ) : (
+        <label className="font-medium" htmlFor={`correction-${field}-${trackId || "value"}`}>
+          {label}
+        </label>
+      )}
       <div className="flex min-w-0 items-start gap-2">
         <div className="min-w-0 flex-1 [&_input]:w-full">{children}</div>
         {!readOnly ? (
@@ -930,6 +936,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 label={label}
                 status={statusFor(field, manual)}
                 readOnly={readOnly}
+                grouped={key === "ReleaseFeatures"}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}

@@ -354,6 +354,10 @@ func TestExplicitFeaturesDoNotInferFromOpaqueEdition(t *testing.T) {
 		t.Fatalf("opaque wording changed: %q", got)
 	}
 	subject.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeature4KRestoration}
+	subject.ReleaseNameOverrides.ReleaseFeatures = new([]api.ReleaseFeature{api.ReleaseFeature4KRestoration})
+	if got := resolveRemasterTitle(subject); got != "4K Restoration / Custom" {
+		t.Fatalf("selected feature duplicated in residual wording: %q", got)
+	}
 	if !slices.ContainsFunc(editionFeatures(subject), func(option api.TrackerEditionFeature) bool {
 		return option.Label == "4K Restoration" && option.Selected
 	}) {
