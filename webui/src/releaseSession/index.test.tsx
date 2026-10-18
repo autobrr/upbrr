@@ -4131,16 +4131,41 @@ describe("useReleaseSession", () => {
   });
 
   it.each([
-    ["prepare", "preparation", "source_unavailable", "The source path is unavailable."],
+    [
+      "prepare",
+      "preparation",
+      "source_unavailable",
+      "The source path is unavailable.",
+      "edit_input",
+      "queued",
+    ],
     [
       "composite_upload",
       "upload_execute",
       "invalid_input",
       "Required input is missing or invalid: Release source. Edit the input and retry.",
+      "edit_input",
+      "queued",
+    ],
+    [
+      "composite_upload",
+      "upload_execute",
+      "invalid_input",
+      "Required input is missing or invalid: Release source. Edit the input and retry.",
+      "edit_input",
+      "failed",
+    ],
+    [
+      "composite_upload",
+      "upload_execute",
+      "missing_prerequisite",
+      "Upload stopped at capture-media without a viable next step.",
+      "review_again",
+      "failed",
     ],
   ])(
-    "surfaces the safe failure retained by a terminal %s operation",
-    async (command, kind, code, message) => {
+    "retains %s %s %s failure and recovery after polling or reload",
+    async (command, kind, code, message, recovery, initialStatus) => {
       window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-failed");
       const startedAt = "2026-07-20T00:00:00Z";
       const queued = {
@@ -4170,16 +4195,25 @@ describe("useReleaseSession", () => {
               Code: code,
               Operation: kind,
               Message: message,
-              Recovery: "edit_input",
+              Recovery: recovery,
             },
           },
         ],
         completedAt: startedAt,
       } as const;
-      const current = vi
-        .fn()
-        .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: queued })
-        .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: failed });
+      const prepared = workflowCurrentFromPreview(
+        workflowCurrent("workflow-failed", 3),
+        preview("C:\\media\\Example.Release.2026.mkv", 1),
+      );
+      const terminalCurrent = {
+        ...prepared,
+        workflow: { ...prepared.workflow, status: "failed", failures: failed.failures },
+        operation: failed,
+      };
+      const current = vi.fn().mockResolvedValue(terminalCurrent);
+      if (initialStatus === "queued") {
+        current.mockResolvedValueOnce({ ...terminalCurrent, operation: queued });
+      }
       const operation = vi.fn().mockResolvedValue(failed);
       const { result, unmount } = renderHook(useReleaseSession, {
         wrapper: wrapperFor(
@@ -4193,13 +4227,89 @@ describe("useReleaseSession", () => {
       await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
         timeout: 3000,
       });
-      expect(result.current.workflow.view.error).toBe(`${message} Recovery: edit input.`);
+      expect(result.current.workflow.view.error).toBe(
+        `${message} Recovery: ${recovery.replaceAll("_", " ")}.`,
+      );
       expect(result.current.workflow.view.failure).toEqual(failed.failures[0].failure);
       expect(result.current.workflow.view.current?.operation?.status).toBe("failed");
       expect(result.current.workflow.view.current?.operation?.result).toBeUndefined();
+      expect(operation).toHaveBeenCalledTimes(initialStatus === "queued" ? 1 : 0);
+      expect(current).toHaveBeenCalledTimes(initialStatus === "queued" ? 2 : 1);
+
+      if (command === "composite_upload") {
+        await act(() => result.current.workflow.reload());
+        expect(result.current.workflow.view.status).toBe("error");
+        expect(result.current.workflow.view.failure).toEqual(failed.failures[0].failure);
+        expect(result.current.workflow.view.current?.operation?.status).toBe("failed");
+        expect(result.current.upload.view.error).toBe(message);
+        expect(result.current.input.view.status).not.toBe("running");
+        expect(operation).toHaveBeenCalledTimes(initialStatus === "queued" ? 1 : 0);
+        expect(current).toHaveBeenCalledTimes(initialStatus === "queued" ? 3 : 2);
+        act(() => result.current.input.updateSourceDraft("C:\\media\\Corrected.Release.2026.mkv"));
+        expect(result.current.input.view.sourceDraft).toBe("C:\\media\\Corrected.Release.2026.mkv");
+      }
 
       unmount();
       window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
+
+  it.each(["completed", "executed", "partial", "blocked", "failed"] as const)(
+    "keeps an active workflow ready when reloading its retained %s composite operation",
+    async (status) => {
+      const current = workflowCurrentFromPreview(
+        workflowCurrent("workflow-retained", 3),
+        preview("C:\\media\\Example.Release.2026.mkv", 1),
+      );
+      const operation = vi.fn();
+      const retained: WorkflowOperationStatus = {
+        id: "operation-retained",
+        workflowId: current.workflow.id,
+        revision: 1,
+        sequence: 2,
+        command: "composite_upload",
+        operation: "upload_execute",
+        status,
+        progress: 100,
+        completed: 1,
+        total: 1,
+        startedAt: "2026-07-20T00:00:00Z",
+        updatedAt: "2026-07-20T00:00:00Z",
+        failures:
+          status === "failed"
+            ? [
+                {
+                  failure: {
+                    Code: "invalid_input",
+                    Operation: "upload_execute",
+                    Message: "Previous input failure.",
+                    Recovery: "edit_input",
+                  },
+                },
+              ]
+            : [],
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            activeInput: {
+              get: async () => ({
+                state: "active",
+                revision: 1,
+                current: { ...current, operation: retained },
+              }),
+            },
+            workflow: workflowPorts({ operation }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      expect(result.current.workflow.view.failure).toBeNull();
+      expect(result.current.workflow.view.error).toBe("");
+      expect(result.current.input.view.status).not.toBe("running");
+      expect(result.current.workflow.view.current?.operation?.status).toBe(status);
+      expect(operation).not.toHaveBeenCalled();
+      unmount();
     },
   );
 

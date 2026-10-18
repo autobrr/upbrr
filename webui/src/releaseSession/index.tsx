@@ -706,6 +706,20 @@ export function ReleaseSessionProvider({
           intent: workflowPreparationIntent(current),
         };
       }
+      // Composite stages can advance the workflow past the failed operation's revision.
+      // Restore its checkpointed failure after Input hydration has settled.
+      const operation = current.operation;
+      if (
+        accepted &&
+        current.workflow.status === "failed" &&
+        operation?.command === "composite_upload" &&
+        isFailedWorkflowOperation(operation)
+      ) {
+        const failure = operation.failures?.[0]?.failure;
+        throw failure
+          ? workflowOperationFailureError(failure)
+          : new Error(operation.message || `Workflow operation ${operation.status}.`);
+      }
       return true;
     } catch (error) {
       if (!controller.signal.aborted) {
