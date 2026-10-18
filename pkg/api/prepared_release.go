@@ -45,8 +45,12 @@ type PreparedRelease struct {
 // PrepareResult returns one immutable release projection plus non-canonical
 // preparation diagnostics.
 type PrepareResult struct {
-	Release     PreparedRelease
-	Diagnostics []PreparationDiagnostic
+	// EquivalentPreviousRelease identifies the atomically checked predecessor whose
+	// finalized facts and verified source identity are unchanged. It does not renew
+	// workflow evidence, expiry, or approval authority.
+	EquivalentPreviousRelease *ReleaseRef
+	Release                   PreparedRelease
+	Diagnostics               []PreparationDiagnostic
 	// EffectiveInstructions and Corrections retain accepted intent outside the
 	// immutable facts so workflow snapshots use the same preparation authority.
 	EffectiveInstructions ReleaseFactInstructions
@@ -165,8 +169,10 @@ type NamingFacts struct {
 // EpisodeFacts contains canonical reusable episodic identity and schedule
 // facts, independent of tracker policy.
 type EpisodeFacts struct {
-	Season            int
-	Episode           int
+	Season  int
+	Episode int
+	// MultipleEpisodes retains known combined or conflicting source episode membership.
+	MultipleEpisodes  bool
 	SeasonLabel       string
 	EpisodeLabel      string
 	DailyDate         string

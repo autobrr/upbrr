@@ -260,18 +260,13 @@ describe("sessionReducer upload intent", () => {
       expect(state.preparationIntent.trackerSourceIDs).toEqual({ AITHER: value });
     }
   });
-  it("keeps duplicate decisions and questionnaire answers independent", () => {
+  it("preserves questionnaire answers after upload failure", () => {
     let state = initialSessionState();
     state = sessionReducer(state, {
       type: "questionnaire_answered",
       tracker: " example ",
       key: "edition",
       value: "Extended",
-    });
-    state = sessionReducer(state, {
-      type: "dupe_ignore_changed",
-      tracker: "EXAMPLE",
-      ignored: true,
     });
     state = sessionReducer(state, { type: "job_command_started", kind: "upload" });
     state = sessionReducer(state, {
@@ -280,7 +275,6 @@ describe("sessionReducer upload intent", () => {
       error: "retryable failure",
     });
 
-    expect(state.ignoredDupesFor).toEqual(["EXAMPLE"]);
     expect(state.questionnaireAnswers).toEqual({ EXAMPLE: { edition: "Extended" } });
     expect(state.uploadError).toBe("retryable failure");
   });

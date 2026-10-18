@@ -74,7 +74,7 @@ func TestDefinitionBuildUploadDryRunIncludesQuestionnaire(t *testing.T) {
 func TestBuildQuestionnaireIncludesTypeOptionsWhenTypeIsUnresolved(t *testing.T) {
 	t.Parallel()
 
-	questionnaire := buildQuestionnaire(api.UploadSubject{}, uploadState{})
+	questionnaire := buildQuestionnaire(api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie}}, uploadState{})
 	if questionnaire == nil || len(questionnaire.Fields) == 0 {
 		t.Fatal("expected unresolved type questionnaire field")
 	}
@@ -84,6 +84,143 @@ func TestBuildQuestionnaireIncludesTypeOptionsWhenTypeIsUnresolved(t *testing.T)
 	}
 	if got := len(field.Options); got != 2 {
 		t.Fatalf("expected 2 type options, got %d", got)
+	}
+}
+
+func TestFilmTypeAnswersRequireMovieEligibility(t *testing.T) {
+	t.Parallel()
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name     string
+		answer   string
+		wantID   string
+		category api.CanonicalCategory
+		tmdbType string
+		imdb     *api.IMDBMetadata
+	}{
+		{
+			name:     "movie short without IMDb",
+			answer:   "Short Film",
+			wantID:   "1",
+			category: api.CanonicalCategoryMovie,
+			tmdbType: "Movie",
+		},
+		{
+			name:     "movie feature with missing IMDb type",
+			answer:   "Feature Film",
+			wantID:   "0",
+			category: api.CanonicalCategoryMovie,
+			tmdbType: "Movie",
+			imdb:     &api.IMDBMetadata{},
+		},
+		{
+			name:     "TMDB television cannot become a movie short",
+			answer:   "Short Film",
+			category: api.CanonicalCategoryTV,
+			tmdbType: "Scripted",
+		},
+		{
+			name:     "TMDB miniseries cannot become a feature film",
+			answer:   "Feature Film",
+			category: api.CanonicalCategoryTV,
+			tmdbType: "Miniseries",
+			imdb:     &api.IMDBMetadata{},
+		},
+		{
+			name:     "TMDB television overrides conflicting movie evidence",
+			answer:   "Short Film",
+			category: api.CanonicalCategoryMovie,
+			tmdbType: "Scripted",
+			imdb:     &api.IMDBMetadata{Type: "short"},
+		},
+		{
+			name:     "TMDB TV category cannot be relabeled without programme type",
+			answer:   "Feature Film",
+			category: api.CanonicalCategoryTV,
+			imdb:     &api.IMDBMetadata{Type: "tv movie"},
+		},
+		{
+			name:     "made for TV movie uses a film TMDB record",
+			answer:   "Feature Film",
+			wantID:   "0",
+			category: api.CanonicalCategoryMovie,
+			tmdbType: "Movie",
+			imdb:     &api.IMDBMetadata{Type: "tv movie"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+			torrentPath := filepath.Join(tmp, "Example.torrent")
+			for path, content := range map[string]string{mediaInfoPath: "General\nUnique ID : 123", torrentPath: "dummy"} {
+				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			input := trackers.PreparationInput{
+				Tracker: "ANT",
+				Meta: api.UploadSubject{
+					ReleaseName:       "Example.Release.2026.1080p.WEB-DL.x264-GRP",
+					Release:           api.ReleaseInfo{Title: "Example Release", Year: 2026},
+					SourcePath:        filepath.Join(tmp, "Example.mkv"),
+					TorrentPath:       torrentPath,
+					MediaInfoTextPath: mediaInfoPath,
+					Identity:          api.ExternalIdentity{Category: test.category, TMDBID: 123},
+					ProviderMetadata: api.SourceScopedMetadata{
+						IMDB: test.imdb,
+						TMDB: &api.TMDBMetadata{
+							TMDBID:   123,
+							Category: string(test.category),
+							TMDBType: test.tmdbType,
+							Title:    "Example Release",
+							Year:     2026,
+							Genres:   "Drama",
+						},
+					},
+				},
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+				Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{}),
+				Logger:        api.NopLogger{},
+			}
+			questionnaire := projectionQuestionnaire(input)
+			if slices.ContainsFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool {
+				return field.Key == "type"
+			}) {
+				t.Fatalf("automatic movie types and ineligible TV must not prompt for a type: %#v", questionnaire)
+			}
+			input.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"ANT": {"type": test.answer}}
+			projection, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			if test.wantID == "" {
+				if projection.DupeReady || projection.UploadReady || !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+					return decision.Code == "unsupported_type" && decision.Blocking
+				}) {
+					t.Fatalf("TV identity must remain ineligible despite a film answer: %+v", projection)
+				}
+				if slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+					return field.Key == "type"
+				}) {
+					t.Fatalf("unsupported TV must not offer a type override: %+v", projection.Questionnaire)
+				}
+				return
+			}
+			if !projection.DupeReady || !projection.UploadReady || len(projection.RequiredActions) != 0 {
+				t.Fatalf("supported type answer must clear readiness: %+v", projection)
+			}
+			input.Projection = &projection
+			entry, err := New().prepareDryRun(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if entry.Payload["type"] != test.wantID || entry.Questionnaire.Fields[0].Value != test.answer {
+				t.Fatalf("type answer did not reach payload and questionnaire: %#v / %#v", entry.Payload, entry.Questionnaire)
+			}
+		})
 	}
 }
 

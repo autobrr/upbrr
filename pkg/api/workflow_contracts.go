@@ -236,9 +236,11 @@ type TrackerArtifactRequirements struct {
 
 // TrackerQuestionnaireRequirement describes one non-secret tracker input requirement.
 type TrackerQuestionnaireRequirement struct {
+	// NeedsReview requests correction without making an optional value mandatory.
+	NeedsReview bool `json:"needsReview,omitempty"`
 	// Kind identifies the renderer; multiselect values use comma-separated option labels.
 	Kind string `json:"kind,omitempty"`
-	// Value is the validated answer or display default for this field; QuestionnaireAnswers owns exact answer intent.
+	// Value is the current answer or display default for this field; QuestionnaireAnswers owns exact answer intent.
 	Value    string   `json:"value,omitempty"`
 	Help     string   `json:"help,omitempty"`
 	Key      string   `json:"key"`
@@ -765,7 +767,9 @@ type ReleaseWorkflow struct {
 	Dupes                  *DupeAssessmentRef                       `json:"dupes,omitempty"`
 	TrackerApproval        *TrackerApprovalSnapshotRef              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSetRef                     `json:"media,omitempty"`
+	HDRComparison          *HDRComparisonSourceRef                  `json:"hdrComparison,omitempty"`
 	HDRAnalysisEnabled     bool                                     `json:"hdrAnalysisEnabled,omitempty"`
+	HDRImages              *HDRImageSelection                       `json:"hdrImages,omitempty"`
 	HDRAnalysis            *HDRAnalysisRef                          `json:"hdrAnalysis,omitempty"`
 	AudioAnalysisEnabled   bool                                     `json:"audioAnalysisEnabled,omitempty"`
 	AudioAnalysis          *AudioAnalysisRef                        `json:"audioAnalysis,omitempty"`
@@ -796,7 +800,9 @@ type ReleaseWorkflowCurrent struct {
 	Dupes                  *DupeAssessment                       `json:"dupes,omitempty"`
 	TrackerApproval        *TrackerApprovalSnapshot              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSet                     `json:"media,omitempty"`
+	HDRComparison          *HDRComparisonSourceRef               `json:"hdrComparison,omitempty"`
 	HDRAnalysis            *HDRAnalysisResult                    `json:"hdrAnalysis,omitempty"`
+	HDRPendingRequest      *HDRAnalysisInstructions              `json:"hdrPendingRequest,omitempty"`
 	AudioAnalysis          *AudioAnalysisResult                  `json:"audioAnalysis,omitempty"`
 	Descriptions           *DescriptionSet                       `json:"descriptions,omitempty"`
 	DryRun                 *UploadDryRunResult                   `json:"dryRun,omitempty"`

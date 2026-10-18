@@ -588,3 +588,138 @@ func TestQuestionnaireRebindPreservesUnchangedSkippedSibling(t *testing.T) {
 		t.Fatalf("new incomplete answer rebound authority: %+v, %v", assessment, err)
 	}
 }
+
+func (s *workflowDupeReuseService) RebindEquivalentMetadata(
+	evidence api.DupeAssessmentEvidence,
+	subject api.DuplicateSubject,
+	previous api.ReleaseRef,
+	projections api.TrackerReleaseProjectionSet,
+) (api.DupeAssessmentEvidence, bool) {
+	return new(dupechecking.Service).RebindEquivalentMetadata(evidence, subject, previous, projections)
+}
+
+func TestEquivalentMetadataRebindPreservesOnlyCurrentCertifiedAuthority(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"equivalent", "no certificate", "wrong successor", "wrong predecessor", "changed target", "changed policy", "changed questionnaire", "expired", "missing evidence", "in client", "staff renewal", "strict remains blocked"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowDupeReuseFixture(t)
+			f.reuse.InvalidatedTrackers = nil
+			f.subject.Identity = api.ExternalIdentity{
+				SourcePath: f.subject.SourcePath,
+				Generation: 1,
+				TMDBID:     123,
+				ResolvedAt: f.now.Add(-time.Minute),
+			}
+			f.subject.ProviderMetadata = api.SourceScopedMetadata{
+				SourcePath: f.subject.SourcePath,
+				Generation: 1,
+				UpdatedAt:  f.now.Add(-time.Minute),
+			}
+			private, ok := f.reuse.PrivateEvidence.(workflowDupePrivateEvidence)
+			if !ok {
+				t.Fatal("missing fixture evidence")
+			}
+			bound := dupechecking.EmptyAssessment()
+			var acknowledged api.DuplicateSubject
+			for _, projection := range f.reuse.Projections.Projections {
+				subject := f.subject
+				subject.ReleaseName = projection.DuplicateCriteria.Name
+				subject.Projection = &projection
+				tracker := string(projection.TrackerID)
+				bound = bound.Merge(dupechecking.NewAssessment(subject, config.Config{}, []dupechecking.AssessmentEvidence{{
+
+					Tracker:     tracker,
+					Disposition: dupechecking.DispositionResolved,
+					HasDupes:    true,
+
+					Match: api.DupeMatch{
+						MatchedID:     tracker + "-1",
+						MatchedName:   projection.UploadReleaseName,
+						MatchedReason: "exact_identity",
+					},
+				}}), []string{tracker})
+				if tracker == "GAMMA" {
+					acknowledged = subject
+				}
+			}
+			bound, err := bound.Authorize(acknowledged, config.Config{}, []string{"GAMMA"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			private.Assessment = bound
+			f.reuse.PrivateEvidence = private
+			f.reuse.Assessment.Results[2].Decision = api.DupeDecisionIgnored
+			f.projections.ReleaseRef.Generation = 2
+			f.reuse.EquivalentMetadataTo = new(f.projections.ReleaseRef)
+			f.subject.Identity.Generation, f.subject.ProviderMetadata.Generation = 2, 2
+			f.subject.Identity.ResolvedAt, f.subject.ProviderMetadata.UpdatedAt = f.now, f.now
+			switch name {
+			case "no certificate":
+				f.reuse.EquivalentMetadataTo = nil
+			case "wrong successor":
+				f.reuse.EquivalentMetadataTo.Generation++
+			case "wrong predecessor":
+				f.reuse.Assessment.ReleaseRef.Generation++
+			case "changed target":
+				f.projections.Projections[2].DuplicateTargetFingerprint = "changed"
+			case "changed policy":
+				f.projections.Projections[2].DuplicatePolicyFingerprint = "changed"
+			case "changed questionnaire":
+				f.projections.Projections[2].QuestionnaireAnswers = map[string]string{"answer": "changed"}
+			case "expired":
+				f.reuse.Assessment.ExpiresAt = f.now
+			case "missing evidence":
+				f.reuse.PrivateEvidence = nil
+			case "in client":
+				f.subject.MatchedTrackers = []string{"GAMMA"}
+			case "staff renewal":
+				f.reuse.Assessment.Results[2].RequiresStaffToken = true
+				f.reuse.Assessment.Results[2].StaffTokenConfirmed = true
+			case "strict remains blocked":
+				f.reuse.Assessment.Results[2].Decision = api.DupeDecisionAccepted
+			}
+			assessment, evidence, err := f.builder.RebindQuestionnaire(t.Context(), f.subject, f.projections, f.preflight, f.now, false, f.reuse)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := name == "equivalent" || name == "staff renewal" || name == "strict remains blocked"
+			if (len(assessment.Results) != 0) != want {
+				t.Fatalf("rebind results=%d, want success=%t", len(assessment.Results), want)
+			}
+			for tracker, calls := range f.service.calls {
+				if calls != 1 {
+					t.Fatalf("rebind remotely searched %s", tracker)
+				}
+			}
+			if !want {
+				return
+			}
+			if !assessment.ExpiresAt.Equal(f.reuse.Assessment.ExpiresAt) || !assessment.Results[2].FreshUntil.Equal(f.reuse.Assessment.Results[2].FreshUntil) {
+				t.Fatal("rebind extended duplicate freshness")
+			}
+			if name == "equivalent" {
+				if assessment.Results[2].Decision != api.DupeDecisionIgnored {
+					t.Fatal("ordinary acknowledgement lost")
+				}
+				retained, ok := evidence.(workflowDupePrivateEvidence)
+				if !ok {
+					t.Fatal("missing rebound private evidence")
+				}
+				currentBound, ok := retained.Assessment.(dupechecking.Assessment)
+				if !ok {
+					t.Fatal("missing current private assessment")
+				}
+				current := f.subject
+				current.ReleaseName = f.projections.Projections[2].DuplicateCriteria.Name
+				current.Projection = &f.projections.Projections[2]
+				if _, ok := currentBound.RetainValid(current, config.Config{}).Decision("GAMMA"); !ok {
+					t.Fatal("acknowledgement retained stale private binding")
+				}
+			} else if releaseworkflow.ProjectionEligibleForDownstream(f.projections.Projections[2], assessment.Results[2], true) ||
+				(name == "staff renewal" && (assessment.Results[2].StaffTokenConfirmed || assessment.Results[2].Decision != api.DupeDecisionPending)) {
+				t.Fatal("metadata rebind bypassed strict or staff authority")
+			}
+		})
+	}
+}

@@ -56,6 +56,7 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowImageHostRequest](s, mux, "RetryReleaseWorkflowImageHost", true)
 	registerReleaseWorkflowCommand[api.RemoveReleaseWorkflowHostedImagesRequest](s, mux, "RemoveReleaseWorkflowHostedImages", false)
 	registerReleaseWorkflowCommand[api.AnalyzeReleaseWorkflowAudioRequest](s, mux, "AnalyzeReleaseWorkflowAudio", true)
+	registerReleaseWorkflowCommand[api.SelectReleaseWorkflowHDRComparisonRequest](s, mux, "SelectReleaseWorkflowHDRComparison", false)
 	registerReleaseWorkflowCommand[api.AnalyzeReleaseWorkflowHDRRequest](s, mux, "AnalyzeReleaseWorkflowHDR", true)
 	registerReleaseWorkflowCommand[api.SetReleaseWorkflowAudioAnalysisEnabledRequest](s, mux, "SetReleaseWorkflowAudioAnalysisEnabled", false)
 	registerReleaseWorkflowCommand[api.SetReleaseWorkflowHDRAnalysisEnabledRequest](s, mux, "SetReleaseWorkflowHDRAnalysisEnabled", false)
@@ -326,10 +327,35 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 		s.writeReleaseWorkflowArtifact(
 			w,
 			content,
-			`inline; filename="hdr10plus.png"`,
+			hdrAnalysisContentDisposition(content.Filename),
 			"releaseworkflow: HDR analysis response interrupted",
 		)
 	}))
+}
+
+func hdrAnalysisContentDisposition(filename string) string {
+	for _, kind := range []api.HDRArtifactKind{api.HDRArtifactPicturePlot, api.HDRArtifactReferencePicturePlot, api.HDRArtifactDVOverlay,
+		api.HDRArtifactHDR10PlusOverlay, api.HDRArtifactDVDifference, api.HDRArtifactHDR10PlusDifference, api.HDRArtifactDVSceneSheet,
+		api.HDRArtifactHDR10PlusSceneSheet, api.HDRArtifactAutomaticArea, api.HDRArtifactAutomaticGrade, api.HDRArtifactAutomaticColour,
+		api.HDRArtifactBoundaryDVSceneSheet, api.HDRArtifactBoundaryHDR10PlusSceneSheet,
+		api.HDRArtifactChromaticity, api.HDRArtifactAudioWaveform, api.HDRArtifactAudioSpectrogram, api.HDRArtifactAudioStats} {
+		if kind.MatchesFilename(filename) {
+			if kind == api.HDRArtifactAudioStats {
+				return `attachment; filename="` + filename + `"`
+			}
+			return `inline; filename="` + filename + `"`
+		}
+	}
+	switch filename {
+	case "dolby-vision-l1.png":
+		return `inline; filename="dolby-vision-l1.png"`
+	case "hdr-analysis.json":
+		return `attachment; filename="hdr-analysis.json"`
+	case "hdr-scene-sync.png", "hdr-active-area.png", "hdr-grade.png", "hdr-colour.png":
+		return `inline; filename="` + filename + `"`
+	default:
+		return `inline; filename="hdr10plus.png"`
+	}
 }
 
 func audioAnalysisContentDisposition(contentType string) string {

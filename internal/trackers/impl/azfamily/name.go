@@ -38,10 +38,10 @@ func releaseNamePolicy(site siteDefinition) trackers.ReleaseNamePolicyBinding {
 	movieYearProvider := api.IdentityProviderTMDB
 	switch site.Name {
 	case "CZ":
-		version = "v7"
+		version = "v8"
 		movieYearProvider = api.IdentityProviderIMDB
 	case "PHD":
-		version = "v4"
+		version = "v5"
 	}
 	return trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy(
 		fmt.Sprintf("azfamily/%s/%s", strings.ToLower(site.Name), version),
@@ -113,7 +113,7 @@ func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubjec
 	title := cinemaZTitle(meta)
 	if title == "" {
 		return &trackers.NameRuleError{
-			Rule:   "azfamily/cz/v7",
+			Rule:   "azfamily/cz/v8",
 			Role:   api.NameRoleTitle,
 			Reason: "no Latin-safe title is available; set a Latin-safe manual original title and reprepare",
 		}
@@ -147,6 +147,9 @@ func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubjec
 			return fmt.Errorf("move CinemaZ DVD rip format before audio: %w", err)
 		}
 		return moveVideoAfterAudio(editor)
+	}
+	if isDVDEncode(meta) {
+		return nil
 	}
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return applyCinemaZDVDDefaults(editor, meta)
@@ -233,7 +236,7 @@ func applyPHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject) e
 		}
 		return nil
 	}
-	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+	if isDVDEncode(meta) || !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return nil
 	}
 	if err := omitNameComponents(editor, api.NameRoleRegion, api.NameRoleDVDSystem, api.NameRoleSource); err != nil {

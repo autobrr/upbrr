@@ -14,10 +14,13 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/hhd/v4", trackers.StructuredNamePolicy{Defaults: applyHHDNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/hhd/v5", trackers.StructuredNamePolicy{Defaults: applyHHDNameDefaults})
 }
 
 func applyHHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := unit3d.ApplyDVDNameDefaults(editor, meta, true); err != nil {
+		return fmt.Errorf("apply HHD DVD naming: %w", err)
+	}
 	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
 		return fmt.Errorf("apply HHD language markers: %w", err)
 	}

@@ -14,10 +14,13 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v5", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v6", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
 }
 
 func applyULCXNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := unit3d.ApplyDVDNameDefaults(editor, meta, true); err != nil {
+		return fmt.Errorf("apply ULCX DVD naming: %w", err)
+	}
 	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
 		return fmt.Errorf("apply ULCX language markers: %w", err)
 	}

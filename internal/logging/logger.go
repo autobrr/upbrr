@@ -235,7 +235,9 @@ func (l *Logger) ConsoleEnabled(level Level) bool {
 
 // SetDefaultConsoleOutput replaces the console writers used by new loggers and
 // returns a restore function. Nil writers leave the corresponding output
-// unchanged.
+// unchanged. A writer implementing WriteConsoleLog(string, string) receives the
+// uppercase level label and sanitized message without console formatting; its
+// implementation must support concurrent calls from logging goroutines.
 func SetDefaultConsoleOutput(stdout io.Writer, stderr io.Writer) func() {
 	defaultConsoleMu.Lock()
 	previousOut := defaultConsoleOut
@@ -311,10 +313,14 @@ func (l *Logger) enabledLevels(applicationLevel Level, level Level) (bool, Level
 func (l *Logger) writeSanitized(level Level, label string, formatted string, applicationEnabled bool, consoleLevel Level) {
 	prefix := label + ": "
 	if level <= consoleLevel {
+		console := l.consoleOut
 		if level <= LevelWarn {
-			l.consoleErr.Print(prefix + formatted)
+			console = l.consoleErr
+		}
+		if writer, ok := console.Writer().(interface{ WriteConsoleLog(string, string) }); ok {
+			writer.WriteConsoleLog(label, formatted)
 		} else {
-			l.consoleOut.Print(prefix + formatted)
+			console.Print(prefix + formatted)
 		}
 	}
 	if applicationEnabled {

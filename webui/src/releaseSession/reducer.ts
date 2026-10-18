@@ -130,7 +130,6 @@ export type SessionState = Readonly<{
   selectedTrackers: readonly string[];
   trackerSelectionTouched: boolean;
   trackerSelectionInitialized: boolean;
-  ignoredDupesFor: readonly string[];
   /** Tracker-name edits retained for the active prepared source. */
   releaseNameOverrides: Readonly<Record<string, string>>;
   questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
@@ -249,7 +248,6 @@ export type SessionAction =
       sessionRevision: number;
       trackers: readonly string[];
     }>
-  | Readonly<{ type: "dupe_ignore_changed"; tracker: string; ignored: boolean }>
   | Readonly<{ type: "release_name_confirmed"; tracker: string; value: string }>
   | Readonly<{ type: "questionnaire_answered"; tracker: string; key: string; value: string }>
   | Readonly<{
@@ -433,7 +431,6 @@ export const initialSessionState = (): SessionState => ({
   selectedTrackers: [],
   trackerSelectionTouched: false,
   trackerSelectionInitialized: false,
-  ignoredDupesFor: [],
   releaseNameOverrides: {},
   questionnaireAnswers: {},
   uploadOptions: emptyOptions(),
@@ -1234,7 +1231,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         selectedTrackers: normalizeNames(action.defaultTrackers || []),
         trackerSelectionTouched: false,
         trackerSelectionInitialized: false,
-        ignoredDupesFor: [],
         releaseNameOverrides: {},
         questionnaireAnswers: {},
         uploadOptions: emptyOptions(),
@@ -1644,17 +1640,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         return state;
       }
       return trackerSelectionChanged(state, trackers, false);
-    }
-    case "dupe_ignore_changed": {
-      const tracker = action.tracker.trim().toUpperCase();
-      if (!tracker) return state;
-      const ignored = new Set(state.ignoredDupesFor);
-      if (action.ignored) ignored.add(tracker);
-      else ignored.delete(tracker);
-      return {
-        ...state,
-        ignoredDupesFor: [...ignored],
-      };
     }
     case "release_name_confirmed": {
       const tracker = action.tracker.trim().toUpperCase();

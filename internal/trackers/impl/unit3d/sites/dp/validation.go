@@ -13,7 +13,7 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-dp-policy-v2", Check: checkLanguageRequirements}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-dp-policy-v3", Check: checkLanguageRequirements}
 }
 
 // checkLanguageRequirements preserves audio eligibility independently of naming.
@@ -54,7 +54,7 @@ func checkLanguageRequirements(ctx context.Context, subject api.TrackerValidatio
 		))
 	} else if !established {
 		if _, chosen := manualAudioLabel(subject); !chosen {
-			failures = append(failures, trackers.NewEvidenceRuleFailure(
+			failure := trackers.NewEvidenceRuleFailure(
 				"dp_language_marker",
 				fmt.Sprintf(
 					"Unresolved DP language naming: explicitly choose the language marker. Original: %s; programme audio: %s",
@@ -63,7 +63,9 @@ func checkLanguageRequirements(ctx context.Context, subject api.TrackerValidatio
 				),
 				api.RuleDispositionStrict,
 				api.MetadataEvidenceStatusPartial,
-			))
+			)
+			failure.QuestionnaireInput = true
+			failures = append(failures, failure)
 		}
 	}
 	return failures, nil

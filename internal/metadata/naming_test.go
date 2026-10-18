@@ -913,6 +913,7 @@ func TestValidateReleaseNameFactInstructions(t *testing.T) {
 		},
 		{Season: new("05"), Episode: new("07")},
 		{Season: new("S05"), Episode: new("E07")},
+		{Season: new("S00"), Episode: new("E01")},
 		{Season: new("s05"), Episode: new("e7")},
 		{Season: new("99"), Episode: new("999")},
 		{Season: new("2026"), Episode: new("03")},
@@ -932,7 +933,6 @@ func TestValidateReleaseNameFactInstructions(t *testing.T) {
 		{Season: new("S01-S02")},
 		{Season: new("1x05")},
 		{Season: new("0")},
-		{Season: new("S00")},
 		{Season: new("10000")},
 		{Season: new("abc")},
 		{Season: new("S")},
@@ -2029,6 +2029,75 @@ func TestSeasonCategoryHintTokenWidths(t *testing.T) {
 			}
 			if got := inferCategoryFromMetadata(meta); (got == "TV") != tc.tv {
 				t.Errorf("inferred category = %s, want TV=%t", got, tc.tv)
+			}
+		})
+	}
+}
+
+func TestSpecialNameRejectsUnmatchedTVDBEpisodeText(t *testing.T) {
+	for _, test := range []struct {
+		name                string
+		season, episode, id int
+		known               bool
+		want                string
+	}{
+		{
+			name:    "exact special",
+			known:   true,
+			episode: 1,
+			id:      123456,
+			want:    "Matched special",
+		},
+		{
+			name:    "legacy unproven special",
+			episode: 1,
+			id:      123456,
+			want:    "Finalized title",
+		},
+		{
+			name:    "ordinary season",
+			season:  1,
+			episode: 1,
+			id:      123456,
+			want:    "Finalized title",
+		},
+		{
+			name:    "different special",
+			episode: 2,
+			id:      123456,
+			want:    "Finalized title",
+		},
+		{
+			name: "missing episode",
+			id:   123456,
+			want: "Finalized title",
+		},
+		{
+			name:    "wrong series",
+			episode: 1,
+			id:      654321,
+			want:    "Finalized title",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := preparationstate.State{
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 123456},
+				ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
+					TVDBID:             test.id,
+					EpisodeSeason:      test.season,
+					EpisodeSeasonKnown: test.known,
+					EpisodeNumber:      test.episode,
+					EpisodeNameEnglish: "Matched special",
+				}},
+				SeasonStr:        "S00",
+				EpisodeInt:       1,
+				EpisodeStr:       "E01",
+				EpisodeTitle:     "Finalized title",
+				DailyEpisodeDate: "2026-01-01",
+			}
+			request := releaseNameRequestFromMeta(meta, api.NopLogger{})
+			if request.EpisodeTitle != test.want || request.Season != "S00" || request.Episode != "E01" || request.ManualDate || request.DailyDate != "" {
+				t.Fatalf("special naming facts changed: %+v", request)
 			}
 		})
 	}

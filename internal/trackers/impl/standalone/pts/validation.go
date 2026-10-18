@@ -6,6 +6,7 @@ package pts
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -20,11 +21,12 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				return nil, fmt.Errorf("context canceled: %w", err)
 			}
 			if reason := validateUpload(standalone.UploadSubjectForValidation(subject)); reason != "" {
-				return []api.RuleFailure{trackers.NewRuleFailure(
+				failure := trackers.NewQuestionnaireRuleFailure(
 					"required_questionnaire_answer",
 					reason,
-					api.RuleDispositionStrict,
-				)}, nil
+				)
+				failure.QuestionnaireInput = !strings.EqualFold(strings.TrimSpace(subject.QuestionnaireAnswers["mandarin_override"]), "no")
+				return []api.RuleFailure{failure}, nil
 			}
 			return nil, nil
 		},

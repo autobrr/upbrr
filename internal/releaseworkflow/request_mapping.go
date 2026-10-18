@@ -89,6 +89,14 @@ func CommandFromRequest(request any) (Command, error) {
 			Instructions:     request.Instructions,
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
+	case api.SelectReleaseWorkflowHDRComparisonRequest:
+		return SelectHDRComparisonCommand{
+			WorkflowID:       request.WorkflowID,
+			ExpectedRevision: request.ExpectedRevision,
+			Release:          request.Release,
+			SourcePath:       request.SourcePath,
+			IdempotencyKey:   request.IdempotencyKey,
+		}, nil
 	case api.AnalyzeReleaseWorkflowHDRRequest:
 		return AnalyzeHDRCommand{
 			WorkflowID:       request.WorkflowID,
@@ -101,6 +109,7 @@ func CommandFromRequest(request any) (Command, error) {
 			WorkflowID:       request.WorkflowID,
 			ExpectedRevision: request.ExpectedRevision,
 			Enabled:          request.Enabled,
+			ArtifactIDs:      request.ArtifactIDs,
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
 	case api.AnalyzeReleaseWorkflowAudioRequest:

@@ -176,7 +176,7 @@ func appendDescriptionRequirementFailure(
 ) []api.RuleFailure {
 	answer := strings.Join(strings.Fields(bbcode.NormalizeNewlines(meta.QuestionnaireAnswers[key])), " ")
 	if answer == "" {
-		return append(failures, trackers.NewRuleFailure(rule, reason, api.RuleDispositionStrict))
+		return append(failures, trackers.NewQuestionnaireRuleFailure(rule, reason))
 	}
 	description := strings.Join(strings.Fields(bbcode.NormalizeNewlines(meta.DescriptionOverride)), " ")
 	if meta.DescriptionGroupsFinal && !strings.Contains(description, answer) {

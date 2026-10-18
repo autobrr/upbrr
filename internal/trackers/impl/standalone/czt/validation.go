@@ -20,10 +20,9 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				return nil, fmt.Errorf("context canceled: %w", err)
 			}
 			if _, err := resolveCategory(standalone.UploadSubjectForValidation(subject)); err != nil {
-				return []api.RuleFailure{trackers.NewRuleFailure(
+				return []api.RuleFailure{trackers.NewQuestionnaireRuleFailure(
 					"unsupported_category",
 					err.Error(),
-					api.RuleDispositionStrict,
 				)}, nil
 			}
 			return nil, nil

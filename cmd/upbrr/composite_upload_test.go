@@ -422,7 +422,7 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	if strings.Contains(output.String(), "Tracker projections") {
 		t.Fatalf("INFO output included tracker projections: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "Dupe checking: 1/2\rDupe checking: 2/2\n") {
+	if !strings.Contains(output.String(), "Dupe checking: 1/2\nDupe checking: 2/2\n") {
 		t.Fatalf("INFO output omitted dupe progress: %q", output.String())
 	}
 	for _, review := range []struct{ summary, prompt string }{
@@ -743,8 +743,15 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 						UploadReleaseName: "Example.Release.2026.1080p-GRP",
 						Matches: []api.DupeMatchProjection{
 							{
-								Name: "Example.Release.2026.1080p.WEB-DL-GRP",
-								Link: "https://alpha.example/torrents/123?passkey=never-print-this",
+								Name:           "Example.Release.2026.1080p.WEB-DL-GRP",
+								Link:           "https://alpha.example/torrents/123?passkey=never-print-this",
+								Relation:       api.DupeRelationExactDuplicate,
+								Reason:         "same_tracker_slot",
+								EvidenceStatus: api.HDREvidenceComplete,
+								HDR: api.HDRFacts{
+									Formats: []api.HDRFormat{api.HDRFormatHDR10},
+									Origin:  api.HDREvidenceMediaInfo,
+								},
 							},
 							{Name: "Example.Release.2026.1080p.BluRay-GRP"},
 						},
@@ -780,7 +787,7 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 
 	for _, expected := range []string{
 		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP candidates=2 decision=accepted search_complete=false pages=0 policy=none",
-		"Duplicate candidates:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Relation: none  Evidence: none/none\n     Link: https://alpha.example/torrents/123?passkey=[REDACTED]\n  2. Example.Release.2026.1080p.BluRay-GRP",
+		"Duplicate candidates:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Evidence: complete/mediainfo\n     Reason: same_tracker_slot\n     Link: https://alpha.example/torrents/123?passkey=[REDACTED]\n  2. Example.Release.2026.1080p.BluRay-GRP",
 		"Upload to ALPHA despite duplicate evidence? [y/N]: \nDupe check BETA:",
 		"Duplicate candidates:\n  1. Example.Release.2026.1080p.Encode-GRP",
 	} {
@@ -790,6 +797,11 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 	}
 	if strings.Contains(output.String(), "never-print-this") {
 		t.Fatalf("duplicate review output exposed passkey: %q", output.String())
+	}
+	for _, removed := range []string{"Relation:", "HDR:"} {
+		if strings.Contains(output.String(), removed) {
+			t.Fatalf("duplicate review output included %q: %q", removed, output.String())
+		}
 	}
 	for index, trackerID := range []api.TrackerID{"ALPHA", "BETA"} {
 		review := feedbackByTracker[index].Response.DuplicateReview

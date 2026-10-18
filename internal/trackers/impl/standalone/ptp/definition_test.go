@@ -64,14 +64,14 @@ func ptpReviewedLanguageFixture(meta api.UploadSubject, language string) api.Upl
 
 func TestBuildDescriptionPreservesAudioGraphsBeforeScreenshots(t *testing.T) {
 	t.Parallel()
-	const audio = "[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	const audio = "[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
 	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
 		Description: "Notes\n\n" + audio,
 	})
-	if !strings.Contains(got, "[hide=source_audio]") || !strings.Contains(got, "audio.png") || !strings.Contains(got, "Peak: -1 dB") {
+	if !strings.Contains(got, "[hide=Audio Plots]") || !strings.Contains(got, "audio.png") || !strings.Contains(got, "Peak: -1 dB") {
 		t.Fatalf("audio graph or stats stripped: %q", got)
 	}
-	if strings.Index(got, "Notes") > strings.Index(got, "[hide=source_audio]") {
+	if strings.Index(got, "Notes") > strings.Index(got, "[hide=Audio Plots]") {
 		t.Fatalf("audio precedes notes: %q", got)
 	}
 }

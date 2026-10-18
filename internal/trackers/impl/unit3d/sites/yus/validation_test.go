@@ -224,7 +224,7 @@ func requireYUSNamingEvidenceFailure(t *testing.T, failures []api.RuleFailure) {
 func TestYUSNamingEvidenceRetainsConstructibility(t *testing.T) {
 	t.Parallel()
 	definition := unit3d.NewWithProfile(Profile())
-	if got := definition.ValidationPolicy().ID; got != "unit3d-yus-constructibility-v1+unit3d-yus-policy-v1" {
+	if got := definition.ValidationPolicy().ID; got != "unit3d-yus-constructibility-v1+unit3d-yus-policy-v2" {
 		t.Fatalf("validation policy = %q", got)
 	}
 	meta, _ := yusNamingEvidenceSubject(t, "German")

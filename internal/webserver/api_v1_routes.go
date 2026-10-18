@@ -500,7 +500,7 @@ func (s *Server) handleAPIV1WorkflowRead(
 		s.writeReleaseWorkflowArtifact(
 			w,
 			content,
-			`inline; filename="hdr10plus.png"`,
+			hdrAnalysisContentDisposition(content.Filename),
 			"releaseworkflow: HDR analysis API response interrupted",
 		)
 	default:
@@ -538,6 +538,13 @@ func (s *Server) apiV1WorkflowCommand(
 		return mapAPIV1WorkflowRequest(w, request)
 	case len(segments) == 2 && segments[1] == "audio-analysis":
 		var request api.AnalyzeReleaseWorkflowAudioRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return nil, false
+		}
+		request.ReleaseWorkflowCommandContext = commandContext
+		return mapAPIV1WorkflowRequest(w, request)
+	case len(segments) == 3 && segments[1] == "hdr-analysis" && segments[2] == "comparison":
+		var request api.SelectReleaseWorkflowHDRComparisonRequest
 		if !decodeAPIV1JSON(w, r, &request) {
 			return nil, false
 		}

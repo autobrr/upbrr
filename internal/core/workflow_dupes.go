@@ -56,14 +56,14 @@ func (b workflowDupeBuilder) BuildWithReuse(
 	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, &reuse, false)
 }
 
-// RebindQuestionnaire publishes only fully compatible, fresh evidence. It never
-// invokes remote duplicate searches when any lane requires a new check.
+// RebindQuestionnaire publishes only fully compatible, fresh questionnaire or
+// owner-certified metadata-refresh evidence. It never invokes remote searches.
 func (b workflowDupeBuilder) RebindQuestionnaire(
 	ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet,
 	preflight api.TrackerPreflightAssessment, checkedAt time.Time, skipRemote bool,
 	reuse releaseworkflow.DuplicateAssessmentReuse,
 ) (api.DupeAssessment, any, error) {
-	if !reuse.QuestionnaireOnly {
+	if !reuse.QuestionnaireOnly && reuse.EquivalentMetadataTo == nil {
 		return api.DupeAssessment{}, nil, nil
 	}
 	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, &reuse, true)
@@ -107,6 +107,29 @@ func (b workflowDupeBuilder) build(
 		readinessMatches := (result.State == api.TrackerPreflightStateReady) == (retained.Decision != api.DupeDecisionSkipped)
 		if !ok || !readinessMatches || !result.FreshUntil.After(checkedAt) {
 			delete(reused, trackerID)
+		}
+	}
+	if reuse != nil && reuse.EquivalentMetadataTo != nil && len(reused) > 0 {
+		// Public decisions alone cannot establish private authority for a new
+		// generation. The service verifies old proof inputs with current config.
+		rebinder, ok := b.service.(interface {
+			RebindEquivalentMetadata(api.DupeAssessmentEvidence, api.DuplicateSubject, api.ReleaseRef, api.TrackerReleaseProjectionSet) (api.DupeAssessmentEvidence, bool)
+		})
+		selected := projections
+		selected.Projections = make([]api.TrackerReleaseProjection, 0, len(reused))
+		for _, projection := range projections.Projections {
+			if _, retained := reused[projection.TrackerID]; retained {
+				selected.Projections = append(selected.Projections, projection)
+			}
+		}
+		var rebound api.DupeAssessmentEvidence
+		if ok {
+			rebound, ok = rebinder.RebindEquivalentMetadata(previousEvidence.Assessment, subject, reuse.Assessment.ReleaseRef, selected)
+		}
+		if !ok {
+			reused = nil
+		} else {
+			previousEvidence.Assessment = rebound
 		}
 	}
 	if reuseOnly && (len(reused) == 0 || len(reused) != len(projections.Projections)) {

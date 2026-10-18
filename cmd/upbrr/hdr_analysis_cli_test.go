@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -31,7 +32,10 @@ func TestHDRCLIRejectsDependentAndConflictingFlags(t *testing.T) {
 			t.Fatalf("invalid flags accepted: %#v", test)
 		}
 	}
-	if err := validateCLIHDR(cliOptions{HDRAnalysisOnly: true, HDROutputDir: "output"}, map[string]bool{"hdr-analysis-only": true, "unattended": true}); err != nil {
+	if err := validateCLIHDR(
+		cliOptions{HDRAnalysisOnly: true, HDROutputDir: "output"},
+		map[string]bool{"hdr-analysis-only": true, "unattended": true},
+	); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -62,7 +66,7 @@ type hdrCLIProgressWriter func([]byte) (int, error)
 
 func (w hdrCLIProgressWriter) Write(data []byte) (int, error) { return w(data) }
 
-func TestHDRCLIOnlyPublishesCompleteOutput(t *testing.T) {
+func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 	for _, failSummary := range []bool{false, true} {
 		name := "complete"
 		if failSummary {
@@ -88,15 +92,22 @@ func TestHDRCLIOnlyPublishesCompleteOutput(t *testing.T) {
 					return len(data), nil
 				})
 			}
-			err := runHDRAnalysisOnly(t.Context(), cliOptions{HDRAnalysisOnly: true, HDROutputDir: parent},
+			err := runHDRAnalysisOnly(t.Context(), cliOptions{
+				HDRAnalysisOnly: true,
+				HDRMetadataOnly: true,
+				HDROutputDir:    parent,
+			},
 				[]string{filepath.Join("testdata", "synthetic-cli-hdr.mkv")}, cliIO{out: &stdout, errOut: stderr})
 			entries, readErr := os.ReadDir(parent)
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
 			if failSummary {
-				if !blockedSummary || !errors.Is(err, os.ErrExist) || len(entries) != 0 || stdout.Len() != 0 {
-					t.Fatalf("failed summary retained or reported partial output: blocked=%t err=%v entries=%v stdout=%q", blockedSummary, err, entries, stdout.String())
+				if !blockedSummary || !errors.Is(err, os.ErrExist) || len(entries) != 1 || stdout.Len() == 0 {
+					t.Fatalf("failed summary lost completed output: blocked=%t err=%v entries=%v stdout=%q", blockedSummary, err, entries, stdout.String())
+				}
+				if image, imageErr := os.Stat(filepath.Join(parent, entries[0].Name(), "hdr10plus.png")); imageErr != nil || image.Size() == 0 {
+					t.Fatalf("completed image missing: %v", imageErr)
 				}
 				return
 			}
@@ -110,5 +121,29 @@ func TestHDRCLIOnlyPublishesCompleteOutput(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHDRCLIRenderCancellationRetainsMetadataReport(t *testing.T) {
+	parent := t.TempDir()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var stdout bytes.Buffer
+	stderr := hdrCLIProgressWriter(func(data []byte) (int, error) {
+		if strings.Contains(string(data), "rendering") {
+			cancel()
+		}
+		return len(data), nil
+	})
+	err := runHDRAnalysisOnly(ctx, cliOptions{HDRAnalysisOnly: true, HDROutputDir: parent},
+		[]string{filepath.Join("testdata", "synthetic-cli-hdr.mkv")}, cliIO{out: &stdout, errOut: stderr})
+	entries, readErr := os.ReadDir(parent)
+	if !errors.Is(err, context.Canceled) || readErr != nil || len(entries) != 1 || stdout.Len() == 0 {
+		t.Fatalf("canceled evidence: err=%v entries=%v read=%v stdout=%q", err, entries, readErr, stdout.String())
+	}
+	report, err := os.ReadFile(filepath.Join(parent, entries[0].Name(), "summary.json"))
+	if err != nil || !bytes.Contains(report, []byte("render_canceled")) || !bytes.Contains(report, []byte(`"state":"complete"`)) ||
+		!bytes.Contains(report, []byte(`"status":"canceled"`)) {
+		t.Fatalf("canceled render lost native observations: report=%s err=%v", report, err)
 	}
 }

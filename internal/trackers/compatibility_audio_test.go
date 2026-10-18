@@ -5,10 +5,240 @@ package trackers
 
 import (
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestCompatibilityAssignmentReviewKeepsResourcesIndependent(t *testing.T) {
+	required := make([]api.MediaTrackFacts, 0, 13)
+	companions := make([]CompatibilityCompanion, 0, 36)
+	for i := range 12 {
+		resource := "resource-" + strconv.Itoa(i)
+		main, first, second := resource+"-main", resource+"-dd-a", resource+"-dd-b"
+		required = append(required, api.MediaTrackFacts{ID: main, ResourceID: resource})
+		companions = append(companions,
+			CompatibilityCompanion{
+				ID:         first,
+				ResourceID: resource,
+				Mixes:      []string{main},
+				CanCover:   true,
+				Optional:   true,
+			},
+			CompatibilityCompanion{
+				ID:         second,
+				ResourceID: resource,
+				Mixes:      []string{main},
+				CanCover:   true,
+				Optional:   true,
+			},
+			CompatibilityCompanion{
+				ID:         resource + "-aac",
+				ResourceID: resource,
+				Mixes:      []string{main, first},
+			},
+		)
+	}
+	failures := []api.RuleFailure{NewRuleFailure("language_compatibility_count", "conflicting assignments", api.RuleDispositionStrict)}
+	if !ReviewCompatibilityAssignments(failures, required, companions, true) {
+		t.Fatal("independent repairable resources lost their corrections")
+	}
+	resource := "resource-11"
+	alternate := resource + "-alternate"
+	required = append(required, api.MediaTrackFacts{ID: alternate, ResourceID: resource})
+	for i := len(companions) - 3; i < len(companions); i++ {
+		companions[i].Mixes = append(companions[i].Mixes, alternate)
+	}
+	failures[0].QuestionnaireInput = false
+	if ReviewCompatibilityAssignments(failures, required, companions, true) || failures[0].QuestionnaireInput {
+		t.Fatal("another resource or coupled source roles supplied impossible coverage")
+	}
+}
+
+func TestPendingCompatibilityAssignmentsRequireEnoughCompanions(t *testing.T) {
+	for _, count := range []int{1, 2} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			failures := []api.RuleFailure{
+				NewQuestionnaireRuleFailure("language_compatibility_missing", "main mix needs coverage"),
+				NewQuestionnaireRuleFailure("language_compatibility_missing", "alternate mix needs coverage"),
+			}
+			required := []api.MediaTrackFacts{{ID: "main"}, {ID: "alternate"}}
+			companions := make([]CompatibilityCompanion, count)
+			for i := range companions {
+				companions[i] = CompatibilityCompanion{Mixes: []string{"main", "alternate"}, CanCover: true}
+			}
+			want := count == 2
+			if got := ReviewCompatibilityAssignments(failures, required, companions, false); got != want {
+				t.Fatalf("pending coverage review=%t want=%t: %+v", got, want, failures)
+			}
+			for _, failure := range failures {
+				if failure.QuestionnaireInput != want || failure.Disposition != api.RuleDispositionStrict {
+					t.Fatalf("pending association overrode measured capacity or strict execution: %+v", failures)
+				}
+			}
+		})
+	}
+}
+
+func TestCompatibilityFormatReviewRequiresMeasuredRecovery(t *testing.T) {
+	for _, marked := range []bool{false, true} {
+		for _, covered := range []bool{false, true} {
+			failures := []api.RuleFailure{NewRuleFailure("language_compatibility_format", "codec restriction", api.RuleDispositionStrict)}
+			failures[0].QuestionnaireInput = marked
+			var companions []CompatibilityCompanion
+			if covered {
+				companions = []CompatibilityCompanion{{
+					ID:       "ac3",
+					Mixes:    []string{"main"},
+					CanCover: true,
+				}}
+			}
+			want := marked && covered
+			if got := ReviewCompatibilityAssignments(failures, []api.MediaTrackFacts{{ID: "main"}}, companions, true); got != want ||
+				failures[0].QuestionnaireInput != want || failures[0].Disposition != api.RuleDispositionStrict {
+				t.Fatalf("format review must require site permission and physical coverage: marked=%t covered=%t review=%t failures=%+v", marked, covered, got, failures)
+			}
+		}
+	}
+}
+
+func TestCompatibilityAssignmentConflictsRequireMeasuredRecovery(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		required   []string
+		companions []CompatibilityCompanion
+		onePerMix  bool
+		want       bool
+	}{
+		{
+			name:     "reassign multiple competing companions",
+			required: []string{"main", "alternate", "commentary"},
+			want:     true,
+			companions: []CompatibilityCompanion{
+				{Mixes: []string{"main", "alternate", "commentary"}, CanCover: true},
+				{Mixes: []string{"main", "alternate"}, CanCover: true},
+				{Mixes: []string{"main"}, CanCover: true},
+			},
+		},
+		{
+			name:       "physical companion missing",
+			required:   []string{"main", "alternate"},
+			companions: []CompatibilityCompanion{{Mixes: []string{"main", "alternate"}, CanCover: true}},
+		},
+		{
+			name:     "different resource or language cannot cover mix",
+			required: []string{"main", "alternate"},
+			companions: []CompatibilityCompanion{
+				{Mixes: []string{"main"}, CanCover: true}, {Mixes: []string{"main"}, CanCover: true},
+			},
+		},
+		{
+			name:       "embedded core cannot supply required standalone coverage",
+			required:   []string{"main"},
+			companions: []CompatibilityCompanion{{Mixes: []string{"main"}}},
+		},
+		{
+			name:      "HHD ordinary stream can remain a source parent",
+			required:  []string{"main"},
+			onePerMix: true,
+			want:      true,
+			companions: []CompatibilityCompanion{
+				{
+					ID:       "dd-a",
+					Mixes:    []string{"main"},
+					CanCover: true,
+					Optional: true,
+				},
+				{
+					ID:       "dd-b",
+					Mixes:    []string{"main"},
+					CanCover: true,
+					Optional: true,
+				},
+				{ID: "aac", Mixes: []string{"main", "dd-a"}},
+			},
+		},
+		{
+			name:      "HHD stream cannot be both source parent and companion",
+			required:  []string{"main", "alternate"},
+			onePerMix: true,
+			companions: []CompatibilityCompanion{
+				{
+					ID:       "dd-a",
+					Mixes:    []string{"main", "alternate"},
+					CanCover: true,
+					Optional: true,
+				},
+				{
+					ID:       "dd-b",
+					Mixes:    []string{"main", "alternate"},
+					CanCover: true,
+					Optional: true,
+				},
+				{ID: "aac", Mixes: []string{"main", "alternate", "dd-a"}},
+			},
+		},
+		{
+			name:      "HHD excess explicit companions",
+			required:  []string{"main"},
+			onePerMix: true,
+			companions: []CompatibilityCompanion{
+				{Mixes: []string{"main"}, CanCover: true}, {Mixes: []string{"main"}, CanCover: true},
+			},
+		},
+		{
+			name:      "HHD ordinary stream can remain noncompatibility",
+			required:  []string{"main"},
+			onePerMix: true,
+			want:      true,
+			companions: []CompatibilityCompanion{
+				{
+					Mixes:    []string{"main"},
+					CanCover: true,
+					Optional: true,
+				}, {Mixes: []string{"main"}, CanCover: true},
+			},
+		},
+		{
+			name:      "HHD reassignment preserves required standalone coverage",
+			required:  []string{"main"},
+			onePerMix: true,
+			want:      true,
+			companions: []CompatibilityCompanion{
+				{Mixes: []string{"main", "DTS"}, CanCover: true}, {Mixes: []string{"DTS"}},
+			},
+		},
+		{
+			name:      "HHD WEB substitute cannot displace mandatory AC3",
+			required:  []string{"main"},
+			onePerMix: true,
+			companions: []CompatibilityCompanion{
+				{Mixes: []string{"main", "DTS"}, CanCover: true}, {Mixes: []string{"main"}},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			failures := []api.RuleFailure{
+				NewRuleFailure("language_compatibility_missing", "uncovered mix", api.RuleDispositionStrict),
+				NewRuleFailure("language_compatibility_count", "duplicate assignment", api.RuleDispositionStrict),
+				NewRuleFailure("language_compatibility_evidence", "unknown codec", api.RuleDispositionStrict),
+			}
+			var required []api.MediaTrackFacts
+			for _, id := range test.required {
+				required = append(required, api.MediaTrackFacts{ID: id})
+			}
+			if got := ReviewCompatibilityAssignments(failures, required, test.companions, test.onePerMix); got != test.want {
+				t.Fatalf("review=%t want=%t: %+v", got, test.want, failures)
+			}
+			for i, failure := range failures {
+				if failure.QuestionnaireInput != (test.want && i < 2) || failure.Disposition != api.RuleDispositionStrict {
+					t.Fatalf("assignment recovery changed independent evidence or execution: %+v", failures)
+				}
+			}
+		})
+	}
+}
 
 func TestAutomaticCompatibilityPreservesEvidenceBoundaries(t *testing.T) {
 	for _, test := range []struct {

@@ -16,12 +16,15 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v8", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v9", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
 
 func applyDPNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := unit3d.ApplyDVDNameDefaults(editor, meta, false); err != nil {
+		return fmt.Errorf("apply DP DVD naming: %w", err)
+	}
 	if err := applyDPTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}

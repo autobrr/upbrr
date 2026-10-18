@@ -15,7 +15,7 @@ import (
 func TestAudioAnalysisPrecedesScreenshots(t *testing.T) {
 	t.Parallel()
 	got := buildDescription(api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{}}}, config.TrackerConfig{}, false, trackers.DescriptionAssets{
-		Description: "Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
+		Description: "Notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		Screenshots: []api.ScreenshotImage{
 			{WebURL: "https://images.example.invalid/shot1", ImgURL: "https://images.example.invalid/shot1.png"},
 			{WebURL: "https://images.example.invalid/shot2", ImgURL: "https://images.example.invalid/shot2.png"},

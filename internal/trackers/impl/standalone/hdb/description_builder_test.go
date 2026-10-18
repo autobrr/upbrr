@@ -14,7 +14,7 @@ import (
 
 func TestBuildDescriptionKeepsAudioGraphsBeforeScreenshots(t *testing.T) {
 	t.Parallel()
-	base := "Base description\n\n[spoiler=source_audio]\n[img]https://img.example/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	base := "Base description\n\n[spoiler=Audio Plots]\n[img]https://img.example/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
 	description, err := BuildDescription(t.Context(), api.UploadSubject{}, config.Config{}, base,
 		[]api.ScreenshotImage{{ImgURL: "https://img.example/menu.png"}},
 		[]api.ScreenshotImage{{ImgURL: "https://img.example/screen.png"}})
@@ -25,7 +25,7 @@ func TestBuildDescriptionKeepsAudioGraphsBeforeScreenshots(t *testing.T) {
 	audioPos := strings.Index(description, "https://img.example/audio.png")
 	screenPos := strings.Index(description, "https://img.example/screen.png")
 	if menuPos < 0 || audioPos <= menuPos || screenPos <= audioPos ||
-		!strings.Contains(description, "[hide=source_audio]") ||
+		!strings.Contains(description, "[hide=Audio Plots]") ||
 		!strings.Contains(description, "[font=monospace]Peak: -1 dB[/font]") {
 		t.Fatalf("HDB audio analysis placement = %q", description)
 	}

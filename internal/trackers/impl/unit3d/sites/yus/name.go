@@ -14,10 +14,13 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v8", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v9", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
 }
 
 func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := unit3d.ApplyDVDNameDefaults(editor, meta, true); err != nil {
+		return fmt.Errorf("apply YUS DVD naming: %w", err)
+	}
 	if !isYUSFullDisc(meta) {
 		for _, role := range []api.ReleaseNameRole{api.NameRoleDualAudio, api.NameRoleDubbed} {
 			if err := editor.Omit(role); err != nil {

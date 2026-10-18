@@ -203,8 +203,12 @@ func TestGenreTagResolutionAndQuestionnaire(t *testing.T) {
 			})
 			// Missing fetched TMDB metadata remains an independent eligibility block.
 			expectReady := !blocked && test.tmdb != nil
-			if hasQuestionAction != blocked || projection.DupeReady != expectReady || projection.UploadReady != expectReady {
+			expectQuestionAction := blocked && test.tmdb != nil
+			if hasQuestionAction != expectQuestionAction || projection.DupeReady != expectReady || projection.UploadReady != expectReady {
 				t.Fatalf("questionnaire readiness disagrees with payload: %+v", projection)
+			}
+			if test.tmdb == nil && (projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0) {
+				t.Fatalf("missing TMDB metadata must block tracker questions: %+v", projection)
 			}
 			entry, err := New().prepareDryRun(context.Background(), input)
 			if err != nil {

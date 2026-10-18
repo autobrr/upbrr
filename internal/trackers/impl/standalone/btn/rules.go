@@ -26,7 +26,9 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
-		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
+		failure := trackers.LanguageRuleFailure(subject, key, reason, outcome)
+		failure.QuestionnaireInput = key == "primary_country"
+		failures = append(failures, failure)
 	}
 	if programmeStatus != api.MetadataEvidenceStatusComplete {
 		if !remux {

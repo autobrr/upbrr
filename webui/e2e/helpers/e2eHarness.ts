@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { access, mkdtemp, mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
@@ -100,6 +100,7 @@ type E2EWorkspaceOptions = {
   preparedMediaInfo?: boolean;
   /** Provides a small valid PCM source and exposes authoritative audio-track facts. */
   audioAnalysis?: boolean;
+  hdrAnalysis?: boolean | "decoded" | "metadata_audio";
   /** Overrides the synthetic audio duration; long fixtures are written sparsely. */
   audioAnalysisDurationSeconds?: number;
   /** Selects the fake metadata and source-name shape; defaults to a movie. */
@@ -122,7 +123,47 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
   const dbPath = path.join(root, "upbrr-e2e.db");
   const authCounterPath = path.join(root, "auth-counters.json");
   const configPath = path.join(root, "config.yaml");
-  if (options.audioAnalysis) {
+  if (options.hdrAnalysis) {
+    const fixture = path.join(
+      repoRoot,
+      "internal/services/hdranalysis/testdata",
+      options.hdrAnalysis === "decoded" || options.hdrAnalysis === "metadata_audio"
+        ? "decoded-pq-cuts-25.mkv"
+        : "reordered-hybrid.mkv",
+    );
+    if (options.hdrAnalysis === "decoded" || options.hdrAnalysis === "metadata_audio") {
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          "ffmpeg",
+          [
+            "-hide_banner",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            fixture,
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:sample_rate=48000:duration=4.8",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "pcm_s16le",
+            ...(options.hdrAnalysis === "decoded" ? ["-shortest"] : []),
+            sourcePath,
+          ],
+          (error) => (error ? reject(error) : resolve()),
+        );
+      });
+    } else {
+      await writeFile(sourcePath, await readFile(fixture));
+    }
+  } else if (options.audioAnalysis) {
     await writeStereoPCMFixture(sourcePath, options.audioAnalysisDurationSeconds ?? 2, 48_000);
   } else {
     await writeFile(sourcePath, "e2e media fixture\n");
@@ -147,6 +188,12 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
     UPBRR_E2E_AUTH_COUNTER_PATH: authCounterPath,
     UPBRR_E2E_MEDIA_KIND: mediaKind,
     UPBRR_E2E_AUDIO_ANALYSIS: options.audioAnalysis ? "1" : "",
+    UPBRR_E2E_HDR_ANALYSIS:
+      options.hdrAnalysis === "decoded" || options.hdrAnalysis === "metadata_audio"
+        ? "decoded"
+        : options.hdrAnalysis
+          ? "1"
+          : "",
   };
   return {
     root,

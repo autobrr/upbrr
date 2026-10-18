@@ -727,8 +727,8 @@ func TestBuildDescriptionUsesAllSelectedScreenshotsByDefault(t *testing.T) {
 
 func TestBuildDescriptionKeepsAudioGraphsOutOfScreenshots(t *testing.T) {
 	t.Parallel()
-	const audio = "[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
-	const sizedAudio = "[spoiler=source_audio]\n[img width=350]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	const audio = "[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	const sizedAudio = "[spoiler=Audio Plots]\n[img width=350]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
 	assets := trackers.DescriptionAssets{
 		Description: "Notes\n\n" + audio,
 		MenuImages:  []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png", WebURL: "https://images.example.invalid/menu"}},

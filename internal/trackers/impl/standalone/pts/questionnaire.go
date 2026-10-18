@@ -22,6 +22,9 @@ func buildQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 	}
 	// An unanswered override must remain pending rather than default to a rejected no.
 	answer := strings.ToLower(strings.TrimSpace(answers["mandarin_override"]))
+	if answer != "yes" && answer != "no" {
+		answer = ""
+	}
 	return &api.TrackerQuestionnaire{
 		Tracker: "PTS",
 		Fields: []api.TrackerQuestionnaireField{{

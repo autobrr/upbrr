@@ -138,10 +138,13 @@ the exact prepared generation. Prepared naming facts store it in `api.NamingFact
 The versioned document is retained through prepared-state persistence and transport; it is not
 reconstructed by parsing `ReleaseName`.
 
-The canonical DVDRip layout includes a known resolution after the movie year or rendered TV
-season/episode segment, while omitting the DVD/PAL/NTSC source label. Reuse these components
-instead of inserting resolution into a rendered name. Exact-name and display-title policies
-retain their own contracts; an unknown resolution must not be inferred from the source label.
+The explicit `DVDRIP` layout includes a known resolution after the movie year or rendered TV
+season/episode segment, while omitting the DVD/PAL/NTSC source label. An `ENCODE` with exactly
+`DVD`, `PAL DVD`, or `NTSC DVD` source instead presents its Source component as `DVDRip` and
+retains the ENCODE layout, including TV episode titles. Its canonical Type and Source facts
+remain unchanged. Reuse these components instead of inserting tokens into a rendered name.
+Exact-name and display-title policies retain their own contracts; an unknown resolution must
+not be inferred from the source label.
 
 Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete supported role set is:
 
@@ -265,6 +268,12 @@ manual components unchanged and skips unavailable targets. `Mandatory` runs afte
 has absolute authority over the role/aspect pairs declared in `Authority`, including conflicting
 manual values or omissions. This is a tracker-owned policy declaration, not a user-configurable
 permission switch. Undeclared aspects remain protected.
+
+DVD-encode Type, Source, and known Resolution corrections select facts, not exact display
+labels. The generated-document producer leaves those derived roles available to optional site
+formatting; an explicitly cleared or `OTHER` resolution stays protected. This exception applies
+only to `ENCODE` with the three DVD sources above. It does not clear manual flags on supplied
+components or give defaults authority over complete manual names or component omissions.
 
 For example, put this optional AKA omission in the tracker's `name.go` (using the `config`,
 `trackers`, and `api` packages):
@@ -753,6 +762,12 @@ Change its version when validation semantics change. Unit3D composes the site bi
 family constructibility; a site without custom validation omits the field and still receives the
 family policy.
 
+`SiteProfile.AllowSeasonZeroEpisodes` is false by default. Enable it only when the site
+accepts individual specials, and bump the site validation policy version. The shared
+preflight and payload predicate requires canonical `SeasonStr == "S00"`, season zero,
+a positive episode, no pack, and no known `MultipleEpisodes` source membership.
+Do not infer specials from a release name or relax other sites' season requirements.
+
 Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;
@@ -1216,9 +1231,17 @@ and question requiredness separately when the destination can supply an omitted 
 same normalized defaults with upload preparation, preserve explicit values and deliberate clears,
 and only fall back between providers when no usable primary-provider value remains. The projection's exact
 `QuestionnaireAnswers` map owns accepted answers for descriptions and upload. An allocated empty
-map clears earlier answers; an omitted legacy map has no new answer authority. The
-projector emits a tracker-scoped questionnaire action even alongside an unrelated strict failure;
-answering the questionnaire never waives that failure. Preflight publication must use the same
+map clears earlier answers; an omitted legacy map has no new answer authority. Independent
+eligibility or preparation failures suppress questionnaire fields and answer actions. For a strict
+failure that a questionnaire answer can correct, use `NewQuestionnaireRuleFailure` and provide the
+matching pure schema. Mark rejected populated or optional fields `NeedsReview` so CLI and WebUI can
+offer corrections. The projector also emits a tracker-scoped answer action for an `input_required`
+policy decision, even when a field's review flag is missing; this fallback does not supply a missing
+schema or identify the rejected field. The CLI stops with an error rather than resubmitting retained
+answers when that action has no reviewable fields. Execution stays blocked until validation accepts
+the answer.
+Optional multiselect answers may be cleared; nonempty choices still require valid options.
+Preflight publication must use the same
 stamped action IDs, workflow revision and expiry in the aggregate assessment and each tracker
 projection; tracker lanes must not retain stale or duplicate unstamped questions.
 Do not turn an upload review into a global

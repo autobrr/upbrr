@@ -16,6 +16,131 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+type correctionWriteProbe struct {
+	Store
+	writes int
+}
+
+func (s *correctionWriteProbe) CompareAndSwapReleaseCorrections(
+	context.Context, string, uint64, api.StoredReleaseCorrectionsV1,
+) (api.ReleaseCorrectionsSnapshot, error) {
+	s.writes++
+	return api.ReleaseCorrectionsSnapshot{}, errors.New("read-only correction comparison attempted a write")
+}
+
+func TestCorrectionsUnchangedUsesOwnerValidationWithoutWrites(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"same values", "normalized date", "discarded provider title", "reset absent", "changed value", "reset existing",
+		"stale expected revision", "stale patch revision", "invalid date", "unconfirmed keep", "invalid track", "changed source", "different effective instructions",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			source := writePreparedTestFile(t, "Synthetic.2026.mkv", "media")
+			store := newMemoryStore()
+			module := newTestModule(t, store, &recordingCollector{})
+			resolved, err := module.ResolveInput(t.Context(), api.PrepareInput{
+				SourcePath: source,
+				Instructions: api.ReleaseFactInstructions{
+					ReleaseName: api.ReleaseNameOverrides{Tag: new("GRP"), ManualDate: new("2026-01-02")},
+					Metadata:    api.MetadataOverrides{Commentary: new(false), AlternateTitle: new("Synthetic alias")},
+				},
+			}, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := resolved.Corrections.Clone()
+			if err != nil {
+				t.Fatal(err)
+			}
+			probe := &correctionWriteProbe{Store: store}
+			module.store = probe
+			input := resolved.Input
+			expected := resolved.Corrections.Revision
+			patch := api.ReleaseCorrectionPatch{ExpectedRevision: new(expected)}
+			want, wantConflict := false, false
+			switch name {
+			case "same values":
+				patch.Values.Metadata.Commentary = new(false)
+				want = true
+			case "normalized date":
+				patch.Values.ReleaseName.ManualDate = new(" 2026-01-02 ")
+				want = true
+			case "discarded provider title":
+				patch.Values.Metadata.Title = new("Unused title")
+				want = true
+			case "reset absent":
+				patch.ResetFields = []api.CorrectionFieldRef{{Field: api.CorrectionFieldReleaseNameEdition}}
+				want = true
+			case "changed value":
+				patch.Values.Metadata.Commentary = new(true)
+			case "reset existing":
+				patch.ResetFields = []api.CorrectionFieldRef{{Field: api.CorrectionFieldReleaseNameTag}}
+			case "stale expected revision":
+				expected++
+			case "stale patch revision":
+				patch.ExpectedRevision = new(expected + 1)
+				wantConflict = true
+			case "invalid date":
+				patch.Values.ReleaseName.ManualDate = new("2026-02-30")
+				wantConflict = true
+			case "unconfirmed keep":
+				patch.ConfirmFields = []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataAlternateTitle}}
+				wantConflict = true
+			case "invalid track":
+				patch.Values.Metadata.TrackLanguages = []api.TrackLanguageCorrection{{
+					TrackID:             "missing",
+					Languages:           []string{"en"},
+					ManifestFingerprint: "obsolete",
+				}}
+				wantConflict = true
+			case "changed source":
+				if err := os.WriteFile(source, []byte("changed media"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "different effective instructions":
+				input.Instructions.Metadata.Commentary = nil
+			}
+			unchanged, err := module.CorrectionsUnchanged(t.Context(), input, api.ReleaseCorrectionUpdate{
+				Mode: api.ReleaseCorrectionUpdatePatch, Patch: &patch,
+			}, expected)
+			if unchanged != want || (err != nil) != wantConflict || (wantConflict && !errors.Is(err, api.ErrCorrectionConflict)) {
+				t.Fatalf("unchanged=%t want=%t err=%v wantConflict=%t", unchanged, want, err, wantConflict)
+			}
+			after, err := store.LoadReleaseCorrections(t.Context(), source)
+			if err != nil || probe.writes != 0 || !reflect.DeepEqual(before, after) || store.commitCount() != 0 {
+				t.Fatalf("comparison changed persistence: writes=%d before=%#v after=%#v err=%v", probe.writes, before, after, err)
+			}
+		})
+	}
+}
+
+func TestCorrectionsUnchangedPreservesEmptyOptionalCollections(t *testing.T) {
+	t.Parallel()
+	source := writePreparedTestFile(t, "Synthetic.2026.mkv", "media")
+	store := newMemoryStore()
+	before := api.ReleaseCorrectionsSnapshot{Corrections: api.StoredReleaseCorrectionsV1{
+		Version:             1,
+		ContentBindings:     map[api.CorrectionField]api.ContentBinding{},
+		StaleContentFields:  []api.CorrectionField{},
+		IdentityResetFields: []api.CorrectionField{},
+	}}
+	store.corrections = map[string]api.ReleaseCorrectionsSnapshot{canonicalSourceKey(source): before}
+	module := newTestModule(t, store, &recordingCollector{})
+	probe := &correctionWriteProbe{Store: store}
+	module.store = probe
+	unchanged, err := module.CorrectionsUnchanged(t.Context(), api.PrepareInput{SourcePath: source}, api.ReleaseCorrectionUpdate{
+		Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{},
+	}, before.Revision)
+	if err != nil || !unchanged || probe.writes != 0 {
+		t.Fatalf("empty optional collections: unchanged=%t writes=%d err=%v", unchanged, probe.writes, err)
+	}
+	after, err := store.LoadReleaseCorrections(t.Context(), source)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("read-only comparison changed representation: before=%#v after=%#v err=%v", before, after, err)
+	}
+}
+
 func TestCorrectionsPersistFalseResetAndFailedCollection(t *testing.T) {
 	t.Parallel()
 	source := writePreparedTestFile(t, "Example.2026.mkv", "media")
@@ -32,7 +157,11 @@ func TestCorrectionsPersistFalseResetAndFailedCollection(t *testing.T) {
 		t.Fatal("explicit intent has no saved revision")
 	}
 	restarted := newTestModule(t, store, &recordingCollector{})
-	loaded, err := restarted.ResolveInput(t.Context(), api.PrepareInput{SourcePath: source}, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	loaded, err := restarted.ResolveInput(
+		t.Context(),
+		api.PrepareInput{SourcePath: source},
+		api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,8 +172,11 @@ func TestCorrectionsPersistFalseResetAndFailedCollection(t *testing.T) {
 		t.Fatal("group was lost")
 	}
 	reset, err := restarted.ResolveInput(t.Context(), api.PrepareInput{SourcePath: source}, api.ReleaseCorrectionUpdate{
-		Mode:  api.ReleaseCorrectionUpdatePatch,
-		Patch: &api.ReleaseCorrectionPatch{ExpectedRevision: new(loaded.Corrections.Revision), ResetFields: []api.CorrectionFieldRef{{Field: api.CorrectionFieldReleaseNameTag}}},
+		Mode: api.ReleaseCorrectionUpdatePatch,
+		Patch: &api.ReleaseCorrectionPatch{
+			ExpectedRevision: new(loaded.Corrections.Revision),
+			ResetFields:      []api.CorrectionFieldRef{{Field: api.CorrectionFieldReleaseNameTag}},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +219,14 @@ func TestManualDateCorrectionPersistsNormalizedValue(t *testing.T) {
 		t.Fatalf("equivalent date changed correction revision: %v", err)
 	}
 	input.Instructions.ReleaseName.ManualDate = new("2026-02-30")
-	if _, err := module.ResolveInput(t.Context(), input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}); !errors.Is(err, api.ErrCorrectionConflict) {
+	if _, err := module.ResolveInput(
+		t.Context(),
+		input,
+		api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit},
+	); !errors.Is(
+		err,
+		api.ErrCorrectionConflict,
+	) {
 		t.Fatalf("invalid date accepted: %v", err)
 	}
 	input.Instructions.ReleaseName.ManualDate = new(" \t ")
@@ -127,7 +266,11 @@ func TestProviderOwnedCorrectionsAreRetiredOnRestart(t *testing.T) {
 			}
 			for range 2 {
 				module := newTestModule(t, store, &recordingCollector{})
-				resolved, resolveErr := module.ResolveInput(t.Context(), api.PrepareInput{SourcePath: source}, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+				resolved, resolveErr := module.ResolveInput(
+					t.Context(),
+					api.PrepareInput{SourcePath: source},
+					api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit},
+				)
 				if resolveErr != nil {
 					t.Fatal(resolveErr)
 				}
@@ -265,7 +408,8 @@ func TestCategoryMismatchDoesNotCommitCollectedNames(t *testing.T) {
 					t.Fatal(err)
 				}
 				if collectedCategory == api.CanonicalCategoryMovie {
-					if saved.Corrections.ReleaseName.ManualYear != nil || len(saved.Corrections.ContentBindings) != 0 || len(saved.Corrections.StaleContentFields) != 0 {
+					if saved.Corrections.ReleaseName.ManualYear != nil || len(saved.Corrections.ContentBindings) != 0 ||
+						len(saved.Corrections.StaleContentFields) != 0 {
 						t.Fatal("final TV category retained a forbidden year or its confirmation evidence after mismatch")
 					}
 				} else if saved.Corrections.ReleaseName.ManualYear == nil || *saved.Corrections.ReleaseName.ManualYear != 2001 {
@@ -289,7 +433,10 @@ func TestFreshContentCorrectionFinalizesBindingAndInheritedIdentityChangeStopsCo
 	source := writePreparedTestFile(t, "Example.2026.mkv", "media")
 	store := newMemoryStore()
 	module := newTestModule(t, store, &recordingCollector{})
-	input := api.PrepareInput{SourcePath: source, Instructions: api.ReleaseFactInstructions{Metadata: api.MetadataOverrides{AlternateTitle: new("Manual alternate title")}}}
+	input := api.PrepareInput{
+		SourcePath:   source,
+		Instructions: api.ReleaseFactInstructions{Metadata: api.MetadataOverrides{AlternateTitle: new("Manual alternate title")}},
+	}
 	first, err := module.Prepare(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -424,7 +571,12 @@ func (s *memoryStore) UpdateReleaseCorrections(_ context.Context, source string,
 	return s.saveCorrections(source, previous.Revision, record)
 }
 
-func (s *memoryStore) CompareAndSwapReleaseCorrections(_ context.Context, source string, revision uint64, record api.StoredReleaseCorrectionsV1) (api.ReleaseCorrectionsSnapshot, error) {
+func (s *memoryStore) CompareAndSwapReleaseCorrections(
+	_ context.Context,
+	source string,
+	revision uint64,
+	record api.StoredReleaseCorrectionsV1,
+) (api.ReleaseCorrectionsSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.saveCorrections(source, revision, record)
@@ -449,6 +601,7 @@ func (s *memoryStore) saveCorrections(source string, revision uint64, record api
 func (s *memoryStore) CommitPreparedReleaseWithCorrections(
 	_ context.Context,
 	release api.PreparedRelease,
+	expectedPreviousGeneration *api.PreparedGeneration,
 	revision uint64,
 	record api.StoredReleaseCorrectionsV1,
 	compatibility func(uint64) (api.PreparationCompatibility, error),
@@ -457,6 +610,9 @@ func (s *memoryStore) CommitPreparedReleaseWithCorrections(
 	defer s.mu.Unlock()
 	if s.commitErr != nil {
 		return 0, s.commitErr
+	}
+	if expectedPreviousGeneration != nil && s.current[canonicalSourceKey(release.Source.SourcePath)].Generation != *expectedPreviousGeneration {
+		return 0, api.ErrCorrectionConflict
 	}
 	previous := s.loadCorrections(release.Source.SourcePath)
 	if previous.Revision != revision {

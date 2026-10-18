@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v38"
+const ContractVersion = "prepared-release-v40"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -37,7 +37,7 @@ type Store interface {
 	LoadReleaseCorrections(context.Context, string) (api.ReleaseCorrectionsSnapshot, error)
 	UpdateReleaseCorrections(context.Context, string, api.ReleaseCorrectionUpdate) (api.ReleaseCorrectionsSnapshot, error)
 	CompareAndSwapReleaseCorrections(context.Context, string, uint64, api.StoredReleaseCorrectionsV1) (api.ReleaseCorrectionsSnapshot, error)
-	CommitPreparedReleaseWithCorrections(context.Context, api.PreparedRelease, uint64, api.StoredReleaseCorrectionsV1,
+	CommitPreparedReleaseWithCorrections(context.Context, api.PreparedRelease, *api.PreparedGeneration, uint64, api.StoredReleaseCorrectionsV1,
 		func(uint64) (api.PreparationCompatibility, error)) (uint64, error)
 }
 
@@ -75,6 +75,7 @@ type CollectedFacts struct {
 // filesystem paths.
 type CollectedResources struct {
 	HDRFileEligibility    map[string]bool
+	HDRFileEvidence       map[string]api.HDRSourceEvidence
 	SourcePath            string
 	VideoPath             string
 	FileList              []string
@@ -425,14 +426,39 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		commitFinish(err)
 		return api.PrepareResult{}, err
 	}
-	committedRevision, err := m.store.CommitPreparedReleaseWithCorrections(ctx, release, resolved.Corrections.Revision, finalCorrections,
+	var equivalentPrevious *api.ReleaseRef
+	var expectedPreviousGeneration *api.PreparedGeneration
+	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() &&
+		input.ExternalFreshness != api.ExternalFreshnessLoad && !forceClientRefresh &&
+		!input.Controls.CaptureHDRMetadata && !input.Controls.ConfirmBDMVRescan && verifiedSource.Version != "" {
+		// Persistence omits private source samples and provider availability.
+		// Compare the complete published predecessor only while its exact stored
+		// generation, source and compatibility remain current.
+		m.mu.RLock()
+		prior, published := m.envelopes[canonicalSourceKey(input.SourcePath)]
+		m.mu.RUnlock()
+		previous := prior.result.Release
+		if published && prior.completeFacts && previous.Generation == current.Generation && previous.Source.SourcePath == current.Source.SourcePath &&
+			previous.Compatibility == current.Compatibility && previous.SourceIdentity.Version != "" &&
+			equivalentPreparedFacts(previous, release) {
+			expectedPreviousGeneration = &current.Generation
+			equivalentPrevious = &api.ReleaseRef{SourcePath: current.Source.SourcePath, Generation: current.Generation}
+		}
+	}
+	committedRevision, err := m.store.CommitPreparedReleaseWithCorrections(
+		ctx,
+		release,
+		expectedPreviousGeneration,
+		resolved.Corrections.Revision,
+		finalCorrections,
 		func(revision uint64) (api.PreparationCompatibility, error) {
 			committedCompatibility, err := preparationCompatibility(input, sourceFingerprint, revision)
 			if err == nil {
 				release.Compatibility = committedCompatibility
 			}
 			return committedCompatibility, err
-		})
+		},
+	)
 	if err != nil {
 		commitFinish(err)
 		return api.PrepareResult{}, fmt.Errorf("prepared release: commit generation: %w", err)
@@ -441,11 +467,13 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	diagnostics := append([]api.PreparationDiagnostic(nil), collected.Diagnostics...)
 	diagnostics = append(diagnostics, identityResult.Diagnostics...)
 	owned := envelope{
+		completeFacts: true,
 		result: api.PrepareResult{
-			Release:               release,
-			Diagnostics:           diagnostics,
-			EffectiveInstructions: input.Instructions,
-			Corrections:           api.ReleaseCorrectionsSnapshot{Corrections: finalCorrections, Revision: committedRevision},
+			EquivalentPreviousRelease: equivalentPrevious,
+			Release:                   release,
+			Diagnostics:               diagnostics,
+			EffectiveInstructions:     input.Instructions,
+			Corrections:               api.ReleaseCorrectionsSnapshot{Corrections: finalCorrections, Revision: committedRevision},
 		},
 		resources: mergePreparationResources(resourcesFromManifest(manifest, input), resourcesFromCollected(collected.Resources)),
 	}
@@ -454,6 +482,23 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	capturesPublished = true
 	commitFinish(nil)
 	return cloneResult(owned.result)
+}
+
+// equivalentPreparedFacts excludes only generation and collection bookkeeping.
+// Identity provenance, overrides, dependencies, conflicts and resolution intent
+// remain authoritative, as do provider availability and all source samples.
+func equivalentPreparedFacts(previous, candidate api.PreparedRelease) bool {
+	normalize := func(release api.PreparedRelease) api.PreparedRelease {
+		release.Generation = 0
+		release.Compatibility.FactInstructionFingerprint = ""
+		release.PreparedAt = time.Time{}
+		release.Identity.Generation = 0
+		release.Identity.ResolvedAt = time.Time{}
+		release.ProviderMetadata.Generation = 0
+		release.ProviderMetadata.UpdatedAt = time.Time{}
+		return release
+	}
+	return reflect.DeepEqual(normalize(previous), normalize(candidate))
 }
 
 // skipReusedPreparationStages emits terminal skipped updates for work supplied
@@ -936,8 +981,10 @@ func cloneInt(value *int) *int {
 }
 
 type envelope struct {
-	result    api.PrepareResult
-	resources preparationResources
+	// completeFacts distinguishes freshly resolved authority from lossy persisted hydration.
+	completeFacts bool
+	result        api.PrepareResult
+	resources     preparationResources
 }
 
 type preparationResources struct {
@@ -948,6 +995,7 @@ type preparationResources struct {
 	fileList              []string
 	mediaInfoJSONPath     string
 	hdrFileEligibility    map[string]bool
+	hdrFileEvidence       map[string]api.HDRSourceEvidence
 	mediaInfoTextPath     string
 	dvdIFOPath            string
 	dvdVOBPath            string
@@ -991,6 +1039,7 @@ func mergePreparationResources(base preparationResources, collected preparationR
 	base.fileList = append([]string(nil), collected.fileList...)
 	base.mediaInfoJSONPath = collected.mediaInfoJSONPath
 	base.hdrFileEligibility = maps.Clone(collected.hdrFileEligibility)
+	base.hdrFileEvidence = maps.Clone(collected.hdrFileEvidence)
 	base.mediaInfoTextPath = collected.mediaInfoTextPath
 	base.dvdIFOPath = collected.dvdIFOPath
 	base.dvdVOBPath = collected.dvdVOBPath
@@ -1011,6 +1060,7 @@ func resourcesFromCollected(collected CollectedResources) preparationResources {
 		fileList:              append([]string(nil), collected.FileList...),
 		mediaInfoJSONPath:     collected.MediaInfoJSONPath,
 		hdrFileEligibility:    maps.Clone(collected.HDRFileEligibility),
+		hdrFileEvidence:       maps.Clone(collected.HDRFileEvidence),
 		mediaInfoTextPath:     collected.MediaInfoTextPath,
 		dvdIFOPath:            collected.DVDIFOPath,
 		dvdVOBPath:            collected.DVDVOBPath,
@@ -1030,7 +1080,8 @@ func cloneEnvelope(value envelope) (envelope, error) {
 		return envelope{}, fmt.Errorf("prepared release: clone envelope: %w", err)
 	}
 	cloned := envelope{
-		result: clonedResult,
+		completeFacts: value.completeFacts,
+		result:        clonedResult,
 		resources: preparationResources{
 			policy:              value.resources.policy,
 			sourcePath:          value.resources.sourcePath,
@@ -1038,6 +1089,7 @@ func cloneEnvelope(value envelope) (envelope, error) {
 			fileList:            append([]string(nil), value.resources.fileList...),
 			mediaInfoJSONPath:   value.resources.mediaInfoJSONPath,
 			hdrFileEligibility:  maps.Clone(value.resources.hdrFileEligibility),
+			hdrFileEvidence:     maps.Clone(value.resources.hdrFileEvidence),
 			mediaInfoTextPath:   value.resources.mediaInfoTextPath,
 			dvdIFOPath:          value.resources.dvdIFOPath,
 			dvdVOBPath:          value.resources.dvdVOBPath,

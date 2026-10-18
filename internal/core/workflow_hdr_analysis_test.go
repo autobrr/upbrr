@@ -87,7 +87,7 @@ func TestHDRRetainedCandidatesRestoreAndCloneUsableMetadata(t *testing.T) {
 	opened = nil
 	nextRelease := release
 	nextRelease.Generation++
-	cloned, retained, err := builder.CloneExtractions(t.Context(), nextRelease, entries, resources, "candidate-rebind")
+	cloned, retained, err := builder.CloneExtractions(t.Context(), releaseworkflow.HDRPreparation{Release: nextRelease}, entries, resources, "candidate-rebind")
 	if err != nil || len(cloned) != 1 || len(retained) != 1 || !slices.Equal(opened, wantOrder) {
 		t.Fatalf("clone entries=%#v opened=%v err=%v", cloned, opened, err)
 	}
@@ -111,7 +111,7 @@ func TestHDRRetainedCandidatesRestoreAndCloneUsableMetadata(t *testing.T) {
 			return resource.OpenExtraction(ctx, record)
 		}),
 	}
-	_, _, err = builder.CloneExtractions(cloneCtx, nextRelease,
+	_, _, err = builder.CloneExtractions(cloneCtx, releaseworkflow.HDRPreparation{Release: nextRelease},
 		map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{complete.ID: complete}, cancelResources, "canceled-candidate-rebind")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("clone swallowed canceled metadata restore: %v", err)
@@ -135,7 +135,7 @@ func TestHDRRetainedCandidatesRestoreAndCloneUsableMetadata(t *testing.T) {
 	}
 }
 
-func (f *hdrResolverFixture) ResolveHDRAnalysisSubject(_ context.Context, instructions api.HDRAnalysisInstructions) (api.HDRAnalysisSubject, error) {
+func (f *hdrResolverFixture) ResolveRetainedHDRAnalysisSubject(_ context.Context, instructions api.HDRAnalysisInstructions, _ []api.HDRAnalysisTarget) (api.HDRAnalysisSubject, error) {
 	if f.stale {
 		return api.HDRAnalysisSubject{}, fmt.Errorf(
 			"resolve synthetic HDR source: %w",
@@ -201,10 +201,14 @@ func TestHDRRetainedMetadataRerenderCopyAndTamper(t *testing.T) {
 	}
 	entries := map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{record.ID: record}
 	resources := map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: extractionResource}
-	request := api.HDRAnalysisInstructions{Release: release, TargetIDs: []string{sidecar.Identity.TargetID}}
+	request := api.HDRAnalysisInstructions{
+		ProfileVersion: api.HDRAnalysisProfileVersion,
+		Release:        release,
+		TargetIDs:      []string{sidecar.Identity.TargetID},
+	}
 	phases := make(map[string]bool)
 	ctx := hdranalysis.WithProgress(t.Context(), func(progress hdranalysis.Progress) { phases[progress.Phase] = true })
-	first, plots, err := builder.Build(ctx, release, request, "first", time.Now().UTC(), nil, nil, entries, resources, nil)
+	first, plots, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: release}, request, "first", time.Now().UTC(), nil, nil, entries, resources, nil, nil)
 	if err != nil || first.Status != api.StageStatusCompleted || plots == nil {
 		t.Fatalf("render=%#v, %v", first, err)
 	}
@@ -213,7 +217,7 @@ func TestHDRRetainedMetadataRerenderCopyAndTamper(t *testing.T) {
 		t.Fatal("retained metadata reread source")
 	}
 	clear(phases)
-	second, copied, err := builder.Build(ctx, release, request, "second", time.Now().UTC(), &first, plots, entries, resources, nil)
+	second, copied, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: release}, request, "second", time.Now().UTC(), &first, plots, entries, resources, nil, nil)
 	if err != nil || second.Status != api.StageStatusCompleted || phases["rendering"] {
 		t.Fatalf("PNG reuse=%#v phases=%v err=%v", second, phases, err)
 	}
@@ -230,7 +234,7 @@ func TestHDRRetainedMetadataRerenderCopyAndTamper(t *testing.T) {
 	}
 	_ = content.Body.Close()
 	resolver.subject.Release.Generation = 2
-	cloned, retained, err := builder.CloneExtractions(t.Context(), resolver.subject.Release, entries, resources, "rebound")
+	cloned, retained, err := builder.CloneExtractions(t.Context(), releaseworkflow.HDRPreparation{Release: resolver.subject.Release}, entries, resources, "rebound")
 	if err != nil || len(cloned) != 1 {
 		t.Fatalf("rebind=%#v %v", cloned, err)
 	}
@@ -246,7 +250,7 @@ func TestHDRRetainedMetadataRerenderCopyAndTamper(t *testing.T) {
 	}
 	maps.Copy(entries, cloned)
 	request.Release = resolver.subject.Release
-	rebound, _, err := builder.Build(t.Context(), request.Release, request, "rebound-render", time.Now().UTC(), nil, nil, entries, retained, nil)
+	rebound, _, err := builder.Build(t.Context(), releaseworkflow.HDRPreparation{Release: request.Release}, request, "rebound-render", time.Now().UTC(), nil, nil, entries, retained, nil, nil)
 	if err != nil || rebound.Status != api.StageStatusCompleted {
 		t.Fatalf("old generation shadowed rebound extraction: %#v %v", rebound, err)
 	}
@@ -287,10 +291,11 @@ func TestHDRMultiTargetProgressStaysBelowCompletionUntilSettled(t *testing.T) {
 	ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) { updates = append(updates, update) })
 	result, _, err := builder.Build(
 		ctx,
-		resolver.subject.Release,
+		releaseworkflow.HDRPreparation{Release: resolver.subject.Release},
 		api.HDRAnalysisInstructions{
-			Release:   resolver.subject.Release,
-			TargetIDs: []string{resolver.subject.Targets[0].Target.ID, resolver.subject.Targets[1].Target.ID},
+			ProfileVersion: api.HDRAnalysisProfileVersion,
+			Release:        resolver.subject.Release,
+			TargetIDs:      []string{resolver.subject.Targets[0].Target.ID, resolver.subject.Targets[1].Target.ID},
 		},
 		"progress",
 		time.Now().UTC(),
@@ -299,7 +304,7 @@ func TestHDRMultiTargetProgressStaysBelowCompletionUntilSettled(t *testing.T) {
 		entries,
 		resources,
 		nil,
-	)
+		nil)
 	if err != nil || result.Status != api.StageStatusCompleted {
 		t.Fatalf("analysis=%#v err=%v", result, err)
 	}
@@ -353,8 +358,12 @@ func TestHDRRetainedFailuresDoNotReportSuccessfulCompletion(t *testing.T) {
 			}
 			var updates []api.WorkflowProgressUpdate
 			ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) { updates = append(updates, update) })
-			result, _, err := builder.Build(ctx, resolver.subject.Release, api.HDRAnalysisInstructions{Release: resolver.subject.Release, TargetIDs: ids},
-				"retained-failure", time.Now().UTC(), nil, nil, entries, resources, nil)
+			result, _, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: resolver.subject.Release}, api.HDRAnalysisInstructions{
+				ProfileVersion: api.HDRAnalysisProfileVersion,
+				Release:        resolver.subject.Release,
+				TargetIDs:      ids,
+			},
+				"retained-failure", time.Now().UTC(), nil, nil, entries, resources, nil, nil)
 			want := api.StageStatusFailed
 			if partial {
 				want = api.StageStatusPartial
@@ -395,8 +404,12 @@ func TestHDRExtractionCheckpointSurvivesRenderCancellation(t *testing.T) {
 	})
 	result, plots, err := builder.Build(
 		ctx,
-		resolver.subject.Release,
-		api.HDRAnalysisInstructions{Release: resolver.subject.Release, TargetIDs: []string{sidecar.Identity.TargetID}},
+		releaseworkflow.HDRPreparation{Release: resolver.subject.Release},
+		api.HDRAnalysisInstructions{
+			ProfileVersion: api.HDRAnalysisProfileVersion,
+			Release:        resolver.subject.Release,
+			TargetIDs:      []string{sidecar.Identity.TargetID},
+		},
 		"cancel",
 		time.Now().UTC(),
 		nil,
@@ -414,7 +427,7 @@ func TestHDRExtractionCheckpointSurvivesRenderCancellation(t *testing.T) {
 			}
 			return nil
 		},
-	)
+		nil)
 	if err != nil || result.Status != api.StageStatusCanceled || plots != nil || len(published) != 1 {
 		t.Fatalf("cancel=%#v checkpoint=%d err=%v", result, len(published), err)
 	}
@@ -434,7 +447,7 @@ func TestHDRExtractionCheckpointSurvivesRenderCancellation(t *testing.T) {
 
 func TestHDRArtifactSourceAndPathAuthority(t *testing.T) {
 	builder, resolver, sidecar := hdrFixture(t)
-	if err := builder.ValidateAuthority(t.Context(), api.HDRAnalysisResult{
+	if err := builder.ValidateAuthority(t.Context(), releaseworkflow.HDRPreparation{Release: resolver.subject.Release}, api.HDRAnalysisResult{
 		Release:             resolver.subject.Release,
 		TargetIDs:           []string{sidecar.Identity.TargetID},
 		ManifestFingerprint: "other",
@@ -442,7 +455,7 @@ func TestHDRArtifactSourceAndPathAuthority(t *testing.T) {
 		t.Fatal("different manifest accepted")
 	}
 	resolver.stale = true
-	if err := builder.ValidateAuthority(t.Context(), api.HDRAnalysisResult{
+	if err := builder.ValidateAuthority(t.Context(), releaseworkflow.HDRPreparation{Release: resolver.subject.Release}, api.HDRAnalysisResult{
 		Release:             resolver.subject.Release,
 		TargetIDs:           []string{sidecar.Identity.TargetID},
 		ManifestFingerprint: resolver.subject.ManifestFingerprint,
@@ -471,15 +484,19 @@ func TestHDRMissingMetadataRequiresExplicitSourceRetry(t *testing.T) {
 	}
 	entries := map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{record.ID: record}
 	retained := map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: resource}
-	request := api.HDRAnalysisInstructions{Release: release, TargetIDs: []string{record.TargetID}}
+	request := api.HDRAnalysisInstructions{
+		ProfileVersion: api.HDRAnalysisProfileVersion,
+		Release:        release,
+		TargetIDs:      []string{record.TargetID},
+	}
 	reading := false
 	ctx := hdranalysis.WithProgress(t.Context(), func(progress hdranalysis.Progress) { reading = reading || progress.Phase == "inspecting_track" })
-	first, _, err := builder.Build(ctx, release, request, "missing-first", time.Now().UTC(), nil, nil, entries, retained, nil)
+	first, _, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: release}, request, "missing-first", time.Now().UTC(), nil, nil, entries, retained, nil, nil)
 	if err != nil || reading || first.Targets[0].Failure == nil || first.Targets[0].Failure.Code != api.HDRAnalysisFailureResourceUnavailable {
 		t.Fatalf("missing metadata triggered source read: reading=%v result=%#v err=%v", reading, first, err)
 	}
 	// A second explicit attempt may reread the source; this synthetic source deliberately does not exist.
-	retry, _, err := builder.Build(ctx, release, request, "missing-retry", time.Now().UTC(), &first, nil, entries, retained, nil)
+	retry, _, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: release}, request, "missing-retry", time.Now().UTC(), &first, nil, entries, retained, nil, nil)
 	if err != nil || !reading || retry.Targets[0].Failure == nil || retry.Targets[0].Failure.Code != api.HDRAnalysisFailureRead {
 		t.Fatalf("explicit retry did not recover source access: reading=%v result=%#v err=%v", reading, retry, err)
 	}
@@ -490,14 +507,18 @@ func TestHDRFailedCombinedCaptureRequiresExplicitRetry(t *testing.T) {
 	release := resolver.subject.Release
 	failure := api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureResourceLimit, Message: "capture exceeded its limit"}
 	resolver.subject.Targets[0].CapturedFailure = &failure
-	request := api.HDRAnalysisInstructions{Release: release, TargetIDs: []string{sidecar.Identity.TargetID}}
+	request := api.HDRAnalysisInstructions{
+		ProfileVersion: api.HDRAnalysisProfileVersion,
+		Release:        release,
+		TargetIDs:      []string{sidecar.Identity.TargetID},
+	}
 	reading := false
 	ctx := hdranalysis.WithProgress(t.Context(), func(progress hdranalysis.Progress) { reading = reading || progress.Phase == "inspecting_track" })
-	first, _, err := builder.Build(ctx, release, request, "capture-failed", time.Now().UTC(), nil, nil, nil, nil, nil)
+	first, _, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: release}, request, "capture-failed", time.Now().UTC(), nil, nil, nil, nil, nil, nil)
 	if err != nil || reading || first.Status != api.StageStatusFailed || first.Targets[0].Failure == nil || first.Targets[0].Failure.Code != failure.Code {
 		t.Fatalf("failed capture triggered reread: reading=%v result=%#v err=%v", reading, first, err)
 	}
-	retry, _, err := builder.Build(ctx, release, request, "capture-retry", time.Now().UTC(), &first, nil, nil, nil, nil)
+	retry, _, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: release}, request, "capture-retry", time.Now().UTC(), &first, nil, nil, nil, nil, nil)
 	if err != nil || !reading || retry.Targets[0].Failure == nil || retry.Targets[0].Failure.Code != api.HDRAnalysisFailureRead {
 		t.Fatalf("explicit capture retry did not read source: reading=%v result=%#v err=%v", reading, retry, err)
 	}
@@ -507,11 +528,39 @@ func TestHDRFailedCombinedCaptureRequiresExplicitRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, _, err := builder.Build(ctx, release, request, "capture-rerender", time.Now().UTC(), &first, nil,
+	recovered, _, err := builder.Build(ctx, releaseworkflow.HDRPreparation{Release: release}, request, "capture-rerender", time.Now().UTC(), &first, nil,
 		map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{record.ID: record},
-		map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: retained}, nil)
+		map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: retained}, nil, nil)
 	if err != nil || reading || recovered.Status != api.StageStatusCompleted {
 		t.Fatalf("complete metadata was shadowed by capture failure: reading=%v result=%#v err=%v", reading, recovered, err)
+	}
+}
+
+func TestHDRV1ResumedSourceRecoveryUsesCompletedCheckpoint(t *testing.T) {
+	builder, resolver, sidecar := hdrFixture(t)
+	release := resolver.subject.Release
+	record, resource, err := builder.retainExtraction(t.Context(), release, sidecar, "recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Sequence = 2
+	entries := map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord{record.ID: record}
+	retained := map[api.HDRExtractionID]releaseworkflow.RetainedHDRExtractionResource{record.ID: resource}
+	prior := &api.HDRAnalysisResult{Release: release, Targets: []api.HDRAnalysisTargetResult{{
+		TargetID: record.TargetID,
+		Status:   api.StageStatusFailed,
+		Failure:  &api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureResourceUnavailable},
+	}}}
+	request := api.HDRAnalysisInstructions{
+		Release:        release,
+		TargetIDs:      []string{record.TargetID},
+		ProfileVersion: api.HDRAnalysisProfileVersion,
+	}
+	store := &releaseworkflow.HDRMeasurementStore{NativeRetryAfterSequence: new(uint64(1))}
+	result, _, err := builder.Build(t.Context(), releaseworkflow.HDRPreparation{Release: release}, request, "resume", time.Now().UTC(), prior, nil,
+		entries, retained, nil, store)
+	if err != nil || result.Status != api.StageStatusCompleted {
+		t.Fatalf("completed recovery reread absent source: %+v %v", result, err)
 	}
 }
 
@@ -520,6 +569,30 @@ func TestHDRInterruptedCleanupPreservesCheckpointedMetadata(t *testing.T) {
 	release := resolver.subject.Release
 	protected := make(map[api.HDRExtractionID]releaseworkflow.HDRExtractionRecord)
 	paths := make(map[string]string)
+	measurements := make(map[string]releaseworkflow.HDRMeasurementRecord)
+	for _, item := range []struct {
+		kind, id string
+		keep     bool
+	}{
+		{"measurement", "operation-1-audio-track-1", true},
+		{"measurement", "operation-1-audio-track-2", false},
+		{"boundary", "operation-1", false},
+	} {
+		directory, err := hdrAttemptRoot(builder.root, release, "hdr-"+item.kind, item.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := createHDRDirectory(directory); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "owned-scratch"), []byte("synthetic"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		paths[item.kind+":"+item.id] = directory
+		if item.keep {
+			measurements[item.id] = releaseworkflow.HDRMeasurementRecord{ID: item.id, Release: release}
+		}
+	}
 	for _, id := range []string{"operation-1", "operation-2", "operation-rebind-1", "operation-rebind-2"} {
 		record, resource, err := builder.retainExtraction(t.Context(), release, sidecar, id)
 		if err != nil {
@@ -537,12 +610,15 @@ func TestHDRInterruptedCleanupPreservesCheckpointedMetadata(t *testing.T) {
 	if err := createHDRDirectory(plot); err != nil {
 		t.Fatal(err)
 	}
-	if err := builder.CleanupAttempt(release, "operation", protected); err != nil {
+	if err := builder.CleanupAttempt(release, "operation", protected, measurements); err != nil {
 		t.Fatal(err)
 	}
 	for id, path := range paths {
 		_, err := os.Stat(path)
 		_, retained := protected[api.HDRExtractionID(id)]
+		if _, ok := measurements[strings.TrimPrefix(id, "measurement:")]; ok {
+			retained = true
+		}
 		if retained && err != nil || !retained && !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("cleanup id=%s retained=%v err=%v", id, retained, err)
 		}
@@ -550,7 +626,12 @@ func TestHDRInterruptedCleanupPreservesCheckpointedMetadata(t *testing.T) {
 	if _, err := os.Stat(plot); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unpublished plot remains: %v", err)
 	}
-	if err := builder.CleanupAttempt(release, "operation", protected); err != nil {
+	if err := builder.CleanupAttempt(release, "operation", protected, measurements); err != nil {
 		t.Fatalf("repeated cleanup failed: %v", err)
 	}
+}
+
+func (f *hdrResolverFixture) ValidateHDRAnalysisSource(ctx context.Context, ref api.ReleaseRef) error {
+	_, err := f.ResolveRetainedHDRAnalysisSubject(ctx, api.HDRAnalysisInstructions{Release: ref}, nil)
+	return err
 }

@@ -72,7 +72,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v8" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v9" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }

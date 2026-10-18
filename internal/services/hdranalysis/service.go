@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Package hdranalysis extracts and renders bounded native HDR10+ metadata.
+// Package hdranalysis extracts native HDR10+ and Dolby Vision metadata and
+// retains bounded picture measurements and audio evidence for reusable rendering.
 package hdranalysis
 
 import (
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
+	dovi "github.com/Audionut/go-dovi-extract"
 	hdr "github.com/Audionut/go-hdr10-plus"
 	"github.com/Audionut/go-hdr10-plus/extract"
 	bridge "github.com/Audionut/go-hdr10-plus/integration/bdinfo"
@@ -29,9 +31,9 @@ const (
 	MaxSidecarBytes       = 256 << 20
 	MaxFrames             = 500000
 	MaxPayloads           = 500000
-	MaxRestoreBytes       = 2 << 30
-	MKVRetainedBytes      = 2 << 30
-	DiscRetainedBytes     = 2 << 30
+	MaxRestoreBytes       = 3 << 30
+	MKVRetainedBytes      = 3 << 30
+	DiscRetainedBytes     = 3 << 30
 	DiscScanRetainedBytes = 3 << 30
 	// DependencyFingerprint identifies the pinned native readers for retained metadata reuse.
 	DependencyFingerprint = "hdr:de677f397791;bdinfo:6250d2b849ca"
@@ -161,29 +163,35 @@ func (s *Service) progress(ctx context.Context, phase string) {
 	case "inspecting":
 		progress.Message = "Waiting for the HDR analysis slot"
 	case "inspecting_track":
-		progress.Message = "Checking the MediaInfo HDR10+ video track"
+		progress.Message = "Checking the prepared video track"
 	case "reading_metadata":
-		progress.Message = "Reading HDR10+ metadata"
+		progress.Message = "Reading HDR metadata"
+	case "reading_shared_media":
+		progress.Message = "Reading HDR metadata and primary audio"
 	case "assembling_playlist":
 		progress.Message = "Assembling the selected playlist timeline"
 	case "rendering":
 		progress.Message, progress.Completed, progress.Total = "Rendering the HDR10+ plot", 95, 100
 	case "saving":
 		progress.Message, progress.Completed, progress.Total = "Saving the HDR10+ plot", 98, 100
+	case "rendering_dolby_vision":
+		progress.Message = "Rendering the Dolby Vision L1 plot"
+	case "saving_dolby_vision":
+		progress.Message = "Saving the Dolby Vision L1 plot"
 	case "validating_metadata":
-		progress.Message, progress.Completed, progress.Total = "Validating HDR10+ metadata", 90, 100
+		progress.Message, progress.Completed, progress.Total = "Validating HDR metadata", 90, 100
 	case "complete":
-		progress.Message = "HDR10+ analysis complete"
+		progress.Message = "HDR analysis complete"
 	case "failed":
-		progress.Message = "HDR10+ analysis failed; inspect the target failures"
+		progress.Message = "HDR analysis failed; inspect the target failures"
 	case "partial":
-		progress.Message = "HDR10+ analysis finished with failed targets"
+		progress.Message = "HDR analysis finished with mixed outcomes"
 	case "canceled":
-		progress.Message = "HDR10+ analysis canceled"
+		progress.Message = "HDR analysis canceled"
 	case "interrupted":
-		progress.Message = "HDR10+ analysis interrupted"
+		progress.Message = "HDR analysis interrupted"
 	default:
-		progress.Message = "HDR10+ analysis: " + phase
+		progress.Message = "HDR analysis: " + phase
 	}
 	s.reportProgress(ctx, progress)
 }
@@ -205,7 +213,7 @@ func (s *Service) reportProgress(ctx context.Context, progress Progress) {
 	api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 		Phase:     "hdr_analysis_" + progress.Phase,
 		Kind:      "hdr_analysis",
-		Label:     "HDR10+ analysis",
+		Label:     "HDR analysis",
 		Status:    status,
 		Message:   progress.Message,
 		Completed: progress.Completed,
@@ -282,6 +290,35 @@ func (s *Service) extractFile(ctx context.Context, pathValue string) (*extract.E
 
 // ValidateExtraction checks storage bounds and actual stream binding before retaining a complete result.
 func ValidateExtraction(result *extract.Extraction, uniqueTrack bool) error {
+	return validateExtraction(result, uniqueTrack, false)
+}
+
+func validateExtraction(result *extract.Extraction, uniqueTrack, rawAllowed bool) error {
+	return validateExtractionWithRetained(result, uniqueTrack, rawAllowed, 0)
+}
+
+func validateExtractionWithRetained(result *extract.Extraction, uniqueTrack, rawAllowed bool, otherRetainedBytes int64) error {
+	if err := validateExtractionBinding(result, uniqueTrack, rawAllowed); err != nil {
+		return err
+	}
+	modelBytes, err := hdrPlotModelBytes(result)
+	if err != nil {
+		return err
+	}
+	// PlotMetadata validates while copying; include its caption scratch and
+	// the retained extraction instead of silently allocating a second result.
+	if otherRetainedBytes < 0 || otherRetainedBytes > MaxRestoreBytes ||
+		modelBytes+int64(len(result.Frames))*24+result.RetainedBytes() > MaxRestoreBytes-otherRetainedBytes {
+		return extract.ErrResourceLimit
+	}
+	_, err = result.PlotMetadata()
+	if err != nil {
+		return fmt.Errorf("validate HDR plot metadata: %w", err)
+	}
+	return nil
+}
+
+func validateExtractionBinding(result *extract.Extraction, uniqueTrack, rawAllowed bool) error {
 	if result == nil || len(result.Frames) == 0 || len(result.Payloads) == 0 {
 		return extract.ErrIncomplete
 	}
@@ -289,20 +326,16 @@ func ValidateExtraction(result *extract.Extraction, uniqueTrack bool) error {
 		return extract.ErrResourceLimit
 	}
 	track := result.Frames[0].Stream.TrackID
-	if track == 0 {
+	if track == 0 && !rawAllowed {
 		return extract.ErrAmbiguousTrack
 	}
 	for _, frame := range result.Frames {
 		if len(frame.Stream.SourceID)+len(frame.Stream.ClipID) > 1024 {
 			return extract.ErrResourceLimit
 		}
-		if frame.Stream.TrackID == 0 || uniqueTrack && frame.Stream != result.Frames[0].Stream {
+		if frame.Stream.TrackID == 0 && !rawAllowed || uniqueTrack && frame.Stream != result.Frames[0].Stream {
 			return extract.ErrAmbiguousTrack
 		}
-	}
-	_, err := result.PlotMetadata()
-	if err != nil {
-		return fmt.Errorf("validate HDR plot metadata: %w", err)
 	}
 	return nil
 }
@@ -319,7 +352,17 @@ func (s *Service) Render(ctx context.Context, extraction *extract.Extraction, pe
 }
 
 func (s *Service) render(ctx context.Context, extraction *extract.Extraction, peak api.HDRPeakSource, title, target string) error {
-	if err := ValidateExtraction(extraction, false); err != nil {
+	return s.renderWithBinding(ctx, extraction, peak, title, target, false)
+}
+
+func (s *Service) renderWithBinding(ctx context.Context, extraction *extract.Extraction, peak api.HDRPeakSource, title, target string, rawAllowed bool) error {
+	if len(title) > 1024 {
+		return Classify(extract.ErrResourceLimit)
+	}
+	if err := validateExtractionBinding(extraction, false, rawAllowed); err != nil {
+		return Classify(err)
+	}
+	if err := validateHDRRenderBudget(extraction); err != nil {
 		return Classify(err)
 	}
 	peak, err := peak.Normalize()
@@ -416,15 +459,18 @@ func Classify(err error) error {
 		code, message = api.HDRAnalysisFailureAbsent, "the complete source contains no HDR10+ metadata"
 	case errors.Is(err, extract.ErrAmbiguousTrack):
 		code, message = api.HDRAnalysisFailureAmbiguousBinding, "the source contains more than one HEVC video track"
-	case errors.Is(err, extract.ErrUnsupportedInput):
+	case errors.Is(err, extract.ErrUnsupportedInput), errors.Is(err, dovi.ErrUnsupported):
 		code, message = api.HDRAnalysisFailureUnsupportedInput, "this source format or video mapping is unsupported"
 	case errors.Is(err, extract.ErrUnsupportedMetadata):
 		code, message = api.HDRAnalysisFailureUnsupportedMetadata, "this HDR10+ metadata dialect is unsupported"
-	case errors.Is(err, extract.ErrInvalidBitstream), errors.Is(err, hdr.ErrInvalidMetadata):
-		code, message = api.HDRAnalysisFailureInvalidBitstream, "the source contains invalid HDR10+ or video metadata"
-	case errors.Is(err, extract.ErrIncomplete), errors.Is(err, io.ErrUnexpectedEOF):
+	case errors.Is(err, extract.ErrInvalidBitstream),
+		errors.Is(err, hdr.ErrInvalidMetadata),
+		errors.Is(err, dovi.ErrInvalidBitstream),
+		errors.Is(err, dovi.ErrInvalidMetadata):
+		code, message = api.HDRAnalysisFailureInvalidBitstream, "the source contains invalid HDR or video metadata"
+	case errors.Is(err, extract.ErrIncomplete), errors.Is(err, dovi.ErrIncomplete), errors.Is(err, io.ErrUnexpectedEOF):
 		code, message = api.HDRAnalysisFailureIncomplete, "HDR metadata extraction did not complete"
-	case errors.Is(err, extract.ErrResourceLimit):
+	case errors.Is(err, extract.ErrResourceLimit), errors.Is(err, dovi.ErrLimit):
 		code, message = api.HDRAnalysisFailureResourceLimit, "HDR analysis exceeded its fixed resource limit"
 	}
 	return fmt.Errorf("HDR analysis: %w", api.NewHDRAnalysisError(api.HDRAnalysisFailure{Code: code, Message: message}, err))
