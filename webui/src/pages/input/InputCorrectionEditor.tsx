@@ -14,6 +14,7 @@ import type {
 } from "../../api/generated/release-workflow";
 import type { InputFacet } from "../../releaseSession/types";
 import type { PreparedRelease } from "../../types";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
 import { LanguageListInput } from "./LanguageListInput";
@@ -80,6 +81,51 @@ function CommaListInput({
       }}
       placeholder="English, Brazilian Portuguese"
     />
+  );
+}
+
+/** Retains unknown saved features until the user removes them or selects None/Auto. */
+function ReleaseFeaturesInput({
+  value,
+  onChange,
+}: Readonly<{
+  value: readonly string[];
+  onChange: (value: readonly string[]) => void;
+}>) {
+  const options = [
+    ...correctionChoices.ReleaseFeatures,
+    ...value
+      .filter(
+        (feature) => !correctionChoices.ReleaseFeatures.some((option) => option.value === feature),
+      )
+      .map((feature) => ({ value: feature, label: `Unsupported current value: ${feature}` })),
+  ];
+  return (
+    <fieldset className="grid gap-2" aria-label="Release features">
+      <Button
+        id="correction-release_name.release_features-value"
+        type="button"
+        aria-label="None Release features"
+        onClick={() => onChange([])}
+      >
+        None
+      </Button>
+      {options.map((option) => (
+        <label key={option.value} className="flex items-center gap-2">
+          <Checkbox
+            checked={value.includes(option.value)}
+            onCheckedChange={(checked) =>
+              onChange(
+                checked
+                  ? [...value, option.value]
+                  : value.filter((feature) => feature !== option.value),
+              )
+            }
+          />
+          <span>{option.label}</span>
+        </label>
+      ))}
+    </fieldset>
   );
 }
 
@@ -256,7 +302,7 @@ const releaseStringFields: ReadonlyArray<{
   key: keyof ReleaseNameOverrides;
   choices?: readonly { value: string; label: string }[];
   searchable?: boolean;
-  automatic: (release: PreparedRelease | null) => string | number;
+  automatic: (release: PreparedRelease | null) => string | number | readonly string[];
 }> = [
   {
     field: "release_name.category",
@@ -305,8 +351,20 @@ const releaseStringFields: ReadonlyArray<{
     label: "Edition",
     key: "Edition",
     automatic: (r) =>
-      r?.Media?.EditionSet ||
-      [r?.Media?.Cut, r?.Media?.Edition, r?.Media?.Presentation].filter(Boolean).join(" "),
+      r?.Media?.EditionSet || [r?.Media?.Cut, r?.Media?.Edition].filter(Boolean).join(" "),
+  },
+  {
+    field: "release_name.presentation",
+    label: "Presentation",
+    key: "Presentation",
+    choices: correctionChoices.Presentation,
+    automatic: (r) => r?.Media?.Presentation || "",
+  },
+  {
+    field: "release_name.release_features",
+    label: "Release features",
+    key: "ReleaseFeatures",
+    automatic: (r) => r?.Media?.ReleaseFeatures || [],
   },
   {
     field: "release_name.repack",
@@ -803,8 +861,10 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
   const identityAutomatic = (key: keyof ExternalIDOverrides) => Number(release?.Identity[key] || 0);
   const setIdentity = (key: keyof ExternalIDOverrides, value: number) =>
     facet.changeIdentity({ ...view.intent.identity, [key]: value });
-  const setReleaseName = (key: keyof ReleaseNameOverrides, value: string | number | boolean) =>
-    facet.changeReleaseName({ ...view.intent.releaseName, [key]: value });
+  const setReleaseName = (
+    key: keyof ReleaseNameOverrides,
+    value: string | number | boolean | readonly string[],
+  ) => facet.changeReleaseName({ ...view.intent.releaseName, [key]: value });
   const setMetadata = (key: keyof MetadataOverrides, value: string | boolean | readonly string[]) =>
     facet.changeMetadata({ ...view.intent.metadata, [key]: value });
 
@@ -857,7 +917,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         <div className={inputGridClass}>
           {releaseStringFields.map(({ field, label, key, automatic, choices, searchable }) => {
             const readOnly = key === "ManualYear" && isTV;
-            const manual = !readOnly && hasOwn(view.intent.releaseName, key);
+            const manual = !readOnly && view.intent.releaseName[key] != null;
             const rawValue = manual ? view.intent.releaseName[key] : automatic(release);
             const numeric = key === "ManualYear";
             const value =
@@ -874,7 +934,12 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
-                {choices ? (
+                {key === "ReleaseFeatures" ? (
+                  <ReleaseFeaturesInput
+                    value={Array.isArray(rawValue) ? rawValue : []}
+                    onChange={(next) => setReleaseName(key, next)}
+                  />
+                ) : choices ? (
                   <ChoiceControl
                     key={draftKey(field)}
                     id={`correction-${field}-value`}

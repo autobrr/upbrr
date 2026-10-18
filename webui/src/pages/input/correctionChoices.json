@@ -4673,6 +4673,24 @@
       "label": "Zulu"
     }
   ],
+  "Presentation": [
+    {
+      "value": "",
+      "label": "None"
+    },
+    {
+      "value": "IMAX",
+      "label": "IMAX"
+    },
+    {
+      "value": "Open Matte",
+      "label": "Open Matte"
+    },
+    {
+      "value": "IMAX Open Matte",
+      "label": "IMAX Open Matte"
+    }
+  ],
   "Region": [
     {
       "value": "AFG",
@@ -5713,6 +5731,56 @@
     {
       "value": "ZIM",
       "label": "ZIM"
+    }
+  ],
+  "ReleaseFeatures": [
+    {
+      "value": "hybrid",
+      "label": "Hybrid"
+    },
+    {
+      "value": "restoration",
+      "label": "Restored"
+    },
+    {
+      "value": "remaster",
+      "label": "Remastered"
+    },
+    {
+      "value": "two_disc_set",
+      "label": "2-Disc Set"
+    },
+    {
+      "value": "4k_restoration",
+      "label": "4K Restoration"
+    },
+    {
+      "value": "4k_remaster",
+      "label": "4K Remaster"
+    },
+    {
+      "value": "extras",
+      "label": "Extras"
+    },
+    {
+      "value": "2d_3d_edition",
+      "label": "2D/3D Edition"
+    },
+    {
+      "value": "3d_anaglyph",
+      "label": "3D Anaglyph"
+    },
+    {
+      "value": "3d_full_sbs",
+      "label": "3D Full SBS"
+    },
+    {
+      "value": "3d_half_ou",
+      "label": "3D Half OU"
+    },
+    {
+      "value": "3d_half_sbs",
+      "label": "3D Half SBS"
     }
   ],
   "Resolution": [

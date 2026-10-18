@@ -1671,7 +1671,9 @@ export type ReleaseNameOverrides = Readonly<{
   NoSeason?: boolean | null;
   NoTag?: boolean | null;
   NoYear?: boolean | null;
+  Presentation?: string | null;
   Region?: string | null;
+  ReleaseFeatures?: readonly ReleaseFeature[] | null;
   Repack?: string | null;
   Resolution?: string | null;
   Season?: string | null;

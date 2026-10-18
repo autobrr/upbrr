@@ -53,8 +53,8 @@ func TestAutomaticHybridDoesNotKeepSolitaryTheatrical(t *testing.T) {
 	}
 	state = preparationstate.State{ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new("Theatrical / Hybrid")}}
 	applyReleaseNameValueOverrides(&state)
-	if state.Edition != "Theatrical / Hybrid" {
-		t.Fatalf("opaque manual compound rewritten: %#v", state)
+	if state.Edition != "" || !slices.Contains(state.ReleaseFeatures, api.ReleaseFeatureHybrid) {
+		t.Fatalf("recognized manual compound not separated: %#v", state)
 	}
 }
 
@@ -89,6 +89,7 @@ func TestReleaseVersionInstructionsPreserveCanonicalFeatureRoles(t *testing.T) {
 		},
 		{
 			name:      "manual theatrical",
+			features:  true,
 			overrides: api.ReleaseNameOverrides{Edition: new("Theatrical"), Repack: new("PROPER")},
 			version:   "PROPER",
 		},

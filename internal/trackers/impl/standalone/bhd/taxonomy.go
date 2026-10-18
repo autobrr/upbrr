@@ -85,7 +85,8 @@ func resolveTags(meta api.UploadSubject) []string {
 		}
 		tags = append(tags, "EnglishDub")
 	}
-	if strings.Contains(strings.ToLower(meta.EditionLabel()), "open matte") {
+	if strings.Contains(strings.ToLower(meta.Presentation), "open matte") ||
+		meta.ReleaseNameOverrides.Presentation == nil && strings.Contains(strings.ToLower(meta.EditionLabel()), "open matte") {
 		tags = append(tags, "OpenMatte")
 	}
 	if meta.Scene {
@@ -94,7 +95,8 @@ func resolveTags(meta api.UploadSubject) []string {
 	if meta.PersonalRelease {
 		tags = append(tags, "Personal")
 	}
-	if slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid) || strings.Contains(strings.ToLower(meta.EditionLabel()), "hybrid") {
+	if slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid) ||
+		meta.ReleaseNameOverrides.ReleaseFeatures == nil && strings.Contains(strings.ToLower(meta.EditionLabel()), "hybrid") {
 		tags = append(tags, "Hybrid")
 	}
 	if meta.HasCommentary {

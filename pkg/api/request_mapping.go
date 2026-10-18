@@ -93,6 +93,8 @@ func cloneReleaseNameOverrides(value ReleaseNameOverrides) ReleaseNameOverrides 
 		Service:          cloneString(value.Service),
 		Edition:          cloneString(value.Edition),
 		Repack:           cloneString(value.Repack),
+		Presentation:     cloneString(value.Presentation),
+		ReleaseFeatures:  cloneReleaseFeatures(value.ReleaseFeatures),
 		Season:           cloneString(value.Season),
 		Episode:          cloneString(value.Episode),
 		EpisodeTitle:     cloneString(value.EpisodeTitle),
@@ -183,4 +185,12 @@ func cloneTrackLanguageCorrections(value []TrackLanguageCorrection) []TrackLangu
 		}
 	}
 	return cloned
+}
+
+// cloneReleaseFeatures preserves explicit empty lists independently of Auto.
+func cloneReleaseFeatures(value *[]ReleaseFeature) *[]ReleaseFeature {
+	if value == nil {
+		return nil
+	}
+	return new(append([]ReleaseFeature{}, (*value)...))
 }

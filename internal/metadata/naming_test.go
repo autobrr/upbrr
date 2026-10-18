@@ -732,8 +732,8 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			name:      "edition updates media and naming facts",
 			overrides: api.ReleaseNameOverrides{Edition: new("Director's Cut")},
 			assert: func(t *testing.T, meta preparationstate.State) {
-				if meta.Edition != "Director's Cut" || len(meta.Release.Edition) != 1 || meta.Release.Edition[0] != "Director's Cut" {
-					t.Fatalf("edition facts = %q/%v", meta.Edition, meta.Release.Edition)
+				if meta.Cut != "Director's Cut" || len(meta.Release.Cut) != 1 || meta.Release.Cut[0] != "Director's Cut" || meta.Edition != "" || len(meta.Release.Edition) != 0 {
+					t.Fatalf("cut/edition facts = %q/%v / %q/%v", meta.Cut, meta.Release.Cut, meta.Edition, meta.Release.Edition)
 				}
 			},
 		},

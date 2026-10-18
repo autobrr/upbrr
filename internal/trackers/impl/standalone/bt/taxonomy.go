@@ -278,11 +278,11 @@ func resolveEdition(meta api.UploadSubject) string {
 		return "Uncut"
 	case strings.Contains(edition, "unrated"):
 		return "Unrated"
-	case strings.Contains(edition, "imax"):
+	case strings.Contains(strings.ToLower(meta.Presentation), "imax") || meta.ReleaseNameOverrides.Presentation == nil && strings.Contains(edition, "imax"):
 		return "IMAX"
 	case strings.Contains(edition, "noir"):
 		return "Noir"
-	case strings.Contains(edition, "remaster") || slices.Contains(meta.ReleaseFeatures, api.ReleaseFeature4KRemaster) || slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureRemaster):
+	case meta.ReleaseNameOverrides.ReleaseFeatures == nil && strings.Contains(edition, "remaster") || slices.Contains(meta.ReleaseFeatures, api.ReleaseFeature4KRemaster) || slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureRemaster):
 		return "Remastered"
 	default:
 		return ""

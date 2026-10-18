@@ -192,10 +192,10 @@ Filename edition evidence takes precedence over provider runtime labels; IMDb at
 categorized only as fallback when the filename has no edition evidence. Selected multi-edition
 playlists have a separate set identity: two distinct variants render only `2in1`, while larger
 sets retain their existing labeled aggregate. Individual category facts remain available for
-validation, but the generated document does not expose them for inclusion while a set label is
-active. A manual edition value is not reclassified as cut or presentation evidence and protects the set
-and all three category roles; clearing or omitting edition
-protects their absence. Do not classify edition text to recover these roles. For tracker payload
+validation, but automatic cut/edition/presentation components are omitted while a set label is
+active. Explicit independent presentation and feature corrections remain available immediately
+after the set label. Manual Edition replaces cut/edition/set identity without erasing independent
+presentation or feature facts. Preparation separates only complete supported manual compounds; opaque wording remains unchanged. Presentation and ReleaseFeatures corrections independently distinguish automatic (nil), explicit empty, and supported values. Trackers must not classify edition text to recover these roles. For tracker payload
 fields that need a combined label, `UploadSubject.EditionLabel()` joins the finalized categories;
 name policies must still edit their individual components. Older prepared contracts require
 preparation again rather than parsing stored names to fill the new roles.
@@ -206,7 +206,7 @@ retains its text and an optional reference to an already-classified feature; an 
 not evidence of an edition. `NameRoleEditionDisplay` replaces rendered `NameRoleEdition` when this
 projection is present, preserving its old position and ordering without duplicating genuine edition
 words. Naming policies that normalize or omit the old edition text apply that same display policy
-to the replacement role. Manual edition corrections clear the automatic projection.
+to the replacement role. Manual Edition edits replace only its editorial display fragments. Explicit feature selections rebuild their display fragments after Edition; Hybrid retains its separate role. Features occupy the Edition position when there is no edition. Preserve tracker-specific display policies and complete-name authority.
 
 Only display consumers may use `EditionDisplayText` or `UploadSubject.EditionDisplayLabel()`.
 Edition validation and duplicate facts continue using canonical `EditionLabel()` and independent

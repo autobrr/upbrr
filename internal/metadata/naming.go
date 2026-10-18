@@ -116,7 +116,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		Cut:            strings.TrimSpace(req.Cut),
 		Presentation:   strings.TrimSpace(req.Presentation),
 		Edition:        edition,
-		EditionDisplay: removeHybrid(strings.TrimSpace(req.EditionDisplay)),
+		EditionDisplay: strings.TrimSpace(req.EditionDisplay),
 		Repack:         repack,
 		Resolution:     resolution,
 		Region:         region,
@@ -134,13 +134,21 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	}
 
 	hybrid := ""
-	if req.Hybrid || req.WebDV || containsExactHybrid(strings.Fields(edition)) {
+	if req.Hybrid || req.WebDV || !req.ManualEdition && containsExactHybrid(strings.Fields(edition)) {
 		hybrid = "Hybrid"
 	}
-	edition = removeHybrid(edition)
+	if !req.ManualEdition {
+		edition = removeHybrid(edition)
+		retained.EditionDisplay = removeHybrid(retained.EditionDisplay)
+	}
 	if retained.EditionSet != "" {
-		edition, retained.Cut, retained.Presentation = "", "", ""
-		retained.EditionDisplay = ""
+		edition, retained.Cut = "", ""
+		if !req.ManualPresentation {
+			retained.Presentation = ""
+		}
+		if !req.ManualReleaseFeatures {
+			retained.EditionDisplay = ""
+		}
 	}
 	retained.Edition = edition
 	retained.Hybrid = hybrid
@@ -1312,41 +1320,44 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	}
 
 	return api.ReleaseNameRequest{
-		Category:       category,
-		Type:           typeValue,
-		ManualType:     manualType,
-		Title:          title,
-		AltTitle:       altTitle,
-		Year:           year,
-		Resolution:     meta.Release.Resolution,
-		Audio:          meta.Audio,
-		Service:        meta.Service,
-		Season:         strings.TrimSpace(meta.SeasonStr),
-		Episode:        strings.TrimSpace(meta.EpisodeStr),
-		Part:           "",
-		Repack:         meta.Repack,
-		ThreeD:         meta.Is3D,
-		Tag:            meta.Tag,
-		Source:         source,
-		UHD:            meta.UHD,
-		HDR:            meta.HDR,
-		WebDV:          meta.WebDV,
-		Hybrid:         slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid),
-		EpisodeTitle:   episodeTitle,
-		VideoCodec:     meta.VideoCodec,
-		VideoEncode:    meta.VideoEncode,
-		DiscType:       meta.DiscType,
-		Region:         meta.Region,
-		DVDSize:        meta.Release.Size,
-		EditionSet:     meta.EditionSet,
-		Cut:            meta.Cut,
-		Presentation:   meta.Presentation,
-		Edition:        meta.Edition,
-		EditionDisplay: api.EditionDisplayText(meta.EditionDisplay),
-		SearchYear:     searchYear,
-		DailyDate:      dailyDate,
-		ManualDate:     manualDate,
-		TMDBDateMatch:  meta.TMDBDateMatch,
+		Category:              category,
+		Type:                  typeValue,
+		ManualType:            manualType,
+		Title:                 title,
+		AltTitle:              altTitle,
+		Year:                  year,
+		Resolution:            meta.Release.Resolution,
+		Audio:                 meta.Audio,
+		Service:               meta.Service,
+		Season:                strings.TrimSpace(meta.SeasonStr),
+		Episode:               strings.TrimSpace(meta.EpisodeStr),
+		Part:                  "",
+		Repack:                meta.Repack,
+		ThreeD:                meta.Is3D,
+		Tag:                   meta.Tag,
+		Source:                source,
+		UHD:                   meta.UHD,
+		HDR:                   meta.HDR,
+		WebDV:                 meta.WebDV && meta.ReleaseNameOverrides.ReleaseFeatures == nil,
+		Hybrid:                slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid),
+		EpisodeTitle:          episodeTitle,
+		VideoCodec:            meta.VideoCodec,
+		VideoEncode:           meta.VideoEncode,
+		DiscType:              meta.DiscType,
+		Region:                meta.Region,
+		DVDSize:               meta.Release.Size,
+		EditionSet:            meta.EditionSet,
+		Cut:                   meta.Cut,
+		Presentation:          meta.Presentation,
+		Edition:               meta.Edition,
+		ManualEdition:         meta.ReleaseNameOverrides.Edition != nil,
+		ManualPresentation:    meta.ReleaseNameOverrides.Presentation != nil,
+		ManualReleaseFeatures: meta.ReleaseNameOverrides.ReleaseFeatures != nil,
+		EditionDisplay:        api.EditionDisplayText(meta.EditionDisplay),
+		SearchYear:            searchYear,
+		DailyDate:             dailyDate,
+		ManualDate:            manualDate,
+		TMDBDateMatch:         meta.TMDBDateMatch,
 	}
 }
 

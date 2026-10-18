@@ -860,10 +860,16 @@ func releaseNameRoleUsesManualFact(
 		return request.ManualEpisodeTitle || overrides.EpisodeTitle != nil
 	case api.NameRoleDailyDate:
 		return overrides.ManualDate != nil
-	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRoleEditionDisplay, api.NameRolePresentation:
+	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition:
 		return overrides.Edition != nil
+	case api.NameRoleEditionDisplay:
+		return overrides.Edition != nil || overrides.ReleaseFeatures != nil
+	case api.NameRolePresentation:
+		return overrides.Presentation != nil || overrides.Edition != nil && manualEditionParts(*overrides.Edition).Presentation != ""
 	case api.NameRoleHybrid:
-		return overrides.Edition != nil || meta.MetadataOverrides.WebDV != nil
+		return overrides.ReleaseFeatures != nil ||
+			overrides.Edition != nil && slices.Contains(manualEditionParts(*overrides.Edition).Features, api.ReleaseFeatureHybrid) ||
+			meta.MetadataOverrides.WebDV != nil
 	case api.NameRoleDubbed, api.NameRoleDualAudio:
 		return meta.MetadataOverrides.OriginalLanguage != nil || manualAudioLanguages(*meta)
 	case api.NameRoleRegion:
@@ -945,8 +951,16 @@ func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseName
 		return overrides.ManualDate != nil || overrides.UseSeasonEpisode != nil
 	case api.NameRoleEpisodeTitle:
 		return overrides.EpisodeTitle != nil || overrides.NoEpisodeTitle != nil
-	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRoleEditionDisplay, api.NameRolePresentation, api.NameRoleHybrid:
+	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition:
 		return overrides.Edition != nil || overrides.NoEdition != nil
+	case api.NameRoleEditionDisplay:
+		return overrides.Edition != nil || overrides.ReleaseFeatures != nil || overrides.NoEdition != nil
+	case api.NameRolePresentation:
+		return overrides.Presentation != nil || overrides.NoEdition != nil ||
+			overrides.Edition != nil && manualEditionParts(*overrides.Edition).Presentation != ""
+	case api.NameRoleHybrid:
+		return overrides.ReleaseFeatures != nil || overrides.NoEdition != nil ||
+			overrides.Edition != nil && slices.Contains(manualEditionParts(*overrides.Edition).Features, api.ReleaseFeatureHybrid)
 	case api.NameRoleRepack:
 		return overrides.Repack != nil || overrides.NoEdition != nil
 	case api.NameRoleRegion:
@@ -1788,7 +1802,7 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 }
 
 // releaseEditionParts keeps evidence categories separate until name rendering.
-// Manual edition wording remains an authoritative whole value, never classified.
+// Manual corrections classify only complete supported labels before naming.
 type releaseEditionParts struct {
 	Features       []api.ReleaseFeature
 	EditionDisplay []api.EditionDisplayPart
@@ -1818,14 +1832,14 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) releaseEditi
 				continue
 			}
 			originalEditions = append(originalEditions, value)
-			if feature := editionFeature(value); feature != "" && !hasManualEditionOverride(meta.ReleaseNameOverrides) {
+			if feature := editionFeature(value); feature != "" {
 				parts.Features = append(parts.Features, feature)
 			} else {
 				editions = append(editions, value)
 			}
 		}
 		parts.Edition = strings.Join(editions, " ")
-	} else if feature := editionFeature(parts.Edition); feature != "" && !hasManualEditionOverride(meta.ReleaseNameOverrides) {
+	} else if feature := editionFeature(parts.Edition); feature != "" {
 		originalEditions = []string{parts.Edition}
 		parts.Features = append(parts.Features, feature)
 		parts.Edition = ""
@@ -1845,7 +1859,7 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) releaseEditi
 	applyReleaseFeatures(&parts, meta)
 	features, filenameSet := parts.Features, parts.Set
 	filenameEvidence = filenameEvidence || parts.Edition != "" || parts.Presentation != ""
-	if !hasManualEditionOverride(meta.ReleaseNameOverrides) {
+	{
 		multi := resolveMultiPlaylistEdition(meta)
 		if !filenameEvidence {
 			parts = resolveIMDbEditionFromMediaDuration(meta, doc)
@@ -1862,7 +1876,7 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) releaseEditi
 		}
 	}
 	hybrid = hybrid || containsExactHybrid(strings.Fields(parts.Edition))
-	if hybrid && !hasManualEditionOverride(meta.ReleaseNameOverrides) {
+	if hybrid {
 		// Hybrid already has its own naming role; it is not another edition.
 		parts.Edition = cleanEditionResidue(removeHybrid(parts.Edition))
 	}
@@ -2365,10 +2379,6 @@ func applyAnimeOverride(meta *preparationstate.State) {
 		return
 	}
 	meta.Anime = *meta.MetadataOverrides.Anime
-}
-
-func hasManualEditionOverride(overrides api.ReleaseNameOverrides) bool {
-	return overrides.Edition != nil
 }
 
 func isMovieMetadata(meta preparationstate.State) bool {

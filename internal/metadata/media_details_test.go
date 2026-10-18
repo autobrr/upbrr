@@ -1758,7 +1758,7 @@ func TestDeriveMediaFactsRetainsAbsentLayoutRolesForMandatoryInclude(t *testing.
 	}
 }
 
-func TestDeriveMediaFactsSeparatesManualHybridAndEditionAvailability(t *testing.T) {
+func TestDeriveMediaFactsPreservesOpaqueManualEditionAvailability(t *testing.T) {
 	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
 	meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
 		SourcePath: "Example.Movie.2026.DVDRip-GRP.mkv",
@@ -1780,7 +1780,7 @@ func TestDeriveMediaFactsSeparatesManualHybridAndEditionAvailability(t *testing.
 	}
 	edition, editionOK := meta.GeneratedName.Component(api.NameRoleEdition)
 	hybrid, hybridOK := meta.GeneratedName.Component(api.NameRoleHybrid)
-	if !editionOK || edition.AvailableValue != "Uncut" || !edition.Manual || !hybridOK || hybrid.AvailableValue != "Hybrid" || !hybrid.Manual {
+	if !editionOK || edition.AvailableValue != "Hybrid Uncut" || !edition.Manual || hybridOK && hybrid.Present {
 		t.Fatalf("manual hybrid/edition = %#v / %#v", edition, hybrid)
 	}
 }
@@ -1816,7 +1816,7 @@ func TestDerivedNamingManualAuthorityThroughTrackerDefaults(t *testing.T) {
 		},
 		{
 			name:       "manual hybrid",
-			overrides:  api.ReleaseNameOverrides{Edition: new("Hybrid Uncut")},
+			overrides:  api.ReleaseNameOverrides{Edition: new("Uncut / Hybrid")},
 			role:       api.NameRoleHybrid,
 			wantManual: true,
 		},
@@ -1827,10 +1827,10 @@ func TestDerivedNamingManualAuthorityThroughTrackerDefaults(t *testing.T) {
 			wantManual: true,
 		},
 		{
-			name:       "empty edition protects absent hybrid",
+			name:       "empty edition does not own hybrid",
 			overrides:  api.ReleaseNameOverrides{Edition: new("")},
 			role:       api.NameRoleHybrid,
-			wantManual: true,
+			wantManual: false,
 		},
 		{
 			name:       "omitted unavailable repack",
@@ -1912,9 +1912,14 @@ func TestDerivedNamingRequiredOmittedAndUnavailableComponents(t *testing.T) {
 		{
 			name:    "known hybrid",
 			role:    api.NameRoleHybrid,
-			edition: "Hybrid Uncut",
+			edition: "Uncut / Hybrid",
 			want:    "Hybrid",
 		},
+		{
+name: "opaque hybrid wording",
+ role: api.NameRoleHybrid,
+ edition: "Hybrid Uncut",
+},
 		{name: "unknown hybrid", role: api.NameRoleHybrid},
 		{name: "unknown repack", role: api.NameRoleRepack},
 		{name: "unknown dual audio", role: api.NameRoleDualAudio},

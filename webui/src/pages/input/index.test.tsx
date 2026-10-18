@@ -1731,6 +1731,175 @@ describe("InputPage", () => {
     expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.repack" });
   });
 
+  it("edits presentation and multiple features independently from Edition and restores Auto", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    let facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: {
+          ...release,
+          Media: {
+            ...release.Media,
+            EditionSet: "",
+            Cut: "Extended",
+            Edition: "",
+            Presentation: "IMAX",
+            ReleaseFeatures: ["hybrid", "4k_restoration"],
+          },
+        },
+      },
+    };
+    const { container, rerender } = render(<InputCorrectionEditor facet={facet} />);
+    const renderOverrides = (releaseName: InputFacet["view"]["intent"]["releaseName"]) => {
+      facet = { ...facet, view: { ...facet.view, intent: { ...facet.view.intent, releaseName } } };
+      rerender(<InputCorrectionEditor facet={facet} />);
+    };
+    const row = (field: string) =>
+      within(container.querySelector<HTMLElement>(`[data-correction-field="${field}"]`)!);
+    expect(screen.getByLabelText("Edition")).toHaveValue("Extended");
+    expect(screen.getByLabelText("Presentation")).toHaveValue("IMAX");
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
+    expect(row("release_name.presentation").getByText("Automatic value")).toBeInTheDocument();
+    expect(row("release_name.release_features").getByText("Automatic value")).toBeInTheDocument();
+
+    renderOverrides({ Edition: "Director's Cut", Presentation: null, ReleaseFeatures: null });
+    expect(screen.getByLabelText("Presentation")).toHaveValue("IMAX");
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
+    expect(row("release_name.release_features").getByText("Automatic value")).toBeInTheDocument();
+
+    for (const Presentation of ["Open Matte", "IMAX Open Matte", ""]) {
+      fireEvent.change(screen.getByLabelText("Presentation"), { target: { value: Presentation } });
+      const expected = { ...facet.view.intent.releaseName, Presentation };
+      expect(facet.changeReleaseName).toHaveBeenLastCalledWith(expected);
+      renderOverrides(expected);
+      expect(screen.getByLabelText("Presentation")).toHaveValue(Presentation);
+      expect(screen.getByLabelText("Edition")).toHaveValue("Director's Cut");
+    }
+    fireEvent.click(screen.getByRole("checkbox", { name: "Extras" }));
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["hybrid", "4k_restoration", "extras"],
+    });
+    renderOverrides({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["hybrid", "4k_restoration", "extras"],
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Hybrid" }));
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["4k_restoration", "extras"],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "None Release features" }));
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: [],
+    });
+    renderOverrides({ ...facet.view.intent.releaseName, ReleaseFeatures: [] });
+    for (const checkbox of row("release_name.release_features").getAllByRole("checkbox")) {
+      expect(checkbox).not.toBeChecked();
+    }
+    expect(
+      row("release_name.release_features").getByText("Manual value · Applied"),
+    ).toBeInTheDocument();
+    for (const [label, field] of [
+      ["Presentation", "presentation"],
+      ["Release features", "release_features"],
+    ]) {
+      fireEvent.click(screen.getByRole("button", { name: `Auto ${label}` }));
+      expect(facet.resetCorrection).toHaveBeenLastCalledWith({ field: `release_name.${field}` });
+    }
+    renderOverrides({ Edition: "Director's Cut" });
+    expect(screen.getByLabelText("Presentation")).toHaveValue("IMAX");
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
+  });
+
+  it.each([{ ReleaseFeatures: null }, { ReleaseFeatures: [] }] as const)(
+    "hydrates saved feature selection $ReleaseFeatures without falling back for None",
+    ({ ReleaseFeatures }) => {
+      const base = readyInputFacet(1);
+      const release = preparedRelease();
+      const facet: InputFacet = {
+        ...base,
+        view: {
+          ...base.view,
+          release: { ...release, Media: { ...release.Media, ReleaseFeatures: ["hybrid"] } },
+          intent: { ...base.view.intent, releaseName: { ReleaseFeatures } },
+          corrections: {
+            revision: 1,
+            corrections: {
+              version: 1,
+              identity: {},
+              releaseName: { ReleaseFeatures },
+              metadata: {},
+            },
+          },
+        },
+      };
+      const { container } = render(<InputCorrectionEditor facet={facet} />);
+      const row = within(
+        container.querySelector<HTMLElement>(
+          '[data-correction-field="release_name.release_features"]',
+        )!,
+      );
+      const hybrid = row.getByRole("checkbox", { name: "Hybrid" });
+      if (ReleaseFeatures === null) {
+        expect(hybrid).toBeChecked();
+        expect(row.getByText("Automatic value")).toBeInTheDocument();
+      } else {
+        expect(hybrid).not.toBeChecked();
+        expect(row.getByText("Manual value · Applied")).toBeInTheDocument();
+      }
+      expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves unsupported presentation and features until explicitly corrected", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: {
+          ...base.view.intent,
+          releaseName: {
+            Edition: "Extended",
+            Presentation: "Legacy presentation",
+            ReleaseFeatures: ["legacy_feature", "hybrid"],
+          },
+        },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    expect(screen.getByLabelText("Presentation")).toHaveValue("Legacy presentation");
+    expect(
+      screen.getByRole("option", { name: "Unsupported current value: Legacy presentation" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", { name: "Unsupported current value: legacy_feature" }),
+    ).toBeChecked();
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Extras" }));
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["legacy_feature", "hybrid", "extras"],
+    });
+    fireEvent.change(screen.getByLabelText("Edition"), { target: { value: "Custom Cut" } });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      Edition: "Custom Cut",
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Unsupported current value: legacy_feature" }),
+    );
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["hybrid"],
+    });
+  });
+
   it("renders the complete source-level correction inventory", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {
@@ -1755,6 +1924,8 @@ describe("InputPage", () => {
       "release_name.tag",
       "release_name.service",
       "release_name.edition",
+      "release_name.presentation",
+      "release_name.release_features",
       "release_name.repack",
       "release_name.season",
       "release_name.episode",
@@ -2006,8 +2177,9 @@ describe("InputPage", () => {
 });
 
 it.each([
+  ["", "", "IMAX", "", ""],
   ["Director's Cut", "", "", "", "Director's Cut"],
-  ["Extended Cut", "Collector's", "IMAX", "", "Extended Cut Collector's IMAX"],
+  ["Extended Cut", "Collector's", "IMAX", "", "Extended Cut Collector's"],
   ["Theatrical / Extended", "", "IMAX", "2in1", "2in1"],
 ])(
   "displays canonical edition parts for correction (%s)",

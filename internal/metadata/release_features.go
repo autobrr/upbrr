@@ -60,7 +60,7 @@ func parsedReleaseFeatures(release rls.Release) []string {
 }
 
 // applyReleaseFeatures separates edition identity from source-backed feature
-// annotations before tracker mapping. Manual edition controls replace both.
+// annotations before tracker mapping. Independent corrections are applied later.
 func applyReleaseFeatures(parts *releaseEditionParts, meta preparationstate.State) {
 	for _, marker := range meta.Release.Other {
 		for _, feature := range releaseFeaturePatterns {

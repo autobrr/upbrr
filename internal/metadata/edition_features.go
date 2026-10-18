@@ -14,6 +14,9 @@ import (
 // mastering labels do not imply a 4K source.
 func editionFeature(value string) api.ReleaseFeature {
 	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
 	for _, feature := range releaseFeaturePatterns {
 		if feature.feature != "" && (strings.EqualFold(value, feature.label) || feature.pattern.FindString(value) == value) {
 			return feature.feature

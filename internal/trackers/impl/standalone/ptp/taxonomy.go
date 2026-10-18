@@ -578,6 +578,14 @@ func editionFeatures(meta api.UploadSubject) []api.TrackerEditionFeature {
 		residue := value.text
 		matched := false
 		for _, option := range editionFeatureCatalogue {
+			// Explicit feature controls own these selections; opaque Edition
+			// text remains display wording rather than restoring cleared facts.
+			if meta.ReleaseNameOverrides.ReleaseFeatures != nil {
+				switch option.label {
+				case "2-Disc Set", "4K Restoration", "4K Remaster", "Extras", "2D/3D Edition", "3D Anaglyph", "3D Full SBS", "3D Half OU", "3D Half SBS":
+					continue
+				}
+			}
 			if option.pattern.MatchString(value.text) {
 				matched = true
 				// Commentary is controlled by the presence-aware metadata correction,

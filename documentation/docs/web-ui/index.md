@@ -91,7 +91,9 @@ Tracker naming policies can declare mandatory rules for specific name components
 
 A complete manual name has no reliable component boundaries. If a mandatory rule cannot safely apply to it, clear the complete-name override and regenerate the automatic name. A tracker policy may explicitly rebuild it instead. Confirm the effective name shown in review: submitting an edit that would be changed by enforcement does not confirm the unseen replacement.
 
-The **Edition** field shows the detected cut, edition, and presentation labels, or just `2in1` for a two-edition set. Replace or clear this field to override those automatic labels, or set **No edition** to **Yes** to omit them. Apply **Refresh metadata**; choose **Auto** on the edited control to restore automatic handling.
+The **Edition** field shows the detected cut and edition, or just `2in1` for a two-edition set. Editing it preserves independent **Presentation** and **Release features**. Presentation supports IMAX, Open Matte, or both; release features allow multiple selections, such as Hybrid and 4K Restoration. **None** clears that control; **Auto** restores detection. Apply **Refresh metadata** to save the change. Legacy **No edition** suppresses automatic edition-related labels; explicit presentation/features selections take precedence.
+
+Recognized compounds such as `Director's Cut / Hybrid` split into the cut and independent feature. Every slash-separated fragment must be recognized; custom wording remains intact. Presentation/features appear immediately after Edition, or in its position when Edition is absent, subject to each tracker's naming policy. Complete manual names retain their existing authority. Feature annotations do not change measured media facts.
 
 A solitary Theatrical cut or edition is ignored; compound editions retain it. Review the effective selections and supporting evidence alongside the payload preview. See [editions and commentary](../trackers/index.md#editions-and-commentary) for manual corrections.
 

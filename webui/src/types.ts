@@ -225,6 +225,9 @@ export type MediaFacts = {
   HasEncodeSettings: boolean;
   BitDepth: string;
   ReleaseFeatures?: Array<
+    | "hybrid"
+    | "restoration"
+    | "remaster"
     | "two_disc_set"
     | "4k_restoration"
     | "4k_remaster"
@@ -389,6 +392,10 @@ export type ReleaseNameOverrides = {
   Tag?: string | null;
   Service?: string | null;
   Edition?: string | null;
+  /** Null restores automatic presentation; an empty string explicitly removes it. */
+  Presentation?: string | null;
+  /** Null restores automatic features; an empty list explicitly removes them. */
+  ReleaseFeatures?: readonly string[] | null;
   Repack?: string | null;
   Season?: string | null;
   Episode?: string | null;

@@ -24,6 +24,8 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 		overrides.Service != nil ||
 		overrides.Edition != nil ||
 		overrides.Repack != nil ||
+		overrides.Presentation != nil ||
+		overrides.ReleaseFeatures != nil ||
 		overrides.Season != nil ||
 		overrides.Episode != nil ||
 		overrides.EpisodeTitle != nil ||
@@ -49,6 +51,18 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 func validateReleaseNameFactInstructions(overrides api.ReleaseNameOverrides) error {
 	if overrides.Repack != nil && !api.IsSupportedReleaseVersion(*overrides.Repack) {
 		return fmt.Errorf("metadata: unsupported release version %q: %w", *overrides.Repack, internalerrors.ErrInvalidInput)
+	}
+	if overrides.Presentation != nil {
+		if _, ok := api.NormalizeReleasePresentation(*overrides.Presentation); !ok {
+			return fmt.Errorf("metadata: unsupported presentation %q: %w", *overrides.Presentation, internalerrors.ErrInvalidInput)
+		}
+	}
+	if overrides.ReleaseFeatures != nil {
+		for _, feature := range *overrides.ReleaseFeatures {
+			if api.ReleaseFeatureLabel(feature) == "" {
+				return fmt.Errorf("metadata: unsupported release feature %q: %w", feature, internalerrors.ErrInvalidInput)
+			}
+		}
 	}
 	if overrides.Season != nil {
 		if _, err := seasonep.ParseSeasonInstruction(*overrides.Season); err != nil {
@@ -148,17 +162,7 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 
 	if overrides.Edition != nil {
-		meta.ReleaseFeatures = nil
-		meta.EditionDisplay = nil
-		meta.EditionSet = ""
-		meta.Cut = ""
-		meta.Presentation = ""
-		meta.Release.Cut = nil
-		meta.Edition = strings.TrimSpace(*overrides.Edition)
-		meta.Release.Edition = nil
-		if meta.Edition != "" {
-			meta.Release.Edition = []string{meta.Edition}
-		}
+		applyManualEdition(meta, *overrides.Edition)
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		meta.ReleaseFeatures = nil
@@ -170,6 +174,13 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 		meta.Release.Cut = nil
 		meta.Release.Edition = nil
 		meta.Repack = ""
+	}
+	// Independent explicit controls win over legacy NoEdition suppression.
+	if overrides.Presentation != nil {
+		meta.Presentation, _ = api.NormalizeReleasePresentation(*overrides.Presentation)
+	}
+	if overrides.ReleaseFeatures != nil {
+		applyManualReleaseFeatures(meta, *overrides.ReleaseFeatures)
 	}
 	// Explicit version corrections take precedence over legacy NoEdition suppression.
 	if overrides.Repack != nil {
@@ -281,11 +292,18 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		req.Edition = ""
-		req.EditionDisplay = ""
+		if overrides.ReleaseFeatures == nil {
+			req.EditionDisplay = ""
+		}
 		req.EditionSet = ""
 		req.Cut = ""
-		req.Presentation = ""
-		req.Hybrid = false
+		if overrides.Presentation == nil {
+			req.Presentation = ""
+		}
+		if overrides.ReleaseFeatures == nil {
+			req.Hybrid = false
+			req.WebDV = false
+		}
 	}
 	return req
 }

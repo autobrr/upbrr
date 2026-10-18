@@ -98,6 +98,11 @@ type ReleaseNameRequest struct {
 	Cut                string
 	Presentation       string
 	Edition            string
+	// ManualEdition keeps opaque user wording intact instead of deriving Hybrid from it.
+	ManualEdition bool
+	// ManualPresentation and ManualReleaseFeatures retain explicit annotations beside multi-edition sets.
+	ManualPresentation    bool
+	ManualReleaseFeatures bool
 	// EditionDisplay replaces edition wording only in generated names, never canonical edition evidence.
 	EditionDisplay string
 	SearchYear     string
@@ -147,11 +152,15 @@ type ReleaseNameOverrides struct {
 	Tag        *string
 	Service    *string
 	// Repack replaces the detected release version; empty clears it and nil keeps automatic detection.
-	Repack       *string
-	Edition      *string
-	Season       *string
-	Episode      *string
-	EpisodeTitle *string
+	Repack *string
+	// Presentation replaces detected presentation; empty clears it and nil keeps detection.
+	Presentation *string
+	// ReleaseFeatures replaces detected features; an empty list clears them and nil keeps detection.
+	ReleaseFeatures *[]ReleaseFeature
+	Edition         *string
+	Season          *string
+	Episode         *string
+	EpisodeTitle    *string
 	// ManualYear replaces the derived year; zero explicitly clears it and nil restores automatic resolution.
 	ManualYear       *int
 	ManualDate       *string

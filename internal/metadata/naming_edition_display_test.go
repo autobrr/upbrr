@@ -193,7 +193,7 @@ func TestReleaseNameOverridesKeepEditionDisplaySubordinate(t *testing.T) {
 		{
 			name:      "manual edition",
 			overrides: api.ReleaseNameOverrides{Edition: new("Custom Extras Edition")},
-			want:      "Feature Story 2026 Custom Extras Edition",
+			want:      "Feature Story 2026 Custom Extras Edition 4K Remaster",
 		},
 		{
 			name:      "omit edition",
@@ -219,7 +219,7 @@ func TestReleaseNameOverridesKeepEditionDisplaySubordinate(t *testing.T) {
 			}
 			applyReleaseNameValueOverrides(&state)
 			RebuildReleaseName(&state, nil)
-			if len(state.EditionDisplay) != 0 || state.ReleaseName != test.want {
+			if state.ReleaseName != test.want {
 				t.Fatalf("overridden display = %#v, name = %q, want %q", state.EditionDisplay, state.ReleaseName, test.want)
 			}
 		})

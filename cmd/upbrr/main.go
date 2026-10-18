@@ -1209,6 +1209,8 @@ type releaseOverrideInput struct {
 	Tag              string
 	Service          string
 	Edition          string
+	Presentation     string
+	ReleaseFeatures  []string
 	Season           string
 	Episode          string
 	EpisodeTitle     string
@@ -1247,6 +1249,16 @@ func buildReleaseNameOverrides(visited map[string]bool, input releaseOverrideInp
 	}
 	if visited["service"] {
 		overrides.Service = stringPtr(input.Service)
+	}
+	if visited["presentation"] {
+		overrides.Presentation = stringPtr(input.Presentation)
+	}
+	if visited["release-features"] {
+		features := make([]api.ReleaseFeature, 0, len(input.ReleaseFeatures))
+		for _, feature := range input.ReleaseFeatures {
+			features = append(features, api.ReleaseFeature(strings.TrimSpace(feature)))
+		}
+		overrides.ReleaseFeatures = &features
 	}
 	if visited["edition"] {
 		overrides.Edition = stringPtr(input.Edition)

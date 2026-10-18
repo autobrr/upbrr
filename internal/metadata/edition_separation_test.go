@@ -171,7 +171,7 @@ func TestParserGenericMasteringDoesNotInvent4K(t *testing.T) {
 	}
 }
 
-func TestManualEditionClearsAutomaticDisplayProjection(t *testing.T) {
+func TestManualEditionRetainsIndependentDisplayProjection(t *testing.T) {
 	for _, overrides := range []api.ReleaseNameOverrides{{Edition: new("Custom wording")}, {Edition: new("Hybrid Uncut")}, {Edition: new("")}, {NoEdition: new(true)}} {
 		state := preparationstate.State{
 			Edition:              "Collector's",
@@ -180,8 +180,12 @@ func TestManualEditionClearsAutomaticDisplayProjection(t *testing.T) {
 			ReleaseNameOverrides: overrides,
 		}
 		applyReleaseNameValueOverrides(&state)
-		if len(state.EditionDisplay) != 0 || len(state.ReleaseFeatures) != 0 {
-			t.Fatalf("automatic projection survived correction: %+v", state)
+		if overrides.NoEdition != nil {
+			if len(state.EditionDisplay) != 0 || len(state.ReleaseFeatures) != 0 {
+				t.Fatal("legacy omission retained annotations")
+			}
+		} else if !slices.Equal(state.ReleaseFeatures, []api.ReleaseFeature{api.ReleaseFeatureRestoration, api.ReleaseFeatureHybrid}) || !strings.Contains(api.EditionDisplayText(state.EditionDisplay), "Restored") {
+			t.Fatalf("edition edit erased independent annotations: edition=%q features=%v display=%v", state.Edition, state.ReleaseFeatures, state.EditionDisplay)
 		}
 		if overrides.Edition != nil && state.Edition != *overrides.Edition {
 			t.Fatalf("manual wording changed: %q, want %q", state.Edition, *overrides.Edition)
