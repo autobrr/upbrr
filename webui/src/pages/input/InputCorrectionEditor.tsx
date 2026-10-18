@@ -84,7 +84,7 @@ function CommaListInput({
   );
 }
 
-/** Retains unknown saved features until the user removes them or selects None/Auto. */
+/** Keeps multiple selections and unknown saved values in a keyboard-accessible disclosure. */
 function ReleaseFeaturesInput({
   value,
   onChange,
@@ -92,6 +92,8 @@ function ReleaseFeaturesInput({
   value: readonly string[];
   onChange: (value: readonly string[]) => void;
 }>) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   const options = [
     ...correctionChoices.ReleaseFeatures,
     ...value
@@ -100,30 +102,70 @@ function ReleaseFeaturesInput({
       )
       .map((feature) => ({ value: feature, label: `Unsupported current value: ${feature}` })),
   ];
+  const selected =
+    value.map((feature) => options.find((option) => option.value === feature)!.label).join(", ") ||
+    "None";
   return (
-    <fieldset
-      className="grid gap-2"
-      aria-labelledby="correction-release_name.release_features-label"
+    <div
+      className="relative min-w-0"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(false);
+          trigger.current?.focus();
+        }
+      }}
     >
-      <Button type="button" aria-label="None Release features" onClick={() => onChange([])}>
-        None
-      </Button>
-      {options.map((option) => (
-        <label key={option.value} className="flex items-center gap-2">
-          <Checkbox
-            checked={value.includes(option.value)}
-            onCheckedChange={(checked) =>
-              onChange(
-                checked
-                  ? [...value, option.value]
-                  : value.filter((feature) => feature !== option.value),
-              )
-            }
-          />
-          <span>{option.label}</span>
-        </label>
-      ))}
-    </fieldset>
+      <button
+        ref={trigger}
+        type="button"
+        className="flex h-9 min-w-0 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm text-card-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        aria-labelledby="correction-release_name.release_features-label"
+        aria-describedby="correction-release_name.release_features-summary"
+        aria-expanded={open}
+        aria-controls={open ? "correction-release_name.release_features-options" : undefined}
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <span
+          id="correction-release_name.release_features-summary"
+          className="truncate"
+          title={selected}
+        >
+          {selected}
+        </span>
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open ? (
+        <fieldset
+          id="correction-release_name.release_features-options"
+          className="absolute inset-x-0 top-full z-20 mt-1 grid max-h-72 gap-2 overflow-y-auto rounded-md border border-input bg-card p-3 text-card-foreground shadow-md"
+          aria-labelledby="correction-release_name.release_features-label"
+        >
+          <Button type="button" aria-label="None Release features" onClick={() => onChange([])}>
+            None
+          </Button>
+          {options.map((option) => (
+            <label key={option.value} className="flex min-w-0 items-center gap-2">
+              <Checkbox
+                checked={value.includes(option.value)}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    checked
+                      ? [...value, option.value]
+                      : value.filter((feature) => feature !== option.value),
+                  )
+                }
+              />
+              <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span>
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
+    </div>
   );
 }
 
@@ -943,6 +985,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               >
                 {key === "ReleaseFeatures" ? (
                   <ReleaseFeaturesInput
+                    key={draftKey(field)}
                     value={Array.isArray(rawValue) ? rawValue : []}
                     onChange={(next) => setReleaseName(key, next)}
                   />

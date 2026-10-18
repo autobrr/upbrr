@@ -300,11 +300,6 @@ func TestUnit3DPayloadCallbacksRejectKnownInvalidFacts(t *testing.T) {
 			rule:    "unsupported_region",
 		},
 		{
-			tracker: "LST",
-			subject: api.TrackerValidationSubject{Edition: "Unknown Edition"},
-			rule:    "unsupported_edition",
-		},
-		{
 			tracker: "SHRI",
 			subject: api.TrackerValidationSubject{DiscType: "DVD"},
 			rule:    "region_required",
@@ -318,6 +313,29 @@ func TestUnit3DPayloadCallbacksRejectKnownInvalidFacts(t *testing.T) {
 				t.Fatalf("%s validation missing %s failure: %#v", test.tracker, test.rule, failures)
 			}
 		})
+	}
+}
+
+func TestLSTUnmappedEditionPreservesRequiredTaxonomyValidation(t *testing.T) {
+	t.Parallel()
+
+	registry, err := impl.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	failures, err := trackers.EvaluateTrackerValidationWithRegistry(
+		t.Context(), registry, "LST", api.TrackerValidationSubject{Edition: "Unknown Edition"}, api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasRuleFailure(failures, "unsupported_edition") {
+		t.Fatalf("optional unmapped edition blocked LST: %#v", failures)
+	}
+	for _, rule := range []string{"unsupported_category", "unsupported_type"} {
+		if !hasRuleFailure(failures, rule) {
+			t.Fatalf("LST validation missing %s failure: %#v", rule, failures)
+		}
 	}
 }
 

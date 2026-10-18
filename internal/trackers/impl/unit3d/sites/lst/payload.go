@@ -16,6 +16,7 @@ func additionalPayload(req trackers.PreparationInput, data map[string]string) {
 	} else {
 		data["draft_queue_opt_in"] = "0"
 	}
+	// Unmapped editions remain in the reviewed name; the optional API field is omitted.
 	if editionID, ok := editionID(req.Meta.EditionLabel()); ok {
 		data["edition_id"] = editionID
 	}

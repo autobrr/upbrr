@@ -5,11 +5,11 @@ package lst
 
 import (
 	"context"
-	"github.com/autobrr/upbrr/internal/mediafacts"
 	"path/filepath"
 	"strconv"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -25,10 +25,8 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 		{name: "complete evidence passes"},
 		{name: "release version is independent of edition", mutate: func(subject *api.TrackerValidationSubject) { subject.Repack = "PROPER" }},
 		{
-			name:            "version text in edition remains invalid",
-			mutate:          func(subject *api.TrackerValidationSubject) { subject.Edition = "PROPER" },
-			wantRule:        "unsupported_edition",
-			wantDisposition: api.RuleDispositionStrict,
+			name:   "unsupported edition does not block upload",
+			mutate: func(subject *api.TrackerValidationSubject) { subject.Edition = "Unknown Edition" },
 		},
 		{
 			name: "archive is strict",
@@ -139,27 +137,24 @@ func requireLSTValidationFailure(
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
 }
 
-func TestLSTValidationChecksCanonicalCut(t *testing.T) {
-	for _, test := range []struct {
-		cut         string
-		wantFailure bool
-	}{{"Director's Cut", false}, {"Unsupported Cut", true}} {
-		t.Run(test.cut, func(t *testing.T) {
+func TestLSTValidationAllowsUnmappedEditions(t *testing.T) {
+	for _, cut := range []string{"Director's Cut", "Unsupported Cut", ""} {
+		t.Run(cut, func(t *testing.T) {
 			subject := lstValidationSubject()
-			subject.Cut = test.cut
+			subject.Cut = cut
 			failures, err := validationPolicy().Check(t.Context(), subject, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			found := false
-			for _, failure := range failures {
-				if failure.Rule == "unsupported_edition" {
-					found = true
-				}
+			if len(failures) != 0 {
+				t.Fatalf("cut %q failures = %#v", cut, failures)
 			}
-			if found != test.wantFailure {
-				t.Fatalf("cut %q failures = %#v", test.cut, failures)
+			subject.AssetFacts.HostedScreenshots.Count = 2
+			failures, err = validationPolicy().Check(t.Context(), subject, nil)
+			if err != nil {
+				t.Fatal(err)
 			}
+			requireLSTValidationFailure(t, failures, "lst_required_assets_hosted_screenshot", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 		})
 	}
 }
