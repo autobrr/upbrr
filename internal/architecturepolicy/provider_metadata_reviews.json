@@ -1416,24 +1416,24 @@
     "sha256": "575f25eae2122199087f1dcecdbf31ffc4ef964348bf315add1d80a2fb04d4f3"
   },
   "internal/trackers/impl/unit3d/sites/lst/questionnaire.go:languageQuestionnaire": {
-    "reason": "Preserves finalized canonical and effective provider facts and current scoped review answers through questionnaire, validation and submission finalization.",
-    "sha256": "91ffd2c857bf07b8eb48cb5574c1db6e95a41636fb9c15163e0bbe2c83d216c1"
+    "reason": "LST compatibility and description confirmation review: removes independent compatibility-origin attestation after valid track association; measured codec, language, resource, ambiguity and manual assignment checks remain. Source documentation uses a source/name/generation-bound promise to include references in the description; ordinary guidance and personal priority remain. Answered automatic fields remain in the post-answer schema for valid API ingestion. Finalized facts, manual overrides and provider scope guards are unchanged.",
+    "sha256": "e8fc7e1bbca3cdef6826e02580f4bb94ff23e849e097a79993bf78c0dab750bb"
   },
   "internal/trackers/impl/unit3d/sites/lst/source_validation.go:endedLSTSeries": {
     "reason": "Uses finalized canonical facts and current scoped review answers; provider series status is consumed only after source and identity validation, with no manual series-status field to override.",
     "sha256": "80ee885d2191b5435842907ac71bca1924004cf45ed9c6c50020e946cefa4709"
   },
   "internal/trackers/impl/unit3d/sites/lst/source_validation.go:sourceReviewQuestions": {
-    "reason": "Preserves finalized canonical and effective provider facts and current scoped review answers through questionnaire, validation and submission finalization.",
-    "sha256": "c9eaa68617853a5ed33ad0158f41114b55f3c207cb798ec3e5980e8ad4be5ede"
+    "reason": "LST guidance review: missing audio titles, known-service WEB naming and source stream processing no longer require reassurance answers. Source and encode prohibitions, ended-series current-source/generation provider checks, finalized facts and manual metadata precedence remain unchanged; questionnaire and validation callers were reviewed together.",
+    "sha256": "f22f58cdf13e7facc66e23927af5003239c4276bc983a6987c9527b5cf3ebbf0"
   },
   "internal/trackers/impl/unit3d/sites/lst/source_validation.go:sourceValidationFailures": {
-    "reason": "Preserves finalized canonical and effective provider facts and current scoped review answers through questionnaire, validation and submission finalization.",
-    "sha256": "b21cf51892fcef3bd5ed6f3c39026ae79b0d5340a849ccff18bdc9eac58556dc"
+    "reason": "LST guidance review: missing audio titles, known-service WEB naming and source stream processing no longer require reassurance answers. Source and encode prohibitions, ended-series current-source/generation provider checks, finalized facts and manual metadata precedence remain unchanged; questionnaire and validation callers were reviewed together.",
+    "sha256": "56baf71f9f4aec05330cb6fd02ed0258398f0de81324939f6920b6061769006d"
   },
   "internal/trackers/impl/unit3d/sites/lst/validation.go:validationPolicy": {
-    "reason": "Preserves finalized canonical and effective provider facts and current scoped review answers through questionnaire, validation and submission finalization.",
-    "sha256": "e1553245035ea2aa45c1ef6a1e9a086f6ed18a52a4727b9e091a1dc3fc4eecef"
+    "reason": "Advances LST policy for source-reference inclusion confirmation and compatibility determined from measured matching track evidence, without independent origin attestation. All existing finalized-fact, manual precedence, source/generation and provider-scope guards remain; independent media eligibility and required language checks are unchanged.",
+    "sha256": "8557a50a3e8d882ad3556244872fba0de3b28021d5f8185310dd308da0cb14b9"
   },
   "internal/trackers/impl/unit3d/sites/lume/name.go:applyLumeTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",

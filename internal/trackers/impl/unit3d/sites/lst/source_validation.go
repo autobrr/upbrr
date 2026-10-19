@@ -43,15 +43,6 @@ func sourceReviewQuestions(subject api.TrackerValidationSubject) []api.TrackerQu
 			NeedsReview: value == "" || value == "unresolved",
 		})
 	}
-	add(
-		"stream_processing",
-		"Review source stream processing",
-		"Review source records for every prepared resource, including video, audio, subtitles and HDR layers. Distinguish studio/distributor processing already present at retail from user-generated/enhanced streams, and check for improper splicing.",
-		"reviewed_no_user_processing_or_improper_splicing",
-		"retail_processing_preserved",
-		"user_generated_or_enhanced_streams",
-		"improper_splicing",
-	)
 	for _, file := range subject.MediaFileFacts.Files {
 		if file.ResourceID != "" && strings.EqualFold(file.Container, "ts") && file.Source == "" {
 			add(
@@ -274,8 +265,6 @@ func sourceValidationFailures(subject api.TrackerValidationSubject) []api.RuleFa
 		invalid := value == "" || value == "unresolved" || !slices.Contains(field.Options, value)
 		if slices.Contains(
 			[]string{
-				"user_generated_or_enhanced_streams",
-				"improper_splicing",
 				"unofficial",
 				"not_retail_untouched",
 				"other",
@@ -293,7 +282,14 @@ func sourceValidationFailures(subject api.TrackerValidationSubject) []api.RuleFa
 			add("source_review", fmt.Sprintf("%s: %s", field.Label, field.Help), status, true)
 		}
 	}
-	return failures
+	guidance := trackers.NewEvidenceRuleFailure(
+		"lst_stream_processing",
+		"Review source records for every prepared resource, including video, audio, subtitles and HDR layers. Distinguish studio/distributor processing already present at retail from user-generated/enhanced streams, and check for improper splicing.",
+		api.RuleDispositionAdvisory,
+		api.MetadataEvidenceStatusPartial,
+	)
+	guidance.DebugBypass = true
+	return append(failures, guidance)
 }
 
 func prohibitedLSTSource(value string) bool {

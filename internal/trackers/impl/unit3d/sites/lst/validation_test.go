@@ -76,6 +76,8 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatalf("validate LST subject: %v", err)
 			}
+			failures = withoutLSTStreamProcessingGuidance(t, failures)
+			failures = withoutLSTTrackPresentationGuidance(t, failures)
 			if test.wantRule == "" {
 				if len(failures) != 0 {
 					t.Fatalf("unexpected failures: %#v", failures)
@@ -162,6 +164,8 @@ func TestLSTValidationAllowsUnmappedEditions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			failures = withoutLSTStreamProcessingGuidance(t, failures)
+			failures = withoutLSTTrackPresentationGuidance(t, failures)
 			if len(failures) != 0 {
 				t.Fatalf("cut %q failures = %#v", cut, failures)
 			}
@@ -170,6 +174,8 @@ func TestLSTValidationAllowsUnmappedEditions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			failures = withoutLSTStreamProcessingGuidance(t, failures)
+			failures = withoutLSTTrackPresentationGuidance(t, failures)
 			requireLSTValidationFailure(t, failures, "lst_required_assets_hosted_screenshot", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 		})
 	}

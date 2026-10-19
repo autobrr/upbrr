@@ -4,101 +4,24 @@
 package lst
 
 import (
-	"slices"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func remuxSubtitleQuestions(subject api.TrackerValidationSubject) []api.TrackerQuestionnaireField {
+func remuxSubtitleFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	if !strings.EqualFold(subject.Type, "REMUX") {
 		return nil
 	}
-	resources := remuxSubtitleResources(subject)
-	var fields []api.TrackerQuestionnaireField
-	for _, resource := range resources {
-		for _, kind := range []string{"english", "forced_english"} {
-			options := []string{"unresolved", "retail_track_retained", "not_available_on_retail", "silent_content", "required_track_missing"}
-			if kind == "forced_english" {
-				options = append(options, "retail_hardcoded_preserved")
-			}
-			key := sourceQuestionKey(subject, "retail_subtitle_"+kind+"_"+resource)
-			value := subject.QuestionnaireAnswers[key]
-			fields = append(
-				fields,
-				api.TrackerQuestionnaireField{
-					Key:         key,
-					Label:       "Retail " + strings.ReplaceAll(kind, "_", " ") + " subtitle coverage for resource " + resource,
-					Kind:        "select",
-					Options:     options,
-					Required:    true,
-					Value:       value,
-					NeedsReview: value == "" || value == "unresolved",
-					Help:        "Compare this exact resource with the retail source. Confirm retained applicable subtitle content, source unavailability, or the stated exception. A forced flag alone does not prove dialogue coverage; subtitle ordering is optional.",
-				},
-			)
-		}
-	}
-	return fields
-}
-
-func remuxSubtitleResources(subject api.TrackerValidationSubject) []string {
-	resources := []string{}
-	for _, file := range subject.MediaFileFacts.Files {
-		if !slices.Contains(resources, file.ResourceID) {
-			resources = append(resources, file.ResourceID)
-		}
-	}
-	for _, track := range subject.LanguageFacts.Tracks {
-		if !slices.Contains(resources, track.ResourceID) {
-			resources = append(resources, track.ResourceID)
-		}
-	}
-	if len(resources) == 0 {
-		resources = append(resources, "")
-	}
-	slices.Sort(resources)
-	return resources
-}
-
-func remuxSubtitleFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
-	fields := remuxSubtitleQuestions(subject)
-	failures := make([]api.RuleFailure, 0, len(fields))
-	resources := remuxSubtitleResources(subject)
-	for i, field := range fields {
-		value := field.Value
-		outcome := trackers.LanguageUnresolved
-		switch {
-		case value == "retail_track_retained" && !retainedEnglishSubtitle(subject, resources[i/2]):
-			if subject.LanguageFacts.TrackCoverageComplete && !slices.ContainsFunc(subject.LanguageFacts.Tracks, func(track api.MediaTrackFacts) bool {
-				return track.ResourceID == resources[i/2] && track.Kind == api.MediaTrackSubtitle && len(track.Languages) == 0
-			}) {
-				outcome = trackers.LanguageProhibited
-			}
-		case value == "required_track_missing":
-			outcome = trackers.LanguageProhibited
-		case slices.Contains(field.Options, value) && value != "unresolved":
-			continue
-		}
-		failure := trackers.LanguageRuleFailure(subject, "retail_subtitles", field.Label+": source coverage requires review or correction", outcome)
-		failure.QuestionnaireInput = true
-		failures = append(failures, failure)
-	}
-	if len(failures) == 0 {
-		return nil
-	}
-	return failures
-}
-
-func retainedEnglishSubtitle(subject api.TrackerValidationSubject, resource string) bool {
-	return slices.ContainsFunc(subject.LanguageFacts.Tracks, func(track api.MediaTrackFacts) bool {
-		return track.ResourceID == resource && track.Kind == api.MediaTrackSubtitle && slices.ContainsFunc(track.Languages, func(value string) bool {
-			language, _ := languageutil.SubtitleLanguageParts(value)
-			return language == "English"
-		})
-	})
+	failure := trackers.LanguageRuleFailure(
+		subject,
+		"retail_subtitles",
+		"Retain applicable retail English subtitles and retail forced-English subtitles for non-English dialogue or on-screen text in English-language content. Compare every prepared resource with its retail source; preserved retail hardcoded forced subtitles can satisfy forced coverage. Missing retail tracks may make the release trumpable.",
+		trackers.LanguageAdvisory,
+	)
+	failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+	return []api.RuleFailure{failure}
 }
 
 func alternateMixQuestions(subject api.TrackerValidationSubject) []api.TrackerQuestionnaireField {

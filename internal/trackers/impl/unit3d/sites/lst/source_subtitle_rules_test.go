@@ -4,52 +4,47 @@
 package lst
 
 import (
-	"github.com/autobrr/upbrr/pkg/api"
+	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestLSTRetailSubtitleReview(t *testing.T) {
-	subject := ordinaryCompatibilitySubject()
-	subject.Type = "REMUX"
-	subject.QuestionnaireAnswers = map[string]string{}
-	fields := remuxSubtitleQuestions(subject)
-	if len(fields) == 0 || len(remuxSubtitleFailures(subject)) != len(fields) {
-		t.Fatal("missing source evidence passed")
-	}
-	for _, field := range fields {
-		subject.QuestionnaireAnswers[field.Key] = "not_available_on_retail"
-	}
-	if failures := remuxSubtitleFailures(subject); len(failures) != 0 {
-		t.Fatalf("source absence: %#v", failures)
-	}
-	for _, field := range fields {
-		subject.QuestionnaireAnswers[field.Key] = "retail_track_retained"
-	}
-	if len(remuxSubtitleFailures(subject)) == 0 {
-		t.Fatal("retained answer hid absent measured subtitles")
-	}
-	for _, field := range fields {
-		subject.QuestionnaireAnswers[field.Key] = "silent_content"
-	}
-	if len(remuxSubtitleFailures(subject)) != 0 {
-		t.Fatal("silent exception failed")
-	}
-	subject.QuestionnaireAnswers[fields[1].Key] = "retail_hardcoded_preserved"
-	if len(remuxSubtitleFailures(subject)) != 0 {
-		t.Fatal("retail hardcoded exception failed")
-	}
-	subject.QuestionnaireAnswers[fields[0].Key] = "required_track_missing"
-	failures := remuxSubtitleFailures(subject)
-	if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionStrict || failures[0].EvidenceStatus != api.MetadataEvidenceStatusComplete {
-		t.Fatalf("known omission: %#v", failures)
-	}
-	subject.Identity.Generation++
-	if len(remuxSubtitleFailures(subject)) != len(fields) {
-		t.Fatal("stale source review persisted")
-	}
-	subject.Type = "ENCODE"
-	if len(remuxSubtitleQuestions(subject)) != 0 {
-		t.Fatal("review leaked outside remux")
+func TestLSTRetailSubtitleCoverageIsGuidance(t *testing.T) {
+	for _, personal := range []bool{false, true} {
+		for _, answer := range []string{"", "required_track_missing", "retail_track_retained"} {
+			t.Run(fmt.Sprintf("personal=%t/answer=%s", personal, answer), func(t *testing.T) {
+				subject := ordinaryCompatibilitySubject()
+				subject.PersonalRelease = personal
+				subject.QuestionnaireAnswers = map[string]string{
+					sourceQuestionKey(subject, "retail_subtitle_english_media"):        answer,
+					sourceQuestionKey(subject, "retail_subtitle_forced_english_media"): answer,
+				}
+				questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
+					Type:            subject.Type,
+					PersonalRelease: personal,
+					LanguageFacts:   subject.LanguageFacts,
+				}})
+				if questionnaire != nil {
+					for _, field := range questionnaire.Fields {
+						if strings.Contains(field.Key, "retail_subtitle_") {
+							t.Fatalf("retail coverage still asks for confirmation: %+v", field)
+						}
+					}
+				}
+				failures := remuxSubtitleFailures(subject)
+				if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionAdvisory || failures[0].QuestionnaireInput ||
+					failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+					t.Fatalf("retail coverage is not passive guidance: %+v", failures)
+				}
+				subject.Type = "ENCODE"
+				if failures := remuxSubtitleFailures(subject); len(failures) != 0 {
+					t.Fatalf("remux guidance leaked to encodes: %+v", failures)
+				}
+			})
+		}
 	}
 }
 
@@ -76,37 +71,5 @@ func TestLSTAlternateMixPriority(t *testing.T) {
 			t.Fatal("current review failed")
 		}
 		subject.QuestionnaireAnswers = map[string]string{}
-	}
-}
-
-func TestLSTRetailSubtitleRetentionNeedsResourceEvidence(t *testing.T) {
-	subject := ordinaryCompatibilitySubject()
-	subject.Type = "REMUX"
-	subject.LanguageFacts.TrackCoverageComplete = true
-	resource := subject.LanguageFacts.Tracks[0].ResourceID
-	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-		ID:         "subtitle",
-		ResourceID: resource,
-		Kind:       api.MediaTrackSubtitle,
-	})
-	subject.QuestionnaireAnswers = map[string]string{}
-	for _, field := range remuxSubtitleQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = "retail_track_retained"
-	}
-	for _, failure := range remuxSubtitleFailures(subject) {
-		if failure.EvidenceStatus != api.MetadataEvidenceStatusPartial {
-			t.Fatalf("unknown language became violation: %#v", failure)
-		}
-	}
-	subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].Languages = []string{"English"}
-	for _, field := range remuxSubtitleQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = "retail_track_retained"
-	}
-	if failures := remuxSubtitleFailures(subject); len(failures) != 0 {
-		t.Fatalf("retained current evidence: %#v", failures)
-	}
-	subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].ResourceID = "other"
-	if len(remuxSubtitleFailures(subject)) == 0 {
-		t.Fatal("resource change preserved source review")
 	}
 }

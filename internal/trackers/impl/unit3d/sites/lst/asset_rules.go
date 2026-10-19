@@ -48,15 +48,15 @@ func assetReviewQuestions(subject api.TrackerValidationSubject) []api.TrackerQue
 			Help:     "Inspect the full-resolution hosted images against the prepared screenshots. Confirm their lossless format and preservation; a filename or thumbnail alone is insufficient.",
 		})
 	}
-	if len(untaggedTracks(subject)) > 0 {
+	if tracks := tracksMissingLanguages(subject); len(tracks) > 0 {
 		fields = append(
 			fields,
 			api.TrackerQuestionnaireField{
 				Key:      assetQuestionKey(subject, "track_notes"),
-				Label:    "Clarify untagged tracks",
+				Label:    "Clarify tracks with missing languages",
 				Kind:     "text",
 				Required: true,
-				Help:     "Identify each untagged track and its language and role: " + strings.Join(untaggedTracks(subject), ", "),
+				Help:     "Identify the language and role of each track with a missing language tag: " + strings.Join(tracks, ", "),
 			},
 		)
 	}
@@ -145,24 +145,16 @@ func escapedDescriptionEvidence(value string) string {
 }
 
 func requiredAssetDescription(subject api.TrackerValidationSubject) string {
-	var lines []string
-	if documentation := presentationDescription(subject); documentation != "" {
-		lines = append(lines, documentation)
-	}
-	if note := strings.TrimSpace(subject.QuestionnaireAnswers[assetQuestionKey(subject, "track_notes")]); note != "" {
-		lines = append(lines, strings.NewReplacer("[", "&#91;", "]", "&#93;").Replace(html.EscapeString(note)))
-	}
-	return strings.Join(lines, "\n")
+	return escapedDescriptionEvidence(strings.TrimSpace(subject.QuestionnaireAnswers[assetQuestionKey(subject, "track_notes")]))
 }
 
-func untaggedTracks(subject api.TrackerValidationSubject) []string {
+func tracksMissingLanguages(subject api.TrackerValidationSubject) []string {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
 		return nil
 	}
 	var tracks []string
 	for _, track := range subject.LanguageFacts.Tracks {
-		if (track.Kind == api.MediaTrackAudio && (track.Title == "" || len(track.Languages) == 0)) ||
-			(track.Kind == api.MediaTrackSubtitle && len(track.Languages) == 0) {
+		if (track.Kind == api.MediaTrackAudio || track.Kind == api.MediaTrackSubtitle) && len(track.Languages) == 0 {
 			tracks = append(tracks, track.ResourceID+":"+track.ID)
 		}
 	}

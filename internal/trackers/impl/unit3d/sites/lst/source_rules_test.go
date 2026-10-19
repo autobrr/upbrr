@@ -112,7 +112,7 @@ func TestLSTCompatibilitySourceQualityIsAdvisory(t *testing.T) {
 					trackers.LanguageQuestionKey(subject, "compatibility_source_compat"): answer,
 					trackers.LanguageQuestionKey(subject, "compatibility_mix_compat"):    "audio-0",
 				}
-				failures := languageAssessment(reviewedCompatibilitySubject(subject))
+				failures := languageAssessment(subject)
 				requireLSTSourceFailure(t, failures, "language_compatibility_source", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 				if codec == "AAC" {
 					requireLSTSourceFailure(t, failures, "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
@@ -128,8 +128,9 @@ func TestLSTCompatibilitySourceQualityIsAdvisory(t *testing.T) {
 					LanguageFacts:               subject.LanguageFacts,
 					TrackerQuestionnaireAnswers: map[string]map[string]string{"LST": subject.QuestionnaireAnswers},
 				}})
-				if question == nil || len(question.Fields) != 1 || !strings.HasPrefix(question.Fields[0].Key, "compatibility_mix_") {
-					t.Fatalf("only measured association input should remain: %+v", question)
+				if question == nil || len(question.Fields) != 1 || !strings.HasPrefix(question.Fields[0].Key, "compatibility_mix_") ||
+					question.Fields[0].Required || question.Fields[0].NeedsReview {
+					t.Fatalf("resolved association is not optional: %+v", question)
 				}
 				subject.Type = "DISC"
 				if got := languageAssessment(subject); len(got) != 0 {

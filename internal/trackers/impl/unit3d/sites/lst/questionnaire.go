@@ -34,8 +34,10 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		}
 		key := trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)
 		inferred := trackers.AutomaticCompatibilityMix(track, candidates)
-		_, answered := subject.QuestionnaireAnswers[key]
-		if !answered && inferred != "" && !assignmentReview {
+		answer, answered := subject.QuestionnaireAnswers[key]
+		automatic := inferred != "" && !assignmentReview
+		// Answered fields remain in the schema so input readiness can validate the submitted key.
+		if !answered && automatic {
 			continue
 		}
 		options, details := []string{"unresolved"}, ""
@@ -57,7 +59,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Label:    "LST source mix for compatibility track " + track.ID,
 			Kind:     "select",
 			Options:  options,
-			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
+			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug && (!automatic || answer != inferred),
 			Help:     "A single same-resource TrueHD mix with the same fully known language set is matched automatically. Review ambiguous mixes using source evidence: " + details + ". DD/DD+ companions retain source-quality guidance; an answer does not waive codec or missing-audio rules.",
 		})
 		if !answered {
@@ -65,8 +67,6 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		}
 	}
 	fields = append(fields, audioProcessingQuestions(subject)...)
-	fields = append(fields, compatibilitySourceQuestions(subject)...)
-	fields = append(fields, remuxSubtitleQuestions(subject)...)
 	fields = append(fields, alternateMixQuestions(subject)...)
 	fields = append(fields, presentationReviewQuestions(subject)...)
 	fields = append(fields, exceptionQuestionnaireFields(subject)...)

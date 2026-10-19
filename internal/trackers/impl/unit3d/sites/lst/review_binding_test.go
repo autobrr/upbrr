@@ -63,7 +63,7 @@ func TestHybridConfirmationInvalidatesWhenSourceChanges(t *testing.T) {
 	}
 }
 
-func TestPresentationQuestionnaireBindsFinalNameAndReferences(t *testing.T) {
+func TestPresentationQuestionnaireBindsFinalNameAndSource(t *testing.T) {
 	meta := api.UploadSubject{
 		Type:            "WEBDL",
 		PersonalRelease: true,
@@ -87,25 +87,22 @@ func TestPresentationQuestionnaireBindsFinalNameAndReferences(t *testing.T) {
 	}
 	subject := lstValidationSubject()
 	subject.Type = "REMUX"
+	subject.PersonalRelease = true
 	for _, f := range presentationReviewQuestions(subject) {
-		if f.Kind == "text" {
-			subject.QuestionnaireAnswers[f.Key] = "source A; https://example.test/log"
+		if strings.Contains(f.Key, "source_documentation") {
+			subject.QuestionnaireAnswers[f.Key] = "will_add_required_data"
 		}
 	}
 	for _, f := range presentationReviewQuestions(subject) {
-		if strings.Contains(f.Key, "documentation_review") {
-			subject.QuestionnaireAnswers[f.Key] = "reviewed_complete"
+		if strings.Contains(f.Key, "source_documentation") && (f.Value != "will_add_required_data" || f.NeedsReview) {
+			t.Fatalf("current description confirmation not retained: %+v", f)
 		}
 	}
+	subject.Identity.Generation++
 	for _, f := range presentationReviewQuestions(subject) {
-		if f.Kind == "text" {
-			subject.QuestionnaireAnswers[f.Key] = "source B; https://example.test/other-log"
+		if strings.Contains(f.Key, "source_documentation") && (f.Value != "" || !f.NeedsReview) {
+			t.Fatalf("changed source retained stale description confirmation: %+v", f)
 		}
-	}
-	if !slices.ContainsFunc(presentationReviewQuestions(subject), func(f api.TrackerQuestionnaireField) bool {
-		return strings.Contains(f.Key, "documentation_review") && f.Value == ""
-	}) {
-		t.Fatal("changed source references retained review")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 func TestTitleSubtitleNegativeEvidenceRequiresEveryCandidate(t *testing.T) {
 	subject := lstValidationSubject()
+	subject.Type = "REMUX"
 	subject.LanguageFacts = lstTestLanguageFacts("Japanese", []string{"Japanese"}, nil)
 	subject.Identity = api.ExternalIdentity{
 		SourcePath: filepath.Join(t.TempDir(), "Example.mkv"),

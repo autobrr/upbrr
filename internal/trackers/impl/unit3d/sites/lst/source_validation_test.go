@@ -103,7 +103,7 @@ func TestLSTSourceReviewBoundaries(t *testing.T) {
 			if tc.change != nil {
 				tc.change(&subject)
 			}
-			failures := reviewedStreamSourceFailures(subject)
+			failures := requiredSourceFailures(t, subject)
 			if tc.rule == "" {
 				if len(failures) != 0 {
 					t.Fatalf("failures = %#v", failures)
@@ -121,11 +121,11 @@ func TestLSTSourceReviewBoundaries(t *testing.T) {
 
 func TestLSTRetailWorkprintAndBelowHDSource(t *testing.T) {
 	subject := exceptionTestSubject(t, "mkv", "Workprint", "")
-	if failures := reviewedStreamSourceFailures(subject); len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
 		t.Fatalf("unknown workprint = %#v", failures)
 	}
 	subject.QuestionnaireAnswers[sourceQuestionKey(subject, "workprint_retail")] = "official_retail"
-	if failures := reviewedStreamSourceFailures(subject); len(failures) != 0 {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("retail workprint = %#v", failures)
 	}
 	subject = reviewedLSTEncode(t)
@@ -133,11 +133,11 @@ func TestLSTRetailWorkprintAndBelowHDSource(t *testing.T) {
 	for _, field := range sourceReviewQuestions(subject) {
 		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
 	}
-	if failures := reviewedStreamSourceFailures(subject); len(failures) != 0 {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("below-HD source = %#v", failures)
 	}
 	subject.QuestionnaireAnswers[sourceQuestionKey(subject, "encode_source_resolution")] = "source_supports_hd"
-	if failures := reviewedStreamSourceFailures(subject); len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusComplete {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusComplete {
 		t.Fatalf("HD source = %#v", failures)
 	}
 }
@@ -151,17 +151,17 @@ func TestLSTFinishedSeasonEvidenceIsSourceBound(t *testing.T) {
 		Generation: subject.Identity.Generation,
 		TVDB:       &api.TVDBMetadata{Status: "Ended"},
 	}
-	failures := reviewedStreamSourceFailures(subject)
+	failures := requiredSourceFailures(t, subject)
 	if len(failures) != 1 || failures[0].Rule != "lst_finished_season_episode" {
 		t.Fatalf("ended = %#v", failures)
 	}
 	subject.ProviderMetadata.Generation++
-	failures = reviewedStreamSourceFailures(subject)
+	failures = requiredSourceFailures(t, subject)
 	if len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
 		t.Fatalf("stale metadata = %#v", failures)
 	}
 	subject.TVPack = true
-	if failures := reviewedStreamSourceFailures(subject); len(failures) != 0 {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("season pack = %#v", failures)
 	}
 }
@@ -183,7 +183,7 @@ func TestLSTSourceReviewBindsEveryResource(t *testing.T) {
 		EncodeSettingsKnown: true,
 		HasEncodeSettings:   true,
 	}}}
-	failures := reviewedStreamSourceFailures(subject)
+	failures := requiredSourceFailures(t, subject)
 	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 		return f.Rule == "lst_resource_prohibited_source" && f.EvidenceStatus == api.MetadataEvidenceStatusComplete
 	}) {
@@ -198,12 +198,12 @@ func TestLSTSourceReviewBindsEveryResource(t *testing.T) {
 	for _, field := range sourceReviewQuestions(subject) {
 		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
 	}
-	if failures := reviewedStreamSourceFailures(subject); len(failures) != 0 {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("reviewed pack = %#v", failures)
 	}
 	subject.MediaFileFacts.Files[1].Resolution = "720p"
 	subject.MediaFileFacts.Files[1].VideoEncoder = "x265"
-	if failures := reviewedStreamSourceFailures(subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "lst_resource_encode_resolution_codec" }) {
+	if failures := requiredSourceFailures(t, subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "lst_resource_encode_resolution_codec" }) {
 		t.Fatalf("secondary encode violation = %#v", failures)
 	}
 }
@@ -212,7 +212,7 @@ func TestLSTMeasuredEncoderAndAV1Settings(t *testing.T) {
 	subject := reviewedLSTEncode(t)
 	subject.VideoEncoder = ""
 	subject.VideoEncode = "x264"
-	failures := reviewedStreamSourceFailures(subject)
+	failures := requiredSourceFailures(t, subject)
 	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 		return f.Rule == "lst_source_review" && f.EvidenceStatus == api.MetadataEvidenceStatusPartial
 	}) {
@@ -225,15 +225,12 @@ func TestLSTMeasuredEncoderAndAV1Settings(t *testing.T) {
 	for _, field := range sourceReviewQuestions(subject) {
 		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
 	}
-	if failures := reviewedStreamSourceFailures(subject); len(failures) != 0 {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("measured AV1 settings rejected: %#v", failures)
 	}
 }
 
-func reviewedStreamSourceFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
-	if subject.QuestionnaireAnswers == nil {
-		subject.QuestionnaireAnswers = map[string]string{}
-	}
-	subject.QuestionnaireAnswers[sourceQuestionKey(subject, "stream_processing")] = "reviewed_no_user_processing_or_improper_splicing"
-	return sourceValidationFailures(subject)
+func requiredSourceFailures(t *testing.T, subject api.TrackerValidationSubject) []api.RuleFailure {
+	t.Helper()
+	return withoutLSTStreamProcessingGuidance(t, sourceValidationFailures(subject))
 }

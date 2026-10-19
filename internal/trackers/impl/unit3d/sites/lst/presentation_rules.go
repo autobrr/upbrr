@@ -4,6 +4,7 @@
 package lst
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 
@@ -11,38 +12,38 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const trackPresentationHelp = "Review each prepared resource: correct audio language tags, subtitle language and forced flags, other default flags, and reported bitrates. Descriptive audio titles are recommended; subtitle ordering is optional. A description note does not correct an incorrect file tag."
+
 func presentationReviewQuestions(subject api.TrackerValidationSubject) []api.TrackerQuestionnaireField {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
 		return nil
 	}
-	fields := []api.TrackerQuestionnaireField{
-		{
+	var fields []api.TrackerQuestionnaireField
+	if subject.PersonalRelease {
+		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:     "track_presentation",
 			Label:   "Review track presentation",
 			Kind:    "select",
 			Options: []string{"unresolved", "reviewed_correct", "corrections_needed"},
-			Help:    "Review each prepared resource: correct audio language/title tags, subtitle language and forced flags, other default flags, and reported bitrates. Subtitle ordering is optional. A description note does not correct an incorrect file tag.",
-		},
+			Help:    trackPresentationHelp,
+		})
 	}
 	switch strings.ToUpper(strings.TrimSpace(subject.Type)) {
 	case "REMUX", "ENCODE":
 		fields = append(
 			fields,
 			api.TrackerQuestionnaireField{
-				Key:   "source_documentation",
-				Label: "Source and processing references",
-				Kind:  "text",
-				Help:  "Identify the exact source releases and references to relevant comparisons, processing logs (including eac3to where applicable), and release notes. Explain any genuinely inapplicable item.",
-			},
-			api.TrackerQuestionnaireField{
-				Key:     "documentation_review",
-				Label:   "Review source documentation",
+				Key:     "source_documentation",
+				Label:   "Include source and processing references",
 				Kind:    "select",
-				Options: []string{"unresolved", "reviewed_complete", "missing_relevant_material"},
-				Help:    "Review the entered source references, comparisons, logs and relevant notes against this exact prepared release. This records your review, not automatic source verification.",
+				Options: []string{"unresolved", "will_add_required_data"},
+				Help:    "Confirm that you will include the exact source releases, relevant comparisons, processing logs (including eac3to where applicable), and release notes in the description. Explain any genuinely inapplicable item there.",
 			},
 		)
 	case "WEBDL", "WEB-DL":
+		if cmp.Or(strings.TrimSpace(subject.Service), strings.TrimSpace(subject.ServiceLongName)) != "" {
+			break
+		}
 		fields = append(
 			fields,
 			api.TrackerQuestionnaireField{
@@ -59,12 +60,15 @@ func presentationReviewQuestions(subject api.TrackerValidationSubject) []api.Tra
 			[]any{subject.FinalizedUploadName, subject.Release, subject.Service, subject.ServiceLongName, subject.ReleaseNameOverrides},
 		)
 		key := fields[i].Key
-		if key == "documentation_review" {
-			refs := subject.QuestionnaireAnswers[assetQuestionKey(subject, "presentation_source_documentation_"+string(nameKey))]
-			refHash, _ := api.CanonicalWorkflowFingerprint(refs)
-			key += "_" + string(refHash)
-		}
 		fields[i].Key = assetQuestionKey(subject, "presentation_"+key+"_"+string(nameKey))
+		if key == "source_documentation" {
+			// A promise to add source references survives later screenshot/hosting stages.
+			fields[i].Key = trackers.LanguageQuestionKey(subject, "presentation_"+key+"_will_add_"+string(nameKey))
+			if !subject.PersonalRelease {
+				fields[i].Placeholder = "No confirmation needed"
+				fields[i].Help = "No confirmation is needed for ordinary releases. Source releases, relevant comparisons, processing logs (including eac3to where applicable), and release notes are recommended in the description. Explain any genuinely inapplicable item there."
+			}
+		}
 		fields[i].Required = subject.PersonalRelease
 		fields[i].Value = strings.TrimSpace(subject.QuestionnaireAnswers[fields[i].Key])
 		fields[i].NeedsReview = fields[i].Required && (fields[i].Value == "" || fields[i].Value == "unresolved")
@@ -73,14 +77,47 @@ func presentationReviewQuestions(subject api.TrackerValidationSubject) []api.Tra
 }
 
 func presentationReviewFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
+		return nil
+	}
 	var failures []api.RuleFailure
-	if subject.PersonalRelease && len(untaggedTracks(subject)) > 0 {
+	if !subject.PersonalRelease {
+		failure := trackers.LanguageRuleFailure(subject, "track_presentation", trackPresentationHelp, trackers.LanguageAdvisory)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
+	}
+	var untitledAudio []string
+	for _, track := range subject.LanguageFacts.Tracks {
+		if track.Kind == api.MediaTrackAudio && strings.TrimSpace(track.Title) == "" {
+			untitledAudio = append(untitledAudio, track.ResourceID+":"+track.ID)
+		}
+	}
+	if len(untitledAudio) > 0 {
+		failures = append(failures, trackers.LanguageRuleFailure(
+			subject,
+			"audio_titles",
+			"audio tracks should have descriptive titles for context; missing title tags for tracks: "+strings.Join(untitledAudio, ", "),
+			trackers.LanguageAdvisory,
+		))
+	}
+	switch strings.ToUpper(strings.TrimSpace(subject.Type)) {
+	case "WEBDL", "WEB-DL":
+		if service := cmp.Or(strings.TrimSpace(subject.Service), strings.TrimSpace(subject.ServiceLongName)); service != "" {
+			failures = append(failures, trackers.LanguageRuleFailure(
+				subject,
+				"web_source_naming",
+				"WEB release names should accurately identify the source service using your source records; resolved service: "+service,
+				trackers.LanguageAdvisory,
+			))
+		}
+	}
+	if tracks := tracksMissingLanguages(subject); subject.PersonalRelease && len(tracks) > 0 {
 		failures = append(
 			failures,
 			trackers.LanguageRuleFailure(
 				subject,
 				"presentation_tags",
-				"correct missing file language/title tags for tracks: "+strings.Join(untaggedTracks(subject), ", "),
+				"correct missing file language tags for tracks: "+strings.Join(tracks, ", "),
 				trackers.LanguageProhibited,
 			),
 		)
@@ -88,17 +125,21 @@ func presentationReviewFailures(subject api.TrackerValidationSubject) []api.Rule
 	for _, field := range presentationReviewQuestions(subject) {
 		value := strings.TrimSpace(subject.QuestionnaireAnswers[field.Key])
 		if !field.Required && (value == "" || value == "unresolved") {
+			if slices.Contains(field.Options, "will_add_required_data") {
+				failure := trackers.LanguageRuleFailure(subject, "source_documentation", field.Help, trackers.LanguageAdvisory)
+				failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+				failures = append(failures, failure)
+			}
 			continue
 		}
-		valid := field.Kind == "text" && value != "" ||
-			field.Kind == "select" && slices.Contains(field.Options, value) && (value == "reviewed_correct" || value == "reviewed_complete")
+		valid := slices.Contains(field.Options, value) && (value == "reviewed_correct" || value == "will_add_required_data")
 		if valid {
 			continue
 		}
 		outcome := trackers.LanguageAdvisory
 		if subject.PersonalRelease {
 			outcome = trackers.LanguageUnresolved
-			if value == "corrections_needed" || value == "missing_relevant_material" {
+			if value == "corrections_needed" {
 				outcome = trackers.LanguageProhibited
 			}
 		}
@@ -110,13 +151,4 @@ func presentationReviewFailures(subject api.TrackerValidationSubject) []api.Rule
 		failures = append(failures, failure)
 	}
 	return failures
-}
-
-func presentationDescription(subject api.TrackerValidationSubject) string {
-	for _, field := range presentationReviewQuestions(subject) {
-		if field.Kind == "text" && field.Value != "" {
-			return escapedDescriptionEvidence(field.Value)
-		}
-	}
-	return ""
 }
