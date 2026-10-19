@@ -10,6 +10,9 @@ import (
 	"unicode"
 )
 
+// ImageCollectionCategoryAnalysis combines exact HDR and audio images in one set.
+const ImageCollectionCategoryAnalysis = "HDR and audio data"
+
 // ImageCollectionMember preserves ordered, content-bound member identity without local paths.
 type ImageCollectionMember struct {
 	Identity string
@@ -35,7 +38,7 @@ type ImageCollection struct {
 	Members      []ImageCollectionMember
 }
 
-// ImageCollectionInput is private workflow authority for one flat, ordered set.
+// ImageCollectionInput is private workflow authority for an ordered comparison matrix.
 type ImageCollectionInput struct {
 	Generation string
 	Purpose    ScreenshotPurpose
@@ -43,6 +46,18 @@ type ImageCollectionInput struct {
 	Label      string
 	Images     []ScreenshotImage
 	Labels     []string
+	// Columns is the source count; zero or one keeps all images in a single viewer row.
+	Columns int
+}
+
+// DescriptionComparison binds one imported block to its exact destination trackers.
+// Collection is populated only after every source image has been uploaded.
+type DescriptionComparison struct {
+	BBCode     string
+	Sources    []string
+	ImageURLs  []string
+	Trackers   []string
+	Collection *ImageCollection
 }
 
 // AllowsCollectionHosting reports the only image purposes accepted by collection hosts.
@@ -111,6 +126,9 @@ func (c ImageCollection) Validate() error {
 
 // ValidImageCollectionCategory keeps presentation categories within producer authority.
 func ValidImageCollectionCategory(purpose ScreenshotPurpose, category string) bool {
+	if purpose.IsAnalysis() && category == ImageCollectionCategoryAnalysis {
+		return true
+	}
 	if purpose == ScreenshotPurposeComparison {
 		return category == "Comps"
 	}

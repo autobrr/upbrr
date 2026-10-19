@@ -30,18 +30,6 @@ func exactHDRDescriptionParts(tracker string, exact *api.ExactMediaAssets, audio
 	}
 	selectedHost := strings.TrimSpace(exact.HDRUploadHosts[strings.ToUpper(strings.TrimSpace(tracker))])
 	parts := make([]string, 0, len(exact.HDRPlots)*2)
-	if exact.CollectionHost == "slowpics" {
-		for _, collection := range exact.Collections {
-			if collection.Purpose != api.ScreenshotPurposeHDRAnalysis || (collection.Category == "Audio Plots") != audio {
-				continue
-			}
-			link, err := imageCollectionDescriptionLink(collection)
-			if err != nil {
-				return nil, err
-			}
-			parts = append(parts, "[b]"+collection.Category+"[/b]", link)
-		}
-	}
 	for _, plot := range exact.HDRPlots {
 		if exact.CollectionHost == "slowpics" {
 			continue

@@ -144,7 +144,7 @@ func (b workflowDescriptionBuilder) reusableDescriptionInputs(
 			return "", "", false, err
 		}
 	}
-	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, resourceSubject, privateMedia, media)
+	exactMedia, err := b.resolveDescriptionMedia(ctx, resourceSubject, privateMedia, media)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -341,7 +341,7 @@ func normalizeReusableDescriptionMedia(
 	}
 	// Automatic HDR output must rebuild against its current exact authority.
 	// All-final editor text resolves no HDR assets and remains reusable.
-	if exact.HDRAnalysis != nil || len(exact.HDRPlots) > 0 {
+	if exact.HDRAnalysis != nil || len(exact.HDRPlots) > 0 || len(exact.DescriptionComparisons) > 0 {
 		return workflowReusableDescriptionMedia{}, false, nil
 	}
 	normalized := workflowReusableDescriptionMedia{

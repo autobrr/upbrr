@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	layout "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -231,6 +233,21 @@ func TestHistoryDeleteAllResetsCollectionOnlySource(t *testing.T) {
 	if _, acquired, err := repo.ReserveImageCollection(t.Context(), binding, collection); err != nil || !acquired {
 		t.Fatalf("reserve orphan collection: acquired=%v err=%v", acquired, err)
 	}
+	tmpRoot, err := db.Subdir(repo.DBPath(), "tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	comparisonDir, err := layout.DescriptionComparisonTempRoot(tmpRoot, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(comparisonDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	comparisonCache := filepath.Join(comparisonDir, "synthetic.png")
+	if err := os.WriteFile(comparisonCache, []byte("cached"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	paths, _, err := repo.ListOrphanedHistoryPaths(t.Context())
 	if err != nil || len(paths) != 0 {
 		t.Fatalf("startup would reset uncertain collection: paths=%v err=%v", paths, err)
@@ -240,5 +257,8 @@ func TestHistoryDeleteAllResetsCollectionOnlySource(t *testing.T) {
 	}
 	if retained, err := repo.LoadImageCollection(t.Context(), binding, collection.Fingerprint); err != nil || retained != nil {
 		t.Fatalf("delete all retained orphan collection: %#v err=%v", retained, err)
+	}
+	if _, err := os.Stat(comparisonCache); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("delete all retained orphan comparison cache: %v", err)
 	}
 }

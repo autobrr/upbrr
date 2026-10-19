@@ -13,6 +13,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/bbcode/comparison"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func renderBBCode(value string) string {
@@ -28,7 +29,6 @@ func renderBBCode(value string) string {
 	compiler.SetTag("right", compileAlign)
 	compiler.SetTag("center", compileAlign)
 	compiler.SetTag("align", compileAlign)
-	compiler.SetTag("comparison", compileComparison)
 	normalized, blocks := extractLiteralBlocks(strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n")))
 	normalized, htmlLiteralBlocks := extractHTMLLiteralBlocks(normalized)
 	for i := range htmlLiteralBlocks {
@@ -39,6 +39,23 @@ func renderBBCode(value string) string {
 	normalized = normalizeImgTags(normalized)
 	normalized, htmlTags := extractHTMLTags(normalized)
 	normalized, htmlEntities := extractHTMLEntities(normalized)
+	// Comparison image parsing needs visible text boundaries, while the main
+	// compiler retains the exact placeholders for mixed-markup restoration.
+	replacements := make([]string, 0, 2*(len(blocks)+len(htmlLiteralBlocks)+len(htmlTags)+len(htmlEntities)))
+	for _, group := range [][]codeBlockPlaceholder{blocks, htmlLiteralBlocks, htmlTags} {
+		for _, block := range group {
+			replacements = append(replacements, block.token, "\n")
+		}
+	}
+	for _, entity := range htmlEntities {
+		replacements = append(replacements, entity.token, entity.value)
+	}
+	comparisonText := strings.NewReplacer(replacements...)
+	compiler.SetTag("comparison", func(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
+		raw := html.UnescapeString(bbcode.CompileRaw(node).Compile(false))
+		parsed := bbcode.Parse(bbcode.Lex(comparisonText.Replace(raw)))
+		return compileComparison(node, comparison.Images(parsed))
+	})
 	rendered := compiler.Compile(normalized)
 	rendered = replaceHTMLTagPlaceholders(rendered, htmlTags)
 	rendered = replaceHTMLTagPlaceholders(rendered, htmlEntities)
@@ -47,8 +64,9 @@ func renderBBCode(value string) string {
 }
 
 var analysisSpoilerTagPattern = regexp.MustCompile(`(?i)\[(?:spoiler(?:\s*=\s*[^\]]*)?|/spoiler)\]`)
+var analysisCollectionLinkPattern = regexp.MustCompile(`\[url=https://slow\.pics/c/[A-Za-z0-9_-]{1,128}\]` + api.ImageCollectionCategoryAnalysis + `\[/url\]`)
 
-// SplitTrailingSourceAudioSpoiler separates complete top-level audio and HDR markup so
+// SplitTrailingSourceAudioSpoiler separates complete top-level audio/HDR markup and collection links so
 // description builders can place it before their screenshot sections.
 func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 	value, literals := extractLiteralBlocks(strings.TrimSpace(value))
@@ -78,27 +96,43 @@ func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 		}
 	}
 	start, end := len(trimmed), len(trimmed)
+	linkStarts := make(map[int]int)
+	for _, link := range analysisCollectionLinkPattern.FindAllStringIndex(trimmed, -1) {
+		linkStarts[link[1]] = link[0]
+	}
 	for end > 0 {
 		prefix := strings.TrimSpace(trimmed[:end])
-		if !strings.HasSuffix(prefix, "[/spoiler]") {
-			break
-		}
-		index := strings.LastIndex(prefix, "[spoiler=")
-		if index < 0 || ends[index] != len(prefix) || index > 0 && prefix[index-1] != '\n' {
-			break
-		}
-		if !strings.HasPrefix(prefix[index:], "[spoiler=source_audio]") && !strings.HasPrefix(prefix[index:], "[spoiler=source_hdr]") &&
-			!strings.HasPrefix(prefix[index:], "[spoiler=Audio Plots]") && !strings.HasPrefix(prefix[index:], "[spoiler=HDR plots]") {
-			break
-		}
-		insideComparison := false
-		for _, block := range ranges {
-			if index >= block[0] && index < block[1] {
-				insideComparison = true
+		index, link := linkStarts[len(prefix)]
+		if !link {
+			if !strings.HasSuffix(prefix, "[/spoiler]") {
+				break
+			}
+			index = strings.LastIndex(prefix, "[spoiler=")
+			if index < 0 || ends[index] != len(prefix) {
+				break
+			}
+			if !strings.HasPrefix(prefix[index:], "[spoiler=source_audio]") && !strings.HasPrefix(prefix[index:], "[spoiler=source_hdr]") &&
+				!strings.HasPrefix(prefix[index:], "[spoiler=Audio Plots]") && !strings.HasPrefix(prefix[index:], "[spoiler=HDR plots]") {
 				break
 			}
 		}
-		if insideComparison {
+		if index > 0 && prefix[index-1] != '\n' {
+			break
+		}
+		insideBlock := depth > 0 && index > opening
+		for start, end := range ends {
+			if index > start && index < end {
+				insideBlock = true
+				break
+			}
+		}
+		for _, block := range ranges {
+			if index >= block[0] && index < block[1] {
+				insideBlock = true
+				break
+			}
+		}
+		if insideBlock {
 			break
 		}
 		start, end = index, index
@@ -155,15 +189,79 @@ type codeBlockPlaceholder struct {
 	pre   bool
 }
 
-// MapOutsideLiteralBlocks transforms BBCode without rewriting complete code and
-// pre blocks. The transform must preserve the opaque placeholders in its input.
+// MapOutsideLiteralBlocks transforms markup without rewriting BBCode code/pre
+// blocks or HTML code/pre regions, including unclosed HTML regions. The transform
+// must preserve the opaque placeholders in its input.
 func MapOutsideLiteralBlocks(value string, transform func(string) string) string {
+	normalized, restore := maskLiteralBlocks(value, "")
+	return restore(transform(normalized))
+}
+
+func maskLiteralBlocks(value, padding string) (string, func(string) string) {
 	normalized, blocks := extractLiteralBlocks(value)
-	replacements := make([]string, 0, 2*len(blocks))
+	normalized = padBlockPlaceholders(normalized, blocks, padding)
+	normalized, htmlBlocks := extractHTMLLiteralBlocks(normalized)
+	normalized = padBlockPlaceholders(normalized, htmlBlocks, padding)
+	replacements := make([]string, 0, 4*len(blocks))
 	for _, block := range blocks {
 		replacements = append(replacements, block.token, block.raw)
+		if padding != "" {
+			replacements = append(replacements, strings.TrimSpace(block.token), block.raw)
+		}
 	}
-	return strings.NewReplacer(replacements...).Replace(transform(normalized))
+	replacer := strings.NewReplacer(replacements...)
+	return normalized, func(fragment string) string {
+		return replacer.Replace(replaceHTMLTagPlaceholders(fragment, htmlBlocks))
+	}
+}
+
+func padBlockPlaceholders(value string, blocks []codeBlockPlaceholder, padding string) string {
+	if padding == "" {
+		return value
+	}
+	for index := range blocks {
+		token := blocks[index].token
+		blocks[index].token = padding + token + padding
+		value = strings.ReplaceAll(value, token, blocks[index].token)
+	}
+	return value
+}
+
+func maskBBCodeText(value, padding string) (string, func(string) string) {
+	normalized, restoreLiterals := maskLiteralBlocks(value, padding)
+	normalized, tags := extractHTMLTags(normalized)
+	normalized = padBlockPlaceholders(normalized, tags, padding)
+	return normalized, func(fragment string) string {
+		return restoreLiterals(replaceHTMLTagPlaceholders(fragment, tags))
+	}
+}
+
+// MapOutsideLiteralAndHTMLTags also protects HTML tokens, including comments and
+// attribute values. Visible element content remains available to transform. The
+// callback's restore function preserves source fragments captured for later use.
+func MapOutsideLiteralAndHTMLTags(value string, transform func(string, func(string) string) string) string {
+	normalized, restore := maskBBCodeText(value, "")
+	return restore(transform(normalized, restore))
+}
+
+// MapComparisonBlocks visits visible comparison blocks with their original
+// source markup. Returning the original BBCode leaves a block unchanged.
+func MapComparisonBlocks(value string, transform func(comparison.Block) string) string {
+	// Parsing needs separators around opaque tokens; restoration removes them.
+	normalized, restore := maskBBCodeText(value, "\n")
+	blocks := comparison.Parse(normalized)
+	replacements := make([]string, 0, 2*len(blocks))
+	for _, block := range blocks {
+		raw := block.BBCode
+		block.BBCode = restore(raw)
+		for index := range block.Sources {
+			block.Sources[index] = strings.TrimSpace(restore(block.Sources[index]))
+		}
+		if replacement := transform(block); replacement != block.BBCode {
+			replacements = append(replacements, raw, replacement)
+		}
+	}
+	return restore(strings.NewReplacer(replacements...).Replace(normalized))
 }
 
 func extractLiteralBlocks(value string) (string, []codeBlockPlaceholder) {
@@ -338,6 +436,9 @@ func extractHTMLLiteralBlocks(value string) (string, []codeBlockPlaceholder) {
 func replaceHTMLTagPlaceholders(value string, tags []codeBlockPlaceholder) string {
 	for _, tag := range tags {
 		value = strings.ReplaceAll(value, tag.token, tag.value)
+		if bare := strings.TrimSpace(tag.token); bare != tag.token {
+			value = strings.ReplaceAll(value, bare, tag.value)
+		}
 	}
 	return value
 }
@@ -517,15 +618,12 @@ func compileQuote(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	return out, false
 }
 
-var comparisonURLPattern = regexp.MustCompile(`(?i)https?://[^\s\]]+\.(?:png|jpe?g|gif|webp)`)
-
-func compileComparison(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
+func compileComparison(node *bbcode.BBCodeNode, images []string) (*bbcode.HTMLTag, bool) {
 	out := bbcode.NewHTMLTag("")
 	out.Name = "div"
 	out.Attrs["class"] = "comparison"
 
-	sources := parseComparisonSources(node.GetOpeningTag().Value)
-	images := parseComparisonImages(bbcode.CompileText(node))
+	sources := comparison.Sources(node.GetOpeningTag().Raw)
 
 	text := bbcode.NewHTMLTag("")
 	text.Name = "div"
@@ -612,37 +710,4 @@ func compileComparison(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	details.AppendChild(screenshots)
 	out.AppendChild(details)
 	return out, false
-}
-
-func parseComparisonSources(value string) []string {
-	cleaned := strings.TrimSpace(value)
-	if cleaned == "" {
-		return nil
-	}
-	parts := strings.Split(cleaned, ",")
-	sources := make([]string, 0, len(parts))
-	for _, part := range parts {
-		source := strings.TrimSpace(part)
-		if source == "" {
-			continue
-		}
-		sources = append(sources, source)
-	}
-	return sources
-}
-
-func parseComparisonImages(value string) []string {
-	matches := comparisonURLPattern.FindAllString(value, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	images := make([]string, 0, len(matches))
-	for _, match := range matches {
-		trimmed := strings.TrimSpace(match)
-		if trimmed == "" {
-			continue
-		}
-		images = append(images, trimmed)
-	}
-	return images
 }

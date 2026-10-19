@@ -370,6 +370,11 @@ func (h *historyModule) collectReleaseCleanupTargets(
 		return nil, nil, nil, fmt.Errorf("core: delete history release resolve reusable media root: %w", err)
 	}
 	tmpDirs[reuseRoot] = struct{}{}
+	comparisonRoot, err := paths.DescriptionComparisonTempRoot(tmpRoot, sourcePath)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("core: delete history release resolve comparison cache root: %w", err)
+	}
+	tmpDirs[comparisonRoot] = struct{}{}
 
 	if snapshot.Metadata != nil {
 		stored := *snapshot.Metadata
@@ -454,6 +459,11 @@ func ensureHistoryTempTargetsUnprotected(
 			return fmt.Errorf("core: delete history release resolve protected reusable media root: %w", err)
 		}
 		protectedRoots = append(protectedRoots, reuseRoot)
+		comparisonRoot, err := paths.DescriptionComparisonTempRoot(tmpRoot, sourcePath)
+		if err != nil {
+			return fmt.Errorf("core: delete history release resolve protected comparison cache root: %w", err)
+		}
+		protectedRoots = append(protectedRoots, comparisonRoot)
 	}
 	for _, target := range append(append([]string(nil), artifactPaths...), slices.Collect(maps.Keys(tmpDirs))...) {
 		for _, protectedRoot := range protectedRoots {

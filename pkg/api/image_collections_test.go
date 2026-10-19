@@ -50,3 +50,12 @@ func TestCollectionLabelsAndURLBoundary(t *testing.T) {
 		t.Fatal("partial collection accepted")
 	}
 }
+
+func TestCombinedAnalysisCollectionCategory(t *testing.T) {
+	t.Parallel()
+	for _, purpose := range []ScreenshotPurpose{ScreenshotPurposeAudioAnalysis, ScreenshotPurposeHDRAnalysis, ScreenshotPurposeComparison, ScreenshotPurposeFinal, ScreenshotPurposeMenu, ScreenshotPurposePreview} {
+		if got := ValidImageCollectionCategory(purpose, ImageCollectionCategoryAnalysis); got != purpose.IsAnalysis() {
+			t.Errorf("purpose=%s allowed=%t", purpose, got)
+		}
+	}
+}

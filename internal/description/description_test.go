@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/bbcode/comparison"
 )
 
 func TestSplitTrailingSourceAudioSpoilerPreservesNestedComparison(t *testing.T) {
@@ -222,6 +224,134 @@ func TestRenderComparisonBBCode(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "pixhost.to/4p352a.png") {
 		t.Fatalf("expected comparison image URL, got %q", rendered)
+	}
+}
+
+func TestRenderComparisonKeepsSpacedSourceColumnsAndFrameOrder(t *testing.T) {
+	t.Parallel()
+	rendered := Render("[comparison=Source A,Source B]https://images.example.test/a1.png https://images.example.test/b1.png " +
+		"https://images.example.test/a2.png https://images.example.test/b2.png[/comparison]")
+	if strings.Count(rendered, `class="comparison__row"`) != 2 || strings.Count(rendered, `class="comparison__image-container"`) != 4 ||
+		!strings.Contains(rendered, ">Source A</figcaption>") || !strings.Contains(rendered, ">Source B</figcaption>") ||
+		strings.Index(rendered, "b1.png") > strings.Index(rendered, "a2.png") {
+		t.Fatalf("source columns or frames changed: %s", rendered)
+	}
+}
+
+func TestRenderComparisonPreservesImageReferences(t *testing.T) {
+	t.Parallel()
+	rendered := Render("[comparison=Source A,Source B][img]https://images.example.test/a1.png?key=synthetic&amp;size=1[/img]" +
+		"[img width=200]https://images.example.test/b1.png[/img]\n" +
+		"[url=https://images.example.test/a2.png?key=other][img]https://images.example.test/a2-thumb.png[/img][/url]" +
+		"[img url=https://images.example.test/b2.png][/img][/comparison]")
+	if strings.Count(rendered, `class="comparison__row"`) != 2 || strings.Contains(rendered, "a2-thumb.png") {
+		t.Fatalf("comparison references changed: %s", rendered)
+	}
+	previous := -1
+	for _, source := range []string{"a1.png?key=synthetic&amp;size=1", "b1.png", "a2.png?key=other", "b2.png"} {
+		position := strings.Index(rendered, source)
+		if position <= previous {
+			t.Fatalf("missing or reordered %q: %s", source, rendered)
+		}
+		previous = position
+	}
+}
+
+func TestRenderComparisonPreservesVisibleTokenBoundaries(t *testing.T) {
+	t.Parallel()
+	a, b := "https://images.example.test/a.png", "https://images.example.test/b.png"
+	for _, body := range []string{
+		"<span>" + a + "</span><span>" + b + "</span>",
+		a + "<br>" + b,
+		a + "<!--https://images.example.test/hidden.png-->" + b,
+		a + "[code]https://images.example.test/hidden.png[/code]" + b,
+		a + "<pre>https://images.example.test/hidden.png</pre>" + b,
+		"<span data-example='https://images.example.test/hidden.png'>" + a + "</span>" + b,
+		a + "&nbsp;" + b,
+		"<span>" + a + "?x=1&amp;amp;y=2</span><span>" + b + "</span>",
+		"<span>" + a + "?filter=&#91;v&#93;</span><span>" + b + "</span>",
+	} {
+		rendered := Render("[comparison=Source A,Source B]" + body + "[/comparison]")
+		if strings.Count(rendered, `class="comparison__image"`) != 2 || !strings.Contains(rendered, a) ||
+			strings.Index(rendered, a) >= strings.Index(rendered, b) || strings.Contains(rendered, "hidden.png") || strings.Contains(rendered, "UPBRR_") {
+			t.Fatalf("visible comparison boundary changed: body=%q rendered=%s", body, rendered)
+		}
+		if strings.Contains(body, "?x=") && !strings.Contains(rendered, "?x=1&amp;amp;y=2") {
+			t.Fatalf("query entity decoded more than once: %s", rendered)
+		}
+		if strings.Contains(body, "?filter=") && !strings.Contains(rendered, "?filter=[v]") {
+			t.Fatalf("encoded query punctuation became markup: %s", rendered)
+		}
+	}
+}
+
+func TestMapOutsideLiteralBlocksPreservesHTMLAndBBCode(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		literal  string
+		unclosed bool
+	}{
+		{literal: "[code]example[/code]"}, {literal: "[pre]example[/pre]"}, {literal: "<pre>example</pre>"}, {literal: "<code>example</code>"},
+		{literal: `<PRE class="sample"><pre>nested</pre>example</PRE>`}, {literal: "<code><code>nested</code>example</code>"},
+		{literal: "<pre>unclosed", unclosed: true}, {literal: "<code>unclosed", unclosed: true},
+		{literal: "<pre>[code]example[/code]</pre>"}, {literal: "[code]<pre>example</pre>[/code]"},
+	} {
+		tail := "AFTER"
+		if test.unclosed {
+			tail = "after"
+		}
+		if got, want := MapOutsideLiteralBlocks("before"+test.literal+"after", strings.ToUpper), "BEFORE"+test.literal+tail; got != want {
+			t.Fatalf("literal changed: got=%q want=%q", got, want)
+		}
+	}
+}
+
+func TestMapComparisonBlocksPreservesOriginalSource(t *testing.T) {
+	t.Parallel()
+	a, b := "https://images.example.test/a.png", "https://images.example.test/b.png"
+	bodies := []string{
+		"[img]" + a + "[/img]<br>[code]https://images.example.test/example.png[/code][img]" + b + "[/img]",
+		a + "<br>" + b, "<span>" + a + "</span><span>" + b + "</span>",
+		a + "[code]https://images.example.test/example.png[/code]" + b,
+		a + "<pre>https://images.example.test/example.png</pre>" + b,
+		a + "<!--https://images.example.test/example.png-->" + b,
+		a + "&nbsp;" + b,
+	}
+	blocks := make([]string, 0, len(bodies)+1)
+	for _, body := range bodies {
+		blocks = append(blocks, "[comparison=Source A,Source B]"+body+"[/comparison]")
+	}
+	blocks = append(blocks, "[comparison=<b>Source A</b>,Source B]"+bodies[0]+"[/comparison]")
+	for index, block := range blocks {
+		hidden := "<!--" + block + "-->"
+		switch index {
+		case 0:
+			hidden = "<span data-example='" + block + "'>notes</span>"
+		case 1:
+			hidden = "<!--" + block
+		}
+		input := block + "\n" + hidden
+		for _, replace := range []bool{false, true} {
+			calls := 0
+			got := MapComparisonBlocks(input, func(found comparison.Block) string {
+				calls++
+				if found.BBCode != block || len(found.Images) != 2 || found.Images[0] != a || found.Images[1] != b ||
+					len(found.Sources) != 2 || strings.Contains(strings.Join(found.Sources, " "), "UPBRR_") {
+					t.Fatalf("lost original markup or promoted a literal image: %+v", found)
+				}
+				if replace {
+					return "collection link"
+				}
+				return found.BBCode
+			})
+			want := input
+			if replace {
+				want = "collection link\n" + hidden
+			}
+			if calls != 1 || got != want {
+				t.Fatalf("hidden comparison changed: calls=%d got=%q want=%q", calls, got, want)
+			}
+		}
 	}
 }
 
@@ -664,6 +794,34 @@ func TestSplitTrailingAnalysisTitles(t *testing.T) {
 				t.Fatalf("comparison split: %q %q", body, plots)
 			}
 		})
+	}
+}
+
+func TestSplitTrailingAnalysisCollectionLinks(t *testing.T) {
+	const link = "[url=https://slow.pics/c/synthetic]HDR and audio data[/url]"
+	const stats = "[spoiler=Audio Plots]\n[code]Synthetic amplitude statistics[/code]\n[/spoiler]"
+	const comparison = "[spoiler=Comps]\n[url=https://slow.pics/c/comparison]Comparison[/url]\n[/spoiler]"
+	for _, analysis := range []string{link, stats + "\n\n" + link, link + "\n\n" + stats} {
+		body, got := SplitTrailingSourceAudioSpoiler("Notes\n\n" + comparison + "\n\n" + analysis)
+		if body != "Notes\n\n"+comparison || got != analysis {
+			t.Fatalf("body=%q analysis=%q", body, got)
+		}
+	}
+	for _, value := range []string{
+		"[spoiler=Notes]\n" + link + "\n[/spoiler]",
+		"[spoiler=Notes]\n" + link,
+		"[spoiler=Comparisons]\n" + link + "\n[/spoiler]",
+		"[comparison=Sources]\n" + link + "\n[/comparison]",
+		"[code]" + link + "[/code]",
+		"<pre>" + link + "</pre>",
+		"Notes " + link,
+		strings.Replace(link, "slow.pics", "example.invalid", 1),
+		strings.Replace(link, "HDR and audio data", "Custom notes", 1),
+	} {
+		body, analysis := SplitTrailingSourceAudioSpoiler(value)
+		if body != value || analysis != "" {
+			t.Fatalf("owned boundary crossed: body=%q analysis=%q", body, analysis)
+		}
 	}
 }
 

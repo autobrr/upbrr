@@ -208,9 +208,10 @@ const (
 // AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
 	// CollectionHost is the explicit analysis-only preference; default leaves existing routing unchanged.
-	CollectionHost string
-	Collections    []ImageCollection
-	ComparisonSets []ImageCollectionInput
+	CollectionHost         string
+	Collections            []ImageCollection
+	ComparisonSets         []ImageCollectionInput
+	DescriptionComparisons []DescriptionComparison
 	// ImageHostUploadSkipped preserves the workflow's explicit upload opt-out.
 	// Compatible cached links remain usable, but missing variants must not trigger uploads.
 	ImageHostUploadSkipped bool
@@ -271,6 +272,7 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		CollectionHost:         a.CollectionHost,
 		Collections:            cloneOptionalSlice(a.Collections),
 		ComparisonSets:         cloneOptionalSlice(a.ComparisonSets),
+		DescriptionComparisons: cloneOptionalSlice(a.DescriptionComparisons),
 		ImageHostUploadSkipped: a.ImageHostUploadSkipped,
 		HDRPlots:               cloneOptionalSlice(a.HDRPlots),
 		HDRStats:               cloneOptionalSlice(a.HDRStats),
@@ -302,6 +304,17 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	for index := range cloned.ComparisonSets {
 		cloned.ComparisonSets[index].Images = cloneOptionalSlice(a.ComparisonSets[index].Images)
 		cloned.ComparisonSets[index].Labels = cloneOptionalSlice(a.ComparisonSets[index].Labels)
+	}
+	for index := range cloned.DescriptionComparisons {
+		value := &cloned.DescriptionComparisons[index]
+		value.Sources = slices.Clone(value.Sources)
+		value.ImageURLs = slices.Clone(value.ImageURLs)
+		value.Trackers = slices.Clone(value.Trackers)
+		if value.Collection != nil {
+			collection := *value.Collection
+			collection.Members = slices.Clone(collection.Members)
+			value.Collection = &collection
+		}
 	}
 	return cloned
 }

@@ -13,9 +13,12 @@ import (
 	"slices"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Keep the established account identity across layout changes so unresolved
+// uploads retain their content fence. The exact fingerprint binds the layout.
 const slowpicsAccountScope = "slowpics-anonymous-flat-v1-public-false-optimize-false"
 
 type collectionRepository interface {
@@ -33,17 +36,21 @@ func (s *Service) UploadCollection(
 	input api.ImageCollectionInput,
 	skip bool,
 ) (collection *api.ImageCollection, uploadErr error) {
+	var fallback api.Logger
+	if s != nil {
+		fallback = s.logger
+	}
+	logger := logging.FromContext(ctx, fallback)
+	stage := "validate"
 	defer func() {
-		if s == nil || s.logger == nil {
-			return
-		}
 		switch {
 		case uploadErr != nil:
-			s.logger.Warnf("image hosting: collection upload blocked host=slowpics state=blocked")
+			logger.Warnf("image hosting: collection upload blocked host=slowpics state=blocked stage=%s outcome_unknown=%t",
+				stage, errors.Is(uploadErr, errSlowpicsOutcomeUnknown))
 		case collection == nil:
-			s.logger.Debugf("image hosting: collection cache lookup host=slowpics state=skipped decision=cache_miss")
+			logger.Debugf("image hosting: collection cache lookup host=slowpics state=skipped stage=%s", stage)
 		default:
-			s.logger.Debugf("image hosting: collection available host=slowpics state=completed decision=available")
+			logger.Debugf("image hosting: collection available host=slowpics state=completed stage=%s", stage)
 		}
 	}()
 
@@ -55,9 +62,12 @@ func (s *Service) UploadCollection(
 	if !ok {
 		return nil, errors.New("image hosting: durable collection storage is unavailable")
 	}
-	request := slowpicsCollectionRequest{Name: api.CollectionLabel(input.Label, "Image set")}
+	request := slowpicsCollectionRequest{Name: api.CollectionLabel(input.Label, "Image set"), Columns: input.Columns}
 	for index, image := range input.Images {
 		valid := image.Purpose == input.Purpose
+		if input.Purpose.IsAnalysis() && input.Category == api.ImageCollectionCategoryAnalysis {
+			valid = image.Purpose.IsAnalysis()
+		}
 		if input.Purpose == api.ScreenshotPurposeComparison {
 			valid = image.Purpose == api.ScreenshotPurposeFinal && image.ComparisonGroup != "" &&
 				image.ComparisonGroup == input.Images[0].ComparisonGroup && image.ComparisonCount == len(input.Images)
@@ -93,20 +103,29 @@ func (s *Service) UploadCollection(
 		return nil, fmt.Errorf("image hosting: collection content fingerprint: %w", err)
 	}
 	record.ContentFingerprint = string(contentFingerprint)
+	layout := "comparison-v1"
+	if len(images) == 1 {
+		layout = "collection-single-v1"
+	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Binding    api.PreparedMediaBinding
 		Generation string
 		Collection api.ImageCollection
-	}{subject.MediaBinding, input.Generation, record})
+		Layout     string
+		Columns    int
+	}{subject.MediaBinding, input.Generation, record, layout, request.columns()})
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: collection fingerprint: %w", err)
 	}
 	record.Fingerprint = string(fingerprint)
+	stage = "cache"
 	existing, err := repo.LoadImageCollection(ctx, subject.MediaBinding, record.Fingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: load collection: %w", err)
 	}
 	if existing != nil {
+		logger.Debugf("image hosting: collection cache lookup host=slowpics state=found completed=%t recovery_authority=%t",
+			existing.Completed, existing.AttemptID != "" && existing.EffectID != "")
 		if !existing.Completed {
 			if skip {
 				return nil, nil
@@ -122,6 +141,7 @@ func (s *Service) UploadCollection(
 		return nil, nil
 	}
 	record.AttemptID = rand.Text()
+	stage = "fence"
 	receipt, err := api.BeginWorkflowExternalEffect(ctx, api.WorkflowExternalEffect{
 		Kind:                api.WorkflowExternalEffectImageHosting,
 		ScopeID:             api.ImageCollectionEffectScope(record.AttemptID),
@@ -131,6 +151,7 @@ func (s *Service) UploadCollection(
 		return nil, fmt.Errorf("image hosting: fence collection attempt: %w", err)
 	}
 	record.EffectID = receipt.EffectID
+	stage = "reserve"
 	existing, acquired, err := repo.ReserveImageCollection(ctx, subject.MediaBinding, record)
 	if err != nil || !acquired {
 		if completeErr := api.CompleteWorkflowExternalEffect(context.WithoutCancel(ctx), receipt, false); completeErr != nil {
@@ -141,13 +162,15 @@ func (s *Service) UploadCollection(
 		return nil, fmt.Errorf("image hosting: reserve collection: %w", err)
 	}
 	if !acquired {
+		logger.Debugf("image hosting: collection reservation host=slowpics state=conflict decision=preserve_existing")
 		if existing != nil && collectionResultMatches(*existing, record) {
 			return existing, nil
 		}
 		return nil, collectionUnknownOutcome(existing)
 	}
-	s.logger.Infof("image hosting: collection upload started host=slowpics purpose=%s members=%d", input.Purpose, len(images))
-	uploader := slowpicsUploader{client: s.client}
+	logger.Infof("image hosting: collection upload started host=slowpics purpose=%s members=%d", input.Purpose, len(images))
+	stage = "upload"
+	uploader := slowpicsUploader{client: s.client, logger: logger}
 	result, err := uploader.uploadValidatedCollection(ctx, request, images)
 	if err != nil {
 		if errors.Is(err, errSlowpicsOutcomeUnknown) {
@@ -155,21 +178,25 @@ func (s *Service) UploadCollection(
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
+		stage = "release"
 		if releaseErr := repo.ReleaseImageCollection(cleanupCtx, subject.MediaBinding, record); releaseErr != nil {
 			return nil, collectionUnknownOutcome(&record)
 		}
+		logger.Debugf("image hosting: collection reservation host=slowpics state=released decision=known_failure")
 		return nil, err
 	}
 	record.URL, record.Completed = string(result), true
+	stage = "validate_result"
 	if err := record.Validate(); err != nil {
 		return nil, collectionUnknownOutcome(&record)
 	}
 	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	stage = "persist"
 	if err := repo.CompleteImageCollection(completionCtx, subject.MediaBinding, record); err != nil {
 		return nil, collectionUnknownOutcome(&record)
 	}
-	s.logger.Infof("image hosting: collection upload completed host=slowpics purpose=%s members=%d", input.Purpose, len(images))
+	logger.Infof("image hosting: collection upload completed host=slowpics purpose=%s members=%d", input.Purpose, len(images))
 	return &record, nil
 }
 

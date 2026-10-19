@@ -200,10 +200,22 @@ func (f *workflowDescriptionResolverFake) ResolveUploadSubject(
 }
 
 type workflowDescriptionServiceFake struct {
-	builds   int
-	subject  api.DescriptionSubject
-	trackers []string
-	preview  *api.PreparationPreview
+	builds           int
+	subject          api.DescriptionSubject
+	trackers         []string
+	preview          *api.PreparationPreview
+	comparisons      []api.DescriptionComparison
+	comparisonInput  api.ImageCollectionInput
+	materializations int
+}
+
+func (f *workflowDescriptionServiceFake) ResolveDescriptionComparisons(context.Context, api.DescriptionSubject, []string) ([]api.DescriptionComparison, error) {
+	return append([]api.DescriptionComparison(nil), f.comparisons...), nil
+}
+
+func (f *workflowDescriptionServiceFake) MaterializeDescriptionComparison(context.Context, api.DescriptionSubject, api.DescriptionComparison) (api.ImageCollectionInput, error) {
+	f.materializations++
+	return f.comparisonInput, nil
 }
 
 func (f *workflowDescriptionServiceFake) BuildPreparation(

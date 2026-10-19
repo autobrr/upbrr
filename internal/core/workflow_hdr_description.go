@@ -175,9 +175,6 @@ func (b workflowDescriptionBuilder) uploadHDRDescriptionImages(ctx context.Conte
 		}
 		return errors.New("HDR image hosting is unavailable")
 	}
-	if subject.ExactMedia.CollectionHost == "slowpics" {
-		return b.uploadHDRCollections(ctx, subject, trackerNames)
-	}
 	images := make([]api.ScreenshotImage, len(subject.ExactMedia.HDRPlots))
 	for index, plot := range subject.ExactMedia.HDRPlots {
 		images[index] = plot.Image
