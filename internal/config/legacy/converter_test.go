@@ -469,10 +469,13 @@ func TestConvertLegacyTrackerAliases(t *testing.T) {
 	legacy := &Config{
 		Default: map[string]any{},
 		Trackers: map[string]any{
-			"default_trackers":  "SEEDCORE, BHD",
+			"default_trackers":  "SEEDCORE, 0DAYFILES, BHD",
 			"preferred_tracker": "SEEDCORE",
 			"SEEDCORE": map[string]any{
 				"api_key": "sc-api-key",
+			},
+			"0DAYFILES": map[string]any{
+				"api_key": "zdf-api-key",
 			},
 		},
 		TorrentClients: make(map[string]any),
@@ -491,12 +494,56 @@ func TestConvertLegacyTrackerAliases(t *testing.T) {
 		t.Errorf("SC.APIKey: got %q, want sc-api-key", sc.APIKey)
 	}
 
-	if len(cfg.Trackers.DefaultTrackers) != 2 || cfg.Trackers.DefaultTrackers[0] != "SC" || cfg.Trackers.DefaultTrackers[1] != "BHD" {
-		t.Errorf("DefaultTrackers: got %v, want [SC BHD]", cfg.Trackers.DefaultTrackers)
+	zdf, ok := cfg.Trackers.Trackers["ZDF"]
+	if !ok {
+		t.Fatal("ZDF tracker not found from 0DAYFILES alias")
+	}
+	if zdf.APIKey != "zdf-api-key" {
+		t.Errorf("ZDF.APIKey: got %q, want zdf-api-key", zdf.APIKey)
+	}
+
+	if len(cfg.Trackers.DefaultTrackers) != 3 || cfg.Trackers.DefaultTrackers[0] != "SC" || cfg.Trackers.DefaultTrackers[1] != "ZDF" || cfg.Trackers.DefaultTrackers[2] != "BHD" {
+		t.Errorf("DefaultTrackers: got %v, want [SC ZDF BHD]", cfg.Trackers.DefaultTrackers)
 	}
 
 	if cfg.Trackers.PreferredTracker != "SC" {
 		t.Errorf("PreferredTracker: got %q, want SC", cfg.Trackers.PreferredTracker)
+	}
+}
+
+func TestConvertLegacyTrackerAliasCollisionPrecedence(t *testing.T) {
+	legacy := &Config{
+		Default: map[string]any{},
+		Trackers: map[string]any{
+			"0DAYFILES": map[string]any{
+				"api_key": "alias-key",
+			},
+			"ZDF": map[string]any{
+				"api_key": "canonical-key",
+			},
+		},
+		TorrentClients: make(map[string]any),
+	}
+
+	cfg, warnings, err := ImportFromContent(marshalLegacyConfig(legacy))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	zdf := cfg.Trackers.Trackers["ZDF"]
+	if zdf.APIKey != "canonical-key" {
+		t.Errorf("ZDF.APIKey: got %q, want canonical-key (canonical should take precedence)", zdf.APIKey)
+	}
+
+	hasWarning := false
+	for _, w := range warnings {
+		if strings.Contains(w, `ignored duplicate tracker section "0DAYFILES"`) {
+			hasWarning = true
+			break
+		}
+	}
+	if !hasWarning {
+		t.Errorf("expected duplicate warning for 0DAYFILES, got warnings: %v", warnings)
 	}
 }
 
