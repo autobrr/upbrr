@@ -187,22 +187,6 @@ func TestCLICollectsNativeCompatibilityCorrections(t *testing.T) {
 			secondKey := trackers.LanguageQuestionKey(validationSubject, "compatibility_mix_companion-1")
 			subject.TrackerQuestionnaireAnswers = map[string]map[string]string{tracker: {firstKey: "main", secondKey: "main"}}
 			projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: tracker, Meta: subject}, "input", "catalog", "config")
-			if failure != nil {
-				t.Fatal(failure)
-			}
-			if tracker == "LST" {
-				for _, field := range projection.Questionnaire {
-					switch {
-					case strings.HasPrefix(field.Key, "compatibility_origin_"):
-						subject.TrackerQuestionnaireAnswers[tracker][field.Key] = "matching_disc_core"
-					case strings.HasPrefix(field.Key, "retail_subtitle_"):
-						subject.TrackerQuestionnaireAnswers[tracker][field.Key] = "not_available_on_retail"
-					case strings.HasPrefix(field.Key, "stream_processing_"):
-						subject.TrackerQuestionnaireAnswers[tracker][field.Key] = "reviewed_no_user_processing_or_improper_splicing"
-					}
-				}
-				projection, failure = registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: tracker, Meta: subject}, "input", "catalog", "config")
-			}
 			if failure != nil || projection.Readiness != api.ReadinessStatusBlocked || len(projection.RequiredActions) != 1 {
 				t.Fatalf("conflicting current answers lost correction controls: %+v, %v", projection, failure)
 			}
@@ -241,44 +225,14 @@ func TestCLICollectsNativeCompatibilityCorrections(t *testing.T) {
 			}
 			subject.TrackerQuestionnaireAnswers = map[string]map[string]string{tracker: answers}
 			reviewed, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: tracker, Meta: subject}, "reviewed", "catalog", "config")
-			if failure != nil {
-				t.Fatal(failure)
-			}
-			if tracker == "LST" {
-				newOriginKey := trackers.LanguageQuestionKey(validationSubject, "compatibility_origin_companion-1_alternate")
-				pending := 0
-				for _, field := range reviewed.Questionnaire {
-					if field.NeedsReview {
-						pending++
-						if field.Key != newOriginKey || field.Value != "" {
-							t.Fatalf("association change reused or changed unrelated review: %+v", field)
-						}
-					}
-				}
-				if reviewed.Readiness != api.ReadinessStatusBlocked || len(reviewed.RequiredActions) != 1 || pending != 1 {
-					t.Fatalf("changed association did not require fresh source review: %+v", reviewed)
-				}
-				session.uploadRequest.TrackerQuestionnaireAnswers = subject.TrackerQuestionnaireAnswers
-				session.current.Projections = &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{reviewed}}
-				feedback, declined, err = session.collectCompositeTrackerFeedback(bufio.NewReader(strings.NewReader("matching_disc_core\n")),
-					api.RequiredAction{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: reviewed.TrackerID}, api.ReleaseWorkflowUploadFeedback{})
-				if err != nil || declined || feedback.Response.Questionnaire == nil {
-					t.Fatalf("source review was not collected: %+v, %t, %v", feedback, declined, err)
-				}
-				for key, value := range feedback.Response.Questionnaire.Answers {
-					if value != nil {
-						answers[key] = *value
-					}
-				}
-				if answers[newOriginKey] != "matching_disc_core" || projection.QuestionnaireAnswers[secondKey] != "main" {
-					t.Fatalf("source review missing or original snapshot mutated: %+v", answers)
-				}
-				reviewed, failure = registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: tracker, Meta: subject}, "source-reviewed", "catalog", "config")
-			}
 			if failure != nil || !reviewed.UploadReady || len(reviewed.RequiredActions) != 0 {
 				t.Fatalf("corrected native associations did not recover: %+v, %v", reviewed, failure)
 			}
 			for _, field := range reviewed.Questionnaire {
+				if tracker == "LST" && (strings.HasPrefix(field.Key, "compatibility_origin_") ||
+					strings.HasPrefix(field.Key, "retail_subtitle_") || strings.HasPrefix(field.Key, "stream_processing_")) {
+					t.Fatalf("retired LST review question returned: %+v", field)
+				}
 				if field.NeedsReview {
 					t.Fatalf("accepted association still needs correction: %+v", field)
 				}
