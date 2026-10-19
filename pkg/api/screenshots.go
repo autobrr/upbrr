@@ -19,6 +19,8 @@ const (
 	ScreenshotPurposePreview ScreenshotPurpose = "preview"
 	// ScreenshotPurposeFinal identifies normal final screenshot selections.
 	ScreenshotPurposeFinal ScreenshotPurpose = "final"
+	// ScreenshotPurposeComparison identifies explicitly grouped comparison inputs.
+	ScreenshotPurposeComparison ScreenshotPurpose = "comparison"
 	// ScreenshotPurposeMenu identifies manual or automatic disc-menu images.
 	ScreenshotPurposeMenu ScreenshotPurpose = "menu"
 	// ScreenshotPurposeAudioAnalysis keeps audio graphs out of screenshot galleries.
@@ -179,11 +181,16 @@ type ScreenshotLinkedImage struct {
 }
 
 type ScreenshotImage struct {
-	DiscID           string
-	DiscName         string
-	Index            int
-	TimestampSeconds float64
-	Path             string
+	// ComparisonGroup is retained input provenance, never inferred from legacy flat selections.
+	ComparisonGroup       string
+	ComparisonCount       int
+	ComparisonLabel       string
+	ComparisonMemberLabel string
+	DiscID                string
+	DiscName              string
+	Index                 int
+	TimestampSeconds      float64
+	Path                  string
 	// Purpose distinguishes preview, normal final, and disc-menu images.
 	Purpose   ScreenshotPurpose
 	Width     int

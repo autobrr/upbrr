@@ -596,6 +596,11 @@ func (r *SQLiteRepository) ResolveReleaseWorkflowEffectUnknown(
 		case api.WorkflowEffectStatusStarted, api.WorkflowEffectStatusSucceeded:
 			return api.ErrReleaseWorkflowEffectConflict
 		}
+		if kind == api.WorkflowExternalEffectImageHosting && api.IsImageCollectionEffectScope(scopeID) {
+			if err := reconcileImageCollection(ctx, tx, latest); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM submission_fences
 			WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?

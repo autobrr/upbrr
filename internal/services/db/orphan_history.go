@@ -64,7 +64,8 @@ type orphanHistoryCompositeAuthority struct {
 // ListOrphanedHistoryPaths returns stored source paths and empty workflow
 // scopes that are absent from visible History and have no active ownership.
 // It preserves related parent and child paths, every path owned by a workflow
-// linked to retained history. Ambiguous workflow source ownership defers all
+// linked to retained history, and pending collection reservations. Only explicit
+// history deletion resets an uncertain collection. Ambiguous workflow source ownership defers all
 // cleanup. Callers remove the returned paths and scopes inside
 // [SQLiteRepository.WithHistoryDeletion].
 func (r *SQLiteRepository) ListOrphanedHistoryPaths(ctx context.Context) ([]string, []api.WorkflowScope, error) {
@@ -118,7 +119,10 @@ func (r *SQLiteRepository) ListOrphanedHistoryPaths(ctx context.Context) ([]stri
 		}
 	}
 
-	retained := make([]string, 0, len(historyEntries)+len(protected.paths))
+	retained, err := r.pendingCollectionHistoryPaths(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, entry := range historyEntries {
 		retained = addOrphanHistoryPath(retained, entry.SourcePath)
 	}
@@ -345,4 +349,25 @@ func orphanHistoryPathRelatedAny(paths, candidates []string) bool {
 		}
 	}
 	return false
+}
+
+// pendingCollectionHistoryPaths keeps automatic cleanup from approving an uncertain retry.
+func (r *SQLiteRepository) pendingCollectionHistoryPaths(ctx context.Context) ([]string, error) {
+	rows, err := r.historyQuery(ctx).QueryContext(ctx, `SELECT DISTINCT source_path FROM image_collections WHERE completed = 0`)
+	if err != nil {
+		return nil, fmt.Errorf("db list pending collection history paths: %w", err)
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			return nil, fmt.Errorf("db scan pending collection history path: %w", err)
+		}
+		paths = addOrphanHistoryPath(paths, source)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db iterate pending collection history paths: %w", err)
+	}
+	return paths, nil
 }

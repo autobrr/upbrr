@@ -554,6 +554,8 @@ func (r *SQLiteRepository) ConfigActivationSafe(ctx context.Context) (bool, erro
 // DiscardUnresolvedWorkflowEffectsOnStartup abandons prior-process effects
 // after all input and work leases expire. It retains failed effect receipts and
 // removes uncertain submission fences so an interrupted attempt can be retried.
+// Collection effects remain unknown until explicit confirmation releases their reservation.
+// Already-unknown collections alone need no cleanup and do not wait for leases.
 func (r *SQLiteRepository) DiscardUnresolvedWorkflowEffectsOnStartup(ctx context.Context, now time.Time) (int64, int64, error) {
 	if now.IsZero() {
 		return 0, 0, errors.New("db: startup effect discard timestamp is required")
@@ -565,9 +567,10 @@ func (r *SQLiteRepository) DiscardUnresolvedWorkflowEffectsOnStartup(ctx context
 		var unresolved int
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM release_workflow_effects WHERE status IN ('started', 'unknown')
+				AND NOT (status = 'unknown' AND kind = ? AND scope_id GLOB ?)
 		) OR EXISTS (
 			SELECT 1 FROM submission_fences WHERE status IN ('started', 'unknown')
-		)`).Scan(&unresolved); err != nil {
+		)`, api.WorkflowExternalEffectImageHosting, api.ImageCollectionEffectScope("?*")).Scan(&unresolved); err != nil {
 			return fmt.Errorf("db inspect unresolved startup workflow effects: %w", err)
 		}
 		if unresolved == 0 {
@@ -605,9 +608,17 @@ func (r *SQLiteRepository) DiscardUnresolvedWorkflowEffectsOnStartup(ctx context
 			return fmt.Errorf("db close startup effect work leases: %w", err)
 		}
 		formattedNow := formatWorkflowStateTime(now)
+		collectionScope := api.ImageCollectionEffectScope("?*")
+		if _, err := tx.ExecContext(ctx, `UPDATE release_workflow_effects
+			SET status = ?, updated_at = ?, completed_at = ?
+			WHERE status = 'started' AND kind = ? AND scope_id GLOB ?`,
+			api.WorkflowEffectStatusUnknown, formattedNow, formattedNow, api.WorkflowExternalEffectImageHosting, collectionScope); err != nil {
+			return fmt.Errorf("db preserve uncertain startup collections: %w", err)
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE release_workflow_effects
 			SET status = ?, updated_at = ?, completed_at = ?
-			WHERE status IN ('started', 'unknown')`, api.WorkflowEffectStatusFailed, formattedNow, formattedNow)
+			WHERE status IN ('started', 'unknown') AND NOT (kind = ? AND scope_id GLOB ?)`,
+			api.WorkflowEffectStatusFailed, formattedNow, formattedNow, api.WorkflowExternalEffectImageHosting, collectionScope)
 		if err != nil {
 			return fmt.Errorf("db discard unresolved startup workflow effects: %w", err)
 		}
@@ -637,7 +648,8 @@ func requireConfigActivationSafe(ctx context.Context, tx *sql.Tx) (api.ActiveInp
 
 // requireStartupConfigActivationSafe permits expired transitional input and
 // bound unfinished operations for startup reconciliation. Live leases and
-// unresolved effects still block it; normal settings activation requires idle
+// unresolved non-collection effects still block it; preserved collection outcomes
+// remain available for manual recovery. Normal settings activation requires idle
 // input and no active work.
 func requireStartupConfigActivationSafe(ctx context.Context, tx *sql.Tx) (api.ActiveInputRecord, error) {
 	return requireConfigActivationSafeForStartup(ctx, tx, true)
@@ -718,7 +730,9 @@ func requireConfigActivationSafeForStartup(ctx context.Context, tx *sql.Tx, star
 	var unresolved int
 	if err := tx.QueryRowContext(
 		ctx,
-		`SELECT EXISTS (SELECT 1 FROM release_workflow_effects WHERE status IN ('started', 'unknown'))`,
+		`SELECT EXISTS (SELECT 1 FROM release_workflow_effects WHERE status IN ('started', 'unknown')
+			AND NOT (? AND status = 'unknown' AND kind = ? AND scope_id GLOB ?))`,
+		startup, api.WorkflowExternalEffectImageHosting, api.ImageCollectionEffectScope("?*"),
 	).Scan(
 		&unresolved,
 	); err != nil {

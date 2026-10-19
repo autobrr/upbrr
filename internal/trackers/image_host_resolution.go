@@ -26,6 +26,7 @@ import (
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
@@ -54,9 +55,11 @@ func exactMediaForTrackerHost(
 	exact := meta.ExactMedia.Clone()
 	if exact != nil {
 		failedHosts := normalizeImageHostNames(meta.ImageHostOverrides.FailedHosts)
-		exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, sourceOnlyUploadedImage)
+		exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, func(upload api.UploadedImageLink) bool {
+			return sourceOnlyUploadedImage(upload) || imagehostpolicy.IsCollectionHost(upload.Host)
+		})
 		exact.DVDMenuUploads = slices.DeleteFunc(exact.DVDMenuUploads, func(upload api.UploadedImageLink) bool {
-			return sourceOnlyUploadedImage(upload) || hostInList(upload.Host, failedHosts)
+			return sourceOnlyUploadedImage(upload) || imagehostpolicy.IsCollectionHost(upload.Host) || hostInList(upload.Host, failedHosts)
 		})
 	}
 	if exact == nil || len(exact.Screenshots) == 0 || len(exact.ScreenshotUploads) == 0 {

@@ -58,6 +58,14 @@ Before commit: `git diff --check`, changed-package `make gofix-check-changed`, o
 - WebUI server/API host `internal/webserver`; API contracts `pkg/api`; frontend workflow state/operation ownership `webui/src/releaseSession`.
 - Public documentation site `documentation`; production publishing `.github/workflows/release.yml`.
 
+## History Deletion
+
+- Explicitly deleting an input from History resets all matching local input-derived data, including caches, workflow state, upload attempts, receipts, and recovery blocks. Delete all must also include history-owned records whose other input rows are already gone.
+- Keep deletion scoped to the selected input; preserve unrelated inputs, global settings, accounts, and source media. Local history deletion does not authorize deleting remote tracker uploads or image-host collections.
+- Preserve active-operation and concurrency guards. A late completion must not recreate deleted state or overwrite a newer attempt. Delete related database records transactionally.
+- Automatic retention and orphan cleanup must not silently act as an explicit user reset or release unresolved external-effect safeguards.
+- New persisted per-input features must participate in selected-input and Delete all cleanup, with regressions for orphan-only records, unrelated-input isolation, live work, and late completion.
+
 ## Logging Levels
 
 - Purposeful levels across CLI, WebUI, tests, tooling.

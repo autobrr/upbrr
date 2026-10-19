@@ -130,6 +130,8 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 		if resetErr == nil {
 			m.startupResetPending = false
 			m.startupResetDone = true
+		} else {
+			m.logger.Warnf("active input: startup recovery state=blocked decision=retry_recovery")
 		}
 	}()
 
@@ -188,7 +190,10 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 		case slot.State == api.ActiveInputActive:
 			// Ordinary admission can precede an explicit startup reset. Settle
 			// prior-process operations without closing the current input.
-			return m.discardInterruptedOperations(recoveryCtx)
+			if err := m.discardInterruptedOperations(recoveryCtx); err != nil {
+				return err
+			}
+			return m.publishUnknownCollectionActions(recoveryCtx, slot.OwnerID, slot.WorkflowID)
 		default:
 			return api.ErrActiveInputBusy
 		}
@@ -219,6 +224,9 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	}
 	if recovered {
 		recoveryCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
+		if err := m.publishUnknownCollectionActions(recoveryCtx, slot.OwnerID, slot.WorkflowID); err != nil {
+			return err
+		}
 		if _, err := m.settleRecoveryActions(recoveryCtx, slot.OwnerID, slot.WorkflowID); err != nil {
 			return fmt.Errorf("release workflow settle discarded input actions on startup: %w", err)
 		}
@@ -852,6 +860,11 @@ func (m *Module) finishActiveInputRecovery(
 	if recoveryErr != nil {
 		return api.ActiveInputRecord{}, recoveryErr
 	}
+	if restored.State == api.ActiveInputActive {
+		if err := m.publishUnknownCollectionActions(ctx, restored.OwnerID, restored.WorkflowID); err != nil {
+			return api.ActiveInputRecord{}, err
+		}
+	}
 	if restored.OwnerID != requestedOwner && restored.State == api.ActiveInputActive {
 		empty := api.ActiveInputRecord{
 			State:          api.ActiveInputEmpty,
@@ -1066,4 +1079,25 @@ func (m *Module) attachVerifiedInput(ctx context.Context, owner string, workflow
 	}
 	input.VerifiedSource = &verified
 	return nil
+}
+
+// publishUnknownCollectionActions restores confirmations lost before a crash or failed save.
+func (m *Module) publishUnknownCollectionActions(ctx context.Context, ownerID string, workflowID api.WorkflowID) error {
+	effects, err := m.durability.ListUnknownCollectionEffects(ctx, ownerID, workflowID)
+	if err != nil {
+		return fmt.Errorf("release workflow read collection recovery effects: %w", err)
+	}
+	if len(effects) == 0 {
+		return nil
+	}
+	state, err := m.repository.Load(ctx, ownerID, workflowID)
+	if err != nil {
+		return fmt.Errorf("release workflow load collection recovery state: %w", err)
+	}
+	// Publication records the current process epoch, so finish restart cleanup
+	// before it can make stale stages and approvals look current.
+	if err := m.recoverAfterRestart(ctx, ownerID, &state); err != nil {
+		return fmt.Errorf("release workflow recover collection state: %w", err)
+	}
+	return m.publishLegacyRecoveryActions(ctx, ownerID, workflowID, effects)
 }

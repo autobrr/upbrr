@@ -2961,3 +2961,60 @@ func TestNormalizeCompositeUploadRequestPreservesImageHostingWhenNotSkipped(t *t
 		t.Fatalf("image-host upload was skipped for an explicit false request: %#v", session.Intent)
 	}
 }
+
+func TestCompositeUploadMenuStagingClearsComparisonProvenance(t *testing.T) {
+	t.Parallel()
+	module, repository, _ := newCompositeUploadTestModule(t)
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "menu-provenance")
+	request.Media.Screenshots.ComparisonPaths = []string{"comparison.png"}
+	request.Media.DVDMenus.MenuPaths = []string{"menu.png"}
+	content := StagedMediaContent{
+		ComparisonGroup:       "synthetic-group",
+		ComparisonCount:       1,
+		ComparisonLabel:       "Synthetic set",
+		ComparisonMemberLabel: "Synthetic member",
+		Name:                  "synthetic.png",
+		Bytes:                 []byte("synthetic image"),
+		ContentType:           "image/png",
+	}
+	startRequest := request
+	startRequest.Media.Screenshots.ComparisonPaths = nil
+	startRequest.Media.DVDMenus.MenuPaths = nil
+	started, err := module.StartUpload(t.Context(), testOwnerID, startRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := waitCompositeUploadTestOperation(t, module, started)
+	err = module.ensureCompositeUploadMediaInputs(t.Context(), testOwnerID, current.Workflow.ID, current.Workflow.Revision, request, CompositeUploadMediaInputs{
+		Comparisons: []StagedMediaContent{content}, DVDMenus: []StagedMediaContent{content},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Composite == nil || len(state.Composite.ManualMedia.Attachments) != 2 {
+		t.Fatal("manual media was not retained")
+	}
+	for index, attachment := range state.Composite.ManualMedia.Attachments {
+		retained, err := module.private.Get(testOwnerID, current.Workflow.ID, stagedMediaPrivateResourceID(attachment.Resource.ID), module.clock.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		staged, ok := retained.(StagedMediaContent)
+		if !ok {
+			t.Fatal("staged media has unexpected type")
+		}
+		if index == 0 {
+			if attachment.ComparisonGroup != content.ComparisonGroup || attachment.ComparisonCount != 1 || !reflect.DeepEqual(staged, content) {
+				t.Fatal("comparison provenance changed")
+			}
+			continue
+		}
+		if attachment.ComparisonGroup != "" || attachment.ComparisonCount != 0 || attachment.ComparisonLabel != "" || attachment.ComparisonMemberLabel != "" || staged.ComparisonGroup != "" || staged.ComparisonCount != 0 || staged.ComparisonLabel != "" || staged.ComparisonMemberLabel != "" {
+			t.Fatal("DVD menu retained comparison provenance")
+		}
+	}
+}

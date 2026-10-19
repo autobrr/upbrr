@@ -469,7 +469,7 @@ export type WorkflowFacet = Readonly<{
   generateDescriptions(instructions: DescriptionInstructions): Promise<boolean>;
   dryRunUploads(): Promise<boolean>;
   executeUploads(): Promise<boolean>;
-  /** Resolves a supported upload action and resumes the workflow. */
+  /** Resolves a supported action; reconciliation records confirmation without resuming execution. */
   confirmAction(action: RequiredAction, confirmed?: boolean): Promise<boolean>;
   retryFailedUploads(): Promise<boolean>;
   retryClientInjections(): Promise<boolean>;

@@ -3328,6 +3328,9 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 		case api.RequiredActionApproveUpload:
 			return true
 		case api.RequiredActionReconcileSubmission:
+			if action.EffectKind == api.WorkflowExternalEffectImageHosting && api.IsImageCollectionEffectScope(action.EffectScopeID) {
+				return false
+			}
 			return workflow.UploadResult == nil && workflow.Media == nil
 		case api.RequiredActionSelectPlaylist,
 			api.RequiredActionSelectMetadata,
@@ -5879,7 +5882,7 @@ func (m *Module) captureMedia(
 	case "", api.ScreenshotPurposeFinal, api.ScreenshotPurposeMenu:
 	case api.ScreenshotPurposePreview:
 		return CommandResult{}, fmt.Errorf("%w: preview images cannot satisfy retained media requirements", ErrInvalidTransition)
-	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis, api.ScreenshotPurposeComparison:
 		return CommandResult{}, fmt.Errorf("%w: analysis images cannot satisfy retained media requirements", ErrInvalidTransition)
 	default:
 		return CommandResult{}, fmt.Errorf("%w: invalid media capture purpose", ErrInvalidTransition)
@@ -7435,6 +7438,19 @@ func (m *Module) publishDescriptions(
 	snapshot.ProjectionSet = *workflow.TrackerProjections
 	snapshot.Media = workflow.Media
 	snapshot.CreatedAt = now
+	for index := range snapshot.RequiredActions {
+		action := &snapshot.RequiredActions[index]
+		if action.ID == "" {
+			id, err := m.newID("action")
+			if err != nil {
+				return CommandResult{}, err
+			}
+			action.ID = api.RequiredActionID(id)
+		}
+		action.Status = api.RequiredActionStatusPending
+		action.WorkflowRevision = nextRevision
+		action.CreatedAt = now
+	}
 	if err := snapshot.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow publish descriptions: %w", err)
 	}
@@ -8545,6 +8561,11 @@ func (m *Module) newReconcileAction(
 	if err != nil {
 		return api.RequiredAction{}, err
 	}
+	label := "Confirmed not completed; allow a fresh exact attempt"
+	if effectKind == api.WorkflowExternalEffectImageHosting && api.IsImageCollectionEffectScope(effectScopeID) {
+		prompt = "Check slow.pics for this uncertain upload. Confirm only after verifying that no collection was created. This clears the block without uploading; retry description generation separately."
+		label = "I verified no collection was created"
+	}
 	return api.RequiredAction{
 		ID:               api.RequiredActionID(actionID),
 		Kind:             api.RequiredActionReconcileSubmission,
@@ -8556,7 +8577,7 @@ func (m *Module) newReconcileAction(
 		Prompt:           prompt,
 		Options: []api.RequiredActionOption{{
 			Value: api.RequiredActionReconcileNotCompleted,
-			Label: "Confirmed not completed; allow a fresh exact attempt",
+			Label: label,
 		}},
 		CreatedAt: now,
 	}, nil
@@ -8784,6 +8805,13 @@ func (m *Module) resolveAction(
 			now,
 		); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow reconcile external effect: %w", err)
+		}
+		if action.EffectKind == api.WorkflowExternalEffectImageHosting && api.IsImageCollectionEffectScope(action.EffectScopeID) {
+			finishImageCollectionReconciliation(&state.Workflow, action)
+			if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
+				return CommandResult{}, fmt.Errorf("release workflow reconcile collection private authority: %w", err)
+			}
+			return CommandResult{}, nil
 		}
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
 			result, err := m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)
@@ -9082,4 +9110,16 @@ func cloneCommandResult(result CommandResult) (CommandResult, error) {
 		return CommandResult{}, fmt.Errorf("clone workflow command result: %w", err)
 	}
 	return cloned.Receipts["result"].Result, nil
+}
+
+func finishImageCollectionReconciliation(workflow *api.ReleaseWorkflow, action api.RequiredAction) {
+	workflow.Descriptions = nil
+	invalidateUploadPlan(workflow)
+	workflow.RequiredActions = slices.DeleteFunc(workflow.RequiredActions, func(candidate api.RequiredAction) bool { return candidate.ID == action.ID })
+	workflow.Failures = slices.DeleteFunc(workflow.Failures, func(failure api.WorkflowFailure) bool {
+		return failure.Failure.Code == api.OperationFailureUnknownOutcome && failure.Resource == action.EffectScopeID
+	})
+	if !hasPendingRequiredAction(workflow.RequiredActions) && workflow.Status == api.WorkflowStatusBlocked {
+		workflow.Status = api.WorkflowStatusActive
+	}
 }

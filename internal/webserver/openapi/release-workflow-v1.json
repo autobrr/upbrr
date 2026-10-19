@@ -4046,6 +4046,18 @@
       "MediaArtifact": {
         "type": "object",
         "properties": {
+          "comparisonCount": {
+            "type": "integer"
+          },
+          "comparisonGroup": {
+            "type": "string"
+          },
+          "comparisonLabel": {
+            "type": "string"
+          },
+          "comparisonMemberLabel": {
+            "type": "string"
+          },
           "discId": {
             "type": "string"
           },
@@ -4221,6 +4233,18 @@
       "MediaAttachment": {
         "type": "object",
         "properties": {
+          "comparisonCount": {
+            "type": "integer"
+          },
+          "comparisonGroup": {
+            "type": "string"
+          },
+          "comparisonLabel": {
+            "type": "string"
+          },
+          "comparisonMemberLabel": {
+            "type": "string"
+          },
           "discId": {
             "type": "string"
           },
@@ -6988,6 +7012,12 @@
           "applicationVersion": {
             "type": "string"
           },
+          "collectionHosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseWorkflowCollectionHost"
+            }
+          },
           "features": {
             "$ref": "#/components/schemas/ReleaseWorkflowCapabilityFeatures"
           },
@@ -7025,6 +7055,7 @@
         "required": [
           "apiVersion",
           "applicationVersion",
+          "collectionHosts",
           "features",
           "imageHosts",
           "ownerId",
@@ -7122,6 +7153,32 @@
           "default",
           "displayName",
           "id"
+        ]
+      },
+      "ReleaseWorkflowCollectionHost": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "purposes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScreenshotPurpose"
+            }
+          }
+        },
+        "required": [
+          "configured",
+          "displayName",
+          "id",
+          "purposes"
         ]
       },
       "ReleaseWorkflowCurrent": {

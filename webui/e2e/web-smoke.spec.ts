@@ -557,3 +557,44 @@ for (const rootCount of [1, 2]) {
     }
   });
 }
+
+test("collection host preference is separate from ordinary screenshot hosts", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.goto(app.url);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Image Hosting", exact: true }).click();
+    const analysisHost = page.getByRole("combobox", {
+      name: "Comparison and analysis host",
+      exact: true,
+    });
+    await expect(analysisHost).toBeVisible();
+    await expect(analysisHost).toHaveAccessibleName("Comparison and analysis host");
+    await page.getByText("Comparison and analysis host", { exact: true }).click();
+    await expect(analysisHost).toBeFocused();
+    await expect(analysisHost).toHaveValue("");
+    for (let index = 1; index <= 6; index += 1) {
+      const ordinaryHost = page.getByRole("combobox", { name: `Host ${index}`, exact: true });
+      await expect(ordinaryHost).toBeVisible();
+      await expect(ordinaryHost.locator('option[value="slowpics"]')).toHaveCount(0);
+    }
+    await analysisHost.selectOption("slowpics");
+    await expect(
+      page.getByText(/visibility and current service limits are unverified/),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Settings saved and applied.")).toBeVisible();
+    await page.getByRole("button", { name: "Reload", exact: true }).click();
+    await expect(analysisHost).toHaveValue("slowpics");
+    await analysisHost.selectOption("");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Settings saved and applied.")).toBeVisible();
+    await page.getByRole("button", { name: "Reload", exact: true }).click();
+    await expect(analysisHost).toHaveValue("");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});

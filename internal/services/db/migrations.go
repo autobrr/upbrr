@@ -60,6 +60,11 @@ type migrationExecutor interface {
 //     bridge mapping also changed historically.
 var migrationRegistry = []migrationStep{
 	{
+		id:        "2026_10_image_collections",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateImageCollections,
+	},
+	{
 		id:        "2026_10_add_hdr_analysis_association",
 		dependsOn: []string{"2026_09_retain_input_workflow"},
 		apply:     migrateHDRAnalysisAssociation,
@@ -129,6 +134,11 @@ var migrationRegistry = []migrationStep{
 		id:        "2026_09_add_reusable_media_tombstone_sources",
 		dependsOn: []string{"2026_09_add_reusable_media_commits"},
 		apply:     migrateAddReusableMediaTombstoneSources,
+	},
+	{
+		id:        "2026_10_add_comparison_provenance",
+		dependsOn: []string{"2026_09_add_media_reuse_associations"},
+		apply:     migrateAddComparisonProvenance,
 	},
 	{
 		id:        "2026_09_add_reusable_media_origin",

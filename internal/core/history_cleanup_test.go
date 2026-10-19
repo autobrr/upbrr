@@ -203,7 +203,17 @@ func TestHistoryDeleteRemovesStoredArtifacts(t *testing.T) {
 	nfoFile := filepath.Join(nfoRoot, "release.nfo")
 	slotFile := filepath.Join(tmpRoot, filepath.Base(sourcePath), "slot-01.png")
 	slotVariantFile := filepath.Join(tmpRoot, filepath.Base(sourcePath), "slot-variant-01.png")
-	for _, target := range []string{tmpFile, cacheFile, nfoFile, slotFile, slotVariantFile} {
+	comparisonDir, err := paths.DescriptionComparisonTempRoot(tmpRoot, sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comparisonCache := filepath.Join(comparisonDir, "synthetic.png")
+	unrelatedDir, err := paths.DescriptionComparisonTempRoot(tmpRoot, filepath.Join(baseDir, "other", filepath.Base(sourcePath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelatedCache := filepath.Join(unrelatedDir, "synthetic.png")
+	for _, target := range []string{tmpFile, cacheFile, nfoFile, slotFile, slotVariantFile, comparisonCache, unrelatedCache} {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", target, err)
 		}
@@ -234,13 +244,73 @@ func TestHistoryDeleteRemovesStoredArtifacts(t *testing.T) {
 	if repo.purgeCalls != 1 || len(repo.purgedPaths) != 1 || repo.purgedPaths[0] != sourcePath {
 		t.Fatalf("unexpected purge calls: %#v", repo.purgedPaths)
 	}
-	for _, target := range []string{tmpFile, cacheFile, nfoFile, slotFile, slotVariantFile} {
+	for _, target := range []string{tmpFile, cacheFile, nfoFile, slotFile, slotVariantFile, comparisonCache} {
 		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("expected %s removed, got err=%v", target, err)
 		}
 	}
+	if _, err := os.Stat(unrelatedCache); err != nil {
+		t.Fatalf("unrelated comparison cache was removed: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(tmpRoot, filepath.Base(sourcePath))); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected tmp content dir removed, got err=%v", err)
+	}
+}
+
+func TestHistoryDeleteComparisonCacheIsolatesEqualBasenames(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo, err := db.Open(filepath.Join(root, "history.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	tmpRoot, err := db.Subdir(repo.DBPath(), "tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := make([]string, 0, 2)
+	caches := make([]string, 0, 2)
+	for _, name := range []string{"first", "second"} {
+		source := filepath.Join(root, name, "Synthetic.Release.2026-GRP.mkv")
+		if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(source, []byte("synthetic"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Save(t.Context(), db.FileMetadata{Path: source, UpdatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		dir, err := paths.DescriptionComparisonTempRoot(tmpRoot, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cache := filepath.Join(dir, "synthetic.png")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cache, []byte("cached"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sources = append(sources, source)
+		caches = append(caches, cache)
+	}
+	history := newHistoryModule(repo, repo.DBPath(), api.NopLogger{})
+	if err := history.Delete(t.Context(), sources[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.GetByPath(t.Context(), sources[1]); err != nil {
+		t.Fatalf("unrelated history missing: %v", err)
+	}
+	if _, err := os.Stat(caches[0]); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("selected comparison cache retained: %v", err)
+	}
+	if _, err := os.Stat(caches[1]); err != nil {
+		t.Fatalf("unrelated comparison cache removed for equal-basename input: %v", err)
 	}
 }
 
@@ -652,6 +722,17 @@ func TestHistoryDeleteProtectsActiveLegacyTempCollision(t *testing.T) {
 			if err := os.WriteFile(capturePath, []byte("unpersisted capture"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			comparisonRoot, err := paths.DescriptionComparisonTempRoot(tmpRoot, activeSource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(comparisonRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			comparisonCache := filepath.Join(comparisonRoot, "synthetic.png")
+			if err := os.WriteFile(comparisonCache, []byte("cached comparison"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 
 			history := newHistoryModule(repo, repo.DBPath(), api.NopLogger{})
 			err = history.Delete(ctx, historySource)
@@ -669,6 +750,9 @@ func TestHistoryDeleteProtectsActiveLegacyTempCollision(t *testing.T) {
 			}
 			if _, err := os.Stat(capturePath); err != nil {
 				t.Fatalf("active unpersisted capture changed: %v", err)
+			}
+			if _, err := os.Stat(comparisonCache); err != nil {
+				t.Fatalf("active comparison cache changed: %v", err)
 			}
 			active, err := repo.LoadActiveInput(ctx)
 			if err != nil {

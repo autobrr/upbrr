@@ -2487,6 +2487,96 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
+  it("reconciles slow.pics only after confirmation without starting an upload", async () => {
+    const reconciliationAction = {
+      id: "action-slowpics-reconcile",
+      kind: "reconcile_submission",
+      status: "pending" as const,
+      workflowRevision: 9,
+      effectKind: "image_hosting" as const,
+      effectScopeId: "slowpics_collection:attempt-1",
+      prompt: "Verify whether the slow.pics collection was created before retrying.",
+      options: [{ value: "not_completed", label: "I verified no collection was created" }],
+      createdAt: "2026-09-19T00:00:00Z",
+    };
+    const baseCurrent = workflowCurrent("workflow-slowpics", 9);
+    const blockedCurrent: ReleaseWorkflowCurrent = {
+      ...baseCurrent,
+      workflow: {
+        ...baseCurrent.workflow,
+        status: "blocked",
+        requiredActions: [reconciliationAction],
+      },
+      continuation: {
+        ...baseCurrent.continuation,
+        lifecycle: "waiting",
+        disposition: "needs_action",
+        requiredActions: [reconciliationAction],
+        availableGoals: baseCurrent.continuation.availableGoals.map((goal) => ({
+          ...goal,
+          available: false,
+        })),
+      },
+    };
+    const reconciledCurrent = workflowCurrent("workflow-slowpics", 10);
+    const activeInput = {
+      state: "active" as const,
+      revision: 4,
+      inputId: "input-slowpics",
+      sourceVersion: "source-slowpics-v1",
+    };
+    const reconcile = vi.fn(async () => ({
+      ...activeInput,
+      revision: 5,
+      current: reconciledCurrent,
+    }));
+    const continueWorkflow = vi.fn(async () => reconciledCurrent);
+    const uploadImages = vi.fn(async () => reconciledCurrent);
+    const retryImageHost = vi.fn(async () => reconciledCurrent);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get: async () => ({ ...activeInput, current: blockedCurrent }),
+            reconcile,
+          },
+          workflow: workflowPorts({ continue: continueWorkflow, uploadImages, retryImageHost }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.current).toEqual(blockedCurrent));
+    expect(reconcile).not.toHaveBeenCalled();
+
+    await act(() =>
+      expect(result.current.workflow.confirmAction(reconciliationAction, false)).resolves.toBe(
+        false,
+      ),
+    );
+    expect(reconcile).not.toHaveBeenCalled();
+
+    await act(() =>
+      expect(result.current.workflow.confirmAction(reconciliationAction, true)).resolves.toBe(true),
+    );
+    expect(reconcile).toHaveBeenCalledExactlyOnceWith(
+      {
+        authority: { workflowId: "workflow-slowpics", expectedRevision: 9 },
+        answer: {
+          actionId: "action-slowpics-reconcile",
+          workflowRevision: 9,
+          selectedValues: ["not_completed"],
+        },
+        idempotencyKey: expect.any(String),
+      },
+      expect.any(AbortSignal),
+    );
+    expect(result.current.input.view.activeInput.state).toBe("active");
+    expect(result.current.workflow.view.current).toEqual(reconciledCurrent);
+    expect(continueWorkflow).not.toHaveBeenCalled();
+    expect(uploadImages).not.toHaveBeenCalled();
+    expect(retryImageHost).not.toHaveBeenCalled();
+    unmount();
+  });
+
   it("resyncs on focus and the visible fifteen-second fallback", async () => {
     vi.useFakeTimers();
     const get = vi.fn(async () => ({ state: "empty", revision: 1 }));

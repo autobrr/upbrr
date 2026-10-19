@@ -1437,3 +1437,36 @@ func TestResolveTrackerDomain(t *testing.T) {
 		})
 	}
 }
+
+func TestAnalysisHostConfigurationStaysSeparateFromOrdinaryHosts(t *testing.T) {
+	t.Parallel()
+	base := Config{ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1}}
+	base.ImageHosting.AnalysisHost = "slowpics"
+	if err := base.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := yaml.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Config
+	if err := yaml.Unmarshal(data, &restored); err != nil || restored.ImageHosting.AnalysisHost != "slowpics" {
+		t.Fatalf("config roundtrip: %#v %v", restored.ImageHosting, err)
+	}
+	for _, host := range []string{"slowpics", "slow.pics"} {
+		bad := base
+		bad.ImageHosting.Host1 = host
+		if bad.Validate() == nil {
+			t.Errorf("ordinary priority accepted %s", host)
+		}
+		bad = base
+		bad.Trackers.Trackers = map[string]TrackerConfig{"EXAMPLE": {ImageHost: host}}
+		if bad.Validate() == nil {
+			t.Errorf("tracker override accepted %s", host)
+		}
+	}
+	base.ImageHosting.AnalysisHost = "imgbb"
+	if base.Validate() == nil {
+		t.Fatal("unknown collection preference accepted")
+	}
+}

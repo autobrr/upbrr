@@ -537,7 +537,11 @@ const (
 
 // MediaArtifact is a safe opaque projection of one retained private artifact.
 type MediaArtifact struct {
-	ID PublicResourceID `json:"id"`
+	ComparisonGroup       string           `json:"comparisonGroup,omitempty"`
+	ComparisonCount       int              `json:"comparisonCount,omitempty"`
+	ComparisonLabel       string           `json:"comparisonLabel,omitempty"`
+	ComparisonMemberLabel string           `json:"comparisonMemberLabel,omitempty"`
+	ID                    PublicResourceID `json:"id"`
 	// DiscID identifies the prepared disc that produced this artifact.
 	DiscID string `json:"discId,omitempty"`
 	// DiscName is the safe page-facing label derived from prepared facts.

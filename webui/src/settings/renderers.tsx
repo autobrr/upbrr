@@ -1129,6 +1129,25 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     return (
       <div className={settingsStyle.form}>
         <div className={settingsStyle.subgroup}>
+          <label className={settingsStyle.field}>
+            <span>Comparison and analysis host</span>
+            <Select
+              value={String(imageCfg.AnalysisHost ?? "")}
+              onChange={(event) =>
+                updateConfigValue(["ImageHosting", "AnalysisHost"], event.target.value)
+              }
+            >
+              <option value="">Use ordinary image hosts</option>
+              <option value="slowpics">slow.pics collection links</option>
+            </Select>
+          </label>
+          <p className="text-muted-foreground">
+            Only grouped comparisons, HDR and audio analysis images. PNG only. Uses anonymous
+            uploads with public and image optimization disabled in the request; visibility and
+            current service limits are unverified. Tracker host restrictions still apply.
+          </p>
+        </div>
+        <div className={settingsStyle.subgroup}>
           <div className={settingsStyle.title}>Host Priority</div>
           <div className={settingsStyle.grid}>
             {hostFields.map((field, index) => {

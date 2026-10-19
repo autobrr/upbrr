@@ -36,3 +36,29 @@ func TestBuildDescriptionAudioPayload(t *testing.T) {
 		t.Fatalf("audio payload changed:\ngot:  %q\nwant: %q", got, want)
 	}
 }
+
+func TestBuildDescriptionKeepsDirectAnalysisLinkOutsideAudioSpoiler(t *testing.T) {
+	t.Parallel()
+	got := buildDescription("Notes\n\n[spoiler=Comps]\n[url=https://slow.pics/c/comparison]Comparison[/url]\n[/spoiler]\n\n" +
+		"[spoiler=Audio Plots]\n[code]Synthetic amplitude statistics[/code]\n[/spoiler]\n\n" +
+		"[url=https://slow.pics/c/synthetic]HDR and audio data[/url]")
+	if !strings.Contains(got, `href="https://slow.pics/c/synthetic"`) || !strings.Contains(got, "HDR and audio data</a>") ||
+		!strings.Contains(got, `href="https://slow.pics/c/comparison"`) ||
+		!strings.Contains(got, "<pre><code>Synthetic amplitude statistics</code></pre>") ||
+		strings.Index(got, "</details>") > strings.Index(got, `href="https://slow.pics/c/synthetic"`) {
+		t.Fatalf("direct analysis link lost or nested: %q", got)
+	}
+}
+
+func TestBuildDescriptionKeepsComparisonViewerLinkAndLiteralExamples(t *testing.T) {
+	t.Parallel()
+	for _, caption := range []string{"Source A vs Source B", "<b>Source A vs Source B</b>"} {
+		link := "[url=https://slow.pics/c/SyntheticComparison]" + caption + "[/url]"
+		got := buildDescription("Before\n" + link + "\nAfter\n[code]" + link + "[/code]\n<pre>" + link + "</pre>\n<code>" + link +
+			"</code>\n<!--" + link + "-->\n<span data-example='" + link + "'>notes</span>")
+		if strings.Count(got, `href="https://slow.pics/c/SyntheticComparison"`) != 1 || !strings.Contains(got, "Before") || !strings.Contains(got, "After") ||
+			strings.Contains(got, "UPBRR_") || !strings.Contains(got, caption) {
+			t.Fatalf("comparison link lost or literal example activated: %q", got)
+		}
+	}
+}

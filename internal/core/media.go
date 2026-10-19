@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/imagehosting"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
@@ -167,7 +168,7 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 			removeMenuImportFiles(created)
 			return api.DVDMenuSubject{}, nil, discErr
 		}
-		destPath, wasCreated, writeErr := writeManagedMenuImage(tmpDir, content.bytes, extension, discID)
+		destPath, wasCreated, writeErr := writeManagedAttachmentImage(tmpDir, content.bytes, extension, discID, content.attachment)
 		if writeErr != nil {
 			removeMenuImportFiles(created)
 			return api.DVDMenuSubject{}, nil, writeErr
@@ -187,7 +188,13 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 			Purpose:   api.ScreenshotPurposeMenu,
 			SizeBytes: int64(len(content.bytes)),
 		}
+		if content.attachment.ComparisonGroup != "" {
+			image.Purpose = api.ScreenshotPurposeFinal
+		}
 		images = append(images, acceptedMenuImage{image: image, attachment: content.attachment})
+		if content.attachment.ComparisonGroup != "" {
+			continue
+		}
 		records = append(records, api.Screenshot{
 			DiscID:     discID,
 			ImagePath:  destPath,
@@ -202,9 +209,11 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 			SelectedAt: now,
 		})
 	}
-	if err := m.repo.AppendManualMenuScreenshots(ctx, subject.MediaBinding, records, selections); err != nil {
-		removeMenuImportFiles(created)
-		return api.DVDMenuSubject{}, nil, fmt.Errorf("core: save staged menu selections: %w", err)
+	if len(records) > 0 {
+		if err := m.repo.AppendManualMenuScreenshots(ctx, subject.MediaBinding, records, selections); err != nil {
+			removeMenuImportFiles(created)
+			return api.DVDMenuSubject{}, nil, fmt.Errorf("core: save staged menu selections: %w", err)
+		}
 	}
 	return subject, images, nil
 }
@@ -222,7 +231,7 @@ func stagedMenuImageExtension(contentType string) (string, error) {
 	}
 }
 
-func writeManagedMenuImage(tmpDir string, data []byte, extension string, discID string) (string, bool, error) {
+func writeManagedAttachmentImage(tmpDir string, data []byte, extension string, discID string, attachment api.MediaAttachment) (string, bool, error) {
 	sum := sha256.Sum256(data)
 	discSegment := strings.Map(func(char rune) rune {
 		switch {
@@ -236,6 +245,23 @@ func writeManagedMenuImage(tmpDir string, data []byte, extension string, discID 
 		discSegment = "single"
 	}
 	destPath := filepath.Join(tmpDir, fmt.Sprintf("manual-disc-%s-dvd-menu-%x%s", discSegment, sum[:8], extension))
+	if attachment.ComparisonGroup != "" {
+		identity, err := api.CanonicalWorkflowFingerprint(struct {
+			Content    [32]byte
+			DiscID     string
+			Attachment api.MediaAttachment
+		}{sum, discID, api.MediaAttachment{
+			ComparisonGroup:       attachment.ComparisonGroup,
+			ComparisonCount:       attachment.ComparisonCount,
+			ComparisonLabel:       attachment.ComparisonLabel,
+			ComparisonMemberLabel: attachment.ComparisonMemberLabel,
+			Order:                 attachment.Order,
+		}})
+		if err != nil {
+			return "", false, fmt.Errorf("core: comparison member identity: %w", err)
+		}
+		destPath = filepath.Join(tmpDir, "manual-comparison-"+string(identity)+extension)
+	}
 	if info, err := os.Stat(destPath); err == nil {
 		if info.IsDir() {
 			return "", false, internalerrors.ErrInvalidInput
@@ -419,6 +445,17 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	view.logger = logging.FromContext(ctx, m.logger)
 	m = &view
 
+	if imagehostpolicy.IsCollectionHost(host) {
+		return api.UploadImagesResult{}, errors.New("collection hosts cannot upload ordinary screenshots")
+	}
+	if m.cfg.ImageHosting.AnalysisHost == "slowpics" {
+		images = slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
+			return image.ComparisonGroup != "" && image.Purpose == api.ScreenshotPurposeFinal
+		})
+		if len(images) == 0 {
+			return api.UploadImagesResult{}, nil
+		}
+	}
 	type scheduledAttempt struct {
 		target   trackers.ImageUploadTarget
 		fallback bool
@@ -693,6 +730,9 @@ func (m *mediaModule) uploadImagesToTarget(
 	view.logger = logging.FromContext(ctx, m.logger)
 	m = &view
 
+	if imagehostpolicy.IsCollectionHost(target.Host) {
+		return nil, errors.New("collection hosts cannot upload ordinary screenshots")
+	}
 	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
 	target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
 	progressTarget := api.ImageUploadProgressTarget{

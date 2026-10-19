@@ -1038,3 +1038,25 @@ func newPrivateResourceKey(ownerID string, workflowID api.WorkflowID, resourceID
 	}
 	return key, nil
 }
+
+func (r *MemoryRepository) ListUnknownCollectionEffects(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+) ([]api.ReleaseWorkflowEffectRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("list unknown collection effects: %w", err)
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var effects []api.ReleaseWorkflowEffectRecord
+	for _, effect := range r.effects {
+		if effect.OwnerID == ownerID && effect.WorkflowID == workflowID && effect.Status == api.WorkflowEffectStatusUnknown &&
+			effect.Kind == string(api.WorkflowExternalEffectImageHosting) &&
+			api.IsImageCollectionEffectScope(effect.ScopeID) {
+			effects = append(effects, effect)
+		}
+	}
+	slices.SortFunc(effects, func(a, b api.ReleaseWorkflowEffectRecord) int { return strings.Compare(a.EffectID, b.EffectID) })
+	return effects, nil
+}

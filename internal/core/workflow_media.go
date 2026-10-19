@@ -498,7 +498,7 @@ func (b workflowMediaBuilder) Build(
 		screenshotCount = max(screenshotCount, len(instructions.ManualFrames))
 	case api.ScreenshotPurposePreview:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
-	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis, api.ScreenshotPurposeComparison:
 		return api.MediaArtifactSet{}, nil, errors.New("workflow media capture: analysis is not a screenshot purpose")
 	default:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
@@ -1394,6 +1394,11 @@ func (b workflowMediaBuilder) RestoreCompatible(
 				image.Purpose,
 				image,
 			)
+			artifact.ComparisonGroup, artifact.ComparisonLabel, artifact.ComparisonMemberLabel = image.ComparisonGroup, image.ComparisonLabel, image.ComparisonMemberLabel
+			artifact.ComparisonCount = image.ComparisonCount
+			if image.ComparisonGroup != "" {
+				artifact.Source = "comparison"
+			}
 			artifact.Order = asset.Order
 			artifact.Selected = asset.Selected
 			if asset.Kind == api.MediaArtifactDVDMenu {
@@ -1407,6 +1412,9 @@ func (b workflowMediaBuilder) RestoreCompatible(
 				retained.DVDMenuImages[artifact.ID] = api.DVDMenuCaptureImage{ScreenshotImage: image}
 			}
 			sourceID = artifact.ID
+		}
+		if b.config.ImageHosting.AnalysisHost == "slowpics" && image.ComparisonGroup != "" {
+			continue
 		}
 		for linkIndex, link := range asset.HostedLinks {
 			if sourceOnlyHostedImageLink(link) {
@@ -2110,6 +2118,34 @@ func (b workflowMediaBuilder) Attach(
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
 	}
+	snapshot.Artifacts = slices.Clone(snapshot.Artifacts)
+	// A grouped attachment replaces that complete explicit group, including after
+	// restoration has materialized its members under different local paths.
+	groups := make(map[string]int)
+	orders := make(map[string]map[int]struct{})
+	for _, staged := range attachments {
+		attachment := staged.Attachment
+		if attachment.ComparisonGroup == "" {
+			continue
+		}
+		if attachment.Kind != api.MediaArtifactScreenshot || attachment.Purpose != api.ScreenshotPurposeFinal {
+			return api.MediaArtifactSet{}, nil, errors.New("comparison grouping requires attached comparison images")
+		}
+		if orders[attachment.ComparisonGroup] == nil {
+			orders[attachment.ComparisonGroup] = make(map[int]struct{})
+		}
+		if _, duplicate := orders[attachment.ComparisonGroup][attachment.Order]; duplicate {
+			return api.MediaArtifactSet{}, nil, errors.New("comparison member order must be distinct")
+		}
+		orders[attachment.ComparisonGroup][attachment.Order] = struct{}{}
+		groups[attachment.ComparisonGroup]++
+	}
+	for _, staged := range attachments {
+		attachment := staged.Attachment
+		if attachment.ComparisonGroup != "" && attachment.ComparisonCount != groups[attachment.ComparisonGroup] {
+			return api.MediaArtifactSet{}, nil, errors.New("comparison attachment must contain the complete group")
+		}
+	}
 	contents := make([]menuImageContent, 0, len(attachments))
 	for _, attachment := range attachments {
 		switch {
@@ -2133,6 +2169,27 @@ func (b workflowMediaBuilder) Attach(
 	}
 	retained.dvdMenuService = b.dvdMenus
 	retained.dvdMenuSubject = subject
+	if !retained.screenshotSubject.MediaBinding.Valid() {
+		retained.screenshotSubject = api.ScreenshotSubject{MediaBinding: subject.MediaBinding, SourcePath: subject.SourcePath}
+	}
+	replaced := make(map[api.PublicResourceID]bool)
+	for _, artifact := range snapshot.Artifacts {
+		if groups[artifact.ComparisonGroup] > 0 {
+			replaced[artifact.ID] = true
+		}
+	}
+	for id, source := range retained.HostedSources {
+		if replaced[source] {
+			replaced[id] = true
+		}
+	}
+	snapshot.Artifacts = slices.DeleteFunc(snapshot.Artifacts, func(artifact api.MediaArtifact) bool { return replaced[artifact.ID] })
+	for id := range replaced {
+		delete(retained.ArtifactImages, id)
+		delete(retained.DVDMenuImages, id)
+		delete(retained.HostedImages, id)
+		delete(retained.HostedSources, id)
+	}
 	knownPaths := make(map[string]struct{}, len(retained.ArtifactImages))
 	for _, image := range retained.ArtifactImages {
 		knownPaths[strings.ToLower(filepath.Clean(image.Path))] = struct{}{}
@@ -2144,20 +2201,36 @@ func (b workflowMediaBuilder) Attach(
 			continue
 		}
 		attachment := accepted.attachment
+		if attachment.ComparisonGroup != "" {
+			if attachment.Kind != api.MediaArtifactScreenshot || attachment.Purpose != api.ScreenshotPurposeFinal {
+				return api.MediaArtifactSet{}, nil, errors.New("comparison grouping requires attached comparison images")
+			}
+			image.ComparisonGroup = attachment.ComparisonGroup
+			image.ComparisonCount = attachment.ComparisonCount
+			image.ComparisonLabel = api.CollectionLabel(attachment.ComparisonLabel, "Comparison set")
+			image.ComparisonMemberLabel = api.CollectionLabel(attachment.ComparisonMemberLabel, "Image")
+		}
 		source := "attached-screenshot"
 		selectionSource := "comparison"
 		if attachment.Kind == api.MediaArtifactDVDMenu {
 			source = "attached-dvd-menu"
 			selectionSource = api.ScreenshotSelectionSourceMenu
 		}
+		artifactIndex := len(snapshot.Artifacts)
+		if image.ComparisonGroup != "" {
+			source = "attached-comparison:" + image.ComparisonGroup
+			artifactIndex = attachment.Order
+		}
 		artifact := publicMediaArtifact(
 			snapshot.CaptureFingerprint,
 			source,
-			len(snapshot.Artifacts),
+			artifactIndex,
 			attachment.Kind,
 			attachment.Purpose,
 			image,
 		)
+		artifact.ComparisonGroup, artifact.ComparisonLabel, artifact.ComparisonMemberLabel = image.ComparisonGroup, image.ComparisonLabel, image.ComparisonMemberLabel
+		artifact.ComparisonCount = image.ComparisonCount
 		artifact.Order = attachment.Order
 		artifact.Source = selectionSource
 		snapshot.Artifacts = append(snapshot.Artifacts, artifact)
@@ -2222,6 +2295,14 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	if len(images) != len(artifactIDs) {
 		return api.MediaArtifactSet{}, nil, nil, errors.New("workflow media upload selection is incomplete")
+	}
+	if b.config.ImageHosting.AnalysisHost == "slowpics" && len(images) > 0 && !slices.ContainsFunc(images, func(image api.ScreenshotImage) bool {
+		return image.Purpose != api.ScreenshotPurposeFinal || image.ComparisonGroup == ""
+	}) {
+		if host != "" {
+			return api.MediaArtifactSet{}, nil, nil, errors.New("grouped comparisons use the analysis host preference, not a screenshot host override")
+		}
+		return snapshot, retained, nil, nil
 	}
 	trackerNames := make([]string, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {
@@ -2599,6 +2680,20 @@ func workflowMediaReuseCaptureFingerprint(
 	if err != nil {
 		return "", fmt.Errorf("workflow media fingerprint reusable capture: %w", err)
 	}
+	if image.ComparisonGroup != "" {
+		fingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+			Version     string
+			Capture     api.WorkflowFingerprint
+			Group       string
+			Count       int
+			Label       string
+			MemberLabel string
+		}{"comparison-capture-v1", fingerprint, image.ComparisonGroup, image.ComparisonCount, image.ComparisonLabel, image.ComparisonMemberLabel})
+		if err != nil {
+			return "", fmt.Errorf("workflow media comparison capture fingerprint: %w", err)
+		}
+	}
+
 	return fingerprint, nil
 }
 

@@ -39,7 +39,7 @@ func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *
 				return errors.New("upbrr: interrupted input has no actionable reconciliation; inspect its workflow before retrying")
 			}
 			bindCLIQuestion(ctx, s.streams.out, workflowID, active.Current.Workflow.Revision, action.ID, action.Prompt)
-			confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
+			confirmed, err := promptYesNo(reader, s.streams.out, cliReconciliationPrompt(*action), false)
 			if err != nil {
 				return fmt.Errorf("upbrr: read recovery confirmation: %w", err)
 			}
@@ -59,6 +59,9 @@ func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *
 			if err != nil {
 				return fmt.Errorf("upbrr: reconcile interrupted input: %w", err)
 			}
+			if action.EffectKind == api.WorkflowExternalEffectImageHosting && api.IsImageCollectionEffectScope(action.EffectScopeID) {
+				return errors.New("upbrr: the slow.pics block is cleared; run the upload command again when you are ready to retry")
+			}
 			if active.Current != nil && active.Current.Workflow.Revision <= priorRevision {
 				return fmt.Errorf("upbrr: reconciliation did not advance workflow %s", workflowID)
 			}
@@ -70,4 +73,11 @@ func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *
 		revision: active.Revision,
 	}
 	return nil
+}
+
+func cliReconciliationPrompt(action api.RequiredAction) string {
+	if action.EffectKind == api.WorkflowExternalEffectImageHosting && api.IsImageCollectionEffectScope(action.EffectScopeID) {
+		return action.Prompt + " I verified no collection was created? [y/N]: "
+	}
+	return action.Prompt + " Confirm it did not complete? [y/N]: "
 }

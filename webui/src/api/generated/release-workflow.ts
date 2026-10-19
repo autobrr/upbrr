@@ -1068,6 +1068,10 @@ export type LanguageFacts = Readonly<{
 }>;
 
 export type MediaArtifact = Readonly<{
+  comparisonCount?: number;
+  comparisonGroup?: string;
+  comparisonLabel?: string;
+  comparisonMemberLabel?: string;
   discId?: string;
   discName?: string;
   height?: number;
@@ -1117,6 +1121,10 @@ export type MediaArtifactSetRef = Readonly<{
 }>;
 
 export type MediaAttachment = Readonly<{
+  comparisonCount?: number;
+  comparisonGroup?: string;
+  comparisonLabel?: string;
+  comparisonMemberLabel?: string;
   discId?: string;
   kind: MediaArtifactKind;
   order?: number;
@@ -1760,6 +1768,7 @@ export type ReleaseWorkflow = Readonly<{
 export type ReleaseWorkflowCapabilities = Readonly<{
   apiVersion: string;
   applicationVersion: string;
+  collectionHosts: readonly ReleaseWorkflowCollectionHost[];
   features: ReleaseWorkflowCapabilityFeatures;
   imageHosts: readonly ReleaseWorkflowCapabilityResource[];
   ownerId: string;
@@ -1794,6 +1803,13 @@ export type ReleaseWorkflowCapabilityTracker = Readonly<{
   default: boolean;
   displayName: string;
   id: TrackerID;
+}>;
+
+export type ReleaseWorkflowCollectionHost = Readonly<{
+  configured: boolean;
+  displayName: string;
+  id: string;
+  purposes: readonly ScreenshotPurpose[];
 }>;
 
 export type ReleaseWorkflowCurrent = Readonly<{

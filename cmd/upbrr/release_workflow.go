@@ -1388,7 +1388,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 			if s.intent.interaction == api.InteractionModeUnattended {
 				return nil, false, errors.New("upbrr: unattended external-effect reconciliation requires manual confirmation")
 			}
-			confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
+			confirmed, err := promptYesNo(reader, s.streams.out, cliReconciliationPrompt(action), false)
 			if err != nil {
 				return nil, false, err
 			}

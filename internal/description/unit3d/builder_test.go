@@ -117,6 +117,19 @@ func TestBuildDescriptionPlacesAudioAfterMenusBeforeScreenshots(t *testing.T) {
 	}
 }
 
+func TestBuildDescriptionKeepsDirectAnalysisLinkOutsideAdditionalSpoilers(t *testing.T) {
+	t.Parallel()
+	const link = "[url=https://slow.pics/c/synthetic]HDR and audio data[/url]"
+	const stats = "[spoiler=Audio Plots]\n[code]Synthetic amplitude statistics[/code]\n[/spoiler]"
+	got, err := BuildDescription(t.Context(), api.DescriptionSubject{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{},
+		"[spoiler=Additional information]Notes[/spoiler]\n\n"+stats+"\n\n"+link,
+		nil, []api.ScreenshotImage{{ImgURL: "https://images.example.invalid/screenshot.png"}})
+	if err != nil || strings.Count(got, link) != 1 || !strings.Contains(got, stats+"\n\n"+link) ||
+		strings.Index(got, link) > strings.Index(got, "https://images.example.invalid/screenshot.png") {
+		t.Fatalf("analysis link placement=%q err=%v", got, err)
+	}
+}
+
 func TestBuildDiscScreenshotSectionsGroupsPreparedDiscOrder(t *testing.T) {
 	t.Parallel()
 

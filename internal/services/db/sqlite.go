@@ -3642,6 +3642,8 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			UNION
 			SELECT source_path FROM uploaded_images
 			UNION
+			SELECT source_path FROM image_collections
+			UNION
 			SELECT source_path FROM upload_records
 			UNION
 			SELECT canonical_path AS source_path FROM input_records
@@ -3948,7 +3950,8 @@ func matchingStoredReleaseWorkflowStates(
 
 // PurgeContentData atomically deletes persisted source-associated history for
 // path, including matching workflow state and retired UI-state rows. It does
-// not remove local files or remote uploads.
+// not remove local files or remote uploads. Collection reservations and cached
+// links are reset with the source, so a later upload may create a new collection.
 func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3984,6 +3987,7 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		{sql: `DELETE FROM screenshot_slot_variants WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM screenshot_slots WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM uploaded_images WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM image_collections WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM media_reusable_hosted_links WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM media_reusable_assets WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM media_reusable_commits WHERE source_path = ?`, args: []any{trimmedPath}},

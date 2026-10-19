@@ -207,6 +207,11 @@ const (
 // their hosted variants. Audio tracks, uploads, and host choices require an
 // AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
+	// CollectionHost is the explicit analysis-only preference; default leaves existing routing unchanged.
+	CollectionHost         string
+	Collections            []ImageCollection
+	ComparisonSets         []ImageCollectionInput
+	DescriptionComparisons []DescriptionComparison
 	// ImageHostUploadSkipped preserves the workflow's explicit upload opt-out.
 	// Compatible cached links remain usable, but missing variants must not trigger uploads.
 	ImageHostUploadSkipped bool
@@ -251,9 +256,10 @@ type HDRDescriptionStats struct {
 // AudioDescriptionTrack is a separate description channel for hosted analysis
 // graphs and the textual statistics of one source audio track.
 type AudioDescriptionTrack struct {
-	Ordinal int
-	Images  []ScreenshotImage
-	Stats   string
+	ImageLabels []string
+	Ordinal     int
+	Images      []ScreenshotImage
+	Stats       string
 }
 
 // Clone returns a detached exact-media bundle while preserving nil slices.
@@ -263,6 +269,10 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		return nil
 	}
 	cloned := &ExactMediaAssets{
+		CollectionHost:         a.CollectionHost,
+		Collections:            cloneOptionalSlice(a.Collections),
+		ComparisonSets:         cloneOptionalSlice(a.ComparisonSets),
+		DescriptionComparisons: cloneOptionalSlice(a.DescriptionComparisons),
 		ImageHostUploadSkipped: a.ImageHostUploadSkipped,
 		HDRPlots:               cloneOptionalSlice(a.HDRPlots),
 		HDRStats:               cloneOptionalSlice(a.HDRStats),
@@ -286,6 +296,25 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	}
 	for index := range cloned.AudioTracks {
 		cloned.AudioTracks[index].Images = cloneOptionalSlice(a.AudioTracks[index].Images)
+		cloned.AudioTracks[index].ImageLabels = cloneOptionalSlice(a.AudioTracks[index].ImageLabels)
+	}
+	for index := range cloned.Collections {
+		cloned.Collections[index].Members = cloneOptionalSlice(a.Collections[index].Members)
+	}
+	for index := range cloned.ComparisonSets {
+		cloned.ComparisonSets[index].Images = cloneOptionalSlice(a.ComparisonSets[index].Images)
+		cloned.ComparisonSets[index].Labels = cloneOptionalSlice(a.ComparisonSets[index].Labels)
+	}
+	for index := range cloned.DescriptionComparisons {
+		value := &cloned.DescriptionComparisons[index]
+		value.Sources = slices.Clone(value.Sources)
+		value.ImageURLs = slices.Clone(value.ImageURLs)
+		value.Trackers = slices.Clone(value.Trackers)
+		if value.Collection != nil {
+			collection := *value.Collection
+			collection.Members = slices.Clone(collection.Members)
+			value.Collection = &collection
+		}
 	}
 	return cloned
 }
@@ -294,6 +323,17 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 func (a *ExactMediaAssets) Validate() error {
 	if a == nil {
 		return nil
+	}
+	if a.CollectionHost != "" && a.CollectionHost != "slowpics" {
+		return errors.New("invalid exact collection host")
+	}
+	for _, collection := range a.Collections {
+		if err := collection.Validate(); err != nil {
+			return err
+		}
+		if a.CollectionHost != collection.Host {
+			return errors.New("collection host authority is unavailable")
+		}
 	}
 	screenshotPaths := make(map[string]struct{}, len(a.Screenshots))
 	for _, image := range a.Screenshots {

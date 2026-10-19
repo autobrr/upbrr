@@ -334,6 +334,9 @@ func ReusableImageHostAllowedWithRegistry(
 ) (bool, error) {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
 	host = strings.ToLower(strings.TrimSpace(host))
+	if imagehostpolicy.IsCollectionHost(host) {
+		return false, nil
+	}
 	if name == "" || host == "" {
 		return false, nil
 	}

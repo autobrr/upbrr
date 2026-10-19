@@ -185,7 +185,8 @@ func (r *SQLiteRepository) DeleteReleaseWorkflowState(ctx context.Context, owner
 
 // DeleteTerminalReleaseWorkflowStatesBefore deletes bounded terminal audit
 // rows. Draft, active, blocked, and submission-fenced workflows are never
-// retention candidates; history deletion removes fenced workflows explicitly.
+// retention candidates. Pending collection owners also retain recovery authority;
+// explicit history deletion resets their reservations with the workflow.
 func (r *SQLiteRepository) DeleteTerminalReleaseWorkflowStatesBefore(ctx context.Context, before time.Time) (int64, error) {
 	if before.IsZero() {
 		return 0, errors.New("db: release workflow retention cutoff is required")
@@ -203,6 +204,13 @@ func (r *SQLiteRepository) DeleteTerminalReleaseWorkflowStatesBefore(ctx context
 				SELECT 1 FROM submission_fences
 				WHERE submission_fences.owner_id = release_workflow_states.owner_id
 				AND submission_fences.workflow_id = release_workflow_states.workflow_id
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM release_workflow_effects AS effect
+				JOIN image_collections AS collection ON json_extract(collection.record_json, '$.EffectID') = effect.effect_id
+				WHERE effect.owner_id = release_workflow_states.owner_id
+				AND effect.workflow_id = release_workflow_states.workflow_id
+				AND collection.completed = 0
 			)`
 		args := []any{api.WorkflowStatusCompleted, api.WorkflowStatusCanceled, api.WorkflowStatusFailed, formatWorkflowStateTime(before)}
 		if slot.State != api.ActiveInputEmpty && slot.OwnerID != "" && slot.WorkflowID != "" {

@@ -103,9 +103,13 @@ type FramePreview struct {
 
 // MediaAttachment describes staged private bytes to attach to retained workflow media.
 type MediaAttachment struct {
-	Resource WorkflowResourceRef `json:"resource"`
-	Kind     MediaArtifactKind   `json:"kind"`
-	Purpose  ScreenshotPurpose   `json:"purpose"`
+	ComparisonGroup       string              `json:"comparisonGroup,omitempty"`
+	ComparisonCount       int                 `json:"comparisonCount,omitempty"`
+	ComparisonLabel       string              `json:"comparisonLabel,omitempty"`
+	ComparisonMemberLabel string              `json:"comparisonMemberLabel,omitempty"`
+	Resource              WorkflowResourceRef `json:"resource"`
+	Kind                  MediaArtifactKind   `json:"kind"`
+	Purpose               ScreenshotPurpose   `json:"purpose"`
 	// DiscID is required for a multi-disc attachment and optional for single-disc compatibility.
 	DiscID string `json:"discId,omitempty"`
 	Order  int    `json:"order,omitempty"`

@@ -8,6 +8,8 @@ main_settings:
   scene_detection: true
 
 image_hosting:
+  # Optional collection links for comparisons, HDR and audio analysis; ordinary screenshots are unchanged.
+  analysis_host: "" # slowpics
   img_host_1: ""
   img_host_2: ""
   img_host_3: ""

@@ -65,3 +65,9 @@ func HostAllowed(host string, allowed []string) bool {
 		return strings.ToLower(strings.TrimSpace(item)) == needle
 	})
 }
+
+// IsCollectionHost identifies hosts that cannot upload or embed ordinary images.
+func IsCollectionHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "slowpics" || host == "slow.pics"
+}

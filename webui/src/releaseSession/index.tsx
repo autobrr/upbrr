@@ -2768,7 +2768,7 @@ export function ReleaseSessionProvider({
       executeUploads: () => executeExactUpload(),
       confirmAction: (action: RequiredAction, confirmed = true) => {
         if (action.kind === "reconcile_submission") {
-          return reconcileRecoveryAction(action);
+          return confirmed ? reconcileRecoveryAction(action) : Promise.resolve(false);
         }
         if (
           !runtimeInfoReady ||

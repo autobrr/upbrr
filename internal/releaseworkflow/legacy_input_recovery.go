@@ -309,6 +309,8 @@ func (m *Module) settleRecoveryActions(ctx context.Context, ownerID string, work
 		}
 		settledCount++
 		switch {
+		case action.EffectKind == api.WorkflowExternalEffectImageHosting && api.IsImageCollectionEffectScope(action.EffectScopeID):
+			finishImageCollectionReconciliation(&state.Workflow, action)
 		case action.EffectKind == api.WorkflowExternalEffectImageHosting:
 			finishUnavailableImageHostingReconciliation(&state.Workflow, action)
 		case action.EffectKind == api.WorkflowExternalEffectClientInjection &&

@@ -19,7 +19,7 @@ import (
 )
 
 // workflowDescriptionRendererVersion invalidates generated output when composition changes.
-const workflowDescriptionRendererVersion = "description-renderer-v1"
+const workflowDescriptionRendererVersion = "description-renderer-v4"
 
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
@@ -27,6 +27,11 @@ type workflowDescriptionSubjectResolver interface {
 
 type workflowDescriptionTrackerService interface {
 	BuildPreparation(context.Context, api.DescriptionSubject, []string) (api.PreparationPreview, error)
+}
+
+type workflowDescriptionComparisonService interface {
+	ResolveDescriptionComparisons(context.Context, api.DescriptionSubject, []string) ([]api.DescriptionComparison, error)
+	MaterializeDescriptionComparison(context.Context, api.DescriptionSubject, api.DescriptionComparison) (api.ImageCollectionInput, error)
 }
 
 type workflowDescriptionBuilder struct {
@@ -49,11 +54,30 @@ func (b workflowDescriptionBuilder) Fingerprints(
 	if err != nil {
 		return "", "", err
 	}
-	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
+	exactMedia, err := b.resolveDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return "", "", err
 	}
+	exactMedia.CollectionHost = b.config.ImageHosting.AnalysisHost
 	return workflowDescriptionFingerprints(release, projections, media, instructions, subject, exactMedia)
+}
+
+func (b workflowDescriptionBuilder) resolveDescriptionMedia(
+	ctx context.Context, subject api.UploadSubject, privateMedia any, media api.MediaArtifactSet,
+) (*api.ExactMediaAssets, error) {
+	exact, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
+	if err != nil || b.config.ImageHosting.AnalysisHost != "slowpics" || b.trackers == nil {
+		return exact, err
+	}
+	service, ok := b.trackers.(workflowDescriptionComparisonService)
+	if !ok {
+		return nil, errors.New("description comparison resources are unavailable")
+	}
+	exact.DescriptionComparisons, err = service.ResolveDescriptionComparisons(ctx, api.NewDescriptionSubject(subject), subject.Trackers)
+	if err != nil {
+		return nil, fmt.Errorf("workflow descriptions: resolve comparison sources: %w", err)
+	}
+	return exact, nil
 }
 
 func workflowDescriptionFingerprints(
@@ -128,10 +152,11 @@ func (b workflowDescriptionBuilder) Build(
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
-	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
+	exactMedia, err := b.resolveDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
+	exactMedia.CollectionHost = b.config.ImageHosting.AnalysisHost
 	inputFingerprint, templateFingerprint, err := workflowDescriptionFingerprints(
 		release,
 		projections,
@@ -156,11 +181,11 @@ func (b workflowDescriptionBuilder) Build(
 			Status:              api.StageStatusSkipped,
 		}, nil
 	}
-	if err := b.uploadAudioDescriptionImages(ctx, subject, trackerNames); err != nil {
-		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload audio analysis images: %w", err)
+	if err := b.uploadComparisonCollections(ctx, subject, trackerNames); err != nil {
+		return collectionDescriptionOutcome(err, inputFingerprint, templateFingerprint)
 	}
-	if err := b.uploadHDRDescriptionImages(ctx, subject, trackerNames); err != nil {
-		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload HDR analysis images: %w", err)
+	if err := b.uploadAnalysisDescriptionImages(ctx, subject, trackerNames); err != nil {
+		return collectionDescriptionOutcome(fmt.Errorf("workflow descriptions: upload analysis images: %w", err), inputFingerprint, templateFingerprint)
 	}
 	for _, projection := range descriptionTargets {
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
@@ -515,6 +540,7 @@ func resolveWorkflowExactMedia(
 				if err != nil {
 					return nil, fmt.Errorf("workflow exact media: audio analysis image: %w", err)
 				}
+				entry.ImageLabels = append(entry.ImageLabels, api.CollectionLabel(string(artifact.Variant), "Audio plot"))
 				entry.Images = append(entry.Images, api.ScreenshotImage{
 					Path:    pathValue,
 					Purpose: api.ScreenshotPurposeAudioAnalysis,

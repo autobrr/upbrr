@@ -169,6 +169,52 @@ func (r *SQLiteRepository) CommitReusableMedia(
 		if err := requireReusableMediaAuthority(ctx, tx, bound.SourcePath); err != nil {
 			return err
 		}
+		// Retire prior versions of explicitly replaced groups before clearing the
+		// exact incoming identities below. This authority survives deletion of the
+		// latest members and prevents an older set from reappearing after restart.
+		groups := make(map[string]struct{})
+		if err := func() (resultErr error) {
+			rows, err := tx.QueryContext(ctx, `SELECT DISTINCT comparison_group FROM media_reusable_assets
+   WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND comparison_group != ''`,
+				bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration)
+			if err != nil {
+				return fmt.Errorf("db reusable media: list replaced comparison groups: %w", err)
+			}
+			defer func() {
+				if closeErr := rows.Close(); closeErr != nil && resultErr == nil {
+					resultErr = fmt.Errorf("db reusable media: close replaced comparison groups: %w", closeErr)
+				}
+			}()
+			for rows.Next() {
+				var group string
+				if err := rows.Scan(&group); err != nil {
+					return fmt.Errorf("db reusable media: read replaced comparison group: %w", err)
+				}
+				groups[group] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("db reusable media: list replaced comparison groups: %w", err)
+			}
+			return nil
+		}(); err != nil {
+			return err
+		}
+
+		for _, asset := range normalized {
+			if asset.Image.ComparisonGroup != "" {
+				groups[asset.Image.ComparisonGroup] = struct{}{}
+			}
+		}
+		for group := range groups {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO media_reusable_tombstones
+    (source_path, compatibility_key, capture_fingerprint, content_sha256, deleted_at)
+    SELECT ?, compatibility_key, capture_fingerprint, content_sha256, ? FROM media_reusable_assets
+    WHERE compatibility_key = ? AND comparison_group = ?
+    ON CONFLICT(compatibility_key, capture_fingerprint, content_sha256, source_path)
+    DO UPDATE SET deleted_at = excluded.deleted_at`, bound.SourcePath, time.Now().UTC().Format(time.RFC3339Nano), compatibilityKey, group); err != nil {
+				return fmt.Errorf("db reusable media: retire replaced comparison group: %w", err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM media_reusable_assets
 			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
@@ -194,8 +240,8 @@ func (r *SQLiteRepository) CommitReusableMedia(
 			INSERT INTO media_reusable_assets (
 				source_path, prepared_media_fingerprint, prepared_generation, compatibility_key,
 				capture_fingerprint, content_sha256, kind, purpose, disc_id, image_path,
-			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at, comparison_group, comparison_count, comparison_label, comparison_member_label
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		if err != nil {
 			return fmt.Errorf("db reusable media: prepare asset: %w", err)
@@ -226,7 +272,7 @@ func (r *SQLiteRepository) CommitReusableMedia(
 				asset.CaptureFingerprint, strings.ToLower(asset.ContentSHA256), asset.Kind, image.Purpose,
 				strings.TrimSpace(image.DiscID), strings.TrimSpace(image.Path), image.Index, image.TimestampSeconds,
 				image.Width, image.Height, image.SizeBytes, boolToInt(asset.Imported), boolToInt(asset.Selected), asset.Order,
-				time.Now().UTC().Format(time.RFC3339Nano),
+				time.Now().UTC().Format(time.RFC3339Nano), image.ComparisonGroup, image.ComparisonCount, image.ComparisonLabel, image.ComparisonMemberLabel,
 			); err != nil {
 				return fmt.Errorf("db reusable media: insert asset: %w", err)
 			}
@@ -298,7 +344,7 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT source_path, prepared_media_fingerprint, prepared_generation, capture_fingerprint, content_sha256,
 			kind, purpose, disc_id, image_path, image_index, timestamp_seconds, width, height, size_bytes,
-			imported, selected, sort_order
+			imported, selected, sort_order, comparison_group, comparison_count, comparison_label, comparison_member_label
 		FROM media_reusable_assets AS asset
 		WHERE compatibility_key = ? AND NOT EXISTS (
 			SELECT 1 FROM media_reusable_tombstones AS tombstone
@@ -314,6 +360,7 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 	defer rows.Close()
 
 	assets := make([]api.ReusableMediaAsset, 0)
+	groupBindings := make(map[string]api.PreparedMediaBinding)
 	seen := make(map[string]struct{})
 	for rows.Next() {
 		var asset api.ReusableMediaAsset
@@ -323,8 +370,17 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 			&asset.CaptureFingerprint, &asset.ContentSHA256, &asset.Kind, &asset.Image.Purpose, &asset.Image.DiscID,
 			&asset.Image.Path, &asset.Image.Index, &asset.Image.TimestampSeconds, &asset.Image.Width, &asset.Image.Height,
 			&asset.Image.SizeBytes, &imported, &selected, &asset.Order,
+			&asset.Image.ComparisonGroup, &asset.Image.ComparisonCount, &asset.Image.ComparisonLabel, &asset.Image.ComparisonMemberLabel,
 		); err != nil {
 			return nil, fmt.Errorf("db reusable media: scan asset: %w", err)
+		}
+		// Select one latest committed generation for each explicit group. Never
+		// fill a changed or incomplete set with members from an older generation.
+		if group := asset.Image.ComparisonGroup; group != "" {
+			if binding, exists := groupBindings[group]; exists && binding != asset.Binding {
+				continue
+			}
+			groupBindings[group] = asset.Binding
 		}
 		asset.CompatibilityKey = compatibilityKey
 		asset.Imported = imported != 0
@@ -525,4 +581,30 @@ func normalizeReusableMediaAssets(
 		}
 	}
 	return normalized, nil
+}
+
+// migrateAddComparisonProvenance adds missing attachment set columns while
+// preserving any existing comparison provenance.
+func migrateAddComparisonProvenance(ctx context.Context, exec migrationExecutor) error {
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{name: "comparison_group", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "comparison_count", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "comparison_label", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "comparison_member_label", definition: "TEXT NOT NULL DEFAULT ''"},
+	} {
+		exists, err := tableColumnExists(ctx, exec, "media_reusable_assets", column.name)
+		if err != nil {
+			return fmt.Errorf("db: inspect comparison provenance column %s: %w", column.name, err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, fmt.Sprintf("ALTER TABLE media_reusable_assets ADD COLUMN %s %s", column.name, column.definition)); err != nil {
+			return fmt.Errorf("db: add comparison provenance column %s: %w", column.name, err)
+		}
+	}
+	return nil
 }

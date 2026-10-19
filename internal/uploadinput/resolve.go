@@ -99,7 +99,7 @@ func readMediaPaths(
 		result = append(result, content)
 		return nil
 	}
-	for _, value := range ordered {
+	for groupIndex, value := range ordered {
 		path, err := filepath.Abs(filepath.Clean(strings.TrimSpace(value)))
 		if err != nil || path == "" {
 			return nil, errors.New("manual media path is invalid")
@@ -108,12 +108,20 @@ func readMediaPaths(
 		if err != nil {
 			return nil, errors.New("manual media path could not be inspected")
 		}
+		group := fmt.Sprintf("comparison-%d", groupIndex+1)
+		label := api.CollectionLabel(filepath.Base(path), fmt.Sprintf("Comparison set %d", groupIndex+1))
+		labelContent := func(content releaseworkflow.StagedMediaContent) releaseworkflow.StagedMediaContent {
+			content.ComparisonGroup = group
+			content.ComparisonLabel = label
+			content.ComparisonMemberLabel = api.CollectionLabel(strings.TrimSuffix(content.Name, filepath.Ext(content.Name)), "Image")
+			return content
+		}
 		if !info.IsDir() {
 			content, readErr := readMediaFile(path)
 			if readErr != nil {
 				return nil, readErr
 			}
-			if appendErr := appendContent(content); appendErr != nil {
+			if appendErr := appendContent(labelContent(content)); appendErr != nil {
 				return nil, appendErr
 			}
 			continue
@@ -131,7 +139,7 @@ func readMediaPaths(
 			if readErr != nil {
 				continue
 			}
-			if appendErr := appendContent(content); appendErr != nil {
+			if appendErr := appendContent(labelContent(content)); appendErr != nil {
 				return nil, appendErr
 			}
 			added++
@@ -139,6 +147,13 @@ func readMediaPaths(
 		if added == 0 {
 			return nil, errors.New("manual media directory contains no supported images")
 		}
+	}
+	counts := make(map[string]int)
+	for _, content := range result {
+		counts[content.ComparisonGroup]++
+	}
+	for index := range result {
+		result[index].ComparisonCount = counts[result[index].ComparisonGroup]
 	}
 	return result, nil
 }

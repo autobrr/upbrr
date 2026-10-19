@@ -537,6 +537,8 @@ type ReleaseWorkflowDurabilityRepository interface {
 	// effect for one owner-scoped workflow and returns its required manual
 	// reconciliation actions. It never creates a submission fence.
 	RecoverLegacyReleaseWorkflowEffects(context.Context, string, WorkflowID, time.Time) ([]ReleaseWorkflowEffectRecord, error)
+	// ListUnknownCollectionEffects returns retained collection attempts requiring explicit reconciliation.
+	ListUnknownCollectionEffects(context.Context, string, WorkflowID) ([]ReleaseWorkflowEffectRecord, error)
 	ListLegacyReleaseWorkflowRecoveryWorkflowIDs(context.Context, string) ([]WorkflowID, error)
 	ResolveReleaseWorkflowEffectUnknown(context.Context, string, WorkflowID, WorkflowExternalEffectKind, string, time.Time) error
 	LoadReleaseWorkflowWork(context.Context, string, WorkflowID, WorkflowOperationID) (ReleaseWorkflowWorkRecord, error)

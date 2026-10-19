@@ -117,6 +117,12 @@ func (s *cliWorkflowSession) completeComposite(
 		if submitErr != nil {
 			return 0, fmt.Errorf("upbrr: submit composite upload feedback: %w", submitErr)
 		}
+		if action.EffectKind == api.WorkflowExternalEffectImageHosting && api.IsImageCollectionEffectScope(action.EffectScopeID) {
+			s.current = next
+			s.publishPresentation(ctx)
+			fmt.Fprintln(s.streams.out, "The slow.pics block is cleared. Run the upload command again when you are ready to retry.")
+			return 0, nil
+		}
 		next, err = s.waitForCompositeUpload(ctx, next)
 		if err != nil {
 			return 0, err
@@ -294,7 +300,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			api.ReleaseWorkflowUploadFeedbackReprepare,
 		)
 	case api.RequiredActionReconcileSubmission:
-		confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
+		confirmed, err := promptYesNo(reader, s.streams.out, cliReconciliationPrompt(action), false)
 		if err != nil {
 			return feedback, false, err
 		}

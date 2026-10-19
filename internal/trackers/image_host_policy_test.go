@@ -258,6 +258,8 @@ func TestReusableImageHostAllowedWithRegistry(t *testing.T) {
 		{"incompatible existing host", "PTP", "imgbox", false},
 		{"unrestricted tracker", "AITHER", "example.org", true},
 		{"owned host belongs to another tracker", "AITHER", "hdb", false},
+		{"collection host is not an ordinary image on unrestricted tracker", "AITHER", "slowpics", false},
+		{"collection host is not an ordinary image on restricted tracker", "PTP", "slowpics", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

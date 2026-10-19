@@ -20,6 +20,7 @@ type ReleaseWorkflowCapabilities struct {
 	Trackers               []ReleaseWorkflowCapabilityTracker  `json:"trackers"`
 	TorrentClients         []ReleaseWorkflowCapabilityResource `json:"torrentClients"`
 	ImageHosts             []ReleaseWorkflowCapabilityResource `json:"imageHosts"`
+	CollectionHosts        []ReleaseWorkflowCollectionHost     `json:"collectionHosts"`
 }
 
 // ReleaseWorkflowCapabilityFeatures are stable feature gates for API clients.
@@ -51,4 +52,12 @@ type ReleaseWorkflowCapabilityResource struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 	Configured  bool   `json:"configured"`
+}
+
+// ReleaseWorkflowCollectionHost is purpose-restricted and never a screenshot-host choice.
+type ReleaseWorkflowCollectionHost struct {
+	ID          string              `json:"id"`
+	DisplayName string              `json:"displayName"`
+	Configured  bool                `json:"configured"`
+	Purposes    []ScreenshotPurpose `json:"purposes"`
 }

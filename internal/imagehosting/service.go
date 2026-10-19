@@ -341,6 +341,13 @@ func (s *Service) Upload(
 	if len(images) == 0 {
 		return nil, internalerrors.ErrInvalidInput
 	}
+	if s.cfg.ImageHosting.AnalysisHost == "slowpics" {
+		for _, image := range images {
+			if image.ComparisonGroup != "" || image.Purpose.AllowsCollectionHosting() {
+				return nil, errors.New("image hosting: selected comparison and analysis images require collection hosting")
+			}
+		}
+	}
 	uploader := s.uploaders[normalizedHost]
 	if uploader == nil {
 		return nil, fmt.Errorf("image hosting: unsupported host %q", normalizedHost)

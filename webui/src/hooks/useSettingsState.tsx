@@ -255,6 +255,7 @@ const selectConfiguredTrackerNames = (
 };
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   ImageHosting: {
+    AnalysisHost: stringField("AnalysisHost", { label: "Comparison and analysis host" }),
     LostimgAPI: stringField("LostimgAPI", { label: "API key", sensitive: true }),
     ReelflixAPI: stringField("ReelflixAPI", {
       label: "ReelFliX API key",

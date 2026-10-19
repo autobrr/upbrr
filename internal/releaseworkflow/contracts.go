@@ -46,9 +46,13 @@ type MediaPreviewContent struct {
 // StagedMediaContent is owner-scoped private upload content. Name and bytes
 // never enter public workflow snapshots.
 type StagedMediaContent struct {
-	Name        string
-	Bytes       []byte
-	ContentType string
+	ComparisonGroup       string
+	ComparisonCount       int
+	ComparisonLabel       string
+	ComparisonMemberLabel string
+	Name                  string
+	Bytes                 []byte
+	ContentType           string
 }
 
 // StagedMediaAttachment binds private staged bytes to one requested artifact shape.
@@ -577,6 +581,7 @@ type DurabilityRepository interface {
 	CompleteEffect(context.Context, api.WorkflowEffectStatus, api.ReleaseWorkflowEffectRecord) error
 	MarkOperationEffectsUnknown(context.Context, string, api.WorkflowID, api.WorkflowOperationID, time.Time) error
 	RecoverLegacyEffects(context.Context, string, api.WorkflowID, time.Time) ([]api.ReleaseWorkflowEffectRecord, error)
+	ListUnknownCollectionEffects(context.Context, string, api.WorkflowID) ([]api.ReleaseWorkflowEffectRecord, error)
 	ListLegacyRecoveryWorkflowIDs(context.Context, string) ([]api.WorkflowID, error)
 	ResolveEffectUnknown(context.Context, string, api.WorkflowID, api.WorkflowExternalEffectKind, string, time.Time) error
 	LoadWork(context.Context, string, api.WorkflowID, api.WorkflowOperationID) (api.ReleaseWorkflowWorkRecord, error)

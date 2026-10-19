@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"maps"
 	"os"
@@ -4591,4 +4593,208 @@ func TestRemoveHostedImagesUsesDVDMenuBindingForLegacyLink(t *testing.T) {
 	if pending := updated.pendingDeletes(); len(pending) != 1 || !pending[0].binding.Equal(binding) {
 		t.Fatalf("pending hosted menu deletion = %#v, want binding %#v", pending, binding)
 	}
+}
+
+func TestComparisonAttachmentsPersistOrderedDuplicateMembers(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	baseDir := t.TempDir()
+	sourcePath := filepath.Join(baseDir, "Example.Release.2026.mkv")
+	if err := os.WriteFile(sourcePath, []byte("verified source bytes"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	dbPath := filepath.Join(baseDir, "workflow.db")
+	repository, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	if err := repository.Migrate(); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, comparisonMediaCollector{})
+	if err != nil {
+		t.Fatalf("create prepared release module: %v", err)
+	}
+	verified, err := preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: sourcePath})
+	if err != nil {
+		t.Fatalf("verify source: %v", err)
+	}
+	preparedResult, err := prepared.Prepare(ctx, api.PrepareInput{SourcePath: sourcePath, VerifiedSource: &verified})
+	if err != nil {
+		t.Fatalf("prepare source: %v", err)
+	}
+	compatibilityKey, err := preparedResult.Release.MediaCompatibilityKey()
+	if err != nil {
+		t.Fatalf("derive compatibility key: %v", err)
+	}
+	release := api.ReleaseRef{SourcePath: sourcePath, Generation: preparedResult.Release.Generation}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}, ImageHosting: config.ImageHostingConfig{AnalysisHost: "slowpics"}}
+	builder := workflowMediaBuilder{
+		config:   cfg,
+		resolver: prepared,
+		media: &mediaModule{
+			cfg:           cfg,
+			repo:          repository,
+			mediaReuse:    repository,
+			preparedFacts: prepared,
+			logger:        api.NopLogger{},
+		},
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	attachments := make([]releaseworkflow.StagedMediaAttachment, 0, 3)
+	for index, group := range []string{"one", "one", "two"} {
+		count := 2
+		if group == "two" {
+			count = 1
+		}
+		attachments = append(attachments, releaseworkflow.StagedMediaAttachment{
+			Attachment: api.MediaAttachment{
+				Kind:                  api.MediaArtifactScreenshot,
+				Purpose:               api.ScreenshotPurposeFinal,
+				Order:                 index,
+				ComparisonGroup:       group,
+				ComparisonCount:       count,
+				ComparisonLabel:       "Set " + group,
+				ComparisonMemberLabel: fmt.Sprint("Member ", index),
+			},
+			Content: releaseworkflow.StagedMediaContent{ContentType: "image/png", Bytes: encoded.Bytes()},
+		})
+	}
+	snapshot, private, err := builder.Attach(ctx, release, api.TrackerReleaseProjectionSet{}, nil, nil, attachments, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Artifacts) != 3 {
+		t.Fatalf("duplicate membership lost: %#v", snapshot.Artifacts)
+	}
+	exact, err := resolveWorkflowExactMedia(private, snapshot)
+	if err != nil || len(exact.Screenshots) != 3 {
+		t.Fatalf("exact attachments = %#v, %v", exact, err)
+	}
+	for index, img := range exact.Screenshots {
+		if img.Purpose != api.ScreenshotPurposeFinal || img.ComparisonMemberLabel != fmt.Sprint("Member ", index) {
+			t.Fatalf("member %d = %#v", index, img)
+		}
+	}
+	again, _, err := builder.Attach(ctx, release, api.TrackerReleaseProjectionSet{}, &snapshot, private, attachments, time.Now())
+	if err != nil || len(again.Artifacts) != 3 {
+		t.Fatalf("reattachment duplicated membership: %#v %v", again, err)
+	}
+	snapshot.WorkflowID = "comparison-workflow"
+	snapshot.ID = "comparison-media"
+	snapshot.Revision = 1
+	if err := builder.RecordReusableMedia(ctx, snapshot, private); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repository, err = db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := repository.LoadReusableMediaAssets(ctx, compatibilityKey)
+	if err != nil || len(persisted) != 3 {
+		t.Fatalf("persisted members = %#v, %v", persisted, err)
+	}
+	for _, asset := range persisted {
+		if asset.Image.ComparisonGroup == "" || asset.Image.ComparisonCount == 0 {
+			t.Fatalf("lost provenance: %#v", asset)
+		}
+	}
+	prepared, err = preparedrelease.New(repository, workflowMediaIdentityResolver{}, comparisonMediaCollector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err = preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: sourcePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedResult, err = prepared.Prepare(ctx, api.PrepareInput{SourcePath: sourcePath, VerifiedSource: &verified})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release.Generation = preparedResult.Release.Generation
+	builder.resolver = prepared
+	builder.media.repo = repository
+	builder.media.mediaReuse = repository
+	builder.media.preparedFacts = prepared
+	restored, retained, err := builder.RestoreCompatible(ctx, release, api.TrackerReleaseProjectionSet{}, nil, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, retained, err = builder.Attach(ctx, release, api.TrackerReleaseProjectionSet{}, &restored, retained, attachments, time.Now())
+	if err != nil || len(restored.Artifacts) != 3 {
+		t.Fatalf("restore then reattach duplicated members: %#v %v", restored.Artifacts, err)
+	}
+	restored.WorkflowID, restored.ID, restored.Revision = "comparison-workflow", "reattached-media", 2
+	if err := builder.RecordReusableMedia(ctx, restored, retained); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := builder.Attach(ctx, release, api.TrackerReleaseProjectionSet{}, &restored, retained, attachments[:1], time.Now()); err == nil {
+		t.Fatal("partial incoming group replaced a complete set")
+	}
+	exact, err = resolveWorkflowExactMedia(retained, restored)
+	if err != nil || len(exact.Screenshots) != 3 {
+		t.Fatalf("restored exact = %#v %v", exact, err)
+	}
+	ids := make([]api.PublicResourceID, 0, len(restored.Artifacts))
+	for _, artifact := range restored.Artifacts {
+		ids = append(ids, artifact.ID)
+	}
+	_, _, attempts, err := builder.UploadImages(ctx, release, api.TrackerReleaseProjectionSet{}, restored, retained, ids, "", false, time.Now())
+	if err != nil || len(attempts) != 0 {
+		t.Fatalf("restored comparison took ordinary upload route: %#v %v", attempts, err)
+	}
+	if _, _, _, err := builder.UploadImages(ctx, release, api.TrackerReleaseProjectionSet{}, restored, retained, ids, "imgbb", false, time.Now()); err == nil {
+		t.Fatal("restored comparison accepted ordinary host override")
+	}
+	descriptions, host := collectionDescriptionBuilder(t)
+	exact.CollectionHost = "slowpics"
+	if err := descriptions.uploadComparisonCollections(ctx, api.UploadSubject{ExactMedia: exact}, []string{"OPEN"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(host.inputs) != 2 || len(host.inputs[0].Images) != 2 || len(host.inputs[1].Images) != 1 || len(exact.Screenshots) != 0 {
+		t.Fatalf("restored routing = %#v %#v", host.inputs, exact)
+	}
+	changed := []releaseworkflow.StagedMediaAttachment{attachments[1], attachments[0]}
+	changed[0].Attachment.Order, changed[1].Attachment.Order = 0, 1
+	changed[0].Attachment.ComparisonMemberLabel = "Changed first member"
+	replaced, replacement, err := builder.Attach(ctx, release, api.TrackerReleaseProjectionSet{}, &restored, retained, changed, time.Now())
+	if err != nil || len(replaced.Artifacts) != 3 {
+		t.Fatalf("changed group replacement = %#v %v", replaced.Artifacts, err)
+	}
+	changedExact, err := resolveWorkflowExactMedia(replacement, replaced)
+	if err != nil || len(changedExact.Screenshots) != 3 || changedExact.Screenshots[0].ComparisonMemberLabel != "Changed first member" || changedExact.Screenshots[2].ComparisonGroup != "two" {
+		t.Fatalf("changed order or unrelated group lost: %#v %v", changedExact, err)
+	}
+	changed = changed[:1]
+	changed[0].Attachment.ComparisonCount = 1
+	replaced, replacement, err = builder.Attach(ctx, release, api.TrackerReleaseProjectionSet{}, &replaced, replacement, changed, time.Now())
+	if err != nil || len(replaced.Artifacts) != 2 {
+		t.Fatalf("changed membership = %#v %v", replaced.Artifacts, err)
+	}
+	replaced.WorkflowID, replaced.ID, replaced.Revision = "comparison-workflow", "changed-media", 3
+	if err := builder.RecordReusableMedia(ctx, replaced, replacement); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err = repository.LoadReusableMediaAssets(ctx, compatibilityKey)
+	if err != nil || len(persisted) != 2 {
+		t.Fatalf("replaced durable members = %#v %v", persisted, err)
+	}
+}
+
+type comparisonMediaCollector struct{ workflowMediaCollector }
+
+func (c comparisonMediaCollector) HydratePrivateResources(ctx context.Context, request preparationstate.Request) (preparedrelease.CollectedResources, error) {
+	facts, err := c.Collect(ctx, request)
+	return facts.Resources, err
 }

@@ -218,6 +218,37 @@ describe("WorkflowRequiredActions", () => {
     expect(confirm).toHaveBeenCalledWith(recovery, true);
   });
 
+  it("requires an explicit click on the backend slow.pics reconciliation choice", () => {
+    const confirm = vi.fn();
+    const navigate = vi.fn();
+    const recovery = action({
+      kind: "reconcile_submission",
+      trackerId: undefined,
+      effectKind: "image_hosting",
+      effectScopeId: "slowpics_collection:attempt-1",
+      prompt: "Verify whether the slow.pics collection was created before retrying.",
+      options: [{ value: "not_completed", label: "I verified no collection was created" }],
+    });
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([recovery])}
+        onConfirm={confirm}
+        onNavigate={navigate}
+      />,
+    );
+
+    const choice = screen.getByRole("button", {
+      name: "I verified no collection was created",
+    });
+    expect(screen.getByText(recovery.prompt)).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toEqual([choice]);
+    expect(confirm).not.toHaveBeenCalled();
+
+    fireEvent.click(choice);
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(recovery, true);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("leaves duplicate review and tracker naming inside dupe tracker cards", () => {
     const navigate = vi.fn();
     render(

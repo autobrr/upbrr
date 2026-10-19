@@ -500,3 +500,16 @@ func normalizeState(state *State) {
 		state.Receipts = make(map[string]commandReceipt)
 	}
 }
+
+// ListUnknownCollectionEffects reads recovery authority without changing effect status.
+func (r *PersistentRepository) ListUnknownCollectionEffects(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+) ([]api.ReleaseWorkflowEffectRecord, error) {
+	if r.durability == nil {
+		return nil, errors.New("release workflow: durable effect repository is unavailable")
+	}
+	effects, err := r.durability.ListUnknownCollectionEffects(ctx, ownerID, workflowID)
+	return effects, mapPersistentRepositoryError(err)
+}

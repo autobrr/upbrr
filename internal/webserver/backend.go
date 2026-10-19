@@ -403,6 +403,12 @@ func (b *Backend) GetReleaseWorkflowCapabilities(
 		Trackers:               trackerCapabilities,
 		TorrentClients:         torrentClients,
 		ImageHosts:             imageHosts,
+		CollectionHosts: []api.ReleaseWorkflowCollectionHost{{
+			ID:          "slowpics",
+			DisplayName: "slow.pics",
+			Configured:  cfg.ImageHosting.AnalysisHost == "slowpics",
+			Purposes:    []api.ScreenshotPurpose{api.ScreenshotPurposeComparison, api.ScreenshotPurposeHDRAnalysis, api.ScreenshotPurposeAudioAnalysis},
+		}},
 	}, nil
 }
 

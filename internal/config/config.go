@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,6 +94,8 @@ func (c *MainSettingsConfig) UnmarshalJSON(data []byte) error {
 }
 
 type ImageHostingConfig struct {
+	// AnalysisHost optionally selects collection hosting for comparisons and analysis images.
+	AnalysisHost      string `yaml:"analysis_host"`
 	Host1             string `yaml:"img_host_1"`
 	Host2             string `yaml:"img_host_2"`
 	Host3             string `yaml:"img_host_3"`
@@ -986,6 +989,20 @@ func torrentClientConfigYAMLMap(c TorrentClientConfig) map[string]any {
 // services can safely start or save settings. An empty TMDBAPI is valid and
 // leaves TMDB enrichment disabled.
 func (c Config) Validate() error {
+	if c.ImageHosting.AnalysisHost != "" && c.ImageHosting.AnalysisHost != "slowpics" {
+		return errors.New("image_hosting.analysis_host must be empty or slowpics")
+	}
+	if slices.ContainsFunc(
+		[]string{c.ImageHosting.Host1, c.ImageHosting.Host2, c.ImageHosting.Host3, c.ImageHosting.Host4, c.ImageHosting.Host5, c.ImageHosting.Host6},
+		imagehostpolicy.IsCollectionHost,
+	) {
+		return errors.New("slowpics is only available as an analysis host")
+	}
+	for _, tracker := range c.Trackers.Trackers {
+		if imagehostpolicy.IsCollectionHost(tracker.ImageHost) {
+			return errors.New("slowpics cannot be a tracker screenshot host override; use analysis_host")
+		}
+	}
 	if c.MainSettings.InputHistoryLimit < 0 {
 		return errors.New("config: main_settings.input_history_limit must be zero or greater")
 	}
