@@ -271,7 +271,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.NoDual, "no-dual", false, "Remove dual-audio tag from audio name")
 	fs.BoolVar(&opts.DualAudio, "dual-audio", false, "Add dual-audio tag to audio name")
 	fs.BoolVar(&opts.CreateAuth, "create-auth", false, "Create web-auth.json beside the active database and exit")
-	fs.StringVar(&opts.ExportConfigPath, "export-config", "", "Export SQLite config to YAML file and exit")
+	fs.StringVar(&opts.ExportConfigPath, "export-config", "", "Export SQLite config (or built-in defaults when unconfigured) to YAML and exit")
 	fs.BoolVar(&opts.ExportConfigPlaintext, "export-config-plaintext", false, "Export config with plaintext secrets (requires --export-config)")
 	fs.StringVar(&opts.ImportConfigPath, "import-config", "", "Import config file (.py, .yaml, .yml, .json) and exit")
 	fs.BoolVar(&opts.DeleteTmp, "dtmp", false, "Delete stored database content for each input path before upload")

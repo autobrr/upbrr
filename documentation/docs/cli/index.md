@@ -97,15 +97,15 @@ Interactive tracker questions with exactly `yes`/`no` choices also accept `y`/`n
 
 ## Config and application
 
-| Option                      | Aliases                    | Purpose                                                     |
-| --------------------------- | -------------------------- | ----------------------------------------------------------- |
-| `--config <path>`           | `-config`                  | Use a config file path.                                     |
-| `--export-config <path>`    | `-export-config`           | Export SQLite config to YAML and exit.                      |
-| `--export-config-plaintext` | `-export-config-plaintext` | Include plaintext secrets; requires `--export-config`.      |
-| `--import-config <path>`    | `-import-config`           | Import `.py`, `.yaml`, `.yml`, or `.json` config and exit.  |
-| `--create-auth`             | `-create-auth`             | Create `web-auth.json` beside the active database and exit. |
-| `--version`                 | `-version`                 | Print version and exit.                                     |
-| `--cleanup`                 | `-cleanup`                 | Delete all stored release content and exit.                 |
+| Option                      | Aliases                    | Purpose                                                                         |
+| --------------------------- | -------------------------- | ------------------------------------------------------------------------------- |
+| `--config <path>`           | `-config`                  | Use a config file path.                                                         |
+| `--export-config <path>`    | `-export-config`           | Export SQLite config, or built-in defaults when unconfigured, to YAML and exit. |
+| `--export-config-plaintext` | `-export-config-plaintext` | Include plaintext secrets; requires `--export-config`.                          |
+| `--import-config <path>`    | `-import-config`           | Import `.py`, `.yaml`, `.yml`, or `.json` config and exit.                      |
+| `--create-auth`             | `-create-auth`             | Create `web-auth.json` beside the active database and exit.                     |
+| `--version`                 | `-version`                 | Print version and exit.                                                         |
+| `--cleanup`                 | `-cleanup`                 | Delete all stored release content and exit.                                     |
 
 `--create-auth`, `--export-config`, and `--import-config` are mutually exclusive. Config exports omit plaintext secrets unless `--export-config-plaintext` is supplied; protect plaintext exports as credentials. See [configuration import and export](../configuration/index.md#import-configuration) for config selection and encryption requirements.
 

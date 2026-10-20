@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -1145,6 +1146,9 @@ func loadServeConfig(ctx context.Context, configPath string, configProvided bool
 	return wrapUpbrrResult2(configstore.Bootstrap(ctx, configPath, true, true))
 }
 
+// exportConfigToYAML exports stored settings, or built-in defaults when the
+// database has no configuration. Exporting defaults does not persist settings
+// or apply environment overrides; opening the database can still migrate it.
 func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {
 	dbPath, err := resolveExportDBPath(configPath, configProvided)
 	if err != nil {
@@ -1161,17 +1165,41 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 		return fmt.Errorf("migrate config database: %w", err)
 	}
 
+	cfg, err := config.LoadFromDatabase(ctx, repo)
+	switch {
+	case errors.Is(err, internalerrors.ErrNotFound):
+		return exportDefaultConfigToYAML(outputPath)
+	case err != nil:
+		return fmt.Errorf("upbrr: config export from database: load: %w", err)
+	default:
+		config.ApplyEnvOverrides(cfg)
+	}
+
 	if plaintext {
-		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, outputPath, repo); err != nil {
-			return fmt.Errorf("upbrr: %w", err)
-		}
-		return nil
+		err = config.ExportToPlaintextYAML(cfg, outputPath)
+	} else {
+		err = config.ExportToYAML(cfg, outputPath)
+	}
+	if err != nil {
+		return fmt.Errorf("upbrr: config export from database: %w", err)
 	}
 
-	if err := config.ExportFromDatabaseToYAML(ctx, outputPath, repo); err != nil {
-		return fmt.Errorf("upbrr: %w", err)
-	}
+	return nil
+}
 
+// exportDefaultConfigToYAML preserves the editable fields and comments in the
+// embedded template without loading user settings or applying environment values.
+func exportDefaultConfigToYAML(outputPath string) error {
+	data := config.EmbeddedExampleYAML()
+	if len(data) == 0 {
+		return errors.New("upbrr: embedded default config is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return fmt.Errorf("upbrr: config export: mkdir: %w", err)
+	}
+	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
+		return fmt.Errorf("upbrr: config export: write file: %w", err)
+	}
 	return nil
 }
 

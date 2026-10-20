@@ -75,7 +75,17 @@ For Upload Assistant Python files, see [migration guidance](../getting-started/m
 
 ## Export configuration
 
-The default YAML export preserves secret values in encrypted form:
+On a fresh installation, the same export command generates a complete, editable
+YAML template with the built-in setting and tracker defaults, comments, and empty
+fields ready to fill in. No prior config,
+import, or Web UI setup is required. This default template does not include
+environment overrides or save settings to the database. The command can create or
+migrate an empty database as part of resolving the export. Edit the template and
+[import it](#import-configuration) when ready to apply your settings.
+
+For a configured installation, export uses the stored settings with environment
+overrides and preserves the existing secret-handling behavior. The default YAML
+export preserves secret values in encrypted form:
 
 ```powershell
 .\upbrr.exe --export-config ".\config-export.yaml"
