@@ -126,7 +126,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		}
 	}
 	if selectedID != 0 {
-		logger.Tracef("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
+		logger.Debugf("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
 	}
 
 	return SearchResult{

@@ -50,6 +50,10 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `i
 - `service.go`: bounded orchestration, result projection, and redacted logs.
 - `assessment*.go`: immutable, fingerprint-bound decisions and authorization.
 
+## Logging
+
+- DEBUG contains one coordinator outcome per tracker/check pass: status, source, candidate count, completeness, decision and short code. Keep full target/policy, set findings, candidate evidence and search-page details at TRACE, retaining redaction. Never demote operational WARN/ERROR outcomes.
+
 ## Checks
 
 Keep one focused regression for every rule boundary, both directions where directional. Run:

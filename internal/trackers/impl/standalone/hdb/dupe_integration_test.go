@@ -349,7 +349,13 @@ func TestHDBHandlerSearchPaginatesFullPages(t *testing.T) {
 	if len(requestedPages) != 2 || requestedPages[0] != 0 || requestedPages[1] != 1 {
 		t.Fatalf("unexpected requested pages %v", requestedPages)
 	}
-	if len(logger.trace) != 2 || !strings.Contains(logger.trace[0], `"page":0`) || !strings.Contains(logger.trace[1], `"page":1`) {
+	var requestLogs []string
+	for _, entry := range logger.trace {
+		if strings.HasPrefix(entry, "dupechecking: request ") {
+			requestLogs = append(requestLogs, entry)
+		}
+	}
+	if len(requestLogs) != 2 || !strings.Contains(requestLogs[0], `"page":0`) || !strings.Contains(requestLogs[1], `"page":1`) {
 		t.Fatalf("request TRACE did not follow actual page numbers: %v", logger.trace)
 	}
 	search := result.SearchEvidence()

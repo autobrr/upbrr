@@ -237,14 +237,16 @@ func TestCLIWorkflowProgressUsesDebugLogger(t *testing.T) {
 	}, &state)
 
 	entries := logger.snapshot()
-	if len(entries) != 2 ||
-		!strings.Contains(entries[0], "DEBUG: workflow: command=check_duplicates phase=dupes state=running progress=0 completed=2 total=4") ||
-		!strings.Contains(entries[1], "DEBUG: workflow: command=check_duplicates phase=dupes state=blocked progress=100 completed=4 total=4") {
+	if len(entries) != 4 ||
+		entries[1] != "DEBUG: workflow: command=check_duplicates phase=dupes state=running" ||
+		entries[3] != "DEBUG: workflow: command=check_duplicates phase=dupes state=blocked" ||
+		!strings.Contains(entries[0], "TRACE: workflow: command=check_duplicates phase=dupes state=running progress=0 completed=2 total=4") ||
+		!strings.Contains(entries[2], "TRACE: workflow: command=check_duplicates phase=dupes state=blocked progress=100 completed=4 total=4") {
 		t.Fatalf("workflow log entries = %#v", entries)
 	}
 }
 
-func TestCLIWorkflowProgressRendersCanonicalScopedEventsAtDebug(t *testing.T) {
+func TestCLIWorkflowProgressRendersCanonicalScopedEventsAtTrace(t *testing.T) {
 	logger := &cliProgressTestLogger{}
 	var state cliWorkflowEventLogState
 	events := []api.WorkflowEvent{
@@ -281,8 +283,8 @@ func TestCLIWorkflowProgressRendersCanonicalScopedEventsAtDebug(t *testing.T) {
 	logCLIWorkflowEvents(logger, events, &state)
 	logCLIWorkflowEvents(logger, events, &state)
 	entries := logger.snapshot()
-	if len(entries) != 2 || !strings.HasPrefix(entries[0], "DEBUG: ") || !strings.Contains(entries[0], "scope=host") ||
-		!strings.HasPrefix(entries[1], "DEBUG: ") || !strings.Contains(entries[1], "scope=tracker") {
+	if len(entries) != 2 || !strings.HasPrefix(entries[0], "TRACE: ") || !strings.Contains(entries[0], "scope=host") ||
+		!strings.HasPrefix(entries[1], "TRACE: ") || !strings.Contains(entries[1], "scope=tracker") {
 		t.Fatalf("canonical workflow event logs = %#v", entries)
 	}
 }
@@ -348,5 +350,52 @@ func TestCLIWorkflowSessionSuppressesRepeatedProgressAndLogsSuccessiveOperations
 	}
 	if len(coreSvc.eventAfters) != 2 || coreSvc.eventAfters[0] != 0 || coreSvc.eventAfters[1] != event.Sequence {
 		t.Fatalf("workflow event cursors = %#v", coreSvc.eventAfters)
+	}
+}
+
+func TestCLISourceInspectionBookkeepingUsesDebugAndPreservesFailures(t *testing.T) {
+	logger := &cliProgressTestLogger{}
+	ctx := withCLISourceVerificationProgressLogger(t.Context(), logger)
+	for _, status := range []api.PreparationProgressStatus{
+		api.PreparationProgressRunning,
+		api.PreparationProgressCompleted,
+		api.PreparationProgressFailed,
+	} {
+		api.EmitPreparationProgress(ctx, api.PreparationProgressUpdate{
+			Phase:  api.PreparationPhaseSourceInspection,
+			Status: status,
+		})
+	}
+	entries := logger.snapshot()
+	if len(entries) != 3 || !strings.HasPrefix(entries[0], "DEBUG: ") ||
+		!strings.HasPrefix(entries[1], "DEBUG: ") || !strings.HasPrefix(entries[2], "WARN: ") {
+		t.Fatalf("source inspection log levels = %#v", entries)
+	}
+}
+
+func TestCLIWorkflowProgressKeepsCountersAtTrace(t *testing.T) {
+	logger := &cliProgressTestLogger{}
+	var state cliWorkflowLogState
+	operation := api.WorkflowOperationStatus{
+		Command: "check_duplicates",
+		Phase:   "dupes",
+		Status:  api.StageStatusRunning,
+		Total:   3,
+	}
+	for completed := 0; completed <= 3; completed++ {
+		operation.Completed = completed
+		logCLIWorkflowOperation(logger, operation, &state)
+	}
+	debug, trace := 0, 0
+	for _, entry := range logger.snapshot() {
+		if strings.HasPrefix(entry, "DEBUG: ") {
+			debug++
+		}
+		if strings.HasPrefix(entry, "TRACE: ") {
+			trace++
+		}
+	}
+	if debug != 1 || trace != 4 {
+		t.Fatalf("workflow log counts: debug=%d trace=%d, want 1 and 4", debug, trace)
 	}
 }

@@ -66,7 +66,7 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 // missing titles return an empty result without error; request or decode failures
 // return no partial result. Missing runtime and plot values default to 60 minutes
 // and "No plot available", and episode data is limited to the first 500 entries.
-func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (Info, error) {
+func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage string, _ bool) (Info, error) {
 	logger := logging.FromContext(ctx, c.logger)
 
 	info := Info{}
@@ -288,11 +288,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		info.TVYear = closest
 	}
 
-	logger.Tracef("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
-
-	if debug {
-		logger.Debugf("imdb: info loaded for %s", id)
-	}
+	logger.Debugf("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
 
 	return info, nil
 }

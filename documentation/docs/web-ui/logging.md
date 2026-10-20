@@ -20,6 +20,12 @@ These edits require **Save** before they become active.
 
 File logging requires positive **Max total size** and **Max files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled.
 
+## Choosing a level
+
+- **Info** shows concise progress and outcomes. Source-inspection bookkeeping without a known byte total is kept at debug; failures remain warnings.
+- **Debug** adds effective prepared-generation facts, including compatible cached results and explicit empty fields, concise provider results, and a bounded outcome for each tracker duplicate check. Provider metadata availability does not mean a new network fetch occurred.
+- **Trace** adds detailed cache decisions, parser intermediates, search pages, candidate evidence, and workflow lifecycle counters. Use it when debug does not answer the specific question being investigated.
+
 ## Upload run verbosity
 
 On **Upload**, choose **Run options → Log level** before starting a dry run or upload. The selected level applies to that run's application logs, including background work and resumed work. It reaches the live viewer, retained log entries, and file output when enabled.

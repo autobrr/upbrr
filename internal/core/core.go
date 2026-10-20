@@ -337,7 +337,7 @@ func newCoreWithHooks(
 	if err != nil {
 		return nil, fmt.Errorf("core: canonical identity resolver: %w", err)
 	}
-	preparedFacts, err := preparedrelease.New(repositories.Prepared(), identityResolver, collector)
+	preparedFacts, err := preparedrelease.New(repositories.Prepared(), identityResolver, collector, logger)
 	if err != nil {
 		return nil, fmt.Errorf("core: canonical preparation: %w", err)
 	}

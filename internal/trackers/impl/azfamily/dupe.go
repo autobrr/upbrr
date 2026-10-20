@@ -231,7 +231,7 @@ func (h dupeSearcher) fetchTorrentList(
 		case !nextPresent:
 			complete = true
 			if h.logger != nil {
-				h.logger.Debugf("dupechecking: search tracker=%s pages=%d complete=true decision=enumeration_complete", h.tracker, pages)
+				h.logger.Tracef("dupechecking: search tracker=%s pages=%d complete=true decision=enumeration_complete", h.tracker, pages)
 			}
 		case nextPage == "":
 			warning = "AZ-family search rejected an invalid next-page link"
