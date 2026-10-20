@@ -51,7 +51,7 @@ func TestOperationLoggerUsesRootSinkWithoutMutatingRootThreshold(t *testing.T) {
 	if len(recent) != 1 || recent[0].Level != "trace" {
 		t.Fatalf("recent entries = %#v", recent)
 	}
-	if strings.Contains(recent[0].Message, "secret-value") || strings.Contains(recent[0].Message, localPath) {
+	if strings.Contains(recent[0].Message, "secret-value") || !strings.Contains(recent[0].Message, localPath) {
 		t.Fatalf("scoped entry was not sanitized: %q", recent[0].Message)
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {

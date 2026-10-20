@@ -1353,22 +1353,22 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name             string
-		code             string
-		message          string
-		wantMessage      string
-		wantSubmission   api.StageStatus
-		wantRedaction    bool
-		wantPathSanitize bool
+		name              string
+		code              string
+		message           string
+		wantMessage       string
+		wantSubmission    api.StageStatus
+		wantRedaction     bool
+		wantPathPreserved bool
 	}{
 		{
-			name:             "submission detail",
-			code:             "submit",
-			message:          `Tracker rejected payload passkey=never-print-this source=C:\releases\Example.Release.2026`,
-			wantMessage:      "Tracker rejected payload",
-			wantSubmission:   api.StageStatusFailed,
-			wantRedaction:    true,
-			wantPathSanitize: true,
+			name:              "submission detail",
+			code:              "submit",
+			message:           `Tracker rejected payload passkey=never-print-this source=C:\releases\Example.Release.2026`,
+			wantMessage:       "Tracker rejected payload",
+			wantSubmission:    api.StageStatusFailed,
+			wantRedaction:     true,
+			wantPathPreserved: true,
 		},
 		{
 			name:           "empty detail fallback",
@@ -1385,13 +1385,13 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			wantSubmission: api.StageStatusUnavailable,
 		},
 		{
-			name:             "unknown outcome retains ANT rejection reason",
-			code:             "unknown_outcome",
-			message:          `trackers: ANT upload failed status=400: A file with the same infohash already exists on the site! passkey=never-print-this source=C:\releases\Example.Release.2026`,
-			wantMessage:      "Reason: trackers: ANT upload failed status=400: A file with the same infohash already exists on the site!",
-			wantSubmission:   api.StageStatusUnavailable,
-			wantRedaction:    true,
-			wantPathSanitize: true,
+			name:              "unknown outcome retains ANT rejection reason",
+			code:              "unknown_outcome",
+			message:           `trackers: ANT upload failed status=400: A file with the same infohash already exists on the site! passkey=never-print-this source=C:\releases\Example.Release.2026`,
+			wantMessage:       "Reason: trackers: ANT upload failed status=400: A file with the same infohash already exists on the site!",
+			wantSubmission:    api.StageStatusUnavailable,
+			wantRedaction:     true,
+			wantPathPreserved: true,
 		},
 		{
 			name:           "unknown outcome empty detail fallback",
@@ -1431,8 +1431,8 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			if test.wantRedaction && (!strings.Contains(failure.Message, "passkey=[REDACTED]") || strings.Contains(failure.Message, "never-print-this")) {
 				t.Fatal("upload failure did not redact the tracker detail")
 			}
-			if test.wantPathSanitize && (!strings.Contains(failure.Message, "source=[local path]") || strings.Contains(failure.Message, `C:\releases`)) {
-				t.Fatal("upload failure did not sanitize the local path")
+			if test.wantPathPreserved && !strings.Contains(failure.Message, `source=C:\releases\Example.Release.2026`) {
+				t.Fatal("upload failure did not preserve the diagnostic path")
 			}
 		})
 	}

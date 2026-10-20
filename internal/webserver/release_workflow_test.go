@@ -122,12 +122,12 @@ func TestReleaseWorkflowDiagnosticMessageExposesSanitizedCause(t *testing.T) {
 	}, cause)
 
 	message := releaseWorkflowDiagnosticMessage(err)
-	for _, leaked := range []string{`D:\media`, "Example.Release.2026.1080p-GRP", "secret-value"} {
+	for _, leaked := range []string{"secret-value"} {
 		if strings.Contains(message, leaked) {
 			t.Fatalf("diagnostic leaked protected value")
 		}
 	}
-	for _, expected := range []string{"prepare source=[local path]", "api_token=[REDACTED]", "metadata probe failed"} {
+	for _, expected := range []string{`prepare source=D:\media\Example.Release.2026.1080p-GRP.mkv`, "api_token=[REDACTED]", "metadata probe failed"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("diagnostic %q missing %q", message, expected)
 		}

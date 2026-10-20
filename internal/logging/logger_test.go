@@ -109,150 +109,77 @@ func TestConsoleLevelCanFilterRetainedApplicationEntries(t *testing.T) {
 	}
 }
 
-func TestLoggerSanitizesLocalPaths(t *testing.T) {
+func TestLoggerPreservesPathsAndRedactsSecretsAcrossSinks(t *testing.T) {
 	t.Parallel()
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	logger, err := NewWithLevel(config.LoggingConfig{Level: "debug"}, "", "")
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	logger, err := New(config.LoggingConfig{
+		Level:          "debug",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       1,
+	}, dbPath)
 	if err != nil {
-		t.Fatalf("new logger: %v", err)
+		t.Fatal(err)
 	}
+	var stdout, stderr bytes.Buffer
 	logger.SetConsoleOutput(&stdout, &stderr)
-
-	logger.Debugf("source=%s artifact=%s tracker=%s", `D:\media\Example.Release.2026-GRP`, `C:\Users\Tester\.upbrr\tmp\file.torrent`, "ABC")
-
-	console := stdout.String()
-	for _, leaked := range []string{`D:\media`, `C:\Users`, "Example.Release.2026-GRP"} {
-		if strings.Contains(console, leaked) {
-			t.Fatalf("expected console log to redact local path details")
-		}
+	id, entries := logger.Subscribe(1)
+	defer logger.Unsubscribe(id)
+	source := `D:\media\Example's Release.2026-GRP`
+	logger.Debugf("source=%s url=https://tracker.example/media/filter?api_token=secret-value state=failed", source)
+	if err := logger.Close(); err != nil {
+		t.Fatal(err)
 	}
-	for _, expected := range []string{"source=[local path]", "artifact=.upbrr/tmp/file.torrent", "tracker=ABC"} {
-		if !strings.Contains(console, expected) {
-			t.Fatalf("expected console log to contain %q, got %q", expected, console)
-		}
+	logPath, err := LogPath(dbPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	contents, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	recent := logger.Recent(1)
 	if len(recent) != 1 {
-		t.Fatalf("expected one buffered log entry, got %d", len(recent))
+		t.Fatalf("recent entries = %#v", recent)
 	}
-	if strings.Contains(recent[0].Message, `D:\media`) || strings.Contains(recent[0].Message, "Example.Release.2026-GRP") {
-		t.Fatalf("expected buffered log to redact local path details")
+	messages := []string{stdout.String(), string(contents), recent[0].Message}
+	select {
+	case entry := <-entries:
+		messages = append(messages, entry.Message)
+	default:
+		t.Fatal("missing subscriber entry")
 	}
-	if !strings.Contains(recent[0].Message, "source=[local path] artifact=.upbrr/tmp/file.torrent tracker=ABC") {
-		t.Fatalf("unexpected buffered log message: %q", recent[0].Message)
-	}
-}
-
-func TestSanitizeMessagePreservesSavePathFieldOnly(t *testing.T) {
-	t.Parallel()
-
-	savePath := filepath.Join(t.TempDir(), "Example.Release.2026-GRP")
-	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.Source-GRP")
-	got := SanitizeMessage(fmt.Sprintf("save_path=%s source=%s", savePath, sourcePath))
-
-	if !strings.Contains(got, "save_path="+savePath) {
-		t.Fatalf("expected save path field to remain visible, got %q", got)
-	}
-	if strings.Contains(got, sourcePath) || !strings.Contains(got, "source=[local path]") {
-		t.Fatalf("expected non-save path field to remain redacted, got %q", got)
-	}
-}
-
-func TestLoggerSanitizesRequestSecretsAndApostrophePaths(t *testing.T) {
-	t.Parallel()
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	logger, err := NewWithLevel(config.LoggingConfig{Level: "debug"}, "", "")
-	if err != nil {
-		t.Fatalf("new logger: %v", err)
-	}
-	logger.SetConsoleOutput(&stdout, &stderr)
-
-	logger.Warnf(
-		"dupechecking: DP search failed for %s: %s",
-		`D:\media\Example's.Release.2026-GRP`,
-		`unit3d: request: Get "https://tracker.example/api/torrents/filter?api_token=secret-api-token&name=Example.Release.2026.1080p-GRP": context deadline exceeded`,
-	)
-
-	console := stderr.String()
-	for _, leaked := range []string{"secret-api-token", `D:\media`, "Example's.Release.2026-GRP"} {
-		if strings.Contains(console, leaked) {
-			t.Fatal("expected console log to redact request secret and complete local path")
+	for _, message := range messages {
+		if strings.Contains(message, "secret-value") {
+			t.Fatalf("secret was not redacted: %q", message)
 		}
-	}
-	for _, expected := range []string{"for [local path]: unit3d: request", "api_token=[REDACTED]", "context deadline exceeded"} {
-		if !strings.Contains(console, expected) {
-			t.Fatal("expected console log to preserve sanitized request context")
-		}
-	}
-
-	recent := logger.Recent(1)
-	if len(recent) != 1 {
-		t.Fatalf("expected one buffered log entry, got %d", len(recent))
-	}
-	if strings.Contains(recent[0].Message, "secret-api-token") || strings.Contains(recent[0].Message, "Example's.Release.2026-GRP") {
-		t.Fatal("expected frontend log entry to redact request secret and complete local path")
-	}
-}
-
-func TestSanitizeMessageHandlesApostrophesInUnixLocalPaths(t *testing.T) {
-	t.Parallel()
-
-	got := SanitizeMessage("source=/media/releases/Example's.Release.2026-GRP: state=failed")
-	if strings.Contains(got, "/media/releases") || strings.Contains(got, "Example's.Release.2026-GRP") {
-		t.Fatal("expected complete Unix local path with apostrophe to be redacted")
-	}
-	if !strings.Contains(got, "source=[local path]: state=failed") {
-		t.Fatal("expected diagnostic context after Unix local path to remain")
-	}
-}
-
-func TestSanitizeLogMessageHandlesUnixLocalPaths(t *testing.T) {
-	t.Parallel()
-
-	got := SanitizeMessage("cache=/home/tester/.upbrr/cache/banned/file.json source=/media/releases/Example.Release.2026-GRP tracker=ABC")
-	for _, leaked := range []string{"/home/tester", "/media/releases", "Example.Release.2026-GRP"} {
-		if strings.Contains(got, leaked) {
-			t.Fatalf("expected sanitized message to redact %q from %q", leaked, got)
-		}
-	}
-	for _, expected := range []string{"cache=.upbrr/cache/banned/file.json", "source=[local path]", "tracker=ABC"} {
-		if !strings.Contains(got, expected) {
-			t.Fatalf("expected sanitized message to contain %q, got %q", expected, got)
+		for _, want := range []string{source, "api_token=[REDACTED]", "state=failed"} {
+			if !strings.Contains(message, want) {
+				t.Fatalf("missing %q in %q", want, message)
+			}
 		}
 	}
 }
 
-func TestSanitizeLogMessagePreservesURLs(t *testing.T) {
+func TestSanitizeMessagePreservesDiagnosticPaths(t *testing.T) {
 	t.Parallel()
-
-	cases := []string{
-		"web: serving web UI on 127.0.0.1:7480 (browser URL http://127.0.0.1:7480/app)",
-		"image=https://img.example.com/media/poster.jpg tracker=ABC",
+	for _, input := range []string{
+		`source=/media/releases/Example's Release.2026-GRP: state=failed`,
+		`source=C:\Users\Tester\Example's Release.mkv tracker=ABC`,
+		`source=\\server\share\Example Release.mkv state=ready`,
+		`cache=/home/tester/.upbrr/cache/banned/file.json tracker=ABC`,
+		`source="/Volumes/Media/Example Release.mkv" state=ready`,
+		`source=C:/media/Example.mkv state=ready`,
 		"image=https://img.example.com/tmp/poster.jpg tracker=ABC",
 		"image=https://img.example.com/home/user/poster.jpg tracker=ABC",
 		"image=https://img.example.com/Users/tester/poster.jpg tracker=ABC",
-	}
-	for _, tc := range cases {
-		got := SanitizeMessage(tc)
-		if strings.Contains(got, "[local path]") {
-			t.Fatalf("expected URL to remain intact, got %q", got)
+		"image=https://img.example.com/media/poster.jpg source=/media/releases/Example.mkv",
+		"web: serving web UI on 127.0.0.1:7480 (browser URL http://127.0.0.1:7480/app)",
+		fmt.Sprintf("save_path=%s source=%s", filepath.Join(t.TempDir(), "Example.mkv"), filepath.Join(t.TempDir(), "Source.mkv")),
+	} {
+		if got := SanitizeMessage(input); got != input {
+			t.Fatalf("diagnostic changed: got %q, want %q", got, input)
 		}
-		if got != tc {
-			t.Fatalf("expected URL to remain intact, got %q", got)
-		}
-	}
-
-	got := SanitizeMessage("image=https://img.example.com/media/poster.jpg source=/media/releases/Example.Release.2026-GRP")
-	if strings.Contains(got, "/media/releases") || strings.Contains(got, "Example.Release.2026-GRP") {
-		t.Fatalf("expected local path after URL to be redacted, got %q", got)
-	}
-	if !strings.Contains(got, "image=https://img.example.com/media/poster.jpg source=[local path]") {
-		t.Fatalf("expected URL preserved and local path redacted, got %q", got)
 	}
 }
 

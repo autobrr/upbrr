@@ -37,4 +37,4 @@ This choice does not save the global logging setting or change another operation
 
 Torrent-client connection diagnostics omit configured private endpoints and retain safe operation and failure context.
 
-The viewer receives centrally sanitized messages, but inspect entries before sharing them. Never publish credentials, cookies, tokens, announce URLs, filesystem details, or private tracker data.
+The viewer receives centrally sanitized messages, but ordinary filesystem paths remain visible for troubleshooting, including in CLI diagnostics and log files. Paths may contain usernames, directories, filenames, and release names. Automatic redaction is intended to protect credentials, not to make every log safe to share. Inspect each excerpt and remove any remaining credentials, cookies, tokens, private URLs, private tracker data, and unrelated personal information before sharing.
