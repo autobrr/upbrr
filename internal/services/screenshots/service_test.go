@@ -763,8 +763,8 @@ func TestCapturePreservesSuccessfulDiscsWhenDiscSetupFails(t *testing.T) {
 		if captureErr.DiscID != "disc-b" || captureErr.Index != offset+1 || strings.TrimSpace(captureErr.Message) == "" {
 			t.Fatalf("failed disc error[%d] = %#v", offset, captureErr)
 		}
-		if strings.Contains(captureErr.Message, subject.Discs[1].Root) {
-			t.Fatalf("failed disc error exposed local path: %q", captureErr.Message)
+		if !strings.Contains(captureErr.Message, subject.Discs[1].Root) {
+			t.Fatalf("failed disc error omitted diagnostic path: %q", captureErr.Message)
 		}
 	}
 }
