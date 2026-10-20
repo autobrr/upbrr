@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
@@ -2788,6 +2789,43 @@ func compositeUploadDuplicateBlockedBuilder(
 	})
 }
 
+func TestCompositeUploadWaitsForTerminalPersistence(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		module, repository, uploads := newCompositeUploadTestModule(t)
+		t.Cleanup(func() { _ = module.Shutdown(context.Background()) })
+		request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "slow-terminal-persistence")
+		started, err := module.StartUpload(t.Context(), testOwnerID, request)
+		if err != nil {
+			t.Fatalf("start composite upload: %v", err)
+		}
+		current := waitCompositeUploadTestOperation(t, module, started)
+		blocking := &blockingCompleteWorkRepository{
+			MemoryRepository: repository,
+			completeStarted:  make(chan struct{}),
+			releaseComplete:  make(chan struct{}),
+		}
+		module.durability = blocking
+		go func() {
+			select {
+			case <-blocking.completeStarted:
+			case <-t.Context().Done():
+				return
+			}
+			// Model a slow durable terminal write without delaying the real test.
+			select {
+			case <-time.After(15 * time.Second):
+			case <-t.Context().Done():
+			}
+			close(blocking.releaseComplete)
+		}()
+		completed := approveCompositeUploadTrackers(t, module, current, []api.TrackerID{"ALPHA", "BETA"}, "approve-slow-terminal-persistence")
+		if completed.Operation.Status != api.StageStatusExecuted || completed.Operation.Result == nil ||
+			completed.Operation.Result.Kind != api.WorkflowOperationResultUpload || uploads.execution == nil || uploads.execution.executions != 1 {
+			t.Fatalf("completed upload operation=%#v execution=%#v", completed.Operation, uploads.execution)
+		}
+	})
+}
+
 func waitCompositeUploadTestOperation(
 	t *testing.T,
 	module *Module,
@@ -2797,20 +2835,18 @@ func waitCompositeUploadTestOperation(
 	if started.Operation == nil {
 		t.Fatalf("composite upload has no operation: %#v", started)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	operation := *started.Operation
-	for !isTerminalProgressStatus(operation.Status) {
-		if time.Now().After(deadline) {
-			t.Fatalf("composite upload operation timed out: %#v", operation)
-		}
-		time.Sleep(5 * time.Millisecond)
-		var err error
-		operation, err = module.Operation(context.Background(), testOwnerID, operation.WorkflowID, operation.ID)
-		if err != nil {
-			t.Fatalf("poll composite upload operation: %v", err)
-		}
+	// Join the registered worker so slow durable writes do not become test deadlines.
+	if err := module.waitForOperationCleanup(t.Context(), started.Operation.ID); err != nil {
+		t.Fatalf("wait for composite upload operation: %v", err)
 	}
-	current, err := module.Current(context.Background(), testOwnerID, operation.WorkflowID)
+	operation, err := module.Operation(t.Context(), testOwnerID, started.Operation.WorkflowID, started.Operation.ID)
+	if err != nil {
+		t.Fatalf("load composite upload operation: %v", err)
+	}
+	if !isTerminalProgressStatus(operation.Status) {
+		t.Fatalf("composite upload worker exited without a terminal status: %#v", operation)
+	}
+	current, err := module.Current(t.Context(), testOwnerID, operation.WorkflowID)
 	if err != nil {
 		t.Fatalf("load composite upload current: %v", err)
 	}
