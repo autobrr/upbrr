@@ -466,10 +466,10 @@ func TestConvertTrackers(t *testing.T) {
 }
 
 func TestConvertTrackersMapsLegacyTrackerAliases(t *testing.T) {
-	digitalCoreAPIKey := fmt.Sprintf("%s-digitalcore", t.Name())
-	hdSpaceAPIKey := fmt.Sprintf("%s-hdspace", t.Name())
-	racingForEveryoneAPIKey := fmt.Sprintf("%s-racing4everyone", t.Name())
-	ulcxAPIKey := fmt.Sprintf("%s-ulcx", t.Name())
+	digitalCoreAPIKey := t.Name() + "-digitalcore"
+	hdSpaceAPIKey := t.Name() + "-hdspace"
+	racingForEveryoneAPIKey := t.Name() + "-racing4everyone"
+	ulcxAPIKey := t.Name() + "-ulcx"
 
 	input := []byte(fmt.Sprintf(`
 config = {
@@ -486,7 +486,7 @@ config = {
     },
     'TORRENT_CLIENTS': {},
 }
-`, digitalCoreAPIKey, hdSpaceAPIKey, racingForEveryoneAPIKey, fmt.Sprintf("%s-lowercase-dc", t.Name()), ulcxAPIKey, fmt.Sprintf("%s-upload-cx", t.Name())))
+`, digitalCoreAPIKey, hdSpaceAPIKey, racingForEveryoneAPIKey, t.Name()+"-lowercase-dc", ulcxAPIKey, t.Name()+"-upload-cx"))
 
 	cfg, warnings, err := ImportFromContent(input)
 	if err != nil {
@@ -528,7 +528,7 @@ config = {
 }
 
 func TestConvertLegacyTrackerAliases(t *testing.T) {
-	seedCoreAPIKey := fmt.Sprintf("%s-seedcore", t.Name())
+	seedCoreAPIKey := t.Name() + "-seedcore"
 	legacy := &Config{
 		Default: map[string]any{},
 		Trackers: map[string]any{
