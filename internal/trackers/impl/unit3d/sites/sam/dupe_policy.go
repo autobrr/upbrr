@@ -22,6 +22,11 @@ func duplicatePolicy() *trackers.DupePolicy {
 			trackers.DupeDimensionAudioCodec,
 			trackers.DupeDimensionAudioChannels,
 		},
+		// Partial audio evidence must not prove a different slot on its own.
+		CompleteSlotDimensions: []trackers.DupeDimension{
+			trackers.DupeDimensionAudioCodec,
+			trackers.DupeDimensionAudioChannels,
+		},
 		CoexistenceRules: []trackers.DupeRule{{
 			ID:         "sam_new_audio_languages",
 			Relation:   string(api.DupeRelationCoexists),

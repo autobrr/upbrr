@@ -13,7 +13,7 @@ import (
 func TestDuplicateAudioEvidenceUsesPerTrackFacts(t *testing.T) {
 	t.Parallel()
 
-	codecs, codecsComplete, channels, channelsComplete := duplicateAudioEvidence(api.MediaFacts{
+	codecs, codecsComplete, channels, channelsComplete, languagesComplete := duplicateAudioEvidence(api.MediaFacts{
 		TrackCoverageComplete: true,
 		Audio:                 "DDP 5.1",
 		Channels:              "5.1",
@@ -23,12 +23,14 @@ func TestDuplicateAudioEvidenceUsesPerTrackFacts(t *testing.T) {
 				Codec:         "E-AC-3",
 				Channels:      6,
 				ChannelsKnown: true,
+				Languages:     []string{"en"},
 			},
 			{
 				Kind:          api.MediaTrackAudio,
 				Codec:         "AAC",
 				Channels:      2,
 				ChannelsKnown: true,
+				Languages:     []string{"pt-BR"},
 			},
 			{Kind: api.MediaTrackSubtitle, Codec: "PGS"},
 		},
@@ -39,8 +41,8 @@ func TestDuplicateAudioEvidenceUsesPerTrackFacts(t *testing.T) {
 	if got, want := channels, []string{"6", "2"}; !slices.Equal(got, want) {
 		t.Fatalf("channels = %#v, want %#v", got, want)
 	}
-	if !codecsComplete || !channelsComplete {
-		t.Fatalf("completeness = %t/%t, want complete", codecsComplete, channelsComplete)
+	if !codecsComplete || !channelsComplete || !languagesComplete {
+		t.Fatalf("completeness = %t/%t/%t, want complete", codecsComplete, channelsComplete, languagesComplete)
 	}
 }
 
@@ -48,12 +50,13 @@ func TestDuplicateAudioEvidenceMarksPartialEvidence(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name             string
-		media            api.MediaFacts
-		wantCodecs       []string
-		wantCodecsDone   bool
-		wantChannels     []string
-		wantChannelsDone bool
+		name               string
+		media              api.MediaFacts
+		wantCodecs         []string
+		wantCodecsDone     bool
+		wantChannels       []string
+		wantChannelsDone   bool
+		wantLanguagesDone  bool
 	}{
 		{
 			name: "coverage incomplete",
@@ -64,6 +67,7 @@ func TestDuplicateAudioEvidenceMarksPartialEvidence(t *testing.T) {
 					Codec:         "AAC",
 					Channels:      2,
 					ChannelsKnown: true,
+					Languages:     []string{"en"},
 				}},
 			},
 			wantCodecs:   []string{"AAC"},
@@ -79,18 +83,37 @@ func TestDuplicateAudioEvidenceMarksPartialEvidence(t *testing.T) {
 						Codec:         "AAC",
 						Channels:      2,
 						ChannelsKnown: true,
+						Languages:     []string{"en"},
 					},
 					{
 						Kind:          api.MediaTrackAudio,
 						ChannelsKnown: false,
 						ChannelLayout: "5.1",
+						Languages:     []string{"pt-BR"},
 					},
 				},
 			},
+			wantCodecs:        []string{"AAC"},
+			wantChannels:      []string{"2", "5.1"},
+			wantChannelsDone:  true,
+			wantCodecsDone:    false,
+			wantLanguagesDone: true,
+		},
+		{
+			name: "track language missing",
+			media: api.MediaFacts{
+				TrackCoverageComplete: true,
+				Tracks: []api.MediaTrackFacts{{
+					Kind:          api.MediaTrackAudio,
+					Codec:         "AAC",
+					Channels:      2,
+					ChannelsKnown: true,
+				}},
+			},
 			wantCodecs:       []string{"AAC"},
-			wantChannels:     []string{"2", "5.1"},
+			wantChannels:     []string{"2"},
+			wantCodecsDone:   true,
 			wantChannelsDone: true,
-			wantCodecsDone:   false,
 		},
 		{
 			name: "no audio tracks",
@@ -103,15 +126,15 @@ func TestDuplicateAudioEvidenceMarksPartialEvidence(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			codecs, codecsComplete, channels, channelsComplete := duplicateAudioEvidence(test.media)
+			codecs, codecsComplete, channels, channelsComplete, languagesComplete := duplicateAudioEvidence(test.media)
 			if got, want := codecs, test.wantCodecs; !slices.Equal(got, want) {
 				t.Fatalf("codecs = %#v, want %#v", got, want)
 			}
 			if got, want := channels, test.wantChannels; !slices.Equal(got, want) {
 				t.Fatalf("channels = %#v, want %#v", got, want)
 			}
-			if codecsComplete != test.wantCodecsDone || channelsComplete != test.wantChannelsDone {
-				t.Fatalf("completeness = %t/%t, want %t/%t", codecsComplete, channelsComplete, test.wantCodecsDone, test.wantChannelsDone)
+			if codecsComplete != test.wantCodecsDone || channelsComplete != test.wantChannelsDone || languagesComplete != test.wantLanguagesDone {
+				t.Fatalf("completeness = %t/%t/%t, want %t/%t/%t", codecsComplete, channelsComplete, languagesComplete, test.wantCodecsDone, test.wantChannelsDone, test.wantLanguagesDone)
 			}
 		})
 	}

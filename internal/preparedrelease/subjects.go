@@ -38,7 +38,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 	if len(selectedPlaylists) == 0 {
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
-	audioCodecs, audioCodecsComplete, audioChannels, audioChannelsComplete := duplicateAudioEvidence(release.Media)
+	audioCodecs, audioCodecsComplete, audioChannels, audioChannelsComplete, audioLanguagesComplete := duplicateAudioEvidence(release.Media)
 	subject := api.UploadSubject{
 		MediaFileFacts:              release.Media.MediaFileFacts.Clone(),
 		SourceIdentity:              release.SourceIdentity,
@@ -101,6 +101,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		AudioChannels:               audioChannels,
 		AudioCodecsComplete:         audioCodecsComplete,
 		AudioChannelsComplete:       audioChannelsComplete,
+		AudioLanguagesComplete:      audioLanguagesComplete,
 		Channels:                    release.Media.Channels,
 		HasCommentary:               release.Media.Commentary,
 		Is3D:                        release.Media.ThreeD,
@@ -175,46 +176,47 @@ func (m *Module) ResolveDuplicateSubject(ctx context.Context, input api.Duplicat
 	if len(fileList) == 0 {
 		fileList = manifestFiles(release.Source)
 	}
-	audioCodecs, audioCodecsComplete, audioChannels, audioChannelsComplete := duplicateAudioEvidence(release.Media)
+	audioCodecs, audioCodecsComplete, audioChannels, audioChannelsComplete, audioLanguagesComplete := duplicateAudioEvidence(release.Media)
 	subject := api.DuplicateSubject{
-		EffectiveMetadata:     release.MetadataFacts(),
-		SourcePath:            release.Source.SourcePath,
-		SourceSize:            release.Source.Size,
-		VideoPath:             resources.videoPath,
-		FileList:              fileList,
-		Filename:              release.Naming.Filename,
-		SceneName:             release.Naming.SceneName,
-		ReleaseName:           release.Naming.ReleaseName,
-		Release:               releaseInfo(release),
-		Identity:              release.Identity,
-		ProviderMetadata:      release.ProviderMetadata,
-		DiscType:              firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
-		Disc:                  release.Disc,
-		Type:                  release.Media.Type,
-		Source:                release.Media.Source,
-		AudioLanguages:        append([]string(nil), release.Media.AudioLanguages...),
-		Audio:                 release.Media.Audio,
-		AudioCodecs:           audioCodecs,
-		AudioChannels:         audioChannels,
-		AudioCodecsComplete:   audioCodecsComplete,
-		AudioChannelsComplete: audioChannelsComplete,
-		Channels:              release.Media.Channels,
-		Tag:                   release.Naming.Tag,
-		HDR:                   release.Media.HDR,
-		HDRFacts:              release.Media.HDRFacts,
-		UHD:                   release.Media.UHD,
-		VideoEncode:           release.Media.VideoEncode,
-		VideoCodec:            release.Media.VideoCodec,
-		HasEncodeSettings:     release.Media.HasEncodeSettings,
-		SeasonInt:             release.Episode.Season,
-		EpisodeInt:            release.Episode.Episode,
-		SeasonStr:             release.Episode.SeasonLabel,
-		EpisodeStr:            release.Episode.EpisodeLabel,
-		DailyEpisodeDate:      release.Episode.DailyDate,
-		TVPack:                release.Episode.Pack,
-		Anime:                 release.Media.Anime,
-		TrackerIDs:            maps.Clone(resources.clientEvidence.Result.TrackerIDs),
-		MatchedTrackers:       append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
+		EffectiveMetadata:      release.MetadataFacts(),
+		SourcePath:             release.Source.SourcePath,
+		SourceSize:             release.Source.Size,
+		VideoPath:              resources.videoPath,
+		FileList:               fileList,
+		Filename:               release.Naming.Filename,
+		SceneName:              release.Naming.SceneName,
+		ReleaseName:            release.Naming.ReleaseName,
+		Release:                releaseInfo(release),
+		Identity:               release.Identity,
+		ProviderMetadata:       release.ProviderMetadata,
+		DiscType:               firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
+		Disc:                   release.Disc,
+		Type:                   release.Media.Type,
+		Source:                 release.Media.Source,
+		AudioLanguages:         append([]string(nil), release.Media.AudioLanguages...),
+		Audio:                  release.Media.Audio,
+		AudioCodecs:            audioCodecs,
+		AudioChannels:          audioChannels,
+		AudioCodecsComplete:    audioCodecsComplete,
+		AudioChannelsComplete:  audioChannelsComplete,
+		AudioLanguagesComplete: audioLanguagesComplete,
+		Channels:               release.Media.Channels,
+		Tag:                    release.Naming.Tag,
+		HDR:                    release.Media.HDR,
+		HDRFacts:               release.Media.HDRFacts,
+		UHD:                    release.Media.UHD,
+		VideoEncode:            release.Media.VideoEncode,
+		VideoCodec:             release.Media.VideoCodec,
+		HasEncodeSettings:      release.Media.HasEncodeSettings,
+		SeasonInt:              release.Episode.Season,
+		EpisodeInt:             release.Episode.Episode,
+		SeasonStr:              release.Episode.SeasonLabel,
+		EpisodeStr:             release.Episode.EpisodeLabel,
+		DailyEpisodeDate:       release.Episode.DailyDate,
+		TVPack:                 release.Episode.Pack,
+		Anime:                  release.Media.Anime,
+		TrackerIDs:             maps.Clone(resources.clientEvidence.Result.TrackerIDs),
+		MatchedTrackers:        append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
 	}
 	cloned, err := cloneWithJSON(subject)
 	if err != nil {
@@ -675,13 +677,22 @@ func cloneAnswers(source map[string]map[string]string) map[string]map[string]str
 // duplicateAudioEvidence projects per-track codec and channel facts into
 // duplicate slot evidence. It keeps the evidence incomplete when any audio
 // track lacks a requested field, so partial facts never prove a different slot.
-func duplicateAudioEvidence(media api.MediaFacts) (codecs []string, codecsComplete bool, channels []string, channelsComplete bool) {
+func duplicateAudioEvidence(media api.MediaFacts) (
+	codecs []string,
+	codecsComplete bool,
+	channels []string,
+	channelsComplete bool,
+	languagesComplete bool,
+) {
 	codecsComplete = media.TrackCoverageComplete
 	channelsComplete = media.TrackCoverageComplete
+	languagesComplete = media.TrackCoverageComplete
+	audioTracks := 0
 	for _, track := range media.Tracks {
 		if track.Kind != api.MediaTrackAudio {
 			continue
 		}
+		audioTracks++
 		if codec := strings.TrimSpace(track.Codec); codec != "" {
 			codecs = append(codecs, codec)
 		} else {
@@ -695,6 +706,16 @@ func duplicateAudioEvidence(media api.MediaFacts) (codecs []string, codecsComple
 		default:
 			channelsComplete = false
 		}
+		hasLanguage := false
+		for _, language := range track.Languages {
+			if strings.TrimSpace(language) != "" {
+				hasLanguage = true
+				break
+			}
+		}
+		if !hasLanguage {
+			languagesComplete = false
+		}
 	}
 	if len(codecs) == 0 {
 		codecsComplete = false
@@ -702,5 +723,8 @@ func duplicateAudioEvidence(media api.MediaFacts) (codecs []string, codecsComple
 	if len(channels) == 0 {
 		channelsComplete = false
 	}
-	return codecs, codecsComplete, channels, channelsComplete
+	if audioTracks == 0 {
+		languagesComplete = false
+	}
+	return codecs, codecsComplete, channels, channelsComplete, languagesComplete
 }
