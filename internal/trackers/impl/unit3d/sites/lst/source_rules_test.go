@@ -45,7 +45,7 @@ func TestLSTAlternateAndSecondaryGuidance(t *testing.T) {
 			track := subject.LanguageFacts.Tracks[0]
 			track.ID, track.Role, track.Default = "secondary", role, false
 			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
-			question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{LanguageFacts: subject.LanguageFacts}})
+			question := compatibilityQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{LanguageFacts: subject.LanguageFacts}})
 			if question != nil {
 				t.Fatalf("source reassurance question: %+v", question)
 			}
@@ -63,7 +63,7 @@ func TestLSTUnverifiedSubtitlePresentationIsAdvisory(t *testing.T) {
 	subject.LanguageFacts = lstTestLanguageFacts("Japanese", []string{"Japanese"}, []string{"English"})
 	subject.LanguageFacts.Tracks = subject.LanguageFacts.Tracks[:1]
 	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
-	if question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{LanguageFacts: subject.LanguageFacts}}); question != nil {
+	if question := compatibilityQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{LanguageFacts: subject.LanguageFacts}}); question != nil {
 		t.Fatalf("subtitle reassurance question: %+v", question)
 	}
 }
@@ -123,13 +123,14 @@ func TestLSTCompatibilitySourceQualityIsAdvisory(t *testing.T) {
 						}
 					}
 				}
-				question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
+				question := compatibilityQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
 					Type:                        subject.Type,
 					LanguageFacts:               subject.LanguageFacts,
 					TrackerQuestionnaireAnswers: map[string]map[string]string{"LST": subject.QuestionnaireAnswers},
 				}})
-				if question == nil || len(question.Fields) != 1 || !strings.HasPrefix(question.Fields[0].Key, "compatibility_mix_") {
-					t.Fatalf("only measured association input should remain: %+v", question)
+				if question == nil || len(question.Fields) != 1 || !strings.HasPrefix(question.Fields[0].Key, "compatibility_mix_") ||
+					question.Fields[0].Required || question.Fields[0].NeedsReview {
+					t.Fatalf("resolved association is not optional: %+v", question)
 				}
 				subject.Type = "DISC"
 				if got := languageAssessment(subject); len(got) != 0 {
@@ -224,7 +225,7 @@ func TestLSTKnownHardcodedEnglishIsNotExternal(t *testing.T) {
 			t.Fatalf("known burned-in English misclassified: %+v", failure)
 		}
 	}
-	if questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); questionnaire != nil {
+	if questionnaire := compatibilityQuestionnaire(trackers.PreparationInput{Meta: meta}); questionnaire != nil {
 		t.Fatalf("known burned-in English requires a false source answer: %+v", questionnaire)
 	}
 	subject.PersonalRelease = true
@@ -239,7 +240,7 @@ func TestLSTSubtitlePresentationCoversEveryProgrammeResource(t *testing.T) {
 	subject.LanguageFacts.Tracks[2].ResourceID = "media-1"
 	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	meta := api.UploadSubject{Type: subject.Type, LanguageFacts: subject.LanguageFacts}
-	if question := languageQuestionnaire(trackers.PreparationInput{Meta: meta}); question != nil {
+	if question := compatibilityQuestionnaire(trackers.PreparationInput{Meta: meta}); question != nil {
 		t.Fatalf("unverified presentation became a question: %+v", question)
 	}
 	subtitle := subject.LanguageFacts.Tracks[2]
@@ -288,7 +289,7 @@ func TestLSTHardcodedPresentationDoesNotInferPackCoverage(t *testing.T) {
 	track.ID, track.ResourceID, track.Default = "audio-2", "media-2", false
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, track)
 	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
-	question := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
+	question := compatibilityQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
 		Type:                       subject.Type,
 		LanguageFacts:              subject.LanguageFacts,
 		HardcodedSubtitleLanguages: subject.HardcodedSubtitleLanguages,
@@ -348,7 +349,7 @@ func TestLSTEnglishDubExemptionPrecedesUnrelatedSubtitleEvidence(t *testing.T) {
 						t.Fatalf("English alternative needs unrelated subtitle evidence: %+v", failure)
 					}
 				}
-				questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{Type: subject.Type, LanguageFacts: subject.LanguageFacts}})
+				questionnaire := compatibilityQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{Type: subject.Type, LanguageFacts: subject.LanguageFacts}})
 				if questionnaire != nil {
 					for _, field := range questionnaire.Fields {
 						if strings.HasPrefix(field.Key, "english_subtitle_presentation") {

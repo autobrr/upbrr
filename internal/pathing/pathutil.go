@@ -5,6 +5,8 @@
 package pathing
 
 import (
+	"errors"
+	"os"
 	"path" //nolint:depguard // Normalizes slash-style metadata paths, not local filesystem paths.
 	"path/filepath"
 	"runtime"
@@ -39,24 +41,29 @@ func Base(value string) string {
 // through the nearest existing path prefix so missing child paths under a
 // symlink cannot escape the root.
 func IsWithinRoot(root string, target string) bool {
+	_, _, ok := resolveWithinRoot(root, target)
+	return ok
+}
+
+func resolveWithinRoot(root string, target string) (string, string, bool) {
 	rootAbs, ok := cleanAbs(root)
 	if !ok {
-		return false
+		return "", "", false
 	}
 	targetAbs, ok := cleanAbs(target)
 	if !ok {
-		return false
+		return "", "", false
 	}
 	if !isWithinCleanRoot(rootAbs, targetAbs) {
-		return false
+		return "", "", false
 	}
 
 	rootReal, rootOK := evalExistingPrefix(rootAbs)
 	targetReal, targetOK := evalExistingPrefix(targetAbs)
 	if !rootOK || !targetOK {
-		return true
+		return "", "", false
 	}
-	return isWithinCleanRoot(rootReal, targetReal)
+	return rootReal, targetReal, isWithinCleanRoot(rootReal, targetReal)
 }
 
 // SamePath compares local filesystem paths with the host OS path semantics.
@@ -127,6 +134,11 @@ func evalExistingPrefix(value string) (string, bool) {
 				resolved = filepath.Join(resolved, m)
 			}
 			return filepath.Clean(resolved), true
+		}
+		// A missing child may be appended to its resolved parent. An existing
+		// but unresolvable entry (including a dangling link) cannot be trusted.
+		if _, err := os.Lstat(current); !errors.Is(err, os.ErrNotExist) {
+			return "", false
 		}
 		parent := filepath.Dir(current)
 		if parent == current {

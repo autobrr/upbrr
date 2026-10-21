@@ -75,7 +75,18 @@ func CorrectionChoices() (map[string][]CorrectionChoice, error) {
 	}
 	serviceNames["AMZN"] = "Amazon Prime Video"
 
+	var features []CorrectionChoice
+	for _, feature := range []api.ReleaseFeature{api.ReleaseFeatureHybrid, api.ReleaseFeatureRestoration, api.ReleaseFeatureRemaster, api.ReleaseFeatureTwoDiscSet, api.ReleaseFeature4KRestoration, api.ReleaseFeature4KRemaster, api.ReleaseFeatureExtras, api.ReleaseFeature2D3DEdition, api.ReleaseFeature3DAnaglyph, api.ReleaseFeature3DFullSBS, api.ReleaseFeature3DHalfOU, api.ReleaseFeature3DHalfSBS} {
+		features = append(features, CorrectionChoice{Value: string(feature), Label: api.ReleaseFeatureLabel(feature)})
+	}
 	return map[string][]CorrectionChoice{
+		"ReleaseFeatures": features,
+		"Presentation": {
+			{Value: "", Label: "None"},
+			{Value: "IMAX", Label: "IMAX"},
+			{Value: "Open Matte", Label: "Open Matte"},
+			{Value: "IMAX Open Matte", Label: "IMAX Open Matte"},
+		},
 		"SubtitleLanguages":          choices,
 		"HardcodedSubtitleLanguages": hardcoded,
 		"Category": {

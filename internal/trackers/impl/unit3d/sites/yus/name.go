@@ -14,10 +14,13 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v8", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v10", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
 }
 
 func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := unit3d.ApplyDVDNameDefaults(editor, meta, true); err != nil {
+		return fmt.Errorf("apply YUS DVD naming: %w", err)
+	}
 	if !isYUSFullDisc(meta) {
 		for _, role := range []api.ReleaseNameRole{api.NameRoleDualAudio, api.NameRoleDubbed} {
 			if err := editor.Omit(role); err != nil {
@@ -36,8 +39,10 @@ func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 	if err := applyYUSTVDBDisambiguation(editor, meta); err != nil {
 		return err
 	}
-	if err := editor.Omit(api.NameRoleEdition); err != nil {
-		return fmt.Errorf("omit YUS edition: %w", err)
+	for _, role := range []api.ReleaseNameRole{api.NameRoleEdition, api.NameRoleEditionDisplay} {
+		if err := editor.Omit(role); err != nil {
+			return fmt.Errorf("omit YUS %s: %w", role, err)
+		}
 	}
 	for _, role := range []api.ReleaseNameRole{api.NameRoleEditionSet, api.NameRoleCut, api.NameRolePresentation} {
 		if err := editor.Include(role); err != nil {

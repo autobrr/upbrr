@@ -295,7 +295,8 @@ type PreparedReleaseRepository interface {
 	// CommitPreparedReleaseWithCorrections computes compatibility from the authoritative
 	// correction revision inside the generation transaction. The callback must perform
 	// only local computation; its error rolls back both corrections and generation.
-	CommitPreparedReleaseWithCorrections(context.Context, PreparedRelease, uint64, StoredReleaseCorrectionsV1,
+	// A non-nil predecessor generation must still be current before any write.
+	CommitPreparedReleaseWithCorrections(context.Context, PreparedRelease, *PreparedGeneration, uint64, StoredReleaseCorrectionsV1,
 		func(uint64) (PreparationCompatibility, error)) (uint64, error)
 }
 

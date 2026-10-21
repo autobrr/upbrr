@@ -23,6 +23,9 @@ var (
 
 // TrackerCandidate is protocol-independent private candidate evidence.
 type TrackerCandidate struct {
+	Evidence          api.DupeReleaseEvidence
+	SourceFingerprint api.WorkflowFingerprint
+
 	// TrackerSlot preserves the adapter's opaque native evidence, including unknown components.
 	TrackerSlot      string
 	ID               string
@@ -61,37 +64,42 @@ type TrackerCandidate struct {
 // NormalizeCandidate converts one adapter entry without exposing private
 // download evidence to public evaluation projections.
 func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
+	source := entry
+	source.Download, source.Link = "", ""
+	sourceFingerprint, _ := api.CanonicalWorkflowFingerprint(source)
 	candidate := TrackerCandidate{
-		TrackerSlot:     entry.TrackerSlot,
-		ID:              strings.TrimSpace(entry.ID),
-		Name:            strings.TrimSpace(entry.Name),
-		Files:           append([]string(nil), entry.Files...),
-		FileCount:       entry.FileCount,
-		SizeBytes:       entry.SizeBytes,
-		SizeKnown:       entry.SizeKnown,
-		Category:        strings.TrimSpace(entry.Category),
-		Type:            strings.TrimSpace(entry.Type),
-		CanonicalType:   strings.TrimSpace(entry.CanonicalType),
-		Source:          strings.TrimSpace(entry.Source),
-		Resolution:      strings.TrimSpace(entry.Res),
-		Codec:           strings.TrimSpace(entry.Codec),
-		Container:       strings.TrimSpace(entry.Container),
-		Provider:        strings.TrimSpace(entry.Provider),
-		Group:           strings.TrimSpace(entry.Group),
-		ReleaseOrigin:   strings.TrimSpace(entry.ReleaseOrigin),
-		Edition:         strings.TrimSpace(entry.Edition),
-		Region:          strings.TrimSpace(entry.Region),
-		ThreeD:          strings.TrimSpace(entry.ThreeD),
-		Repack:          strings.TrimSpace(entry.Repack),
-		Season:          entry.Season,
-		Episode:         entry.Episode,
-		Pack:            entry.Pack,
-		Internal:        entry.Internal,
-		Trumpable:       entry.Trumpable,
-		Flags:           append([]string(nil), entry.Flags...),
-		HDR:             cloneHDRFacts(entry.HDR),
-		DetailsLink:     strings.TrimSpace(entry.Link),
-		privateDownload: strings.TrimSpace(entry.Download),
+		SourceFingerprint: sourceFingerprint,
+		Evidence:          entry.Evidence,
+		TrackerSlot:       entry.TrackerSlot,
+		ID:                strings.TrimSpace(entry.ID),
+		Name:              strings.TrimSpace(entry.Name),
+		Files:             append([]string(nil), entry.Files...),
+		FileCount:         entry.FileCount,
+		SizeBytes:         entry.SizeBytes,
+		SizeKnown:         entry.SizeKnown,
+		Category:          strings.TrimSpace(entry.Category),
+		Type:              strings.TrimSpace(entry.Type),
+		CanonicalType:     strings.TrimSpace(entry.CanonicalType),
+		Source:            strings.TrimSpace(entry.Source),
+		Resolution:        strings.TrimSpace(entry.Res),
+		Codec:             strings.TrimSpace(entry.Codec),
+		Container:         strings.TrimSpace(entry.Container),
+		Provider:          strings.TrimSpace(entry.Provider),
+		Group:             strings.TrimSpace(entry.Group),
+		ReleaseOrigin:     strings.TrimSpace(entry.ReleaseOrigin),
+		Edition:           strings.TrimSpace(entry.Edition),
+		Region:            strings.TrimSpace(entry.Region),
+		ThreeD:            strings.TrimSpace(entry.ThreeD),
+		Repack:            strings.TrimSpace(entry.Repack),
+		Season:            entry.Season,
+		Episode:           entry.Episode,
+		Pack:              entry.Pack,
+		Internal:          entry.Internal,
+		Trumpable:         entry.Trumpable,
+		Flags:             append([]string(nil), entry.Flags...),
+		HDR:               cloneHDRFacts(entry.HDR),
+		DetailsLink:       strings.TrimSpace(entry.Link),
+		privateDownload:   strings.TrimSpace(entry.Download),
 	}
 	if candidate.FileCount == 0 {
 		candidate.FileCount = len(candidate.Files)
@@ -167,8 +175,8 @@ func enrichCandidateCoordinatesFromTitle(candidate *TrackerCandidate) {
 		}
 	}
 	if candidate.Date == "" {
-		if match := candidateDailyDatePattern.FindStringSubmatch(candidate.Name); len(match) == 4 {
-			candidate.Date = strings.Join(match[1:], "-")
+		if scope := contentScopeFromTitle(candidate.Name, FactOriginTrackerTitle); scope.Kind == contentScopeDaily {
+			candidate.Date = scope.Date
 		}
 	}
 }

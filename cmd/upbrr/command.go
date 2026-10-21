@@ -8,18 +8,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type cliIO struct {
-	in     io.Reader
-	out    io.Writer
-	errOut io.Writer
+	in           io.Reader
+	out          io.Writer
+	errOut       io.Writer
+	capabilities *cliTerminalCapabilities
+	presenter    cliPresenter
+	// terminalResult carries one deferred artifact report for output after
+	// terminal restoration; the driver must not send multiple reports.
+	terminalResult chan<- func(io.Writer) error
+	dashboard      bool
+	keepOpen       bool
 }
 
 func (streams cliIO) normalized() cliIO {
@@ -171,11 +180,7 @@ func newUploadRootCommand(streams cliIO, originalArgs []string) *cobra.Command {
 			if err := normalizeCLIOptions(&bound, visited); err != nil {
 				return exitError(2, err)
 			}
-			return runUpload(cmd.Context(), originalArgs, bound, visited, paths, cliIO{
-				in:     cmd.InOrStdin(),
-				out:    cmd.OutOrStdout(),
-				errOut: cmd.ErrOrStderr(),
-			})
+			return runUpload(cmd.Context(), originalArgs, bound, visited, paths, streams)
 		},
 	}
 	configureCommand(cmd, streams, 2, "parse CLI options", func(cmd *cobra.Command) string {
@@ -194,6 +199,16 @@ func newServeCommand(streams cliIO) *cobra.Command {
 		Use:  "serve [options]",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if isCLITerminal(streams.out) || isCLITerminal(streams.errOut) {
+				stdout, stderr := streams.out, streams.errOut
+				if isCLITerminal(stdout) {
+					stdout = &cliStyledConsoleWriter{Writer: stdout, noColor: os.Getenv("NO_COLOR") != ""}
+				}
+				if isCLITerminal(stderr) {
+					stderr = &cliStyledConsoleWriter{Writer: stderr, noColor: os.Getenv("NO_COLOR") != ""}
+				}
+				defer logging.SetDefaultConsoleOutput(stdout, stderr)()
+			}
 			return runServe(cmd.Context(), opts, canonicalChangedFlags(cmd.Flags(), nil))
 		},
 	}
@@ -305,11 +320,7 @@ func newAuthPasswordCommand(streams cliIO) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runChangeAuthPasswordCommand(cmd.Context(), opts, cmd.Flags().Changed("config"), cliIO{
-				in:     cmd.InOrStdin(),
-				out:    cmd.OutOrStdout(),
-				errOut: cmd.ErrOrStderr(),
-			})
+			return runAuthPasswordPresentation(cmd.Context(), opts, cmd.Flags().Changed("config"), streams)
 		},
 	}
 	configureCommand(cmd, streams, 2, "parse auth password options", func(cmd *cobra.Command) string {

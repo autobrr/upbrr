@@ -14,6 +14,7 @@ import type {
 } from "../../api/generated/release-workflow";
 import type { InputFacet } from "../../releaseSession/types";
 import type { PreparedRelease } from "../../types";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
 import { LanguageListInput } from "./LanguageListInput";
@@ -83,6 +84,91 @@ function CommaListInput({
   );
 }
 
+/** Keeps multiple selections and unknown saved values in a keyboard-accessible disclosure. */
+function ReleaseFeaturesInput({
+  value,
+  onChange,
+}: Readonly<{
+  value: readonly string[];
+  onChange: (value: readonly string[]) => void;
+}>) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const options = [
+    ...correctionChoices.ReleaseFeatures,
+    ...value
+      .filter(
+        (feature) => !correctionChoices.ReleaseFeatures.some((option) => option.value === feature),
+      )
+      .map((feature) => ({ value: feature, label: `Unsupported current value: ${feature}` })),
+  ];
+  const selected =
+    value.map((feature) => options.find((option) => option.value === feature)!.label).join(", ") ||
+    "None";
+  return (
+    <div
+      className="relative min-w-0"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(false);
+          trigger.current?.focus();
+        }
+      }}
+    >
+      <button
+        ref={trigger}
+        type="button"
+        className="flex h-9 min-w-0 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm text-card-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        aria-labelledby="correction-release_name.release_features-label"
+        aria-describedby="correction-release_name.release_features-summary"
+        aria-expanded={open}
+        aria-controls={open ? "correction-release_name.release_features-options" : undefined}
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <span
+          id="correction-release_name.release_features-summary"
+          className="truncate"
+          title={selected}
+        >
+          {selected}
+        </span>
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open ? (
+        <fieldset
+          id="correction-release_name.release_features-options"
+          className="absolute inset-x-0 top-full z-20 mt-1 grid max-h-72 gap-2 overflow-y-auto rounded-md border border-input bg-card p-3 text-card-foreground shadow-md"
+          aria-labelledby="correction-release_name.release_features-label"
+        >
+          <Button type="button" aria-label="None Release features" onClick={() => onChange([])}>
+            None
+          </Button>
+          {options.map((option) => (
+            <label key={option.value} className="flex min-w-0 items-center gap-2">
+              <Checkbox
+                checked={value.includes(option.value)}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    checked
+                      ? [...value, option.value]
+                      : value.filter((feature) => feature !== option.value),
+                  )
+                }
+              />
+              <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span>
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
+    </div>
+  );
+}
+
 function ProviderIDInput({
   id,
   label,
@@ -144,6 +230,7 @@ function CorrectionRow({
   status,
   stale,
   trackId,
+  grouped = false,
   readOnly = false,
   onAuto,
   onConfirm,
@@ -154,6 +241,7 @@ function CorrectionRow({
   status: string;
   stale: boolean;
   trackId?: string;
+  grouped?: boolean;
   readOnly?: boolean;
   onAuto: () => void;
   onConfirm: () => void;
@@ -165,9 +253,15 @@ function CorrectionRow({
       data-correction-field={field}
       {...(trackId ? { "data-track-id": trackId } : {})}
     >
-      <label className="font-medium" htmlFor={`correction-${field}-${trackId || "value"}`}>
-        {label}
-      </label>
+      {grouped ? (
+        <span className="font-medium" id={`correction-${field}-label`}>
+          {label}
+        </span>
+      ) : (
+        <label className="font-medium" htmlFor={`correction-${field}-${trackId || "value"}`}>
+          {label}
+        </label>
+      )}
       <div className="flex min-w-0 items-start gap-2">
         <div className="min-w-0 flex-1 [&_input]:w-full">{children}</div>
         {!readOnly ? (
@@ -256,7 +350,7 @@ const releaseStringFields: ReadonlyArray<{
   key: keyof ReleaseNameOverrides;
   choices?: readonly { value: string; label: string }[];
   searchable?: boolean;
-  automatic: (release: PreparedRelease | null) => string | number;
+  automatic: (release: PreparedRelease | null) => string | number | readonly string[];
 }> = [
   {
     field: "release_name.category",
@@ -305,8 +399,20 @@ const releaseStringFields: ReadonlyArray<{
     label: "Edition",
     key: "Edition",
     automatic: (r) =>
-      r?.Media?.EditionSet ||
-      [r?.Media?.Cut, r?.Media?.Edition, r?.Media?.Presentation].filter(Boolean).join(" "),
+      r?.Media?.EditionSet || [r?.Media?.Cut, r?.Media?.Edition].filter(Boolean).join(" "),
+  },
+  {
+    field: "release_name.presentation",
+    label: "Presentation",
+    key: "Presentation",
+    choices: correctionChoices.Presentation,
+    automatic: (r) => r?.Media?.Presentation || "",
+  },
+  {
+    field: "release_name.release_features",
+    label: "Release features",
+    key: "ReleaseFeatures",
+    automatic: (r) => r?.Media?.ReleaseFeatures || [],
   },
   {
     field: "release_name.repack",
@@ -803,8 +909,10 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
   const identityAutomatic = (key: keyof ExternalIDOverrides) => Number(release?.Identity[key] || 0);
   const setIdentity = (key: keyof ExternalIDOverrides, value: number) =>
     facet.changeIdentity({ ...view.intent.identity, [key]: value });
-  const setReleaseName = (key: keyof ReleaseNameOverrides, value: string | number | boolean) =>
-    facet.changeReleaseName({ ...view.intent.releaseName, [key]: value });
+  const setReleaseName = (
+    key: keyof ReleaseNameOverrides,
+    value: string | number | boolean | readonly string[],
+  ) => facet.changeReleaseName({ ...view.intent.releaseName, [key]: value });
   const setMetadata = (key: keyof MetadataOverrides, value: string | boolean | readonly string[]) =>
     facet.changeMetadata({ ...view.intent.metadata, [key]: value });
 
@@ -857,7 +965,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         <div className={inputGridClass}>
           {releaseStringFields.map(({ field, label, key, automatic, choices, searchable }) => {
             const readOnly = key === "ManualYear" && isTV;
-            const manual = !readOnly && hasOwn(view.intent.releaseName, key);
+            const manual = !readOnly && view.intent.releaseName[key] != null;
             const rawValue = manual ? view.intent.releaseName[key] : automatic(release);
             const numeric = key === "ManualYear";
             const value =
@@ -870,11 +978,18 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 label={label}
                 status={statusFor(field, manual)}
                 readOnly={readOnly}
+                grouped={key === "ReleaseFeatures"}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
               >
-                {choices ? (
+                {key === "ReleaseFeatures" ? (
+                  <ReleaseFeaturesInput
+                    key={draftKey(field)}
+                    value={Array.isArray(rawValue) ? rawValue : []}
+                    onChange={(next) => setReleaseName(key, next)}
+                  />
+                ) : choices ? (
                   <ChoiceControl
                     key={draftKey(field)}
                     id={`correction-${field}-value`}

@@ -535,8 +535,8 @@ func TestAZFamilyNamingPolicyVersions(t *testing.T) {
 		provider   api.IdentityProvider
 	}{
 		{"AZ", "azfamily/az/v4", api.IdentityProviderTMDB},
-		{"CZ", "azfamily/cz/v7", api.IdentityProviderIMDB},
-		{"PHD", "azfamily/phd/v4", api.IdentityProviderTMDB},
+		{"CZ", "azfamily/cz/v9", api.IdentityProviderIMDB},
+		{"PHD", "azfamily/phd/v6", api.IdentityProviderTMDB},
 	} {
 		t.Run(test.site, func(t *testing.T) {
 			policy := New(test.site).ReleaseNamePolicy()

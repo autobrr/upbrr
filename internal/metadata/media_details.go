@@ -25,9 +25,11 @@ import (
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -111,8 +113,26 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		return preparationstate.State{}, err
 	}
 
+	if meta.MetadataRequirements.InspectProgrammeTracks && meta.DiscType == "" && len(meta.FileList) > 0 && s.mi != nil {
+		root, cacheErr := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
+		if cacheErr != nil {
+			return preparationstate.State{}, fmt.Errorf("primary inspection cache: %w", cacheErr)
+		}
+		fingerprint := meta.MediaInspectionFingerprint
+		if fingerprint == "" {
+			fingerprint = meta.SourceFingerprint
+		}
+		var reports mediainfo.Result
+		miDoc, reports, err = inspectFileMediaInfoReports(ctx, s.mi, meta.VideoPath, fingerprint, root)
+		if err != nil {
+			return preparationstate.State{}, fmt.Errorf("primary inspection: %w", err)
+		}
+		meta.MediaInfoJSONPath, meta.MediaInfoTextPath = reports.JSONPath, reports.TextPath
+	}
+
 	meta.MediaInfoUniqueID, meta.MediaInfoUniqueIDPresent = validateMediaInfoUniqueID(meta, miDoc)
 	meta.VideoBitrate = videoBitrateAssessment(miDoc)
+	meta.VideoEncoder = measuredVideoEncoder(miDoc)
 	if !meta.MediaInfoUniqueIDPresent {
 		logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
@@ -126,6 +146,12 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	// BDInfo report ordinals identify playlist evidence, not native decoder streams.
 	if slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool { return track.DiscID != "" || track.PlaylistID != "" }) {
 		meta.TrackCoverageComplete = false
+	}
+	if meta.MetadataRequirements.InspectProgrammeTracks && meta.DiscType == "" && len(meta.FileList) > 0 {
+		meta, err = s.inspectProgrammeTracks(ctx, meta)
+		if err != nil {
+			return preparationstate.State{}, err
+		}
 	}
 	meta.AudioLanguages = append([]string(nil), meta.TrackAudioLanguages...)
 	meta.SubtitleLanguages = append([]string(nil), meta.TrackSubtitleLanguages...)
@@ -240,6 +266,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	parts := editionFromMeta(meta, miDoc)
 	meta.EditionSet, meta.Cut, meta.Edition, meta.Presentation, meta.Repack = parts.Set, parts.Cut, parts.Edition, parts.Presentation, parts.Repack
 	meta.ReleaseFeatures = parts.Features
+	meta.EditionDisplay = parts.EditionDisplay
 	meta.WebDV = false
 	logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
 
@@ -794,7 +821,7 @@ func mergeGeneratedNameAvailability(
 		if source, ok := available.Component(component.Role); ok {
 			component.AvailableValue = source.Value
 		}
-		component.Manual = releaseNameRoleIsManual(component.Role, meta.ReleaseNameOverrides) || releaseNameRoleUsesManualFact(component.Role, meta, request)
+		component.Manual = generatedNameRoleIsManual(component.Role, meta, request)
 	}
 	alignAudioMarkerLayout(document, available)
 }
@@ -805,10 +832,10 @@ func ensureManualGeneratedNameComponents(document *api.ReleaseNameDocument, meta
 	}
 	for _, role := range []api.ReleaseNameRole{
 		api.NameRoleTitle, api.NameRoleAlternateTitle, api.NameRoleYear, api.NameRoleSeason, api.NameRoleEpisode, api.NameRoleDailyDate, api.NameRoleEpisodeTitle,
-		api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation, api.NameRoleHybrid, api.NameRoleRepack, api.NameRoleRegion, api.NameRoleSource, api.NameRoleService, api.NameRoleResolution,
+		api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRoleEditionDisplay, api.NameRolePresentation, api.NameRoleHybrid, api.NameRoleRepack, api.NameRoleRegion, api.NameRoleSource, api.NameRoleService, api.NameRoleResolution,
 		api.NameRoleDVDSystem, api.NameRoleVideoFormat, api.NameRoleDubbed, api.NameRoleDualAudio, api.NameRoleGroup,
 	} {
-		manual := releaseNameRoleIsManual(role, meta.ReleaseNameOverrides) || releaseNameRoleUsesManualFact(role, meta, request)
+		manual := generatedNameRoleIsManual(role, meta, request)
 		if _, exists := document.Component(role); exists || !manual {
 			continue
 		}
@@ -818,6 +845,23 @@ func ensureManualGeneratedNameComponents(document *api.ReleaseNameDocument, meta
 			Manual: true,
 		})
 	}
+}
+
+// generatedNameRoleIsManual keeps DVD-encode fact corrections separate from
+// exact presentation choices. Tracker defaults may format their source/type
+// labels and known resolution; explicit resolution clears remain protected.
+func generatedNameRoleIsManual(role api.ReleaseNameRole, meta *preparationstate.State, request api.ReleaseNameRequest) bool {
+	if strings.EqualFold(strings.TrimSpace(request.Type), "ENCODE") && sourceIn(request.Source, "DVD", "PAL DVD", "NTSC DVD") {
+		if role == api.NameRoleSource || role == api.NameRoleVideoFormat {
+			return false
+		}
+		if role == api.NameRoleResolution {
+			if resolution := strings.TrimSpace(request.Resolution); resolution != "" && !strings.EqualFold(resolution, "OTHER") {
+				return false
+			}
+		}
+	}
+	return releaseNameRoleIsManual(role, meta.ReleaseNameOverrides) || releaseNameRoleUsesManualFact(role, meta, request)
 }
 
 func releaseNameRoleUsesManualFact(
@@ -842,10 +886,16 @@ func releaseNameRoleUsesManualFact(
 		return request.ManualEpisodeTitle || overrides.EpisodeTitle != nil
 	case api.NameRoleDailyDate:
 		return overrides.ManualDate != nil
-	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation:
+	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition:
 		return overrides.Edition != nil
+	case api.NameRoleEditionDisplay:
+		return overrides.Edition != nil || overrides.ReleaseFeatures != nil
+	case api.NameRolePresentation:
+		return overrides.Presentation != nil || overrides.Edition != nil && manualEditionParts(*overrides.Edition).Presentation != ""
 	case api.NameRoleHybrid:
-		return overrides.Edition != nil || meta.MetadataOverrides.WebDV != nil
+		return overrides.ReleaseFeatures != nil ||
+			overrides.Edition != nil && slices.Contains(manualEditionParts(*overrides.Edition).Features, api.ReleaseFeatureHybrid) ||
+			meta.MetadataOverrides.WebDV != nil
 	case api.NameRoleDubbed, api.NameRoleDualAudio:
 		return meta.MetadataOverrides.OriginalLanguage != nil || manualAudioLanguages(*meta)
 	case api.NameRoleRegion:
@@ -927,8 +977,16 @@ func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseName
 		return overrides.ManualDate != nil || overrides.UseSeasonEpisode != nil
 	case api.NameRoleEpisodeTitle:
 		return overrides.EpisodeTitle != nil || overrides.NoEpisodeTitle != nil
-	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation, api.NameRoleHybrid:
+	case api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition:
 		return overrides.Edition != nil || overrides.NoEdition != nil
+	case api.NameRoleEditionDisplay:
+		return overrides.Edition != nil || overrides.ReleaseFeatures != nil || overrides.NoEdition != nil
+	case api.NameRolePresentation:
+		return overrides.Presentation != nil || overrides.NoEdition != nil ||
+			overrides.Edition != nil && manualEditionParts(*overrides.Edition).Presentation != ""
+	case api.NameRoleHybrid:
+		return overrides.ReleaseFeatures != nil || overrides.NoEdition != nil ||
+			overrides.Edition != nil && slices.Contains(manualEditionParts(*overrides.Edition).Features, api.ReleaseFeatureHybrid)
 	case api.NameRoleRepack:
 		return overrides.Repack != nil || overrides.NoEdition != nil
 	case api.NameRoleRegion:
@@ -1770,14 +1828,15 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 }
 
 // releaseEditionParts keeps evidence categories separate until name rendering.
-// Manual edition wording remains an authoritative whole value, never classified.
+// Manual corrections classify only complete supported labels before naming.
 type releaseEditionParts struct {
-	Features     []api.ReleaseFeature
-	Set          string
-	Cut          string
-	Edition      string
-	Presentation string
-	Repack       string
+	Features       []api.ReleaseFeature
+	EditionDisplay []api.EditionDisplayPart
+	Set            string
+	Cut            string
+	Edition        string
+	Presentation   string
+	Repack         string
 }
 
 var releaseCutTags = taginfo.Find(taginfo.All()["cut"]...)
@@ -1790,50 +1849,75 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) releaseEditi
 	applyAnimeOverride(&meta)
 	parts := releaseEditionParts{Cut: canonicalCutLabel(meta.Release.Cut), Edition: strings.TrimSpace(meta.Edition)}
 	filenameEvidence := parts.Cut != "" || parts.Edition != "" || len(meta.Release.Edition) > 0 || meta.Release.Collection == "IMAX"
+	var originalEditions []string
 	if parts.Edition == "" {
 		var editions []string
 		for _, value := range meta.Release.Edition {
 			if info := releaseEditionTags(value); info != nil && info.Tag() == "Open.Matte" {
 				parts.Presentation = "Open Matte"
+				continue
+			}
+			originalEditions = append(originalEditions, value)
+			if feature := editionFeature(value); feature != "" {
+				parts.Features = append(parts.Features, feature)
 			} else {
 				editions = append(editions, value)
 			}
 		}
 		parts.Edition = strings.Join(editions, " ")
+	} else if feature := editionFeature(parts.Edition); feature != "" {
+		originalEditions = []string{parts.Edition}
+		parts.Features = append(parts.Features, feature)
+		parts.Edition = ""
+	}
+	if len(parts.Features) > 0 {
+		parts.EditionDisplay = parserEditionDisplay(originalEditions)
 	}
 	if meta.Release.Collection == "IMAX" {
 		parts.Presentation = strings.TrimSpace("IMAX " + parts.Presentation)
 	}
+	hybrid := containsExactHybrid(meta.Release.Other) || containsExactHybrid(strings.Fields(parts.Edition))
 	repack := repackFromMeta(meta, parts.Edition)
 	parts.Edition = cleanEditionText(repackPattern.ReplaceAllString(parts.Edition, ""))
+	if api.EditionDisplayText(parts.EditionDisplay) == parts.Edition {
+		parts.EditionDisplay = nil
+	}
 	applyReleaseFeatures(&parts, meta)
 	features, filenameSet := parts.Features, parts.Set
 	filenameEvidence = filenameEvidence || parts.Edition != "" || parts.Presentation != ""
-	if !hasManualEditionOverride(meta.ReleaseNameOverrides) {
+	{
 		multi := resolveMultiPlaylistEdition(meta)
 		if !filenameEvidence {
 			parts = resolveIMDbEditionFromMediaDuration(meta, doc)
-			if parts.Set == "" && parts.Cut == "" && parts.Edition == "" && parts.Presentation == "" {
+			if parts.Set == "" && parts.Cut == "" && parts.Edition == "" && parts.Presentation == "" && len(parts.Features) == 0 {
 				parts = multi
 			}
 		}
 		if multi.Set != "" {
 			parts.Set = multi.Set
+			// Preserve the filename feature snapshot before later Hybrid appends.
+			parts.Features = append(slices.Clone(parts.Features), multi.Features...)
 		} else if parts.Set == "" {
 			parts.Set = filenameSet
 		}
 	}
-	hybrid := containsExactHybrid(meta.Release.Other) || containsExactHybrid(strings.Fields(parts.Edition))
-	if hybrid && !hasManualEditionOverride(meta.ReleaseNameOverrides) {
+	hybrid = hybrid || containsExactHybrid(strings.Fields(parts.Edition))
+	if hybrid {
 		// Hybrid already has its own naming role; it is not another edition.
-		parts.Edition = removeHybrid(parts.Edition)
+		parts.Edition = cleanEditionResidue(removeHybrid(parts.Edition))
 	}
 	parts = ignoreSolitaryTheatrical(parts)
-	if hybrid && !containsExactHybrid(strings.Fields(parts.Edition)) {
-		parts.Edition = strings.TrimSpace(parts.Edition + " Hybrid")
+	if hybrid {
+		features = append(features, api.ReleaseFeatureHybrid)
 	}
 	parts.Repack = strings.ToUpper(repack)
-	parts.Features = features
+	features = append(append([]api.ReleaseFeature(nil), features...), parts.Features...)
+	parts.Features = nil
+	for _, feature := range features {
+		if !slices.Contains(parts.Features, feature) {
+			parts.Features = append(parts.Features, feature)
+		}
+	}
 	return parts
 }
 
@@ -1861,29 +1945,44 @@ func canonicalCutLabel(cuts []string) string {
 // provider labels remain editions instead of being guessed from substrings.
 func imdbEditionParts(attributes []string) releaseEditionParts {
 	var cuts, editions, presentations []string
+	var display []api.EditionDisplayPart
+	parts := releaseEditionParts{}
 	for _, attribute := range attributes {
 		value := strings.TrimSpace(attribute)
 		if value == "" {
 			continue
 		}
+		label := cleanIMDbEditionText(smartEditionTitle(value))
 		switch {
 		case releaseCutTags(value) != nil:
-			cuts = append(cuts, cleanIMDbEditionText(smartEditionTitle(value)))
+			cuts = append(cuts, label)
 		case strings.EqualFold(value, "IMAX"):
 			presentations = append(presentations, "IMAX")
 		default:
 			if info := releaseEditionTags(value); info != nil && info.Tag() == "Open.Matte" {
 				presentations = append(presentations, "Open Matte")
+				continue
+			}
+			feature := editionFeature(value)
+			if feature != api.ReleaseFeatureHybrid {
+				display = append(display, api.EditionDisplayPart{Text: label, Feature: feature})
+			}
+			if feature != "" {
+				if !slices.Contains(parts.Features, feature) {
+					parts.Features = append(parts.Features, feature)
+				}
 			} else {
-				editions = append(editions, cleanIMDbEditionText(smartEditionTitle(value)))
+				editions = append(editions, label)
 			}
 		}
 	}
-	return releaseEditionParts{
-		Cut:          strings.Join(cuts, " "),
-		Edition:      strings.Join(editions, " "),
-		Presentation: strings.Join(presentations, " "),
+	parts.Cut = strings.Join(cuts, " ")
+	parts.Edition = strings.Join(editions, " ")
+	parts.Presentation = strings.Join(presentations, " ")
+	if api.EditionDisplayText(display) != parts.Edition {
+		parts.EditionDisplay = display
 	}
+	return parts
 }
 
 func containsExactHybrid(values []string) bool {
@@ -1970,7 +2069,11 @@ func resolveMultiPlaylistEdition(meta preparationstate.State) releaseEditionPart
 			continue
 		}
 		if best := matches[0]; best.hasAttribute {
-			matched[best.name] = best.parts
+			label := cleanEditionResidue(removeHybrid(best.name))
+			if label == "" {
+				label = fmt.Sprintf("%d Minute Version", best.minutes)
+			}
+			matched[label] = best.parts
 		} else {
 			withoutAttributes = true
 		}
@@ -1984,11 +2087,30 @@ func resolveMultiPlaylistEdition(meta preparationstate.State) releaseEditionPart
 	}
 	sort.Strings(names)
 	var cuts, editions, presentations []string
+	var display []api.EditionDisplayPart
+	var displayTexts []string
+	var features []api.ReleaseFeature
 	if withoutAttributes {
 		cuts = append(cuts, "Theatrical")
 	}
 	for _, name := range names {
 		parts := matched[name]
+		for _, feature := range parts.Features {
+			if !slices.Contains(features, feature) {
+				features = append(features, feature)
+			}
+		}
+		fragments := parts.EditionDisplay
+		if len(fragments) == 0 && parts.Edition != "" {
+			fragments = []api.EditionDisplayPart{{Text: parts.Edition}}
+		}
+		if text := api.EditionDisplayText(fragments); text != "" && !slices.Contains(displayTexts, text) {
+			if len(display) > 0 {
+				display = append(display, api.EditionDisplayPart{Text: "/"})
+			}
+			display = append(display, fragments...)
+			displayTexts = append(displayTexts, text)
+		}
 		for _, item := range []struct {
 			value  string
 			values *[]string
@@ -2011,11 +2133,16 @@ func resolveMultiPlaylistEdition(meta preparationstate.State) releaseEditionPart
 	case count > 2:
 		set = cleanIMDbEditionText(fmt.Sprintf("%din1 %s", count, strings.Join(labels, " / ")))
 	}
+	if api.EditionDisplayText(display) == strings.Join(editions, " / ") {
+		display = nil
+	}
 	return releaseEditionParts{
-		Set:          set,
-		Cut:          strings.Join(cuts, " / "),
-		Edition:      strings.Join(editions, " / "),
-		Presentation: strings.Join(presentations, " / "),
+		Set:            set,
+		Features:       features,
+		EditionDisplay: display,
+		Cut:            strings.Join(cuts, " / "),
+		Edition:        strings.Join(editions, " / "),
+		Presentation:   strings.Join(presentations, " / "),
 	}
 }
 
@@ -2278,10 +2405,6 @@ func applyAnimeOverride(meta *preparationstate.State) {
 		return
 	}
 	meta.Anime = *meta.MetadataOverrides.Anime
-}
-
-func hasManualEditionOverride(overrides api.ReleaseNameOverrides) bool {
-	return overrides.Edition != nil
 }
 
 func isMovieMetadata(meta preparationstate.State) bool {

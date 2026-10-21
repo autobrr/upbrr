@@ -478,6 +478,9 @@ func normalizeState(state *State) {
 	if state.HDRExtractions == nil {
 		state.HDRExtractions = make(map[api.HDRExtractionID]HDRExtractionRecord)
 	}
+	if state.HDRMeasurements == nil {
+		state.HDRMeasurements = make(map[string]HDRMeasurementRecord)
+	}
 	if state.AudioAnalyses == nil {
 		state.AudioAnalyses = make(map[api.AudioAnalysisResultID]api.AudioAnalysisResult)
 	}

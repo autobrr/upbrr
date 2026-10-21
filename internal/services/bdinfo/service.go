@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 
-	bridge "github.com/Audionut/go-hdr10-plus/integration/bdinfo"
 	bdrunner "github.com/autobrr/go-bdinfo/pkg/bdinfo"
 
 	"github.com/autobrr/upbrr/internal/logging"
@@ -154,11 +153,16 @@ type ScanResult struct {
 }
 
 type hdrCaptureKey struct{}
-type HDRCapture func(*bridge.Outcome) error
+type HDRCapture func(*hdranalysis.NativeDiscOutcome) error
+
+type hdrCaptureRequest struct {
+	capture   HDRCapture
+	playlists []string
+}
 
 // WithHDRCapture collects HDR metadata during the next report scan.
-func WithHDRCapture(ctx context.Context, capture HDRCapture) context.Context {
-	return context.WithValue(ctx, hdrCaptureKey{}, capture)
+func WithHDRCapture(ctx context.Context, capture HDRCapture, playlists ...string) context.Context {
+	return context.WithValue(ctx, hdrCaptureKey{}, hdrCaptureRequest{capture: capture, playlists: append([]string(nil), playlists...)})
 }
 
 // SetHDRService installs the same admission owner used by workflow and standalone analysis.
@@ -264,7 +268,7 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 	}
 	var result bdrunner.Result
 	var err error
-	if capture, ok := ctx.Value(hdrCaptureKey{}).(HDRCapture); ok && capture != nil && s.hdr != nil {
+	if capture, ok := ctx.Value(hdrCaptureKey{}).(hdrCaptureRequest); ok && capture.capture != nil && s.hdr != nil {
 		err = s.hdr.WithSession(ctx, func(session *hdranalysis.Session) error {
 			settings := bdrunner.DefaultSettings(filepath.Dir(outputPath))
 			settings.GenerateStreamDiagnostics = false
@@ -279,7 +283,13 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 				OnProgress:      req.OnProgress,
 				IncludeTimeline: true,
 			}
-			outcome, scanErr := session.ScanDisc(ctx, options)
+			outcome, scanErr := session.ScanNativeDisc(
+				ctx,
+				options,
+				api.HDRAnalysisFormatsBoth,
+				0,
+				capture.playlists[:min(len(capture.playlists), api.HDRAnalysisMaxTargets)]...)
+			defer outcome.Release()
 			if scanErr != nil {
 				return fmt.Errorf("combined HDR report scan: %w", scanErr)
 			}
@@ -287,7 +297,7 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 				return errors.New("bdinfo: combined scan returned no report")
 			}
 			result = *outcome.Report
-			if captureErr := capture(outcome); captureErr != nil {
+			if captureErr := capture.capture(outcome); captureErr != nil {
 				logger.Warnf("bdinfo: HDR capture state=unavailable")
 			}
 			return nil

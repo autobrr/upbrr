@@ -125,7 +125,10 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 						t.Fatal(err)
 					}
 					for _, failure := range failures {
-						if failure.Rule == "language_evidence" ||
+						if tracker == "LST" && failure.Rule == "language_lst_audio_layout_evidence" && failure.EvidenceStatus == api.MetadataEvidenceStatusPartial {
+							continue
+						}
+						if tracker != "LST" && failure.Rule == "language_evidence" ||
 							strings.HasPrefix(failure.Rule, "language_") && trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
 							t.Errorf("%s blocked the selected report's ordinary English/Japanese audio: %+v", tracker, failure)
 						}

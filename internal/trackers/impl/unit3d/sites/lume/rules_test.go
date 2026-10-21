@@ -180,6 +180,11 @@ func TestLumePersonalRecommendationExemptions(t *testing.T) {
 			subject.LanguageFacts.Tracks[0].Title = ""
 			setLumeAnswer(&subject, "language_personal_exemption", test.answer)
 			requireLUMEValidationFailure(t, languageAssessment(subject), "language_track_titles", test.want, test.status)
+			for _, failure := range languageAssessment(subject) {
+				if failure.Rule == "language_track_titles" && failure.QuestionnaireInput != (test.status == api.MetadataEvidenceStatusPartial) {
+					t.Fatalf("personal exemption input gate = %+v", failure)
+				}
+			}
 			requireLUMEValidationFailure(t, languageAssessment(subject), "language_original_order", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
 		})
 	}

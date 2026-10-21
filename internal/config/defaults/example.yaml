@@ -387,6 +387,10 @@ trackers:
     api_key: ""
     anon: false
     tag_for_custom_release: ""
+  SC:
+    link_dir_name: ""
+    api_key: ""
+    anon: false
   SHRI:
     link_dir_name: ""
     api_key: ""

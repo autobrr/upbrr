@@ -104,6 +104,9 @@ func ripTypeName(meta api.UploadSubject) string {
 	case "bdrip":
 		return "BDRip"
 	case "encode":
+		if isDVDEncode(meta) {
+			return "DVDRip"
+		}
 		return "BluRay"
 	case "brrip":
 		return "BRRip"
@@ -129,6 +132,19 @@ func ripTypeName(meta api.UploadSubject) string {
 		return "WEBRip"
 	default:
 		return ""
+	}
+}
+
+// isDVDEncode uses finalized type and source facts, never a disc hint or name token.
+func isDVDEncode(meta api.UploadSubject) bool {
+	if !strings.EqualFold(strings.TrimSpace(meta.Type), "ENCODE") {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(meta.Source)) {
+	case "DVD", "PAL DVD", "NTSC DVD":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -36,6 +36,9 @@ func (m *Module) evaluateInputReadiness(
 		trackerNames[index] = string(trackerIDs[index])
 	}
 	previousAnswers := cloneTrackerInputAnswers(state.TrackerInputAnswers)
+	lateQuestionnaires := currentUploadQuestionnaires(state, now)
+	var descriptionSubject api.UploadSubject
+	applyDescriptionHDRQuestionnaireEvidence(&descriptionSubject, state)
 	if trackerInputAnswersChanged(state.TrackerInputAnswers, command.TrackerInputAnswers) {
 		applyTrackerInputAnswers(state, command.TrackerInputAnswers)
 		invalidateTrackerAndDownstream(&state.Workflow)
@@ -48,6 +51,9 @@ func (m *Module) evaluateInputReadiness(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve input readiness subject: %w", err)
 	}
+	subject.TrackerHDRArtifacts = descriptionSubject.TrackerHDRArtifacts
+	subject.DescriptionGroups = descriptionSubject.DescriptionGroups
+	subject.DescriptionGroupsFinal = descriptionSubject.DescriptionGroupsFinal
 	globalEvaluation := defaultInputReadinessEvaluation(subject, trackerIDs)
 	evaluation := globalEvaluation
 	if m.inputReadiness != nil {
@@ -60,7 +66,7 @@ func (m *Module) evaluateInputReadiness(
 	if err := validateTrackerInputPatch(
 		command.TrackerInputAnswers,
 		trackerIDs,
-		slices.Concat(evaluation.Schemas, evaluation.TrackerQuestionnaires),
+		slices.Concat(evaluation.Schemas, evaluation.TrackerQuestionnaires, lateQuestionnaires),
 		previousAnswers,
 	); err != nil {
 		return CommandResult{}, err
@@ -120,11 +126,21 @@ func validateTrackerInputPatch(
 			if index < 0 {
 				return fmt.Errorf("%w: tracker has no local input schema", ErrInvalidTransition)
 			}
-			fieldIndex := slices.IndexFunc(schemas[index].Fields, func(field api.TrackerQuestionnaireField) bool { return field.Key == key })
-			if fieldIndex < 0 {
+			var field api.TrackerQuestionnaireField
+			for _, schema := range schemas {
+				if !strings.EqualFold(schema.Tracker, string(trackerID)) {
+					continue
+				}
+				fieldIndex := slices.IndexFunc(schema.Fields, func(field api.TrackerQuestionnaireField) bool { return field.Key == key })
+				if fieldIndex >= 0 {
+					// Current schemas precede retained late questions and own conflicts.
+					field = schema.Fields[fieldIndex]
+					break
+				}
+			}
+			if field.Key == "" {
 				return fmt.Errorf("%w: unknown tracker input field", ErrInvalidTransition)
 			}
-			field := schemas[index].Fields[fieldIndex]
 			if value == nil {
 				continue
 			}

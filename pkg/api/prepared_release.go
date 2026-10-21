@@ -45,8 +45,12 @@ type PreparedRelease struct {
 // PrepareResult returns one immutable release projection plus non-canonical
 // preparation diagnostics.
 type PrepareResult struct {
-	Release     PreparedRelease
-	Diagnostics []PreparationDiagnostic
+	// EquivalentPreviousRelease identifies the atomically checked predecessor whose
+	// finalized facts and verified source identity are unchanged. It does not renew
+	// workflow evidence, expiry, or approval authority.
+	EquivalentPreviousRelease *ReleaseRef
+	Release                   PreparedRelease
+	Diagnostics               []PreparationDiagnostic
 	// EffectiveInstructions and Corrections retain accepted intent outside the
 	// immutable facts so workflow snapshots use the same preparation authority.
 	EffectiveInstructions ReleaseFactInstructions
@@ -165,8 +169,10 @@ type NamingFacts struct {
 // EpisodeFacts contains canonical reusable episodic identity and schedule
 // facts, independent of tracker policy.
 type EpisodeFacts struct {
-	Season            int
-	Episode           int
+	Season  int
+	Episode int
+	// MultipleEpisodes retains known combined or conflicting source episode membership.
+	MultipleEpisodes  bool
 	SeasonLabel       string
 	EpisodeLabel      string
 	DailyDate         string
@@ -198,10 +204,23 @@ type SubtitleLanguageCoverage struct {
 	Coverage SubtitleCoverage
 }
 
+// EditionDisplayPart retains one ordered fragment of previously rendered
+// automatic edition wording. Feature references an independently classified
+// release feature; an empty reference is display text, not edition evidence.
+// Only naming and feature-review presentation consume this projection.
+type EditionDisplayPart struct {
+	Text    string
+	Feature ReleaseFeature `json:",omitempty"`
+}
+
 // ReleaseFeature identifies a prepared annotation that does not establish a cut or edition.
 type ReleaseFeature string
 
 const (
+	// ReleaseFeatureHybrid describes mixed release sources, never an editorial cut.
+	ReleaseFeatureHybrid        ReleaseFeature = "hybrid"
+	ReleaseFeatureRestoration   ReleaseFeature = "restoration"
+	ReleaseFeatureRemaster      ReleaseFeature = "remaster"
 	ReleaseFeatureTwoDiscSet    ReleaseFeature = "two_disc_set"
 	ReleaseFeature4KRestoration ReleaseFeature = "4k_restoration"
 	ReleaseFeature4KRemaster    ReleaseFeature = "4k_remaster"
@@ -248,11 +267,15 @@ type MediaFacts struct {
 	Distributor                          string
 	Region                               string
 	VideoCodec                           string
+	VideoEncoder                         string
 	VideoEncode                          string
 	HasEncodeSettings                    bool
 	BitDepth                             string
 	// ReleaseFeatures are source-backed annotations, separate from naming components.
 	ReleaseFeatures []ReleaseFeature `json:",omitempty"`
+	// EditionDisplay preserves previously rendered automatic annotation wording for display only.
+	// Never use it for edition identity, validation mappings, or duplicate comparison.
+	EditionDisplay []EditionDisplayPart
 	// Cut, Edition, and Presentation are independently addressable naming facts.
 	EditionSet        string
 	Cut               string
@@ -265,6 +288,7 @@ type MediaFacts struct {
 	ServiceLongName   string
 	MediaInfoUniqueID string
 	Anime             bool
+	AnimeKnown        bool
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as

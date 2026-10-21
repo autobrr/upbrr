@@ -307,6 +307,12 @@ func (b workflowUploadPlanBuilder) Build(
 		}
 	}
 	subject.ExactMedia = exactMedia
+	subject.TrackerHDRArtifacts = make(map[string][]api.HDRArtifactEvidence, len(eligible))
+	for _, projection := range eligible {
+		tracker := string(projection.TrackerID)
+		retained := api.UploadSubject{TrackerHDRArtifacts: map[string][]api.HDRArtifactEvidence{tracker: descriptions.HDRArtifacts[projection.TrackerID]}}
+		subject.TrackerHDRArtifacts[tracker] = retained.HDRArtifactEvidence(tracker)
+	}
 	subject.ImageHostOverrides.FailedHosts = slices.Concat(subject.ImageHostOverrides.FailedHosts, media.FailedHosts)
 	skipImageUpload := true
 	subject.ImageHostOverrides.SkipUpload = &skipImageUpload
@@ -1210,7 +1216,7 @@ func (e *workflowUploadExecution) Execute(
 		}
 		_, alreadyInjected := e.dryRunInjected[trackerID]
 		switch {
-		case result.Summary.PendingPublication:
+		case result.Summary.PendingPublication && !hasUploaded:
 			outcome.ClientInjectionStatus = api.StageStatusSkipped
 			outcome.ClientInjectionMessage = "Client injection skipped while tracker publication is pending."
 		case alreadyInjected:
@@ -1660,16 +1666,5 @@ func sanitizeWorkflowFieldValue(key string, value string) string {
 }
 
 func sanitizeWorkflowRemoteURL(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || !parsed.IsAbs() || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return ""
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	parsed.User = nil
-	return parsed.String()
+	return redaction.TrackerPageURL(value)
 }

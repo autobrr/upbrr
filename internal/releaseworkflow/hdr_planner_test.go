@@ -11,6 +11,58 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestRequestedHDRUsableRetainedAudioAndNativeRequirements(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		options *api.HDRDecodedOptions
+		state   api.HDRDecodedState
+		owned   bool
+		sibling bool
+		status  api.StageStatus
+		want    bool
+	}{
+		{"complete audio", &api.HDRDecodedOptions{Audio: true}, api.HDRDecodedComplete, true, false, api.StageStatusPartial, true},
+		{"partial audio", &api.HDRDecodedOptions{Audio: true}, api.HDRDecodedInconclusive, true, false, api.StageStatusPartial, true},
+		{"automatic includes audio", &api.HDRDecodedOptions{Automatic: true}, api.HDRDecodedComplete, true, false, api.StageStatusPartial, true},
+		{"native only still requires native", nil, api.HDRDecodedComplete, true, false, api.StageStatusPartial, false},
+		{"failed audio", &api.HDRDecodedOptions{Audio: true}, api.HDRDecodedFailed, true, false, api.StageStatusPartial, false},
+		{"unowned audio", &api.HDRDecodedOptions{Audio: true}, api.HDRDecodedComplete, false, false, api.StageStatusPartial, false},
+		{"missing sibling", &api.HDRDecodedOptions{Audio: true}, api.HDRDecodedComplete, true, true, api.StageStatusPartial, false},
+		{"canceled", &api.HDRDecodedOptions{Audio: true}, api.HDRDecodedComplete, true, false, api.StageStatusCanceled, false},
+		{"interrupted", &api.HDRDecodedOptions{Audio: true}, api.HDRDecodedComplete, true, false, api.StageStatusInterrupted, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			target := api.HDRAnalysisTargetResult{
+				Artifacts: []api.HDRTypedArtifact{{
+					ID:   "stats",
+					Kind: api.HDRArtifactAudioStats,
+					MIME: "text/plain",
+				}},
+				Decoded: []api.HDRDecodedResult{{
+					Mode:     api.HDRDecodedAudio,
+					State:    test.state,
+					Measured: 1,
+				}},
+			}
+			if test.owned {
+				target.Decoded[0].Artifacts = []api.PublicResourceID{"stats"}
+			}
+			result := api.HDRAnalysisResult{
+				ProfileVersion: api.HDRAnalysisProfileV2,
+				Status:         test.status,
+				Decoded:        test.options,
+				Targets:        []api.HDRAnalysisTargetResult{target},
+			}
+			if test.sibling {
+				result.Targets = append(result.Targets, api.HDRAnalysisTargetResult{})
+			}
+			if got := requestedHDRUsable(&result); got != test.want {
+				t.Fatalf("usable=%v want=%v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRequestedHDRDefaultsOnlySingleEligibleTarget(t *testing.T) {
 	first, second := api.HDRTargetID("first", ""), api.HDRTargetID("second", "")
 	supported := api.HDRAnalysisTarget{ID: first, Supported: true}

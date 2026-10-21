@@ -5,8 +5,6 @@ package metadata
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -19,7 +17,6 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
-	"github.com/autobrr/upbrr/internal/mediafacts"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
@@ -624,23 +621,19 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		}
 		meta.MediaInfoJSONPath = miResult.JSONPath
 		meta.HDRFileEligibility = make(map[string]bool)
+		meta.HDRFileEvidence = make(map[string]api.HDRSourceEvidence)
 		// Bind HDR track evidence to its file, inspected inventory and verified content.
 		hdrSourceFingerprint := request.SourceFingerprint
 		if request.Input.VerifiedSource != nil {
 			hdrSourceFingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
 		}
+		meta.MediaInspectionFingerprint = hdrSourceFingerprint
 		for _, file := range meta.FileList {
-			if !strings.EqualFold(filepath.Ext(file), ".mkv") {
+			extension := strings.ToLower(filepath.Ext(file))
+			if extension != ".mkv" && extension != ".mp4" && extension != ".ts" && extension != ".m2ts" {
 				continue
 			}
-			key := sha256.Sum256([]byte(file + "\x00" + hdrSourceFingerprint))
-			result, inspectErr := s.mi.Export(ctx, mediainfo.Request{
-				SourcePath:  file,
-				VideoPath:   file,
-				TempRoot:    tmpRoot,
-				ArtifactDir: filepath.Join(tmpRoot, "hdr-mediainfo", hex.EncodeToString(key[:])),
-				Release:     ParseReleaseInfo(file),
-			})
+			evidence, inspectErr := InspectHDRFile(ctx, s.mi, file, hdrSourceFingerprint, tmpRoot)
 			if inspectErr != nil {
 				if ctx.Err() != nil {
 					return preparationstate.State{}, fmt.Errorf("metadata: HDR track inspection canceled: %w", ctx.Err())
@@ -648,10 +641,8 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 				logger.Debugf("metadata: HDR track inspection state=unavailable")
 				continue
 			}
-			doc, inspectErr := loadMediaInfoDoc(result.JSONPath)
-			if inspectErr == nil {
-				meta.HDRFileEligibility[file] = mediafacts.HDR10PlusTrackFromMediaInfo(doc)
-			}
+			meta.HDRFileEligibility[file] = evidence.UniqueHEVC && evidence.HDR10Plus
+			meta.HDRFileEvidence[file] = evidence
 		}
 		meta.MediaInfoTextPath = miResult.TextPath
 		meta.DVDIFOPath = miResult.IFOPath
@@ -814,7 +805,10 @@ func (s *Service) collectDiscEvidence(
 					reportBDInfo(api.PreparationProgressRunning, message)
 				})
 				if request.Input.Controls.CaptureHDRMetadata {
-					analysisCtx = bdinfo.WithHDRCapture(analysisCtx, capturePreparedHDR(analysisCtx, &resource, artifactDir, request.SourceFingerprint))
+					analysisCtx = bdinfo.WithHDRCapture(
+						analysisCtx,
+						capturePreparedHDR(analysisCtx, &resource, artifactDir, request.SourceFingerprint),
+						playlistFiles...)
 				}
 				outputPath, _, err := s.resolveOrCreateBDMVSummaries(analysisCtx, request.Input, artifactDir, disc.Root, playlistFiles)
 				if err != nil {
@@ -1391,9 +1385,12 @@ func applySeasonEpisodeMetadata(meta *preparationstate.State, result seasonep.Re
 		return
 	}
 
-	if result.Season > 0 {
+	if result.Season > 0 || result.SeasonKnown {
 		meta.SeasonInt = result.Season
 		meta.SeasonStr = seasonep.FormatSeason(result.Season)
+		if result.Season == 0 {
+			meta.SeasonStr = "S00"
+		}
 		if meta.Release.Season == 0 {
 			meta.Release.Season = result.Season
 		}
@@ -1409,6 +1406,7 @@ func applySeasonEpisodeMetadata(meta *preparationstate.State, result seasonep.Re
 		meta.DailyEpisodeDate = result.DailyDate
 	}
 	meta.TVPack = result.TVPack
+	meta.MultipleEpisodes = result.MultipleEpisodes
 
 	if logger != nil && (meta.SeasonStr != "" || meta.EpisodeStr != "" || meta.DailyEpisodeDate != "" || meta.TVPack) {
 		logger.Debugf(

@@ -41,6 +41,7 @@ func (b workflowDescriptionBuilder) PrepareReusableDescriptions(
 		return nil, nil
 	}
 	reusable := api.ReusableDescription{
+		RendererVersion:          workflowDescriptionRendererVersion,
 		CompatibilityFingerprint: compatibilityFingerprint,
 		Descriptions:             cloneWorkflowRenderedDescriptions(snapshot.Descriptions),
 		TrackerResults:           slices.Clone(snapshot.TrackerResults),
@@ -91,6 +92,11 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 
 	restoredInstructions := instructions
 	restoredInstructions.Overrides = slices.Clone(reusable.Overrides)
+	if reusable.RendererVersion != workflowDescriptionRendererVersion {
+		// Keep compatible explicit edits while rebuilding output from an older renderer.
+		snapshot, buildErr := b.Build(ctx, release, projections, media, privateMedia, restoredInstructions, time.Time{})
+		return snapshot, restoredInstructions, buildErr
+	}
 	inputFingerprint, templateFingerprint, err := b.Fingerprints(
 		ctx, release, projections, media, privateMedia, restoredInstructions,
 	)

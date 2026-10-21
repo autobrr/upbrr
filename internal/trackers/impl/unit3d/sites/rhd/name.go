@@ -65,8 +65,11 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	}
 	if meta.EditionSet != "" {
 		parts = append(parts, meta.EditionSet)
-	} else if edition := meta.EditionLabel(); edition != "" {
+	} else if edition := meta.EditionDisplayLabel(); edition != "" {
 		parts = append(parts, edition)
+	}
+	if slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid) {
+		parts = append(parts, "Hybrid")
 	}
 	if meta.Is3D != "" {
 		parts = append(parts, meta.Is3D)

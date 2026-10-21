@@ -21,6 +21,8 @@ func TestANTTVUsesSupportedContentType(t *testing.T) {
 		name, answer, providerType string
 		wantType                   string
 	}{
+		{name: "unknown TV content cannot become a movie short", answer: "Short Film"},
+		{name: "unknown TV content cannot become a feature film", answer: "Feature Film"},
 		{
 			name:   "selected miniseries",
 			answer: "Miniseries",
@@ -28,6 +30,7 @@ func TestANTTVUsesSupportedContentType(t *testing.T) {
 		{
 			name:         "known miniseries",
 			providerType: "tv mini series",
+			answer:       "Short Film",
 		},
 		{
 			name:         "known television movie",
@@ -35,9 +38,18 @@ func TestANTTVUsesSupportedContentType(t *testing.T) {
 			wantType:     "Feature Film",
 		},
 		{
-			name:         "known television short",
-			providerType: "tv short",
+			name:         "known movie short",
+			providerType: "short",
 			wantType:     "Short Film",
+		},
+		{
+			name:         "television short cannot be relabeled",
+			providerType: "tv short",
+			answer:       "Short Film",
+		},
+		{
+			name:         "camel case television short",
+			providerType: "tvShort",
 		},
 		{
 			name:         "ordinary series cannot be relabeled",

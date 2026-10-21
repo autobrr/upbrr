@@ -30,7 +30,7 @@ func resolveEdition(meta api.UploadSubject, tags []string) (bool, string) {
 	if slices.Contains(tags, "Hybrid") {
 		edition = strings.TrimSpace(strings.ReplaceAll(edition, "Hybrid", ""))
 	}
-	if edition == "" {
+	if edition == "" && len(meta.EditionDisplay) == 0 {
 		return false, ""
 	}
 	for _, token := range []string{"collector", "director", "extended", "limited", "special", "theatrical", "uncut", "unrated"} {
@@ -41,6 +41,12 @@ func resolveEdition(meta api.UploadSubject, tags []string) (bool, string) {
 			default:
 				return false, strings.ToUpper(token[:1]) + token[1:]
 			}
+		}
+	}
+	if len(meta.EditionDisplay) > 0 {
+		edition = meta.EditionDisplayLabel()
+		if slices.Contains(tags, "Hybrid") {
+			edition = strings.TrimSpace(strings.ReplaceAll(edition, "Hybrid", ""))
 		}
 	}
 	return true, edition
@@ -79,7 +85,8 @@ func resolveTags(meta api.UploadSubject) []string {
 		}
 		tags = append(tags, "EnglishDub")
 	}
-	if strings.Contains(strings.ToLower(meta.EditionLabel()), "open matte") {
+	if strings.Contains(strings.ToLower(meta.Presentation), "open matte") ||
+		meta.ReleaseNameOverrides.Presentation == nil && strings.Contains(strings.ToLower(meta.EditionLabel()), "open matte") {
 		tags = append(tags, "OpenMatte")
 	}
 	if meta.Scene {
@@ -88,7 +95,8 @@ func resolveTags(meta api.UploadSubject) []string {
 	if meta.PersonalRelease {
 		tags = append(tags, "Personal")
 	}
-	if strings.Contains(strings.ToLower(meta.EditionLabel()), "hybrid") {
+	if slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid) ||
+		meta.ReleaseNameOverrides.ReleaseFeatures == nil && strings.Contains(strings.ToLower(meta.EditionLabel()), "hybrid") {
 		tags = append(tags, "Hybrid")
 	}
 	if meta.HasCommentary {

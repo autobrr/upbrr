@@ -241,7 +241,7 @@ func TestANTDescriptionAssetsPreserveLiteralAudioExamples(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !strings.Contains(assets.Description, literal) || strings.Contains(assets.Description, "stale stats") ||
-				strings.Count(assets.Description, "[spoiler=source_audio]") != 2 ||
+				strings.Count(assets.Description, "[spoiler=Audio Plots]") != 1 ||
 				!strings.Contains(assets.Description, "[code]Audio track 1\nPeak: -1.0 dB[/code]") {
 				t.Fatalf("audio replacement changed literal content or retained stale stats: %q", assets.Description)
 			}

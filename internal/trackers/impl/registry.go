@@ -60,6 +60,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rhd"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rmc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sam"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/shri"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/stc"
@@ -126,6 +127,7 @@ func unit3DDefinitions() []trackers.Definition {
 		rhd.Profile(),
 		rmc.Profile(),
 		sam.Profile(),
+		sc.Profile(),
 		shri.Profile(),
 		sp.Profile(),
 		stc.Profile(),

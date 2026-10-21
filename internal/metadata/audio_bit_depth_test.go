@@ -57,38 +57,33 @@ func TestMediaTrackFactsAudioBitDepth(t *testing.T) {
 	}
 }
 
-func TestLSTAudioGuidanceRequiresExactChannelEvidence(t *testing.T) {
+func TestLSTAudioTierDepthIndependentOfChannelEvidence(t *testing.T) {
 	for _, test := range []struct {
-		name         string
-		channels     any
-		original     string
-		wantCount    int
-		wantGuidance bool
+		name      string
+		channels  any
+		original  string
+		wantCount int
 	}{
 		{
-			name:         "mono",
-			channels:     "1",
-			wantCount:    1,
-			wantGuidance: true,
+			name:      "mono",
+			channels:  "1",
+			wantCount: 1,
 		},
 		{
-			name:         "stereo",
-			channels:     "2",
-			wantCount:    2,
-			wantGuidance: true,
+			name:      "stereo",
+			channels:  "2",
+			wantCount: 2,
 		},
 		{
-			name:         "numeric stereo",
-			channels:     float64(2),
-			wantCount:    2,
-			wantGuidance: true,
+			name:      "numeric stereo",
+			channels:  float64(2),
+			wantCount: 2,
 		},
 		{
-			name:         "original count",
-			channels:     "6",
-			original:     "2",
-			wantCount:    2,
-			wantGuidance: true,
+			name:      "original count",
+			channels:  "6",
+			original:  "2",
+			wantCount: 2,
 		},
 		{name: "unknown"},
 		{
@@ -140,23 +135,23 @@ func TestLSTAudioGuidanceRequiresExactChannelEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "guidance_lst_flac_bit_depth" })
-			if got != test.wantGuidance {
-				t.Fatalf("guidance=%t want=%t for %+v", got, test.wantGuidance, tracks[0])
+			got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+				return f.Rule == "language_lst_audio_depth" && f.Disposition == api.RuleDispositionStrict && f.EvidenceStatus == api.MetadataEvidenceStatusComplete
+			})
+			if !got {
+				t.Fatalf("inspected depth violation was not strict: %+v", tracks[0])
 			}
 		})
 	}
 }
 
-func TestLSTAudioGuidanceUsesMeasuredPrimaryEvidence(t *testing.T) {
+func TestLSTAudioTierChecksEveryInspectedTrack(t *testing.T) {
 	for _, test := range []struct {
 		name, order, otherOrder, otherTitle string
-		want                                bool
 	}{
 		{
 			name:  "measured",
 			order: "1",
-			want:  true,
 		},
 		{name: "missing order"},
 		{name: "compound order", order: "1 / 2"},
@@ -170,7 +165,6 @@ func TestLSTAudioGuidanceUsesMeasuredPrimaryEvidence(t *testing.T) {
 			order:      "1",
 			otherOrder: "0",
 			otherTitle: "Commentary",
-			want:       true,
 		},
 		{
 			name:       "earlier isolated score",
@@ -212,9 +206,11 @@ func TestLSTAudioGuidanceUsesMeasuredPrimaryEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "guidance_lst_flac_bit_depth" })
-			if got != test.want {
-				t.Fatalf("guidance=%t want=%t for primary=%s tracks=%+v", got, test.want, primaryID, tracks)
+			got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+				return f.Rule == "language_lst_audio_depth" && f.Disposition == api.RuleDispositionStrict && f.EvidenceStatus == api.MetadataEvidenceStatusComplete
+			})
+			if !got {
+				t.Fatalf("inspected depth violation was not strict: primary=%s tracks=%+v", primaryID, tracks)
 			}
 		})
 	}

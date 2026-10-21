@@ -16,6 +16,8 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		return nil
 	}
 	var fields []api.TrackerQuestionnaireField
+	_, assignmentReview := compatibilityAssessment(subject)
+	assignmentReview = assignmentReview && api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug
 	for _, track := range subject.LanguageFacts.Tracks {
 		if track.Kind != api.MediaTrackAudio || track.ID == "" {
 			continue
@@ -26,7 +28,9 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			continue
 		}
 		key := trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)
-		if _, answered := subject.QuestionnaireAnswers[key]; !answered && trackers.AutomaticCompatibilityMix(track, candidates) != "" {
+		inferred := trackers.AutomaticCompatibilityMix(track, candidates)
+		_, answered := subject.QuestionnaireAnswers[key]
+		if !answered && inferred != "" && !assignmentReview {
 			continue
 		}
 		options, details := []string{"unresolved"}, ""
@@ -51,11 +55,15 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Help:     "A single same-resource TrueHD mix with the same fully known language set is matched automatically. Review ambiguous mixes using source evidence: " + details + ". Compatibility tracks for other codecs are prohibited; this answer does not waive other language or retail-source rules.",
 		})
+		if !answered {
+			fields[len(fields)-1].Value = inferred
+		}
 	}
 	for i := range fields {
 		if value := subject.QuestionnaireAnswers[fields[i].Key]; slices.Contains(fields[i].Options, value) {
 			fields[i].Value = value
 		}
+		fields[i].NeedsReview = fields[i].Required && (fields[i].Value == "unresolved" || assignmentReview && fields[i].Value != "")
 	}
 	if len(fields) == 0 {
 		return nil

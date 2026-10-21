@@ -1498,7 +1498,7 @@ func TestCLIInputFlagsMapTypedCorrections(t *testing.T) {
 	t.Parallel()
 
 	opts, visited, paths, err := parseCLIOptions([]string{
-		"--title", "Example", "--alternate-title", "Alt", "--original-title", "Original", "--genres", "Drama, Mystery",
+		"--alternate-title", "Alt", "--genres", "Drama, Mystery",
 		"--audio-languages", "en, Spanish", "--subtitle-languages", "fr, English", "--hardcoded-subs", "--hardcoded-subtitle-languages", "es",
 		"--anime", "--use-season-episode", "example.mkv",
 	})
@@ -1510,7 +1510,7 @@ func TestCLIInputFlagsMapTypedCorrections(t *testing.T) {
 		t.Fatalf("build request: %v", err)
 	}
 	metadata := req.MetadataOverrides
-	if metadata.Title == nil || *metadata.Title != "Example" || metadata.AlternateTitle == nil || *metadata.AlternateTitle != "Alt" || metadata.OriginalTitle == nil || *metadata.OriginalTitle != "Original" {
+	if metadata.Title != nil || metadata.OriginalTitle != nil || metadata.AlternateTitle == nil || *metadata.AlternateTitle != "Alt" {
 		t.Fatalf("title overrides = %#v", metadata)
 	}
 	if metadata.Genres == nil || !slices.Equal(*metadata.Genres, []string{"Drama", "Mystery"}) {
@@ -1532,10 +1532,10 @@ func TestCLIInputFlagsRejectConflicts(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"--anime", "--not-anime", "example.mkv"},
-		{"--tracker-input", "PTP:feature=yes", "--title", "Example", "example.mkv"},
-		{"--reset-input", "metadata.title", "--title", "Example", "example.mkv"},
+		{"--tracker-input", "PTP:feature=yes", "--alternate-title", "Example", "example.mkv"},
+		{"--reset-input", "metadata.alternate_title", "--alternate-title", "Example", "example.mkv"},
 		{"--track-languages", "a=English", "--track-languages", "a=Spanish", "example.mkv"},
-		{"--title", "Example", "--title=Other", "example.mkv"},
+		{"--alternate-title", "Example", "--alternate-title=Other", "example.mkv"},
 		{"--audio-languages=en", "--audio-languages", "es", "example.mkv"},
 		{"--hardcoded-subs=false", "--hc", "example.mkv"},
 		{"-g", "GRP", "--tag", "OTHER", "example.mkv"},
@@ -1594,9 +1594,9 @@ func TestCLIAudioAnalysisOptionsRejectMalformedSelection(t *testing.T) {
 func TestCLIInputFlagOccurrenceSkipsValuesAndLiteralPaths(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
-		{"--title", "--title", "example.mkv"},
-		{"--title=Example", "--", "--title=literal-path.mkv"},
-		{"--title", "Example", "--original-title", "Other", "example.mkv"},
+		{"--alternate-title", "--alternate-title", "example.mkv"},
+		{"--alternate-title=Example", "--", "--alternate-title=literal-path.mkv"},
+		{"--alternate-title", "Example", "--genres", "Other", "example.mkv"},
 	} {
 		if _, _, _, err := parseCLIOptions(args); err != nil {
 			t.Fatalf("parse %v: %v", args, err)
@@ -1606,7 +1606,7 @@ func TestCLIInputFlagOccurrenceSkipsValuesAndLiteralPaths(t *testing.T) {
 
 func TestCLIInputEditReplacesEarlierCorrection(t *testing.T) {
 	t.Parallel()
-	args, err := mergeCLIInputEditArgs([]string{"-g", "GRP", "--title=Old", "--commentary", "example.mkv"}, []string{"--tag=OTHER", "--title", "New", "--mc=false"})
+	args, err := mergeCLIInputEditArgs([]string{"-g", "GRP", "--alternate-title=Old", "--commentary", "example.mkv"}, []string{"--tag=OTHER", "--alternate-title", "New", "--mc=false"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1614,10 +1614,10 @@ func TestCLIInputEditReplacesEarlierCorrection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Tag != "OTHER" || opts.Title != "New" || opts.Commentary || !slices.Equal(paths, []string{"example.mkv"}) {
+	if opts.Tag != "OTHER" || opts.AlternateTitle != "New" || opts.Commentary || !slices.Equal(paths, []string{"example.mkv"}) {
 		t.Fatalf("edited options = %#v, paths = %v", opts, paths)
 	}
-	if _, err := mergeCLIInputEditArgs(args, []string{"--title=A", "--title=B"}); err == nil {
+	if _, err := mergeCLIInputEditArgs(args, []string{"--alternate-title=A", "--alternate-title=B"}); err == nil {
 		t.Fatal("duplicate correction within one edit was accepted")
 	}
 }
@@ -1806,5 +1806,54 @@ func TestPrintMetadataPreviewAlwaysShowsEffectiveCommentary(t *testing.T) {
 		if !strings.Contains(output.String(), "Commentary: "+strconv.FormatBool(commentary)+"\n") {
 			t.Fatalf("metadata preview omitted effective commentary: %q", output.String())
 		}
+	}
+}
+
+func TestPrintMetadataPreviewShowsSourceSeasonEvidence(t *testing.T) {
+	t.Parallel()
+	const warning = "Multiple seasons detected: S00, S01. Trackers that do not allow multiple seasons may reject this release during duplicate checking.\nAdditional season file: \"Example.Series.S00E01.mkv\" — S00"
+	var output bytes.Buffer
+	printMetadataPreview(&output, api.MetadataPreview{Diagnostics: []api.PreparationDiagnostic{{
+		Code:     "multiple_source_seasons",
+		Severity: api.DiagnosticSeverityWarning,
+		Message:  warning,
+	}}}, false)
+	if !strings.Contains(output.String(), warning) {
+		t.Fatalf("source season warning missing: %s", output.String())
+	}
+	output.Reset()
+	printMetadataPreview(&output, api.MetadataPreview{}, false)
+	if strings.Contains(output.String(), "Multiple seasons") {
+		t.Fatalf("stale source season warning: %s", output.String())
+	}
+}
+
+func TestCLIRejectsProviderOwnedTitleFlags(t *testing.T) {
+	for _, name := range []string{"title", "original-title"} {
+		t.Run(name, func(t *testing.T) {
+			for _, flag := range []string{"--" + name, "-" + name} {
+				for _, args := range [][]string{{flag, "Example", "example.mkv"}, {"example.mkv", flag + "=Example"}} {
+					if _, _, _, err := parseCLIOptions(args); err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -"+name) {
+						t.Errorf("parse %v: got %v, want unknown flag", args, err)
+					}
+				}
+				result := executeCLIForTest(t.Context(), t, []string{flag + "=Example", "--help"})
+				if result.err == nil || !strings.Contains(result.stderr, "flag provided but not defined: -"+name) {
+					t.Errorf("command %s: got %v, stderr %q, want unknown flag", flag, result.err, result.stderr)
+				}
+			}
+		})
+	}
+	result := executeCLIForTest(t.Context(), t, []string{"--help"})
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	for _, flag := range []string{"--title", "--original-title"} {
+		if strings.Contains(result.stdout, flag) {
+			t.Errorf("help advertises %s", flag)
+		}
+	}
+	if !strings.Contains(result.stdout, "--alternate-title") {
+		t.Error("help omits alternate-title")
 	}
 }

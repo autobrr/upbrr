@@ -219,6 +219,14 @@ func TestOERequiredEvidenceUsesTrackerProjection(t *testing.T) {
 		Type:        "ENCODE",
 		VideoCodec:  "AV1",
 		Tag:         "-SM737",
+		Identity: api.ExternalIdentity{
+			Category: api.CanonicalCategoryMovie,
+			TMDBID:   123,
+			IMDBID:   123,
+		},
+		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{TMDBID: 123}},
+		MediaInfoTextPath: filepath.Join(t.TempDir(), "mediainfo.txt"),
+		Assessments:       api.ReleaseAssessments{MediaInfoEncodeSettings: api.EncodeSettingsStatusNotApplicable},
 	}
 	for _, answered := range []bool{false, true} {
 		if answered {
@@ -239,14 +247,17 @@ func TestOERequiredEvidenceUsesTrackerProjection(t *testing.T) {
 			t.Fatal(failure)
 		}
 		if len(projection.Questionnaire) != 2 {
-			t.Fatalf("OE projection questionnaire = %+v", projection.Questionnaire)
+			t.Fatalf("OE projection questionnaire = %+v; decisions=%+v", projection.Questionnaire, projection.PolicyDecisions)
 		}
 		for _, field := range projection.Questionnaire {
 			if !field.Required || (field.Value != "") != answered {
 				t.Errorf("answered=%t field=%+v", answered, field)
 			}
 		}
-		pending := slices.ContainsFunc(projection.RequiredActions, func(action api.RequiredAction) bool { return action.Kind == api.RequiredActionAnswerQuestionnaire })
+		pending := slices.ContainsFunc(
+			projection.RequiredActions,
+			func(action api.RequiredAction) bool { return action.Kind == api.RequiredActionAnswerQuestionnaire },
+		)
 		if pending == answered {
 			t.Fatalf("answered=%t questionnaire action=%t", answered, pending)
 		}

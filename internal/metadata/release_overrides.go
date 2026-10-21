@@ -24,6 +24,8 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 		overrides.Service != nil ||
 		overrides.Edition != nil ||
 		overrides.Repack != nil ||
+		overrides.Presentation != nil ||
+		overrides.ReleaseFeatures != nil ||
 		overrides.Season != nil ||
 		overrides.Episode != nil ||
 		overrides.EpisodeTitle != nil ||
@@ -50,6 +52,18 @@ func validateReleaseNameFactInstructions(overrides api.ReleaseNameOverrides) err
 	if overrides.Repack != nil && !api.IsSupportedReleaseVersion(*overrides.Repack) {
 		return fmt.Errorf("metadata: unsupported release version %q: %w", *overrides.Repack, internalerrors.ErrInvalidInput)
 	}
+	if overrides.Presentation != nil {
+		if _, ok := api.NormalizeReleasePresentation(*overrides.Presentation); !ok {
+			return fmt.Errorf("metadata: unsupported presentation %q: %w", *overrides.Presentation, internalerrors.ErrInvalidInput)
+		}
+	}
+	if overrides.ReleaseFeatures != nil {
+		for _, feature := range *overrides.ReleaseFeatures {
+			if api.ReleaseFeatureLabel(feature) == "" {
+				return fmt.Errorf("metadata: unsupported release feature %q: %w", feature, internalerrors.ErrInvalidInput)
+			}
+		}
+	}
 	if overrides.Season != nil {
 		if _, err := seasonep.ParseSeasonInstruction(*overrides.Season); err != nil {
 			return fmt.Errorf("metadata: %w", err)
@@ -70,13 +84,15 @@ func validateReleaseNameFactInstructions(overrides api.ReleaseNameOverrides) err
 	return nil
 }
 
-// manualSeasonEpisodeInstructionValues returns explicit valid season and
-// episode instruction values; zero means no explicit value was supplied.
-func manualSeasonEpisodeInstructionValues(overrides api.ReleaseNameOverrides) (int, int) {
+// manualSeasonEpisodeInstructionValues preserves explicit season zero separately
+// from missing, cleared, or invalid instructions. Episodes remain positive-only.
+func manualSeasonEpisodeInstructionValues(overrides api.ReleaseNameOverrides) (int, int, bool) {
 	season, episode := 0, 0
-	if overrides.Season != nil {
+	seasonSet := false
+	if overrides.Season != nil && strings.TrimSpace(*overrides.Season) != "" {
 		if value, err := seasonep.ParseSeasonInstruction(*overrides.Season); err == nil {
 			season = value
+			seasonSet = true
 		}
 	}
 	if overrides.Episode != nil {
@@ -84,7 +100,7 @@ func manualSeasonEpisodeInstructionValues(overrides api.ReleaseNameOverrides) (i
 			episode = value
 		}
 	}
-	return season, episode
+	return season, episode, seasonSet
 }
 
 // applyReleaseNameValueOverrides folds fact-producing release-name
@@ -146,19 +162,11 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 
 	if overrides.Edition != nil {
-		meta.ReleaseFeatures = nil
-		meta.EditionSet = ""
-		meta.Cut = ""
-		meta.Presentation = ""
-		meta.Release.Cut = nil
-		meta.Edition = strings.TrimSpace(*overrides.Edition)
-		meta.Release.Edition = nil
-		if meta.Edition != "" {
-			meta.Release.Edition = []string{meta.Edition}
-		}
+		applyManualEdition(meta, *overrides.Edition)
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		meta.ReleaseFeatures = nil
+		meta.EditionDisplay = nil
 		meta.Edition = ""
 		meta.EditionSet = ""
 		meta.Cut = ""
@@ -166,6 +174,13 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 		meta.Release.Cut = nil
 		meta.Release.Edition = nil
 		meta.Repack = ""
+	}
+	// Independent explicit controls win over legacy NoEdition suppression.
+	if overrides.Presentation != nil {
+		meta.Presentation, _ = api.NormalizeReleasePresentation(*overrides.Presentation)
+	}
+	if overrides.ReleaseFeatures != nil {
+		applyManualReleaseFeatures(meta, *overrides.ReleaseFeatures)
 	}
 	// Explicit version corrections take precedence over legacy NoEdition suppression.
 	if overrides.Repack != nil {
@@ -186,6 +201,9 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 		if season, err := seasonep.ParseSeasonInstruction(*overrides.Season); err == nil {
 			meta.SeasonInt = season
 			meta.SeasonStr = seasonep.FormatSeason(season)
+			if season == 0 && strings.TrimSpace(*overrides.Season) != "" {
+				meta.SeasonStr = "S00"
+			}
 		}
 	}
 	if overrides.Episode != nil {
@@ -193,6 +211,11 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 			meta.EpisodeInt = episode
 			meta.EpisodeStr = seasonep.FormatEpisode(episode)
 		}
+	}
+	// An explicit special is episode-scoped even when its source or corrections
+	// carry a date. Persist the same scope used by its generated release name.
+	if meta.HasExplicitSeasonZero() {
+		meta.DailyEpisodeDate = ""
 	}
 
 	meta.Audio = applyAudioOverrides(meta.Audio, overrides)
@@ -231,7 +254,7 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 		req.ManualEpisodeTitle = true
 	}
 	if overrides.ManualDate != nil {
-		req.ManualDate = strings.TrimSpace(*overrides.ManualDate) != ""
+		req.ManualDate = strings.TrimSpace(*overrides.ManualDate) != "" && !strings.EqualFold(req.Season, "S00")
 	}
 	if overrides.UseSeasonEpisode != nil {
 		if *overrides.UseSeasonEpisode {
@@ -269,9 +292,18 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		req.Edition = ""
+		if overrides.ReleaseFeatures == nil {
+			req.EditionDisplay = ""
+		}
 		req.EditionSet = ""
 		req.Cut = ""
-		req.Presentation = ""
+		if overrides.Presentation == nil {
+			req.Presentation = ""
+		}
+		if overrides.ReleaseFeatures == nil {
+			req.Hybrid = false
+			req.WebDV = false
+		}
 	}
 	return req
 }

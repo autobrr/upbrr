@@ -88,15 +88,21 @@ Questions remain for genuine upload inputs, naming choices and ambiguous track a
 
 upbrr resolves upload and search names before duplicate checking. Review the projected name for every selected tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. Manual naming controls are presentation choices and do not grant upload eligibility or replace required factual evidence.
 
+Correct `PROPER`, `REPACK`, their supported numbered variants, or `RERIP` with the independent **Release version** control on **Input**, then refresh metadata and review the projected names again. Clearing **Edition** does not clear the release version; see [Input corrections](../web-ui/index.md#correct-input-facts) for **None**, **Auto**, and the legacy **No edition** behavior.
+
 Automatic title and year sources can differ by destination. A required title must come from matching metadata for the current release; missing or outdated evidence blocks that name instead of silently substituting another provider. Refresh metadata and prepare the release again when requested. Explicit manual titles and complete name overrides remain authoritative, while an automatic duplicate-search name can still require its own provider evidence. These naming choices do not change the shared release facts or another destination's name. TV series-year disambiguation can use a different provider from the primary title. Established evidence may add or omit an automatic series year; manual title and year choices remain authoritative.
 
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or TV season/episode segment. Missing or unknown resolution stays absent, and complete manual names remain unchanged.
+
+An **Encode** with **DVD**, **PAL DVD**, or **NTSC DVD** source normally displays `DVDRip` in its generated name while keeping the selected type, source, and TV episode details. Destination naming rules may use `PAL DVD`, `NTSC DVD`, or a system-qualified `DVDRip` instead. If a destination requires PAL or NTSC, select that source explicitly or provide a known DVD resolution (`480i`/`480p` for NTSC, `576i`/`576p` for PAL), then refresh metadata and review the name. An unknown DVD system is not guessed.
+
+Missing audio tracks and unidentified audio languages are separate facts. A tracker-specific no-audio label uses inspected evidence that audio is absent. Non-linguistic audio retains its codec and channels; an unknown language does not imply that audio is absent or non-linguistic.
 
 Categories, source/type mappings, descriptions, media selection, questionnaires and authentication requirements can vary. Review the displayed requirements and consult the tracker's current rules. A successful local preparation does not prove that a remote upload will be accepted.
 
 ### Editions and commentary
 
-A solitary Theatrical cut or edition is ignored. Compound editions retain their constituent cuts and multi-edition marker. Presentation and technical-feature annotations do not establish another edition. Actual additional editions and multi-cut sets remain intact; opaque manual Edition compounds retain their existing wording.
+A solitary Theatrical cut or edition is ignored. Compound editions retain their constituent cuts and multi-edition marker. Presentation and technical-feature annotations do not establish another edition. Actual additional editions and multi-cut sets remain intact. Fully recognized manual compounds such as `Director's Cut / Hybrid` separate their meanings; unknown/custom wording stays intact. Use the independent Presentation and Release features controls for corrections without changing Edition.
 
 Review detected labels and inspected tracks before approval. Missing track languages cannot be borrowed from another report without a reliable identity match; correct missing languages explicitly when needed. A separate compatibility stream can match a single suitable mix automatically when its known languages agree and it is not identified as commentary or a distinct mix. Ambiguous associations and current manual choices remain editable. Automatic association does not change inspected track roles or waive independent codec, core, or track-count requirements. Consult the tracker's current rules when interpreting any eligibility finding.
 
@@ -109,6 +115,12 @@ Region and distributor fields accept supported suggestions or explicit numeric I
 ### Diagnostics
 
 For a tracker defect, follow [troubleshooting guidance](../troubleshooting/index.md) and collect only the relevant sanitized excerpt. upbrr is intended to redact credentials automatically, but inspect every log and remove any remaining credentials, cookies, tokens, private URLs and unrelated personal information before sharing.
+
+### BHD NFOs
+
+BHD sends an available local scene NFO through the dedicated `nfo` upload field without changing the reviewed description. NFO content is captured during upload preparation; an unreadable supplied NFO or content larger than 8 MiB blocks preparation. Uploads without NFO content omit the optional field.
+
+Scene NFOs must stay within the database-adjacent `nfo` storage, including any symlink targets. Safe nested paths and links within that storage remain usable; a supplied NFO outside it blocks BHD preparation.
 
 ## Image hosts and clients
 

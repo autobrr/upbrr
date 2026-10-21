@@ -79,6 +79,8 @@ const (
 	CorrectionFieldReleaseNameTag              CorrectionField = "release_name.tag"
 	CorrectionFieldReleaseNameService          CorrectionField = "release_name.service"
 	CorrectionFieldReleaseNameEdition          CorrectionField = "release_name.edition"
+	CorrectionFieldReleaseNamePresentation     CorrectionField = "release_name.presentation"
+	CorrectionFieldReleaseNameReleaseFeatures  CorrectionField = "release_name.release_features"
 	CorrectionFieldReleaseNameRepack           CorrectionField = "release_name.repack"
 	CorrectionFieldReleaseNameSeason           CorrectionField = "release_name.season"
 	CorrectionFieldReleaseNameEpisode          CorrectionField = "release_name.episode"
@@ -273,6 +275,11 @@ func ApplyReleaseCorrectionUpdate(snapshot ReleaseCorrectionsSnapshot, update Re
 	if err := normalizeIdentityResetFields(&stored); err != nil {
 		return StoredReleaseCorrectionsV1{}, err
 	}
+	// Upgrade legacy compound intent before patch/reset, so later Edition edits
+	// and Auto operate on the independent saved corrections.
+	normalizedReleaseName := ReleaseNameOverrides{}
+	applyReleaseNameOverrides(&normalizedReleaseName, stored.ReleaseName)
+	stored.ReleaseName = normalizedReleaseName
 	switch update.Mode {
 	case ReleaseCorrectionUpdateInherit:
 		if update.Patch != nil || !releaseCorrectionValuesZero(update.Values) {
@@ -370,6 +377,31 @@ func normalizeReleaseCorrectionValues(values *ReleaseCorrectionValues) error {
 	if repack := values.ReleaseName.Repack; repack != nil && !IsSupportedReleaseVersion(*repack) {
 		return correctionConflict(CorrectionFieldRef{Field: CorrectionFieldReleaseNameRepack}, fmt.Sprintf("unsupported release version %q", *repack))
 	}
+	if presentation := values.ReleaseName.Presentation; presentation != nil {
+		normalized, ok := NormalizeReleasePresentation(*presentation)
+		if !ok {
+			return correctionConflict(
+				CorrectionFieldRef{Field: CorrectionFieldReleaseNamePresentation},
+				fmt.Sprintf("unsupported presentation %q", *presentation),
+			)
+		}
+		values.ReleaseName.Presentation = new(normalized)
+	}
+	if features := values.ReleaseName.ReleaseFeatures; features != nil {
+		normalized := make([]ReleaseFeature, 0, len(*features))
+		for _, feature := range *features {
+			if ReleaseFeatureLabel(feature) == "" {
+				return correctionConflict(
+					CorrectionFieldRef{Field: CorrectionFieldReleaseNameReleaseFeatures},
+					fmt.Sprintf("unsupported release feature %q", feature),
+				)
+			}
+			if !slices.Contains(normalized, feature) {
+				normalized = append(normalized, feature)
+			}
+		}
+		values.ReleaseName.ReleaseFeatures = new(normalized)
+	}
 	if values.ReleaseName.Category == nil {
 		return nil
 	}
@@ -407,6 +439,7 @@ func correctionValueRefs(values ReleaseCorrectionValues) (map[string]CorrectionF
 		{CorrectionFieldIdentityMAL, values.Identity.MALID != nil}, {CorrectionFieldReleaseNameCategory, values.ReleaseName.Category != nil},
 		{CorrectionFieldReleaseNameType, values.ReleaseName.Type != nil}, {CorrectionFieldReleaseNameSource, values.ReleaseName.Source != nil},
 		{CorrectionFieldReleaseNameResolution, values.ReleaseName.Resolution != nil}, {CorrectionFieldReleaseNameTag, values.ReleaseName.Tag != nil},
+		{CorrectionFieldReleaseNamePresentation, values.ReleaseName.Presentation != nil}, {CorrectionFieldReleaseNameReleaseFeatures, values.ReleaseName.ReleaseFeatures != nil},
 		{CorrectionFieldReleaseNameService, values.ReleaseName.Service != nil}, {CorrectionFieldReleaseNameEdition, values.ReleaseName.Edition != nil}, {CorrectionFieldReleaseNameRepack, values.ReleaseName.Repack != nil},
 		{CorrectionFieldReleaseNameSeason, values.ReleaseName.Season != nil}, {CorrectionFieldReleaseNameEpisode, values.ReleaseName.Episode != nil},
 		{CorrectionFieldReleaseNameEpisodeTitle, values.ReleaseName.EpisodeTitle != nil}, {CorrectionFieldReleaseNameManualYear, values.ReleaseName.ManualYear != nil},
@@ -563,6 +596,8 @@ var allCorrectionFields = []CorrectionField{
 	CorrectionFieldReleaseNameTag,
 	CorrectionFieldReleaseNameService,
 	CorrectionFieldReleaseNameEdition,
+	CorrectionFieldReleaseNamePresentation,
+	CorrectionFieldReleaseNameReleaseFeatures,
 	CorrectionFieldReleaseNameRepack,
 	CorrectionFieldReleaseNameSeason,
 	CorrectionFieldReleaseNameEpisode,
@@ -637,11 +672,26 @@ func applyExternalIDOverrides(destination *ExternalIDOverrides, source ExternalI
 }
 
 func applyReleaseNameOverrides(destination *ReleaseNameOverrides, source ReleaseNameOverrides) {
+	if source.Edition != nil {
+		separated := SeparateEditionOverride(*source.Edition)
+		source.Edition = separated.Edition
+		if source.Presentation == nil && destination.Presentation == nil {
+			source.Presentation = separated.Presentation
+		}
+		if source.ReleaseFeatures == nil && destination.ReleaseFeatures == nil {
+			source.ReleaseFeatures = separated.ReleaseFeatures
+		}
+	}
+
+	if source.ReleaseFeatures != nil {
+		destination.ReleaseFeatures = cloneReleaseFeatures(source.ReleaseFeatures)
+	}
 	for _, item := range []struct {
 		destination **string
 		source      *string
 	}{
 		{&destination.Category, source.Category}, {&destination.Type, source.Type}, {&destination.Source, source.Source}, {&destination.Resolution, source.Resolution},
+		{&destination.Presentation, source.Presentation},
 		{&destination.Tag, source.Tag}, {&destination.Service, source.Service}, {&destination.Edition, source.Edition}, {&destination.Repack, source.Repack}, {&destination.Season, source.Season},
 		{&destination.Episode, source.Episode}, {&destination.EpisodeTitle, source.EpisodeTitle}, {&destination.ManualDate, source.ManualDate}, {&destination.Region, source.Region},
 	} {
@@ -740,6 +790,10 @@ func resetStoredCorrectionField(stored *StoredReleaseCorrectionsV1, ref Correcti
 		stored.ReleaseName.Tag = nil
 	case CorrectionFieldReleaseNameService:
 		stored.ReleaseName.Service = nil
+	case CorrectionFieldReleaseNamePresentation:
+		stored.ReleaseName.Presentation = nil
+	case CorrectionFieldReleaseNameReleaseFeatures:
+		stored.ReleaseName.ReleaseFeatures = nil
 	case CorrectionFieldReleaseNameEdition:
 		stored.ReleaseName.Edition = nil
 	case CorrectionFieldReleaseNameRepack:

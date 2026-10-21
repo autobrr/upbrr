@@ -202,16 +202,34 @@ func Convert(legacy *Config, template *config.Config) (*config.Config, []string,
 	return out, warnings, nil
 }
 
+// legacyTrackerNameAliases maps legacy Upload-Assistant tracker section names to upbrr names.
+var legacyTrackerNameAliases = map[string]string{
+	"SEEDCORE": "SC",
+}
+
+func normalizeLegacyTrackerName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if mapped, ok := legacyTrackerNameAliases[strings.ToUpper(trimmed)]; ok {
+		return mapped
+	}
+	return trimmed
+}
+
 // migrateTrackers copies tracker settings from the legacy config into out.
 func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out *config.Config) []string {
 	var warnings []string
 
 	if dt, ok := legacyTrackers["default_trackers"]; ok && dt != nil {
-		out.Trackers.DefaultTrackers = coerceToStringSlice(dt)
+		rawTrackers := coerceToStringSlice(dt)
+		normalized := make([]string, 0, len(rawTrackers))
+		for _, name := range rawTrackers {
+			normalized = append(normalized, normalizeLegacyTrackerName(name))
+		}
+		out.Trackers.DefaultTrackers = normalized
 	}
 
 	if pt, ok := legacyTrackers["preferred_tracker"]; ok && pt != nil {
-		out.Trackers.PreferredTracker = strings.TrimSpace(fmt.Sprintf("%v", pt))
+		out.Trackers.PreferredTracker = normalizeLegacyTrackerName(fmt.Sprintf("%v", pt))
 	}
 
 	// Get known tracker names from the template.
@@ -221,6 +239,7 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 	}
 
 	for trackerName, raw := range legacyTrackers {
+		trackerName = normalizeLegacyTrackerName(trackerName)
 		if strings.EqualFold(strings.TrimSpace(trackerName), "THR") {
 			warnings = append(warnings, "ignored removed tracker entry: "+trackerName)
 			continue

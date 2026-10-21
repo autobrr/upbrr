@@ -41,13 +41,14 @@ type MetadataRequirement struct {
 
 // MetadataRequirementSet is the tracker-ID-free normalized union of selected tracker demands.
 type MetadataRequirementSet struct {
-	Version      string                `json:"version"`
-	Requirements []MetadataRequirement `json:"requirements,omitempty"`
+	InspectProgrammeTracks bool                  `json:"inspectProgrammeTracks,omitempty"`
+	Version                string                `json:"version"`
+	Requirements           []MetadataRequirement `json:"requirements,omitempty"`
 }
 
 // Normalize returns a deterministic demand set suitable for compatibility fingerprints.
 func (s MetadataRequirementSet) Normalize() (MetadataRequirementSet, error) {
-	normalized := MetadataRequirementSet{Version: strings.TrimSpace(s.Version)}
+	normalized := MetadataRequirementSet{Version: strings.TrimSpace(s.Version), InspectProgrammeTracks: s.InspectProgrammeTracks}
 	if len(s.Requirements) == 0 {
 		return normalized, nil
 	}

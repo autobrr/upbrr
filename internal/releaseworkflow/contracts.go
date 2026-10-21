@@ -27,6 +27,7 @@ const (
 type MediaArtifactContent struct {
 	Body        io.ReadCloser
 	ContentType string
+	Filename    string
 }
 
 // MediaPreviewContent retains one non-authoritative frame preview without
@@ -122,6 +123,7 @@ type IDGenerator interface {
 // ReleasePreparer owns canonical prepared-release generation.
 type ReleasePreparer interface {
 	CorrectionsCurrent(context.Context, string, uint64) (bool, error)
+	CorrectionsUnchanged(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate, uint64) (bool, error)
 	Prepare(context.Context, api.PrepareInput) (api.PrepareResult, error)
 	ResolveInput(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error)
 	PrepareResolved(context.Context, api.ResolvedPreparationInput) (api.PrepareResult, error)
@@ -132,13 +134,14 @@ type ReleasePreparer interface {
 
 // ReleasePreparerFunc adapts a function to [ReleasePreparer].
 type ReleasePreparerFunc struct {
-	CorrectionsCurrentFunc func(context.Context, string, uint64) (bool, error)
-	PrepareFunc            func(context.Context, api.PrepareInput) (api.PrepareResult, error)
-	ResolveInputFunc       func(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error)
-	PrepareResolvedFunc    func(context.Context, api.ResolvedPreparationInput) (api.PrepareResult, error)
-	DisplayFunc            func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error)
-	SubjectFunc            func(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
-	DuplicateFunc          func(context.Context, api.DuplicateCheckInput) (api.DuplicateSubject, error)
+	CorrectionsCurrentFunc   func(context.Context, string, uint64) (bool, error)
+	CorrectionsUnchangedFunc func(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate, uint64) (bool, error)
+	PrepareFunc              func(context.Context, api.PrepareInput) (api.PrepareResult, error)
+	ResolveInputFunc         func(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error)
+	PrepareResolvedFunc      func(context.Context, api.ResolvedPreparationInput) (api.PrepareResult, error)
+	DisplayFunc              func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error)
+	SubjectFunc              func(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
+	DuplicateFunc            func(context.Context, api.DuplicateCheckInput) (api.DuplicateSubject, error)
 }
 
 // CorrectionsCurrent checks source correction authority before workflow reuse.
@@ -148,6 +151,20 @@ func (f ReleasePreparerFunc) CorrectionsCurrent(ctx context.Context, source stri
 		return f.CorrectionsCurrentFunc(ctx, source, revision)
 	}
 	return true, nil
+}
+
+// CorrectionsUnchanged classifies an update without accepting or persisting it.
+// Adapters without a correction owner conservatively require repreparation.
+func (f ReleasePreparerFunc) CorrectionsUnchanged(
+	ctx context.Context,
+	input api.PrepareInput,
+	update api.ReleaseCorrectionUpdate,
+	revision uint64,
+) (bool, error) {
+	if f.CorrectionsUnchangedFunc != nil {
+		return f.CorrectionsUnchangedFunc(ctx, input, update, revision)
+	}
+	return false, nil
 }
 
 // ResolveInput delegates source correction resolution to the preparation owner.
@@ -214,6 +231,11 @@ type TrackerProjectionBuilder interface {
 	)
 }
 
+// DuplicateQuestionnaireProjector exposes tracker-owned comparison questions after a real search.
+type DuplicateQuestionnaireProjector interface {
+	DuplicateQuestionnaires(api.UploadSubject, api.TrackerReleaseProjectionSet, api.DupeAssessment) api.DupeAssessment
+}
+
 // InputReadinessEvaluator evaluates selected tracker input demands without
 // authentication, duplicate checks, or other remote work.
 type InputReadinessEvaluator interface {
@@ -261,8 +283,8 @@ type IncrementalDupeAssessmentBuilder interface {
 		api.TrackerPreflightAssessment, time.Time, bool, DuplicateAssessmentReuse) (api.DupeAssessment, any, error)
 }
 
-// QuestionnaireDupeAssessmentRebinder can rebind all compatible questionnaire-only
-// evidence without searching. An empty result means a fresh check is required.
+// QuestionnaireDupeAssessmentRebinder can rebind compatible questionnaire edits
+// or certified metadata refreshes without searching. An empty result requires a fresh check.
 type QuestionnaireDupeAssessmentRebinder interface {
 	RebindQuestionnaire(context.Context, api.DuplicateSubject, api.TrackerReleaseProjectionSet,
 		api.TrackerPreflightAssessment, time.Time, bool, DuplicateAssessmentReuse) (api.DupeAssessment, any, error)
@@ -271,19 +293,23 @@ type QuestionnaireDupeAssessmentRebinder interface {
 // DuplicateAssessmentReuse supplies the prior exact assessment and private evidence
 // for a scoped edit. InvalidatedTrackers must be checked again when eligible.
 type DuplicateAssessmentReuse struct {
-	QuestionnaireOnly   bool
-	Assessment          api.DupeAssessment
-	Projections         api.TrackerReleaseProjectionSet
-	PrivateEvidence     any
-	InvalidatedTrackers []api.TrackerID
+	// EquivalentMetadataTo binds owner-certified unchanged facts to the new generation.
+	EquivalentMetadataTo *api.ReleaseRef
+	QuestionnaireOnly    bool
+	Assessment           api.DupeAssessment
+	Projections          api.TrackerReleaseProjectionSet
+	PrivateEvidence      any
+	InvalidatedTrackers  []api.TrackerID
 }
 
 // PendingDuplicateReuse retains evidence across the projection and preflight
-// stages of rule or questionnaire edits; it is not current duplicate authority.
+// stages of edits or metadata refresh; it is not current duplicate authority.
 type PendingDuplicateReuse struct {
-	QuestionnaireOnly   bool
-	Assessment          api.DupeAssessmentRef
-	InvalidatedTrackers []api.TrackerID
+	MetadataRefresh      bool
+	EquivalentMetadataTo *api.ReleaseRef
+	QuestionnaireOnly    bool
+	Assessment           api.DupeAssessmentRef
+	InvalidatedTrackers  []api.TrackerID
 }
 
 // MediaArtifactBuilder captures generation- and projection-bound media while
@@ -313,6 +339,8 @@ type RetainedAudioAnalysisLocalPath interface {
 // DescriptionResources carries the current owner-scoped analysis alongside
 // retained media. HDR authority is resolved only for descriptions using automatic assets.
 type DescriptionResources struct {
+	// HDRArtifacts preserves validated current image associations for final editor overrides.
+	HDRArtifacts  map[api.TrackerID][]api.HDRArtifactEvidence
 	HDR           func(context.Context) (api.HDRAnalysisResult, RetainedHDRAnalysisResource, error)
 	Media         any
 	AudioAnalysis api.AudioAnalysisResult
@@ -529,6 +557,8 @@ type Repository interface {
 	Load(context.Context, string, api.WorkflowID) (State, error)
 	Save(context.Context, string, api.WorkflowRevision, State) error
 	CheckpointHDRExtractions(context.Context, string, api.WorkflowID, api.WorkflowRevision, map[api.HDRExtractionID]HDRExtractionRecord) error
+	CheckpointHDRMeasurements(context.Context, string, api.WorkflowID, api.WorkflowRevision, map[string]HDRMeasurementRecord) error
+	CheckpointHDRRequest(context.Context, string, api.WorkflowID, api.WorkflowRevision, PendingHDRRequest) error
 	Delete(context.Context, string, api.WorkflowID) error
 }
 
@@ -635,6 +665,8 @@ type State struct {
 	Media                        map[api.MediaArtifactSetID]api.MediaArtifactSet
 	HDRAnalyses                  map[api.HDRAnalysisResultID]api.HDRAnalysisResult
 	HDRExtractions               map[api.HDRExtractionID]HDRExtractionRecord
+	HDRMeasurements              map[string]HDRMeasurementRecord
+	HDRPendingRequest            *PendingHDRRequest
 	PendingHDRAnalysis           *api.HDRAnalysisRef
 	PendingHDRAnalysisWorkflowID api.WorkflowID
 	AudioAnalyses                map[api.AudioAnalysisResultID]api.AudioAnalysisResult

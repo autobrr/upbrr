@@ -465,6 +465,41 @@ func TestConvertTrackers(t *testing.T) {
 	}
 }
 
+func TestConvertLegacyTrackerAliases(t *testing.T) {
+	legacy := &Config{
+		Default: map[string]any{},
+		Trackers: map[string]any{
+			"default_trackers":  "SEEDCORE, BHD",
+			"preferred_tracker": "SEEDCORE",
+			"SEEDCORE": map[string]any{
+				"api_key": "sc-api-key",
+			},
+		},
+		TorrentClients: make(map[string]any),
+	}
+
+	cfg, _, err := ImportFromContent(marshalLegacyConfig(legacy))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sc, ok := cfg.Trackers.Trackers["SC"]
+	if !ok {
+		t.Fatal("SC tracker not found from SEEDCORE alias")
+	}
+	if sc.APIKey != "sc-api-key" {
+		t.Errorf("SC.APIKey: got %q, want sc-api-key", sc.APIKey)
+	}
+
+	if len(cfg.Trackers.DefaultTrackers) != 2 || cfg.Trackers.DefaultTrackers[0] != "SC" || cfg.Trackers.DefaultTrackers[1] != "BHD" {
+		t.Errorf("DefaultTrackers: got %v, want [SC BHD]", cfg.Trackers.DefaultTrackers)
+	}
+
+	if cfg.Trackers.PreferredTracker != "SC" {
+		t.Errorf("PreferredTracker: got %q, want SC", cfg.Trackers.PreferredTracker)
+	}
+}
+
 func TestConvertTrackersPreferredTrackerNil(t *testing.T) {
 	input := []byte(`
 config = {

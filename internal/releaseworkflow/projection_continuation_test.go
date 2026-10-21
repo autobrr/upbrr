@@ -133,6 +133,35 @@ type legacyGroupQuestionnaireDefinition struct {
 	answers trackers.TrackerAnswerSchemaProvider
 }
 
+func questionnaireTestPreparer() ReleasePreparerFunc {
+	preparer := testPreparer()
+	subject := preparer.SubjectFunc
+	preparer.SubjectFunc = func(ctx context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+		meta, err := subject(ctx, input)
+		meta.Identity = api.ExternalIdentity{
+			Category: api.CanonicalCategoryMovie,
+			TMDBID:   123,
+			IMDBID:   123,
+		}
+		meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
+			TMDBID: 123,
+			Title:  "Example Movie",
+			Year:   2026,
+		}
+		meta.MediaInfoTextPath = filepath.Join(filepath.Dir(input.Release.SourcePath), "mediainfo.txt")
+		meta.LanguageFacts = api.LanguageFacts{
+			OriginalLanguages:      []string{"English"},
+			OriginalLanguagesKnown: true,
+			ProgrammeLanguages:     []string{"English"},
+			ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+			AudioStatus:            api.MetadataEvidenceStatusComplete,
+			SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+		}
+		return meta, err
+	}
+	return preparer
+}
+
 func (d legacyGroupQuestionnaireDefinition) ProjectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestionnaire {
 	return d.answers.TrackerAnswerSchema(input)
 }
@@ -182,7 +211,7 @@ func TestProjectionContinuationRefreshesPersistedGroupSchemasWithoutRepreparing(
 				t.Fatal(err)
 			}
 			preparations := 0
-			preparer := testPreparer()
+			preparer := questionnaireTestPreparer()
 			base := preparer.PrepareFunc
 			preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 				preparations++

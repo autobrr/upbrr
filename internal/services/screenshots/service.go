@@ -694,7 +694,8 @@ func (s *Service) captureDisc(
 				img.SizeBytes = stat.Size()
 			}
 			if f, err := os.Open(output); err == nil {
-				if cfg, _, err := image.DecodeConfig(f); err == nil {
+				if cfg, format, err := image.DecodeConfig(f); err == nil {
+					img.Format = format
 					img.Width = cfg.Width
 					img.Height = cfg.Height
 				}
@@ -1456,7 +1457,9 @@ func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
 			continue
 		}
 		ts := parseScreenshotTimestamp(match, base)
+		image, _ := buildScreenshotImage(match, parseScreenshotIndex(match, base))
 		results = append(results, api.ScreenshotImage{
+			Format:           image.Format,
 			Index:            parseScreenshotIndex(match, base),
 			TimestampSeconds: ts,
 			Path:             match,
@@ -1503,7 +1506,9 @@ func listTrackerScreens(tmpDir, base string) []api.ScreenshotImage {
 		if infoErr != nil {
 			return nil
 		}
+		image, _ := buildScreenshotImage(path, 0)
 		results = append(results, api.ScreenshotImage{
+			Format:    image.Format,
 			Path:      path,
 			Purpose:   api.ScreenshotPurposeFinal,
 			SizeBytes: info.Size(),
@@ -1574,7 +1579,8 @@ func buildScreenshotImage(pathValue string, index int) (api.ScreenshotImage, boo
 		SizeBytes:        stat.Size(),
 	}
 	if f, err := os.Open(pathValue); err == nil {
-		if cfg, _, err := image.DecodeConfig(f); err == nil {
+		if cfg, format, err := image.DecodeConfig(f); err == nil {
+			img.Format = format
 			img.Width = cfg.Width
 			img.Height = cfg.Height
 		}

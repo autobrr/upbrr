@@ -65,11 +65,11 @@ func TestHDBReleaseNamePolicyBuildsStructuredOriginalIMDbName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reviewed HDB name: %v", err)
 	}
-	const want = "Example Original 2026 2160p WEB-DL DDP 5.1 H.265-GRP"
+	const want = "Example Original 2026 REPACK 2160p WEB-DL DDP 5.1 H.265-GRP"
 	if got != want {
 		t.Fatalf("HDB name = %q, want %q", got, want)
 	}
-	if strings.Contains(got, "Director's Cut") || strings.Contains(got, "REPACK") || strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Example.Original") {
+	if strings.Contains(got, "Director's Cut") || strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Example.Original") {
 		t.Fatalf("HDB name retained prohibited/separator elements: %q", got)
 	}
 }

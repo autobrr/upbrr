@@ -179,6 +179,8 @@ type ScreenshotLinkedImage struct {
 }
 
 type ScreenshotImage struct {
+	// Format is decoded from the image bytes; empty means uninspected.
+	Format           string `json:",omitempty"`
 	DiscID           string
 	DiscName         string
 	Index            int

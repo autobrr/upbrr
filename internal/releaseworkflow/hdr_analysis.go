@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// WithHDRAnalysisBuilder supplies native analysis, checkpointing and artifact production.
 func WithHDRAnalysisBuilder(builder HDRAnalysisBuilder) Option {
 	return func(m *Module) error { m.hdrAnalysisBuilder = builder; return nil }
 }
@@ -75,6 +77,10 @@ func (m *Module) analyzeHDR(
 			}
 		}
 	}
+	var extractionSequence uint64
+	for _, record := range state.HDRExtractions {
+		extractionSequence = max(extractionSequence, record.Sequence)
+	}
 	publish := func(record HDRExtractionRecord, resource RetainedHDRExtractionResource) error {
 		if record.Release != releaseRef || record.ID == "" || resource == nil {
 			return ErrPrivateResourceIntegrity
@@ -82,6 +88,12 @@ func (m *Module) analyzeHDR(
 		if _, exists := state.HDRExtractions[record.ID]; exists {
 			return ErrPrivateResourceIntegrity
 		}
+		record.Sequence = max(record.Sequence, extractionSequence)
+		if record.Sequence == ^uint64(0) {
+			return ErrPrivateResourceIntegrity
+		}
+		record.Sequence++
+		extractionSequence = record.Sequence
 		if err := ctx.Err(); err != nil {
 			releasePrivateResource(resource)
 			return fmt.Errorf("publish HDR extraction: %w", err)
@@ -108,9 +120,74 @@ func (m *Module) analyzeHDR(
 		}
 	}
 	var retired []api.HDRExtractionID
+	if retry := normalized.DecodedRetry; retry != nil {
+		if prior == nil || prior.AttemptID != retry.AnalysisAttemptID || prior.Release != releaseRef ||
+			prior.ProfileVersion != normalized.ProfileVersion || prior.Formats != normalized.Formats ||
+			!slices.Equal(prior.TargetIDs, normalized.TargetIDs) || !reflect.DeepEqual(prior.Decoded, normalized.Decoded) {
+			return CommandResult{}, fmt.Errorf("%w: decoded retry must select the current retained attempt and options", ErrInvalidTransition)
+		}
+		for _, mode := range retry.Modes {
+			eligible := false
+			for _, target := range prior.Targets {
+				for _, result := range target.Decoded {
+					eligible = eligible || result.Mode == mode && slices.Contains([]api.HDRDecodedState{
+						api.HDRDecodedFailed, api.HDRDecodedCanceled, api.HDRDecodedInterrupted, api.HDRDecodedUnsupported, api.HDRDecodedInconclusive,
+					}, result.State)
+				}
+			}
+			if !eligible {
+				return CommandResult{}, fmt.Errorf("%w: decoded retry must select unsuccessful requested modes", ErrInvalidTransition)
+			}
+		}
+	}
+	if err := m.checkpointHDRAttempt(ctx, ownerID, state.Workflow.ID, releaseRef); err != nil {
+		return CommandResult{}, err
+	}
+	measurements := m.hdrMeasurementStore(ctx, ownerID, state, releaseRef, now)
+	measurements.RetainedArtifactsOnly = command.WorkflowID == "" && prior != nil && normalized.Decoded == nil &&
+		api.IsNativeHDRProfile(prior.ProfileVersion)
+	measurements.Comparison, err = m.resolveHDRComparison(ownerID, *state, normalized)
+	if err != nil {
+		if !errors.Is(err, ErrPrivateResourceUnavailable) || normalized.Decoded == nil || !normalized.Decoded.Automatic ||
+			state.OwnerID != ownerID || prior == nil || prior.Release != normalized.Release || !reflect.DeepEqual(prior.Decoded, normalized.Decoded) {
+			return CommandResult{}, err
+		}
+		// Same-generation recovery keeps the original measurement identity.
+		// Missing secondary authority never authorizes a new secondary read.
+	}
+	if command.Comparison != nil && (state.Workflow.HDRComparison == nil || command.Comparison.Ref != *state.Workflow.HDRComparison ||
+		measurements.Comparison != nil && command.Comparison.Ref != measurements.Comparison.Ref) {
+		return CommandResult{}, ErrPrivateResourceIntegrity
+	}
+	// Only an explicit analysis request establishes resumable retry authority.
+	// Save its boundaries before retiring old evidence or publishing new work.
+	var nativeRetryAfterSequence *uint64
+	if command.WorkflowID != "" {
+		pending := PendingHDRRequest{Instructions: normalized, NativeRetryAfterSequence: new(extractionSequence)}
+		if previous := state.HDRPendingRequest; previous != nil && reflect.DeepEqual(previous.Instructions, normalized) {
+			pending.RetryAfterSequence = previous.RetryAfterSequence
+			if previous.NativeRetryAfterSequence != nil {
+				pending.NativeRetryAfterSequence = previous.NativeRetryAfterSequence
+			}
+		} else {
+			for _, record := range state.HDRMeasurements {
+				pending.RetryAfterSequence = max(pending.RetryAfterSequence, record.Sequence)
+			}
+		}
+		if err := m.repository.CheckpointHDRRequest(ctx, ownerID, state.Workflow.ID, state.Workflow.Revision, pending); err != nil {
+			return CommandResult{}, fmt.Errorf("checkpoint HDR request: %w", err)
+		}
+		state.HDRPendingRequest = &pending
+		nativeRetryAfterSequence = pending.NativeRetryAfterSequence
+		extractionSequence = max(extractionSequence, *nativeRetryAfterSequence)
+		measurements.RetryAfterSequence = &pending.RetryAfterSequence
+		measurements.NativeRetryAfterSequence = nativeRetryAfterSequence
+	}
 	if prior != nil && prior.Release == releaseRef {
 		for id, record := range state.HDRExtractions {
-			if record.Release == releaseRef && slices.Contains(normalized.TargetIDs, record.TargetID) && prior.TargetNeedsSourceRetry(record.TargetID) {
+			if !api.IsNativeHDRProfile(normalized.ProfileVersion) && record.Release == releaseRef &&
+				slices.Contains(normalized.TargetIDs, record.TargetID) &&
+				prior.TargetNeedsSourceRetry(record.TargetID) && (nativeRetryAfterSequence == nil || record.Sequence <= *nativeRetryAfterSequence) {
 				delete(state.HDRExtractions, id)
 				delete(resources, id)
 				retired = append(retired, id)
@@ -125,12 +202,9 @@ func (m *Module) analyzeHDR(
 			m.private.Delete(ownerID, state.Workflow.ID, hdrExtractionPrivateResourceID(id))
 		}
 	}
-	if err := m.checkpointHDRAttempt(ctx, ownerID, state.Workflow.ID, releaseRef); err != nil {
-		return CommandResult{}, err
-	}
 	snapshot, resource, err := m.hdrAnalysisBuilder.Build(
 		ctx,
-		releaseRef,
+		hdrPreparation(release),
 		normalized,
 		attemptID,
 		now,
@@ -139,6 +213,7 @@ func (m *Module) analyzeHDR(
 		state.HDRExtractions,
 		resources,
 		publish,
+		&measurements,
 	)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow analyze HDR: %w", err)
@@ -161,24 +236,54 @@ func (m *Module) analyzeHDR(
 		}
 	}
 	state.HDRAnalyses[snapshot.ID] = snapshot
+	if command.WorkflowID != "" {
+		state.HDRPendingRequest = nil
+	}
 	state.Workflow.HDRAnalysis = &api.HDRAnalysisRef{ID: snapshot.ID, Revision: snapshot.Revision}
-	state.Workflow.HDRAnalysisEnabled = snapshot.Status == api.StageStatusCompleted
+	state.Workflow.HDRAnalysisEnabled = snapshot.CanIncludeDefaultImages()
+	if selection := state.Workflow.HDRImages; selection != nil && api.IsNativeHDRProfile(snapshot.ProfileVersion) {
+		selected := remapHDRImages(selection, prior, &snapshot)
+		state.Workflow.HDRImages = selected
+		state.Workflow.HDRAnalysisEnabled = len(selected.ArtifactIDs) > 0
+	} else {
+		state.Workflow.HDRImages = nil
+	}
 	state.Workflow.Descriptions = nil
 	invalidateUploadPlan(&state.Workflow)
 	return CommandResult{HDRAnalysis: &snapshot}, nil
 }
 
 func (m *Module) setHDRAnalysisEnabled(ctx context.Context, state *State, command SetHDRAnalysisEnabledCommand) error {
+	if len(command.ArtifactIDs) > api.HDRAnalysisMaxTargets*216 || !command.Enabled && len(command.ArtifactIDs) > 0 {
+		return fmt.Errorf("%w: HDR image selection is invalid", ErrInvalidTransition)
+	}
 	if command.Enabled {
 		if state.Workflow.HDRAnalysis == nil {
 			return fmt.Errorf("%w: generate HDR analysis before enabling inclusion", ErrInvalidTransition)
 		}
 		analysis, ok := state.HDRAnalyses[state.Workflow.HDRAnalysis.ID]
-		if !ok || analysis.Revision != state.Workflow.HDRAnalysis.Revision || analysis.Status != api.StageStatusCompleted {
+		if !ok || analysis.Revision != state.Workflow.HDRAnalysis.Revision || !analysis.CanIncludeImages() {
 			return fmt.Errorf("%w: every HDR target must complete before inclusion", ErrInvalidTransition)
 		}
+		if len(command.ArtifactIDs) == 0 && !analysis.CanIncludeDefaultImages() {
+			return fmt.Errorf("%w: select decoded HDR images explicitly when no native metadata image is available", ErrInvalidTransition)
+		}
+		if len(command.ArtifactIDs) > 0 && !api.IsNativeHDRProfile(analysis.ProfileVersion) {
+			return fmt.Errorf("%w: per-image selection requires a native HDR analysis", ErrInvalidTransition)
+		}
+		selected := make(map[api.PublicResourceID]bool, len(command.ArtifactIDs))
+		for _, id := range command.ArtifactIDs {
+			if id == "" || selected[id] {
+				return fmt.Errorf("%w: HDR image selection is invalid", ErrInvalidTransition)
+			}
+			selected[id] = true
+		}
+		release, err := currentReleaseSnapshot(state)
+		if err != nil {
+			return err
+		}
 		if validator, ok := m.hdrAnalysisBuilder.(HDRAnalysisAuthorityValidator); ok {
-			if err := validator.ValidateAuthority(ctx, analysis); err != nil {
+			if err := validator.ValidateAuthority(ctx, hdrPreparation(release), analysis); err != nil {
 				return fmt.Errorf("hdr_analysis: %w", err)
 			}
 		}
@@ -191,18 +296,32 @@ func (m *Module) setHDRAnalysisEnabled(ctx context.Context, state *State, comman
 			return ErrPrivateResourceUnavailable
 		}
 		for _, target := range analysis.Targets {
-			if target.Artifact == nil {
-				return ErrPrivateResourceIntegrity
+			images := target.DescriptionImages()
+			if len(command.ArtifactIDs) > 0 {
+				images = target.SelectableImages()
 			}
-			if _, err := resource.LocalArtifactPath(analysis, target.Artifact.ID); err != nil {
-				return fmt.Errorf("hdr_analysis: %w", err)
+			for _, artifact := range images {
+				if len(command.ArtifactIDs) > 0 && !selected[artifact.ID] {
+					continue
+				}
+				if _, err := resource.LocalArtifactPath(analysis, artifact.ID); err != nil {
+					return fmt.Errorf("hdr_analysis: %w", err)
+				}
+				delete(selected, artifact.ID)
 			}
+		}
+		if len(selected) > 0 {
+			return fmt.Errorf("%w: selection contains unavailable HDR images", ErrInvalidTransition)
 		}
 	}
 	if !command.Enabled && state.Composite != nil {
 		state.Composite.Intent.HDRAnalysis = nil
 	}
 	state.Workflow.HDRAnalysisEnabled = command.Enabled
+	state.Workflow.HDRImages = nil
+	if !command.Enabled || len(command.ArtifactIDs) > 0 {
+		state.Workflow.HDRImages = &api.HDRImageSelection{ArtifactIDs: slices.Clone(command.ArtifactIDs)}
+	}
 	state.Workflow.Descriptions = nil
 	invalidateUploadPlan(&state.Workflow)
 	return nil
@@ -240,7 +359,7 @@ func (m *Module) hdrAnalysisResource(
 		return api.HDRAnalysisResult{}, nil, ErrRevisionConflict
 	}
 	if validator, ok := m.hdrAnalysisBuilder.(HDRAnalysisAuthorityValidator); ok {
-		if err := validator.ValidateAuthority(ctx, analysis); err != nil {
+		if err := validator.ValidateAuthority(ctx, hdrPreparation(release), analysis); err != nil {
 			return api.HDRAnalysisResult{}, nil, fmt.Errorf("hdr_analysis: %w", err)
 		}
 	}
@@ -255,6 +374,8 @@ func (m *Module) hdrAnalysisResource(
 	return analysis, resource, nil
 }
 
+// HDRAnalysisArtifact opens an artifact only from the owner's current analysis
+// revision and exact prepared generation. The caller closes the returned Body.
 func (m *Module) HDRAnalysisArtifact(
 	ctx context.Context,
 	ownerID string,
@@ -273,6 +394,8 @@ func (m *Module) HDRAnalysisArtifact(
 	return content, nil
 }
 
+// HDRAnalysisArtifactPath returns a verified host path owned by the current
+// analysis resource. The path is private and does not transfer file ownership.
 func (m *Module) HDRAnalysisArtifactPath(
 	ctx context.Context,
 	ownerID string,
@@ -365,7 +488,7 @@ func (m *Module) cleanupInterruptedHDR(ctx context.Context, record api.ReleaseWo
 		if ref.Generation == 0 || ref.SourcePath == "" {
 			continue
 		}
-		if err := cleaner.CleanupAttempt(ref, attempt, state.HDRExtractions); err != nil {
+		if err := cleaner.CleanupAttempt(ref, attempt, state.HDRExtractions, state.HDRMeasurements); err != nil {
 			return fmt.Errorf("clean interrupted HDR files: %w", err)
 		}
 	}

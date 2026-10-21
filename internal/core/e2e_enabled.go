@@ -59,6 +59,7 @@ const (
 	e2eMediaKindEnv     = "UPBRR_E2E_MEDIA_KIND"
 	e2eNamingModeEnv    = "UPBRR_E2E_NAMING_MODE"
 	e2eAudioAnalysisEnv = "UPBRR_E2E_AUDIO_ANALYSIS"
+	e2eHDRAnalysisEnv   = "UPBRR_E2E_HDR_ANALYSIS"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -339,11 +340,54 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 	}}
 	meta.PrimaryAudioTrackID = audioTrackID
 	meta.TrackCoverageComplete = true
+	if mode := os.Getenv(e2eHDRAnalysisEnv); mode == "1" || mode == "decoded" {
+		meta.HDRFileEvidence = map[string]api.HDRSourceEvidence{
+			sourcePath: {
+				UniqueHEVC:  true,
+				HDR10Plus:   mode == "1",
+				DolbyVision: mode == "1",
+			},
+		}
+		if mode == "decoded" {
+			evidence := meta.HDRFileEvidence[sourcePath]
+			evidence.Decoded = &api.HDRDecodedSourceEvidence{
+				VideoStreams:           1,
+				Codec:                  "hevc",
+				Width:                  192,
+				Height:                 112,
+				BitDepth:               10,
+				PixelAspectNumerator:   1,
+				PixelAspectDenominator: 1,
+				Range:                  "limited",
+				Matrix:                 "bt2020nc",
+				Transfer:               "smpte2084",
+				Primaries:              "bt2020",
+			}
+			meta.HDRFileEvidence[sourcePath] = evidence
+		}
+	}
 	if value := strings.TrimSpace(os.Getenv(e2eAudioAnalysisEnv)); value == "1" || strings.EqualFold(value, "true") {
 		meta.VideoPath = sourcePath
 		meta.MediaTracks[0].Codec = "PCM"
 		meta.MediaTracks[0].ChannelLayout = "stereo"
 		meta.MediaTracks[0].Channels = 2
+	}
+	if request.Layout.DiscType == "" {
+		// The validated manifest includes nested videos; avoid a shallower rescan.
+		meta.FileList = nil
+		for _, entry := range request.Manifest.Entries {
+			if entry.Type != api.SourceEntryTypeFile {
+				continue
+			}
+			name := strings.ToLower(filepath.Base(entry.Path))
+			if entry.Path != sourcePath && (!filesystem.IsVideoFile(name) || (strings.Contains(name, "sample") && !strings.Contains(name, "!sample"))) {
+				continue
+			}
+			meta.FileList = append(meta.FileList, entry.Path)
+		}
+		if len(meta.FileList) > 0 {
+			meta.VideoPath = meta.FileList[0]
+		}
 	}
 	if namingFixture {
 		meta.Edition = "Uncut"

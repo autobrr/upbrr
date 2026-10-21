@@ -4,6 +4,7 @@
 package aither
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -16,6 +17,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		return nil
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, languagePolicy())
+	associationReview := additionalMainAudioAssociationReview(subject)
 	for _, track := range additionalMainAudio(subject) {
 		original := slices.ContainsFunc(
 			track.Languages,
@@ -28,6 +30,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			reason = "additional original-language main audio " + track.ID + " is permitted for music videos in original, non-transcoded form; source history has not been verified"
 		}
 		failure := trackers.LanguageRuleFailure(subject, "additional_main_audio", reason, outcome)
+		failure.QuestionnaireInput = !original && len(associationReview) > 0
 		if original {
 			failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		}
@@ -35,10 +38,48 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	}
 	failures = append(failures, compatibilityFailures(subject)...)
 	if track, ok := multilingualProgrammeTrack(subject); ok && multilingualMarker(subject, track) == "" {
-		failures = append(failures, trackers.LanguageRuleFailure(subject, "multilingual_balance",
-			"source review must establish whether programme track "+track.ID+" is evenly split or has a predominant language", trackers.LanguageUnresolved))
+		failure := trackers.LanguageRuleFailure(subject, "multilingual_balance",
+			"source review must establish whether programme track "+track.ID+" is evenly split or has a predominant language", trackers.LanguageUnresolved)
+		failure.QuestionnaireInput = true
+		failures = append(failures, failure)
 	}
 	return failures
+}
+
+// additionalMainAudioAssociationReview proves that revising known companion
+// choices removes every strict extra-main gate, independently of stream order.
+func additionalMainAudioAssociationReview(subject api.TrackerValidationSubject) map[string]bool {
+	hasStrictExtra := func(candidate api.TrackerValidationSubject) bool {
+		return slices.ContainsFunc(additionalMainAudio(candidate), func(track api.MediaTrackFacts) bool {
+			return !slices.ContainsFunc(track.Languages, func(language string) bool {
+				return slices.Contains(candidate.LanguageFacts.OriginalLanguages, language)
+			})
+		})
+	}
+	if !hasStrictExtra(subject) {
+		return nil
+	}
+	reviewed := subject
+	reviewed.QuestionnaireAnswers = maps.Clone(subject.QuestionnaireAnswers)
+	keys := map[string]bool{}
+	for _, track := range subject.LanguageFacts.Tracks {
+		key := trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)
+		if subject.QuestionnaireAnswers[key] != "not_compatibility" || !compatibilityCandidate(subject.LanguageFacts, track) ||
+			len(trackers.KnownCompatibilityLanguages(track.Languages)) == 0 {
+			continue
+		}
+		for _, mix := range compatibilityMixes(subject.LanguageFacts, track) {
+			if mix.ID != "" && mix.Codec != "" {
+				reviewed.QuestionnaireAnswers[key] = mix.ID
+				keys[key] = true
+				break
+			}
+		}
+	}
+	if len(keys) == 0 || hasStrictExtra(reviewed) {
+		return nil
+	}
+	return keys
 }
 
 // additionalMainAudio counts programme options within each inspected resource;
@@ -113,7 +154,14 @@ func resolveCompatibilityMix(subject api.TrackerValidationSubject, track api.Med
 // Compatibility associations use current review or unambiguous same-language
 // standalone companions. Embedded cores cannot satisfy a missing companion.
 func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	failures, _ := compatibilityAssessment(subject)
+	return failures
+}
+
+func compatibilityAssessment(subject api.TrackerValidationSubject) ([]api.RuleFailure, bool) {
 	var failures []api.RuleFailure
+	var companions []trackers.CompatibilityCompanion
+	var required []api.MediaTrackFacts
 	confirmed, pending := map[string]bool{}, map[string]bool{}
 	for _, track := range subject.LanguageFacts.Tracks {
 		if track.Kind != api.MediaTrackAudio {
@@ -129,6 +177,21 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 			continue
 		}
 		answer, _ := resolveCompatibilityMix(subject, track)
+		candidates := compatibilityMixes(subject.LanguageFacts, track)
+		if track.ID != "" && len(trackers.KnownCompatibilityLanguages(track.Languages)) > 0 && trackers.DolbyCompatibilityCodec(track.Codec) {
+			companion := trackers.CompatibilityCompanion{
+				ID:         track.ID,
+				ResourceID: track.ResourceID,
+				CanCover:   true,
+				Optional:   track.Role != api.AudioRoleCompatibility,
+			}
+			for _, candidate := range candidates {
+				if candidate.ID != "" && candidate.Codec != "" {
+					companion.Mixes = append(companion.Mixes, candidate.ID)
+				}
+			}
+			companions = append(companions, companion)
+		}
 		if track.Role != api.AudioRoleCompatibility && answer == "not_compatibility" {
 			continue
 		}
@@ -155,7 +218,6 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 				trackers.LanguageRuleFailure(subject, "compatibility_format", "standalone DD or DD+ is required for compatibility track "+track.ID, outcome),
 			)
 		}
-		candidates := compatibilityMixes(subject.LanguageFacts, track)
 		if answer != "" &&
 			slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.ID == answer && candidate.Codec != "" }) {
 			if validCodec && identified {
@@ -164,38 +226,44 @@ func compatibilityFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 				pending[answer] = true
 			}
 		} else {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"compatibility_mix",
-					"source association with its TrueHD mix is unresolved for compatibility track "+track.ID,
-					trackers.LanguageUnresolved,
-				),
+			failure := trackers.LanguageRuleFailure(
+				subject,
+				"compatibility_mix",
+				"source association with its TrueHD mix is unresolved for compatibility track "+track.ID,
+				trackers.LanguageUnresolved,
 			)
+			failure.QuestionnaireInput = slices.ContainsFunc(
+				candidates,
+				func(candidate api.MediaTrackFacts) bool { return candidate.ID != "" && candidate.Codec != "" },
+			)
+			failures = append(failures, failure)
 			for _, candidate := range candidates {
 				pending[candidate.ID] = true
 			}
 		}
 	}
 	for _, track := range subject.LanguageFacts.Tracks {
-		if track.Kind != api.MediaTrackAudio || track.Role == api.AudioRoleCompatibility || !strings.Contains(strings.ToLower(track.Codec), "truehd") ||
-			confirmed[track.ID] {
+		if track.Kind != api.MediaTrackAudio || track.Role == api.AudioRoleCompatibility || !strings.Contains(strings.ToLower(track.Codec), "truehd") {
+			continue
+		}
+		required = append(required, track)
+		if confirmed[track.ID] {
 			continue
 		}
 		outcome := trackers.LanguageProhibited
 		if track.ID == "" || pending[track.ID] || subject.LanguageFacts.AudioStatus != api.MetadataEvidenceStatusComplete {
 			outcome = trackers.LanguageUnresolved
 		}
-		failures = append(
-			failures,
-			trackers.LanguageRuleFailure(
-				subject,
-				"compatibility_missing",
-				"TrueHD mix "+track.ID+" requires its own standalone DD or DD+ compatibility audio",
-				outcome,
-			),
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"compatibility_missing",
+			"TrueHD mix "+track.ID+" requires its own standalone DD or DD+ compatibility audio",
+			outcome,
 		)
+		failure.QuestionnaireInput = track.ID != "" && pending[track.ID] && subject.LanguageFacts.AudioStatus == api.MetadataEvidenceStatusComplete
+		failures = append(failures, failure)
 	}
-	return failures
+	review := subject.LanguageFacts.AudioStatus == api.MetadataEvidenceStatusComplete &&
+		trackers.ReviewCompatibilityAssignments(failures, required, companions, false)
+	return failures, review
 }

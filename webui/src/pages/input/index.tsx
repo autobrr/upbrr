@@ -1252,7 +1252,7 @@ export default function InputPage(props: Props) {
                 })
               }
             />
-            Check for HDR10+ in the selected playlists
+            Check for HDR metadata in the selected playlists
           </label>
           <p className="text-sm text-muted-foreground">
             Scans the selected video streams and generates HDR plots, even when a Blu-ray report is
@@ -1457,7 +1457,10 @@ export default function InputPage(props: Props) {
         {(preview.Diagnostics || [])
           .filter((diagnostic) => diagnostic.Severity === "warning")
           .map((diagnostic) => (
-            <p key={`${diagnostic.Code}-${diagnostic.Message}`} className="text-muted-foreground">
+            <p
+              key={`${diagnostic.Code}-${diagnostic.Message}`}
+              className="whitespace-pre-line break-words text-muted-foreground"
+            >
               {diagnostic.Message}
             </p>
           ))}

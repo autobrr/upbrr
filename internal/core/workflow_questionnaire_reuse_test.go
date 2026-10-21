@@ -25,24 +25,60 @@ import (
 )
 
 func TestContinuePTPQuestionnaireRebindsOnlyCompatibleDuplicateEvidence(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "PTP", "", false)
+	testContinueQuestionnaireReuse(t, "PTP", "", false, false)
 }
 
 func TestContinueANTQuestionnaireRebindsOnlyCompatibleDuplicateEvidence(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "ANT", "", false)
+	testContinueQuestionnaireReuse(t, "ANT", "", false, false)
 }
 
 func TestContinueANTQuestionnaireRequiresFreshStaffTokenConfirmation(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "ANT", "", true)
+	testContinueQuestionnaireReuse(t, "ANT", "", true, false)
 }
 
 func TestContinueQuestionnaireReusesEvidenceWithConfirmedSibling(t *testing.T) {
-	testContinueQuestionnaireReuse(t, "PTP", "ANT", false)
+	testContinueQuestionnaireReuse(t, "PTP", "ANT", false, false)
 }
 
-func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker api.TrackerID, staffToken bool) {
+func TestContinueCandidateQuestionsRefreshAfterCompatibleRebind(t *testing.T) {
+	testContinueQuestionnaireReuse(t, "ANT", "", false, true)
+}
+
+func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker api.TrackerID, staffToken, candidateReview bool) {
 	t.Helper()
 	registry := trackerimpl.MustNewRegistry()
+	reviewKey := func(answers map[string]string) string {
+		fingerprint, _ := api.CanonicalWorkflowFingerprint([]string{answers["source"], answers["internal_status"]})
+		return "source_reviewed_" + string(fingerprint)
+	}
+	if candidateReview {
+		descriptor, ok := registry.LookupDescriptor(string(trackerID))
+		if !ok || descriptor.DupePolicy == nil {
+			t.Fatal("missing fixture policy")
+		}
+		descriptor.DupePolicy.Questionnaire = func(input trackers.PreparationInput) []api.TrackerQuestionnaireField {
+			answers := input.Meta.TrackerQuestionnaireAnswers[string(trackerID)]
+			key := reviewKey(answers)
+			return []api.TrackerQuestionnaireField{{
+				Key:   "source",
+				Kind:  "text",
+				Value: answers["source"],
+			}, {
+				Key:     key,
+				Kind:    "select",
+				Value:   answers[key],
+				Options: []string{"unknown", "yes"},
+			}}
+		}
+		descriptor.DupePolicy.TargetEvidence = func(subject api.UploadSubject) (api.DupeReleaseEvidence, []api.DupeComparisonEvidence) {
+			answers := subject.TrackerQuestionnaireAnswers[string(trackerID)]
+			var evidence api.DupeReleaseEvidence
+			if answers[reviewKey(answers)] == "yes" {
+				evidence.InternalStatus = answers["internal_status"]
+			}
+			return evidence, nil
+		}
+	}
 	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}, Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{string(trackerID): {
 		APIKey:     "example",
 		PTPAPIUser: "example",
@@ -159,6 +195,15 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 		Search:             api.DupeSearchEvidence{Complete: true},
 		RequiresStaffToken: staffToken,
 	}}}
+	if candidateReview {
+		dupes.results[0].HasDupes = true
+		dupes.results[0].Evaluations = []api.DupeCandidateEvaluation{{
+			ID:                  "candidate",
+			Name:                "Existing release",
+			EvidenceFingerprint: "current",
+			Relation:            api.DupeRelationSameSlot,
+		}}
+	}
 	if staffToken {
 		dupes.results[0].HasDupes = true
 		dupes.results[0].Evaluations = []api.DupeCandidateEvaluation{{
@@ -298,6 +343,31 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 	}
 	if staffToken {
 		confirmStaffToken()
+	}
+	if candidateReview {
+		intent.DuplicateDecisions = map[api.TrackerID]api.DupeDecision{trackerID: api.DupeDecisionIgnored}
+		settle(api.WorkflowGoalDuplicatesDecided)
+		priorKey := current.Dupes.Results[0].Questionnaire[1].Key
+		priorCalls := len(dupes.projections)
+		for _, source := range []string{"https://example.test/source-a", "https://example.test/source-b"} {
+			answers := intent.ProjectionInstructions[trackerID].Questionnaire
+			answers["source"], answers["internal_status"] = new(source), new("internal")
+			settle(api.WorkflowGoalTrackersAssessed)
+			if len(dupes.projections) != priorCalls || current.Dupes == nil {
+				t.Fatal("compatible source edit did not rebind")
+			}
+			fields := current.Dupes.Results[0].Questionnaire
+			if len(fields) != 2 || fields[0].Value != source || fields[1].Key == priorKey || fields[1].Value != "" {
+				t.Fatalf("stale rebound questionnaire: %+v; projected answers=%+v; instructions=%+v; operation=%+v", fields, current.Projections.Projections[0].QuestionnaireAnswers, current.ProjectionInstructions.Instructions[trackerID], current.Operation)
+			}
+			priorKey = fields[1].Key
+		}
+		intent.ProjectionInstructions[trackerID].Questionnaire[priorKey] = new("yes")
+		settle(api.WorkflowGoalDuplicatesDecided)
+		if len(dupes.projections) != priorCalls+1 || current.Projections.Projections[0].DuplicateTarget.Evidence.InternalStatus != "internal" {
+			t.Fatal("new source review key did not apply and trigger fresh evaluation")
+		}
+		return
 	}
 	baseline := *current.Dupes
 	type questionnaireEdit struct {

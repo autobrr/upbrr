@@ -104,9 +104,9 @@ func TestWorkflowTitleSearchDecisionsAndChangedEvidence(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			definition := &titleSearchTestDefinition{
-				name:   "TITLE",
-				result: test.result,
-				calls:  &calls,
+				workflowImageHostPolicyDefinition: workflowImageHostPolicyDefinition{name: "TITLE"},
+				result:                            test.result,
+				calls:                             &calls,
 			}
 			registry := trackers.NewRegistry()
 			validation := trackers.WithLanguageAssessment(trackers.NoExtraValidationPolicy("title-test-v1"), titleSearchTestFailures)
@@ -209,9 +209,10 @@ func TestWorkflowTitleSearchDecisionsAndChangedEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if finalized[0].DupeReady || finalized[0].RuleAuthorizationFingerprint != "" || !slices.ContainsFunc(finalized[0].PolicyDecisions, func(d api.TrackerPolicyDecision) bool {
-				return d.Disposition == api.RuleDispositionStrict && d.Blocking
-			}) {
+			if finalized[0].DupeReady || finalized[0].RuleAuthorizationFingerprint != "" ||
+				!slices.ContainsFunc(finalized[0].PolicyDecisions, func(d api.TrackerPolicyDecision) bool {
+					return d.Disposition == api.RuleDispositionStrict && d.Blocking
+				}) {
 				t.Fatalf("changed evidence retained waiver: %+v", finalized[0])
 			}
 		})
@@ -257,11 +258,18 @@ func TestWorkflowTitleSearchDoesNotExtendDownstreamFreshness(t *testing.T) {
 		Search:    api.DupeSearchEvidence{Complete: true, Scope: "title_preflight"},
 		CheckedAt: evidence.CheckedAt,
 	}}
-	dupes, _, err := (workflowDupeBuilder{service: search}).Build(t.Context(), api.DuplicateSubject{SourcePath: subject.SourcePath, Identity: subject.Identity}, projections, api.TrackerPreflightAssessment{
-		Status:    api.StageStatusReady,
-		ExpiresAt: expires,
-		Results:   []api.TrackerPreflightResult{{TrackerID: "TITLE", State: api.TrackerPreflightStateReady}},
-	}, now, false)
+	dupes, _, err := (workflowDupeBuilder{service: search}).Build(
+		t.Context(),
+		api.DuplicateSubject{SourcePath: subject.SourcePath, Identity: subject.Identity},
+		projections,
+		api.TrackerPreflightAssessment{
+			Status:    api.StageStatusReady,
+			ExpiresAt: expires,
+			Results:   []api.TrackerPreflightResult{{TrackerID: "TITLE", State: api.TrackerPreflightStateReady}},
+		},
+		now,
+		false,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +278,18 @@ func TestWorkflowTitleSearchDoesNotExtendDownstreamFreshness(t *testing.T) {
 	}
 	service := &workflowRetainedUploadServiceFake{}
 	builder := workflowUploadPlanBuilder{resolver: workflowUploadResolverFixed{subject: subject}, trackers: service}
-	plan, execution, err := builder.Build(t.Context(), projections, dupes, workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{}, api.DescriptionInstructions{}, releaseworkflow.UploadPlanBuildOptions{}, now)
+	plan, execution, err := builder.Build(
+		t.Context(),
+		projections,
+		dupes,
+		workflowDupePrivateEvidence{},
+		api.MediaArtifactSet{},
+		workflowMediaPrivateArtifacts{},
+		api.DescriptionSet{},
+		api.DescriptionInstructions{},
+		releaseworkflow.UploadPlanBuildOptions{},
+		now,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,5 +300,128 @@ func TestWorkflowTitleSearchDoesNotExtendDownstreamFreshness(t *testing.T) {
 	validated := api.NewTrackerValidationSubject(service.subject, "TITLE")
 	if !validated.TitleSearchEvidence.Current(subject.Identity) {
 		t.Fatal("late pure validation lost title evidence")
+	}
+}
+
+func TestTitleSearchSubtitleInspectionChangesEvidence(t *testing.T) {
+	calls := 0
+	rows := []api.DupeEntry{{ID: "one", EnglishSubtitlesKnown: true}, {ID: "two", EnglishSubtitlesKnown: true}}
+	complete := dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID}
+	definition := &titleSearchTestDefinition{
+		workflowImageHostPolicyDefinition: workflowImageHostPolicyDefinition{name: "TITLE"},
+		result:                            dupe.ResolvedWithSearch(rows, nil, complete),
+		calls:                             &calls,
+	}
+	registry := trackers.NewRegistry()
+	if err := registry.RegisterDescriptor(trackers.Descriptor{Name: "TITLE", Definition: definition}); err != nil {
+		t.Fatal(err)
+	}
+	builder := workflowPreflightBuilder{registry: registry, logger: api.NopLogger{}}
+	subject := api.UploadSubject{
+		Identity: api.ExternalIdentity{
+			SourcePath: filepath.Join(t.TempDir(), "example.mkv"),
+			Generation: 1,
+			TMDBID:     123,
+			Category:   api.CanonicalCategoryMovie,
+		},
+	}
+	projection := api.TrackerReleaseProjection{TrackerID: "TITLE", ConfigFingerprint: "config"}
+	first, err := builder.acquireTitleSearchEvidence(t.Context(), subject, projection, definition, "policy", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SubtitleInspectedTorrentCount != 2 || !first.NoEnglishSubtitleTorrent(subject.Identity) {
+		t.Fatalf("negative inspection not retained: %+v", first)
+	}
+	rows[1].EnglishSubtitlesKnown = false
+	definition.result = dupe.ResolvedWithSearch(rows, nil, complete)
+	second, err := builder.acquireTitleSearchEvidence(t.Context(), subject, projection, definition, "policy", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.SubtitleInspectedTorrentCount != 1 || second.NoEnglishSubtitleTorrent(subject.Identity) || second.ResultFingerprint == first.ResultFingerprint {
+		t.Fatalf("unknown inspection retained authority: %+v", second)
+	}
+}
+
+func TestTitleSearchRetainsFinalNameBoundReviews(t *testing.T) {
+	const reviewedName = "Example.Final.2026.1080p.WEB-DL-GRP"
+	for _, finalName := range []string{reviewedName, "Example.Changed.2026.1080p.WEB-DL-GRP"} {
+		t.Run(finalName, func(t *testing.T) {
+			calls := 0
+			definition := &titleSearchTestDefinition{
+				workflowImageHostPolicyDefinition: workflowImageHostPolicyDefinition{name: "TITLE"},
+				result: dupe.ResolvedWithSearch(
+					nil,
+					nil,
+					dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID},
+				),
+				calls: &calls,
+			}
+			registry := trackers.NewRegistry()
+			validation := trackers.WithLanguageAssessment(
+				trackers.NoExtraValidationPolicy("final-name-review-test"),
+				func(subject api.TrackerValidationSubject) []api.RuleFailure {
+					var failures []api.RuleFailure
+					for _, review := range []string{"naming_review", "documentation_review"} {
+						if subject.QuestionnaireAnswers[review+":"+subject.FinalizedUploadName] != "yes" {
+							failures = append(failures, trackers.NewRuleFailure(review, "review the current final name", api.RuleDispositionStrict))
+						}
+					}
+					return failures
+				},
+			)
+			if err := registry.RegisterDescriptor(trackers.Descriptor{
+				Name:       "TITLE",
+				Definition: definition,
+				Validation: validation,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			subject := api.UploadSubject{
+				PersonalRelease: true,
+				Identity: api.ExternalIdentity{
+					SourcePath: filepath.Join(t.TempDir(), "example.mkv"),
+					Generation: 1,
+					TMDBID:     123,
+					Category:   api.CanonicalCategoryMovie,
+				},
+			}
+			initial := api.TrackerReleaseProjectionSet{
+				Projections: []api.TrackerReleaseProjection{
+					{
+						TrackerID:            "TITLE",
+						UploadReleaseName:    finalName,
+						Readiness:            api.ReadinessStatusReady,
+						DupeReady:            true,
+						UploadReady:          true,
+						QuestionnaireAnswers: map[string]string{"naming_review:" + reviewedName: "yes", "documentation_review:" + reviewedName: "yes"},
+					},
+				},
+			}
+			builder := workflowPreflightBuilder{registry: registry, logger: api.NopLogger{}}
+			_, got, err := builder.assessTitleSearchRules(t.Context(), subject, initial, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			projection := got.Projections[0]
+			if calls != 1 || projection.TitleSearchEvidence == nil {
+				t.Fatal("title search did not run")
+			}
+			wantReady := finalName == reviewedName
+			if projection.DupeReady != wantReady || projection.UploadReady != wantReady {
+				t.Fatalf("name-bound review readiness: %+v", projection)
+			}
+			if !wantReady {
+				for _, review := range []string{"naming_review", "documentation_review"} {
+					if !slices.ContainsFunc(
+						projection.PolicyDecisions,
+						func(decision api.TrackerPolicyDecision) bool { return decision.Code == review && decision.Blocking },
+					) {
+						t.Fatalf("changed name retained %s review: %+v", review, projection)
+					}
+				}
+			}
+		})
 	}
 }

@@ -257,6 +257,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 				ruleAction,
 				{Kind: api.RequiredActionProvideTrackerInput, Status: api.RequiredActionStatusPending},
 			}
+			acknowledged.Projections[0].Questionnaire = []api.TrackerQuestionnaireRequirement{{Key: "requestid", Kind: "text"}}
 			status := api.TrackerAuthStatus{TrackerID: "ALPHA", State: trackerauth.StateLoginRequired}
 			wantCode := api.OperationFailureTrackerAuthRequired
 			if unavailable {
@@ -274,7 +275,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			}
 			result := assessment.Results[0]
 			if result.State != api.TrackerPreflightStateRetryable || len(result.Failures) != 1 || result.Failures[0].Failure.Code != wantCode ||
-				finalized[0].DupeReady || finalized[0].UploadReady || len(finalized[0].RequiredActions) != 1 ||
+				finalized[0].DupeReady || finalized[0].UploadReady || len(finalized[0].Questionnaire) != 0 || len(finalized[0].RequiredActions) != 1 ||
 				finalized[0].RequiredActions[0].Kind != ruleAction.Kind || finalized[0].RequiredActions[0].Status != ruleAction.Status ||
 				finalized[0].RequiredActions[0].Prompt != ruleAction.Prompt {
 				t.Fatalf("auth-blocked rule acknowledgement unavailable=%t: %#v/%#v", unavailable, result, finalized[0])
@@ -859,7 +860,9 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 		RequiredActions: []api.RequiredAction{
 			{Kind: api.RequiredActionAuthorizeRules, TrackerID: "RESOURCE"},
 			{Kind: api.RequiredActionReviewDuplicates, TrackerID: "RESOURCE"},
+			{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: "RESOURCE"},
 		},
+		Questionnaire: []api.TrackerQuestionnaireRequirement{{Key: "requestid", Kind: "text"}},
 		Failures: []api.WorkflowFailure{
 			{
 				Failure:   api.OperationFailure{Code: api.OperationFailureNoEligibleTrackers, Operation: api.OperationKindDuplicateCheck},
@@ -906,7 +909,10 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 		t.Fatalf("auth called before local-resource rejection: capabilities=%d validate=%d", capabilityCalls, validateCalls)
 	}
 	if len(assessment.Results) != 1 || assessment.Results[0].State == api.TrackerPreflightStateReady ||
-		len(finalized) != 1 || finalized[0].DupeReady {
+		len(finalized) != 1 || finalized[0].DupeReady || len(finalized[0].Questionnaire) != 0 ||
+		slices.ContainsFunc(finalized[0].RequiredActions, func(action api.RequiredAction) bool {
+			return action.Kind == api.RequiredActionAnswerQuestionnaire
+		}) {
 		t.Fatalf("missing local resource remained eligible: assessment=%#v finalized=%#v", assessment.Results, finalized)
 	}
 	if !slices.ContainsFunc(finalized[0].PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
@@ -973,21 +979,104 @@ func workflowPreflightFixtures(
 }
 
 type workflowQuestionnaireResourceDefinition struct {
+	expectedName string
 	workflowPreparedResourceDefinition
 }
 
-func (workflowQuestionnaireResourceDefinition) ValidationPolicy() trackerspkg.ValidationPolicyBinding {
-	return trackerspkg.ValidationPolicyBinding{ID: "resource-questionnaire-test-v1", Check: func(_ context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
-		if subject.MediaInfoTextReady && subject.QuestionnaireAnswers["override"] == "yes" {
+func (definition workflowQuestionnaireResourceDefinition) ValidationPolicy() trackerspkg.ValidationPolicyBinding {
+	return trackerspkg.ValidationPolicyBinding{
+		ID: "resource-questionnaire-test-v1",
+		Check: func(_ context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
+			if definition.expectedName != "" && subject.FinalizedUploadName != definition.expectedName {
+				return []api.RuleFailure{trackerspkg.NewQuestionnaireRuleFailure("reviewed_name", "finalized name changed")}, nil
+			}
+			if !subject.MediaInfoTextReady {
+				return []api.RuleFailure{trackerspkg.NewRuleFailure("required_media", "prepared media is required", api.RuleDispositionStrict)}, nil
+			}
+			if subject.QuestionnaireAnswers["override"] != "yes" {
+				return []api.RuleFailure{trackerspkg.NewQuestionnaireRuleFailure("required_answer", "reviewed answer is required")}, nil
+			}
 			return nil, nil
+		},
+	}
+}
+
+func (workflowQuestionnaireResourceDefinition) ProjectionQuestionnaire(input trackerspkg.PreparationInput) *api.TrackerQuestionnaire {
+	return &api.TrackerQuestionnaire{Tracker: "RESOURCE", Fields: []api.TrackerQuestionnaireField{{
+		NeedsReview: input.Meta.TrackerQuestionnaireAnswers["RESOURCE"]["override"] == "unresolved",
+		Key:         "override",
+		Kind:        "select",
+		Options:     []string{"unresolved", "yes"},
+		Value:       input.Meta.TrackerQuestionnaireAnswers["RESOURCE"]["override"],
+		Required:    true,
+	}}}
+}
+
+func TestWorkflowPreflightPreservesUnresolvedQuestionnaire(t *testing.T) {
+	registry := trackerspkg.NewRegistry()
+	if err := registry.Register(workflowQuestionnaireResourceDefinition{}); err != nil {
+		t.Fatal(err)
+	}
+	mediaInfo := filepath.Join(t.TempDir(), "mediainfo.txt")
+	if err := os.WriteFile(mediaInfo, []byte("prepared media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		answer       string
+		missingMedia bool
+	}{
+		{},
+		{answer: "unresolved"},
+		{answer: "yes"},
+		{answer: "unresolved", missingMedia: true},
+	} {
+		subject := api.UploadSubject{
+			ReleaseName:                 "Example.Release.2026.1080p-GRP",
+			MediaInfoTextPath:           mediaInfo,
+			TrackerQuestionnaireAnswers: map[string]map[string]string{"RESOURCE": {"override": test.answer}},
 		}
-		return []api.RuleFailure{trackerspkg.NewRuleFailure("required_answer_or_media", "prepared media and reviewed answer are required", api.RuleDispositionStrict)}, nil
-	}}
+		if test.missingMedia {
+			subject.MediaInfoTextPath = ""
+		}
+		projection, failure := registry.ProjectRelease(
+			t.Context(),
+			trackerspkg.PreparationInput{Tracker: "RESOURCE", Meta: subject},
+			"input",
+			"catalog",
+			"config",
+		)
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
+		assessment, finalized, err := builder.Build(t.Context(), subject,
+			api.TrackerCatalogSnapshot{Trackers: []api.TrackerCatalogDescriptor{{TrackerID: "RESOURCE"}}}, api.TrackerRuntimeSnapshot{},
+			api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{projection}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, final := assessment.Results[0], finalized[0]
+		switch {
+		case test.missingMedia:
+			if result.State != api.TrackerPreflightStateFailed || len(final.Questionnaire) != 0 || final.UploadReady {
+				t.Fatalf("independent media failure exposed questions: %+v / %+v", result, final)
+			}
+		case test.answer == "yes":
+			if result.State != api.TrackerPreflightStateReady || !final.UploadReady || len(final.RequiredActions) != 0 {
+				t.Fatalf("accepted answer did not recover: %+v / %+v", result, final)
+			}
+		default:
+			if result.State != api.TrackerPreflightStateActionRequired || len(final.Questionnaire) != 1 ||
+				final.Questionnaire[0].Value != test.answer || len(final.RequiredActions) != 1 || final.UploadReady {
+				t.Fatalf("unresolved answer %q lost its corrective question: %+v / %+v", test.answer, result, final)
+			}
+		}
+	}
 }
 
 func TestWorkflowPreflightResourceRevalidationUsesExactQuestionnaireAnswers(t *testing.T) {
 	registry := trackerspkg.NewRegistry()
-	if err := registry.Register(workflowQuestionnaireResourceDefinition{}); err != nil {
+	if err := registry.Register(workflowQuestionnaireResourceDefinition{expectedName: "reviewed-name"}); err != nil {
 		t.Fatal(err)
 	}
 	mediaInfo := filepath.Join(t.TempDir(), "mediainfo.txt")
@@ -1013,6 +1102,7 @@ func TestWorkflowPreflightResourceRevalidationUsesExactQuestionnaireAnswers(t *t
 			resource := api.NewTrackerValidationSubject(subject, "RESOURCE").PreparedResourceFingerprint
 			initial := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
 				TrackerID:                   "RESOURCE",
+				UploadReleaseName:           "reviewed-name",
 				QuestionnaireAnswers:        test.answers,
 				Readiness:                   api.ReadinessStatusReady,
 				DupeReady:                   true,

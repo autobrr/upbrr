@@ -444,6 +444,10 @@ func buildUploadDryRunUnit3D(
 		return api.TrackerDryRunEntry{}, err
 	}
 	data["mod_queue_opt_in"] = boolFlag(req.TrackerConfig.ModQ)
+	if err := applySubmissionRequirements(req, data, profile); err != nil {
+		return api.TrackerDryRunEntry{}, err
+	}
+	description = data["description"]
 	if req.TrackerConfig.Exclusive {
 		data["exclusive"] = "1"
 	}
@@ -469,7 +473,7 @@ func buildUploadDryRunUnit3D(
 
 	message := "dry-run payload generated"
 	status := "ready"
-	if metadataMessage, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data); err != nil {
+	if metadataMessage, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data, profile); err != nil {
 		message += "; " + metadataMessage
 		status = "blocked"
 		if req.Intent == trackers.PreparationIntentUpload {

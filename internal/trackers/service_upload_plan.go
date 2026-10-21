@@ -664,6 +664,7 @@ func (s *Service) preparationInput(
 		Runtime: PreparationRuntime{
 			DBPath:      s.cfg.MainSettings.DBPath,
 			Description: s.cfg.Description,
+			ToneMap:     s.cfg.ScreenshotHandling.ToneMap,
 			Internal:    groupPolicy.Internal,
 			BTNAPIToken: config.ResolveBTNAPIToken(s.cfg),
 		},
@@ -879,7 +880,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				slot.summary = summary
 				if summary.PendingPublication {
 					s.logger.Infof(
-						"trackers: upload tracker=%s state=pending_publication decision=defer_client_injection count=%d",
+						"trackers: upload tracker=%s state=pending_publication decision=submission_completed count=%d",
 						slot.tracker,
 						summary.Uploaded,
 					)

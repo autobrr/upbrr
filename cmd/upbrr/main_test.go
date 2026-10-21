@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,9 +49,8 @@ func TestCloseCLIWorkflowCoreShutsDownBeforeClosingRepository(t *testing.T) {
 	fake := &cliWorkflowCoreLifecycleFake{shutdownErr: errors.New("synthetic shutdown")}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	var stderr strings.Builder
-	closeCLIWorkflowCore(ctx, fake, &stderr)
-	if len(fake.order) != 2 || fake.order[0] != "shutdown" || fake.order[1] != "close" {
+	err := closeCLIWorkflowCore(ctx, fake)
+	if len(fake.order) != 3 || slices.Contains(fake.order, "close") {
 		t.Fatalf("lifecycle order = %v", fake.order)
 	}
 	if fake.shutdownCtxErr != nil {
@@ -59,8 +59,8 @@ func TestCloseCLIWorkflowCoreShutsDownBeforeClosingRepository(t *testing.T) {
 	if !fake.shutdownCtxHasDeadline {
 		t.Fatal("shutdown context has no deadline")
 	}
-	if !strings.Contains(stderr.String(), "synthetic shutdown") {
-		t.Fatalf("shutdown failure was not reported: %q", stderr.String())
+	if err == nil || !strings.Contains(err.Error(), "synthetic shutdown") {
+		t.Fatalf("shutdown failure was not returned: %v", err)
 	}
 }
 

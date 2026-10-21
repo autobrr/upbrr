@@ -24,8 +24,16 @@ func reusableWorkflowDupes(
 	skipRemote bool,
 	inClient func(api.TrackerID) bool,
 ) (map[api.TrackerID]api.TrackerDupeAssessment, workflowDupePrivateEvidence, error) {
-	if reuse == nil || reuse.Assessment.ReleaseRef != projections.ReleaseRef ||
-		reuse.Projections.ExecutionMode != projections.ExecutionMode || !reuse.Assessment.ExpiresAt.After(now) {
+	if reuse == nil || reuse.Projections.ExecutionMode != projections.ExecutionMode || !reuse.Assessment.ExpiresAt.After(now) {
+		return nil, workflowDupePrivateEvidence{}, nil
+	}
+	if equivalent := reuse.EquivalentMetadataTo; equivalent != nil {
+		previous := reuse.Assessment.ReleaseRef
+		if reuse.QuestionnaireOnly || *equivalent != projections.ReleaseRef || previous != reuse.Projections.ReleaseRef ||
+			previous.SourcePath == "" || previous.SourcePath != equivalent.SourcePath || previous.Generation == 0 || equivalent.Generation <= previous.Generation {
+			return nil, workflowDupePrivateEvidence{}, nil
+		}
+	} else if reuse.Assessment.ReleaseRef != projections.ReleaseRef {
 		return nil, workflowDupePrivateEvidence{}, nil
 	}
 	evidence, ok := reuse.PrivateEvidence.(workflowDupePrivateEvidence)

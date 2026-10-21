@@ -36,7 +36,7 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 | **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
 | **Dupe Check**     | Answer tracker questions and review search results, rules, and names.    |
 | **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
-| **HDR Analysis**   | Generate, inspect, download, and include HDR10+ brightness plots.        |
+| **HDR Analysis**   | Generate native HDR plots, audio analysis, and optional picture checks.  |
 | **Screenshots**    | Generate, import, order, and select screenshots.                         |
 | **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
 | **Upload Images**  | Publish selected images through configured hosts.                        |
@@ -67,7 +67,11 @@ Each successful graph can be previewed, opened at full size, or downloaded as it
 
 See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and troubleshooting details.
 
-**HDR Analysis** appears when prepared Input contains eligible targets. MKV files require MediaInfo-confirmed HDR10+ on a unique HEVC video track. For Blu-ray, check **Check for HDR10+ in the selected playlists** during playlist selection, or use **Review selected playlists** for an already prepared disc. Confirmed playlists are plotted during preparation, ready to view on **HDR Analysis**. Opening the page does not read the source. For MKV files, select targets and a peak estimator, then click **Generate**. MKV progress shows structure discovery and metadata collection. Complete retained metadata supports estimator changes without another source scan. Completed analyses are automatically included in generated descriptions; partial plots remain inspectable. Compatible saved plots and their hosted links are restored when reopening a release. See [HDR analysis](../workflow/hdr-analysis.md).
+### Generate HDR analysis
+
+**HDR Analysis** appears when prepared Input contains eligible targets. Opening the page does not start analysis. Select targets and metadata formats, then choose a mode. **HDR metadata plots and primary audio** is the default; **Bounded scene synchronization** adds checks around selected scene boundaries, with **Analyze audio** enabled by default and optional **Active-area borders**. **Picture checks and primary audio** offers sampled checks or **Measure every video frame (slower)**. Audio-enabled modes can select **Analyze all audio tracks (up to 64)**.
+
+Click **Generate**, then inspect each format and picture/audio outcome. Native plots and selected audio images/statistics are included in descriptions by default. Select individual picture-check images to include them. Successful artifacts remain inspectable after partial attempts; a sampled or bounded result does not establish whole-video picture coverage. See [HDR analysis](../workflow/hdr-analysis.md) for source requirements, comparison sources, retries, and colour-thumbnail interpretation.
 
 ### Correct Input facts
 
@@ -81,13 +85,15 @@ Use **Release version** to set `PROPER`, `REPACK`, their supported numbered vari
 
 Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. An empty list, an empty string, a removed provider ID, or explicit **No** remains a manual value until you choose **Auto**.
 
-**Refresh metadata** verifies the source again and applies your corrections, reusing provider lookups for unchanged inputs. It does not repeat lookups that returned no result while the same input remains active. Loading the input again after closing it can retry those empty results; completed fetch failures remain retained until you remove the input from **History**. A changed source, provider ID, or lookup query requests its own result. Compatible screenshot content, selection, order, and hosted links can be reused when media preparation runs again. Earlier duplicate decisions and upload approval must be renewed.
+**Refresh metadata** verifies the source again and applies your corrections, reusing provider lookups for unchanged inputs. It does not repeat lookups that returned no result while the same input remains active. Loading the input again after closing it can retry those empty results; completed fetch failures remain retained until you remove the input from **History**. A changed source, provider ID, or lookup query requests its own result. Compatible screenshot content, selection, order, and hosted links can be reused when media preparation runs again. Refreshing the same verified input can preserve a still-valid duplicate acknowledgement when the backend verifies unchanged finalized facts and compatible tracker policy. This includes normalized no-op edits and saved corrections that resolve to the same finalized facts. Changed metadata, changed source content, forced fresh preparation, or unavailable or expired evidence requires renewed review. A new prepared generation still rebuilds tracker projections and preflight; staff-token attestations require fresh confirmation when evidence is rebound. The acknowledgement switch reflects the current backend decision; an earlier acknowledgement cannot keep it checked for a result that requires review. Refreshing a successfully completed workflow reopens preparation; confirmed uploads remain excluded from resubmission.
 
 Tracker naming policies can declare mandatory rules for specific name components. Those rules take precedence over manual naming choices for that tracker only; they do not change the saved Input facts. When a rule overrides a choice or replaces a complete manual name, the review shows an explanation beside the effective tracker name. This authority is part of the tracker implementation, not a user setting.
 
 A complete manual name has no reliable component boundaries. If a mandatory rule cannot safely apply to it, clear the complete-name override and regenerate the automatic name. A tracker policy may explicitly rebuild it instead. Confirm the effective name shown in review: submitting an edit that would be changed by enforcement does not confirm the unseen replacement.
 
-The **Edition** field shows the detected cut, edition, and presentation labels, or just `2in1` for a two-edition set. Replace or clear this field to override those automatic labels, or set **No edition** to **Yes** to omit them. Apply **Refresh metadata**; choose **Auto** on the edited control to restore automatic handling.
+The **Edition** field shows the detected cut and edition, or just `2in1` for a two-edition set. Editing it preserves independent **Presentation** and **Release features**. Presentation supports IMAX, Open Matte, or both; open the **Release features** dropdown to select multiple features, such as Hybrid and 4K Restoration. **None** clears that control; **Auto** restores detection. Apply **Refresh metadata** to save the change. Legacy **No edition** suppresses automatic edition-related labels; explicit presentation/features selections take precedence.
+
+Recognized compounds such as `Director's Cut / Hybrid` split into the cut and independent feature. Every slash-separated fragment must be recognized; custom wording remains intact. Presentation/features appear immediately after Edition, or in its position when Edition is absent, subject to each tracker's naming policy. Complete manual names retain their existing authority. Feature annotations do not change measured media facts.
 
 A solitary Theatrical cut or edition is ignored; compound editions retain it. Review the effective selections and supporting evidence alongside the payload preview. See [editions and commentary](../trackers/index.md#editions-and-commentary) for manual corrections.
 

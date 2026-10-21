@@ -534,6 +534,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 // Callers provide only the description-owned contract.
 func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubject {
 	return api.UploadSubject{
+		TrackerHDRArtifacts:         subject.TrackerHDRArtifacts,
 		VideoCodec:                  subject.VideoCodec,
 		HasEncodeSettings:           subject.HasEncodeSettings,
 		TrackerQuestionnaireAnswers: subject.TrackerQuestionnaireAnswers,

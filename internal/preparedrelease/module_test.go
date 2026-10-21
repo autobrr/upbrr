@@ -2097,12 +2097,14 @@ func TestPreparedReleaseFeaturesRemainDistinctAndDetached(t *testing.T) {
 	state := preparationstate.State{
 		SourcePath:      path,
 		Release:         api.ReleaseInfo{Collection: "Criterion.Collection"},
-		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature4KRestoration},
+		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature4KRestoration, api.ReleaseFeatureHybrid},
 		Edition:         "Collector's",
+		EditionDisplay:  []api.EditionDisplayPart{{Text: "Collector's"}, {Text: "4K Restoration", Feature: api.ReleaseFeature4KRestoration}},
 		Presentation:    "Open Matte",
 	}
 	facts := mapCollectedFacts(state)
 	state.ReleaseFeatures[0] = api.ReleaseFeatureExtras
+	state.EditionDisplay[1].Text = "mutated"
 	module := newTestModule(t, newMemoryStore(), &recordingCollector{facts: &facts})
 	prepared, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
 	if err != nil {
@@ -2114,12 +2116,14 @@ func TestPreparedReleaseFeaturesRemainDistinctAndDetached(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(subject.ReleaseFeatures, []api.ReleaseFeature{api.ReleaseFeature4KRestoration}) ||
+		if !slices.Equal(subject.ReleaseFeatures, []api.ReleaseFeature{api.ReleaseFeature4KRestoration, api.ReleaseFeatureHybrid}) ||
+			!slices.Equal(subject.Release.ReleaseFeatures, subject.ReleaseFeatures) ||
 			subject.Release.Collection != "Criterion.Collection" ||
 			subject.Edition != "Collector's" ||
-			subject.Presentation != "Open Matte" {
+			subject.Presentation != "Open Matte" || api.EditionDisplayText(subject.EditionDisplay) != "Collector's 4K Restoration" {
 			t.Fatalf("feature/edition contracts lost: %#v", subject)
 		}
 		subject.ReleaseFeatures[0] = api.ReleaseFeatureExtras
+		subject.EditionDisplay[1].Text = "mutated"
 	}
 }

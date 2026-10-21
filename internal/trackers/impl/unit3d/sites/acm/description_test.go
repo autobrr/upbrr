@@ -17,7 +17,7 @@ func TestDVDAudioAnalysisFollowsMediaInfoAndMenus(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Description.ThumbnailSize = 420
 	got, err := buildACMDescription(t.Context(), meta, cfg, config.TrackerConfig{}, api.NopLogger{},
-		"Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
+		"Notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		[]api.ScreenshotImage{{
 			RawURL: "https://images.example.invalid/menu.png",
 			ImgURL: "https://images.example.invalid/menu.png",

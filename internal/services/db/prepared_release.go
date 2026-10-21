@@ -49,9 +49,11 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 // correction record before publishing the prepared generation. Compatibility
 // is computed from the authoritative revision within the transaction. The callback
 // must perform only local computation; an error rolls back the complete commit.
+// A non-nil expectedPreviousGeneration also fences the source generation before any write.
 func (r *SQLiteRepository) CommitPreparedReleaseWithCorrections(
 	ctx context.Context,
 	release api.PreparedRelease,
+	expectedPreviousGeneration *api.PreparedGeneration,
 	expectedRevision uint64,
 	record api.StoredReleaseCorrectionsV1,
 	compatibility func(uint64) (api.PreparationCompatibility, error),
@@ -80,6 +82,16 @@ func (r *SQLiteRepository) CommitPreparedReleaseWithCorrections(
 
 	finalRevision := expectedRevision
 	err := r.withWriteTx(ctx, "commit prepared release with corrections", func(tx *sql.Tx) error {
+		if expectedPreviousGeneration != nil {
+			var generation uint64
+			err := tx.QueryRowContext(ctx, "SELECT generation FROM prepared_release_current WHERE source_path = ?", release.Source.SourcePath).Scan(&generation)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && api.PreparedGeneration(generation) != *expectedPreviousGeneration {
+				return fmt.Errorf("prepared predecessor changed: %w", api.ErrCorrectionConflict)
+			}
+			if err != nil {
+				return fmt.Errorf("db load prepared predecessor: %w", err)
+			}
+		}
 		snapshot, found, err := loadReleaseCorrectionsTx(ctx, tx, release.Source.SourcePath)
 		if err != nil {
 			return err

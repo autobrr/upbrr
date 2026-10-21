@@ -15,7 +15,7 @@ import (
 )
 
 // ValidationContractID versions shared eligibility semantics independently of site policies.
-const ValidationContractID = "tracker-validation-primary-programme-v1"
+const ValidationContractID = "tracker-validation-primary-programme-v3"
 
 // ValidationCheck returns keyed tracker-specific constructibility or policy
 // failures without performing I/O or reading runtime secrets.
@@ -59,6 +59,14 @@ func NewRuleFailure(rule string, reason string, disposition api.RuleDisposition)
 	}
 }
 
+// NewQuestionnaireRuleFailure keeps a corrective tracker answer actionable while
+// preserving the strict preparation and submission gate.
+func NewQuestionnaireRuleFailure(rule, reason string) api.RuleFailure {
+	failure := NewRuleFailure(rule, reason, api.RuleDispositionStrict)
+	failure.QuestionnaireInput = true
+	return failure
+}
+
 // NewEvidenceRuleFailure constructs a normalized keyed tracker-rule result
 // carrying the completeness of the evidence used for that decision.
 func NewEvidenceRuleFailure(
@@ -75,6 +83,7 @@ func NewEvidenceRuleFailure(
 // NormalizeRuleFailure preserves evidence while normalizing legacy fields.
 func NormalizeRuleFailure(failure api.RuleFailure) api.RuleFailure {
 	normalized := NewRuleFailure(failure.Rule, failure.Reason, failure.Disposition)
+	normalized.QuestionnaireInput = failure.QuestionnaireInput
 	normalized.DebugBypass = failure.DebugBypass
 	normalized.EvidenceFingerprint = failure.EvidenceFingerprint
 	if failure.EvidenceStatus != "" {
@@ -174,6 +183,9 @@ func EvaluatePreparationRules(
 	subject api.TrackerValidationSubject,
 	fallback ValidationPolicyBinding,
 ) ([]api.RuleFailure, error) {
+	if input.Projection != nil {
+		subject.FinalizedUploadName = input.Projection.UploadReleaseName
+	}
 	if input.validationRegistry == nil {
 		if fallback.Check == nil {
 			return nil, nil

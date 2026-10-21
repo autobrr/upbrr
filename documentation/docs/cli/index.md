@@ -164,11 +164,11 @@ Exit code `0` means Input is ready. Exit code `2` means required input prevents 
 
 ### Correct descriptive fields and languages
 
+Title and original title are read-only provider values. Use `--alternate-title` to correct the alternate title.
+
 | Option                                            | Purpose                                                                                                |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--title <text>`                                  | Override the resolved title.                                                                           |
 | `--alternate-title <text>`                        | Override the alternate title.                                                                          |
-| `--original-title <text>`                         | Override the original title.                                                                           |
 | `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                             |
 | `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                         |
 | `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                            |
@@ -211,36 +211,46 @@ The review is tracker-specific. Strict `--unattended` never prompts and skips a 
 
 Season tokens require exactly two or four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized; use `S01E05` instead.
 
-| Option                        | Aliases                                           | Purpose                                                                                     |
-| ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `--category <value>`          | `-category`, `-c`                                 | Override category.                                                                          |
-| `--type <value>`              | `-type`, `-t`                                     | Override release type.                                                                      |
-| `--source <value>`            | `-source`                                         | Override source.                                                                            |
-| `--resolution <value>`        | `-resolution`, `-res`                             | Override resolution.                                                                        |
-| `--tag <value>`               | `-tag`, `-g`                                      | Override group tag.                                                                         |
-| `--service <value>`           | `-service`, `-serv`                               | Override streaming service.                                                                 |
-| `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                                                                       |
-| `--original-language <value>` | `-original-language`, `-ol`                       | Override original language.                                                                 |
-| `--edition <value>`           | `-edition`, `-repack`                             | Override edition text, replacing automatic cut, presentation, and multi-edition set labels. |
-| `--season <value>`            | `-season`                                         | Override one season token, such as `05` or `S05`.                                           |
-| `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                           |
-| `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                     |
-| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                            |
-| `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                 |
-| `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                    |
-| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                       |
-| `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                        |
-| `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                      |
-| `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                       |
-| `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                                                                 |
-| `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                                                             |
-| `--no-distributor`            | `-no-distributor`, `-ndist`                       | Remove distributor.                                                                         |
-| `--no-edition`                | `-no-edition`, `-ne`                              | Remove cut, edition, presentation, and multi-edition set labels from the name.              |
-| `--no-dub`                    | `-no-dub`                                         | Remove dubbed tag from audio name.                                                          |
-| `--no-dual`                   | `-no-dual`                                        | Remove dual-audio tag from audio name.                                                      |
-| `--dual-audio`                | `-dual-audio`                                     | Add dual-audio tag to audio name.                                                           |
+Specials can use `S00E01` in a source name or `--season S00 --episode 01`. An explicit season zero is distinct from an unknown season; episode zero is invalid. Use `--season=` to clear the season or `--reset-input release_name.season` to restore automatic detection. Tracker eligibility still determines whether a special or a pack can be uploaded. Changing the episode coordinates does not remove known multi-episode source membership.
+
+Existing prepared releases are rebuilt after this update. Older binaries do not support saved season-zero corrections.
+
+| Option                        | Aliases                                           | Purpose                                                                                               |
+| ----------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `--category <value>`          | `-category`, `-c`                                 | Override category.                                                                                    |
+| `--type <value>`              | `-type`, `-t`                                     | Override release type.                                                                                |
+| `--source <value>`            | `-source`                                         | Override source.                                                                                      |
+| `--resolution <value>`        | `-resolution`, `-res`                             | Override resolution.                                                                                  |
+| `--tag <value>`               | `-tag`, `-g`                                      | Override group tag.                                                                                   |
+| `--service <value>`           | `-service`, `-serv`                               | Override streaming service.                                                                           |
+| `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                                                                                 |
+| `--original-language <value>` | `-original-language`, `-ol`                       | Override original language.                                                                           |
+| `--edition <value>`           | `-edition`, `-repack`                             | Override cut/edition text and multi-edition set labels; independent presentation and features remain. |
+| `--presentation <value>`      | `-presentation`                                   | Set `IMAX`, `Open Matte`, or `IMAX Open Matte`; `--presentation=` clears it.                          |
+| `--release-features <list>`   | `-release-features`                               | Replace release features using comma-separated IDs; `--release-features=` clears them.                |
+| `--season <value>`            | `-season`                                         | Override one season token, such as `05` or `S05`.                                                     |
+| `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                                     |
+| `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                               |
+| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                                      |
+| `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                           |
+| `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                              |
+| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                                 |
+| `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                                  |
+| `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                                |
+| `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                                 |
+| `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                                                                           |
+| `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                                                                       |
+| `--no-distributor`            | `-no-distributor`, `-ndist`                       | Remove distributor.                                                                                   |
+| `--no-edition`                | `-no-edition`, `-ne`                              | Remove cut, edition, presentation, and multi-edition set labels from the name.                        |
+| `--no-dub`                    | `-no-dub`                                         | Remove dubbed tag from audio name.                                                                    |
+| `--no-dual`                   | `-no-dual`                                        | Remove dual-audio tag from audio name.                                                                |
+| `--dual-audio`                | `-dual-audio`                                     | Add dual-audio tag to audio name.                                                                     |
 
 Filename cut, edition, and presentation labels take priority over provider runtime labels. If selected playlists identify two distinct editions, automatic naming uses only `2in1`, without listing the individual editions. Manual `--edition` and `--no-edition` choices take precedence over these automatic labels.
+
+Presentation and release features are independent of Edition. For example, `--edition "Director's Cut" --presentation "Open Matte" --release-features hybrid,4k_restoration` retains all three meanings. Supported feature IDs are `hybrid`, `restoration`, `remaster`, `two_disc_set`, `4k_restoration`, `4k_remaster`, `extras`, `2d_3d_edition`, `3d_anaglyph`, `3d_full_sbs`, `3d_half_ou`, and `3d_half_sbs`. These are release annotations; selecting a 3D annotation does not change measured 3D media facts.
+
+Omit a flag to retain a saved correction. Use `--reset-input release_name.presentation` or `--reset-input release_name.release_features` to return that control to automatic detection. An explicit empty value clears only that control. Legacy `--no-edition` suppresses automatic edition-related labels, but explicit presentation/features selections take precedence.
 
 `-repack` remains an alias for `--edition`. It does not set the independent **Release version** correction. Set that correction in the Web UI; use `--reset-input release_name.repack` to restore automatic version detection from the CLI. The legacy `--no-edition` option also suppresses an automatic release version, but a saved explicit **Release version** selection takes precedence. See [Input corrections](../web-ui/index.md#correct-input-facts).
 
@@ -320,16 +330,45 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 
 ### HDR analysis options
 
-| Option                      | Purpose                                                                               |
-| --------------------------- | ------------------------------------------------------------------------------------- |
-| `--hdr-analysis`            | Generate HDR10+ plots during upload.                                                  |
-| `--hdr-analysis-only`       | Analyze one MKV or Blu-ray content root without configuration or upload.              |
-| `--hdr-targets <id,id>`     | Select prepared opaque target IDs in source order for upload.                         |
-| `--hdr-playlist <number>`   | Select a numeric MPLS basename in standalone disc mode.                               |
-| `--hdr-peak-source <value>` | Choose `histogram` (default), `histogram99`, `max-scl`, or `max-scl-luminance`.       |
-| `--hdr-output-dir <path>`   | Required output parent for standalone mode; each run creates a fresh child directory. |
+| Option                         | Purpose                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `--hdr-analysis`               | Generate native HDR plots and primary-audio analysis before upload.                                                      |
+| `--hdr-analysis-only`          | Analyze one supported HDR file or Blu-ray content root without configuration or upload.                                  |
+| `--hdr-targets <id,id>`        | Select prepared opaque target IDs in source order for upload.                                                            |
+| `--hdr-playlist <number>`      | Select a numeric MPLS basename in standalone disc mode.                                                                  |
+| `--hdr-peak-source <value>`    | Choose `histogram` (default), `histogram99`, `max-scl`, or `max-scl-luminance`.                                          |
+| `--hdr-output-dir <path>`      | Required output parent for standalone mode; each run creates a fresh child directory.                                    |
+| `--hdr-formats <value>`        | Select `auto` (default), `hdr10plus`, `dolby-vision`, or `both`.                                                         |
+| `--hdr-metadata-only`          | Generate native plots without automatic audio or picture measurement.                                                    |
+| `--hdr-audio-only`             | Explicitly request native plots and primary audio without pictures, the default mode.                                    |
+| `--hdr-pictures`               | Add sampled automatic picture checks to native metadata and audio.                                                       |
+| `--hdr-full-frames`            | Select full-frame automatic picture checks instead of sampling; slower.                                                  |
+| `--hdr-boundary-sync`          | Decode bounded windows at selected HDR10+ and Dolby Vision scene boundaries.                                             |
+| `--hdr-boundary-audio=false`   | Disable audio in bounded mode; audio is otherwise enabled there by default.                                              |
+| `--hdr-all-audio-tracks`       | Analyze all prepared audio tracks instead of the primary track; maximum 64. Requires an audio-enabled mode.              |
+| `--hdr-decoder-threads <n>`    | Video threads: `0` uses the mode default; `1`–`64` requests a maximum subject to resource limits. Requires picture work. |
+| `--hdr-scene-sync`             | Select the individual decoded scene check against Dolby Vision markers.                                                  |
+| `--hdr-active-area`            | Check decoded picture borders against Dolby Vision active areas.                                                         |
+| `--hdr-compare-source <path>`  | Explicit local reference source B for grade or colour checks.                                                            |
+| `--hdr-compare-offset <n>`     | Confirm the frame mapping `B = A + n`; explicit zero is required for aligned sources.                                    |
+| `--hdr-compare-crop <l,t,w,h>` | Common coded-pixel crop for both sources; positive even width and height must fit both.                                  |
+| `--hdr-grade`                  | Compare brightness and PQ values against the selected reference.                                                         |
+| `--hdr-colour`                 | Compare colour distributions against the selected reference.                                                             |
 
-Every selected target must complete for requested upload analysis. See [HDR analysis](../workflow/hdr-analysis.md) for supported inputs, local examples, retained metadata, and recovery.
+For requested upload analysis, every selected target needs usable native metadata or, when audio was requested, usable audio output. Partial results can qualify; canceled and interrupted attempts cannot. A comparison requires source B, an explicit offset, a crop, and at least one of `--hdr-grade` or `--hdr-colour`. Bounded mode accepts audio and active-area checks, but cannot combine metadata-only, audio-only, automatic pictures, full-frame pictures, the individual scene check, or comparison options. `--hdr-boundary-audio` requires bounded mode even when explicitly false.
+
+Individual picture flags select manual work rather than the default audio operation. For scene checks, borders, and audio together, use `--hdr-boundary-sync --hdr-active-area`. See [HDR analysis](../workflow/hdr-analysis.md) for examples and the limits of sampled and bounded coverage.
+
+#### Retained HDR workflows
+
+| Option                       | Purpose                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--hdr-resume-workflow <id>` | Resume the exact retained active CLI workflow without replacing its request.                                     |
+| `--hdr-retry-attempt <id>`   | Identify the retained analysis attempt for a new decoded measurement pass. Requires retry modes.                 |
+| `--hdr-retry-modes <list>`   | Explicit unsuccessful decoded modes to measure again, from the current retained request. Requires an attempt ID. |
+| `--hdr-image-ids <id,id>`    | Select exact current HDR artifact IDs for descriptions on continuation.                                          |
+
+Retry and image-selection flags require `--hdr-resume-workflow`; do not combine resume with either new-analysis flag. Retry measurements before selecting their new artifact IDs, in separate invocations. Resume accepts configuration, logging, and unattended options but cannot change the retained analysis request. Use IDs from the retained workflow; they are opaque. A decoded retry does not authorize a native metadata rescan.
 
 ### Audio analysis
 

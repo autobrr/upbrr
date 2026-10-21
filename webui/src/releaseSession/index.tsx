@@ -706,6 +706,20 @@ export function ReleaseSessionProvider({
           intent: workflowPreparationIntent(current),
         };
       }
+      // Composite stages can advance the workflow past the failed operation's revision.
+      // Restore its checkpointed failure after Input hydration has settled.
+      const operation = current.operation;
+      if (
+        accepted &&
+        current.workflow.status === "failed" &&
+        operation?.command === "composite_upload" &&
+        isFailedWorkflowOperation(operation)
+      ) {
+        const failure = operation.failures?.[0]?.failure;
+        throw failure
+          ? workflowOperationFailureError(failure)
+          : new Error(operation.message || `Workflow operation ${operation.status}.`);
+      }
       return true;
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -2182,6 +2196,18 @@ export function ReleaseSessionProvider({
     duplicateAssessmentCurrent &&
     questionnaireStatus !== "error" &&
     (!questionnaireRefreshPending || questionnaireRefreshCurrent);
+  const gradeComparisonTrackers = questionnaireSnapshotCurrent
+    ? questionnaires
+        .filter(
+          (projection) =>
+            state.selectedTrackers.includes(projection.trackerId) &&
+            [
+              ...(projection.questionnaire || []),
+              ...(projection.preparationQuestionnaire || []),
+            ].some((field) => field.hdrGradeComparison),
+        )
+        .map((projection) => projection.displayName || projection.trackerId)
+    : [];
   const duplicateOperation =
     workflowView.current?.operation?.operation === "duplicate_check"
       ? workflowView.current.operation
@@ -2445,6 +2471,8 @@ export function ReleaseSessionProvider({
         (workflowView.current?.workflow.revision ?? 0))
       ? latestWorkflowOperation
       : null;
+  const pendingHDRRequest = workflowView.current?.hdrPendingRequest || null;
+  const hdrRetryRequest = pendingHDRRequest || retainedHDRAnalysis;
   const hdrCommandError =
     hdrCommandFailure &&
     workflowView.current &&
@@ -2455,7 +2483,10 @@ export function ReleaseSessionProvider({
     hdrCommandError ||
     (hdrOperation?.failures || []).map((failure) => failure.failure.Message).join(" ") ||
     retainedHDRAnalysis?.targets
-      .map((target) => target.failure?.message)
+      .flatMap((target) => [
+        target.failure?.message,
+        ...(target.formats || []).map((format) => format.failure?.message),
+      ])
       .filter(Boolean)
       .join(" ") ||
     "";
@@ -2479,7 +2510,16 @@ export function ReleaseSessionProvider({
           release: { SourcePath: release.Source.SourcePath, Generation: release.Generation },
           targetIds: [...input.targetIDs],
           peakSource: input.peakSource,
-          profileVersion: "hdr-analysis-v1",
+          profileVersion:
+            input.profileVersion ||
+            (input.decoded?.boundarySync ||
+            input.decoded?.allAudioTracks ||
+            input.decoded?.videoDecoderThreads
+              ? "hdr-analysis-v3"
+              : "hdr-analysis-v2"),
+          formats: input.formats,
+          decoded: input.decoded,
+          decodedRetry: input.decodedRetry,
         };
         return activePorts.workflow.analyzeHDR(current, instructions, commandID, signal);
       },
@@ -3002,7 +3042,6 @@ export function ReleaseSessionProvider({
           duplicateOperation?.total ||
           workflowView.current?.projections?.projections.length ||
           state.selectedTrackers.length,
-        ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
         releaseNameOverrides: state.releaseNameOverrides,
         questionnaires: questionnaireSnapshotCurrent ? questionnaires : [],
@@ -3140,7 +3179,6 @@ export function ReleaseSessionProvider({
           hasReviewableEvidence &&
           ["pending", "accepted", "ignored"].includes(result.decision);
         if (!canOverride) return;
-        dispatch({ type: "dupe_ignore_changed", tracker: normalizedTracker, ignored });
         void runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
@@ -3167,18 +3205,75 @@ export function ReleaseSessionProvider({
         releaseGeneration: Number(preparedRelease?.Generation || 0),
         targets: workflowView.current?.release?.display.hdrTargets || [],
         result: retainedHDRAnalysis,
+        pendingRequest: pendingHDRRequest,
+        comparison: workflowView.current?.workflow.hdrComparison || null,
+        requirementsNeedRefresh:
+          access.hdrAnalysis.available &&
+          state.selectedTrackers.length > 0 &&
+          !duplicateAssessmentCurrent &&
+          questionnaireStatus === "idle" &&
+          workflowView.status !== "running" &&
+          !activeWorkflowOperation,
+        gradeComparisonTrackers,
+        selectionRecoveryNote: workflowView.current?.workflow.hdrImages?.recoveryNote,
+        includedArtifactIDs: workflowView.current?.workflow.hdrAnalysisEnabled
+          ? workflowView.current.workflow.hdrImages?.artifactIds ||
+            retainedHDRAnalysis?.targets.flatMap((target) =>
+              (target.artifacts || [])
+                .filter(
+                  (artifact) =>
+                    artifact.kind === "hdr10plus_plot" ||
+                    artifact.kind === "dolby_vision_l1_plot" ||
+                    ((artifact.kind === "audio_waveform" ||
+                      artifact.kind === "audio_spectrogram") &&
+                      target.decoded?.some(
+                        (decoded) =>
+                          decoded.mode === "audio" &&
+                          decoded.measured > 0 &&
+                          (decoded.state === "complete" || decoded.state === "inconclusive") &&
+                          decoded.artifacts?.includes(artifact.id),
+                      )),
+                )
+                .map((artifact) => artifact.id),
+            ) ||
+            []
+          : [],
         phase: hdrOperation?.phase || "",
         message: hdrOperation?.message || "",
         progress: hdrOperation?.progress || 0,
         mutationBlockedReason: hdrMutationBlockedReason,
-        error: hdrError,
+        error: hdrError || (questionnaireRefreshCurrent ? questionnaireRefresh.error : ""),
       },
       generate: runHDRAnalysis,
-      retry: () =>
-        retainedHDRAnalysis
+      refreshRequirements: refreshQuestionnaires,
+      selectComparison: (sourcePath) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.selectHDRComparison(current, sourcePath, commandID, signal),
+        ),
+      retryDecoded: (modes) =>
+        !pendingHDRRequest && retainedHDRAnalysis?.decoded
           ? runHDRAnalysis({
               targetIDs: retainedHDRAnalysis.targetIds,
               peakSource: retainedHDRAnalysis.peakSource,
+              formats: retainedHDRAnalysis.formats,
+              profileVersion: retainedHDRAnalysis.profileVersion,
+              decoded: retainedHDRAnalysis.decoded,
+              decodedRetry: { analysisAttemptId: retainedHDRAnalysis.attemptId, modes: [...modes] },
+            })
+          : Promise.resolve(false),
+      setIncludedArtifacts: (artifactIDs) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.setHDRAnalysisEnabled(current, artifactIDs, commandID, signal),
+        ),
+      retry: () =>
+        hdrRetryRequest
+          ? runHDRAnalysis({
+              targetIDs: hdrRetryRequest.targetIds,
+              peakSource: hdrRetryRequest.peakSource,
+              formats: hdrRetryRequest.formats || undefined,
+              profileVersion: hdrRetryRequest.profileVersion,
+              decoded: hdrRetryRequest.decoded || undefined,
+              decodedRetry: pendingHDRRequest?.decodedRetry || undefined,
             })
           : Promise.resolve(false),
       cancel: cancelHDRAnalysis,
@@ -3433,7 +3528,6 @@ export function ReleaseSessionProvider({
         revision: workflowView.current?.workflow.revision ?? 0,
         selectedTrackers: state.selectedTrackers,
         projections: workflowView.current?.projections || null,
-        ignoredDupesFor: state.ignoredDupesFor,
         questionnaireDirty,
         workflowBusy: Boolean(controllers.current.workflow),
         options: uploadOptions,

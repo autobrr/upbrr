@@ -38,6 +38,7 @@ func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *
 			if action == nil {
 				return errors.New("upbrr: interrupted input has no actionable reconciliation; inspect its workflow before retrying")
 			}
+			bindCLIQuestion(ctx, s.streams.out, workflowID, active.Current.Workflow.Revision, action.ID, action.Prompt)
 			confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
 			if err != nil {
 				return fmt.Errorf("upbrr: read recovery confirmation: %w", err)

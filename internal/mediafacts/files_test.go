@@ -51,7 +51,12 @@ func TestResolveFilesKeepsPrimaryCorrectionsAndClears(t *testing.T) {
 			}
 			got := ResolveFiles(media, resolution)
 			primary := got.Files[0]
-			if got.OriginalLanguage != media.OriginalLanguage || primary.Container != media.Container || primary.Source != media.Source || primary.Resolution != resolution || primary.VideoCodec != media.VideoCodec || primary.BitDepth != media.BitDepth || !reflect.DeepEqual(primary.AudioLanguages, media.AudioLanguages) || !reflect.DeepEqual(primary.SubtitleLanguages, media.SubtitleLanguages) {
+			if got.OriginalLanguage != media.OriginalLanguage || primary.Container != media.Container || primary.Source != media.Source ||
+				primary.Resolution != resolution ||
+				primary.VideoCodec != media.VideoCodec ||
+				primary.BitDepth != media.BitDepth ||
+				!reflect.DeepEqual(primary.AudioLanguages, media.AudioLanguages) ||
+				!reflect.DeepEqual(primary.SubtitleLanguages, media.SubtitleLanguages) {
 				t.Fatalf("stale primary=%+v", primary)
 			}
 			if !reflect.DeepEqual(got.Files[1], second) {
@@ -104,16 +109,16 @@ func TestResolveFilesCannotRepairUninspectedTracksWithAggregateCorrections(t *te
 func TestResolveFilesNormalizesPrimaryTransportStreamContainer(t *testing.T) {
 	media := api.MediaFacts{Container: "m2ts", MediaFileFacts: api.MediaFileFacts{ExpectedFileCount: 2, Files: []api.MediaFileFact{
 		{
-FileName: "episode1.m2ts",
- Primary: true,
- Container: "ts",
- VideoTrackCount: 1,
-},
+			FileName:        "episode1.m2ts",
+			Primary:         true,
+			Container:       "ts",
+			VideoTrackCount: 1,
+		},
 		{
-FileName: "episode2.m2ts",
- Container: "ts",
- VideoTrackCount: 1,
-},
+			FileName:        "episode2.m2ts",
+			Container:       "ts",
+			VideoTrackCount: 1,
+		},
 	}}}
 	got := ResolveFiles(media, "1080p")
 	if got.Files[0].Container != "ts" || got.Files[1].Container != "ts" {
@@ -121,5 +126,81 @@ FileName: "episode2.m2ts",
 	}
 	if media.Container != "m2ts" {
 		t.Fatal("pack comparison normalization changed canonical naming container")
+	}
+}
+
+func TestResolveFilesKeepsResourceLanguagesAndTrackCorrections(t *testing.T) {
+	media := api.MediaFacts{
+		MediaFileFacts: api.MediaFileFacts{ExpectedFileCount: 2, Files: []api.MediaFileFact{
+			{
+				ResourceID:      "a",
+				Primary:         true,
+				VideoTrackCount: 1,
+				AudioStatus:     api.MetadataEvidenceStatusComplete,
+			},
+			{
+				ResourceID:      "b",
+				VideoTrackCount: 1,
+				AudioStatus:     api.MetadataEvidenceStatusComplete,
+			},
+		}},
+		Tracks: []api.MediaTrackFacts{
+			{
+				ResourceID: "a",
+				Kind:       api.MediaTrackAudio,
+				Languages:  []string{"Japanese"},
+			},
+			{
+				ResourceID: "b",
+				Kind:       api.MediaTrackAudio,
+				Languages:  []string{"English"},
+			},
+		},
+		AudioLanguages: []string{"Japanese", "English"},
+	}
+	got := ResolveFiles(media, "1080p")
+	if !reflect.DeepEqual(got.Files[0].AudioLanguages, []string{"Japanese"}) || !reflect.DeepEqual(got.Files[1].AudioLanguages, []string{"English"}) {
+		t.Fatalf("cross-resource languages: %+v", got)
+	}
+	media.Tracks[1].Languages = nil
+	got = ResolveFiles(media, "1080p")
+	if got.Files[0].AudioStatus != api.MetadataEvidenceStatusComplete || got.Files[1].AudioStatus != api.MetadataEvidenceStatusPartial {
+		t.Fatalf("unknown secondary language: %+v", got)
+	}
+	media.Tracks[1].Languages = []string{"French"}
+	media.AudioLanguages, media.AudioLanguagesProvenance = nil, api.FactProvenanceManualEmpty
+	got = ResolveFiles(media, "1080p")
+	if len(got.Files[0].AudioLanguages) != 0 || got.Files[0].AudioStatus != api.MetadataEvidenceStatusPartial ||
+		!reflect.DeepEqual(got.Files[1].AudioLanguages, []string{"French"}) {
+		t.Fatalf("lost corrections: %+v", got)
+	}
+}
+
+func TestResolveFilesPreservesMeasuredPrimaryOverNamingLabels(t *testing.T) {
+	measured := api.MediaFileFact{
+		ResourceID:      "primary",
+		Primary:         true,
+		Container:       "mkv",
+		Resolution:      "1080p",
+		VideoCodec:      "AVC",
+		VideoEncode:     "x264",
+		VideoEncoder:    "x264",
+		BitDepth:        "8",
+		VideoTrackCount: 1,
+	}
+	media := api.MediaFacts{
+		Container:      "mp4",
+		VideoCodec:     "HEVC",
+		VideoEncode:    "x265",
+		VideoEncoder:   "x265",
+		BitDepth:       "10",
+		MediaFileFacts: api.MediaFileFacts{ExpectedFileCount: 1, Files: []api.MediaFileFact{measured}},
+	}
+	got := ResolveFiles(media, "2160p").Files[0]
+	if got.Resolution != measured.Resolution || got.VideoCodec != measured.VideoCodec || got.VideoEncode != measured.VideoEncode ||
+		got.VideoEncoder != measured.VideoEncoder ||
+		got.BitDepth != measured.BitDepth ||
+		got.Container != measured.Container {
+		t.Fatalf("naming overwrote measured facts: %+v", got)
 	}
 }

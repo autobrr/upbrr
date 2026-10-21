@@ -21,8 +21,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 
 	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
-	if len(registered) != 180 || len(aliases) != 54 {
-		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 180 and 54", len(registered), len(aliases))
+	if len(registered) != 202 || len(aliases) != 54 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 202 and 54", len(registered), len(aliases))
 	}
 	for alias, target := range aliases {
 		if _, exists := registered[alias]; !exists {
@@ -39,8 +39,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 		}
 		canonical[name] = struct{}{}
 	}
-	if len(canonical) != 126 {
-		t.Fatalf("canonical upload flags=%d, want 126", len(canonical))
+	if len(canonical) != 148 {
+		t.Fatalf("canonical upload flags=%d, want 148", len(canonical))
 	}
 
 	classified := cliCompositeFlagManifest()
@@ -96,6 +96,13 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"hdr-analysis",
 		"hdr-targets",
 		"hdr-peak-source",
+		"hdr-formats",
+		"hdr-metadata-only",
+		"hdr-full-frames",
+		"hdr-pictures",
+		"hdr-audio-only",
+		"hdr-boundary-sync", "hdr-boundary-audio", "hdr-all-audio-tracks", "hdr-decoder-threads",
+		"hdr-scene-sync", "hdr-active-area", "hdr-compare-source", "hdr-compare-offset", "hdr-compare-crop", "hdr-grade", "hdr-colour",
 		"audio-analysis",
 		"audio-images",
 		"audio-languages",
@@ -122,6 +129,8 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"draft",
 		"dual-audio",
 		"edition",
+		"presentation",
+		"release-features",
 		"episode",
 		"episode-title",
 		"force-recheck",
@@ -160,7 +169,6 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"onlyID",
 		"opera",
 		"original-language",
-		"original-title",
 		"personalrelease",
 		"ptp",
 		"qbit-cat",
@@ -183,7 +191,6 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"stream",
 		"subtitle-languages",
 		"tag",
-		"title",
 		"track-languages",
 		"tracker-input",
 		"tmdb",
@@ -204,6 +211,12 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		result[name] = cliCompositeFlagClass{kind: "mapped"}
 	}
 	for name, reason := range map[string]string{
+		"ui":                      "invocation-only terminal presentation",
+		"ui-keep-open":            "invocation-only terminal completion display",
+		"hdr-resume-workflow":     "explicit retained active workflow HDR continuation",
+		"hdr-retry-attempt":       "exact retained HDR retry authority",
+		"hdr-retry-modes":         "explicit workflow-only decoded retry",
+		"hdr-image-ids":           "explicit current workflow image inclusion",
 		"hdr-analysis-only":       "standalone HDR analysis without upload",
 		"hdr-output-dir":          "standalone HDR output parent",
 		"hdr-playlist":            "standalone HDR disc selection",

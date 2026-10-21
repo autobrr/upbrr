@@ -58,9 +58,11 @@ Automatic category detection checks source folders and filenames for TV hints be
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
-Refresh reapplies corrections and reuses provider evidence whose lookup inputs still match; it withdraws earlier duplicate decisions and upload approval. It preserves compatible screenshot content and hosted links. Reset requests a new preparation of the source; source or capture changes can make earlier images incompatible. A provider failure is reported rather than presenting old provider data as fresh.
+Web UI refresh verifies the source and reuses provider evidence whose lookup inputs still match. When finalized metadata is unchanged, ordinary refresh preserves valid duplicate decisions, including corrections that resolve to the same facts. Refreshing a successfully completed workflow reopens preparation; confirmed uploads remain excluded from resubmission. A correction can still produce a new prepared generation: earlier decisions return only after the backend verifies equivalent finalized facts, compatible tracker projections and current private evidence. Missing or expired evidence, changed metadata, changed tracker policy or incompatible preparation inputs requires fresh review; rebinding does not extend the original evidence lifetime. Staff-token attestations are renewed when evidence is rebound. Explicit fresh-provider preparation also renews the prepared generation and its dependent review, even when the provider returns the same values. It preserves compatible screenshot content and hosted links. Reset requests a new preparation of the source; source or capture changes can make earlier images incompatible. A provider failure is reported rather than presenting old provider data as fresh.
 
 Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
+
+If a composite upload stops because a required global source or type is missing, its operation reports an input failure rather than a completed upload. Edit the missing fields on Input, then retry from the latest workflow state. If another stage stops without a next action, review its retained stop reason before retrying; a stopped operation is not proof of a successful tracker submission.
 
 Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year still follows eligible TVDB alias evidence.
 
@@ -71,6 +73,12 @@ You can reload a paused correction review in the same owning browser session. To
 Video naming follows the effective release type, including your corrections: AVC/HEVC encodes use `x264`/`x265`, Blu-ray remuxes retain `AVC`/`HEVC`, and WEB-DL releases use `H.264`/`H.265`. An explicit release type takes precedence over the filename and source; select Auto to restore automatic type detection. The underlying measured codec remains unchanged. Older cached names are regenerated the next time the release is prepared; existing corrections are retained.
 
 If a provider fails or selects the wrong title, supply a correct ID or [clear that provider](../cli/index.md#clear-a-metadata-provider). Clearing suppresses its ID and metadata for this source, including later reloads. Other providers remain available, but trackers that require the cleared provider may be blocked.
+
+### Mixed-season source files
+
+After metadata fetch, the CLI and Web UI input page warn when the source files contain more than one detected season, such as S00 and S01. The warning lists the season numbers and up to five files from seasons other than the selected metadata season, with an omitted count when needed. If that season is unknown or absent from the files, the most represented season is used instead. Nested files use paths relative to the selected source folder.
+
+Review the listed files for unintended specials or episodes. Correct the source selection and fetch metadata again to update or clear the warning. Editing the release title or season does not change the file-derived evidence. The warning does not change tracker restrictions: trackers that reject multi-season packages can still block the release during duplicate checking.
 
 ## 3. Resolve tracker names and eligibility
 
@@ -122,7 +130,7 @@ Compatible images retain their selection and order across refresh. In the Web UI
 
 [Audio analysis](audio-analysis.md) is a separate, optional operation. It streams decoded samples from FFmpeg into Go without writing a full decoded-audio file. Its PNGs are retained for preview and download. When descriptions are generated from a completed analysis, upbrr hosts the graphs for each tracker and adds them with the statistics to the default description.
 
-[HDR analysis](hdr-analysis.md) produces HDR10+ brightness plots from supported MKV files or exact selected Blu-ray timelines. It retains complete metadata for retries and estimator changes and automatically includes completed analyses in generated descriptions. The Blu-ray playlist HDR check also renders plots during preparation.
+[HDR analysis](hdr-analysis.md) produces independent HDR10+ and Dolby Vision metadata plots. The CLI and Web UI default to metadata plots plus primary-audio analysis. Optional bounded scene checks produce colour thumbnails around selected metadata boundaries; sampled or full-frame picture checks provide additional brightness and border evidence. Native plots and audio are included by default, while picture-check images require selection. Descriptions keep **HDR plots**, **Audio Plots**, and ordinary screenshots separate. Retained metadata supports retries and estimator changes without repeating a complete native scan.
 
 ## 6. Preview immutable tracker operations
 
@@ -146,6 +154,8 @@ Deleting a release from History removes its associated local workflow, effect, a
 
 Client injection is enabled by default when configured. Disable it explicitly with CLI `--no-seed` or the corresponding Web UI upload option.
 
+A successful draft can be injected before publication when the tracker integration supplies registered torrent authority. It remains unpublished on the tracker. If that artifact is unavailable or injection fails, the result reports the local failure separately from the completed submission.
+
 Check save path, category, tags, automatic management, staging mode, and source-file access. Hardlink, reflink, and symlink staging have filesystem-specific requirements.
 
 ## Debug and unattended modes
@@ -164,6 +174,8 @@ Debug mode is not a non-mutating dry run. It can perform screenshots, image uplo
 Answer tracker-specific questions on **Dupe Checking**, alongside release-name and duplicate review. Questions appear immediately for selected trackers, including defaults, using the current prepared facts. Loading these questions does not run duplicate searches, remote metadata enrichment, authentication, banned-group checks, or claim checks. If the current prepared facts are unavailable or insufficient for this review, upbrr asks you to prepare the source instead of fetching metadata in the background.
 
 Questions are omitted when finalized media and current provider metadata establish the required answer. Conflicting or incomplete evidence still requires review. A tracker with an unanswered required field cannot proceed to upload; other eligible trackers can continue.
+
+Questions are also hidden when an independent eligibility or preparation failure prevents the tracker from accepting the release. If an answer can resolve the blocker, the relevant questions remain available, including rejected answers that are already filled in. Review those answers before continuing. An optional multi-select answer can be cleared in the CLI by submitting a blank response; required questions still need an answer.
 
 Each tracker panel starts collapsed and identifies **Required answers missing**, **Required fields filled**, or **Optional controls**. **Unapplied changes** means a local edit has not reached the assessment; filled fields are not a claim that pending changes have been accepted. Open the summary with a click, Enter, or Space to review the fields. Collapsing preserves your edits. Choose **Apply tracker answers** to refresh the assessment without uploading or starting another duplicate search. Unapplied changes block dry runs and uploads. Passive warnings require no answer; a separate **Acknowledge tracker warnings** control appears only for findings that require explicit acknowledgement.
 
@@ -198,3 +210,9 @@ Before submission, verify:
 - duplicate results, rule warnings, and manual prerequisites have been read.
 
 When any item is uncertain, stop before upload and resolve it manually.
+
+### Release annotations and editions
+
+Automatically detected Hybrid describes source composition and is kept separately from the title’s cut or edition. Recognized mastering, extras and packaging annotations from provider edition labels are also kept separately. Their existing displayed wording is retained without treating them as editorial edition IDs; filename-only feature annotations keep their existing naming behavior. Generic restoration or remastering does not imply a 4K source.
+
+Older prepared releases must be prepared again so cached mixed edition values cannot be reused. Explicit manual Edition entries and complete release-name overrides retain their existing behavior.

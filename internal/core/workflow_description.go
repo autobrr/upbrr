@@ -18,6 +18,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// workflowDescriptionRendererVersion invalidates generated output when composition changes.
+const workflowDescriptionRendererVersion = "description-renderer-v1"
+
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
 }
@@ -46,6 +49,7 @@ func (b workflowDescriptionBuilder) Fingerprints(
 	if err != nil {
 		return "", "", err
 	}
+	retainWorkflowHDRDescriptionEvidence(&subject, privateMedia)
 	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return "", "", err
@@ -62,42 +66,45 @@ func workflowDescriptionFingerprints(
 	exactMedia *api.ExactMediaAssets,
 ) (api.WorkflowFingerprint, api.WorkflowFingerprint, error) {
 	templateFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Template string
-		Version  string
-	}{subject.DescriptionTemplate, strings.TrimSpace(instructions.TemplateVersion)})
+		Template        string
+		Version         string
+		RendererVersion string
+	}{subject.DescriptionTemplate, strings.TrimSpace(instructions.TemplateVersion), workflowDescriptionRendererVersion})
 	if err != nil {
 		return "", "", fmt.Errorf("workflow description template fingerprint: %w", err)
 	}
 	inputFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Release             api.ReleaseRef
-		ProjectionID        api.TrackerReleaseProjectionSetID
-		ProjectionRevision  api.WorkflowRevision
-		ProjectionInput     api.WorkflowFingerprint
-		ProjectionPolicy    api.WorkflowFingerprint
-		MediaID             api.MediaArtifactSetID
-		MediaRevision       api.WorkflowRevision
-		MediaCapture        api.WorkflowFingerprint
-		MediaRequirements   api.WorkflowFingerprint
-		Artifacts           []api.MediaArtifact
-		ExactMedia          *api.ExactMediaAssets
-		TargetTrackerIDs    []string
-		Instructions        api.DescriptionInstructions
-		TemplateFingerprint api.WorkflowFingerprint
+		Release              api.ReleaseRef
+		ProjectionID         api.TrackerReleaseProjectionSetID
+		ProjectionRevision   api.WorkflowRevision
+		ProjectionInput      api.WorkflowFingerprint
+		ProjectionPolicy     api.WorkflowFingerprint
+		MediaID              api.MediaArtifactSetID
+		MediaRevision        api.WorkflowRevision
+		MediaCapture         api.WorkflowFingerprint
+		MediaRequirements    api.WorkflowFingerprint
+		Artifacts            []api.MediaArtifact
+		ExactMedia           *api.ExactMediaAssets
+		RetainedHDRArtifacts map[string][]api.HDRArtifactEvidence
+		TargetTrackerIDs     []string
+		Instructions         api.DescriptionInstructions
+		TemplateFingerprint  api.WorkflowFingerprint
 	}{
-		Release:             release,
-		ProjectionID:        projections.ID,
-		ProjectionRevision:  projections.Revision,
-		ProjectionInput:     projections.InputFingerprint,
-		ProjectionPolicy:    projections.PolicyFingerprint,
-		MediaID:             media.ID,
-		MediaRevision:       media.Revision,
-		MediaCapture:        media.CaptureFingerprint,
-		MediaRequirements:   media.RequirementsFingerprint,
-		Artifacts:           media.Artifacts,
-		ExactMedia:          exactMedia,
-		TargetTrackerIDs:    workflowProjectionTrackerNames(workflowDescriptionTargets(projections.Projections)),
-		Instructions:        instructions,
-		TemplateFingerprint: templateFingerprint,
+		Release:              release,
+		ProjectionID:         projections.ID,
+		ProjectionRevision:   projections.Revision,
+		ProjectionInput:      projections.InputFingerprint,
+		ProjectionPolicy:     projections.PolicyFingerprint,
+		MediaID:              media.ID,
+		MediaRevision:        media.Revision,
+		MediaCapture:         media.CaptureFingerprint,
+		MediaRequirements:    media.RequirementsFingerprint,
+		Artifacts:            media.Artifacts,
+		ExactMedia:           exactMedia,
+		RetainedHDRArtifacts: subject.TrackerHDRArtifacts,
+		TargetTrackerIDs:     workflowProjectionTrackerNames(workflowDescriptionTargets(projections.Projections)),
+		Instructions:         instructions,
+		TemplateFingerprint:  templateFingerprint,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("workflow description input fingerprint: %w", err)
@@ -124,6 +131,7 @@ func (b workflowDescriptionBuilder) Build(
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
+	retainWorkflowHDRDescriptionEvidence(&subject, privateMedia)
 	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return api.DescriptionSet{}, err
@@ -258,6 +266,12 @@ func (b workflowDescriptionBuilder) Build(
 			ContentFingerprint: contentFingerprint,
 		})
 		for _, trackerID := range trackerIDs {
+			if artifacts := subject.HDRArtifactEvidence(string(trackerID)); len(artifacts) > 0 {
+				if snapshot.HDRArtifacts == nil {
+					snapshot.HDRArtifacts = make(map[api.TrackerID][]api.HDRArtifactEvidence)
+				}
+				snapshot.HDRArtifacts[trackerID] = artifacts
+			}
 			recordTrackerResult(trackerID, entry.GroupKey, api.StageStatusCompleted, "Description generated.", false)
 		}
 	}

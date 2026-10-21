@@ -57,7 +57,7 @@ func TestHDRPlaylistCaptureAutomaticallyPublishesIncludedPlots(t *testing.T) {
 				return
 			}
 			if prepared.HDRAnalysis == nil || !prepared.Workflow.HDRAnalysisEnabled || prepared.HDRAnalysis.PeakSource != api.HDRPeakHistogram ||
-				prepared.HDRAnalysis.Targets[0].Artifact == nil {
+				len(prepared.HDRAnalysis.Targets[0].DescriptionImages()) == 0 {
 				t.Fatalf("captured metadata not rendered and included: %#v", prepared)
 			}
 			if _, err := module.HDRAnalysisArtifact(
@@ -65,7 +65,7 @@ func TestHDRPlaylistCaptureAutomaticallyPublishesIncludedPlots(t *testing.T) {
 				testOwnerID,
 				prepared.Workflow.ID,
 				*prepared.Workflow.HDRAnalysis,
-				prepared.HDRAnalysis.Targets[0].Artifact.ID,
+				prepared.HDRAnalysis.Targets[0].DescriptionImages()[0].ID,
 			); err != nil {
 				t.Fatal(err)
 			}

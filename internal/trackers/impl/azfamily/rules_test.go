@@ -53,7 +53,7 @@ func TestAZRegionalDialectEvidenceAndIndependentRules(t *testing.T) {
 				t.Fatalf("established regional dialect blocked: %#v", failures)
 			}
 		} else if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-			return f.Rule == "language_regional_dialect" && f.Disposition == api.RuleDispositionStrict
+			return f.Rule == "language_regional_dialect" && f.Disposition == api.RuleDispositionStrict && f.QuestionnaireInput == (answer == "")
 		}) {
 			t.Fatalf("unestablished regional dialect accepted: %#v", failures)
 		}
@@ -78,7 +78,7 @@ func TestAZRegionalDialectEvidenceAndIndependentRules(t *testing.T) {
 	meta.TrackerQuestionnaireAnswers["AZ"][question.Fields[0].Key] = "yes"
 	failures := evaluateAZLanguageRules(siteFor("AZ"), api.NewTrackerValidationSubject(meta, "AZ"))
 	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-		return f.Rule == "language_track_role" && trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, true)
+		return f.Rule == "language_track_role" && !f.QuestionnaireInput && trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, true)
 	}) {
 		t.Fatalf("dialect answer waived prohibited voice-over: %#v", failures)
 	}

@@ -162,20 +162,22 @@ func TestReleaseNameElementPolicyNormalizedPreservesVersion(t *testing.T) {
 func TestEditionLabelsJoinOnlyFinalizedCategories(t *testing.T) {
 	t.Parallel()
 	subject := UploadSubject{
-		Cut:          "Extended",
-		Edition:      "Collector's",
-		Presentation: "Open Matte",
-		ReleaseName:  "IMAX Director's Cut",
+		ReleaseFeatures: []ReleaseFeature{ReleaseFeatureHybrid},
+		Cut:             "Extended",
+		Edition:         "Collector's",
+		Presentation:    "Open Matte",
+		ReleaseName:     "IMAX Director's Cut",
 	}
 	want := "Extended Collector's Open Matte"
 	if got := subject.EditionLabel(); got != want {
 		t.Fatalf("upload label = %q, want %q", got, want)
 	}
 	release := ReleaseInfo{
-		Cut:          []string{"Extended"},
-		Edition:      []string{"Collector's"},
-		Presentation: []string{"Open Matte"},
-		Title:        "IMAX Director's Cut",
+		ReleaseFeatures: []ReleaseFeature{ReleaseFeatureHybrid},
+		Cut:             []string{"Extended"},
+		Edition:         []string{"Collector's"},
+		Presentation:    []string{"Open Matte"},
+		Title:           "IMAX Director's Cut",
 	}
 	if got := release.EditionLabel(); got != want {
 		t.Fatalf("release label = %q, want %q", got, want)

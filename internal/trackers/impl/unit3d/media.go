@@ -92,8 +92,8 @@ func resolveEpisode(meta api.UploadSubject) string {
 // validateUnit3DTVPayloadMetadata returns the shared Unit3D TV metadata block
 // reason used by live upload and dry-run when canonical season or episode data
 // is missing from payload fields that would otherwise be submitted as zero.
-func validateUnit3DTVPayloadMetadata(trackerName string, meta api.UploadSubject, data map[string]string) (string, error) {
-	message := unit3DTVPayloadMetadataMessage(meta, data)
+func validateUnit3DTVPayloadMetadata(trackerName string, meta api.UploadSubject, data map[string]string, profile SiteProfile) (string, error) {
+	message := unit3DTVPayloadMetadataMessage(meta, data, profile)
 	if message == "" {
 		return "", nil
 	}
@@ -104,7 +104,7 @@ func validateUnit3DTVPayloadMetadata(trackerName string, meta api.UploadSubject,
 // canonical season or episode metadata is missing. Parsed release and manual
 // naming values are reported only as ignored signals, and the message includes
 // the operator action required by blocked dry-run entries.
-func unit3DTVPayloadMetadataMessage(meta api.UploadSubject, data map[string]string) string {
+func unit3DTVPayloadMetadataMessage(meta api.UploadSubject, data map[string]string, profiles ...SiteProfile) string {
 	if _, hasSeason := data["season_number"]; !hasSeason {
 		return ""
 	}
@@ -114,7 +114,7 @@ func unit3DTVPayloadMetadataMessage(meta api.UploadSubject, data map[string]stri
 
 	missing := make([]string, 0, 2)
 	ignored := make([]string, 0, 2)
-	if meta.SeasonInt <= 0 {
+	if !validUnit3DSeason(meta, firstSiteProfile(profiles)) {
 		missing = append(missing, "season")
 		if hasParsedSeasonSignal(meta) {
 			ignored = append(ignored, "season")

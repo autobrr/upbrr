@@ -33,6 +33,48 @@ func RequireStaffTokenReview(result *api.TrackerDupeAssessment) {
 	}}
 }
 
+// stageMetadataDuplicateReuse retains only a historical candidate while active
+// authority is withdrawn. Preparation must certify the exact generation pair
+// before any duplicate decision can be rebound.
+func stageMetadataDuplicateReuse(state *State, now time.Time) {
+	if state.Workflow.Release != nil && state.Workflow.Dupes != nil {
+		ref := state.Workflow.Dupes
+		prior, ok := state.Dupes[ref.ID]
+		release, err := currentReleaseSnapshot(state)
+		if ok && err == nil && prior.Revision == ref.Revision && prior.ExpiresAt.After(now) &&
+			prior.ReleaseRef == (api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}) {
+			state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *ref, MetadataRefresh: true}
+			return
+		}
+	}
+	if pending := state.PendingDuplicateReuse; pending != nil && pending.MetadataRefresh {
+		return
+	}
+	state.PendingDuplicateReuse = nil
+}
+
+// certifyMetadataDuplicateReuse accepts only the preparation owner's exact
+// predecessor certificate. Missing proof drops the candidate without granting
+// any new review authority or extending its evidence lifetime.
+func certifyMetadataDuplicateReuse(state *State, prepared api.PrepareResult) {
+	pending := state.PendingDuplicateReuse
+	if pending == nil || !pending.MetadataRefresh {
+		return
+	}
+	prior, ok := state.Dupes[pending.Assessment.ID]
+	if !ok || prior.Revision != pending.Assessment.Revision || prepared.EquivalentPreviousRelease == nil ||
+		prior.ReleaseRef != *prepared.EquivalentPreviousRelease {
+		state.PendingDuplicateReuse = nil
+		return
+	}
+	next := api.ReleaseRef{SourcePath: prepared.Release.Source.SourcePath, Generation: prepared.Release.Generation}
+	if next.SourcePath != prior.ReleaseRef.SourcePath || next.Generation <= prior.ReleaseRef.Generation {
+		state.PendingDuplicateReuse = nil
+		return
+	}
+	pending.EquivalentMetadataTo = &next
+}
+
 func (m *Module) pendingDuplicateReuse(
 	ownerID string,
 	state *State,
@@ -46,7 +88,8 @@ func (m *Module) pendingDuplicateReuse(
 	}
 	prior, ok := state.Dupes[pending.Assessment.ID]
 	if !ok || prior.Revision != pending.Assessment.Revision || !prior.ExpiresAt.After(now) ||
-		prior.ReleaseRef != projections.ReleaseRef ||
+		(prior.ReleaseRef != projections.ReleaseRef && (pending.EquivalentMetadataTo == nil || *pending.EquivalentMetadataTo != projections.ReleaseRef ||
+			prior.ReleaseRef.SourcePath != projections.ReleaseRef.SourcePath)) ||
 		normalizedDuplicateCheckOrdinal(prior.CheckOrdinal) != normalizedDuplicateCheckOrdinal(command.CheckOrdinal) {
 		return nil, nil
 	}
@@ -62,11 +105,12 @@ func (m *Module) pendingDuplicateReuse(
 		return nil, fmt.Errorf("release workflow load reusable duplicate evidence: %w", err)
 	}
 	return &DuplicateAssessmentReuse{
-		QuestionnaireOnly:   pending.QuestionnaireOnly,
-		Assessment:          prior,
-		Projections:         previous,
-		PrivateEvidence:     evidence,
-		InvalidatedTrackers: pending.InvalidatedTrackers,
+		EquivalentMetadataTo: pending.EquivalentMetadataTo,
+		QuestionnaireOnly:    pending.QuestionnaireOnly,
+		Assessment:           prior,
+		Projections:          previous,
+		PrivateEvidence:      evidence,
+		InvalidatedTrackers:  pending.InvalidatedTrackers,
 	}, nil
 }
 
@@ -75,6 +119,13 @@ func (m *Module) pendingDuplicateReuse(
 // other selection, instruction, and execution changes discard the baseline.
 func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersCommand) (bool, error) {
 	pending := state.PendingDuplicateReuse
+	if pending != nil && pending.MetadataRefresh && pending.EquivalentMetadataTo != nil {
+		release, err := currentReleaseSnapshot(state)
+		if err == nil &&
+			*pending.EquivalentMetadataTo == (api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}) {
+			return false, nil
+		}
+	}
 	state.PendingDuplicateReuse = nil
 	workflow := state.Workflow
 	if workflow.TrackerProjections == nil || workflow.Selection == nil || workflow.ProjectionInstructions == nil {
@@ -134,7 +185,8 @@ func (m *Module) rebindQuestionnaireDupes(
 ) (*api.DupeAssessment, error) {
 	pending := state.PendingDuplicateReuse
 	rebinder, ok := m.dupeBuilder.(QuestionnaireDupeAssessmentRebinder)
-	if !ok || pending == nil || !pending.QuestionnaireOnly || projections.Status != api.StageStatusReady || preflight.Status != api.StageStatusReady {
+	if !ok || pending == nil || (!pending.QuestionnaireOnly && pending.EquivalentMetadataTo == nil) || projections.Status != api.StageStatusReady ||
+		preflight.Status != api.StageStatusReady {
 		return nil, nil
 	}
 	prior := state.Dupes[pending.Assessment.ID]
@@ -163,6 +215,10 @@ func (m *Module) rebindQuestionnaireDupes(
 	}
 	if len(snapshot.Results) == 0 {
 		return nil, nil
+	}
+	snapshot, err = m.projectDuplicateQuestionnaires(ctx, state, projections, snapshot)
+	if err != nil {
+		return nil, err
 	}
 	result, err := m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, evidence, prior.CheckOrdinal)
 	return result.Dupes, err

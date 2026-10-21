@@ -143,3 +143,46 @@ func TestHDRFromMediaInfoDocumentMatchesTextNormalization(t *testing.T) {
 		t.Fatalf("HDR facts = %#v", facts)
 	}
 }
+
+func TestEnglishSubtitleEvidenceRequiresTextTrack(t *testing.T) {
+	for _, test := range []struct {
+		report string
+		want   bool
+	}{
+		{"General\nTitle : English Subtitles\nAudio\nLanguage : English", false},
+		{"Text #1\nLanguage : English", true},
+		{"Text #1\nLanguage : Japanese\nText #2\nLanguage : eng", true},
+		{"Text\nLanguage : Japanese\nAudio\nLanguage : English", false},
+		{"Text\nTitle : English", false},
+	} {
+		if got := EnglishSubtitlesFromMediaInfoText(test.report); got != test.want {
+			t.Fatalf("%q: %v", test.report, got)
+		}
+	}
+}
+
+func TestEnglishSubtitleInspectionKnownState(t *testing.T) {
+	const header = "General\nFormat : Matroska\nVideo\nFormat : AVC\n"
+	for _, tc := range []struct {
+		name, report   string
+		english, known bool
+	}{
+		{"missing", "", false, false},
+		{"negative", "General\nFormat : Matroska\nCount of text streams : 1\nVideo\nFormat : AVC\nText\nLanguage : Japanese\n", false, true},
+		{"count unknown negative", header + "Text\nLanguage : Japanese\n", false, false},
+		{"positive", "Text\nLanguage : English\n", true, true},
+		{"unknown language", header + "Text\nLanguage : und\n", false, false},
+		{"partial track", header + "Text #1\nLanguage : Japanese\nText #2\nFormat : UTF-8\n", false, false},
+		{"partial report", "Text\nLanguage : Japanese\n", false, false},
+		{"unproven absent", header, false, false},
+		{"explicit absent", "General\nFormat : Matroska\nCount of text streams : 0\nVideo\nFormat : AVC\n", false, true},
+		{"count mismatch", "General\nFormat : Matroska\nCount of text streams : 2\nVideo\nFormat : AVC\nText\nLanguage : Japanese\n", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			english, known := EnglishSubtitleEvidenceFromMediaInfoText(tc.report)
+			if english != tc.english || known != tc.known {
+				t.Fatalf("got (%t,%t), want (%t,%t)", english, known, tc.english, tc.known)
+			}
+		})
+	}
+}

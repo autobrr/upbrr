@@ -13,14 +13,16 @@ import (
 // TrackerTitleSearchEvidence records a complete-title lookup without exposing
 // private tracker rows or download links. It grants no upload authority.
 type TrackerTitleSearchEvidence struct {
-	Status            MetadataEvidenceStatus `json:"status"`
-	TitleFingerprint  WorkflowFingerprint    `json:"titleFingerprint"`
-	ResultFingerprint WorkflowFingerprint    `json:"resultFingerprint"`
-	ConfigFingerprint WorkflowFingerprint    `json:"configFingerprint"`
-	PolicyID          string                 `json:"policyId"`
-	TorrentCount      int                    `json:"torrentCount"`
-	FreshUntil        time.Time              `json:"freshUntil" ts_type:"string"`
-	CheckedAt         time.Time              `json:"checkedAt" ts_type:"string"`
+	Status                        MetadataEvidenceStatus `json:"status"`
+	TitleFingerprint              WorkflowFingerprint    `json:"titleFingerprint"`
+	ResultFingerprint             WorkflowFingerprint    `json:"resultFingerprint"`
+	ConfigFingerprint             WorkflowFingerprint    `json:"configFingerprint"`
+	PolicyID                      string                 `json:"policyId"`
+	SubtitleInspectedTorrentCount int                    `json:"subtitleInspectedTorrentCount"`
+	EnglishSubtitleTorrentCount   int                    `json:"englishSubtitleTorrentCount"`
+	TorrentCount                  int                    `json:"torrentCount"`
+	FreshUntil                    time.Time              `json:"freshUntil" ts_type:"string"`
+	CheckedAt                     time.Time              `json:"checkedAt" ts_type:"string"`
 }
 
 // TitleSearchIdentityFingerprint binds provider work identity to one exact
@@ -57,4 +59,14 @@ func (e TrackerTitleSearchEvidence) HasOtherTorrent(identity ExternalIdentity) b
 	return err == nil && (e.Status == MetadataEvidenceStatusComplete || e.Status == MetadataEvidenceStatusPartial) && e.TorrentCount > 0 &&
 		e.ResultFingerprint != "" &&
 		e.TitleFingerprint == fingerprint
+}
+
+// HasEnglishSubtitleTorrent requires a positively inspected subtitle match for this prepared work.
+func (e TrackerTitleSearchEvidence) HasEnglishSubtitleTorrent(identity ExternalIdentity) bool {
+	return e.EnglishSubtitleTorrentCount > 0 && e.HasOtherTorrent(identity)
+}
+
+// NoEnglishSubtitleTorrent requires complete inspection of every title-wide result.
+func (e TrackerTitleSearchEvidence) NoEnglishSubtitleTorrent(identity ExternalIdentity) bool {
+	return e.Current(identity) && e.EnglishSubtitleTorrentCount == 0 && e.SubtitleInspectedTorrentCount == e.TorrentCount
 }

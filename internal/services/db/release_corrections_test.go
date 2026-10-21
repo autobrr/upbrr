@@ -118,7 +118,12 @@ func TestReleaseCorrectionsUpdateResetAndRestart(t *testing.T) {
 	if missing.Revision != 0 || missing.Corrections.Version != 1 {
 		t.Fatalf("missing snapshot = %#v, want empty v1 revision zero", missing)
 	}
-	if noOp, err := repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}); err != nil || !reflect.DeepEqual(noOp, missing) {
+	if noOp, err := repo.UpdateReleaseCorrections(
+		ctx,
+		sourcePath,
+		api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit},
+	); err != nil ||
+		!reflect.DeepEqual(noOp, missing) {
 		t.Fatalf("inherit missing = %#v, %v; want %#v, nil", noOp, err, missing)
 	}
 
@@ -131,17 +136,26 @@ func TestReleaseCorrectionsUpdateResetAndRestart(t *testing.T) {
 	if stored.Revision != 1 || stored.Corrections.ReleaseName.NoTag == nil || *stored.Corrections.ReleaseName.NoTag {
 		t.Fatalf("stored correction = %#v", stored)
 	}
-	if noOp, err := repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
-		Values:           patch.Values,
-		ExpectedRevision: &stored.Revision,
-	}}); err != nil || noOp.Revision != stored.Revision {
+	if noOp, err := repo.UpdateReleaseCorrections(
+		ctx,
+		sourcePath,
+		api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+			Values:           patch.Values,
+			ExpectedRevision: &stored.Revision,
+		}},
+	); err != nil ||
+		noOp.Revision != stored.Revision {
 		t.Fatalf("same correction changed revision: %#v, %v", noOp, err)
 	}
 
 	expectedZero := uint64(0)
-	_, err = repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
-		ExpectedRevision: &expectedZero,
-	}})
+	_, err = repo.UpdateReleaseCorrections(
+		ctx,
+		sourcePath,
+		api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+			ExpectedRevision: &expectedZero,
+		}},
+	)
 	var revisionConflict *api.CorrectionRevisionConflictError
 	if !errors.As(err, &revisionConflict) || revisionConflict.Actual != stored.Revision {
 		t.Fatalf("stale update error = %v, want revision conflict at %d", err, stored.Revision)
@@ -192,7 +206,14 @@ func TestReleaseCorrectionsPreserveUnknownVersionBytes(t *testing.T) {
 	if _, err := repo.LoadReleaseCorrections(ctx, sourcePath); !errors.Is(err, api.ErrUnsupportedCorrectionVersion) {
 		t.Fatalf("load unknown version error = %v", err)
 	}
-	if _, err := repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateResetAll}); !errors.Is(err, api.ErrUnsupportedCorrectionVersion) {
+	if _, err := repo.UpdateReleaseCorrections(
+		ctx,
+		sourcePath,
+		api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateResetAll},
+	); !errors.Is(
+		err,
+		api.ErrUnsupportedCorrectionVersion,
+	) {
 		t.Fatalf("update unknown version error = %v", err)
 	}
 	var gotPayload string
@@ -352,21 +373,41 @@ func TestIdentityResetMarkersSurviveRestartAndRejectInvalidRows(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = repo.Close() })
 	restarted, err := repo.LoadReleaseCorrections(t.Context(), "source")
-	if err != nil || !reflect.DeepEqual(stored, restarted) || restarted.Corrections.Identity.TMDBID != nil || restarted.Corrections.Identity.IMDBID == nil || !slices.Equal(restarted.Corrections.IdentityResetFields, []api.CorrectionField{api.CorrectionFieldIdentityTMDB}) {
+	if err != nil || !reflect.DeepEqual(stored, restarted) || restarted.Corrections.Identity.TMDBID != nil || restarted.Corrections.Identity.IMDBID == nil ||
+		!slices.Equal(restarted.Corrections.IdentityResetFields, []api.CorrectionField{api.CorrectionFieldIdentityTMDB}) {
 		t.Fatalf("identity reset did not survive restart: %v", err)
 	}
 	const payload = `{"version":1,"identityResetFields":["metadata.title"]}`
-	if _, err := repo.RawDB().ExecContext(t.Context(), `UPDATE release_overrides SET corrections_json = ? WHERE source_path = ?`, payload, "source"); err != nil {
+	if _, err := repo.RawDB().ExecContext(
+		t.Context(),
+		`UPDATE release_overrides SET corrections_json = ? WHERE source_path = ?`,
+		payload,
+		"source",
+	); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.LoadReleaseCorrections(t.Context(), "source"); !errors.Is(err, api.ErrCorrectionConflict) {
 		t.Fatalf("invalid marker loaded: %v", err)
 	}
-	if _, err := repo.UpdateReleaseCorrections(t.Context(), "source", api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateResetAll}); !errors.Is(err, api.ErrCorrectionConflict) {
+	if _, err := repo.UpdateReleaseCorrections(
+		t.Context(),
+		"source",
+		api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateResetAll},
+	); !errors.Is(
+		err,
+		api.ErrCorrectionConflict,
+	) {
 		t.Fatalf("invalid marker rewritten: %v", err)
 	}
 	var unchanged string
-	if err := repo.RawDB().QueryRowContext(t.Context(), `SELECT corrections_json FROM release_overrides WHERE source_path = ?`, "source").Scan(&unchanged); err != nil || unchanged != payload {
+	if err := repo.RawDB().QueryRowContext(
+		t.Context(),
+		`SELECT corrections_json FROM release_overrides WHERE source_path = ?`,
+		"source",
+	).Scan(
+		&unchanged,
+	); err != nil ||
+		unchanged != payload {
 		t.Fatal("invalid saved marker changed")
 	}
 }
@@ -423,7 +464,7 @@ func TestCommitPreparedReleaseWithCorrectionsRejectsStaleRevisionWithoutGenerati
 	if err != nil {
 		t.Fatalf("save corrections: %v", err)
 	}
-	_, err = repo.CommitPreparedReleaseWithCorrections(ctx, release, 0, snapshot.Corrections,
+	_, err = repo.CommitPreparedReleaseWithCorrections(ctx, release, nil, 0, snapshot.Corrections,
 		func(uint64) (api.PreparationCompatibility, error) {
 			t.Fatal("stale corrections reached compatibility calculation")
 			return release.Compatibility, nil
@@ -471,7 +512,7 @@ func TestCommitPreparedReleaseWithCorrectionsUsesCommittedRevision(t *testing.T)
 		result.FactInstructionFingerprint = fmt.Sprintf("instructions-at-revision-%d", revision)
 		return result, nil
 	}
-	finalRevision, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, 0, record, compatibility)
+	finalRevision, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, nil, 0, record, compatibility)
 	if err != nil {
 		t.Fatalf("commit prepared release with corrections: %v", err)
 	}
@@ -497,7 +538,15 @@ func TestCommitPreparedReleaseWithCorrectionsUsesCommittedRevision(t *testing.T)
 	// the same stored correction payload. SQLite keeps the existing revision.
 	record.ContentBindings = map[api.CorrectionField]api.ContentBinding{}
 	record.StaleContentFields = []api.CorrectionField{}
-	if noOpRevision, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, finalRevision, record, compatibility); err != nil || noOpRevision != finalRevision {
+	if noOpRevision, err := repo.CommitPreparedReleaseWithCorrections(
+		ctx,
+		release,
+		nil,
+		finalRevision,
+		record,
+		compatibility,
+	); err != nil ||
+		noOpRevision != finalRevision {
 		t.Fatalf("no-op commit revision = %d, %v; want %d, nil", noOpRevision, err, finalRevision)
 	}
 	committed, err = repo.LoadPreparedRelease(ctx, release.Source.SourcePath)
@@ -512,7 +561,7 @@ func TestCommitPreparedReleaseWithCorrectionsRollsBackCompatibilityFailure(t *te
 	release := preparedReleaseDBFixture("correction-compatibility-failure", 1)
 	record := api.StoredReleaseCorrectionsV1{Version: 1, ReleaseName: api.ReleaseNameOverrides{Tag: new("GRP")}}
 	wantErr := errors.New("compatibility failure")
-	_, err := repo.CommitPreparedReleaseWithCorrections(t.Context(), release, 0, record,
+	_, err := repo.CommitPreparedReleaseWithCorrections(t.Context(), release, nil, 0, record,
 		func(uint64) (api.PreparationCompatibility, error) { return api.PreparationCompatibility{}, wantErr })
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("compatibility failure lost: %v", err)
@@ -523,5 +572,60 @@ func TestCommitPreparedReleaseWithCorrectionsRollsBackCompatibilityFailure(t *te
 	}
 	if _, err := repo.LoadPreparedRelease(t.Context(), release.Source.SourcePath); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("failed commit persisted a generation: %v", err)
+	}
+}
+
+func TestCommitPreparedReleaseWithCorrectionsFencesPredecessor(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		stored    api.PreparedGeneration
+		wantError bool
+	}{
+		{name: "matching", stored: 1},
+		{
+			name:      "replaced",
+			stored:    2,
+			wantError: true,
+		},
+		{name: "missing", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := openPreparedReleaseTestRepo(t)
+			ctx := t.Context()
+			source := "guarded-predecessor"
+			if test.stored != 0 {
+				if err := repo.CommitPreparedRelease(ctx, preparedReleaseDBFixture(source, test.stored)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			release := preparedReleaseDBFixture(source, 3)
+			expected := api.PreparedGeneration(1)
+			tag := "GRP"
+			record := api.StoredReleaseCorrectionsV1{Version: 1, ReleaseName: api.ReleaseNameOverrides{Tag: &tag}}
+			callbackCalled := false
+			_, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, &expected, 0, record, func(uint64) (api.PreparationCompatibility, error) {
+				callbackCalled = true
+				return release.Compatibility, nil
+			})
+			if test.wantError {
+				if !errors.Is(err, api.ErrCorrectionConflict) || callbackCalled {
+					t.Fatalf("stale predecessor = %v; callback called %v", err, callbackCalled)
+				}
+				corrections, loadErr := repo.LoadReleaseCorrections(ctx, source)
+				if loadErr != nil || corrections.Revision != 0 {
+					t.Fatalf("corrections changed on conflict: %#v, %v", corrections, loadErr)
+				}
+				current, loadErr := repo.LoadPreparedRelease(ctx, source)
+				if test.stored == 0 {
+					if !errors.Is(loadErr, internalerrors.ErrNotFound) {
+						t.Fatalf("unexpected generation: %#v, %v", current, loadErr)
+					}
+				} else if loadErr != nil || current.Generation != test.stored {
+					t.Fatalf("generation overwritten: %#v, %v", current, loadErr)
+				}
+			} else if err != nil || !callbackCalled {
+				t.Fatalf("matching predecessor: %v; callback called %v", err, callbackCalled)
+			}
+		})
 	}
 }

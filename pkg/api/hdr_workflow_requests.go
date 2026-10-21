@@ -18,7 +18,8 @@ func (r AnalyzeReleaseWorkflowHDRRequest) Validate() error {
 
 type SetReleaseWorkflowHDRAnalysisEnabledRequest struct {
 	ReleaseWorkflowCommandContext
-	Enabled bool `json:"enabled"`
+	Enabled     bool               `json:"enabled"`
+	ArtifactIDs []PublicResourceID `json:"artifactIds,omitempty"`
 }
 
 func (r SetReleaseWorkflowHDRAnalysisEnabledRequest) Validate() error {
