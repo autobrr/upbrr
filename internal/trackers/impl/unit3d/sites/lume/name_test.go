@@ -222,7 +222,7 @@ func TestLumeOmitsExactHi10PWithoutOverwritingManualComponent(t *testing.T) {
 }
 func TestLumePolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/lume/v5" || p.Structured == nil {
+	if p.ID != "unit3d/lume/v6" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }

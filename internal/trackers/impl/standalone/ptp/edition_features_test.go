@@ -177,3 +177,190 @@ func TestPTPManualTechnicalLabelsUseCatalogue(t *testing.T) {
 		t.Fatalf("manual and detected features diverge or duplicate: %q", got)
 	}
 }
+
+func TestPTPHybridRemainsDistinctFeature(t *testing.T) {
+	t.Parallel()
+	subject := api.UploadSubject{
+		Release:         api.ReleaseInfo{Resolution: "1080p"},
+		Cut:             "Director's Cut",
+		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureHybrid},
+	}
+	want := "Director's Cut / Hybrid"
+	if got := resolveRemasterTitle(subject); got != want {
+		t.Fatalf("remaster title=%q, want %q", got, want)
+	}
+	fields, err := buildUploadFields(subject, "synthetic", "1", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := buildUploadPreview(uploadState{fields: fields}, subject)
+	if fields["remaster_title"] != want || preview.Payload["remaster_title"] != want {
+		t.Fatalf("payload=%q preview=%v, want %q", fields["remaster_title"], preview.Payload["remaster_title"], want)
+	}
+	for _, option := range editionFeatures(subject) {
+		if option.Label == "Hybrid" {
+			if !option.Selected || option.Category != "Feature" {
+				t.Fatalf("Hybrid=%+v", option)
+			}
+			return
+		}
+	}
+	t.Fatal("Hybrid missing from feature review")
+}
+
+func TestPTPManualHybridWordingPreservesPayload(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct{ edition, want string }{
+		{"Hybrid Uncut", "Uncut / Hybrid"},
+		{"Hybrid Custom Label", "Hybrid Custom Label"},
+	} {
+		t.Run(test.edition, func(t *testing.T) {
+			// Final manual overrides clear automatic features and display fragments.
+			subject := api.UploadSubject{Edition: test.edition}
+			if got := resolveRemasterTitle(subject); got != test.want {
+				t.Fatalf("remaster title=%q, want %q", got, test.want)
+			}
+			for _, option := range editionFeatures(subject) {
+				if option.Selected && option.Category == "Feature" {
+					t.Fatalf("manual wording inferred a feature: %+v", option)
+				}
+			}
+		})
+	}
+}
+
+func TestSeparatedFeatureDisplayPreservesPTPLabelsAndPayload(t *testing.T) {
+	for _, test := range []struct {
+		label   string
+		feature api.ReleaseFeature
+	}{
+		{"Remastered Version", api.ReleaseFeatureRemaster},
+		{"Restored", api.ReleaseFeatureRestoration},
+		{"4K Restoration", api.ReleaseFeature4KRestoration},
+		{"Extras", api.ReleaseFeatureExtras},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			legacy := api.UploadSubject{Cut: "Director's Cut", Edition: "Archive Label " + test.label + " Festival Label"}
+			separated := api.UploadSubject{
+				Cut:             "Director's Cut",
+				Edition:         "Archive Label Festival Label",
+				ReleaseFeatures: []api.ReleaseFeature{test.feature},
+				EditionDisplay:  []api.EditionDisplayPart{{Text: "Archive Label"}, {Text: test.label, Feature: test.feature}, {Text: "Festival Label"}},
+			}
+			if got, want := resolveRemasterTitle(separated), resolveRemasterTitle(legacy); got != want {
+				t.Fatalf("payload=%q want legacy=%q", got, want)
+			}
+			found := false
+			for _, option := range editionFeatures(separated) {
+				if option.Label == test.label && option.Selected {
+					found = true
+					if option.Category != "Feature" {
+						t.Fatalf("annotation is not a feature: %+v", option)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("named feature absent from review")
+			}
+		})
+	}
+}
+
+func TestPTPDisplayPreservesUnselectedWordingAndSuppression(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		subject    api.UploadSubject
+		want       string
+		unselected string
+	}{
+		{
+			name: "separate restoration attributes do not imply 4K restoration",
+			subject: api.UploadSubject{
+				Edition:         "4K",
+				ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureRestoration},
+				EditionDisplay:  []api.EditionDisplayPart{{Text: "4K"}, {Text: "Restoration", Feature: api.ReleaseFeatureRestoration}},
+			},
+			want:       "4K Restoration",
+			unselected: "4K Restoration",
+		},
+		{
+			name: "separate remaster attributes do not imply 4K remaster",
+			subject: api.UploadSubject{
+				Edition:         "4K",
+				ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureRemaster},
+				EditionDisplay:  []api.EditionDisplayPart{{Text: "4K"}, {Text: "Remaster", Feature: api.ReleaseFeatureRemaster}},
+			},
+			want:       "4K Remaster",
+			unselected: "4K Remaster",
+		},
+		{
+			name: "selected collection spanning attributes is not duplicated",
+			subject: api.UploadSubject{
+				Edition:         "Warner Archive Collection",
+				ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureRestoration},
+				EditionDisplay:  []api.EditionDisplayPart{{Text: "Warner"}, {Text: "Archive Collection"}, {Text: "Restored", Feature: api.ReleaseFeatureRestoration}},
+			},
+			want: "Warner Archive Collection / Restored",
+		},
+		{
+			name: "false commentary remains suppressed",
+			subject: api.UploadSubject{
+				Edition:         "With Commentary",
+				ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureRestoration},
+				EditionDisplay:  []api.EditionDisplayPart{{Text: "Restored", Feature: api.ReleaseFeatureRestoration}, {Text: "With Commentary"}},
+			},
+			want:       "Restored",
+			unselected: "With Commentary",
+		},
+		{
+			name: "solitary theatrical cut remains suppressed",
+			subject: api.UploadSubject{
+				Cut:             "Theatrical",
+				ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureRestoration},
+				EditionDisplay:  []api.EditionDisplayPart{{Text: "Restored", Feature: api.ReleaseFeatureRestoration}},
+			},
+			want:       "Restored",
+			unselected: "Theatrical Cut",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.subject.Release.Resolution = "1080p"
+			fields, err := buildUploadFields(test.subject, "synthetic", "1", nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			preview := buildUploadPreview(uploadState{fields: fields}, test.subject)
+			if fields["remaster_title"] != test.want || preview.Payload["remaster_title"] != test.want {
+				t.Errorf("payload=%q preview=%v, want %q", fields["remaster_title"], preview.Payload["remaster_title"], test.want)
+			}
+			for _, option := range preview.EditionFeatures {
+				if option.Label == test.unselected && option.Selected {
+					t.Errorf("display wording selected unsupported feature: %+v", option)
+				}
+			}
+		})
+	}
+}
+
+func TestExplicitFeaturesDoNotInferFromOpaqueEdition(t *testing.T) {
+	subject := api.UploadSubject{Edition: "Custom / 4K Restoration", ReleaseNameOverrides: api.ReleaseNameOverrides{ReleaseFeatures: new([]api.ReleaseFeature{})}}
+	for _, option := range editionFeatures(subject) {
+		if option.Label == "4K Restoration" && option.Selected {
+			t.Fatal("None restored a feature from opaque Edition")
+		}
+	}
+	if got := resolveRemasterTitle(subject); got != subject.Edition {
+		t.Fatalf("opaque wording changed: %q", got)
+	}
+	subject.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeature4KRestoration}
+	subject.ReleaseNameOverrides.ReleaseFeatures = new([]api.ReleaseFeature{api.ReleaseFeature4KRestoration})
+	if got := resolveRemasterTitle(subject); got != "4K Restoration / Custom" {
+		t.Fatalf("selected feature duplicated in residual wording: %q", got)
+	}
+	if !slices.ContainsFunc(editionFeatures(subject), func(option api.TrackerEditionFeature) bool {
+		return option.Label == "4K Restoration" && option.Selected
+	}) {
+		t.Fatal("explicit feature lost")
+	}
+}

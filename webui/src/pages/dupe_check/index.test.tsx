@@ -21,7 +21,6 @@ const facetFor = (
     preflight: null,
     completed: 0,
     total: 0,
-    ignoredTrackers: [],
     selectedTrackers: ["EXAMPLE"],
     releaseNameOverrides: {},
     questionnaires: [],
@@ -82,21 +81,27 @@ describe("DupeCheckPage", () => {
       checked: true,
     },
     {
-      name: "ordinary optimistic ignore",
+      name: "ordinary acknowledgement retained by current assessment",
       requiresStaffToken: false,
-      decision: "pending",
+      decision: "ignored",
       confirmed: false,
       checked: true,
     },
+    {
+      name: "ordinary acknowledgement withdrawn by current assessment",
+      requiresStaffToken: false,
+      decision: "pending",
+      confirmed: false,
+      checked: false,
+    },
   ])(
-    "uses current staff-token authority for $name",
+    "uses current assessment authority for $name",
     ({ requiresStaffToken, decision, confirmed, checked }) => {
       const setIgnored = vi.fn();
       renderPage(
         facetFor(
           {
             status: "ready",
-            ignoredTrackers: ["EXAMPLE"],
             assessment: {
               results: [
                 {
@@ -125,13 +130,71 @@ describe("DupeCheckPage", () => {
       const control = screen.getByRole("switch", {
         name: requiresStaffToken
           ? "Confirm staff-issued token for EXAMPLE"
-          : "Acknowledge dupe risk for EXAMPLE",
+          : decision === "pending"
+            ? "Acknowledge dupe risk for EXAMPLE"
+            : "Ignore dupes for EXAMPLE",
       });
       expect(control).toHaveAttribute("aria-checked", String(checked));
       fireEvent.click(control);
       expect(setIgnored).toHaveBeenCalledWith("EXAMPLE", !checked);
     },
   );
+
+  it("follows renewed backend review across refresh and repeated acknowledgements", () => {
+    const setIgnored = vi.fn();
+    const snapshot = (decision: string) => (
+      <DupeCheckPage
+        facet={facetFor(
+          {
+            status: "ready",
+            projections: {
+              projections: [{ trackerId: "EXAMPLE", readiness: "ready" }],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+            preflight: {
+              results: [{ trackerId: "EXAMPLE", state: "ready" }],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+            assessment: {
+              results: [
+                {
+                  trackerId: "EXAMPLE",
+                  decision,
+                  reviewReasons: [
+                    { code: "incomplete_search", message: "Search evidence requires review." },
+                  ],
+                  status: decision === "pending" ? "blocked" : "completed",
+                  search: { complete: false, pages: 1, candidateCount: 0 },
+                  matches: [],
+                },
+              ],
+            } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          },
+          { setIgnored },
+        )}
+        sourcePath="C:\\media\\Example"
+        trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
+        trackerIconSrcByName={{}}
+        submissionExclusions={[]}
+        workflowComplete={false}
+      />
+    );
+    const view = render(snapshot("ignored"));
+    const control = () => screen.getByRole("switch", { name: "Acknowledge dupe risk for EXAMPLE" });
+    expect(control()).toHaveAttribute("aria-checked", "true");
+    view.rerender(snapshot("ignored"));
+    expect(control()).toHaveAttribute("aria-checked", "true");
+    view.rerender(snapshot("pending"));
+    expect(control()).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(control());
+    expect(setIgnored).toHaveBeenLastCalledWith("EXAMPLE", true);
+    // A failed acknowledgement must not create local authority over the pending result.
+    view.rerender(snapshot("pending"));
+    expect(control()).toHaveAttribute("aria-checked", "false");
+    view.rerender(snapshot("ignored"));
+    expect(control()).toHaveAttribute("aria-checked", "true");
+    view.unmount();
+    render(snapshot("pending"));
+    expect(control()).toHaveAttribute("aria-checked", "false");
+  });
 
   it.each([
     { required: true, value: "", draft: undefined, label: "Required answers missing" },
@@ -177,6 +240,7 @@ describe("DupeCheckPage", () => {
                 matches: [
                   {
                     id: "episode",
+                    evidenceFingerprint: "synthetic-current-candidate",
                     name: "Example.Show.S01E02.1080p.WEB-DL-GRP",
                     relation: "manual_review",
                     reasons: [{ code: "pack_audio_languages_unverified", message: warning }],
@@ -200,6 +264,9 @@ describe("DupeCheckPage", () => {
       ["SP"],
     );
     expect(screen.getByText(warning)).toBeInTheDocument();
+    expect(
+      screen.queryByText("Evidence reference: episode / synthetic-current-candidate"),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("manual review")).toBeInTheDocument();
     expect(screen.queryByText("proposed trumps")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch", { name: "Acknowledge dupe risk for SP" }));

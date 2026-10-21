@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,7 +256,13 @@ func TestCloseIdleActiveInputDetachesUnresolvedEffects(t *testing.T) {
 				t.Fatalf("begin effect: %v", err)
 			}
 			if status == api.WorkflowEffectStatusUnknown {
-				if err := repo.MarkReleaseWorkflowOperationEffectsUnknown(activeCtx, workflow.OwnerID, workflow.WorkflowID, effect.OperationID, now.Add(time.Second)); err != nil {
+				if err := repo.MarkReleaseWorkflowOperationEffectsUnknown(
+					activeCtx,
+					workflow.OwnerID,
+					workflow.WorkflowID,
+					effect.OperationID,
+					now.Add(time.Second),
+				); err != nil {
 					t.Fatalf("mark effect unknown: %v", err)
 				}
 			}
@@ -288,7 +296,15 @@ func TestCloseIdleActiveInputDetachesUnresolvedEffects(t *testing.T) {
 				RequestedPath:  filepath.Join(t.TempDir(), "source.mkv"),
 				IdempotencyKey: "open",
 			}
-			if err := repo.CompareAndSwapActiveInput(ctx, closed, opening, now.Add(3*time.Second)); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+			if err := repo.CompareAndSwapActiveInput(
+				ctx,
+				closed,
+				opening,
+				now.Add(3*time.Second),
+			); !errors.Is(
+				err,
+				api.ErrReleaseWorkflowEffectOutcomeUnknown,
+			) {
 				t.Fatalf("open after detached %s effect = %v, want %v", status, err, api.ErrReleaseWorkflowEffectOutcomeUnknown)
 			}
 		})
@@ -681,7 +697,15 @@ func TestLegacyRecoveryFencesOwnerEffectsAndDoesNotBypassNormalAdmission(t *test
 	if len(effects) != 1 || effects[0].Status != api.WorkflowEffectStatusUnknown || effects[0].EffectID != effect.EffectID {
 		t.Fatalf("legacy effects = %#v", effects)
 	}
-	if _, err := repo.RecoverLegacyReleaseWorkflowEffects(recoveryCtx, "foreign-owner", state.WorkflowID, now.Add(2*time.Second)); !errors.Is(err, api.ErrActiveInputLeaseLost) {
+	if _, err := repo.RecoverLegacyReleaseWorkflowEffects(
+		recoveryCtx,
+		"foreign-owner",
+		state.WorkflowID,
+		now.Add(2*time.Second),
+	); !errors.Is(
+		err,
+		api.ErrActiveInputLeaseLost,
+	) {
 		t.Fatalf("foreign legacy recovery = %v", err)
 	}
 	closed := api.ActiveInputRecord{
@@ -783,5 +807,185 @@ func TestLegacyRecoveryAllowsOwnersToReconcileSequentially(t *testing.T) {
 	effects, err := repo.RecoverLegacyReleaseWorkflowEffects(secondCtx, second.OwnerID, second.WorkflowID, now.Add(5*time.Second))
 	if err != nil || len(effects) != 1 || effects[0].EffectID != secondEffect.EffectID || effects[0].Status != api.WorkflowEffectStatusUnknown {
 		t.Fatalf("recover second legacy effects = %#v, %v", effects, err)
+	}
+}
+
+func TestFinalizeActiveInputChecksRetainedAuthorityAtomically(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name              string
+		seed              bool
+		expected          *uint64
+		conflict          bool
+		generation        api.PreparedGeneration
+		wrongSource       bool
+		caseVariant       bool
+		authorityConflict bool
+	}{
+		{
+			name:        "host canonical casing",
+			seed:        true,
+			expected:    new(uint64(1)),
+			generation:  1,
+			caseVariant: true,
+		},
+		{
+			name:       "current revision",
+			seed:       true,
+			expected:   new(uint64(1)),
+			generation: 1,
+		},
+		{
+			name:       "changed revision",
+			seed:       true,
+			expected:   new(uint64(0)),
+			conflict:   true,
+			generation: 1,
+		},
+		{
+			name:       "missing corrections",
+			expected:   new(uint64(1)),
+			conflict:   true,
+			generation: 1,
+		},
+		{
+			name:       "initial revision",
+			expected:   new(uint64(0)),
+			generation: 1,
+		},
+		{name: "unguarded compatibility", seed: true},
+		{
+			name:              "missing generation",
+			expected:          new(uint64(0)),
+			conflict:          true,
+			authorityConflict: true,
+		},
+		{
+			name:              "advanced generation",
+			expected:          new(uint64(0)),
+			generation:        2,
+			conflict:          true,
+			authorityConflict: true,
+		},
+		{
+			name:              "wrong source",
+			expected:          new(uint64(0)),
+			generation:        1,
+			wrongSource:       true,
+			conflict:          true,
+			authorityConflict: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if test.caseVariant && runtime.GOOS != "windows" {
+				test.conflict, test.authorityConflict = true, true
+			}
+			repo := openMigratedTestRepo(t)
+			ctx := t.Context()
+			now := time.Now().UTC().Truncate(time.Second)
+			input := api.InputRecord{
+
+				ID:            "input",
+				CanonicalPath: filepath.Join(t.TempDir(), "Canonical.mkv"),
+
+				SourceVersion: "verified",
+				Manifest:      []byte(`{}`),
+				UpdatedAt:     now,
+			}
+			if test.seed {
+				if _, err := repo.CompareAndSwapReleaseCorrections(ctx, input.CanonicalPath, 0, api.StoredReleaseCorrectionsV1{
+					Version: 1, ReleaseName: api.ReleaseNameOverrides{Tag: new("GRP")},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.generation != 0 {
+				if err := repo.CommitPreparedRelease(ctx, preparedReleaseDBFixture(input.CanonicalPath, test.generation)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var retention *api.ActiveInputRetention
+			if test.expected != nil {
+				retention = &api.ActiveInputRetention{
+					Release:            api.ReleaseRef{SourcePath: input.CanonicalPath, Generation: 1},
+					CorrectionRevision: *test.expected,
+				}
+				if test.wrongSource {
+					retention.Release.SourcePath += ".different"
+				}
+			}
+			if test.caseVariant {
+				// Keep DB authority's original spelling while input IDs use case-folded keys.
+				input.CanonicalPath = strings.ToLower(input.CanonicalPath)
+			}
+			before := workflowStateRecordForTest("workflow", api.WorkflowStatusActive, now, `{"receipts":{}}`)
+			if _, _, err := repo.CreateReleaseWorkflowState(ctx, before); err != nil {
+				t.Fatal(err)
+			}
+			empty, err := repo.LoadActiveInput(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opening := api.ActiveInputRecord{
+
+				State:    api.ActiveInputOpening,
+				Revision: empty.Revision + 1,
+				Fence:    empty.Fence + 1,
+
+				OwnerID:        before.OwnerID,
+				CoordinatorID:  "coordinator",
+				LeaseExpiresAt: now.Add(time.Hour),
+
+				ReservationID:  "reservation",
+				RequestedPath:  filepath.Join(t.TempDir(), "alias.mkv"),
+				IdempotencyKey: "open",
+			}
+			if err := repo.CompareAndSwapActiveInput(ctx, empty, opening, now); err != nil {
+				t.Fatal(err)
+			}
+			active := opening
+			active.State, active.Revision = api.ActiveInputActive, opening.Revision+1
+			active.InputID, active.SourceVersion, active.WorkflowID = input.ID, input.SourceVersion, before.WorkflowID
+			active.ReservationID, active.RequestedPath = "", ""
+			updated := before
+			updated.Revision++
+			updated.Payload = []byte(`{"receipts":{"accepted":"no-op"}}`)
+			err = repo.FinalizeActiveInput(ctx, opening, active, input, &updated, now, retention)
+			if test.conflict {
+				wantError := api.ErrCorrectionConflict
+				if test.authorityConflict {
+					wantError = api.ErrActiveInputChanged
+				}
+				if !errors.Is(err, wantError) {
+					t.Fatalf("finalize error = %v, want %v", err, wantError)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			wantSlot, wantWorkflow := active, updated
+			if test.conflict {
+				wantSlot, wantWorkflow = opening, before
+			}
+			slot, err := repo.LoadActiveInput(ctx)
+			if err != nil || slot != wantSlot {
+				t.Fatalf("slot = %#v, error = %v, want %#v", slot, err, wantSlot)
+			}
+			workflow, err := repo.LoadReleaseWorkflowState(ctx, before.OwnerID, before.WorkflowID)
+			if err != nil || workflow.Revision != wantWorkflow.Revision || string(workflow.Payload) != string(wantWorkflow.Payload) {
+				t.Fatalf("workflow/receipt = %#v, error = %v, want %#v", workflow, err, wantWorkflow)
+			}
+			_, err = repo.LoadInputRecord(ctx, input.CanonicalPath)
+			if test.conflict && !errors.Is(err, api.ErrInputRecordNotFound) {
+				t.Fatalf("rejected finalization wrote input: %v", err)
+			}
+			if !test.conflict && err != nil {
+				t.Fatal(err)
+			}
+			association, err := repo.LoadInputWorkflowAssociation(ctx, input.CanonicalPath, before.OwnerID, input.SourceVersion)
+			if err != nil || (test.conflict && association.WorkflowID != "") || (!test.conflict && association.WorkflowID != before.WorkflowID) {
+				t.Fatalf("association = %#v, error = %v", association, err)
+			}
+		})
 	}
 }

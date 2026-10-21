@@ -706,6 +706,20 @@ export function ReleaseSessionProvider({
           intent: workflowPreparationIntent(current),
         };
       }
+      // Composite stages can advance the workflow past the failed operation's revision.
+      // Restore its checkpointed failure after Input hydration has settled.
+      const operation = current.operation;
+      if (
+        accepted &&
+        current.workflow.status === "failed" &&
+        operation?.command === "composite_upload" &&
+        isFailedWorkflowOperation(operation)
+      ) {
+        const failure = operation.failures?.[0]?.failure;
+        throw failure
+          ? workflowOperationFailureError(failure)
+          : new Error(operation.message || `Workflow operation ${operation.status}.`);
+      }
       return true;
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -2182,6 +2196,18 @@ export function ReleaseSessionProvider({
     duplicateAssessmentCurrent &&
     questionnaireStatus !== "error" &&
     (!questionnaireRefreshPending || questionnaireRefreshCurrent);
+  const gradeComparisonTrackers = questionnaireSnapshotCurrent
+    ? questionnaires
+        .filter(
+          (projection) =>
+            state.selectedTrackers.includes(projection.trackerId) &&
+            [
+              ...(projection.questionnaire || []),
+              ...(projection.preparationQuestionnaire || []),
+            ].some((field) => field.hdrGradeComparison),
+        )
+        .map((projection) => projection.displayName || projection.trackerId)
+    : [];
   const duplicateOperation =
     workflowView.current?.operation?.operation === "duplicate_check"
       ? workflowView.current.operation
@@ -3016,7 +3042,6 @@ export function ReleaseSessionProvider({
           duplicateOperation?.total ||
           workflowView.current?.projections?.projections.length ||
           state.selectedTrackers.length,
-        ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
         releaseNameOverrides: state.releaseNameOverrides,
         questionnaires: questionnaireSnapshotCurrent ? questionnaires : [],
@@ -3154,7 +3179,6 @@ export function ReleaseSessionProvider({
           hasReviewableEvidence &&
           ["pending", "accepted", "ignored"].includes(result.decision);
         if (!canOverride) return;
-        dispatch({ type: "dupe_ignore_changed", tracker: normalizedTracker, ignored });
         void runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
@@ -3183,6 +3207,14 @@ export function ReleaseSessionProvider({
         result: retainedHDRAnalysis,
         pendingRequest: pendingHDRRequest,
         comparison: workflowView.current?.workflow.hdrComparison || null,
+        requirementsNeedRefresh:
+          access.hdrAnalysis.available &&
+          state.selectedTrackers.length > 0 &&
+          !duplicateAssessmentCurrent &&
+          questionnaireStatus === "idle" &&
+          workflowView.status !== "running" &&
+          !activeWorkflowOperation,
+        gradeComparisonTrackers,
         selectionRecoveryNote: workflowView.current?.workflow.hdrImages?.recoveryNote,
         includedArtifactIDs: workflowView.current?.workflow.hdrAnalysisEnabled
           ? workflowView.current.workflow.hdrImages?.artifactIds ||
@@ -3210,9 +3242,10 @@ export function ReleaseSessionProvider({
         message: hdrOperation?.message || "",
         progress: hdrOperation?.progress || 0,
         mutationBlockedReason: hdrMutationBlockedReason,
-        error: hdrError,
+        error: hdrError || (questionnaireRefreshCurrent ? questionnaireRefresh.error : ""),
       },
       generate: runHDRAnalysis,
+      refreshRequirements: refreshQuestionnaires,
       selectComparison: (sourcePath) =>
         runBackendWorkflow((current, commandID, signal) =>
           activePorts.workflow.selectHDRComparison(current, sourcePath, commandID, signal),
@@ -3495,7 +3528,6 @@ export function ReleaseSessionProvider({
         revision: workflowView.current?.workflow.revision ?? 0,
         selectedTrackers: state.selectedTrackers,
         projections: workflowView.current?.projections || null,
-        ignoredDupesFor: state.ignoredDupesFor,
         questionnaireDirty,
         workflowBusy: Boolean(controllers.current.workflow),
         options: uploadOptions,

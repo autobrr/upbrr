@@ -24,6 +24,8 @@ import (
 )
 
 type cliOptions struct {
+	UI                         string
+	UIKeepOpen                 bool
 	LiveTestMaxImages          int
 	LiveTest                   bool
 	ConfigPath                 string
@@ -53,6 +55,8 @@ type cliOptions struct {
 	Distributor                string
 	OriginalLanguage           string
 	Edition                    string
+	Presentation               string
+	ReleaseFeatures            []string
 	Season                     string
 	Episode                    string
 	EpisodeTitle               string
@@ -185,6 +189,13 @@ type serveOptions struct {
 }
 
 func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
+	fs.StringVar(
+		&opts.UI,
+		"ui",
+		"plain",
+		"Presentation: plain (default), auto or tui (uploads, audio and local auth forms; static commands keep ordinary output)",
+	)
+	fs.BoolVar(&opts.UIKeepOpen, "ui-keep-open", false, "Keep the TUI dashboard open after completion until closed (ignored in plain mode)")
 	fs.IntVar(&opts.LiveTestMaxImages, "live-test-max-images", 0, "Maximum journaled image uploads in this live-test run (zero keeps captures local)")
 	fs.BoolVar(&opts.LiveTest, "live-test", false, "Use an isolated live-test profile with tracker and client writes disabled")
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
@@ -235,6 +246,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.OriginalLanguage, "original-language", "", "Override original language")
 	fs.StringVar(&opts.OriginalLanguage, "ol", "", "Override original language")
 	fs.StringVar(&opts.Edition, "edition", "", "Override edition text")
+	fs.StringVar(&opts.Presentation, "presentation", "", "Override presentation (IMAX, Open Matte, IMAX Open Matte); empty clears")
+	fs.StringSliceVar(&opts.ReleaseFeatures, "release-features", nil, "Override release features with comma-separated supported IDs; empty clears")
 	fs.StringVar(&opts.Edition, "repack", "", "Override edition text")
 	fs.StringVar(&opts.Season, "season", "", "Override season value (two or four digits, such as 05 or S2026)")
 	fs.StringVar(&opts.Episode, "episode", "", "Override episode value (single token such as 5 or E05)")
@@ -420,6 +433,9 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 }
 
 func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
+	if err := validateCLIUI(opts.UI); err != nil {
+		return err
+	}
 	if opts.UnattendedConfirm {
 		opts.Unattended = true
 		visited["unattended"] = true
@@ -535,6 +551,15 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 	}
 	if err := validateCLITrackLanguageInputs(opts.TrackLanguages); err != nil {
 		return err
+	}
+	if visited["presentation"] || visited["release-features"] {
+		values, err := buildCLIInputCorrectionValues(*opts, visited)
+		if err != nil {
+			return err
+		}
+		if err := (api.ReleaseCorrectionPatch{Values: values}).Validate(); err != nil {
+			return fmt.Errorf("invalid input correction: %w", err)
+		}
 	}
 	if _, err := buildCLIInputCorrectionPatch(*opts, visited, nil); err != nil {
 		return err
@@ -879,10 +904,40 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Tracker Selection", names: []string{"trackers", "trackers-remove"}},
 		{title: "Tracker IDs", names: []string{"ptp", "blu", "aither", "lst", "oe", "hdb", "btn", "bhd", "ulcx"}},
 		{title: "Release Overrides", names: []string{
-			"category", "type", "source", "resolution", "tag", "service", "distributor", "original-language",
-			"edition", "season", "episode", "episode-title", "manual-year", "daily", "region", "use-season-episode", "no-season", "no-year",
-			"no-aka", "no-tag", "no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio",
-			"alternate-title", "genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
+			"category",
+			"type",
+			"source",
+			"resolution",
+			"tag",
+			"service",
+			"distributor",
+			"original-language",
+			"edition",
+			"presentation",
+			"release-features",
+			"season",
+			"episode",
+			"episode-title",
+			"manual-year",
+			"daily",
+			"region",
+			"use-season-episode",
+			"no-season",
+			"no-year",
+			"no-aka",
+			"no-tag",
+			"no-episode-title",
+			"no-distributor",
+			"no-edition",
+			"no-dub",
+			"no-dual",
+			"dual-audio",
+			"alternate-title",
+			"genres",
+			"audio-languages",
+			"subtitle-languages",
+			"hardcoded-subs",
+			"hardcoded-subtitle-languages",
 		}},
 		{title: "Input Corrections", names: []string{"source-lookup", "track-languages", "reset-input", "confirm-input", "tracker-input"}},
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
@@ -1046,6 +1101,8 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 			Tag:              opts.Tag,
 			Service:          opts.Service,
 			Edition:          opts.Edition,
+			Presentation:     opts.Presentation,
+			ReleaseFeatures:  opts.ReleaseFeatures,
 			Season:           opts.Season,
 			Episode:          opts.Episode,
 			EpisodeTitle:     opts.EpisodeTitle,
@@ -1180,7 +1237,7 @@ func hasCLIInputCorrections(visited map[string]bool) bool {
 
 func isCLIInputCorrectionFlag(name string) bool {
 	return slices.Contains([]string{
-		"tmdb", "imdb", "tvdb", "tvmaze", "mal", "category", "type", "source", "resolution", "tag", "service", "edition",
+		"tmdb", "imdb", "tvdb", "tvmaze", "mal", "category", "type", "source", "resolution", "tag", "service", "edition", "presentation", "release-features",
 		"season", "episode", "episode-title", "manual-year", "daily", "use-season-episode", "no-season", "no-year", "no-aka", "no-tag",
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
 		"original-language", "commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "alternate-title",
@@ -1369,6 +1426,8 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		Tag:              opts.Tag,
 		Service:          opts.Service,
 		Edition:          opts.Edition,
+		Presentation:     opts.Presentation,
+		ReleaseFeatures:  opts.ReleaseFeatures,
 		Season:           opts.Season,
 		Episode:          opts.Episode,
 		EpisodeTitle:     opts.EpisodeTitle,

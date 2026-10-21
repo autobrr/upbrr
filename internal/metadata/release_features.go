@@ -60,7 +60,7 @@ func parsedReleaseFeatures(release rls.Release) []string {
 }
 
 // applyReleaseFeatures separates edition identity from source-backed feature
-// annotations before tracker mapping. Manual edition controls replace both.
+// annotations before tracker mapping. Independent corrections are applied later.
 func applyReleaseFeatures(parts *releaseEditionParts, meta preparationstate.State) {
 	for _, marker := range meta.Release.Other {
 		for _, feature := range releaseFeaturePatterns {
@@ -76,6 +76,10 @@ func applyReleaseFeatures(parts *releaseEditionParts, meta preparationstate.Stat
 				}
 			default:
 				parts.Edition = appendEditionLabel(parts.Edition, feature.label)
+				if len(parts.EditionDisplay) > 0 &&
+					appendEditionLabel(api.EditionDisplayText(parts.EditionDisplay), feature.label) != api.EditionDisplayText(parts.EditionDisplay) {
+					parts.EditionDisplay = append(parts.EditionDisplay, api.EditionDisplayPart{Text: "/"}, api.EditionDisplayPart{Text: feature.label})
+				}
 			}
 		}
 	}

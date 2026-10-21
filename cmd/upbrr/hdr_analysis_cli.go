@@ -43,6 +43,8 @@ func validateCLIHDR(opts cliOptions, visited map[string]bool) error {
 				"config",
 				"log-level",
 				"console-log-level",
+				"ui",
+				"ui-keep-open",
 				"unattended",
 				"ua",
 				"unattended_confirm",
@@ -119,6 +121,8 @@ func validateCLIHDR(opts cliOptions, visited map[string]bool) error {
 				"hdr-peak-source",
 				"hdr-output-dir",
 				"hdr-formats",
+				"ui",
+				"ui-keep-open",
 				"unattended",
 				"ua",
 				"unattended_confirm",
@@ -215,6 +219,7 @@ type hdrSourceStamp struct {
 
 func hdrSourceIdentity(ctx context.Context, source string) (api.WorkflowFingerprint, error) {
 	var stamps []hdrSourceStamp
+	// #nosec G703 -- The local CLI explicitly permits inspecting user-selected disc source paths.
 	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("hdr_analysis_cli: %w", err)
@@ -313,6 +318,7 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 	if err != nil {
 		return fmt.Errorf("hdr_analysis_cli: %w", err)
 	}
+	// #nosec G703 -- The local CLI explicitly permits reading user-selected source paths.
 	info, err := os.Stat(source)
 	if err != nil {
 		return fmt.Errorf("hdr_analysis_cli: %w", err)
@@ -320,6 +326,7 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 	disc := info.IsDir()
 	extension := strings.ToLower(filepath.Ext(source))
 	if disc {
+		// #nosec G703 -- BDMV is inspected beneath the user-selected local disc source.
 		if marker, err := os.Stat(filepath.Join(source, "BDMV")); err != nil || !marker.IsDir() {
 			return errors.New("HDR disc input must be a content root containing BDMV")
 		}

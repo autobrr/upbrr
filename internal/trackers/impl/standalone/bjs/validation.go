@@ -31,7 +31,7 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				))
 			}
 			if strings.TrimSpace(fields["sinopse"]) == "" {
-				failures = append(failures, trackers.NewRuleFailure("required_overview", "missing overview", api.RuleDispositionStrict))
+				failures = append(failures, trackers.NewQuestionnaireRuleFailure("required_overview", "missing overview"))
 			}
 			if strings.TrimSpace(fields["diretor"]) == "" || strings.EqualFold(strings.TrimSpace(fields["diretor"]), "skipped") {
 				failures = append(failures, trackers.NewRuleFailure(

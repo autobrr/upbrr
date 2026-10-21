@@ -101,6 +101,8 @@ type MetadataRequirement struct {
 
 // TrackerMetadataPolicy defines declarative metadata requirements for a tracker.
 type TrackerMetadataPolicy struct {
+	// InspectProgrammeTracks requests measured tracks for every programme resource.
+	InspectProgrammeTracks bool
 	// RequireKnownCategory blocks evaluation when content is neither movie nor TV.
 	RequireKnownCategory bool
 	// Requirements are evaluated in order after category resolution.

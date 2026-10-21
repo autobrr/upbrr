@@ -206,3 +206,30 @@ describe("workflowQuestionnaires", () => {
     expect(workflowQuestionnaires(null)).toEqual([]);
   });
 });
+
+describe("candidate comparison questions", () => {
+  it("uses only the current assessment and selected tracker", () => {
+    const workflow = current();
+    const dupes = {
+      workflowId: "workflow-1",
+      projectionSet: { id: "projections-1", revision: 2 },
+      results: [
+        {
+          trackerId: "EXAMPLE",
+          questionnaire: [{ key: "candidate-bound", label: "Compare", required: false }],
+        },
+        { trackerId: "OTHER", questionnaire: [{ key: "unselected", required: false }] },
+      ],
+    } as unknown as NonNullable<ReleaseWorkflowCurrent["dupes"]>;
+    const result = workflowQuestionnaires({ ...workflow, dupes });
+    expect(result).toHaveLength(1);
+    expect(result[0].questionnaire?.some((field) => field.key === "candidate-bound")).toBe(true);
+    for (const projectionSet of [
+      { id: "old", revision: 2 },
+      { id: "projections-1", revision: 1 },
+    ]) {
+      const stale = workflowQuestionnaires({ ...workflow, dupes: { ...dupes, projectionSet } });
+      expect(stale[0].questionnaire?.some((field) => field.key === "candidate-bound")).toBe(false);
+    }
+  });
+});

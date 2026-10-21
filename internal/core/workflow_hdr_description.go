@@ -80,6 +80,7 @@ func appendWorkflowHDRAssets(
 				return fmt.Errorf("resolve HDR description plot: %w", err)
 			}
 			exact.HDRPlots = append(exact.HDRPlots, api.HDRDescriptionPlot{
+				GenerationComplete:     target.ArtifactGenerationComplete(artifact),
 				ArtifactID:             artifact.ID,
 				Format:                 artifact.Format,
 				Kind:                   artifact.Kind,
@@ -213,4 +214,20 @@ func (b workflowDescriptionBuilder) uploadHDRDescriptionImages(ctx context.Conte
 		return fmt.Errorf("validate hosted HDR assets: %w", err)
 	}
 	return nil
+}
+
+// retainWorkflowHDRDescriptionEvidence carries only already validated, path-free
+// associations for final editor output; generated lanes use their exact assets.
+func retainWorkflowHDRDescriptionEvidence(subject *api.UploadSubject, privateMedia any) {
+	resources, ok := privateMedia.(releaseworkflow.DescriptionResources)
+	if !ok || len(resources.HDRArtifacts) == 0 {
+		return
+	}
+	subject.TrackerHDRArtifacts = make(map[string][]api.HDRArtifactEvidence)
+	for tracker, artifacts := range resources.HDRArtifacts {
+		if _, final := subject.TrackerDescriptionOverride(string(tracker)); final {
+			retained := api.UploadSubject{TrackerHDRArtifacts: map[string][]api.HDRArtifactEvidence{string(tracker): artifacts}}
+			subject.TrackerHDRArtifacts[string(tracker)] = retained.HDRArtifactEvidence(string(tracker))
+		}
+	}
 }

@@ -74,21 +74,21 @@ func azFamilyResponsibilityVersion(name string, version string) trackerResponsib
 
 var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("ACM", "acm", "acm", "v4"),
-	unit3DResponsibilityVersion("AITHER", "aither", "", "v8"),
+	unit3DResponsibilityVersion("AITHER", "aither", "", "v9"),
 	unit3DResponsibility("BLU"),
 	unit3DResponsibilityVersion("CBR", "cbr", "", "v2"),
-	unit3DResponsibilityVersion("DP", "dp", "", "v8"),
-	unit3DResponsibilityVersion("DVL", "dvl", "", "v2"),
+	unit3DResponsibilityVersion("DP", "dp", "", "v9"),
+	unit3DResponsibilityVersion("DVL", "dvl", "", "v3"),
 	unit3DResponsibility("EMUW"),
 	unit3DResponsibility("FRIKI"),
-	unit3DResponsibilityVersion("HHD", "hhd", "", "v4"),
+	unit3DResponsibilityVersion("HHD", "hhd", "", "v6"),
 	unit3DResponsibility("IHD"),
 	unit3DResponsibility("ITT"),
 	unit3DResponsibilityVersion("LCD", "lcd", "", "v2"),
 	unit3DResponsibilityVersion("LDU", "ldu", "", "v2"),
 	unit3DResponsibility("LST"),
 	unit3DResponsibility("LT"),
-	unit3DResponsibilityVersion("LUME", "lume", "", "v5"),
+	unit3DResponsibilityVersion("LUME", "lume", "", "v6"),
 	unit3DResponsibility("MNS"),
 	unit3DResponsibilityVersion("OE", "oe", "oe", "v2"),
 	unit3DResponsibilityVersion("OTW", "otw", "", "v6"),
@@ -97,9 +97,10 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("R4E"),
 	unit3DResponsibility("RAS"),
 	unit3DResponsibilityVersion("RF", "rf", "", "v3"),
-	unit3DResponsibilityVersion("RHD", "rhd", "", "v5"),
+	unit3DResponsibilityVersion("RHD", "rhd", "", "v6"),
 	unit3DResponsibilityVersion("RMC", "rmc", "", "v3"),
 	unit3DResponsibilityVersion("SAM", "sam", "", "v3"),
+	unit3DResponsibility("SC"),
 	unit3DResponsibility("SHRI"),
 	unit3DResponsibilityVersion("SP", "sp", "sp", "v5"),
 	unit3DResponsibility("STC"),
@@ -107,13 +108,13 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("TLZ"),
 	unit3DResponsibility("TOS"),
 	unit3DResponsibility("TTR"),
-	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v5"),
+	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v7"),
 	unit3DResponsibility("UTP"),
-	unit3DResponsibilityVersion("YUS", "yus", "", "v8"),
+	unit3DResponsibilityVersion("YUS", "yus", "", "v10"),
 	unit3DResponsibilityVersion("ZNTH", "znth", "", "v2"),
 	azFamilyResponsibilityVersion("AZ", "v4"),
-	azFamilyResponsibilityVersion("CZ", "v7"),
-	azFamilyResponsibilityVersion("PHD", "v4"),
+	azFamilyResponsibilityVersion("CZ", "v9"),
+	azFamilyResponsibilityVersion("PHD", "v6"),
 	{
 		name:              "ANT",
 		family:            trackers.FamilyStandalone,
@@ -476,8 +477,8 @@ func TestTrackerResponsibilityLedgerCoversEveryBuiltIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	if len(trackerResponsibilityLedger) != 65 {
-		t.Fatalf("responsibility rows = %d, want 65", len(trackerResponsibilityLedger))
+	if len(trackerResponsibilityLedger) != 66 {
+		t.Fatalf("responsibility rows = %d, want 66", len(trackerResponsibilityLedger))
 	}
 
 	ledgerNames := make([]string, 0, len(trackerResponsibilityLedger))

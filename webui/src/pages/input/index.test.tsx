@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InputFacet } from "../../releaseSession/types";
 import type {
@@ -357,6 +358,21 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it("shows source-season evidence after metadata fetch and clears it with the next preview", () => {
+    const facet = readyInputFacet(1);
+    const message =
+      'Multiple seasons detected: S00, S01. Trackers that do not allow multiple seasons may reject this release during duplicate checking.\nAdditional season file: "Example.Series.S00E01.mkv" — S00';
+    facet.view.preview!.Diagnostics = [
+      { Code: "multiple_source_seasons", Severity: "warning", Message: message, Candidates: [] },
+    ];
+    const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    const warning = screen.getByText(/Multiple seasons detected/);
+    expect(warning.textContent).toBe(message);
+    expect(warning).toHaveClass("whitespace-pre-line", "break-words");
+    rerender(<InputPage facet={readyInputFacet(2)} {...inputPageProps()} />);
+    expect(screen.queryByText(/Multiple seasons detected/)).not.toBeInTheDocument();
+  });
+
   it("shows source MediaInfo between release details and external IDs", () => {
     const base = readyInputFacet(1);
     const preview = base.view.preview!;
@@ -1716,6 +1732,255 @@ describe("InputPage", () => {
     expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.repack" });
   });
 
+  it("edits presentation and multiple features independently from Edition and restores Auto", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    let facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: {
+          ...release,
+          Media: {
+            ...release.Media,
+            EditionSet: "",
+            Cut: "Extended",
+            Edition: "",
+            Presentation: "IMAX",
+            ReleaseFeatures: ["hybrid", "4k_restoration"],
+          },
+        },
+      },
+    };
+    const { container, rerender } = render(<InputCorrectionEditor facet={facet} />);
+    const trigger = () => screen.getByRole("button", { name: "Release features" });
+    expect(trigger()).toHaveTextContent("Hybrid, 4K Restoration");
+    fireEvent.click(trigger());
+    const renderOverrides = (releaseName: InputFacet["view"]["intent"]["releaseName"]) => {
+      facet = { ...facet, view: { ...facet.view, intent: { ...facet.view.intent, releaseName } } };
+      rerender(<InputCorrectionEditor facet={facet} />);
+    };
+    const row = (field: string) =>
+      within(container.querySelector<HTMLElement>(`[data-correction-field="${field}"]`)!);
+    expect(screen.getByLabelText("Edition")).toHaveValue("Extended");
+    expect(screen.getByLabelText("Presentation")).toHaveValue("IMAX");
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
+    expect(row("release_name.presentation").getByText("Automatic value")).toBeInTheDocument();
+    expect(row("release_name.release_features").getByText("Automatic value")).toBeInTheDocument();
+
+    renderOverrides({ Edition: "Director's Cut", Presentation: null, ReleaseFeatures: null });
+    expect(screen.getByLabelText("Presentation")).toHaveValue("IMAX");
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
+    expect(row("release_name.release_features").getByText("Automatic value")).toBeInTheDocument();
+
+    for (const Presentation of ["Open Matte", "IMAX Open Matte", ""]) {
+      fireEvent.change(screen.getByLabelText("Presentation"), { target: { value: Presentation } });
+      const expected = { ...facet.view.intent.releaseName, Presentation };
+      expect(facet.changeReleaseName).toHaveBeenLastCalledWith(expected);
+      renderOverrides(expected);
+      expect(screen.getByLabelText("Presentation")).toHaveValue(Presentation);
+      expect(screen.getByLabelText("Edition")).toHaveValue("Director's Cut");
+    }
+    fireEvent.click(screen.getByRole("checkbox", { name: "Extras" }));
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["hybrid", "4k_restoration", "extras"],
+    });
+    renderOverrides({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["hybrid", "4k_restoration", "extras"],
+    });
+    expect(trigger()).toHaveTextContent("Hybrid, 4K Restoration, Extras");
+    fireEvent.click(trigger());
+    expect(screen.queryByRole("checkbox", { name: "Extras" })).not.toBeInTheDocument();
+    fireEvent.click(trigger());
+    expect(screen.getByRole("checkbox", { name: "Extras" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Hybrid" }));
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["4k_restoration", "extras"],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "None Release features" }));
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: [],
+    });
+    renderOverrides({ ...facet.view.intent.releaseName, ReleaseFeatures: [] });
+    expect(trigger()).toHaveTextContent("None");
+    for (const checkbox of row("release_name.release_features").getAllByRole("checkbox")) {
+      expect(checkbox).not.toBeChecked();
+    }
+    expect(
+      row("release_name.release_features").getByText("Manual value · Applied"),
+    ).toBeInTheDocument();
+    for (const [label, field] of [
+      ["Presentation", "presentation"],
+      ["Release features", "release_features"],
+    ]) {
+      fireEvent.click(screen.getByRole("button", { name: `Auto ${label}` }));
+      expect(facet.resetCorrection).toHaveBeenLastCalledWith({ field: `release_name.${field}` });
+    }
+    renderOverrides({ Edition: "Director's Cut" });
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+    expect(trigger()).toHaveTextContent("Hybrid, 4K Restoration");
+    fireEvent.click(trigger());
+    expect(screen.getByLabelText("Presentation")).toHaveValue("IMAX");
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
+  });
+
+  it.each([{ ReleaseFeatures: null }, { ReleaseFeatures: [] }] as const)(
+    "hydrates saved feature selection $ReleaseFeatures without falling back for None",
+    ({ ReleaseFeatures }) => {
+      const base = readyInputFacet(1);
+      const release = preparedRelease();
+      const facet: InputFacet = {
+        ...base,
+        view: {
+          ...base.view,
+          release: { ...release, Media: { ...release.Media, ReleaseFeatures: ["hybrid"] } },
+          intent: { ...base.view.intent, releaseName: { ReleaseFeatures } },
+          corrections: {
+            revision: 1,
+            corrections: {
+              version: 1,
+              identity: {},
+              releaseName: { ReleaseFeatures },
+              metadata: {},
+            },
+          },
+        },
+      };
+      const { container } = render(<InputCorrectionEditor facet={facet} />);
+      const row = within(
+        container.querySelector<HTMLElement>(
+          '[data-correction-field="release_name.release_features"]',
+        )!,
+      );
+      expect(row.getByRole("button", { name: "Release features" })).toHaveTextContent(
+        ReleaseFeatures === null ? "Hybrid" : "None",
+      );
+      fireEvent.click(row.getByRole("button", { name: "Release features" }));
+      const hybrid = row.getByRole("checkbox", { name: "Hybrid" });
+      if (ReleaseFeatures === null) {
+        expect(hybrid).toBeChecked();
+        expect(row.getByText("Automatic value")).toBeInTheDocument();
+      } else {
+        expect(hybrid).not.toBeChecked();
+        expect(row.getByText("Manual value · Applied")).toBeInTheDocument();
+      }
+      expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    },
+  );
+
+  it("opens the feature dropdown with the keyboard and restores trigger focus on Escape", async () => {
+    const user = userEvent.setup();
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: { ...base.view.intent, releaseName: { ReleaseFeatures: ["hybrid"] } },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    const trigger = screen.getByRole("button", { name: "Release features" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveTextContent("Hybrid");
+    expect(screen.queryByRole("checkbox", { name: "Hybrid" })).not.toBeInTheDocument();
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const group = screen.getByRole("group", { name: "Release features" });
+    expect(group.id).toBe(trigger.getAttribute("aria-controls"));
+    await user.tab();
+    expect(screen.getByRole("button", { name: "None Release features" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toHaveFocus();
+    await user.keyboard(" ");
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ ReleaseFeatures: [] });
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard(" ");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.tab({ shift: true });
+    expect(trigger).not.toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps features selected when their group caption is clicked", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: {
+          ...base.view.intent,
+          releaseName: { ReleaseFeatures: ["hybrid", "4k_restoration"] },
+        },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    fireEvent.click(screen.getByText("Release features", { exact: true }));
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Release features" }));
+    const group = screen.getByRole("group", { name: "Release features" });
+    expect(within(group).getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
+    expect(within(group).getByRole("checkbox", { name: "4K Restoration" })).toBeChecked();
+    fireEvent.click(within(group).getByRole("button", { name: "None Release features" }));
+    expect(facet.changeReleaseName).toHaveBeenCalledExactlyOnceWith({ ReleaseFeatures: [] });
+  });
+
+  it("preserves unsupported presentation and features until explicitly corrected", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: {
+          ...base.view.intent,
+          releaseName: {
+            Edition: "Extended",
+            Presentation: "Legacy presentation",
+            ReleaseFeatures: ["legacy_feature", "hybrid"],
+          },
+        },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    const trigger = screen.getByRole("button", { name: "Release features" });
+    expect(trigger).toHaveTextContent("Unsupported current value: legacy_feature, Hybrid");
+    fireEvent.click(trigger);
+    expect(screen.getByLabelText("Presentation")).toHaveValue("Legacy presentation");
+    expect(
+      screen.getByRole("option", { name: "Unsupported current value: Legacy presentation" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", { name: "Unsupported current value: legacy_feature" }),
+    ).toBeChecked();
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Extras" }));
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["legacy_feature", "hybrid", "extras"],
+    });
+    fireEvent.change(screen.getByLabelText("Edition"), { target: { value: "Custom Cut" } });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      Edition: "Custom Cut",
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Unsupported current value: legacy_feature" }),
+    );
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      ...facet.view.intent.releaseName,
+      ReleaseFeatures: ["hybrid"],
+    });
+  });
+
   it("renders the complete source-level correction inventory", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {
@@ -1740,6 +2005,8 @@ describe("InputPage", () => {
       "release_name.tag",
       "release_name.service",
       "release_name.edition",
+      "release_name.presentation",
+      "release_name.release_features",
       "release_name.repack",
       "release_name.season",
       "release_name.episode",
@@ -1991,8 +2258,9 @@ describe("InputPage", () => {
 });
 
 it.each([
+  ["", "", "IMAX", "", ""],
   ["Director's Cut", "", "", "", "Director's Cut"],
-  ["Extended Cut", "Collector's", "IMAX", "", "Extended Cut Collector's IMAX"],
+  ["Extended Cut", "Collector's", "IMAX", "", "Extended Cut Collector's"],
   ["Theatrical / Extended", "", "IMAX", "2in1", "2in1"],
 ])(
   "displays canonical edition parts for correction (%s)",

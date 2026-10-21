@@ -444,6 +444,10 @@ func buildUploadDryRunUnit3D(
 		return api.TrackerDryRunEntry{}, err
 	}
 	data["mod_queue_opt_in"] = boolFlag(req.TrackerConfig.ModQ)
+	if err := applySubmissionRequirements(req, data, profile); err != nil {
+		return api.TrackerDryRunEntry{}, err
+	}
+	description = data["description"]
 	if req.TrackerConfig.Exclusive {
 		data["exclusive"] = "1"
 	}

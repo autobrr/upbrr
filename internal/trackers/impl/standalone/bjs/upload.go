@@ -396,7 +396,11 @@ func resolveRemasterTitle(meta api.UploadSubject) string {
 		{"uncensored", "Uncensored"},
 	}
 	for _, entry := range editionEntries {
-		if strings.Contains(editionLower, entry.keyword) {
+		value := editionLower
+		if (entry.keyword == "imax" || entry.keyword == "open matte") && meta.ReleaseNameOverrides.Presentation != nil {
+			value = strings.ToLower(meta.Presentation)
+		}
+		if strings.Contains(value, entry.keyword) {
 			tags = append(tags, entry.label)
 			break
 		}

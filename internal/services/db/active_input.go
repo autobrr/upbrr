@@ -12,6 +12,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -57,7 +58,7 @@ func (r *SQLiteRepository) LoadActiveInput(ctx context.Context) (api.ActiveInput
 func (r *SQLiteRepository) CompareAndSwapActiveInput(
 	ctx context.Context, expected, next api.ActiveInputRecord, now time.Time,
 ) error {
-	return r.transitionActiveInput(ctx, expected, next, nil, nil, now)
+	return r.transitionActiveInput(ctx, expected, next, nil, nil, now, nil)
 }
 
 // CloseIdleActiveInput atomically closes one exact committed input without
@@ -107,9 +108,10 @@ func (r *SQLiteRepository) CloseIdleActiveInput(ctx context.Context, expected ap
 	})
 }
 
-// FinalizeActiveInput atomically publishes verified input, workflow invalidation, and the slot.
+// FinalizeActiveInput atomically publishes verified input, workflow state, and the slot.
+// Supplied retention authority must still own the canonical source at commit.
 func (r *SQLiteRepository) FinalizeActiveInput(ctx context.Context, expected, next api.ActiveInputRecord,
-	input api.InputRecord, workflow *api.ReleaseWorkflowStateRecord, now time.Time,
+	input api.InputRecord, workflow *api.ReleaseWorkflowStateRecord, now time.Time, retention *api.ActiveInputRetention,
 ) error {
 	if next.State != api.ActiveInputActive || input.ID != next.InputID || input.SourceVersion != next.SourceVersion {
 		return api.ErrActiveInputChanged
@@ -117,11 +119,14 @@ func (r *SQLiteRepository) FinalizeActiveInput(ctx context.Context, expected, ne
 	if input.CanonicalPath == "" || len(input.Manifest) == 0 || input.UpdatedAt.IsZero() {
 		return api.ErrActiveInputChanged
 	}
-	return r.transitionActiveInput(ctx, expected, next, &input, workflow, now)
+	if retention != nil && !pathing.SamePath(retention.Release.SourcePath, input.CanonicalPath) {
+		return api.ErrActiveInputChanged
+	}
+	return r.transitionActiveInput(ctx, expected, next, &input, workflow, now, retention)
 }
 
 func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, next api.ActiveInputRecord,
-	input *api.InputRecord, workflow *api.ReleaseWorkflowStateRecord, now time.Time,
+	input *api.InputRecord, workflow *api.ReleaseWorkflowStateRecord, now time.Time, retention *api.ActiveInputRetention,
 ) error {
 	if expected.Revision >= math.MaxInt64 || expected.Fence >= math.MaxInt64 || next.Revision != expected.Revision+1 {
 		return api.ErrActiveInputChanged
@@ -192,6 +197,32 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 				if running != 0 {
 					return api.ErrActiveInputBusy
 				}
+			}
+		}
+		if retention != nil {
+			if input == nil || retention.Release.Generation == 0 {
+				return api.ErrActiveInputChanged
+			}
+			var generation uint64
+			err := tx.QueryRowContext(
+				ctx,
+				"SELECT generation FROM prepared_release_current WHERE source_path = ?",
+				retention.Release.SourcePath,
+			).Scan(
+				&generation,
+			)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && api.PreparedGeneration(generation) != retention.Release.Generation {
+				return api.ErrActiveInputChanged
+			}
+			if err != nil {
+				return fmt.Errorf("db verify active input prepared generation: %w", err)
+			}
+			corrections, _, err := loadReleaseCorrectionsTx(ctx, tx, retention.Release.SourcePath)
+			if err != nil {
+				return fmt.Errorf("db verify active input corrections: %w", err)
+			}
+			if corrections.Revision != retention.CorrectionRevision {
+				return &api.CorrectionRevisionConflictError{Expected: retention.CorrectionRevision, Actual: corrections.Revision}
 			}
 		}
 		if input != nil {

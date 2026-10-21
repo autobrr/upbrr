@@ -627,6 +627,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		if request.Input.VerifiedSource != nil {
 			hdrSourceFingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
 		}
+		meta.MediaInspectionFingerprint = hdrSourceFingerprint
 		for _, file := range meta.FileList {
 			extension := strings.ToLower(filepath.Ext(file))
 			if extension != ".mkv" && extension != ".mp4" && extension != ".ts" && extension != ".m2ts" {

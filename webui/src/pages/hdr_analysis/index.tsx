@@ -62,6 +62,11 @@ const retryable = new Set(["failed", "canceled", "interrupted", "unsupported", "
 /** Renders backend-owned selection, retained outputs and workflow intents. */
 export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAlt }: Props) {
   const { view } = facet;
+  const refreshRequirements = useRef(facet.refreshRequirements);
+  refreshRequirements.current = facet.refreshRequirements;
+  useEffect(() => {
+    if (view.requirementsNeedRefresh) void refreshRequirements.current();
+  }, [view.requirementsNeedRefresh]);
   const request = view.pendingRequest || view.result;
   const supportedTargets = view.targets.filter((target) => target.supported);
   const [selected, setSelected] = useState<readonly string[]>(
@@ -172,6 +177,31 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
           evidence is separate from optional decoded picture checks.
         </p>
       </header>
+      {Boolean(view.gradeComparisonTrackers?.length) && (
+        <section className={`${pageStyle.panel} grid gap-3`} aria-labelledby="hdr-grade-required">
+          <h2 id="hdr-grade-required">Required hybrid HDR evidence</h2>
+          <p>
+            {view.gradeComparisonTrackers?.join(", ")} requires a brightness grade comparison and an
+            HDR10+ plot for this hybrid release. If already generated, select the resulting images
+            for descriptions. Otherwise choose “Metadata only / individual picture checks” and
+            enable “Brightness grade comparison”. Use “HDR10+ only” under “Metadata formats” for the
+            required plot.
+          </p>
+          <p>
+            Select an HDR10-compatible comparison source with matching content and cadence. Supply
+            “Confirmed frame offset (B − A)” and “Common crop: left,top,width,height” with even
+            width and height, then generate the checks.
+          </p>
+          <p>
+            Review the comparison against this source. Generating a plot does not confirm grade
+            compatibility. If the source cannot produce the required evidence, add it manually to
+            the description and answer the tracker’s evidence question.
+          </p>
+          {(!view.available || supportedTargets.length === 0) && (
+            <p>Prepare a supported HDR source before running this check.</p>
+          )}
+        </section>
+      )}
       <section className={`${pageStyle.panel} grid gap-3`} aria-labelledby="hdr-selection">
         <h2 id="hdr-selection">Prepared targets</h2>
         <p className={pageStyle.subtitle}>

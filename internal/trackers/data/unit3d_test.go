@@ -756,3 +756,16 @@ func TestTorrentInfoOtherUnit3DTrackerImportsDescriptionAndImages(t *testing.T) 
 		t.Fatalf("BLU description/images not imported: %#v", result)
 	}
 }
+
+func TestUnit3DInternalEvidencePreservesKnownState(t *testing.T) {
+	for _, test := range []struct {
+		value *bool
+		want  string
+	}{
+		{nil, ""}, {new(false), "non_internal"}, {new(true), "internal"},
+	} {
+		if got := unit3DDupeInternalEvidence(test.value); got.InternalStatus != test.want {
+			t.Fatalf("got %+v, want %q", got, test.want)
+		}
+	}
+}

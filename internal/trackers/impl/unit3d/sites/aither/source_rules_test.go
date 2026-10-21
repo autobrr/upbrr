@@ -4,11 +4,14 @@
 package aither
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -169,6 +172,86 @@ func TestAitherMultilingualSourceAnswerReachesStructuredName(t *testing.T) {
 	subject.Identity.Generation++
 	if got := aitherReviewedName(t, subject, nil); strings.Contains(got, "MULTIPLE LANGUAGES") || strings.Contains(got, "JAPANESE") {
 		t.Fatalf("stale source answer guessed a language marker: %q", got)
+	}
+}
+
+func TestAitherProjectionRetainsMultilingualBalanceReview(t *testing.T) {
+	mediaInfo := filepath.Join(t.TempDir(), "mediainfo.txt")
+	if err := os.WriteFile(mediaInfo, []byte("prepared media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry := trackers.NewRegistry()
+	if err := registry.Register(unit3d.NewWithProfile(Profile())); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		answer      string
+		independent bool
+		mode        api.WorkflowExecutionMode
+	}{
+		{},
+		{answer: "unresolved"},
+		{answer: "unresolved", mode: api.WorkflowExecutionModeDebug},
+		{answer: "evenly_split"},
+		{answer: "predominant:Korean"},
+		{answer: "evenly_split", independent: true},
+	} {
+		meta := aitherGeneratedSubject(t, api.ReleaseNameRequest{
+			Category:   "MOVIE",
+			Type:       "WEBDL",
+			Title:      "Example Film",
+			Year:       2026,
+			Resolution: "1080p",
+			Source:     "WEB",
+			VideoCodec: "H.264",
+			Audio:      "DD 2.0",
+			Tag:        "GRP",
+		}, []string{"Japanese"})
+		meta.Identity.TMDBID = 123
+		meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
+			TMDBID:   123,
+			Category: "MOVIE",
+			Title:    "Example Film",
+			Year:     2026,
+		}
+		meta.MediaInfoTextPath = mediaInfo
+		meta.Assessments = api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent, MediaInfoEncodeSettings: api.EncodeSettingsStatusPresent}
+		meta.HasEncodeSettings = true
+		meta.LanguageFacts.Tracks[0].Languages = []string{"Japanese", "Korean"}
+		meta.LanguageFacts.ProgrammeLanguages = []string{"Japanese", "Korean"}
+		meta.LanguageFacts.OriginalLanguages = []string{"Japanese", "Korean"}
+		if test.independent {
+			meta.LanguageFacts.OriginalLanguages = []string{"Japanese"}
+		}
+		key := trackers.LanguageQuestionKey(api.NewTrackerValidationSubject(meta, "AITHER"), "multilingual_balance_audio-0")
+		meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"AITHER": {key: test.answer}}
+		projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
+			Tracker:       "AITHER",
+			Meta:          meta,
+			ExecutionMode: test.mode,
+		}, "input", "catalog", "config")
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		if test.independent {
+			if projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0 || projection.UploadReady {
+				t.Fatalf("independent prohibited dub exposed review: %+v", projection)
+			}
+			continue
+		}
+		if len(projection.Questionnaire) != 1 || projection.Questionnaire[0].Key != key || projection.Questionnaire[0].Value != test.answer {
+			t.Fatalf("balance answer %q lost its editable review: %+v", test.answer, projection)
+		}
+		if projection.Questionnaire[0].NeedsReview != (test.answer == "unresolved" && test.mode != api.WorkflowExecutionModeDebug) {
+			t.Fatalf("balance correction flag ignored execution mode: %+v", projection)
+		}
+		if (test.answer == "" || test.answer == "unresolved") && test.mode != api.WorkflowExecutionModeDebug {
+			if projection.Readiness != api.ReadinessStatusBlocked || len(projection.RequiredActions) != 1 || projection.UploadReady {
+				t.Fatalf("unresolved balance lost corrective action: %+v", projection)
+			}
+		} else if !projection.UploadReady {
+			t.Fatalf("resolved balance did not recover: %+v", projection)
+		}
 	}
 }
 

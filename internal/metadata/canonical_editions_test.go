@@ -52,7 +52,7 @@ func TestCanonicalEditionPartsPreserveParserCategories(t *testing.T) {
 func TestCanonicalProviderAttributesKeepCategories(t *testing.T) {
 	t.Parallel()
 	parts := imdbEditionParts([]string{"Director's Cut", "IMAX", "Open Matte", "remastered version", "Unknown Label"})
-	if parts.Cut != "Director's Cut" || parts.Presentation != "IMAX Open Matte" || parts.Edition != "Remastered Version Unknown Label" {
+	if parts.Cut != "Director's Cut" || parts.Presentation != "IMAX Open Matte" || parts.Edition != "Unknown Label" || api.EditionDisplayText(parts.EditionDisplay) != "Remastered Version Unknown Label" || !slices.Contains(parts.Features, api.ReleaseFeatureRemaster) {
 		t.Fatalf("provider parts = %#v", parts)
 	}
 	if got := imdbEditionParts([]string{"A Director Remastered This"}); got.Cut != "" || got.Edition != "A Director Remastered This" {
@@ -60,7 +60,7 @@ func TestCanonicalProviderAttributesKeepCategories(t *testing.T) {
 	}
 }
 
-func TestCanonicalEditionOverridesProtectAllRoles(t *testing.T) {
+func TestCanonicalEditionOverridesPreserveIndependentPresentation(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		overrides api.ReleaseNameOverrides
@@ -90,10 +90,10 @@ func TestCanonicalEditionOverridesProtectAllRoles(t *testing.T) {
 			captureAvailableGeneratedName(&meta, api.NopLogger{})
 			applyReleaseNameValueOverrides(&meta)
 			RebuildReleaseName(&meta, api.NopLogger{})
-			if meta.Cut != "" || meta.Presentation != "" || meta.Edition != tc.want {
+			if meta.Cut != "" || (meta.Presentation == "Open Matte") != (tc.overrides.NoEdition == nil) || meta.Edition != tc.want {
 				t.Fatalf("final parts = %q / %q / %q", meta.Cut, meta.Edition, meta.Presentation)
 			}
-			for _, role := range []api.ReleaseNameRole{api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation} {
+			for _, role := range []api.ReleaseNameRole{api.NameRoleCut, api.NameRoleEdition} {
 				component, ok := meta.GeneratedName.Component(role)
 				if !ok || !component.Manual {
 					t.Fatalf("manual %s = %#v", role, component)
@@ -186,7 +186,7 @@ func TestCanonicalMultiEditionSetNames(t *testing.T) {
 			if !ok || !set.Present || set.Value != test.wantSet {
 				t.Fatalf("set component = %#v", set)
 			}
-			for _, role := range []api.ReleaseNameRole{api.NameRoleCut, api.NameRoleEdition, api.NameRolePresentation} {
+			for _, role := range []api.ReleaseNameRole{api.NameRoleCut, api.NameRoleEdition} {
 				part, ok := result.GeneratedName.Component(role)
 				if !ok || part.Present || part.AvailableValue != "" {
 					t.Fatalf("individual variant exposed for naming: %#v", part)
@@ -231,7 +231,7 @@ func TestCanonicalEditionSetHonorsManualEditionControls(t *testing.T) {
 			captureAvailableGeneratedName(&meta, api.NopLogger{})
 			applyReleaseNameValueOverrides(&meta)
 			RebuildReleaseName(&meta, api.NopLogger{})
-			if meta.EditionSet != "" || meta.Edition != test.wantEdition || meta.Cut != "" || meta.Presentation != "" {
+			if meta.EditionSet != "" || meta.Edition != test.wantEdition || meta.Cut != "" || (meta.Presentation == "IMAX") != (test.overrides.NoEdition == nil) {
 				t.Fatalf("manual set facts = %#v", meta)
 			}
 			set, ok := meta.GeneratedName.Component(api.NameRoleEditionSet)
@@ -356,7 +356,7 @@ func TestCanonicalTheatricalIgnoresPresentationsAndFeatures(t *testing.T) {
 	for _, edition := range []string{"Theatrical / Custom Variant", "Theatrical / Open Matte", "Theatrical / 4K Restoration"} {
 		state := preparationstate.State{ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureExtras}, ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new(edition)}}
 		applyReleaseNameValueOverrides(&state)
-		if state.Edition != edition || len(state.ReleaseFeatures) != 0 {
+		if !slices.Contains(state.ReleaseFeatures, api.ReleaseFeatureExtras) || (edition == "Theatrical / Custom Variant" && state.Edition != edition) || (edition != "Theatrical / Custom Variant" && state.Edition != "") {
 			t.Fatalf("manual compound repartitioned: %#v", state)
 		}
 	}

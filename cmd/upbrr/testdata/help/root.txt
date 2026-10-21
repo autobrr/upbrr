@@ -106,6 +106,10 @@ Release Overrides:
       Override original language
   -edition, --edition, -repack string
       Override edition text
+  -presentation, --presentation string
+      Override presentation (IMAX, Open Matte, IMAX Open Matte); empty clears
+  -release-features, --release-features strings
+      Override release features with comma-separated supported IDs; empty clears
   -season, --season string
       Override season value (two or four digits, such as 05 or S2026)
   -episode, --episode string
@@ -324,3 +328,7 @@ Other:
       Explicit comma-separated unsuccessful decoded modes to measure again
   -hdr-scene-sync, --hdr-scene-sync
       Measure decoded scene synchronization against Dolby Vision markers
+  -ui, --ui string
+      Presentation: plain (default), auto or tui (uploads, audio and local auth forms; static commands keep ordinary output)
+  -ui-keep-open, --ui-keep-open
+      Keep the TUI dashboard open after completion until closed (ignored in plain mode)

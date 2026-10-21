@@ -41,8 +41,18 @@ export const workflowQuestionnaires = (
     dryRun.projectionSet.revision === projections.revision
       ? dryRun.reports
       : [];
+  const duplicateResults =
+    current.dupes?.workflowId === current.workflow.id &&
+    current.dupes.projectionSet.id === projections.id &&
+    current.dupes.projectionSet.revision === projections.revision
+      ? current.dupes.results
+      : [];
   return projections.projections.map((projection) => {
     const fields = new Map((projection.questionnaire || []).map((field) => [field.key, field]));
+    for (const field of duplicateResults.find((result) => result.trackerId === projection.trackerId)
+      ?.questionnaire || []) {
+      fields.set(field.key, field);
+    }
     const preparationQuestionnaire: NonNullable<
       TrackerReleaseProjection["questionnaire"]
     >[number][] = [];

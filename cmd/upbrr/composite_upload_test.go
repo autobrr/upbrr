@@ -21,12 +21,74 @@ func TestCLICompositeDupeEvidenceIncludesBackendWarning(t *testing.T) {
 	const warning = "Audio-language matching is unverified. You may acknowledge this warning and continue the upload; this does not establish matching content or trump eligibility."
 	var output strings.Builder
 	printCLICompositeDupeMatches(&output, []api.DupeMatchProjection{{
-		Name:     "Example.Show.S01E02.1080p.WEB-DL-GRP",
-		Relation: api.DupeRelationManualReview,
-		Reasons:  []api.DupeReason{{Code: "pack_audio_languages_unverified", Message: warning}},
+		Name:                "Example.Show.S01E02.1080p.WEB-DL-GRP",
+		ID:                  "123",
+		EvidenceFingerprint: "comparison-fingerprint",
+		Relation:            api.DupeRelationManualReview,
+		Reasons:             []api.DupeReason{{Code: "pack_audio_languages_unverified", Message: warning}},
 	}})
-	if !strings.Contains(output.String(), warning) || !strings.Contains(output.String(), "manual_review") {
+	if !strings.Contains(output.String(), warning) || !strings.Contains(output.String(), "manual_review") || !strings.Contains(output.String(), "Candidate ID: 123") || strings.Contains(output.String(), "comparison-fingerprint") {
 		t.Fatalf("CLI hid the waiver warning: %s", output.String())
+	}
+}
+
+func TestCLICompositeFailurePreservesInvalidInputRecovery(t *testing.T) {
+	t.Parallel()
+
+	for _, initialStatus := range []api.StageStatus{api.StageStatusQueued, api.StageStatusFailed} {
+		t.Run(string(initialStatus), func(t *testing.T) {
+			t.Parallel()
+			failure := api.OperationFailure{
+				Code:      api.OperationFailureInvalidInput,
+				Operation: api.OperationKindUploadExecute,
+				Message:   "Required input is missing or invalid: Release source. Edit the input and retry.",
+				Recovery:  api.OperationRecoveryEditInput,
+			}
+			operation := api.WorkflowOperationStatus{
+				ID:         "operation-invalid-input",
+				WorkflowID: "workflow-invalid-input",
+				Command:    "composite_upload",
+				Operation:  api.OperationKindUploadExecute,
+				Status:     api.StageStatusFailed,
+				Failures:   []api.WorkflowFailure{{Failure: failure}},
+			}
+			current := releaseworkflow.CommandResult{
+				Workflow: api.ReleaseWorkflow{
+					ID:       operation.WorkflowID,
+					Revision: 2,
+					Status:   api.WorkflowStatusFailed,
+				},
+				Operation: &operation,
+				Selection: &api.TrackerSelection{},
+			}
+			coreSvc := &cliWorkflowCoreFake{current: current, operation: operation}
+			coreSvc.startUploadFn = func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+				initial := operation
+				initial.Status = initialStatus
+				current.Operation = &initial
+				return current, nil
+			}
+			var output strings.Builder
+			session := &cliWorkflowSession{
+				core: coreSvc,
+				uploadRequest: api.Request{
+					SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+					Options:    api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+				},
+				streams: cliIO{out: &output},
+			}
+			uploaded, err := session.completeComposite(t.Context(), false, bufio.NewReader(strings.NewReader("")), config.Config{}, api.NopLogger{})
+			got, ok := api.AsOperationFailure(err)
+			if uploaded != 0 || !ok || got != failure {
+				t.Fatalf("composite failure = uploaded:%d failure:%#v err:%v", uploaded, got, err)
+			}
+			if got, want := formatCLIError(err), failure.Message+" (recovery: edit_input)"; got != want {
+				t.Fatalf("CLI failure = %q, want %q", got, want)
+			}
+			if strings.Contains(output.String(), "No trackers configured") {
+				t.Fatalf("failed composite reported a successful empty selection: %q", output.String())
+			}
+		})
 	}
 }
 
@@ -422,7 +484,7 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	if strings.Contains(output.String(), "Tracker projections") {
 		t.Fatalf("INFO output included tracker projections: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "Dupe checking: 1/2\rDupe checking: 2/2\n") {
+	if !strings.Contains(output.String(), "Dupe checking: 1/2\nDupe checking: 2/2\n") {
 		t.Fatalf("INFO output omitted dupe progress: %q", output.String())
 	}
 	for _, review := range []struct{ summary, prompt string }{
@@ -743,8 +805,15 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 						UploadReleaseName: "Example.Release.2026.1080p-GRP",
 						Matches: []api.DupeMatchProjection{
 							{
-								Name: "Example.Release.2026.1080p.WEB-DL-GRP",
-								Link: "https://alpha.example/torrents/123?passkey=never-print-this",
+								Name:           "Example.Release.2026.1080p.WEB-DL-GRP",
+								Link:           "https://alpha.example/torrents/123?passkey=never-print-this",
+								Relation:       api.DupeRelationExactDuplicate,
+								Reason:         "same_tracker_slot",
+								EvidenceStatus: api.HDREvidenceComplete,
+								HDR: api.HDRFacts{
+									Formats: []api.HDRFormat{api.HDRFormatHDR10},
+									Origin:  api.HDREvidenceMediaInfo,
+								},
 							},
 							{Name: "Example.Release.2026.1080p.BluRay-GRP"},
 						},
@@ -780,7 +849,7 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 
 	for _, expected := range []string{
 		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP candidates=2 decision=accepted search_complete=false pages=0 policy=none",
-		"Duplicate candidates:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Relation: none  Evidence: none/none\n     Link: https://alpha.example/torrents/123?passkey=[REDACTED]\n  2. Example.Release.2026.1080p.BluRay-GRP",
+		"Duplicate candidates:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Evidence: complete/mediainfo\n     Reason: same_tracker_slot\n     Link: https://alpha.example/torrents/123?passkey=[REDACTED]\n  2. Example.Release.2026.1080p.BluRay-GRP",
 		"Upload to ALPHA despite duplicate evidence? [y/N]: \nDupe check BETA:",
 		"Duplicate candidates:\n  1. Example.Release.2026.1080p.Encode-GRP",
 	} {
@@ -790,6 +859,11 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 	}
 	if strings.Contains(output.String(), "never-print-this") {
 		t.Fatalf("duplicate review output exposed passkey: %q", output.String())
+	}
+	for _, removed := range []string{"Relation:", "HDR:"} {
+		if strings.Contains(output.String(), removed) {
+			t.Fatalf("duplicate review output included %q: %q", removed, output.String())
+		}
 	}
 	for index, trackerID := range []api.TrackerID{"ALPHA", "BETA"} {
 		review := feedbackByTracker[index].Response.DuplicateReview
@@ -1078,5 +1152,56 @@ func TestCLICompositeStaffTokenConfirmation(t *testing.T) {
 		if !strings.Contains(output.String(), "appropriate staff-issued EXAMPLE token") {
 			t.Fatal("missing explicit token prompt")
 		}
+	}
+}
+
+func TestCLICompositeDuplicateComparisonIsOptional(t *testing.T) {
+	for _, test := range []struct {
+		name, input string
+		compare     bool
+	}{
+		{"keep duplicate decision", "n\nn\n", false},
+		{"review evidence", "y\nreviewed\n", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := &cliWorkflowSession{
+				streams:       cliIO{out: io.Discard},
+				intent:        cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+				uploadRequest: api.Request{Trackers: []string{"LST"}},
+				current: releaseworkflow.CommandResult{
+					Workflow: api.ReleaseWorkflow{ID: "workflow"},
+					Projections: &api.TrackerReleaseProjectionSet{
+						ID:          "projection",
+						Revision:    1,
+						Projections: []api.TrackerReleaseProjection{{TrackerID: "LST"}},
+					},
+					Dupes: &api.DupeAssessment{
+						WorkflowID:    "workflow",
+						ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: "projection", Revision: 1},
+						Results: []api.TrackerDupeAssessment{{
+							TrackerID: "LST",
+							Decision:  api.DupeDecisionPending,
+							Questionnaire: []api.TrackerQuestionnaireRequirement{{
+								Key:     "candidate-bound",
+								Kind:    "select",
+								Label:   "Comparison",
+								Options: []string{"unknown", "reviewed"},
+							}},
+						}},
+					},
+				},
+			}
+			feedback, declined, err := session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader(test.input)), api.RequiredAction{Kind: api.RequiredActionReviewDuplicates, TrackerID: "LST"}, api.ReleaseWorkflowUploadFeedback{})
+			if err != nil || declined {
+				t.Fatalf("feedback=%+v declined=%t error=%v", feedback, declined, err)
+			}
+			if test.compare {
+				if feedback.Response.Questionnaire == nil || *feedback.Response.Questionnaire.Answers["candidate-bound"] != "reviewed" || feedback.Response.DuplicateReview != nil {
+					t.Fatalf("comparison became duplicate approval: %+v", feedback)
+				}
+			} else if feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionAccepted || feedback.Response.Questionnaire != nil {
+				t.Fatalf("ordinary duplicate decision changed: %+v", feedback)
+			}
+		})
 	}
 }

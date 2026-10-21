@@ -23,6 +23,9 @@ var (
 
 // TrackerCandidate is protocol-independent private candidate evidence.
 type TrackerCandidate struct {
+	Evidence          api.DupeReleaseEvidence
+	SourceFingerprint api.WorkflowFingerprint
+
 	// TrackerSlot preserves the adapter's opaque native evidence, including unknown components.
 	TrackerSlot            string
 	ID                     string
@@ -67,7 +70,12 @@ type TrackerCandidate struct {
 // NormalizeCandidate converts one adapter entry without exposing private
 // download evidence to public evaluation projections.
 func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
+	source := entry
+	source.Download, source.Link = "", ""
+	sourceFingerprint, _ := api.CanonicalWorkflowFingerprint(source)
 	candidate := TrackerCandidate{
+		SourceFingerprint:      sourceFingerprint,
+		Evidence:               entry.Evidence,
 		TrackerSlot:            entry.TrackerSlot,
 		ID:                     strings.TrimSpace(entry.ID),
 		Name:                   strings.TrimSpace(entry.Name),

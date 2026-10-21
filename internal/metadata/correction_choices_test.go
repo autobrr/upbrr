@@ -22,11 +22,14 @@ func TestCorrectionChoices(t *testing.T) {
 	for field, values := range choices {
 		byField[field] = make(map[string]string)
 		for _, choice := range values {
-			if choice.Value == "" || choice.Label == "" || byField[field][choice.Value] != "" {
+			if (choice.Value == "" && (field != "Presentation" || choice.Label != "None")) || choice.Label == "" || byField[field][choice.Value] != "" {
 				t.Fatalf("invalid or duplicate %s choice: %#v", field, choice)
 			}
 			byField[field][choice.Value] = choice.Label
 		}
+	}
+	if byField["Presentation"][""] != "None" {
+		t.Fatal("presentation choices must expose explicit None")
 	}
 	services := metautil.ServiceCodeMap()
 	serviceValues := make(map[string]bool)

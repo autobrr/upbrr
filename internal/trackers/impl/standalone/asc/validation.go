@@ -34,10 +34,10 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				failures = append(failures, trackers.NewRuleFailure("required_poster", "missing poster URL", api.RuleDispositionStrict))
 			}
 			if strings.TrimSpace(resolveGenres(meta, answers)) == "" {
-				failures = append(failures, trackers.NewRuleFailure("required_genre", "missing genre", api.RuleDispositionStrict))
+				failures = append(failures, trackers.NewQuestionnaireRuleFailure("required_genre", "missing genre"))
 			}
 			if strings.TrimSpace(resolveOverview(meta, answers)) == "" {
-				failures = append(failures, trackers.NewRuleFailure("required_overview", "missing overview", api.RuleDispositionStrict))
+				failures = append(failures, trackers.NewQuestionnaireRuleFailure("required_overview", "missing overview"))
 			}
 			return failures, nil
 		},

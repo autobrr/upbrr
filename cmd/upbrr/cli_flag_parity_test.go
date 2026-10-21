@@ -21,8 +21,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 
 	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
-	if len(registered) != 198 || len(aliases) != 54 {
-		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 198 and 54", len(registered), len(aliases))
+	if len(registered) != 202 || len(aliases) != 54 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 202 and 54", len(registered), len(aliases))
 	}
 	for alias, target := range aliases {
 		if _, exists := registered[alias]; !exists {
@@ -39,8 +39,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 		}
 		canonical[name] = struct{}{}
 	}
-	if len(canonical) != 144 {
-		t.Fatalf("canonical upload flags=%d, want 144", len(canonical))
+	if len(canonical) != 148 {
+		t.Fatalf("canonical upload flags=%d, want 148", len(canonical))
 	}
 
 	classified := cliCompositeFlagManifest()
@@ -129,6 +129,8 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"draft",
 		"dual-audio",
 		"edition",
+		"presentation",
+		"release-features",
 		"episode",
 		"episode-title",
 		"force-recheck",
@@ -209,6 +211,8 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		result[name] = cliCompositeFlagClass{kind: "mapped"}
 	}
 	for name, reason := range map[string]string{
+		"ui":                      "invocation-only terminal presentation",
+		"ui-keep-open":            "invocation-only terminal completion display",
 		"hdr-resume-workflow":     "explicit retained active workflow HDR continuation",
 		"hdr-retry-attempt":       "exact retained HDR retry authority",
 		"hdr-retry-modes":         "explicit workflow-only decoded retry",

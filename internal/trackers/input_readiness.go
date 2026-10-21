@@ -34,6 +34,7 @@ func CollectMetadataRequirements(registry *Registry, selected []api.TrackerID) (
 		if !ok {
 			continue
 		}
+		set.InspectProgrammeTracks = set.InspectProgrammeTracks || policy.InspectProgrammeTracks
 		for _, requirement := range policy.Requirements {
 			set.Requirements = append(set.Requirements, api.MetadataRequirement{
 				Scope:       api.MetadataRequirementScope(requirement.Scope),

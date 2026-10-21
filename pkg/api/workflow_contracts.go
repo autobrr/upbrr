@@ -193,6 +193,9 @@ type TrackerDuplicateCriteria struct {
 // TrackerDuplicateTarget is the projection-bound proposed release used only
 // for local duplicate policy evaluation.
 type TrackerDuplicateTarget struct {
+	Evidence    DupeReleaseEvidence      `json:"evidence"`
+	Comparisons []DupeComparisonEvidence `json:"comparisons,omitempty"`
+
 	// TrackerSlot is opaque native slot evidence resolved from this prepared generation.
 	TrackerSlot            string   `json:"trackerSlot,omitempty"`
 	Names                  []string `json:"names,omitempty"`
@@ -223,6 +226,9 @@ type TrackerDuplicateTarget struct {
 	AudioCodecsComplete    bool     `json:"audioCodecsComplete,omitempty"`
 	AudioChannelsComplete  bool     `json:"audioChannelsComplete,omitempty"`
 	AudioLanguagesComplete bool     `json:"audioLanguagesComplete,omitempty"`
+
+	// ReleaseFeatures retain non-edition annotations without changing edition comparisons.
+	ReleaseFeatures []ReleaseFeature `json:"releaseFeatures,omitempty"`
 }
 
 // TrackerArtifactRequirements are backend-owned tracker artifact requirements.
@@ -242,6 +248,10 @@ type TrackerArtifactRequirements struct {
 
 // TrackerQuestionnaireRequirement describes one non-secret tracker input requirement.
 type TrackerQuestionnaireRequirement struct {
+	// HDRGradeComparison requests conditional guidance beside the HDR analysis controls.
+	HDRGradeComparison bool `json:"hdrGradeComparison,omitempty"`
+	// NeedsReview requests correction without making an optional value mandatory.
+	NeedsReview bool `json:"needsReview,omitempty"`
 	// Kind identifies the renderer; multiselect values use comma-separated option labels.
 	Kind string `json:"kind,omitempty"`
 	// Value is the validated answer or display default for this field; QuestionnaireAnswers owns exact answer intent.
@@ -424,39 +434,42 @@ const (
 
 // DupeMatchProjection is sanitized duplicate evidence safe for public clients.
 type DupeMatchProjection struct {
-	ID             string            `json:"id,omitempty"`
-	Name           string            `json:"name"`
-	Link           string            `json:"link,omitempty"`
-	SizeBytes      int64             `json:"sizeBytes,omitempty"`
-	Flags          []string          `json:"flags,omitempty"`
-	Reason         string            `json:"reason,omitempty"`
-	Relation       DupeRelation      `json:"relation,omitempty"`
-	Reasons        []DupeReason      `json:"reasons,omitempty"`
-	HDR            HDRFacts          `json:"hdr"`
-	Category       string            `json:"category,omitempty"`
-	Type           string            `json:"type,omitempty"`
-	Resolution     string            `json:"resolution,omitempty"`
-	Source         string            `json:"source,omitempty"`
-	Codec          string            `json:"codec,omitempty"`
-	Container      string            `json:"container,omitempty"`
-	Provider       string            `json:"provider,omitempty"`
-	Group          string            `json:"group,omitempty"`
-	ReleaseOrigin  string            `json:"releaseOrigin,omitempty"`
-	Edition        string            `json:"edition,omitempty"`
-	Region         string            `json:"region,omitempty"`
-	ThreeD         string            `json:"threeD,omitempty"`
-	Repack         string            `json:"repack,omitempty"`
-	Season         int               `json:"season,omitempty"`
-	Episode        int               `json:"episode,omitempty"`
-	Date           string            `json:"date,omitempty"`
-	Pack           bool              `json:"pack"`
-	Internal       bool              `json:"internal"`
-	Trumpable      bool              `json:"trumpable"`
-	EvidenceStatus HDREvidenceStatus `json:"evidenceStatus,omitempty"`
+	EvidenceFingerprint WorkflowFingerprint `json:"evidenceFingerprint,omitempty"`
+	ID                  string              `json:"id,omitempty"`
+	Name                string              `json:"name"`
+	Link                string              `json:"link,omitempty"`
+	SizeBytes           int64               `json:"sizeBytes,omitempty"`
+	Flags               []string            `json:"flags,omitempty"`
+	Reason              string              `json:"reason,omitempty"`
+	Relation            DupeRelation        `json:"relation,omitempty"`
+	Reasons             []DupeReason        `json:"reasons,omitempty"`
+	HDR                 HDRFacts            `json:"hdr"`
+	Category            string              `json:"category,omitempty"`
+	Type                string              `json:"type,omitempty"`
+	Resolution          string              `json:"resolution,omitempty"`
+	Source              string              `json:"source,omitempty"`
+	Codec               string              `json:"codec,omitempty"`
+	Container           string              `json:"container,omitempty"`
+	Provider            string              `json:"provider,omitempty"`
+	Group               string              `json:"group,omitempty"`
+	ReleaseOrigin       string              `json:"releaseOrigin,omitempty"`
+	Edition             string              `json:"edition,omitempty"`
+	Region              string              `json:"region,omitempty"`
+	ThreeD              string              `json:"threeD,omitempty"`
+	Repack              string              `json:"repack,omitempty"`
+	Season              int                 `json:"season,omitempty"`
+	Episode             int                 `json:"episode,omitempty"`
+	Date                string              `json:"date,omitempty"`
+	Pack                bool                `json:"pack"`
+	Internal            bool                `json:"internal"`
+	Trumpable           bool                `json:"trumpable"`
+	EvidenceStatus      HDREvidenceStatus   `json:"evidenceStatus,omitempty"`
 }
 
 // TrackerDupeAssessment is one retained projection-bound duplicate result.
 type TrackerDupeAssessment struct {
+	// Questionnaire contains candidate-bound questions from this exact assessment.
+	Questionnaire []TrackerQuestionnaireRequirement `json:"questionnaire,omitempty"`
 	// RequiresStaffToken blocks overrides until the owner explicitly attests possession.
 	RequiresStaffToken bool `json:"requiresStaffToken,omitempty"`
 	// StaffTokenConfirmed retains attestation for this projection; reprojecting clears it.
@@ -645,22 +658,24 @@ type DescriptionTrackerResult struct {
 
 // DescriptionSet retains descriptions for exact release, projection, and media revisions.
 type DescriptionSet struct {
-	ID                  DescriptionSetID               `json:"id"`
-	WorkflowID          WorkflowID                     `json:"workflowId"`
-	Revision            WorkflowRevision               `json:"revision"`
-	Release             ReleaseSnapshotRef             `json:"release"`
-	ReleaseRef          ReleaseRef                     `json:"releaseRef"`
-	ProjectionSet       TrackerReleaseProjectionSetRef `json:"projectionSet"`
-	TrackerApproval     *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
-	Media               *MediaArtifactSetRef           `json:"media,omitempty"`
-	InputFingerprint    WorkflowFingerprint            `json:"inputFingerprint"`
-	TemplateFingerprint WorkflowFingerprint            `json:"templateFingerprint"`
-	Descriptions        []RenderedDescription          `json:"descriptions"`
-	TrackerResults      []DescriptionTrackerResult     `json:"trackerResults,omitempty"`
-	Status              StageStatus                    `json:"status"`
-	RequiredActions     []RequiredAction               `json:"requiredActions,omitempty"`
-	Failures            []WorkflowFailure              `json:"failures,omitempty"`
-	CreatedAt           time.Time                      `json:"createdAt" ts_type:"string"`
+	// HDRArtifacts is server-owned evidence from this exact description generation.
+	HDRArtifacts        map[TrackerID][]HDRArtifactEvidence `json:"hdrArtifacts,omitempty"`
+	ID                  DescriptionSetID                    `json:"id"`
+	WorkflowID          WorkflowID                          `json:"workflowId"`
+	Revision            WorkflowRevision                    `json:"revision"`
+	Release             ReleaseSnapshotRef                  `json:"release"`
+	ReleaseRef          ReleaseRef                          `json:"releaseRef"`
+	ProjectionSet       TrackerReleaseProjectionSetRef      `json:"projectionSet"`
+	TrackerApproval     *TrackerApprovalSnapshotRef         `json:"trackerApproval,omitempty"`
+	Media               *MediaArtifactSetRef                `json:"media,omitempty"`
+	InputFingerprint    WorkflowFingerprint                 `json:"inputFingerprint"`
+	TemplateFingerprint WorkflowFingerprint                 `json:"templateFingerprint"`
+	Descriptions        []RenderedDescription               `json:"descriptions"`
+	TrackerResults      []DescriptionTrackerResult          `json:"trackerResults,omitempty"`
+	Status              StageStatus                         `json:"status"`
+	RequiredActions     []RequiredAction                    `json:"requiredActions,omitempty"`
+	Failures            []WorkflowFailure                   `json:"failures,omitempty"`
+	CreatedAt           time.Time                           `json:"createdAt" ts_type:"string"`
 }
 
 // UploadPlanField is one ordered sanitized request field from a retained operation.

@@ -27,6 +27,14 @@ func formatPathLabel(value string) string {
 }
 
 func promptYesNo(reader *bufio.Reader, output io.Writer, prompt string, defaultYes bool) (bool, error) {
+	if writer, ok := output.(*cliPresentationWriter); ok {
+		answer, err := writer.ask(cliPrompt{
+			Kind:       cliPromptConfirm,
+			Question:   prompt,
+			DefaultYes: defaultYes,
+		})
+		return answer.Confirmed, err
+	}
 	line, err := promptLine(reader, output, prompt)
 	if err != nil {
 		return false, err
@@ -39,6 +47,10 @@ func promptYesNo(reader *bufio.Reader, output io.Writer, prompt string, defaultY
 }
 
 func promptLine(reader *bufio.Reader, output io.Writer, prompt string) (string, error) {
+	if writer, ok := output.(*cliPresentationWriter); ok {
+		answer, err := writer.ask(cliPrompt{Kind: cliPromptText, Question: prompt})
+		return answer.Text, err
+	}
 	if _, err := fmt.Fprint(output, prompt); err != nil {
 		return "", fmt.Errorf("write prompt: %w", err)
 	}

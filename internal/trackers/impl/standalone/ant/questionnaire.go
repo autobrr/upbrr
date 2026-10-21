@@ -28,7 +28,7 @@ func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuesti
 func buildQuestionnaire(meta api.UploadSubject, state uploadState) *api.TrackerQuestionnaire {
 	current := standalone.QuestionnaireAnswers(meta, "ANT")
 	fields := make([]api.TrackerQuestionnaireField, 0, 3)
-	if _, answered := current["type"]; strings.TrimSpace(state.typeName) == "" || answered {
+	if _, answered := current["type"]; movieContent(meta) && (strings.TrimSpace(state.typeName) == "" || answered) {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "type",
 			Label:       "ANT Type",
@@ -73,6 +73,10 @@ func buildQuestionnaire(meta api.UploadSubject, state uploadState) *api.TrackerQ
 		Placeholder: "Optional request ID",
 		Help:        "Positive ANT request ID to include with the upload",
 	})
+	if _, err := requestID(current); err != nil {
+		fields[len(fields)-1].NeedsReview = true
+		fields[len(fields)-1].Help = err.Error()
+	}
 	return &api.TrackerQuestionnaire{Tracker: "ANT", Fields: fields}
 }
 

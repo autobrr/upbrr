@@ -16,17 +16,24 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 		return nil
 	}
 	var fields []api.TrackerQuestionnaireField
+	_, assignmentReview := compatibilityAssessment(subject)
+	assignmentReview = assignmentReview && api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug
 	for _, track := range subject.LanguageFacts.Tracks {
 		if track.Kind != api.MediaTrackAudio || track.ID == "" {
 			continue
 		}
 		candidates := compatibilityMixes(subject, track)
+		if assignmentReview {
+			candidates = trackers.CompatibilityAudioMixes(subject.LanguageFacts, track, track.Role != api.AudioRoleCompatibility)
+		}
 		if track.Role != api.AudioRoleCompatibility &&
 			(!trackers.StandaloneDolbyAudio(track) || !slices.ContainsFunc(candidates, func(candidate api.MediaTrackFacts) bool { return candidate.Codec != "" })) {
 			continue
 		}
 		key := trackers.LanguageQuestionKey(subject, "compatibility_mix_"+track.ID)
-		if _, answered := subject.QuestionnaireAnswers[key]; !answered && trackers.AutomaticCompatibilityMix(track, candidates) != "" {
+		inferred := trackers.AutomaticCompatibilityMix(track, candidates)
+		_, answered := subject.QuestionnaireAnswers[key]
+		if !answered && inferred != "" && !assignmentReview {
 			continue
 		}
 		options, details := []string{"unresolved"}, ""
@@ -51,11 +58,15 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Required: api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug,
 			Help:     "A single same-resource mix with the same fully known language set is matched automatically. Review ambiguous mixes using source evidence: " + details + ". At most one compatibility track is allowed per mix; every TrueHD mix still needs standalone AC-3, including WEB releases.",
 		})
+		if !answered {
+			fields[len(fields)-1].Value = inferred
+		}
 	}
 	for i := range fields {
 		if value := subject.QuestionnaireAnswers[fields[i].Key]; slices.Contains(fields[i].Options, value) {
 			fields[i].Value = value
 		}
+		fields[i].NeedsReview = fields[i].Required && (fields[i].Value == "unresolved" || assignmentReview && fields[i].Value != "")
 	}
 	if len(fields) == 0 {
 		return nil

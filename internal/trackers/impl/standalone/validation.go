@@ -92,6 +92,8 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		Cut:                         subject.Cut,
 		Presentation:                subject.Presentation,
 		Edition:                     subject.Edition,
+		ReleaseFeatures:             append([]api.ReleaseFeature(nil), subject.ReleaseFeatures...),
+		EditionDisplay:              append([]api.EditionDisplayPart(nil), subject.EditionDisplay...),
 		Repack:                      subject.Repack,
 		WebDV:                       subject.WebDV,
 		Assessments:                 subject.Assessments,

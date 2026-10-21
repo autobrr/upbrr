@@ -215,36 +215,42 @@ Specials can use `S00E01` in a source name or `--season S00 --episode 01`. An ex
 
 Existing prepared releases are rebuilt after this update. Older binaries do not support saved season-zero corrections.
 
-| Option                        | Aliases                                           | Purpose                                                                                     |
-| ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `--category <value>`          | `-category`, `-c`                                 | Override category.                                                                          |
-| `--type <value>`              | `-type`, `-t`                                     | Override release type.                                                                      |
-| `--source <value>`            | `-source`                                         | Override source.                                                                            |
-| `--resolution <value>`        | `-resolution`, `-res`                             | Override resolution.                                                                        |
-| `--tag <value>`               | `-tag`, `-g`                                      | Override group tag.                                                                         |
-| `--service <value>`           | `-service`, `-serv`                               | Override streaming service.                                                                 |
-| `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                                                                       |
-| `--original-language <value>` | `-original-language`, `-ol`                       | Override original language.                                                                 |
-| `--edition <value>`           | `-edition`, `-repack`                             | Override edition text, replacing automatic cut, presentation, and multi-edition set labels. |
-| `--season <value>`            | `-season`                                         | Override one season token, such as `05` or `S05`.                                           |
-| `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                           |
-| `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                     |
-| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                            |
-| `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                 |
-| `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                    |
-| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                       |
-| `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                        |
-| `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                      |
-| `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                       |
-| `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                                                                 |
-| `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                                                             |
-| `--no-distributor`            | `-no-distributor`, `-ndist`                       | Remove distributor.                                                                         |
-| `--no-edition`                | `-no-edition`, `-ne`                              | Remove cut, edition, presentation, and multi-edition set labels from the name.              |
-| `--no-dub`                    | `-no-dub`                                         | Remove dubbed tag from audio name.                                                          |
-| `--no-dual`                   | `-no-dual`                                        | Remove dual-audio tag from audio name.                                                      |
-| `--dual-audio`                | `-dual-audio`                                     | Add dual-audio tag to audio name.                                                           |
+| Option                        | Aliases                                           | Purpose                                                                                               |
+| ----------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `--category <value>`          | `-category`, `-c`                                 | Override category.                                                                                    |
+| `--type <value>`              | `-type`, `-t`                                     | Override release type.                                                                                |
+| `--source <value>`            | `-source`                                         | Override source.                                                                                      |
+| `--resolution <value>`        | `-resolution`, `-res`                             | Override resolution.                                                                                  |
+| `--tag <value>`               | `-tag`, `-g`                                      | Override group tag.                                                                                   |
+| `--service <value>`           | `-service`, `-serv`                               | Override streaming service.                                                                           |
+| `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                                                                                 |
+| `--original-language <value>` | `-original-language`, `-ol`                       | Override original language.                                                                           |
+| `--edition <value>`           | `-edition`, `-repack`                             | Override cut/edition text and multi-edition set labels; independent presentation and features remain. |
+| `--presentation <value>`      | `-presentation`                                   | Set `IMAX`, `Open Matte`, or `IMAX Open Matte`; `--presentation=` clears it.                          |
+| `--release-features <list>`   | `-release-features`                               | Replace release features using comma-separated IDs; `--release-features=` clears them.                |
+| `--season <value>`            | `-season`                                         | Override one season token, such as `05` or `S05`.                                                     |
+| `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                                     |
+| `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                               |
+| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                                      |
+| `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                           |
+| `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                              |
+| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                                 |
+| `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                                  |
+| `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                                |
+| `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                                 |
+| `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                                                                           |
+| `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                                                                       |
+| `--no-distributor`            | `-no-distributor`, `-ndist`                       | Remove distributor.                                                                                   |
+| `--no-edition`                | `-no-edition`, `-ne`                              | Remove cut, edition, presentation, and multi-edition set labels from the name.                        |
+| `--no-dub`                    | `-no-dub`                                         | Remove dubbed tag from audio name.                                                                    |
+| `--no-dual`                   | `-no-dual`                                        | Remove dual-audio tag from audio name.                                                                |
+| `--dual-audio`                | `-dual-audio`                                     | Add dual-audio tag to audio name.                                                                     |
 
 Filename cut, edition, and presentation labels take priority over provider runtime labels. If selected playlists identify two distinct editions, automatic naming uses only `2in1`, without listing the individual editions. Manual `--edition` and `--no-edition` choices take precedence over these automatic labels.
+
+Presentation and release features are independent of Edition. For example, `--edition "Director's Cut" --presentation "Open Matte" --release-features hybrid,4k_restoration` retains all three meanings. Supported feature IDs are `hybrid`, `restoration`, `remaster`, `two_disc_set`, `4k_restoration`, `4k_remaster`, `extras`, `2d_3d_edition`, `3d_anaglyph`, `3d_full_sbs`, `3d_half_ou`, and `3d_half_sbs`. These are release annotations; selecting a 3D annotation does not change measured 3D media facts.
+
+Omit a flag to retain a saved correction. Use `--reset-input release_name.presentation` or `--reset-input release_name.release_features` to return that control to automatic detection. An explicit empty value clears only that control. Legacy `--no-edition` suppresses automatic edition-related labels, but explicit presentation/features selections take precedence.
 
 `-repack` remains an alias for `--edition`. It does not set the independent **Release version** correction. Set that correction in the Web UI; use `--reset-input release_name.repack` to restore automatic version detection from the CLI. The legacy `--no-edition` option also suppresses an automatic release version, but a saved explicit **Release version** selection takes precedence. See [Input corrections](../web-ui/index.md#correct-input-facts).
 

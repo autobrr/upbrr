@@ -5,6 +5,7 @@ package webserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,11 +13,99 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type releaseWorkflowOperationCoreFake struct {
+	ReleaseWorkflowCapability
+	operation api.WorkflowOperationStatus
+	ownerID   string
+}
+
+func (f *releaseWorkflowOperationCoreFake) ReleaseWorkflowOperation(
+	_ context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+) (api.WorkflowOperationStatus, error) {
+	if ownerID != f.ownerID || workflowID != f.operation.WorkflowID || operationID != f.operation.ID {
+		return api.WorkflowOperationStatus{}, releaseworkflow.ErrWorkflowNotFound
+	}
+	return f.operation, nil
+}
+
+func TestReleaseWorkflowPollingPreservesCompositeInvalidInputFailure(t *testing.T) {
+	t.Parallel()
+	for _, transport := range []string{"app", "api"} {
+		t.Run(transport, func(t *testing.T) {
+			t.Parallel()
+			server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state.db"))
+			current, err := server.sessions.Create("admin", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ownerID := current.ID
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/app/GetReleaseWorkflowOperation",
+				strings.NewReader(`{"workflowId":"workflow-invalid-input","operationId":"operation-invalid-input"}`))
+			request.Header.Set("Origin", "http://example.com")
+			request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+			request.Header.Set("X-Csrf-Token", current.CSRFToken)
+			if transport == "api" {
+				ownerID = "api:reader"
+				server.apiTokens, err = newAPITokenStore([]APITokenCredential{{
+					Token:   apiV1TestToken,
+					OwnerID: "reader",
+					Scopes:  []APITokenScope{APITokenScopeWorkflowRead},
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				server.generalLimiter = newFixedWindowLimiter(100, time.Minute)
+				request = httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+					"/api/v1/workflows/workflow-invalid-input/operations/operation-invalid-input", nil)
+				request.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+			}
+			failure := api.OperationFailure{
+				Code:      api.OperationFailureInvalidInput,
+				Operation: api.OperationKindUploadExecute,
+				Message:   "Required input is missing or invalid: Release source. Edit the input and retry.",
+				Recovery:  api.OperationRecoveryEditInput,
+			}
+			coreFake := &releaseWorkflowOperationCoreFake{
+				ownerID: ownerID,
+				operation: api.WorkflowOperationStatus{
+					ID:         "operation-invalid-input",
+					WorkflowID: "workflow-invalid-input",
+					Command:    "composite_upload",
+					Operation:  api.OperationKindUploadExecute,
+					Status:     api.StageStatusFailed,
+					Failures:   []api.WorkflowFailure{{Failure: failure}},
+				},
+			}
+			server.backend.replaceRuntime(config.Config{}, CoreCapabilities{ReleaseWorkflow: coreFake}, nil)
+			mux := http.NewServeMux()
+			server.registerReleaseWorkflowAppRoutes(mux)
+			server.registerV1Routes(mux)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("poll status=%d body=%s", response.Code, response.Body.String())
+			}
+			var operation api.WorkflowOperationStatus
+			if err := json.Unmarshal(response.Body.Bytes(), &operation); err != nil {
+				t.Fatal(err)
+			}
+			if operation.Status != api.StageStatusFailed || operation.Result != nil ||
+				len(operation.Failures) != 1 || operation.Failures[0].Failure != failure {
+				t.Fatalf("polled composite failure = %#v", operation)
+			}
+		})
+	}
+}
 
 func TestReleaseWorkflowDiagnosticMessageExposesSanitizedCause(t *testing.T) {
 	t.Parallel()

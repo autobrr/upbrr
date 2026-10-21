@@ -15,7 +15,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dvl/v2", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dvl/v3", trackers.StructuredNamePolicy{
 		Defaults: applyDVLNameDefaults,
 	})
 }
@@ -79,7 +79,7 @@ func applyDVDRipNameOrder(editor *trackers.NameEditor) error {
 }
 
 func omitDVDEncodeMarkers(editor *trackers.NameEditor) error {
-	for _, role := range []api.ReleaseNameRole{api.NameRoleEdition, api.NameRoleRepack} {
+	for _, role := range []api.ReleaseNameRole{api.NameRoleEdition, api.NameRoleEditionDisplay, api.NameRoleRepack} {
 		if err := editor.Omit(role); err != nil {
 			return fmt.Errorf("omit DVL DVD encode %s: %w", role, err)
 		}

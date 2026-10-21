@@ -963,6 +963,41 @@ func TestCLIWorkflowBlockedOperationPublishesResult(t *testing.T) {
 	}
 }
 
+func TestCLIContinuationRejectsRetainedTerminalFailure(t *testing.T) {
+	t.Parallel()
+	failure := api.OperationFailure{
+		Code:      api.OperationFailureInvalidInput,
+		Operation: api.OperationKindPreparation,
+		Message:   "Required release input is missing or invalid. Edit the input and retry.",
+		Recovery:  api.OperationRecoveryEditInput,
+	}
+	current := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{
+			ID:       "workflow-invalid-input",
+			Revision: 2,
+			Status:   api.WorkflowStatusFailed,
+		},
+		Operation: &api.WorkflowOperationStatus{
+			ID:         "operation-invalid-input",
+			WorkflowID: "workflow-invalid-input",
+			Operation:  api.OperationKindPreparation,
+			Status:     api.StageStatusFailed,
+			Failures:   []api.WorkflowFailure{{Failure: failure}},
+		},
+	}
+	coreSvc := &cliWorkflowCoreFake{
+		continueFn: func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return current, nil },
+	}
+	session := &cliWorkflowSession{core: coreSvc}
+	err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: 1},
+		Goal:      api.WorkflowGoalPrepared,
+	})
+	if got, ok := api.AsOperationFailure(err); !ok || got != failure {
+		t.Fatalf("terminal continuation failure = %#v, err=%v", got, err)
+	}
+}
+
 func TestCLIWorkflowLoadsEveryRetainedOperationEventDelta(t *testing.T) {
 	logger := &cliProgressTestLogger{}
 	operation := api.WorkflowOperationStatus{

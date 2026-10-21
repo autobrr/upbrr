@@ -1014,6 +1014,7 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 		audioCodecs, audioCodecsComplete := mediafacts.AudioCodecsFromMediaInfoTextWithCoverage(item.Attributes.MediaInfo)
 		audioChannels, audioChannelsComplete := mediafacts.AudioChannelsFromMediaInfoTextWithCoverage(item.Attributes.MediaInfo)
 		audioLanguages, audioLanguagesComplete := mediafacts.AudioLanguagesFromMediaInfoTextWithCoverage(item.Attributes.MediaInfo)
+		englishSubtitles, subtitlesKnown := mediafacts.EnglishSubtitleEvidenceFromMediaInfoText(item.Attributes.MediaInfo)
 		entry := api.DupeEntry{
 			Name:                   strings.TrimSpace(item.Attributes.Name),
 			Trumpable:              item.Attributes.Trumpable,
@@ -1032,6 +1033,9 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 			AudioLanguagesComplete: audioLanguagesComplete,
 			Provider:               strings.TrimSpace(item.Attributes.Provider),
 			Internal:               item.Attributes.Internal,
+			EnglishSubtitles:       englishSubtitles,
+			EnglishSubtitlesKnown:  subtitlesKnown,
+			MediaInfo:              strings.TrimSpace(item.Attributes.MediaInfo),
 			BDInfo:                 strings.TrimSpace(item.Attributes.BDInfo),
 			Description:            strings.TrimSpace(item.Attributes.Description),
 			HDR:                    hdr,
@@ -1079,6 +1083,7 @@ func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dS
 		pendingAudioCodecs, pendingAudioCodecsComplete := mediafacts.AudioCodecsFromMediaInfoTextWithCoverage(item.MediaInfo)
 		pendingAudioChannels, pendingAudioChannelsComplete := mediafacts.AudioChannelsFromMediaInfoTextWithCoverage(item.MediaInfo)
 		pendingAudioLanguages, pendingAudioLanguagesComplete := mediafacts.AudioLanguagesFromMediaInfoTextWithCoverage(item.MediaInfo)
+		englishSubtitles, subtitlesKnown := mediafacts.EnglishSubtitleEvidenceFromMediaInfoText(item.MediaInfo)
 		entry := api.DupeEntry{
 			Name:                   strings.TrimSpace(item.Name),
 			Trumpable:              item.Trumpable,
@@ -1096,6 +1101,9 @@ func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dS
 			AudioChannelsComplete:  pendingAudioChannelsComplete,
 			AudioLanguagesComplete: pendingAudioLanguagesComplete,
 			Internal:               item.Internal,
+			EnglishSubtitles:       englishSubtitles,
+			EnglishSubtitlesKnown:  subtitlesKnown,
+			MediaInfo:              strings.TrimSpace(item.MediaInfo),
 			BDInfo:                 strings.TrimSpace(item.BDInfo),
 			Description:            strings.TrimSpace(item.Description),
 			HDR:                    hdr,
@@ -1589,6 +1597,17 @@ type unit3dSearchAttrs struct {
 
 type unit3dPendingSearchResponse struct {
 	Data []unit3dPendingSearchItem `json:"data"`
+}
+
+func unit3DDupeInternalEvidence(internal *bool) api.DupeReleaseEvidence {
+	if internal == nil {
+		return api.DupeReleaseEvidence{}
+	}
+	status := "non_internal"
+	if *internal {
+		status = "internal"
+	}
+	return api.DupeReleaseEvidence{InternalStatus: status}
 }
 
 type unit3dPendingSearchItem struct {

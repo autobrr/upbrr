@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ func (b workflowPreflightBuilder) assessTitleSearchRules(
 		}
 		policy := provider.TitleSearchPolicy()
 		validation := api.NewTrackerValidationSubject(subject, string(projection.TrackerID))
+		validation.FinalizedUploadName = projection.UploadReleaseName
 		if policy.ID == "" || policy.Required == nil || !policy.Required(validation) {
 			continue
 		}
@@ -146,6 +148,14 @@ func (b workflowPreflightBuilder) acquireTitleSearchEvidence(
 	search := result.SearchEvidence()
 	rows := result.Entries()
 	evidence.TorrentCount = len(rows)
+	for _, row := range rows {
+		if row.EnglishSubtitlesKnown {
+			evidence.SubtitleInspectedTorrentCount++
+		}
+		if row.EnglishSubtitles {
+			evidence.EnglishSubtitleTorrentCount++
+		}
+	}
 	if search.WorkScope != dupe.WorkScopeProviderID {
 		evidence.TorrentCount = -1
 	}
@@ -159,7 +169,13 @@ func (b workflowPreflightBuilder) acquireTitleSearchEvidence(
 	// resolution, season or format counts against title-wide absence.
 	rowIdentities := make([]string, 0, len(rows))
 	for _, row := range rows {
-		rowIdentities = append(rowIdentities, strings.Join([]string{row.ID, row.Name, row.Type, row.Res}, "\x00"))
+		rowIdentities = append(
+			rowIdentities,
+			strings.Join(
+				[]string{row.ID, row.Name, row.Type, row.Res, strconv.FormatBool(row.EnglishSubtitles), strconv.FormatBool(row.EnglishSubtitlesKnown)},
+				"\x00",
+			),
+		)
 	}
 	slices.Sort(rowIdentities)
 	evidence.ResultFingerprint, err = api.CanonicalWorkflowFingerprint(struct {

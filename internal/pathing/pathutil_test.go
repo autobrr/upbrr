@@ -6,6 +6,7 @@ package pathing
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -50,6 +51,26 @@ func TestIsWithinRootRejectsSymlinkEscapes(t *testing.T) {
 	}
 
 	assertEscapingLinkRejected(t, root, link)
+}
+
+func TestIsWithinRootRejectsDanglingLinks(t *testing.T) {
+	t.Parallel()
+	for _, directory := range []bool{false, true} {
+		t.Run(strconv.FormatBool(directory), func(t *testing.T) {
+			root, outside := setupEscapeDirs(t)
+			link := filepath.Join(root, "dangling")
+			if err := os.Symlink(filepath.Join(outside, "missing"), link); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			target := link
+			if directory {
+				target = filepath.Join(link, "child.nfo")
+			}
+			if IsWithinRoot(root, target) {
+				t.Fatal("dangling outward link accepted")
+			}
+		})
+	}
 }
 
 func setupEscapeDirs(t *testing.T) (string, string) {

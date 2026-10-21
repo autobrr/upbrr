@@ -146,6 +146,7 @@ func (b workflowPreflightBuilder) Build(
 				continue
 			}
 			validationSubject := api.NewTrackerValidationSubject(checkedSubject, string(projection.TrackerID))
+			validationSubject.FinalizedUploadName = projection.UploadReleaseName
 			if projection.QuestionnaireAnswers != nil {
 				validationSubject.QuestionnaireAnswers = maps.Clone(projection.QuestionnaireAnswers)
 			}
@@ -405,6 +406,9 @@ func (b workflowPreflightBuilder) Build(
 		}
 		finalProjection.RequiredActions = append([]api.RequiredAction(nil), result.RequiredActions...)
 		finalProjection.Failures = append([]api.WorkflowFailure(nil), result.Failures...)
+		if result.State == api.TrackerPreflightStateFailed || result.State == api.TrackerPreflightStateRetryable {
+			finalProjection.Questionnaire = nil
+		}
 		if result.State == api.TrackerPreflightStateReady {
 			finalProjection.Readiness = api.ReadinessStatusReady
 			finalProjection.DupeReady = true

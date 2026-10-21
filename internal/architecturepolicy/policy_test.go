@@ -931,3 +931,24 @@ func TestCheckRepositoryUnit3DSearchCallbackBelongsInDupe(t *testing.T) {
 		})
 	}
 }
+
+func TestUnit3DSubmissionRequirementsBelongInPayload(t *testing.T) {
+	for _, file := range []string{"payload.go", "upload.go"} {
+		t.Run(file, func(t *testing.T) {
+			root := t.TempDir()
+			writePolicyFixture(t, root, "internal/trackers/impl/unit3d/sites/example/profile.go", "package example\nvar site = SiteProfile{SubmissionRequirements: submissionRequirements}\n")
+			writePolicyFixture(t, root, filepath.ToSlash(filepath.Join("internal", "trackers", "impl", "unit3d", "sites", "example", file)), "package example\nfunc submissionRequirements() {}\n")
+			violations, err := CheckRepository(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if file == "payload.go" {
+				if len(violations) != 0 {
+					t.Fatalf("violations = %#v", violations)
+				}
+			} else {
+				assertViolationContains(t, violations, "site-local payload.go")
+			}
+		})
+	}
+}
