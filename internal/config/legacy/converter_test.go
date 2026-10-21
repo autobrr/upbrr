@@ -466,38 +466,58 @@ func TestConvertTrackers(t *testing.T) {
 }
 
 func TestConvertTrackersMapsLegacyTrackerAliases(t *testing.T) {
-	input := []byte(`
+	digitalCoreAPIKey := fmt.Sprintf("%s-digitalcore", t.Name())
+	hdSpaceAPIKey := fmt.Sprintf("%s-hdspace", t.Name())
+	racingForEveryoneAPIKey := fmt.Sprintf("%s-racing4everyone", t.Name())
+	ulcxAPIKey := fmt.Sprintf("%s-ulcx", t.Name())
+
+	input := []byte(fmt.Sprintf(`
 config = {
     'DEFAULT': {'tmdb_api': 'test', 'screens': 6},
     'TRACKERS': {
-        'default_trackers': 'DIGITALCORE, HDSPACE, RACING4EVERYONE, UNWALLED',
+        'default_trackers': 'DIGITALCORE, HDSPACE, RACING4EVERYONE, UNWALLED, dc, ULCX, upload.cx',
         'preferred_tracker': 'UNWALLED',
-        'DIGITALCORE': {'api_key': 'digitalcore-key'},
-        'HDSPACE': {'api_key': 'hdspace-key'},
-        'RACING4EVERYONE': {'api_key': 'r4e-key'},
+        'DIGITALCORE': {'api_key': %q},
+        'HDSPACE': {'api_key': %q},
+        'RACING4EVERYONE': {'api_key': %q},
+        'dc': {'api_key': %q},
+        'ULCX': {'api_key': %q},
+        'upload.cx': {'api_key': %q},
     },
     'TORRENT_CLIENTS': {},
 }
-`)
+`, digitalCoreAPIKey, hdSpaceAPIKey, racingForEveryoneAPIKey, fmt.Sprintf("%s-lowercase-dc", t.Name()), ulcxAPIKey, fmt.Sprintf("%s-upload-cx", t.Name())))
 
 	cfg, warnings, err := ImportFromContent(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := cfg.Trackers.DefaultTrackers; len(got) != 3 || strings.Join(got, ",") != "DC,HDS,R4E" {
-		t.Fatalf("DefaultTrackers: got %v, want [DC HDS R4E]", got)
+	if got := cfg.Trackers.DefaultTrackers; len(got) != 4 || strings.Join(got, ",") != "DC,HDS,R4E,ULCX" {
+		t.Fatalf("DefaultTrackers: got %v, want [DC HDS R4E ULCX]", got)
 	}
-	if got := cfg.Trackers.Trackers["DC"].APIKey; got != "digitalcore-key" {
-		t.Fatalf("DC.APIKey: *** %q", got)
+	if got := cfg.Trackers.Trackers["DC"].APIKey; got != digitalCoreAPIKey {
+		t.Fatalf("DC API key did not preserve the deterministic entry")
 	}
-	if got := cfg.Trackers.Trackers["HDS"].APIKey; got != "hdspace-key" {
-		t.Fatalf("HDS.APIKey: *** %q", got)
+	if got := cfg.Trackers.Trackers["HDS"].APIKey; got != hdSpaceAPIKey {
+		t.Fatalf("HDS API key did not preserve the legacy alias entry")
 	}
-	if got := cfg.Trackers.Trackers["R4E"].APIKey; got != "r4e-key" {
-		t.Fatalf("R4E.APIKey: *** %q", got)
+	if got := cfg.Trackers.Trackers["R4E"].APIKey; got != racingForEveryoneAPIKey {
+		t.Fatalf("R4E API key did not preserve the legacy alias entry")
 	}
-	if !strings.Contains(strings.Join(warnings, "\n"), "UNWALLED") {
+	if !slices.Contains(warnings, "skipped unsupported default tracker: UNWALLED") {
 		t.Fatalf("missing unsupported default tracker warning: %v", warnings)
+	}
+	if got := cfg.Trackers.Trackers["DC"].APIKey; got != digitalCoreAPIKey {
+		t.Fatalf("case-insensitive DC API key did not preserve the deterministic entry")
+	}
+	if got := cfg.Trackers.Trackers["ULCX"].APIKey; got != ulcxAPIKey {
+		t.Fatalf("ULCX API key did not preserve the canonical entry")
+	}
+	if !slices.Contains(warnings, "skipped duplicate tracker entry for DC: dc") {
+		t.Fatalf("missing duplicate DC tracker warning: %v", warnings)
+	}
+	if !slices.Contains(warnings, "skipped duplicate tracker entry for ULCX: upload.cx") {
+		t.Fatalf("missing duplicate ULCX tracker warning: %v", warnings)
 	}
 	if got := cfg.Trackers.PreferredTracker; got != "" {
 		t.Fatalf("unsupported preferred tracker: got %q, want empty", got)

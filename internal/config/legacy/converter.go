@@ -142,6 +142,7 @@ var trackerAliases = map[string]string{
 	"DIGITALCORE":     "DC",
 	"HDSPACE":         "HDS",
 	"RACING4EVERYONE": "R4E",
+	"UPLOAD.CX":       "ULCX",
 	"IMMORTALSEED":    "IS",
 	"LUMINARR":        "LUME",
 	"MIDNIGHTSCENE":   "MNS",
@@ -233,7 +234,7 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		out.Trackers.DefaultTrackers = nil
 		seenDefaults := make(map[string]bool)
 		for _, trackerName := range coerceToStringSlice(dt) {
-			canonicalName := canonicalTrackerName(trackerName)
+			canonicalName := canonicalTrackerName(trackerName, knownTrackers)
 			if !knownTrackers[canonicalName] {
 				warnings = append(warnings, "skipped unsupported default tracker: "+trackerName)
 				continue
@@ -247,7 +248,7 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 	}
 
 	if pt, ok := legacyTrackers["preferred_tracker"]; ok && pt != nil {
-		preferred := canonicalTrackerName(strings.TrimSpace(fmt.Sprintf("%v", pt)))
+		preferred := canonicalTrackerName(strings.TrimSpace(fmt.Sprintf("%v", pt)), knownTrackers)
 		if preferred != "" && !knownTrackers[preferred] {
 			out.Trackers.PreferredTracker = ""
 			warnings = append(warnings, "skipped unsupported preferred tracker: "+preferred)
@@ -275,7 +276,7 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		if !ok {
 			continue
 		}
-		canonicalName := canonicalTrackerName(trackerName)
+		canonicalName := canonicalTrackerName(trackerName, knownTrackers)
 		if importedTrackers[canonicalName] && knownTrackers[canonicalName] {
 			warnings = append(warnings, "skipped duplicate tracker entry for "+canonicalName+": "+trackerName)
 			continue
@@ -319,12 +320,17 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 	return warnings
 }
 
-func canonicalTrackerName(name string) string {
-	trimmed := strings.ToUpper(strings.TrimSpace(name))
-	if alias, ok := trackerAliases[trimmed]; ok {
+func canonicalTrackerName(name string, knownTrackers map[string]bool) string {
+	trimmed := strings.TrimSpace(name)
+	if alias, ok := trackerAliases[strings.ToUpper(trimmed)]; ok {
 		return alias
 	}
-	return trimmed
+	for canonical := range knownTrackers {
+		if strings.EqualFold(canonical, trimmed) {
+			return canonical
+		}
+	}
+	return strings.ToUpper(trimmed)
 }
 
 // migrateTorrentClients copies torrent client settings from the legacy config.
