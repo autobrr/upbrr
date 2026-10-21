@@ -154,6 +154,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 	return fingerprint, nil
 }
 
+// Build prepares one upload plan and its tracker-specific torrent artifacts.
 func (b workflowUploadPlanBuilder) Build(
 	ctx context.Context,
 	projections api.TrackerReleaseProjectionSet,
@@ -318,6 +319,7 @@ func (b workflowUploadPlanBuilder) Build(
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
 	torrentSubject := workflowSubmissionTorrentSubject(subject)
 	torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
+	torrentSubject.RootName = workflowCBRTorrentRootName(eligible)
 	torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
 	torrentSubject.TorrentOverrides = descriptionInstructions.Torrent
 	var sourceManifest *api.SourceManifest
@@ -356,6 +358,34 @@ func (b workflowUploadPlanBuilder) Build(
 				remaining = append(remaining, projection)
 			}
 			eligible = remaining
+		}
+		cbrRootName := workflowCBRTorrentRootName(eligible)
+		if cbrRootName == "" {
+			var rejected bool
+			eligible, rejected = workflowRejectCBRTorrentRoot(eligible)
+			if rejected {
+				message := "CBR requires its reviewed torrent root and cannot share a torrent with another tracker."
+				trackerStatuses["CBR"] = api.StageStatusFailed
+				trackerReasons["CBR"] = message
+				trackerFailures["CBR"] = []api.WorkflowFailure{{
+					TrackerID: "CBR",
+					Failure: api.OperationFailure{
+						Code:      api.OperationFailureInvalidInput,
+						Operation: api.OperationKindUploadDryRun,
+						Message:   message,
+						Recovery:  api.OperationRecoverySelectTrackers,
+					},
+				}}
+			}
+		} else if torrentSubject.RootName != cbrRootName {
+			torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
+			torrentSubject.RootName = cbrRootName
+			torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
+			torrent, err = b.torrents.Create(ctx, torrentSubject)
+			if err != nil {
+				return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare CBR torrent: %w", err)
+			}
+			subject.TorrentPath = torrent.Path
 		}
 		subject.Trackers = workflowProjectionTrackerNames(eligible)
 		subject.RehashedTrackers = append([]string(nil), torrent.RehashedTrackers...)
@@ -643,6 +673,29 @@ func workflowSkipIfRehashTrackers(cfg config.Config, projections []api.TrackerRe
 	return result
 }
 
+// workflowCBRTorrentRootName keeps a CBR-only torrent's root directory aligned
+// with the tracker-approved release name without touching source files.
+func workflowCBRTorrentRootName(eligible []api.TrackerReleaseProjection) string {
+	if len(eligible) != 1 || eligible[0].TrackerID != "CBR" {
+		return ""
+	}
+	return strings.ReplaceAll(strings.TrimSpace(eligible[0].UploadReleaseName), " ", ".")
+}
+
+func workflowRejectCBRTorrentRoot(eligible []api.TrackerReleaseProjection) ([]api.TrackerReleaseProjection, bool) {
+	filtered := make([]api.TrackerReleaseProjection, 0, len(eligible))
+	rejected := false
+	for _, projection := range eligible {
+		if projection.TrackerID == "CBR" {
+			rejected = true
+			continue
+		}
+		filtered = append(filtered, projection)
+	}
+	return filtered, rejected
+}
+
+// RetryClientInjections injects registered tracker torrents into configured clients.
 func (b workflowUploadPlanBuilder) RetryClientInjections(
 	ctx context.Context,
 	authority releaseworkflow.RegisteredArtifactAuthority,

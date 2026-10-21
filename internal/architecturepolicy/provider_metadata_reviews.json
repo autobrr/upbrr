@@ -720,12 +720,12 @@
     "sha256": "c167e166843a683aa3c0717c800e0950df4e6552f013a0af1a551debe13f8463"
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnOriginalAudioCountryID": {
-    "reason": "Country inference requires the inspected primary language to equal the sole finalized original language, current source/generation and matching known provider IDs. All populated country values must agree, including the complete IMDb list; dubs, conflicts and unknown values remain unresolved.",
-    "sha256": "feebf612c84b3c2894fc45354e8c3d2e4b2dd7c1fb153efbd0cf92ff9a38b8ce"
+    "sha256": "feebf612c84b3c2894fc45354e8c3d2e4b2dd7c1fb153efbd0cf92ff9a38b8ce",
+    "reason": "Country inference requires the inspected primary language to equal the sole finalized original language, current source/generation and matching known provider IDs. All populated country values must agree, including the complete IMDb list; dubs, conflicts and unknown values remain unresolved."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnPrimaryCountryID": {
-    "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced.",
-    "sha256": "348f649ee711c24c033ca0e3a7ba1d1f4b4d5aff4aefaaad90564b231fe5ed4e"
+    "sha256": "348f649ee711c24c033ca0e3a7ba1d1f4b4d5aff4aefaaad90564b231fe5ed4e",
+    "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:resolveBTNOriginalLanguage": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -844,8 +844,8 @@
     "sha256": "79c22141472eb9036f87b2ee9b22ab7bbf124edfe6284bbb7671185760b61c1c"
   },
   "internal/trackers/impl/standalone/gpw/questionnaire.go:resolveDirectorFields": {
-    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged.",
-    "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1"
+    "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1",
+    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged."
   },
   "internal/trackers/impl/standalone/gpw/taxonomy.go:resolveMovieType": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1312,8 +1312,8 @@
     "sha256": "c00ccda59006f108b3c5567502f054bfc4614083f93864b64ca3cc6f01cee3f3"
   },
   "internal/trackers/impl/unit3d/name.go:applyLocalizedNameDefaults": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "cfa1dbff84cec212b964eb4513cbe68f5514e9da2cab28531f5090fe994cdf37"
+    "sha256": "277fd9ba235439b5a11efc248831bed7684d5c36fc6aad85419b582b206a7ce7",
+    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/name.go:resolveOriginalLanguage": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1364,8 +1364,8 @@
     "sha256": "19a7fe328e8cc8af238d8a318893ba397821cacb3a3a78932664de01dfeab103"
   },
   "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
-    "reason": "Adds a canonical category-family catalog for broad duplicate gathering. The catalog reads no provider metadata; existing localized naming and upload taxonomy retain their prepared-provider and manual-precedence paths.",
-    "sha256": "2bd391d7b8d645bb56e5b600ede58a6eefb21cf615726709da234b70f85a6326"
+    "reason": "CBR disables generic title and movie-year providers so its localized policy retains the generated title and applies current TVDB collision evidence only; manual title and component authority remains intact.",
+    "sha256": "f37721d1b4cb83fca6d69aae193e5a885c9e0a211e327e8fa7cadfbd9fa4d556"
   },
   "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
@@ -1602,5 +1602,13 @@
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",
     "sha256": "0631a672653bf72afb4214c9c8e3cfb771c050f4a98ce7cf926124acc15b47ec"
+  },
+  "internal/trackers/impl/unit3d/name.go:ApplyLocalizedNameDefaults": {
+    "sha256": "82e109766652173612b4b32ff803a01088c0f7f2a26a9729266d197dc815959e",
+    "reason": "Delegates unchanged localized naming behavior; manual components remain protected by NameEditor and provider evidence remains source-current."
+  },
+  "internal/trackers/impl/unit3d/sites/cbr/name.go:applyCBRTVDBDisambiguation": {
+    "sha256": "addb633e43f1ed8bb2327e32c8359bb3ee8ce679ef91332b06844adf21c4ee23",
+    "reason": "Uses only current TVDB collision evidence and refuses to alter manually supplied titles; NameEditor preserves manually specified year and locale components."
   }
 }
