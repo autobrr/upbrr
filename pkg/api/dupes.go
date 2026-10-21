@@ -9,6 +9,11 @@ import (
 
 // DupeEntry is one backend adapter's private duplicate-search hit.
 type DupeEntry struct {
+	Evidence DupeReleaseEvidence
+	// EnglishSubtitles records positive inspected subtitle-language evidence, never a title inference.
+	EnglishSubtitles      bool
+	EnglishSubtitlesKnown bool
+
 	// TrackerSlot is opaque tracker-native slot evidence, which may be partial.
 	TrackerSlot   string
 	Name          string
@@ -45,6 +50,7 @@ type DupeEntry struct {
 	Episode       int
 	Pack          bool
 	Internal      bool
+	MediaInfo     string
 	BDInfo        string
 	Description   string
 }
@@ -72,6 +78,8 @@ type DupeReason struct {
 // EvidenceStatus describes HDR evidence only; other comparison dimensions
 // may still be incomplete.
 type DupeCandidateEvaluation struct {
+	EvidenceFingerprint WorkflowFingerprint `json:"evidenceFingerprint,omitempty"`
+
 	ID             string            `json:"id,omitempty"`
 	Name           string            `json:"name"`
 	Link           string            `json:"link,omitempty"`

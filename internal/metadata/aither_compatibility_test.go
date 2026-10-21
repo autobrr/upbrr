@@ -32,7 +32,18 @@ func TestTrackersResolveStandaloneDolbyAudioFromMediaInfo(t *testing.T) {
 						before := meta.LanguageFacts.Clone()
 						question := profile.Site.ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
 						if question != nil {
-							t.Fatalf("clear inspected relationship still asks a question: %+v", question)
+							if profile.Name != "LST" {
+								t.Fatalf("clear inspected relationship still asks a question: %+v", question)
+							}
+							meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"LST": {}}
+							for _, field := range question.Fields {
+								if strings.HasPrefix(field.Key, "compatibility_mix_") {
+									t.Fatal("clear inspected relationship still asks for mix assignment")
+								}
+								if strings.HasPrefix(field.Key, "compatibility_origin_") {
+									meta.TrackerQuestionnaireAnswers["LST"][field.Key] = "matching_web_source"
+								}
+							}
 						}
 						failures, err := profile.ValidationPolicy.Check(t.Context(), api.NewTrackerValidationSubject(meta, profile.Name), api.NopLogger{})
 						if err != nil {

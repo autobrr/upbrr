@@ -556,7 +556,7 @@ func TestLSTDuplicatePolicyMetadata(t *testing.T) {
 	t.Parallel()
 
 	policy := Profile().DupePolicy
-	if policy == nil || policy.ID != "lst/duplicate/v5" || policy.EvidenceID != lstDupeEvidenceID {
+	if policy == nil || policy.ID != "lst/duplicate/v7" || policy.EvidenceID != lstDupeEvidenceID {
 		t.Fatalf("LST duplicate policy = %#v", policy)
 	}
 }
@@ -609,6 +609,7 @@ func lstTarget(
 
 func lstCandidate(name string, typeValue string, resolution string, formats ...api.HDRFormat) dupe.TrackerCandidate {
 	return dupe.NormalizeCandidate(api.DupeEntry{
+		Evidence:      api.DupeReleaseEvidence{InternalStatus: "non_internal"},
 		Name:          name,
 		Type:          typeValue,
 		CanonicalType: typeValue,

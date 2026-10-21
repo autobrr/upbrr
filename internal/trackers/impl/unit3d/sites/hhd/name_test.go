@@ -101,7 +101,7 @@ func TestHHDDiscDistributorAndManualEdition(t *testing.T) {
 }
 func TestHHDPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/hhd/v4" || p.Structured == nil {
+	if p.ID != "unit3d/hhd/v6" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }

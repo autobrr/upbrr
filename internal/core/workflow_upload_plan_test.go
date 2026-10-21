@@ -1834,3 +1834,104 @@ func TestWorkflowQuestionnaireAnswersPreserveClearedConditionalFields(t *testing
 		t.Fatalf("cleared field revived: %+v", answers)
 	}
 }
+
+func TestWorkflowUploadExecutionPendingRegisteredDraft(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name             string
+		artifact         string
+		noSeed           bool
+		alreadyInjected  bool
+		alreadySucceeded bool
+		clientErr        error
+		wantStatus       api.StageStatus
+		wantCalls        int
+	}{
+		{
+			name:       "inject",
+			artifact:   "valid",
+			wantStatus: api.StageStatusCompleted,
+			wantCalls:  1,
+		},
+		{
+			name:       "explicit skip",
+			artifact:   "valid",
+			noSeed:     true,
+			wantStatus: api.StageStatusSkipped,
+		},
+		{name: "missing artifact", wantStatus: api.StageStatusFailed},
+		{
+			name:       "corrupt artifact",
+			artifact:   "corrupt",
+			wantStatus: api.StageStatusFailed,
+		},
+		{
+			name:       "client failure",
+			artifact:   "valid",
+			clientErr:  errors.New("client unavailable"),
+			wantStatus: api.StageStatusFailed,
+			wantCalls:  1,
+		},
+		{
+			name:            "dry run receipt",
+			alreadyInjected: true,
+			wantStatus:      api.StageStatusCompleted,
+		},
+		{
+			name:             "submission fence",
+			artifact:         "valid",
+			alreadySucceeded: true,
+			wantStatus:       api.StageStatusSkipped,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			artifact := ""
+			if test.artifact != "" {
+				artifact = filepath.Join(t.TempDir(), "registered.torrent")
+				if test.artifact == "valid" {
+					writeWorkflowRegisteredTorrent(t, artifact, "BHD")
+				} else if err := os.WriteFile(artifact, []byte("invalid"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			clients := &dryRunClientService{injectErr: test.clientErr}
+			execution := &workflowUploadExecution{
+				plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
+					Tracker:          "BHD",
+					AlreadySucceeded: test.alreadySucceeded,
+					Summary: api.UploadSummary{
+						Uploaded:           1,
+						PendingPublication: true,
+						UploadedTorrents:   []api.UploadedTorrent{{Tracker: "BHD", TorrentPath: artifact}},
+					},
+				}}},
+				clients: clients,
+				noSeed:  test.noSeed,
+			}
+			if test.alreadyInjected {
+				execution.dryRunInjected = map[api.TrackerID]struct{}{"BHD": {}}
+			}
+			results, err := execution.Execute(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("got %d results", len(results))
+			}
+			result := results[0]
+			if result.SubmissionStatus != api.StageStatusCompleted || result.ClientInjectionStatus != test.wantStatus || len(clients.injections) != test.wantCalls {
+				t.Fatalf("submission=%s injection=%s calls=%d", result.SubmissionStatus, result.ClientInjectionStatus, len(clients.injections))
+			}
+			if result.RemoteID != "" || result.RemoteURL != "" {
+				t.Fatal("draft fabricated remote identity")
+			}
+			if test.wantStatus == api.StageStatusFailed && (result.ClientFailureCode == "" || result.ClientInjectionMessage == "" || result.Status != api.StageStatusPartial) {
+				t.Fatal("local failure lost actionable result")
+			}
+			if test.wantCalls == 1 && clients.injections[0].Path != artifact {
+				t.Fatal("injected a different artifact")
+			}
+		})
+	}
+}

@@ -216,3 +216,118 @@ func (compositePersistenceCollector) HydratePrivateResources(
 
 var _ preparedrelease.Collector = compositePersistenceCollector{}
 var _ preparedrelease.IdentityResolver = compositePersistenceIdentityResolver{}
+
+// TestCompositeInputFailureSurvivesRestart exercises the real SQLite boundary:
+// terminal failures survive a new coordinator, while correction uses fresh authority.
+func TestCompositeInputFailureSurvivesRestart(t *testing.T) {
+	t.Parallel()
+	databasePath := filepath.Join(t.TempDir(), "composite-input-stop.sqlite")
+	first, _, database, firstUploads := newCompositeSQLiteTestModule(t, databasePath)
+	preparer := testPreparer()
+	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+		return api.UploadSubject{
+			SourcePath:  input.Release.SourcePath,
+			ReleaseName: "Example.Release.2026.1080p-GRP",
+			Trackers:    append([]string(nil), input.Trackers...),
+		}, nil
+	}
+	first.preparer = preparer
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "durable-input-stop")
+	started, err := first.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := waitCompositeUploadTestOperation(t, first, started)
+	if stopped.Operation.Status != api.StageStatusFailed || len(stopped.Operation.Failures) != 1 || firstUploads.execution != nil {
+		t.Fatalf("input stop = %#v, execution = %#v", stopped.Operation, firstUploads.execution)
+	}
+	failure := stopped.Operation.Failures[0].Failure
+	if failure.Code != api.OperationFailureInvalidInput || failure.Recovery != api.OperationRecoveryEditInput {
+		t.Fatalf("input failure = %#v", failure)
+	}
+	if err := first.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, persistent, _, uploads := newCompositeSQLiteTestModule(t, databasePath)
+	current, err := restarted.Current(t.Context(), testOwnerID, stopped.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := restarted.Operation(t.Context(), testOwnerID, stopped.Workflow.ID, stopped.Operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := persistent.Load(t.Context(), testOwnerID, stopped.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Workflow.Status != api.WorkflowStatusFailed || len(current.Workflow.Failures) != 1 ||
+		current.Workflow.Failures[0].Failure != failure || operation.Status != api.StageStatusFailed ||
+		len(operation.Failures) != 1 || operation.Failures[0].Failure != failure || operation.Result != nil ||
+		state.Composite == nil || state.Composite.TerminalReason != "input-not-ready" || state.Composite.ActiveOperationID != "" {
+		t.Fatalf("restarted workflow=%#v operation=%#v composite=%#v", current.Workflow, operation, state.Composite)
+	}
+	if current.InputReadiness == nil || !inputReadinessBlocked(current.InputReadiness) {
+		t.Fatalf("restarted input correction evidence = %#v", current.InputReadiness)
+	}
+	if _, err := restarted.Operation(t.Context(), "other-owner", stopped.Workflow.ID, stopped.Operation.ID); !errors.Is(err, ErrWorkflowNotFound) {
+		t.Fatalf("foreign operation read = %v", err)
+	}
+	request.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision - 1}
+	request.IdempotencyKey = "corrected-durable-input"
+	if _, err := restarted.StartUpload(t.Context(), testOwnerID, request); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale correction = %v", err)
+	}
+	request.Authority.ExpectedRevision = current.Workflow.Revision
+	if _, err := restarted.StartUpload(t.Context(), "other-owner", request); !errors.Is(err, ErrWorkflowNotFound) {
+		t.Fatalf("foreign correction = %v", err)
+	}
+	resumed, err := restarted.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("corrected restart: %v", err)
+	}
+	next := waitCompositeUploadTestOperation(t, restarted, resumed)
+	if next.Workflow.ID != current.Workflow.ID || next.Operation.ID == operation.ID ||
+		next.Operation.Status != api.StageStatusBlocked || next.Projections == nil ||
+		inputReadinessBlocked(next.InputReadiness) || uploads.execution != nil {
+		t.Fatalf("corrected workflow=%#v operation=%#v execution=%#v", next.Workflow, next.Operation, uploads.execution)
+	}
+	completed := approveCompositeUploadTrackers(t, restarted, next, []api.TrackerID{"ALPHA", "BETA"}, "approve-corrected-durable-input")
+	if completed.Operation.Status != api.StageStatusExecuted || completed.Operation.Result == nil ||
+		completed.Operation.Result.Kind != api.WorkflowOperationResultUpload || uploads.execution == nil || uploads.execution.executions != 1 {
+		t.Fatalf("corrected upload operation=%#v execution=%#v", completed.Operation, uploads.execution)
+	}
+	replayed := approveCompositeUploadTrackers(t, restarted, next, []api.TrackerID{"ALPHA", "BETA"}, "approve-corrected-durable-input")
+	if replayed.Operation.ID != completed.Operation.ID || uploads.execution.executions != 1 {
+		t.Fatalf("approval replay repeated upload: operation=%#v execution=%#v", replayed.Operation, uploads.execution)
+	}
+	retained, err := restarted.Operation(t.Context(), testOwnerID, current.Workflow.ID, operation.ID)
+	if err != nil || retained.Status != api.StageStatusFailed || len(retained.Failures) != 1 || retained.Failures[0].Failure != failure {
+		t.Fatalf("original failure after retry = %#v, %v", retained, err)
+	}
+}
+
+func newCompositeSQLiteTestModule(t *testing.T, databasePath string) (*Module, *PersistentRepository, *db.SQLiteRepository, *uploadPlanBuilderFake) {
+	t.Helper()
+	database, err := db.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	persistent, err := NewPersistentRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, _, uploads := newCompositeUploadTestModule(t)
+	module.repository, module.operations, module.durability = persistent, persistent, persistent
+	module.ids = randomIDGenerator{}
+	t.Cleanup(func() { _ = module.Shutdown(context.Background()) })
+	return module, persistent, database, uploads
+}

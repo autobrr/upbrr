@@ -5,11 +5,11 @@ package lst
 
 import (
 	"context"
-	"github.com/autobrr/upbrr/internal/mediafacts"
 	"path/filepath"
 	"strconv"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -25,10 +25,8 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 		{name: "complete evidence passes"},
 		{name: "release version is independent of edition", mutate: func(subject *api.TrackerValidationSubject) { subject.Repack = "PROPER" }},
 		{
-			name:            "version text in edition remains invalid",
-			mutate:          func(subject *api.TrackerValidationSubject) { subject.Edition = "PROPER" },
-			wantRule:        "unsupported_edition",
-			wantDisposition: api.RuleDispositionStrict,
+			name:   "unsupported edition does not block upload",
+			mutate: func(subject *api.TrackerValidationSubject) { subject.Edition = "Unknown Edition" },
 		},
 		{
 			name: "archive is strict",
@@ -78,6 +76,8 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatalf("validate LST subject: %v", err)
 			}
+			failures = withoutLSTStreamProcessingGuidance(t, failures)
+			failures = withoutLSTTrackPresentationGuidance(t, failures)
 			if test.wantRule == "" {
 				if len(failures) != 0 {
 					t.Fatalf("unexpected failures: %#v", failures)
@@ -97,8 +97,9 @@ func TestRulesRequireEncodeSettings(t *testing.T) {
 }
 
 func lstValidationSubject() api.TrackerValidationSubject {
-	return api.TrackerValidationSubject{
+	subject := api.TrackerValidationSubject{
 		Tracker:       "LST",
+		AnimeKnown:    true,
 		LanguageFacts: lstTestLanguageFacts("English", []string{"English"}, []string{"English"}),
 		Type:          "WEBDL",
 		Container:     "mkv",
@@ -108,6 +109,13 @@ func lstValidationSubject() api.TrackerValidationSubject {
 			MediaFileCount: 1,
 		},
 		AssetFacts: api.AssetFacts{
+			Screenshots: api.AssetEvidence{
+				Status:               api.MetadataEvidenceStatusComplete,
+				Ready:                true,
+				Count:                3,
+				InspectedFormatCount: 3,
+				LosslessCount:        3,
+			},
 			Status: api.MetadataEvidenceStatusComplete,
 			MediaInfoText: api.AssetEvidence{
 				Status: api.MetadataEvidenceStatusComplete,
@@ -121,6 +129,14 @@ func lstValidationSubject() api.TrackerValidationSubject {
 			},
 		},
 	}
+	subject.QuestionnaireAnswers = map[string]string{assetQuestionKey(subject, "screenshot_preservation"): "lossless_preserved"}
+	for _, field := range presentationReviewQuestions(subject) {
+		subject.QuestionnaireAnswers[field.Key] = "reviewed_correct"
+	}
+	for _, field := range sourceReviewQuestions(subject) {
+		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
+	}
+	return subject
 }
 
 func requireLSTValidationFailure(
@@ -139,27 +155,28 @@ func requireLSTValidationFailure(
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
 }
 
-func TestLSTValidationChecksCanonicalCut(t *testing.T) {
-	for _, test := range []struct {
-		cut         string
-		wantFailure bool
-	}{{"Director's Cut", false}, {"Unsupported Cut", true}} {
-		t.Run(test.cut, func(t *testing.T) {
+func TestLSTValidationAllowsUnmappedEditions(t *testing.T) {
+	for _, cut := range []string{"Director's Cut", "Unsupported Cut", ""} {
+		t.Run(cut, func(t *testing.T) {
 			subject := lstValidationSubject()
-			subject.Cut = test.cut
+			subject.Cut = cut
 			failures, err := validationPolicy().Check(t.Context(), subject, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			found := false
-			for _, failure := range failures {
-				if failure.Rule == "unsupported_edition" {
-					found = true
-				}
+			failures = withoutLSTStreamProcessingGuidance(t, failures)
+			failures = withoutLSTTrackPresentationGuidance(t, failures)
+			if len(failures) != 0 {
+				t.Fatalf("cut %q failures = %#v", cut, failures)
 			}
-			if found != test.wantFailure {
-				t.Fatalf("cut %q failures = %#v", test.cut, failures)
+			subject.AssetFacts.HostedScreenshots.Count = 2
+			failures, err = validationPolicy().Check(t.Context(), subject, nil)
+			if err != nil {
+				t.Fatal(err)
 			}
+			failures = withoutLSTStreamProcessingGuidance(t, failures)
+			failures = withoutLSTTrackPresentationGuidance(t, failures)
+			requireLSTValidationFailure(t, failures, "lst_required_assets_hosted_screenshot", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 		})
 	}
 }
@@ -178,6 +195,7 @@ func lstTestLanguageFacts(original string, programme, subtitles []string) api.La
 			ID:               "audio-" + strconv.Itoa(index),
 			Kind:             api.MediaTrackAudio,
 			Role:             api.AudioRoleProgramme,
+			Title:            "Programme audio",
 			Languages:        []string{language},
 			Codec:            "AC-3",
 			Default:          index == 0,
@@ -223,10 +241,12 @@ func TestLSTLanguageDefaultAndTitleEvidenceBoundaries(t *testing.T) {
 	requireLSTValidationFailure(t, failures, "language_subtitles_search", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 	subject.Anime = true
 	subject.LanguageFacts.Tracks[0].Default = false
-	requireLSTValidationFailure(t, languageAssessment(subject), "language_default_audio", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	requireLSTValidationFailure(t, languageAssessment(subject), "language_default_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
 	subject.TitleSearchEvidence.Status = api.MetadataEvidenceStatusPartial
 	subject.TitleSearchEvidence.TorrentCount = 1
 	subject.TitleSearchEvidence.ResultFingerprint = "positive-partial"
+	requireLSTValidationFailure(t, languageAssessment(subject), "language_subtitles_search", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	subject.TitleSearchEvidence.EnglishSubtitleTorrentCount = 1
 	requireLSTValidationFailure(t, languageAssessment(subject), "language_subtitles_search", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	subject.Type = "DISC"
 	if failures := languageAssessment(subject); len(failures) != 0 {

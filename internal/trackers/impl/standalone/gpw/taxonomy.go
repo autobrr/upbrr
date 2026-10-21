@@ -4,6 +4,7 @@
 package gpw
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -143,4 +144,13 @@ func resolveMovieType(meta api.UploadSubject) string {
 		return "2"
 	}
 	return "1"
+}
+
+// remasterTitle preserves source composition separately from editorial mappings.
+func remasterTitle(meta api.UploadSubject) string {
+	title := meta.EditionDisplayLabel()
+	if slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid) {
+		title = strings.TrimSpace(title + " Hybrid")
+	}
+	return title
 }

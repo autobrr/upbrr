@@ -93,3 +93,35 @@ func TestBHDLanguageTagsAreIndependentFromPresentation(t *testing.T) {
 		}
 	}
 }
+
+func TestHybridFeaturePreservesBHDTag(t *testing.T) {
+	subject := api.UploadSubject{Cut: "Director's Cut", ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureHybrid}}
+	tags := resolveTags(subject)
+	if !slices.Contains(tags, "Hybrid") {
+		t.Fatalf("tags=%v", tags)
+	}
+	if custom, edition := resolveEdition(subject, tags); custom || edition != "Director" {
+		t.Fatalf("custom=%t edition=%q", custom, edition)
+	}
+}
+
+func TestSeparatedAnnotationRetainsOnlyCustomEditionDisplay(t *testing.T) {
+	subject := api.UploadSubject{
+		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureRestoration},
+		EditionDisplay:  []api.EditionDisplayPart{{Text: "Restored", Feature: api.ReleaseFeatureRestoration}},
+	}
+	if custom, label := resolveEdition(subject, nil); !custom || label != "Restored" {
+		t.Fatalf("custom=%t label=%q", custom, label)
+	}
+	subject.Cut = "Director's Cut"
+	if custom, label := resolveEdition(subject, nil); custom || label != "Director" {
+		t.Fatalf("display affected edition mapping: custom=%t label=%q", custom, label)
+	}
+}
+
+func TestManualCustomEditionStillRemovesTaggedHybrid(t *testing.T) {
+	subject := api.UploadSubject{Edition: "Fan Edit Hybrid"}
+	if custom, label := resolveEdition(subject, []string{"Hybrid"}); !custom || label != "Fan Edit" {
+		t.Fatalf("custom=%t label=%q", custom, label)
+	}
+}

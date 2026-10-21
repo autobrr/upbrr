@@ -26,6 +26,8 @@ Run "upbrr auth <command> --help" for command options.
 
 type authPasswordOptions struct {
 	configPath string
+	ui         string
+	uiKeepOpen bool
 }
 
 type authBrowseRootsOptions struct {
@@ -34,6 +36,8 @@ type authBrowseRootsOptions struct {
 }
 
 func bindAuthPasswordFlags(fs *pflag.FlagSet, opts *authPasswordOptions) {
+	fs.StringVar(&opts.ui, "ui", "plain", "Presentation: plain (default), auto or tui for the local password form")
+	fs.BoolVar(&opts.uiKeepOpen, "ui-keep-open", false, "Keep the TUI dashboard open after completion until closed (ignored in plain mode)")
 	fs.StringVar(&opts.configPath, "config", "", "Path to config file")
 }
 
@@ -68,7 +72,13 @@ func runChangeAuthPasswordCommand(ctx context.Context, opts authPasswordOptions,
 	if changeErr != nil {
 		changeErr = fmt.Errorf("change password: %w", changeErr)
 	}
-	if err := errors.Join(changeErr, writeAuthBackupPath(streams.out, backupPath)); err != nil {
+	var backupErr error
+	if streams.terminalResult != nil && backupPath != "" {
+		streams.terminalResult <- func(output io.Writer) error { return writeAuthBackupPath(output, backupPath) }
+	} else {
+		backupErr = writeAuthBackupPath(streams.out, backupPath)
+	}
+	if err := errors.Join(changeErr, backupErr); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(streams.out, "Password changed. Retained browser sessions were revoked."); err != nil {

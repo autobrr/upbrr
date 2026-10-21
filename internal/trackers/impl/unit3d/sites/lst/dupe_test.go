@@ -84,11 +84,29 @@ func TestLSTTitleSearchIncludesEverySeasonAndVariant(t *testing.T) {
 func TestLSTTitleSearchApplicability(t *testing.T) {
 	t.Parallel()
 	base := api.TrackerValidationSubject{LanguageFacts: api.LanguageFacts{
-		OriginalLanguages:  []string{"Japanese"},
+		OriginalLanguages:      []string{"Japanese"},
+		OriginalLanguagesKnown: true,
+		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+		TrackCoverageComplete:  true,
+		Tracks: []api.MediaTrackFacts{{
+			ID:         "audio",
+			ResourceID: "resource",
+			Kind:       api.MediaTrackAudio,
+			Role:       api.AudioRoleProgramme,
+			Languages:  []string{"Japanese"},
+		}},
 		ProgrammeLanguages: []string{"Japanese"},
 		AudioStatus:        api.MetadataEvidenceStatusComplete,
 		SubtitleStatus:     api.MetadataEvidenceStatusComplete,
 	}}
+	base.MediaFileFacts = api.MediaFileFacts{Files: []api.MediaFileFact{{
+		ResourceID:      "resource",
+		Primary:         true,
+		VideoTrackCount: 1,
+		AudioStatus:     api.MetadataEvidenceStatusComplete,
+		SubtitleStatus:  api.MetadataEvidenceStatusComplete,
+		AudioLanguages:  []string{"Japanese"},
+	}}}
 	policy := titleSearchPolicy()
 	if !policy.Required(base) {
 		t.Fatal("missing subtitles did not request title search")
@@ -105,17 +123,28 @@ func TestLSTTitleSearchApplicability(t *testing.T) {
 	for index, change := range []func(*api.TrackerValidationSubject){
 		func(s *api.TrackerValidationSubject) {
 			s.LanguageFacts.ProgrammeLanguages = []string{"Japanese", "English"}
+			s.LanguageFacts.Tracks[0].Languages = []string{"Japanese", "English"}
+			s.MediaFileFacts.Files[0].AudioLanguages = []string{"Japanese", "English"}
 		},
-		func(s *api.TrackerValidationSubject) { s.LanguageFacts.SubtitleLanguages = []string{"English"} },
+		func(s *api.TrackerValidationSubject) {
+			s.LanguageFacts.SubtitleLanguages = []string{"English"}
+			s.MediaFileFacts.Files[0].SubtitleLanguages = []string{"English"}
+		},
 		func(s *api.TrackerValidationSubject) { s.LanguageFacts.OriginalLanguages = []string{"English"} },
 		func(s *api.TrackerValidationSubject) { s.LanguageFacts.OriginalLanguages = []string{"ZXX"} },
-		func(s *api.TrackerValidationSubject) { s.LanguageFacts.AudioStatus = api.MetadataEvidenceStatusPartial },
+		func(s *api.TrackerValidationSubject) {
+			s.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
+			s.MediaFileFacts.Files[0].AudioStatus = api.MetadataEvidenceStatusPartial
+		},
 		func(s *api.TrackerValidationSubject) {
 			s.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
+			s.MediaFileFacts.Files[0].SubtitleStatus = api.MetadataEvidenceStatusPartial
 		},
 	} {
 		t.Run(strconv.Itoa(index), func(t *testing.T) {
 			subject := base
+			subject.LanguageFacts = base.LanguageFacts.Clone()
+			subject.MediaFileFacts = base.MediaFileFacts.Clone()
 			change(&subject)
 			if policy.Required(subject) {
 				t.Fatal("inapplicable facts requested title search")

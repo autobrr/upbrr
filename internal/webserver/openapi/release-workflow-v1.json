@@ -1530,6 +1530,15 @@
               "$ref": "#/components/schemas/WorkflowFailure"
             }
           },
+          "hdrArtifacts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/HDRArtifactEvidence"
+              }
+            }
+          },
           "id": {
             "$ref": "#/components/schemas/DescriptionSetID"
           },
@@ -1827,6 +1836,44 @@
           "revision"
         ]
       },
+      "DupeComparisonEvidence": {
+        "type": "object",
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/DupeReleaseEvidence"
+          },
+          "candidateFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "candidateId": {
+            "type": "string"
+          },
+          "defectImproved": {
+            "type": "boolean"
+          },
+          "meaningfulBenefit": {
+            "type": "string"
+          },
+          "quality": {
+            "type": "string"
+          },
+          "replacement": {
+            "type": "string"
+          },
+          "reviewed": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          },
+          "visualImprovement": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "candidate"
+        ]
+      },
       "DupeDecision": {
         "type": "string"
       },
@@ -1850,6 +1897,9 @@
           },
           "episode": {
             "type": "integer"
+          },
+          "evidenceFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
           },
           "evidenceStatus": {
             "$ref": "#/components/schemas/HDREvidenceStatus"
@@ -1952,6 +2002,32 @@
       "DupeRelation": {
         "type": "string"
       },
+      "DupeReleaseEvidence": {
+        "type": "object",
+        "properties": {
+          "backCatalogue": {
+            "type": "string"
+          },
+          "discForm": {
+            "type": "string"
+          },
+          "discIdentity": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          },
+          "hdrLayerSource": {
+            "type": "string"
+          },
+          "internalStatus": {
+            "type": "string"
+          },
+          "personalRelease": {
+            "type": "boolean"
+          }
+        }
+      },
       "DupeSearchEvidence": {
         "type": "object",
         "properties": {
@@ -1984,6 +2060,20 @@
           "candidateCount",
           "complete",
           "pages"
+        ]
+      },
+      "EditionDisplayPart": {
+        "type": "object",
+        "properties": {
+          "Feature": {
+            "$ref": "#/components/schemas/ReleaseFeature"
+          },
+          "Text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Text"
         ]
       },
       "EncodeSettingsStatus": {
@@ -2665,6 +2755,45 @@
           "label",
           "scenes",
           "status",
+          "targetId"
+        ]
+      },
+      "HDRArtifactEvidence": {
+        "type": "object",
+        "properties": {
+          "analysis": {
+            "$ref": "#/components/schemas/HDRAnalysisRef"
+          },
+          "artifactId": {
+            "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "generationComplete": {
+            "type": "boolean"
+          },
+          "imageUrls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HDRArtifactKind"
+          },
+          "measurementFingerprint": {
+            "type": "string"
+          },
+          "renderFingerprint": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "analysis",
+          "artifactId",
+          "generationComplete",
+          "kind",
           "targetId"
         ]
       },
@@ -4324,6 +4453,9 @@
           "Anime": {
             "type": "boolean"
           },
+          "AnimeKnown": {
+            "type": "boolean"
+          },
           "Audio": {
             "type": "string"
           },
@@ -4362,6 +4494,12 @@
           },
           "Edition": {
             "type": "string"
+          },
+          "EditionDisplay": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionDisplayPart"
+            }
           },
           "EditionSet": {
             "type": "string"
@@ -4486,12 +4624,16 @@
           "VideoEncode": {
             "type": "string"
           },
+          "VideoEncoder": {
+            "type": "string"
+          },
           "WebDV": {
             "type": "boolean"
           }
         },
         "required": [
           "Anime",
+          "AnimeKnown",
           "Audio",
           "AudioAbsent",
           "AudioLanguages",
@@ -4504,6 +4646,7 @@
           "Distributor",
           "DistributorProvenance",
           "Edition",
+          "EditionDisplay",
           "EditionSet",
           "HDR",
           "HDRFacts",
@@ -4536,6 +4679,7 @@
           "UHD",
           "VideoCodec",
           "VideoEncode",
+          "VideoEncoder",
           "WebDV"
         ]
       },
@@ -4557,13 +4701,25 @@
           "Container": {
             "type": "string"
           },
+          "EncodeSettingsKnown": {
+            "type": "boolean"
+          },
           "FileName": {
             "type": "string"
+          },
+          "HDRFacts": {
+            "$ref": "#/components/schemas/HDRFacts"
+          },
+          "HasEncodeSettings": {
+            "type": "boolean"
           },
           "Primary": {
             "type": "boolean"
           },
           "Resolution": {
+            "type": "string"
+          },
+          "ResourceID": {
             "type": "string"
           },
           "Source": {
@@ -4584,6 +4740,9 @@
           "VideoEncode": {
             "type": "string"
           },
+          "VideoEncoder": {
+            "type": "string"
+          },
           "VideoTrackCount": {
             "type": "integer"
           }
@@ -4593,14 +4752,19 @@
           "AudioStatus",
           "BitDepth",
           "Container",
+          "EncodeSettingsKnown",
           "FileName",
+          "HDRFacts",
+          "HasEncodeSettings",
           "Primary",
           "Resolution",
+          "ResourceID",
           "Source",
           "SubtitleLanguages",
           "SubtitleStatus",
           "VideoCodec",
           "VideoEncode",
+          "VideoEncoder",
           "VideoTrackCount"
         ]
       },
@@ -6478,10 +6642,33 @@
               }
             ]
           },
+          "Presentation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "Region": {
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ReleaseFeatures": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReleaseFeature"
+                }
               },
               {
                 "type": "null"
@@ -10907,6 +11094,12 @@
           "projectionFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
+          "questionnaire": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerQuestionnaireRequirement"
+            }
+          },
           "requiredActions": {
             "type": "array",
             "items": {
@@ -11018,6 +11211,12 @@
           "category": {
             "type": "string"
           },
+          "comparisons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DupeComparisonEvidence"
+            }
+          },
           "container": {
             "type": "string"
           },
@@ -11029,6 +11228,9 @@
           },
           "episode": {
             "type": "integer"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/DupeReleaseEvidence"
           },
           "fileNames": {
             "type": "array",
@@ -11056,6 +11258,12 @@
           },
           "region": {
             "type": "string"
+          },
+          "releaseFeatures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseFeature"
+            }
           },
           "releaseOrigin": {
             "type": "string"
@@ -11092,6 +11300,7 @@
           }
         },
         "required": [
+          "evidence",
           "hdr",
           "pack"
         ]
@@ -11568,6 +11777,9 @@
       "TrackerQuestionnaireField": {
         "type": "object",
         "properties": {
+          "HDRGradeComparison": {
+            "type": "boolean"
+          },
           "Help": {
             "type": "string"
           },
@@ -11579,6 +11791,9 @@
           },
           "Label": {
             "type": "string"
+          },
+          "NeedsReview": {
+            "type": "boolean"
           },
           "Options": {
             "type": "array",
@@ -11610,6 +11825,9 @@
       "TrackerQuestionnaireRequirement": {
         "type": "object",
         "properties": {
+          "hdrGradeComparison": {
+            "type": "boolean"
+          },
           "help": {
             "type": "string"
           },
@@ -11621,6 +11839,9 @@
           },
           "label": {
             "type": "string"
+          },
+          "needsReview": {
+            "type": "boolean"
           },
           "options": {
             "type": "array",
@@ -12165,6 +12386,9 @@
           "configFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
+          "englishSubtitleTorrentCount": {
+            "type": "integer"
+          },
           "freshUntil": {
             "type": "string"
           },
@@ -12177,6 +12401,9 @@
           "status": {
             "$ref": "#/components/schemas/MetadataEvidenceStatus"
           },
+          "subtitleInspectedTorrentCount": {
+            "type": "integer"
+          },
           "titleFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
@@ -12187,10 +12414,12 @@
         "required": [
           "checkedAt",
           "configFingerprint",
+          "englishSubtitleTorrentCount",
           "freshUntil",
           "policyId",
           "resultFingerprint",
           "status",
+          "subtitleInspectedTorrentCount",
           "titleFingerprint",
           "torrentCount"
         ]

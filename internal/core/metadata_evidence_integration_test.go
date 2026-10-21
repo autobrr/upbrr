@@ -359,6 +359,7 @@ func assertCoreCorrectionName(t *testing.T, correction api.ReleaseCorrectionValu
 		{correction.ReleaseName.Tag, before.Naming.Group},
 		{correction.ReleaseName.Edition, before.Media.Edition},
 		{correction.ReleaseName.Repack, before.Media.Repack},
+		{correction.ReleaseName.Presentation, before.Media.Presentation},
 		{correction.ReleaseName.EpisodeTitle, before.Episode.Title},
 		{correction.Metadata.AlternateTitle, before.Naming.AlternateTitle},
 	} {
@@ -413,6 +414,12 @@ func TestDefaultCoreLocalCorrectionMatrix(t *testing.T) {
 		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameEdition, []string{"Extended", "Uncut", ""}, []string{"Extended", "Uncut", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Edition },
 			func(r api.PreparedRelease) string { return r.Media.Edition }),
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNamePresentation, []string{"Open Matte", "IMAX", ""}, []string{"Open Matte", "IMAX", ""},
+			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Presentation },
+			func(r api.PreparedRelease) string { return r.Media.Presentation }),
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameReleaseFeatures, [][]api.ReleaseFeature{{api.ReleaseFeatureHybrid, api.ReleaseFeature4KRestoration}, {api.ReleaseFeatureExtras}, {}}, [][]api.ReleaseFeature{{api.ReleaseFeatureHybrid, api.ReleaseFeature4KRestoration}, {api.ReleaseFeatureExtras}, nil},
+			func(v *api.ReleaseCorrectionValues) **[]api.ReleaseFeature { return &v.ReleaseName.ReleaseFeatures },
+			func(r api.PreparedRelease) []api.ReleaseFeature { return r.Media.ReleaseFeatures }),
 		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameRepack, []string{"PROPER", "REPACK2", ""}, []string{"PROPER", "REPACK2", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Repack },
 			func(r api.PreparedRelease) string { return r.Media.Repack }),
@@ -639,8 +646,9 @@ func TestCanonicalFilenameCutExplicitCorrectionLifecycle(t *testing.T) {
 					}
 					for _, role := range []api.ReleaseNameRole{api.NameRoleCut, api.NameRolePresentation, api.NameRoleEditionSet} {
 						component, ok := release.Naming.GeneratedName.Component(role)
-						if !ok || component.Present || !component.Manual {
-							t.Fatalf("unprotected omitted %s: %#v", role, component)
+						wantManual := role != api.NameRolePresentation || tc.name == "omit"
+						if !ok || component.Present || component.Manual != wantManual {
+							t.Fatalf("omitted %s manual=%t: %#v", role, wantManual, component)
 						}
 					}
 				}

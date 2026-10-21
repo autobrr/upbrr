@@ -214,6 +214,11 @@ func compareDubLanguages(left, right string) int {
 // Suitability that the inspected metadata cannot establish remains advisory.
 func trackMetadataFailures(subject api.TrackerValidationSubject, outcome trackers.LanguageOutcome) []api.RuleFailure {
 	var failures []api.RuleFailure
+	add := func(key, reason string) {
+		failure := trackers.LanguageRuleFailure(subject, key, reason, outcome)
+		failure.QuestionnaireInput = outcome == trackers.LanguageUnresolved
+		failures = append(failures, failure)
+	}
 	hasTracks := false
 	missingTitle := false
 	for _, track := range subject.LanguageFacts.Tracks {
@@ -232,19 +237,11 @@ func trackMetadataFailures(subject api.TrackerValidationSubject, outcome tracker
 			})
 		}
 		if flagMismatch {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"track_flags",
-					"the forced flag should match the established subtitle coverage of track "+track.ID,
-					outcome,
-				),
-			)
+			add("track_flags", "the forced flag should match the established subtitle coverage of track "+track.ID)
 		}
 	}
 	if missingTitle {
-		failures = append(failures, trackers.LanguageRuleFailure(subject, "track_titles", "tracks missing a descriptive title", outcome))
+		add("track_titles", "tracks missing a descriptive title")
 	}
 	if !hasTracks || outcome == trackers.LanguageAdvisory {
 		return failures

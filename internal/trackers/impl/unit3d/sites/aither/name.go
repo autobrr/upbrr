@@ -17,7 +17,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v8", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v9", trackers.StructuredNamePolicy{
 		Defaults: applyAitherNameDefaults,
 	})
 }
@@ -38,8 +38,10 @@ func applyAitherNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject
 		}
 	}
 
-	if err := editor.Omit(api.NameRoleEdition); err != nil {
-		return fmt.Errorf("omit AITHER edition: %w", err)
+	for _, role := range []api.ReleaseNameRole{api.NameRoleEdition, api.NameRoleEditionDisplay} {
+		if err := editor.Omit(role); err != nil {
+			return fmt.Errorf("omit AITHER %s: %w", role, err)
+		}
 	}
 
 	nameType := strings.ToUpper(strings.TrimSpace(meta.Type))

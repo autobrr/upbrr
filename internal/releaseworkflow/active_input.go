@@ -377,7 +377,6 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow reserve input: %w", err)
 	}
 	ctx = api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: pending.Fence})
-	m.startActiveInputHeartbeat(ctx, pending.Fence)
 	committed := false
 	defer func() {
 		if committed {
@@ -393,6 +392,9 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			logging.FromContext(ctx, m.logger).Warnf("active input: rollback failed state=recovery_required")
 		}
 	}()
+	if err := m.startActiveInputHeartbeat(ctx, pending.Fence); err != nil {
+		return api.ActiveInputRecord{}, err
+	}
 	if err := m.cancelPriorInputWork(ctx, owner, prior.WorkflowID); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -416,6 +418,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	}
 	workflow := prior.WorkflowID
 	var updatedWorkflow *api.ReleaseWorkflowStateRecord
+	var retention *api.ActiveInputRetention
 	if prior.InputID != record.ID || workflow == "" {
 		created, createErr := m.Execute(ctx, owner, CreateWorkflowCommand{
 			SourcePath:          strings.TrimSpace(record.CanonicalPath),
@@ -494,82 +497,259 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		if loadErr != nil {
 			return api.ActiveInputRecord{}, fmt.Errorf("release workflow load refreshed workflow: %w", loadErr)
 		}
-		var correctionReview *api.CorrectionConfirmation
-		if patch := request.CorrectionPatch; patch != nil && state.Corrections != nil {
-			expected := state.Corrections.Revision
-			if patch.ExpectedRevision != nil {
-				expected = *patch.ExpectedRevision
+		preserve, preserveErr := m.canRetainActiveInput(ctx, owner, state, prior, record, request)
+		if preserveErr != nil {
+			return api.ActiveInputRecord{}, preserveErr
+		}
+		if preserve {
+			facts := state.FactInstructions[state.Workflow.FactInstructions.ID]
+			release, _ := currentReleaseSnapshot(&state)
+			retention = &api.ActiveInputRetention{
+				Release:            api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation},
+				CorrectionRevision: facts.CorrectionRevision,
 			}
-			// The verified input ID already binds this workflow to the same canonical
-			// source; its preparation may still contain the originally submitted alias.
-			if len(patch.ConfirmFields) > 0 {
-				correctionReview, err = pendingCorrectionConfirmation(&state, currentWorkflowSourcePath(&state), *patch)
-				if err != nil {
+			if request.CorrectionPatch != nil {
+				if err := m.acceptUnchangedInputCorrections(&state, request); err != nil {
 					return api.ActiveInputRecord{}, err
 				}
-			} else {
-				correctionReview, _ = currentCorrectionConfirmation(&state, currentWorkflowSourcePath(&state), expected)
+				encoded, encodeErr := workflowStateRecord(owner, state)
+				if encodeErr != nil {
+					return api.ActiveInputRecord{}, encodeErr
+				}
+				updatedWorkflow = &encoded
+			}
+		} else {
+			var correctionReview *api.CorrectionConfirmation
+			if patch := request.CorrectionPatch; patch != nil && state.Corrections != nil {
+				expected := state.Corrections.Revision
+				if patch.ExpectedRevision != nil {
+					expected = *patch.ExpectedRevision
+				}
+				// The verified input ID already binds this workflow to the same canonical
+				// source; its preparation may still contain the originally submitted alias.
+				if len(patch.ConfirmFields) > 0 {
+					correctionReview, err = pendingCorrectionConfirmation(&state, currentWorkflowSourcePath(&state), *patch)
+					if err != nil {
+						return api.ActiveInputRecord{}, err
+					}
+				} else {
+					correctionReview, _ = currentCorrectionConfirmation(&state, currentWorkflowSourcePath(&state), expected)
+				}
+				if prior.SourceVersion != record.SourceVersion {
+					correctionReview = nil
+				}
+			}
+			state.SourcePath = strings.TrimSpace(record.CanonicalPath)
+			state.PreparationInput = &request.Input
+			if request.Composite != nil && (state.Composite == nil || state.Composite.RequestFingerprint != request.Composite.RequestFingerprint) {
+				state.Composite = request.Composite
+			}
+			state.Workflow.Revision++
+			state.Workflow.UpdatedAt = m.clock.Now()
+			state.Workflow.Status = api.WorkflowStatusDraft
+			if prior.SourceVersion != record.SourceVersion {
+				state.Workflow.SubmissionExclusions = nil
+			}
+			state.Workflow.RequiredActions, state.Workflow.Failures = nil, nil
+			if correctionReview != nil {
+				// Reverification retains only valid correction review, bound to the new
+				// workflow revision. Preparation still checks the final provider identity.
+				if err := m.blockForCorrectionConfirmation(
+					&state,
+					state.Workflow.Revision,
+					state.Workflow.UpdatedAt,
+					correctionReview.CurrentBinding,
+				); err != nil {
+					return api.ActiveInputRecord{}, err
+				}
 			}
 			if prior.SourceVersion != record.SourceVersion {
-				correctionReview = nil
+				// Old source checkpoints must not become pending authority on a later reverify.
+				clear(state.HDRExtractions)
+				state.HDRPendingRequest = nil
+				state.PendingCorrectionConfirmation = nil
+				state.PendingAudioAnalysis = nil
+				state.PendingAudioAnalysisWorkflowID = ""
+				state.PendingHDRAnalysis = nil
+				state.PendingHDRAnalysisWorkflowID = ""
+			} else if state.Workflow.AudioAnalysis != nil {
+				state.PendingAudioAnalysis = state.Workflow.AudioAnalysis
+				state.PendingAudioAnalysisWorkflowID = state.Workflow.ID
 			}
-		}
-		state.SourcePath = strings.TrimSpace(record.CanonicalPath)
-		state.PreparationInput = &request.Input
-		if request.Composite != nil && (state.Composite == nil || state.Composite.RequestFingerprint != request.Composite.RequestFingerprint) {
-			state.Composite = request.Composite
-		}
-		state.Workflow.Revision++
-		state.Workflow.UpdatedAt = m.clock.Now()
-		state.Workflow.Status = api.WorkflowStatusDraft
-		state.Workflow.SubmissionExclusions = nil
-		state.Workflow.RequiredActions, state.Workflow.Failures = nil, nil
-		if correctionReview != nil {
-			// Reverification retains only valid correction review, bound to the new
-			// workflow revision. Preparation still checks the final provider identity.
-			if err := m.blockForCorrectionConfirmation(&state, state.Workflow.Revision, state.Workflow.UpdatedAt, correctionReview.CurrentBinding); err != nil {
-				return api.ActiveInputRecord{}, err
+			// Prefer current results or newly owned checkpoints. Repeated verification
+			// must preserve the result already pending in this workflow after invalidation.
+			if prior.SourceVersion == record.SourceVersion && (state.Workflow.HDRAnalysis != nil ||
+				(len(state.HDRExtractions) > 0 && state.PendingHDRAnalysisWorkflowID != state.Workflow.ID)) {
+				state.PendingHDRAnalysis = state.Workflow.HDRAnalysis
+				state.PendingHDRAnalysisWorkflowID = state.Workflow.ID
 			}
+			if prior.SourceVersion == record.SourceVersion && ordinaryMetadataRefresh(request.Input) && request.Composite == nil && state.Composite == nil {
+				stageMetadataDuplicateReuse(&state, m.clock.Now())
+			} else {
+				state.PendingDuplicateReuse = nil
+			}
+			invalidatePreparedAndDownstream(&state.Workflow)
+			if state.Composite != nil {
+				state.Composite.LastCommittedRevision = state.Workflow.Revision
+			}
+			encoded, encodeErr := workflowStateRecord(owner, state)
+			if encodeErr != nil {
+				return api.ActiveInputRecord{}, encodeErr
+			}
+			updatedWorkflow = &encoded
 		}
-		if prior.SourceVersion != record.SourceVersion {
-			state.HDRPendingRequest = nil
-			state.PendingCorrectionConfirmation = nil
-			state.PendingAudioAnalysis = nil
-			state.PendingAudioAnalysisWorkflowID = ""
-			state.PendingHDRAnalysis = nil
-			state.PendingHDRAnalysisWorkflowID = ""
-		} else if state.Workflow.AudioAnalysis != nil {
-			state.PendingAudioAnalysis = state.Workflow.AudioAnalysis
-			state.PendingAudioAnalysisWorkflowID = state.Workflow.ID
-		}
-		// Prefer current results or newly owned checkpoints. Repeated verification
-		// must preserve the result already pending in this workflow after invalidation.
-		if prior.SourceVersion == record.SourceVersion && (state.Workflow.HDRAnalysis != nil ||
-			(len(state.HDRExtractions) > 0 && state.PendingHDRAnalysisWorkflowID != state.Workflow.ID)) {
-			state.PendingHDRAnalysis = state.Workflow.HDRAnalysis
-			state.PendingHDRAnalysisWorkflowID = state.Workflow.ID
-		}
-		state.PendingDuplicateReuse = nil
-		invalidatePreparedAndDownstream(&state.Workflow)
-		if state.Composite != nil {
-			state.Composite.LastCommittedRevision = state.Workflow.Revision
-		}
-		encoded, encodeErr := workflowStateRecord(owner, state)
-		if encodeErr != nil {
-			return api.ActiveInputRecord{}, encodeErr
-		}
-		updatedWorkflow = &encoded
 	}
 	active := pending
 	active.Revision++
 	active.State, active.InputID, active.SourceVersion, active.WorkflowID = api.ActiveInputActive, record.ID, record.SourceVersion, workflow
 	active.ReservationID, active.RequestedPath = "", ""
 	active.LeaseExpiresAt = m.clock.Now().Add(workflowWorkLeaseTTL)
-	if err := m.activeInputs.FinalizeActiveInput(ctx, pending, active, record, updatedWorkflow, m.clock.Now()); err != nil {
+	if err := m.activeInputs.FinalizeActiveInput(ctx, pending, active, record, updatedWorkflow, m.clock.Now(), retention); err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow commit verified input: %w", err)
 	}
 	committed = true
 	return active, nil
+}
+
+// ordinaryMetadataRefresh excludes explicit collection and evidence renewal.
+func ordinaryMetadataRefresh(input api.PrepareInput) bool {
+	return !input.Force && input.ExternalFreshness == api.ExternalFreshnessReuse && !input.Controls.CaptureHDRMetadata &&
+		!input.Controls.ConfirmBDMVRescan && (input.Controls.ForceRecheck == nil || !*input.Controls.ForceRecheck)
+}
+
+// canRetainActiveInput preserves current authority only for an unchanged, verified
+// reuse request. Fresh provider work and changed correction records still reprepare.
+func (m *Module) canRetainActiveInput(
+	ctx context.Context, owner string, state State, prior api.ActiveInputRecord, record api.InputRecord, request OpenInputRequest,
+) (bool, error) {
+	input := request.Input
+	if prior.SourceVersion != record.SourceVersion || request.Composite != nil || state.Composite != nil ||
+		!ordinaryMetadataRefresh(input) || completedInputCanReopen(state) {
+		return false, nil
+	}
+	release, err := currentReleaseSnapshot(&state)
+	if err != nil {
+		return false, nil
+	}
+	facts, ok := state.FactInstructions[state.Workflow.FactInstructions.ID]
+	if !ok || facts.Revision != state.Workflow.FactInstructions.Revision {
+		return false, nil
+	}
+	if !continuationPreparationSatisfied(&release, &input) {
+		if request.CorrectionPatch == nil {
+			return false, nil
+		}
+		if _, matches := unchangedCorrectionPreparation(&release, input, facts.Instructions); !matches {
+			return false, nil
+		}
+	}
+	current, err := m.preparer.CorrectionsCurrent(ctx, release.Release.Source.SourcePath, facts.CorrectionRevision)
+	if err != nil {
+		return false, fmt.Errorf("release workflow verify retained input corrections: %w", err)
+	}
+	if !current {
+		return false, nil
+	}
+	if patch := request.CorrectionPatch; patch != nil {
+		if len(patch.ConfirmFields) > 0 || state.PendingCorrectionConfirmation != nil {
+			return false, nil
+		}
+		unchanged, err := m.preparer.CorrectionsUnchanged(ctx,
+			api.PrepareInput{SourcePath: release.Release.Source.SourcePath, Instructions: facts.Instructions},
+			api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: patch}, facts.CorrectionRevision)
+		if err != nil {
+			return false, fmt.Errorf("release workflow classify retained input corrections: %w", err)
+		}
+		if !unchanged {
+			return false, nil
+		}
+	}
+	ref := api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}
+	if _, err := m.preparer.ResolveDisplay(ctx, ref); err != nil {
+		return false, nil
+	}
+	if hdr := state.Workflow.HDRAnalysis; hdr != nil {
+		analysis, ok := state.HDRAnalyses[hdr.ID]
+		if !ok || analysis.Revision != hdr.Revision || analysis.Release != ref || analysis.Validate() != nil ||
+			!m.retainedHDRPlotsValid(owner, state.Workflow.ID, analysis, m.clock.Now()) {
+			return false, nil
+		}
+		if validator, ok := m.hdrAnalysisBuilder.(HDRAnalysisAuthorityValidator); ok {
+			if err := validator.ValidateAuthority(ctx, hdrPreparation(release), analysis); err != nil {
+				return false, nil
+			}
+		}
+	}
+	if state.Workflow.Dupes != nil {
+		dupes, ok := state.Dupes[state.Workflow.Dupes.ID]
+		if !ok || dupes.Revision != state.Workflow.Dupes.Revision || !dupes.ExpiresAt.After(m.clock.Now()) {
+			return false, nil
+		}
+		return m.privateResourceAvailable(owner, state.Workflow.ID, dupePrivateResourceID(dupes.ID), m.clock.Now())
+	}
+	return true, nil
+}
+
+// completedInputCanReopen limits refresh reopening to successful terminal work.
+// Failed submissions and client-only retries keep their retained authority.
+func completedInputCanReopen(state State) bool {
+	if state.Workflow.Status != api.WorkflowStatusCompleted {
+		return false
+	}
+	ref := state.Workflow.UploadResult
+	if ref == nil {
+		if !state.Workflow.AllSelectedTrackersAlreadyUploaded() {
+			return false
+		}
+		for _, exclusion := range state.Workflow.SubmissionExclusions {
+			if exclusion.Reason != "already_uploaded" {
+				return false
+			}
+		}
+		return true
+	}
+	result, ok := state.UploadResults[ref.ID]
+	if !ok || result.ID != ref.ID || result.Revision != ref.Revision || result.Status != api.StageStatusCompleted {
+		return false
+	}
+	confirmed := false
+	for _, tracker := range result.Results {
+		status := tracker.DerivedStatus()
+		if status != api.StageStatusCompleted && status != api.StageStatusSkipped {
+			return false
+		}
+		confirmed = confirmed || tracker.EffectiveSubmissionStatus() == api.StageStatusCompleted
+	}
+	return confirmed
+}
+
+// acceptUnchangedInputCorrections records a proven no-op using the ordinary
+// correction receipt. FinalizeActiveInput atomically checks its correction
+// revision before committing this outcome, so continuation never reapplies it.
+func (m *Module) acceptUnchangedInputCorrections(state *State, request OpenInputRequest) error {
+	command := ReplaceFactInstructionsCommand{
+		WorkflowID:       state.Workflow.ID,
+		ExpectedRevision: state.Workflow.Revision,
+		CorrectionPatch:  request.CorrectionPatch,
+		SourcePath:       request.Input.SourcePath,
+		IdempotencyKey:   continuationIdempotencyKey(request.IdempotencyKey, "correction-patch", 0),
+	}
+	fingerprint, err := acceptedCommandFingerprint(command)
+	if err != nil {
+		return err
+	}
+	key := commandReceiptKey(command.commandName(), command.IdempotencyKey, "")
+	if _, exists := state.Receipts[key]; exists {
+		return ErrIdempotencyConflict
+	}
+	state.Workflow.Revision++
+	state.Workflow.UpdatedAt = m.clock.Now()
+	facts := state.FactInstructions[state.Workflow.FactInstructions.ID]
+	if state.Receipts == nil {
+		state.Receipts = make(map[string]commandReceipt)
+	}
+	state.Receipts[key] = commandReceipt{Fingerprint: fingerprint, Result: CommandResult{Workflow: state.Workflow, FactInstructions: &facts}}
+	return nil
 }
 
 func (m *Module) cancelPriorInputWork(ctx context.Context, owner string, workflow api.WorkflowID) error {
@@ -613,7 +793,9 @@ func (m *Module) recoverActiveInput(
 	if err := m.activeInputs.CompareAndSwapActiveInput(ctx, prior, recovering, now); err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow claim input recovery: %w", err)
 	}
-	m.startActiveInputHeartbeat(ctx, recovering.Fence)
+	if err := m.startActiveInputHeartbeat(ctx, recovering.Fence); err != nil {
+		return api.ActiveInputRecord{}, err
+	}
 	return m.finishActiveInputRecovery(ctx, recovering, requestedOwner, discardInterrupted)
 }
 
@@ -736,6 +918,7 @@ func (m *Module) ReleaseInput(ctx context.Context, owner string, revision uint64
 // Shutdown stops local workflow work, then relinquishes only this
 // coordinator's active-input lease. It is for process shutdown, never runtime
 // replacement, and retains the committed input for recovery.
+// If joining workers fails, shutdown does not relinquish the lease and can be retried.
 func (m *Module) Shutdown(ctx context.Context) error {
 	if m == nil {
 		return nil
@@ -765,9 +948,26 @@ func (m *Module) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (m *Module) startActiveInputHeartbeat(ctx context.Context, fence uint64) {
+// startActiveInputHeartbeat requires activeMu and joins the previous heartbeat
+// before replacing it. The new heartbeat outlives ctx; failed joins retain the
+// previous handle for shutdown retry and never admit an untracked replacement.
+func (m *Module) startActiveInputHeartbeat(ctx context.Context, fence uint64) error {
+	if m.shuttingDown.Load() {
+		return errors.New("release workflow coordinator is shutting down")
+	}
 	if m.activeCancel != nil {
 		m.activeCancel()
+	}
+	// Admission is serialized by activeMu. Bound the join even when a repository
+	// ignores cancellation, and retain its handle on failure for shutdown retry.
+	if m.activeDone != nil {
+		joinCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		select {
+		case <-m.activeDone:
+		case <-joinCtx.Done():
+			return fmt.Errorf("release workflow replace input heartbeat: %w", joinCtx.Err())
+		}
 	}
 	// The coordinator retains the slot after the opening request completes.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -789,6 +989,7 @@ func (m *Module) startActiveInputHeartbeat(ctx context.Context, fence uint64) {
 			}
 		}
 	}()
+	return nil
 }
 
 func (m *Module) activeMutationContext(ctx context.Context, owner string, workflow api.WorkflowID) (context.Context, error) {

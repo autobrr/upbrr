@@ -1294,6 +1294,26 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if len(publishedAssets) != 1 || len(publishedAssets[0].HostedLinks) != 1 {
 		t.Fatalf("published reusable media = %#v", publishedAssets)
 	}
+	// Questionnaire-only projection changes must preserve exact screenshot review identity.
+	beforeExact, err := resolveWorkflowExactMedia(retainedResource, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeFingerprint := api.NewTrackerValidationSubject(api.UploadSubject{ExactMedia: beforeExact}, "ONE").AssetFacts.ScreenshotFingerprint
+	answerProjections := projections
+	answerProjections.ID, answerProjections.Revision = "answered-projections", 42
+	answerMedia, answerResource, err := builder.RestoreCompatible(ctx, firstRelease, answerProjections, nil, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterExact, err := resolveWorkflowExactMedia(answerResource, answerMedia)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterFingerprint := api.NewTrackerValidationSubject(api.UploadSubject{ExactMedia: afterExact}, "ONE").AssetFacts.ScreenshotFingerprint
+	if beforeFingerprint != afterFingerprint || host.uploads != 1 || capture.captures != 1 {
+		t.Fatalf("answer-only restore changed screenshot review/effects: before=%s after=%s uploads=%d captures=%d beforeExact=%+v afterExact=%+v", beforeFingerprint, afterFingerprint, host.uploads, capture.captures, beforeExact, afterExact)
+	}
 	uploadsBeforeRestore := host.uploads
 	verified, err = preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: sourcePath})
 	if err != nil {

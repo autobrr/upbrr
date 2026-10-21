@@ -63,6 +63,8 @@ func azUploadSubject(subject api.TrackerValidationSubject) api.UploadSubject {
 		Cut:                  subject.Cut,
 		Presentation:         subject.Presentation,
 		Edition:              subject.Edition,
+		ReleaseFeatures:      append([]api.ReleaseFeature(nil), subject.ReleaseFeatures...),
+		EditionDisplay:       append([]api.EditionDisplayPart(nil), subject.EditionDisplay...),
 		WebDV:                subject.WebDV,
 		Service:              subject.Service,
 		ServiceLongName:      subject.ServiceLongName,

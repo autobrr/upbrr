@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { HDRAnalysisFacet } from "../../releaseSession/types";
 import HDRAnalysisPage from "./index";
@@ -21,6 +21,7 @@ const facet = (): HDRAnalysisFacet => ({
     result: null,
     pendingRequest: null,
     comparison: null,
+    requirementsNeedRefresh: false,
     includedArtifactIDs: [],
     phase: "",
     message: "",
@@ -29,6 +30,7 @@ const facet = (): HDRAnalysisFacet => ({
     error: "",
   },
   generate: vi.fn(async () => true),
+  refreshRequirements: vi.fn(async () => true),
   setIncludedArtifacts: vi.fn(async () => true),
   selectComparison: vi.fn(async () => true),
   retryDecoded: vi.fn(async () => true),
@@ -36,6 +38,111 @@ const facet = (): HDRAnalysisFacet => ({
   cancel: vi.fn(async () => true),
   artifactURL: (id) => `/hdr/${id}`,
 });
+
+it("requests current tracker requirements once when needed and waits through pending and ready states", () => {
+  const value = facet();
+  const props = { setLightboxImage: vi.fn(), setLightboxAlt: vi.fn() };
+  const rendered = render(
+    <HDRAnalysisPage
+      {...props}
+      facet={{ ...value, view: { ...value.view, requirementsNeedRefresh: true } }}
+    />,
+  );
+  expect(value.refreshRequirements).toHaveBeenCalledOnce();
+  rendered.rerender(
+    <HDRAnalysisPage
+      {...props}
+      facet={{ ...value, view: { ...value.view, requirementsNeedRefresh: true } }}
+    />,
+  );
+  expect(value.refreshRequirements).toHaveBeenCalledOnce();
+  rendered.rerender(
+    <HDRAnalysisPage {...props} facet={{ ...value, view: { ...value.view, status: "running" } }} />,
+  );
+  rendered.rerender(<HDRAnalysisPage {...props} facet={value} />);
+  expect(value.refreshRequirements).toHaveBeenCalledOnce();
+});
+
+it("shows backend-requested grade guidance with the exact check and comparison prerequisites", () => {
+  const value = facet();
+  const view = { ...value.view, gradeComparisonTrackers: ["LST"] };
+  const rendered = render(
+    <HDRAnalysisPage
+      facet={{ ...value, view }}
+      setLightboxImage={vi.fn()}
+      setLightboxAlt={vi.fn()}
+    />,
+  );
+  const guidance = screen.getByRole("region", { name: "Required hybrid HDR evidence" });
+  expect(guidance).toHaveTextContent(
+    "LST requires a brightness grade comparison and an HDR10+ plot",
+  );
+  expect(guidance).toHaveTextContent("Metadata only / individual picture checks");
+  expect(guidance).toHaveTextContent("Brightness grade comparison");
+  expect(guidance).toHaveTextContent("HDR10-compatible comparison source");
+  expect(guidance).toHaveTextContent("matching content and cadence");
+  expect(guidance).toHaveTextContent("Confirmed frame offset (B − A)");
+  expect(guidance).toHaveTextContent("Common crop: left,top,width,height");
+  expect(guidance).toHaveTextContent("even width and height");
+  expect(guidance).toHaveTextContent("select the resulting images for descriptions");
+  expect(guidance).toHaveTextContent("Generating a plot does not confirm grade compatibility");
+  expect(value.generate).not.toHaveBeenCalled();
+  expect(value.setIncludedArtifacts).not.toHaveBeenCalled();
+  rendered.rerender(
+    <HDRAnalysisPage
+      facet={{ ...value, view: { ...view, gradeComparisonTrackers: [] } }}
+      setLightboxImage={vi.fn()}
+      setLightboxAlt={vi.fn()}
+    />,
+  );
+  expect(screen.queryByRole("region", { name: "Required hybrid HDR evidence" })).toBeNull();
+});
+
+it.each([undefined, []])(
+  "omits grade guidance without a current backend requirement (%s)",
+  (trackers) => {
+    const value = facet();
+    render(
+      <HDRAnalysisPage
+        facet={{ ...value, view: { ...value.view, gradeComparisonTrackers: trackers } }}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("region", { name: "Required hybrid HDR evidence" })).toBeNull();
+  },
+);
+
+it.each(["unavailable", "missing", "unsupported"])(
+  "keeps required guidance actionable for an %s source",
+  (readiness) => {
+    const value = facet();
+    render(
+      <HDRAnalysisPage
+        facet={{
+          ...value,
+          view: {
+            ...value.view,
+            gradeComparisonTrackers: ["LST"],
+            available: readiness !== "unavailable",
+            targets:
+              readiness === "missing"
+                ? []
+                : value.view.targets.map((target) => ({
+                    ...target,
+                    supported: readiness !== "unsupported",
+                  })),
+          },
+        }}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+    const guidance = screen.getByRole("region", { name: "Required hybrid HDR evidence" });
+    expect(within(guidance).getByText(/Prepare a supported HDR source/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Generate" })).toBeDisabled();
+  },
+);
 
 it("restores interrupted request controls and resumes without a terminal result", () => {
   const original = facet();

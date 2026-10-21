@@ -12,6 +12,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// SubmissionRequirements contains mandatory site constraints applied after user defaults.
+// DescriptionAppendix is retained even when a final description override is supplied.
+type SubmissionRequirements struct {
+	ForceModeration     bool
+	DescriptionAppendix string
+}
+
 // SiteProfile contains site-owned Unit3D taxonomy and preparation callbacks.
 type SiteProfile struct {
 	// AllowSeasonZeroEpisodes admits explicitly identified individual specials.
@@ -58,6 +65,10 @@ type SiteProfile struct {
 	AdjustSearchParams func(url.Values)
 	// ApplyAdditionalPayload appends site-owned fields to a prepared payload.
 	ApplyAdditionalPayload func(req trackers.PreparationInput, data map[string]string)
+	// SubmissionRequirements resolves mandatory final payload constraints without I/O.
+	SubmissionRequirements func(trackers.PreparationInput) (SubmissionRequirements, error)
+	// ValidateFinalDescription checks final rendered content and parser fields after defaults and overrides.
+	ValidateFinalDescription func(api.UploadSubject, string, string, string) error
 	// FinalizeDescription applies final site-owned description transformations.
 	FinalizeDescription func(description string, meta api.UploadSubject) string
 }

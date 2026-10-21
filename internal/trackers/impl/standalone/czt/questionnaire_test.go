@@ -12,6 +12,10 @@ import (
 
 func TestProjectionQuestionnaireUsesResolvedCategory(t *testing.T) {
 	t.Parallel()
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, tc := range []struct {
 		name     string
@@ -46,17 +50,36 @@ func TestProjectionQuestionnaireUsesResolvedCategory(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			questionnaire := Profile().ProjectionQuestionnaire(trackers.PreparationInput{Meta: api.UploadSubject{
-				Identity:                    api.ExternalIdentity{Category: tc.category},
+			projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: "CZT", Meta: api.UploadSubject{
+				ReleaseName:                 "Example.Release.2026.1080p-GRP",
+				Identity:                    api.ExternalIdentity{Category: tc.category, IMDBID: 123},
 				TrackerQuestionnaireAnswers: map[string]map[string]string{"CZT": {"category": tc.answer}},
-			}})
-			if questionnaire == nil || len(questionnaire.Fields) != 1 {
-				t.Fatalf("expected category field: %#v", questionnaire)
+			}}, "input", "catalog", "config")
+			if failure != nil {
+				t.Fatal(failure)
 			}
-			field := questionnaire.Fields[0]
+			if len(projection.Questionnaire) != 1 {
+				t.Fatalf("expected category field: %#v", projection)
+			}
+			field := projection.Questionnaire[0]
 			if field.Value != tc.want || field.Required != tc.required {
 				t.Fatalf("category field = %#v, want value %q required %v", field, tc.want, tc.required)
 			}
+			if tc.required && tc.want == "" {
+				if projection.Readiness != api.ReadinessStatusBlocked || len(projection.RequiredActions) != 1 || projection.UploadReady {
+					t.Fatalf("missing category lost its corrective action: %+v", projection)
+				}
+			} else if !projection.UploadReady {
+				t.Fatalf("selected category did not recover: %+v", projection)
+			}
 		})
 	}
+	t.Run("missing required identity", func(t *testing.T) {
+		projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: "CZT", Meta: api.UploadSubject{
+			ReleaseName: "Example.Release.2026.1080p-GRP",
+		}}, "input", "catalog", "config")
+		if failure != nil || projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0 {
+			t.Fatalf("independent missing identity exposed category selection: %+v, %v", projection, failure)
+		}
+	})
 }

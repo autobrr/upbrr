@@ -25,6 +25,7 @@ import DescriptionBuilderPage from "../pages/description_builder";
 import ScreenshotsPage from "../pages/screenshots";
 import DupeCheckPage from "../pages/dupe_check";
 import TrackerUploadPage from "../pages/tracker_upload";
+import HDRAnalysisPage from "../pages/hdr_analysis";
 import type { ReleaseSessionPorts } from "./ports";
 import { setAppRequestHandlerForTests } from "../api/client";
 import { productionReleaseSessionPorts } from "./production";
@@ -831,6 +832,17 @@ const QuestionnaireSurface = () => {
       trackerIconSrcByName={{}}
       submissionExclusions={[]}
       workflowComplete={false}
+    />
+  );
+};
+
+const HDRSurface = () => {
+  const session = useReleaseSession();
+  return (
+    <HDRAnalysisPage
+      facet={session.hdrAnalysis}
+      setLightboxImage={vi.fn()}
+      setLightboxAlt={vi.fn()}
     />
   );
 };
@@ -4130,67 +4142,188 @@ describe("useReleaseSession", () => {
     }
   });
 
-  it("surfaces the safe failure retained by a terminal workflow operation", async () => {
-    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-failed");
-    const startedAt = "2026-07-20T00:00:00Z";
-    const queued = {
-      id: "operation-failed",
-      workflowId: "workflow-failed",
-      revision: 1,
-      sequence: 1,
-      command: "prepare",
-      operation: "preparation",
-      status: "queued",
-      progress: 0,
-      completed: 0,
-      total: 1,
-      startedAt,
-      updatedAt: startedAt,
-    } as const;
-    const failed = {
-      ...queued,
-      sequence: 2,
-      status: "failed",
-      progress: 100,
-      completed: 1,
-      message: "Operation failed.",
-      failures: [
-        {
-          failure: {
-            Code: "source_unavailable",
-            Operation: "preparation",
-            Message: "The source path is unavailable.",
-            Recovery: "edit_input",
+  it.each([
+    [
+      "prepare",
+      "preparation",
+      "source_unavailable",
+      "The source path is unavailable.",
+      "edit_input",
+      "queued",
+    ],
+    [
+      "composite_upload",
+      "upload_execute",
+      "invalid_input",
+      "Required input is missing or invalid: Release source. Edit the input and retry.",
+      "edit_input",
+      "queued",
+    ],
+    [
+      "composite_upload",
+      "upload_execute",
+      "invalid_input",
+      "Required input is missing or invalid: Release source. Edit the input and retry.",
+      "edit_input",
+      "failed",
+    ],
+    [
+      "composite_upload",
+      "upload_execute",
+      "missing_prerequisite",
+      "Upload stopped at capture-media without a viable next step.",
+      "review_again",
+      "failed",
+    ],
+  ])(
+    "retains %s %s %s failure and recovery after polling or reload",
+    async (command, kind, code, message, recovery, initialStatus) => {
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-failed");
+      const startedAt = "2026-07-20T00:00:00Z";
+      const queued = {
+        id: "operation-failed",
+        workflowId: "workflow-failed",
+        revision: 1,
+        sequence: 1,
+        command,
+        operation: kind,
+        status: "queued",
+        progress: 0,
+        completed: 0,
+        total: 1,
+        startedAt,
+        updatedAt: startedAt,
+      } as const;
+      const failed = {
+        ...queued,
+        sequence: 2,
+        status: "failed",
+        progress: 100,
+        completed: 1,
+        message: "Operation failed.",
+        failures: [
+          {
+            failure: {
+              Code: code,
+              Operation: kind,
+              Message: message,
+              Recovery: recovery,
+            },
           },
-        },
-      ],
-      completedAt: startedAt,
-    } as const;
-    const current = vi
-      .fn()
-      .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: queued })
-      .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: failed });
-    const operation = vi.fn().mockResolvedValue(failed);
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          resumeWorkflowID: "workflow-failed",
-          workflow: workflowPorts({ current, operation }),
-        }),
-      ),
-    });
+        ],
+        completedAt: startedAt,
+      } as const;
+      const prepared = workflowCurrentFromPreview(
+        workflowCurrent("workflow-failed", 3),
+        preview("C:\\media\\Example.Release.2026.mkv", 1),
+      );
+      const terminalCurrent = {
+        ...prepared,
+        workflow: { ...prepared.workflow, status: "failed", failures: failed.failures },
+        operation: failed,
+      };
+      const current = vi.fn().mockResolvedValue(terminalCurrent);
+      if (initialStatus === "queued") {
+        current.mockResolvedValueOnce({ ...terminalCurrent, operation: queued });
+      }
+      const operation = vi.fn().mockResolvedValue(failed);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: "workflow-failed",
+            workflow: workflowPorts({ current, operation }),
+          }),
+        ),
+      });
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
-      timeout: 3000,
-    });
-    expect(result.current.workflow.view.error).toBe(
-      "The source path is unavailable. Recovery: edit input.",
-    );
-    expect(result.current.workflow.view.failure?.Code).toBe("source_unavailable");
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
+        timeout: 3000,
+      });
+      expect(result.current.workflow.view.error).toBe(
+        `${message} Recovery: ${recovery.replaceAll("_", " ")}.`,
+      );
+      expect(result.current.workflow.view.failure).toEqual(failed.failures[0].failure);
+      expect(result.current.workflow.view.current?.operation?.status).toBe("failed");
+      expect(result.current.workflow.view.current?.operation?.result).toBeUndefined();
+      expect(operation).toHaveBeenCalledTimes(initialStatus === "queued" ? 1 : 0);
+      expect(current).toHaveBeenCalledTimes(initialStatus === "queued" ? 2 : 1);
 
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
-  });
+      if (command === "composite_upload") {
+        await act(() => result.current.workflow.reload());
+        expect(result.current.workflow.view.status).toBe("error");
+        expect(result.current.workflow.view.failure).toEqual(failed.failures[0].failure);
+        expect(result.current.workflow.view.current?.operation?.status).toBe("failed");
+        expect(result.current.upload.view.error).toBe(message);
+        expect(result.current.input.view.status).not.toBe("running");
+        expect(operation).toHaveBeenCalledTimes(initialStatus === "queued" ? 1 : 0);
+        expect(current).toHaveBeenCalledTimes(initialStatus === "queued" ? 3 : 2);
+        act(() => result.current.input.updateSourceDraft("C:\\media\\Corrected.Release.2026.mkv"));
+        expect(result.current.input.view.sourceDraft).toBe("C:\\media\\Corrected.Release.2026.mkv");
+      }
+
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
+
+  it.each(["completed", "executed", "partial", "blocked", "failed"] as const)(
+    "keeps an active workflow ready when reloading its retained %s composite operation",
+    async (status) => {
+      const current = workflowCurrentFromPreview(
+        workflowCurrent("workflow-retained", 3),
+        preview("C:\\media\\Example.Release.2026.mkv", 1),
+      );
+      const operation = vi.fn();
+      const retained: WorkflowOperationStatus = {
+        id: "operation-retained",
+        workflowId: current.workflow.id,
+        revision: 1,
+        sequence: 2,
+        command: "composite_upload",
+        operation: "upload_execute",
+        status,
+        progress: 100,
+        completed: 1,
+        total: 1,
+        startedAt: "2026-07-20T00:00:00Z",
+        updatedAt: "2026-07-20T00:00:00Z",
+        failures:
+          status === "failed"
+            ? [
+                {
+                  failure: {
+                    Code: "invalid_input",
+                    Operation: "upload_execute",
+                    Message: "Previous input failure.",
+                    Recovery: "edit_input",
+                  },
+                },
+              ]
+            : [],
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            activeInput: {
+              get: async () => ({
+                state: "active",
+                revision: 1,
+                current: { ...current, operation: retained },
+              }),
+            },
+            workflow: workflowPorts({ operation }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      expect(result.current.workflow.view.failure).toBeNull();
+      expect(result.current.workflow.view.error).toBe("");
+      expect(result.current.input.view.status).not.toBe("running");
+      expect(result.current.workflow.view.current?.operation?.status).toBe(status);
+      expect(operation).not.toHaveBeenCalled();
+      unmount();
+    },
+  );
 
   it.each(["C:\\media\\Next.Release.2026.mkv", ""])(
     "preserves an unsubmitted source path %j until the active input changes",
@@ -5578,6 +5711,170 @@ describe("useReleaseSession", () => {
 
   describe("early questionnaire projection", () => {
     afterEach(cleanup);
+    it("loads HDR guidance on fresh page entry without starting preflight or duplicate searches", async () => {
+      const workflowID = "fresh-hdr-guidance";
+      const initial = preparedQuestionnaireWorkflow(workflowID);
+      const prepared: ReleaseWorkflowCurrent = {
+        ...initial,
+        inputReadiness: { ...initial.inputReadiness!, selectedTrackerIds: ["LST"] },
+        release: {
+          ...initial.release!,
+          display: {
+            ...initial.release!.display,
+            hdrTargets: [
+              { id: "hdr-target", label: "Video", supported: true, selectionPolicy: "unique_hevc" },
+            ],
+          },
+        },
+      };
+      const active = workflowPorts();
+      const projected = await active.project(
+        prepared,
+        ["LST"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const pending = createDeferred<ReleaseWorkflowCurrent>();
+      const project = vi.fn(async () => pending.promise);
+      const preflight = vi.fn(active.preflight);
+      const checkDuplicates = vi.fn(active.checkDuplicates);
+      const workflow = workflowPorts({
+        current: async () => prepared,
+        project,
+        preflight,
+        checkDuplicates,
+      });
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: ({ children }) => (
+          <ReleaseSessionProvider ports={portsFor({ resumeWorkflowID: workflowID, workflow })}>
+            <HDRSurface />
+            {children}
+          </ReleaseSessionProvider>
+        ),
+      });
+      await waitFor(() => expect(project).toHaveBeenCalledOnce());
+      expect(result.current.hdrAnalysis.view.requirementsNeedRefresh).toBe(false);
+      expect(screen.queryByRole("region", { name: "Required hybrid HDR evidence" })).toBeNull();
+      await act(async () =>
+        pending.resolve({
+          ...projected,
+          projections: {
+            ...projected.projections!,
+            projections: projected.projections!.projections.map((projection) => ({
+              ...projection,
+              questionnaire: [
+                {
+                  key: "hybrid_evidence",
+                  label: "Evidence",
+                  required: false,
+                  hdrGradeComparison: true,
+                },
+              ],
+            })),
+          },
+        }),
+      );
+      expect(screen.getByRole("region", { name: "Required hybrid HDR evidence" })).toBeVisible();
+      expect(result.current.hdrAnalysis.view.requirementsNeedRefresh).toBe(false);
+      expect(project).toHaveBeenCalledOnce();
+      await act(() => result.current.hdrAnalysis.setIncludedArtifacts(["grade", "plot"]));
+      expect(project).toHaveBeenCalledOnce();
+      expect(preflight).not.toHaveBeenCalled();
+      expect(checkDuplicates).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false, undefined])(
+      "retains current backend HDR guidance without reprojecting descriptions and clears it on deselection (%s)",
+      async (hdrGradeComparison) => {
+        const workflowID = "hdr-grade-guidance";
+        const initial = preparedQuestionnaireWorkflow(workflowID);
+        const prepared = {
+          ...initial,
+          release: {
+            ...initial.release!,
+            display: {
+              ...initial.release!.display,
+              hdrTargets: [
+                {
+                  id: "hdr-target",
+                  label: "Video",
+                  supported: true,
+                  selectionPolicy: "unique_hevc",
+                },
+              ],
+            },
+          },
+          inputReadiness: {
+            ...initial.inputReadiness!,
+            selectedTrackerIds: ["LST"],
+          },
+        };
+        const projected = await workflowPorts().project(
+          prepared,
+          ["LST"],
+          {},
+          "seed",
+          new AbortController().signal,
+        );
+        const current: ReleaseWorkflowCurrent = {
+          ...projected,
+          descriptions: workflowCurrentWithDescriptions(workflowID, 3, "Retained description")
+            .descriptions,
+          media: {
+            id: "retained-media",
+            revision: 1,
+            workflowId: workflowID,
+            release: { id: projected.release!.id, revision: projected.release!.revision },
+            releaseRef: { SourcePath: initial.release!.release.Source.SourcePath, Generation: 1 },
+            projectionSet: {
+              id: projected.projections!.id,
+              revision: projected.projections!.revision,
+            },
+            captureFingerprint: "capture",
+            requirementsFingerprint: "requirements",
+            imageRequirementsPrepared: true,
+            artifacts: [],
+            status: "completed",
+            createdAt: "2026-10-18T00:00:00Z",
+          },
+          projections: {
+            ...projected.projections!,
+            projections: projected.projections!.projections.map((projection) => ({
+              ...projection,
+              displayName: "LST",
+              questionnaire: [
+                { key: "hybrid_evidence", label: "Evidence", required: true, hdrGradeComparison },
+              ],
+            })),
+          },
+        };
+        const project = vi.fn(async () => current);
+        const workflow = workflowPorts({ current: async () => current, project });
+        const { result } = renderHook(useReleaseSession, {
+          wrapper: ({ children }) => (
+            <ReleaseSessionProvider ports={portsFor({ resumeWorkflowID: workflowID, workflow })}>
+              <HDRSurface />
+              {children}
+            </ReleaseSessionProvider>
+          ),
+        });
+        await waitFor(() =>
+          expect(result.current.duplicates.view.selectedTrackers).toEqual(["LST"]),
+        );
+        expect(result.current.hdrAnalysis.view.gradeComparisonTrackers).toEqual(
+          hdrGradeComparison ? ["LST"] : [],
+        );
+        expect(result.current.hdrAnalysis.view.available).toBe(true);
+        expect(result.current.hdrAnalysis.view.requirementsNeedRefresh).toBe(false);
+        expect(project).not.toHaveBeenCalled();
+        expect(result.current.descriptions.view.artifact).toEqual(current.descriptions);
+        expect(result.current.screenshots.view.artifacts).toEqual(current.media);
+        act(() => result.current.duplicates.chooseTrackers([]));
+        expect(result.current.hdrAnalysis.view.gradeComparisonTrackers).toEqual([]);
+      },
+    );
+
     it("projects default tracker questions on opening Dupe Checking without preflight or duplicate calls", async () => {
       const active = workflowPorts();
       const prepared = preparedQuestionnaireWorkflow("early-questions");
@@ -7572,81 +7869,96 @@ describe("useReleaseSession", () => {
     expect(result.current.duplicates.view.status).toBe("ready");
   });
 
-  it("acknowledges incomplete zero-candidate duplicate evidence", async () => {
-    const fixture = workflowPorts();
-    const checkDuplicates = vi.fn(
-      async (
-        current: ReleaseWorkflowCurrent,
-        skipRemote: boolean,
-        idempotencyKey: string,
-        signal: AbortSignal,
-      ) => {
-        const checked = await fixture.checkDuplicates(current, skipRemote, idempotencyKey, signal);
-        return {
-          ...checked,
-          dupes: {
-            ...checked.dupes!,
-            status: "blocked",
-            results: [
-              {
-                trackerId: "AITHER",
-                uploadReleaseName: "Example.Release.2026.1080p-GRP",
-                matches: [],
-                search: {
-                  complete: false,
-                  pages: 2,
-                  candidateCount: 0,
-                  scope: "work_identity",
-                  warnings: ["Search pagination is incomplete."],
+  it.each([false, true])(
+    "keeps duplicate acknowledgement authoritative when rejected=%s",
+    async (rejected) => {
+      const fixture = workflowPorts();
+      const checkDuplicates = vi.fn(
+        async (
+          current: ReleaseWorkflowCurrent,
+          skipRemote: boolean,
+          idempotencyKey: string,
+          signal: AbortSignal,
+        ) => {
+          const checked = await fixture.checkDuplicates(
+            current,
+            skipRemote,
+            idempotencyKey,
+            signal,
+          );
+          return {
+            ...checked,
+            dupes: {
+              ...checked.dupes!,
+              status: "blocked",
+              results: [
+                {
+                  trackerId: "AITHER",
+                  uploadReleaseName: "Example.Release.2026.1080p-GRP",
+                  matches: [],
+                  search: {
+                    complete: false,
+                    pages: 2,
+                    candidateCount: 0,
+                    scope: "work_identity",
+                    warnings: ["Search pagination is incomplete."],
+                  },
+                  decision: "pending",
+                  status: "blocked",
                 },
-                decision: "pending",
-                status: "blocked",
-              },
-            ],
-          } as unknown as NonNullable<ReleaseWorkflowCurrent["dupes"]>,
-        };
-      },
-    );
-    const decideDuplicates = vi.fn(
-      async (current: ReleaseWorkflowCurrent): Promise<ReleaseWorkflowCurrent> => ({
-        ...current,
-        dupes: {
-          ...current.dupes!,
-          status: "completed",
-          results: current.dupes!.results.map((result) => ({
-            ...result,
-            decision: "ignored",
-            status: "completed",
-          })),
+              ],
+            } as unknown as NonNullable<ReleaseWorkflowCurrent["dupes"]>,
+          };
         },
-      }),
-    );
-    const workflow = workflowPorts({ checkDuplicates, decideDuplicates });
-    const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ workflow })),
-    });
-
-    act(() => result.current.input.selectSource("C:\\media\\Example Release"));
-    act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
-    await act(() => result.current.input.prepare());
-    await act(() => result.current.duplicates.run());
-
-    act(() => result.current.duplicates.setIgnored("AITHER", true));
-    await waitFor(() =>
-      expect(decideDuplicates).toHaveBeenCalledWith(
-        expect.anything(),
-        { AITHER: "ignored" },
-        expect.any(String),
-        expect.any(AbortSignal),
-      ),
-    );
-    await waitFor(() => {
-      expect(result.current.workflow.view.current?.dupes?.status).toBe("completed");
-      expect(result.current.workflow.view.current?.dupes?.results[0]).toEqual(
-        expect.objectContaining({ decision: "ignored", status: "completed" }),
       );
-    });
-  });
+      const decideDuplicates = vi.fn(
+        async (current: ReleaseWorkflowCurrent): Promise<ReleaseWorkflowCurrent> => ({
+          ...current,
+          dupes: {
+            ...current.dupes!,
+            status: "completed",
+            results: current.dupes!.results.map((result) => ({
+              ...result,
+              decision: "ignored",
+              status: "completed",
+            })),
+          },
+        }),
+      );
+      if (rejected) decideDuplicates.mockRejectedValue(new Error("Acknowledgement rejected."));
+      const workflow = workflowPorts({ checkDuplicates, decideDuplicates });
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(portsFor({ workflow })),
+      });
+
+      act(() => result.current.input.selectSource("C:\\media\\Example Release"));
+      act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+      await act(() => result.current.input.prepare());
+      await act(() => result.current.duplicates.run());
+
+      act(() => result.current.duplicates.setIgnored("AITHER", true));
+      await waitFor(() =>
+        expect(decideDuplicates).toHaveBeenCalledWith(
+          expect.anything(),
+          { AITHER: "ignored" },
+          expect.any(String),
+          expect.any(AbortSignal),
+        ),
+      );
+      if (rejected) {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("error"));
+        expect(result.current.workflow.view.current?.dupes?.results[0].decision).toBe("pending");
+        expect(result.current.duplicates.view.assessment?.results[0].decision).not.toBe("ignored");
+        return;
+      }
+      await waitFor(() => {
+        expect(result.current.workflow.view.current?.dupes?.status).toBe("completed");
+        expect(result.current.workflow.view.current?.dupes?.results[0]).toEqual(
+          expect.objectContaining({ decision: "ignored", status: "completed" }),
+        );
+      });
+    },
+  );
 
   it("binds explicit staff-token confirmation to the current duplicate assessment", async () => {
     const fixture = workflowPorts();

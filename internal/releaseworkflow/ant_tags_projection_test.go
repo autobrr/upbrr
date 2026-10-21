@@ -18,6 +18,27 @@ import (
 
 type legacyANTTagsDefinition struct{ trackers.Definition }
 
+func TestANTRequestIDCorrectionAllowsClearAndReset(t *testing.T) {
+	subject := api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			TMDBID: 123,
+			Genres: "Drama",
+		}},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{"ANT": {"requestid": "0"}},
+	}
+	evaluation, err := trackers.EvaluateInputReadiness(trackerimpl.MustNewRegistry(), []api.TrackerID{"ANT"}, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []*string{nil, new(""), new("42")} {
+		if err := validateTrackerInputPatch(map[api.TrackerID]map[string]*string{"ANT": {"requestid": value}},
+			[]api.TrackerID{"ANT"}, evaluation.TrackerQuestionnaires, subject.TrackerQuestionnaireAnswers); err != nil {
+			t.Fatalf("optional request ID could not be reset, cleared, or corrected: %v", err)
+		}
+	}
+}
+
 func (legacyANTTagsDefinition) ProjectionQuestionnaire(trackers.PreparationInput) *api.TrackerQuestionnaire {
 	return &api.TrackerQuestionnaire{Tracker: "ANT", Fields: []api.TrackerQuestionnaireField{{
 		Key:      "tags",

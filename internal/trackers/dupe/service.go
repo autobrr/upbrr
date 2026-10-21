@@ -965,6 +965,8 @@ func duplicateTargetForEvaluation(meta api.DuplicateSubject) api.TrackerDuplicat
 		Pack:        meta.TVPack,
 		SizeBytes:   meta.SourceSize,
 		FileNames:   append([]string(nil), meta.FileList...),
+
+		ReleaseFeatures: append([]api.ReleaseFeature(nil), meta.Release.ReleaseFeatures...),
 	}
 }
 
@@ -1185,4 +1187,20 @@ func panicProgressMessage(recovered any) string {
 		return "duplicate progress reporter panicked"
 	}
 	return "duplicate progress reporter panicked: " + detail
+}
+
+// RebindEquivalentMetadata carries private evidence across an owner-certified
+// unchanged metadata refresh. Legacy or mismatched bindings fail closed without
+// remote searches, and current tracker config must validate the old authority.
+func (s *Service) RebindEquivalentMetadata(
+	evidence api.DupeAssessmentEvidence,
+	subject api.DuplicateSubject,
+	previous api.ReleaseRef,
+	projections api.TrackerReleaseProjectionSet,
+) (api.DupeAssessmentEvidence, bool) {
+	assessment, ok := evidence.(Assessment)
+	if !ok || s == nil {
+		return nil, false
+	}
+	return assessment.rebindEquivalentMetadata(subject, s.cfg, previous, projections)
 }

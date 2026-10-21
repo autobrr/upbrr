@@ -40,6 +40,7 @@ func (s *cliWorkflowSession) completeComposite(
 	if err != nil {
 		return 0, err
 	}
+	s.submissionSuppressed = request.Execution.Mode == api.ReleaseWorkflowUploadModeDebug || s.core.LiveTestEnabled()
 	if s.current.Workflow.ID != "" {
 		request.Authority = &api.WorkflowAuthority{WorkflowID: s.current.Workflow.ID, ExpectedRevision: s.current.Workflow.Revision}
 		// The CLI prepared this exact workflow before starting the composite
@@ -54,6 +55,7 @@ func (s *cliWorkflowSession) completeComposite(
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
 		printCLIWorkflowDupeProgress(s.streams.out, update)
 	})
+	ctx = s.presentationProgressContext(ctx)
 	startUpload := s.core.StartReleaseWorkflowUpload
 	if s.core.LiveTestEnabled() {
 		startUpload = s.core.StartLiveTestReleaseWorkflowUpload
@@ -63,11 +65,13 @@ func (s *cliWorkflowSession) completeComposite(
 		return 0, fmt.Errorf("upbrr: start composite upload: %w", err)
 	}
 	s.current = current
+	s.publishPresentation(ctx)
 	current, err = s.waitForCompositeUpload(ctx, current)
 	if err != nil {
 		return 0, err
 	}
 	s.current = current
+	s.publishPresentation(ctx)
 
 	printProjections := cliWorkflowProjectionOutputEnabled(
 		cfg.Logging.Level,
@@ -80,11 +84,11 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, nil
 		}
 		s.printCompositeProjectionsOnce(printProjections)
-		if (debug || s.core.LiveTestEnabled()) && s.current.DryRun != nil {
+		if s.submissionSuppressed && s.current.DryRun != nil {
 			printCLIWorkflowDryRun(s.streams.out, *s.current.DryRun, s.intent.noSeed, s.current.Projections, s.core.LiveTestEnabled())
 			return 0, nil
 		}
-		if !debug && s.current.UploadResult != nil {
+		if !s.submissionSuppressed && s.current.UploadResult != nil {
 			return printCLIWorkflowUploadResult(s.streams.out, s.current.UploadResult)
 		}
 		if s.current.Selection != nil && len(s.current.Selection.TrackerIDs) == 0 {
@@ -101,6 +105,7 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, feedbackErr
 		}
 		if declined {
+			s.publishDeclinedAction(*action)
 			return 0, nil
 		}
 		next, submitErr := s.core.SubmitReleaseWorkflowUploadFeedback(
@@ -117,6 +122,7 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, err
 		}
 		s.current = next
+		s.publishPresentation(ctx)
 	}
 	return 0, errors.New("upbrr: composite upload exceeded the transition limit")
 }
@@ -159,8 +165,11 @@ func (s *cliWorkflowSession) waitForCompositeUpload(
 	ctx context.Context,
 	current releaseworkflow.CommandResult,
 ) (releaseworkflow.CommandResult, error) {
-	if current.Operation == nil || isTerminalCLIWorkflowOperation(current.Operation.Status) {
+	if current.Operation == nil {
 		return current, nil
+	}
+	if isTerminalCLIWorkflowOperation(current.Operation.Status) {
+		return current, cliWorkflowOperationError(*current.Operation)
 	}
 	completed, waitErr := s.waitForOperation(ctx, *current.Operation)
 	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -190,7 +199,7 @@ func firstPendingCLICompositeAction(actions []api.RequiredAction) *api.RequiredA
 }
 
 func (s *cliWorkflowSession) collectCompositeUploadFeedback(
-	_ context.Context,
+	ctx context.Context,
 	reader *bufio.Reader,
 	cfg config.Config,
 	logger api.Logger,
@@ -212,6 +221,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation {
 		return feedback, false, fmt.Errorf("upbrr: strict unattended upload requires global action %s: %s", action.Kind, action.Prompt)
 	}
+	s.bindAction(ctx, action, action.Prompt)
 
 	switch action.Kind {
 	case api.RequiredActionConfirmCorrections:
@@ -412,8 +422,12 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			tracker = string(trackerID)
 		}
 		dupe := dupeByTracker[trackerID]
-		fmt.Fprintf(s.streams.out, "Tracker: %s (%s)\n", tracker, trackerID)
+		var evidence strings.Builder
+		// Capture evidence before console output, which may fail independently.
+		output := io.MultiWriter(&evidence, s.streams.out)
+		fmt.Fprintf(output, "Tracker: %s (%s)\n", tracker, trackerID)
 		fmt.Fprintf(s.streams.out, "Upload name: %q\n", projection.UploadReleaseName)
+		fmt.Fprintf(&evidence, "Upload name: %s\n", projection.UploadReleaseName)
 		if len(projection.EditionFeatures) > 0 {
 			selected := make([]string, 0, len(projection.EditionFeatures))
 			for _, feature := range projection.EditionFeatures {
@@ -421,10 +435,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 					selected = append(selected, "["+feature.Label+"]")
 				}
 			}
-			fmt.Fprintf(s.streams.out, "%s edition/features: %s\n", trackerID, emptyCLIValue(strings.Join(selected, " ")))
+			fmt.Fprintf(output, "%s edition/features: %s\n", trackerID, emptyCLIValue(strings.Join(selected, " ")))
 		}
 		fmt.Fprintf(
-			s.streams.out,
+			output,
 			"Duplicate check: decision=%s candidates=%d search_complete=%t policy=%s\n",
 			dupe.Decision,
 			len(dupe.Matches),
@@ -432,15 +446,18 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			emptyCLIValue(dupe.PolicyID),
 		)
 		fmt.Fprintf(
-			s.streams.out,
+			output,
 			"Requirements: screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t\n",
 			projection.Artifacts.ScreenshotCount,
 			projection.Artifacts.DVDMenuCount,
 			projection.Artifacts.ImageHosting,
 			projection.Artifacts.Description,
 		)
-		printCLICompositeDupeReviewReasons(s.streams.out, dupe.ReviewReasons)
-		printCLICompositeDupeMatches(s.streams.out, dupe.Matches)
+		printCLICompositeDupeReviewReasons(output, dupe.ReviewReasons)
+		printCLICompositeDupeMatches(output, dupe.Matches)
+		if writer, ok := s.streams.out.(*cliPresentationWriter); ok {
+			writer.question.Evidence = safeTerminalText(evidence.String())
+		}
 		if logger != nil {
 			logger.Debugf(
 				"tracker approval: tracker=%s screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t",
@@ -458,6 +475,8 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		}
 		if confirmed {
 			approved = append(approved, trackerID)
+		} else {
+			publishCLITrackerDecline(s.streams, trackerID)
 		}
 	}
 	if len(action.Options) == 0 {
@@ -493,12 +512,27 @@ func selectCLICompositeOption(
 	for index, option := range action.Options {
 		fmt.Fprintf(output, "%d. %s\n", index+1, option.Label)
 	}
-	answer, err := promptLine(reader, output, label+" number: ")
+	options := make([]cliPromptOption, len(action.Options))
+	for index, option := range action.Options {
+		options[index] = cliPromptOption{Label: option.Label, Value: strconv.Itoa(index + 1)}
+	}
+	answer, err := askCLIField(reader, output, cliPrompt{
+		Kind:     cliPromptSelect,
+		Question: label + " number: ",
+		Evidence: action.Prompt,
+		Options:  options,
+		Required: true,
+	})
 	if err != nil {
 		return "", err
 	}
 	for index, option := range action.Options {
-		if answer == strconv.Itoa(index+1) || strings.EqualFold(strings.TrimSpace(answer), option.Value) {
+		if answer == strconv.Itoa(index+1) {
+			return option.Value, nil
+		}
+	}
+	for _, option := range action.Options {
+		if strings.EqualFold(strings.TrimSpace(answer), option.Value) {
 			return option.Value, nil
 		}
 	}
@@ -518,6 +552,24 @@ func cliTrackerQuestionnaireProjection(current releaseworkflow.CommandResult, tr
 	selected := *current.Projections
 	projection := current.Projections.Projections[index]
 	projection.Questionnaire = slices.Clone(projection.Questionnaire)
+	if dupes := current.Dupes; dupes != nil && dupes.WorkflowID == current.Workflow.ID && dupes.ProjectionSet.ID == selected.ID &&
+		dupes.ProjectionSet.Revision == selected.Revision {
+		for _, result := range dupes.Results {
+			if result.TrackerID == trackerID {
+				for _, field := range result.Questionnaire {
+					fieldIndex := slices.IndexFunc(
+						projection.Questionnaire,
+						func(existing api.TrackerQuestionnaireRequirement) bool { return existing.Key == field.Key },
+					)
+					if fieldIndex < 0 {
+						projection.Questionnaire = append(projection.Questionnaire, field)
+					} else {
+						projection.Questionnaire[fieldIndex] = field
+					}
+				}
+			}
+		}
+	}
 	if report := current.DryRun; report != nil && report.WorkflowID == current.Workflow.ID && report.ProjectionSet.ID == selected.ID &&
 		report.ProjectionSet.Revision == selected.Revision {
 		for _, tracker := range report.Reports {
@@ -556,7 +608,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 		s.intent.trackerConfig,
 		s.intent.trackerSite,
 	)
-	_, err := collectCLIWorkflowQuestionnaires(
+	collected, err := collectCLIWorkflowQuestionnaires(
 		reader,
 		s.streams.out,
 		s.intent.interaction,
@@ -565,6 +617,9 @@ func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 	)
 	if err != nil {
 		return feedback, false, err
+	}
+	if action.Kind == api.RequiredActionAnswerQuestionnaire && !collected {
+		return feedback, false, fmt.Errorf("upbrr: questionnaire for %s requires correction but has no reviewable fields", action.TrackerID)
 	}
 	instruction := instructions[action.TrackerID]
 	if action.Kind == api.RequiredActionProvideTrackerInput && action.AllowsFreeText && len(action.Options) > 0 {
@@ -636,6 +691,56 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	)
 	printCLICompositeDupeReviewReasons(s.streams.out, result.ReviewReasons)
 	printCLICompositeDupeMatches(s.streams.out, result.Matches)
+	var evidence strings.Builder
+	fmt.Fprintf(
+		&evidence,
+		"Tracker: %s\nUpload name: %s\nDecision: %s\nCandidates: %d\nSearch complete: %t\nPolicy: %s\n",
+		result.TrackerID,
+		result.UploadReleaseName,
+		result.Decision,
+		len(result.Matches),
+		result.Search.Complete,
+		emptyCLIValue(result.PolicyID),
+	)
+	printCLICompositeDupeReviewReasons(&evidence, result.ReviewReasons)
+	printCLICompositeDupeMatches(&evidence, result.Matches)
+	if cliDupeRequiresRiskAcknowledgement(result) {
+		evidence.WriteString("Risk acknowledgement required: incomplete or manual evidence.\n")
+	}
+	if writer, ok := s.streams.out.(*cliPresentationWriter); ok {
+		writer.question.Evidence = safeTerminalText(evidence.String())
+	}
+	if len(result.Questionnaire) > 0 && s.intent.interaction != api.InteractionModeUnattended {
+		review, reviewErr := promptYesNo(reader, s.streams.out, "Review comparison evidence before deciding? [y/N]: ", false)
+		if reviewErr != nil {
+			return feedback, false, reviewErr
+		}
+		if review {
+			projections := cliTrackerQuestionnaireProjection(s.current, action.TrackerID)
+			if projections == nil {
+				return feedback, false, errors.New("upbrr: comparison questionnaire projection is unavailable")
+			}
+			// The operator opted into these optional fields; other tracker inputs keep their normal prompt policy.
+			for index := range projections.Projections[0].Questionnaire {
+				field := &projections.Projections[0].Questionnaire[index]
+				if slices.ContainsFunc(result.Questionnaire, func(question api.TrackerQuestionnaireRequirement) bool { return question.Key == field.Key }) {
+					field.NeedsReview = true
+				}
+			}
+			instructions := cliProjectionInstructions(s.uploadRequest)
+			if _, collectErr := collectCLIWorkflowQuestionnaires(reader, s.streams.out, s.intent.interaction, projections, instructions); collectErr != nil {
+				return feedback, false, collectErr
+			}
+			feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
+				Kind: api.ReleaseWorkflowUploadFeedbackQuestionnaire,
+				Questionnaire: &api.ReleaseWorkflowUploadQuestionnaire{
+					TrackerID: action.TrackerID,
+					Answers:   cloneCLIStringPointerMap(instructions[action.TrackerID].Questionnaire),
+				},
+			}
+			return feedback, false, nil
+		}
+	}
 	fmt.Fprintln(s.streams.out)
 	prompt := fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID)
 	if cliDupeRequiresRiskAcknowledgement(result) {
@@ -683,11 +788,16 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 		fmt.Fprintf(output, "  %d. %s\n", index+1, strings.TrimSpace(match.Name))
 		fmt.Fprintf(
 			output,
-			"     Relation: %s  Evidence: %s/%s\n",
-			emptyCLIValue(string(match.Relation)),
+			"     Evidence: %s/%s\n",
 			emptyCLIValue(string(match.EvidenceStatus)),
 			emptyCLIValue(string(match.HDR.Origin)),
 		)
+		if match.ID != "" {
+			fmt.Fprintf(output, "     Candidate ID: %s\n", logging.SanitizeMessage(match.ID))
+		}
+		if match.Relation == api.DupeRelationManualReview {
+			fmt.Fprintf(output, "     Policy review: %s\n", match.Relation)
+		}
 		if len(match.Reasons) > 0 {
 			reasons := make([]string, 0, len(match.Reasons))
 			for _, reason := range match.Reasons {
@@ -705,13 +815,6 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 			}
 		} else if reason := strings.TrimSpace(match.Reason); reason != "" {
 			fmt.Fprintf(output, "     Reason: %s\n", reason)
-		}
-		if len(match.HDR.Formats) > 0 {
-			formats := make([]string, len(match.HDR.Formats))
-			for index, format := range match.HDR.Formats {
-				formats[index] = string(format)
-			}
-			fmt.Fprintf(output, "     HDR: %s\n", strings.Join(formats, "+"))
 		}
 		if link := strings.TrimSpace(logging.SanitizeMessage(match.Link)); link != "" {
 			fmt.Fprintf(output, "     Link: %s\n", link)

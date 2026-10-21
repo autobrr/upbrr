@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ func (d workflowAudioOrderDefinition) ProjectionQuestionnaire(input trackers.Pre
 	return d.questionnaire(input)
 }
 
-func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testing.T) {
+func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 	for _, test := range []struct {
 		mode releaseworkflow.TrackerDecisionMode
 		pack bool
@@ -83,6 +84,8 @@ func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testi
 						Title:               language + " main audio",
 						Languages:           []string{language},
 						Codec:               "FLAC",
+						Channels:            2,
+						ChannelsKnown:       true,
 						Default:             language == "Japanese",
 						DefaultKnown:        true,
 						StreamOrder:         index,
@@ -91,6 +94,7 @@ func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testi
 				}
 				media.Tracks = append(media.Tracks, api.MediaTrackFacts{
 					ID:           "English-subtitles",
+					ResourceID:   "selected-resource",
 					Kind:         api.MediaTrackSubtitle,
 					Title:        "English full subtitles",
 					Languages:    []string{"English (Full)"},
@@ -111,6 +115,30 @@ func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testi
 				if test.pack && (canonicalFacts.TrackCoverageComplete || canonicalFacts.ProgrammeStatus != api.MetadataEvidenceStatusPartial) {
 					t.Fatalf("fixture promoted uninspected pack evidence: %+v", canonicalFacts)
 				}
+				mediaFiles := api.MediaFileFacts{
+					Status:            api.MetadataEvidenceStatusComplete,
+					TechnicalStatus:   api.MetadataEvidenceStatusComplete,
+					LanguageStatus:    api.MetadataEvidenceStatusComplete,
+					ExpectedFileCount: len(files),
+					OriginalLanguage:  "Japanese",
+					Files: []api.MediaFileFact{{
+						ResourceID:        "selected-resource",
+						FileName:          videoPath,
+						Primary:           true,
+						Container:         "mkv",
+						Resolution:        "1080p",
+						VideoTrackCount:   1,
+						AudioLanguages:    []string{"German", "Japanese", "English"},
+						SubtitleLanguages: []string{"English (Full)"},
+						AudioStatus:       api.MetadataEvidenceStatusComplete,
+						SubtitleStatus:    api.MetadataEvidenceStatusComplete,
+					}},
+				}
+				if test.pack {
+					mediaFiles.Status = api.MetadataEvidenceStatusPartial
+					mediaFiles.TechnicalStatus = api.MetadataEvidenceStatusPartial
+					mediaFiles.LanguageStatus = api.MetadataEvidenceStatusPartial
+				}
 				preparer := releaseworkflow.ReleasePreparerFunc{
 					PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 						return api.PrepareResult{Release: api.PreparedRelease{
@@ -123,7 +151,7 @@ func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testi
 						return api.PreparedReleaseDisplay{ReleaseName: releaseName}, nil
 					},
 					SubjectFunc: func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
-						return api.UploadSubject{
+						subject := api.UploadSubject{
 							SourcePath:      input.Release.SourcePath,
 							VideoPath:       videoPath,
 							FileList:        slices.Clone(files),
@@ -133,12 +161,29 @@ func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testi
 							Container:       "mkv",
 							PersonalRelease: personal,
 							LanguageFacts:   canonicalFacts.Clone(),
+							MediaFileFacts:  mediaFiles.Clone(),
 							Release: api.ReleaseInfo{
 								Title:      "Example Release",
 								Year:       2026,
 								Resolution: "1080p",
 							},
-						}, nil
+						}
+						answers := map[string]string{}
+						questionnaire := lst.Profile().Site.ProjectionQuestionnaire(trackers.PreparationInput{
+							Tracker:    "LST",
+							Meta:       subject,
+							Projection: &api.TrackerReleaseProjection{UploadReleaseName: releaseName},
+						})
+						for _, field := range questionnaire.Fields {
+							switch {
+							case strings.HasPrefix(field.Key, "stream_processing_"):
+								answers[field.Key] = "reviewed_no_user_processing_or_improper_splicing"
+							case strings.HasPrefix(field.Key, "presentation_track_presentation_"), strings.HasPrefix(field.Key, "presentation_web_source_naming_"):
+								answers[field.Key] = "reviewed_correct"
+							}
+						}
+						subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"LST": answers}
+						return subject, nil
 					},
 					DuplicateFunc: func(_ context.Context, input api.DuplicateCheckInput) (api.DuplicateSubject, error) {
 						return api.DuplicateSubject{SourcePath: input.Release.SourcePath, ReleaseName: releaseName}, nil
@@ -211,20 +256,43 @@ func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testi
 				if current.Projections == nil || len(current.Projections.Projections) != 2 || current.Preflight == nil || len(current.Preflight.Results) != 2 {
 					t.Fatalf("audio order blocked preflight: %#v", current)
 				}
+				lstBlocked := test.pack || personal
 				for _, projection := range current.Projections.Projections {
-					if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady ||
+					blocked := projection.TrackerID == "LST" && lstBlocked
+					wantReadiness := api.ReadinessStatusReady
+					if blocked {
+						wantReadiness = api.ReadinessStatusIneligible
+					}
+					if projection.Readiness != wantReadiness || projection.DupeReady == blocked ||
 						projection.RuleAuthorizationFingerprint != "" || projection.WaivableRuleFingerprint != "" || len(projection.RequiredActions) != 0 {
-						t.Fatalf("audio order requires permission: %#v", projection)
+						t.Fatalf("ordering or resource policy changed: %#v", projection)
+					}
+					if projection.TrackerID == "LST" && test.pack && !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+						return decision.Code == "lst_container_evidence" && decision.Disposition == api.RuleDispositionStrict &&
+							decision.EvidenceStatus == api.MetadataEvidenceStatusPartial && decision.Blocking
+					}) {
+						t.Fatalf("uninspected pack lost its required evidence gate: %#v", projection)
+					}
+					for _, decision := range projection.PolicyDecisions {
+						if decision.Blocking && (projection.TrackerID != "LST" ||
+							(!personal || decision.Code != "language_original_order") && (!test.pack || decision.Code != "lst_container_evidence")) {
+							t.Fatalf("unrelated prerequisite masks ordering behavior: %#v", decision)
+						}
 					}
 					codes := []string{"language_original_order"}
 					if projection.TrackerID == "LUME" {
 						codes = append(codes, "language_dub_order")
 					}
 					for _, code := range codes {
+						strict := projection.TrackerID == "LST" && personal
+						wantDisposition := api.RuleDispositionAdvisory
+						if strict {
+							wantDisposition = api.RuleDispositionStrict
+						}
 						if !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
-							return decision.Code == code && decision.Disposition == api.RuleDispositionAdvisory && !decision.Blocking
+							return decision.Code == code && decision.Disposition == wantDisposition && decision.Blocking == strict
 						}) {
-							t.Fatalf("missing non-blocking %s warning: %#v", code, projection)
+							t.Fatalf("missing expected %s ordering decision: %#v", code, projection)
 						}
 					}
 					if guidance := slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
@@ -235,7 +303,11 @@ func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testi
 					}
 				}
 				for _, result := range current.Preflight.Results {
-					if result.State != api.TrackerPreflightStateReady || len(result.RequiredActions) != 0 {
+					wantState := api.TrackerPreflightStateReady
+					if result.TrackerID == "LST" && lstBlocked {
+						wantState = api.TrackerPreflightStateFailed
+					}
+					if result.State != wantState || len(result.RequiredActions) != 0 {
 						t.Fatalf("audio-order preflight requires action: %#v", result)
 					}
 				}
@@ -244,11 +316,19 @@ func TestContinueReleaseWorkflowAudioOrderWarningsNeedNoAcknowledgement(t *testi
 				}) {
 					t.Fatalf("audio order requested acknowledgement: %#v", current.Workflow.RequiredActions)
 				}
-				if current.Dupes == nil || len(current.Dupes.Results) != 2 || len(dupes.projections) != 2 {
+				wantChecked := 2
+				if lstBlocked {
+					wantChecked = 1
+				}
+				if current.Dupes == nil || len(current.Dupes.Results) != 2 || len(dupes.projections) != wantChecked {
 					t.Fatalf("audio order blocked duplicate progression: results=%#v checked=%#v", current.Dupes, dupes.projections)
 				}
 				for _, result := range current.Dupes.Results {
-					if result.Decision != api.DupeDecisionNoMatch {
+					wantDecision := api.DupeDecisionNoMatch
+					if result.TrackerID == "LST" && lstBlocked {
+						wantDecision = api.DupeDecisionSkipped
+					}
+					if result.Decision != wantDecision {
 						t.Fatalf("unexpected duplicate outcome: %#v", result)
 					}
 				}

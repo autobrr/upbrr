@@ -7,6 +7,7 @@ import (
 	"github.com/autobrr/rls"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
+	"slices"
 	"testing"
 )
 
@@ -45,15 +46,15 @@ func TestAutomaticHybridDoesNotKeepSolitaryTheatrical(t *testing.T) {
 	state := preparationstate.State{Release: api.ReleaseInfo{Cut: []string{"Theatrical.Cut"}, Other: []string{"HYBRiD"}}}
 	for range 2 {
 		parts := editionFromMeta(state, mediaInfoDoc{})
-		if parts.Cut != "" || parts.Edition != "Hybrid" {
+		if parts.Cut != "" || parts.Edition != "" || !slices.Contains(parts.Features, api.ReleaseFeatureHybrid) {
 			t.Fatalf("automatic Hybrid retained ordinary cut: %#v", parts)
 		}
 		state.Edition = parts.Edition
 	}
 	state = preparationstate.State{ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new("Theatrical / Hybrid")}}
 	applyReleaseNameValueOverrides(&state)
-	if state.Edition != "Theatrical / Hybrid" {
-		t.Fatalf("opaque manual compound rewritten: %#v", state)
+	if state.Edition != "" || !slices.Contains(state.ReleaseFeatures, api.ReleaseFeatureHybrid) {
+		t.Fatalf("recognized manual compound not separated: %#v", state)
 	}
 }
 
@@ -88,6 +89,7 @@ func TestReleaseVersionInstructionsPreserveCanonicalFeatureRoles(t *testing.T) {
 		},
 		{
 			name:      "manual theatrical",
+			features:  true,
 			overrides: api.ReleaseNameOverrides{Edition: new("Theatrical"), Repack: new("PROPER")},
 			version:   "PROPER",
 		},

@@ -92,12 +92,17 @@ func printCLIHDRResult(out io.Writer, current releaseworkflow.CommandResult) {
 	if current.HDRAnalysis == nil {
 		return
 	}
-	fmt.Fprintf(out, "HDR workflow: %s · attempt: %s · status: %s\n", current.Workflow.ID, current.HDRAnalysis.AttemptID, current.HDRAnalysis.Status)
+	var report strings.Builder
+	fmt.Fprintf(&report, "HDR workflow: %s · attempt: %s · status: %s\n", current.Workflow.ID, current.HDRAnalysis.AttemptID, current.HDRAnalysis.Status)
 	for _, target := range current.HDRAnalysis.Targets {
 		for _, artifact := range target.Artifacts {
-			fmt.Fprintf(out, "HDR artifact: %s · %s\n", artifact.ID, artifact.Kind)
+			fmt.Fprintf(&report, "HDR artifact: %s · %s\n", artifact.ID, artifact.Kind)
 		}
 	}
+	if bridge := cliBridgeFromOutput(out); bridge != nil {
+		bridge.RetainHDRReport(report.String())
+	}
+	fmt.Fprint(out, report.String())
 }
 
 func cliHDRResumeInstructions(current releaseworkflow.CommandResult, opts cliOptions) (api.HDRAnalysisInstructions, error) {

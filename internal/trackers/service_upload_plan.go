@@ -880,7 +880,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				slot.summary = summary
 				if summary.PendingPublication {
 					s.logger.Infof(
-						"trackers: upload tracker=%s state=pending_publication decision=defer_client_injection count=%d",
+						"trackers: upload tracker=%s state=pending_publication decision=submission_completed count=%d",
 						slot.tracker,
 						summary.Uploaded,
 					)

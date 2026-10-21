@@ -260,18 +260,13 @@ describe("sessionReducer upload intent", () => {
       expect(state.preparationIntent.trackerSourceIDs).toEqual({ AITHER: value });
     }
   });
-  it("keeps duplicate decisions and questionnaire answers independent", () => {
+  it("preserves questionnaire answers after upload failure", () => {
     let state = initialSessionState();
     state = sessionReducer(state, {
       type: "questionnaire_answered",
       tracker: " example ",
       key: "edition",
       value: "Extended",
-    });
-    state = sessionReducer(state, {
-      type: "dupe_ignore_changed",
-      tracker: "EXAMPLE",
-      ignored: true,
     });
     state = sessionReducer(state, { type: "job_command_started", kind: "upload" });
     state = sessionReducer(state, {
@@ -280,7 +275,6 @@ describe("sessionReducer upload intent", () => {
       error: "retryable failure",
     });
 
-    expect(state.ignoredDupesFor).toEqual(["EXAMPLE"]);
     expect(state.questionnaireAnswers).toEqual({ EXAMPLE: { edition: "Extended" } });
     expect(state.uploadError).toBe("retryable failure");
   });
@@ -503,6 +497,49 @@ describe("sessionReducer upload intent", () => {
     });
     expect(state.correctionResetFields).toEqual([]);
     expect(state.correctionValueFields).toEqual([{ field: "release_name.repack" }]);
+  });
+
+  it("tracks presentation and feature corrections, None, confirmation, and Auto independently", () => {
+    let state = initialSessionState();
+    state = sessionReducer(state, {
+      type: "release_name_changed",
+      value: {
+        Edition: "Extended",
+        Presentation: "IMAX",
+        ReleaseFeatures: ["hybrid", "4k_restoration"],
+      },
+    });
+    state = sessionReducer(state, {
+      type: "correction_confirmed",
+      field: { field: "release_name.edition" },
+    });
+    expect(correctionValuesFor(state.preparationIntent, state.correctionValueFields)).toEqual({
+      Identity: {},
+      ReleaseName: { Presentation: "IMAX", ReleaseFeatures: ["hybrid", "4k_restoration"] },
+      Metadata: {},
+    });
+    state = sessionReducer(state, {
+      type: "release_name_changed",
+      value: { Edition: "Extended", Presentation: "", ReleaseFeatures: [] },
+    });
+    expect(
+      correctionValuesFor(state.preparationIntent, state.correctionValueFields).ReleaseName,
+    ).toEqual({ Presentation: "", ReleaseFeatures: [] });
+    state = sessionReducer(state, {
+      type: "correction_confirmed",
+      field: { field: "release_name.presentation" },
+    });
+    expect(state.correctionValueFields).toEqual([{ field: "release_name.release_features" }]);
+    for (const field of ["release_name.presentation", "release_name.release_features"]) {
+      state = sessionReducer(state, { type: "correction_reset", field: { field } });
+    }
+    expect(state.preparationIntent.releaseName).toEqual({ Edition: "Extended" });
+    expect(state.correctionResetFields).toEqual([
+      { field: "release_name.presentation" },
+      { field: "release_name.release_features" },
+    ]);
+    expect(state.correctionConfirmFields).toEqual([{ field: "release_name.edition" }]);
+    expect(state.correctionValueFields).toEqual([]);
   });
 
   it("preserves a newer edit when an older preparation response succeeds", () => {

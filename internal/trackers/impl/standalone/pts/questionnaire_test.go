@@ -20,6 +20,7 @@ func TestProjectionQuestionnaireRequiresExplicitMandarinOverride(t *testing.T) {
 		valid   bool
 	}{
 		{name: "unanswered"},
+		{name: "invalid saved answer", answers: map[string]string{"mandarin_override": "invalid"}},
 		{
 			name:    "declined",
 			answers: map[string]string{"mandarin_override": "no"},
@@ -60,5 +61,36 @@ func TestProjectionQuestionnaireRetainsMandarinAnswerWithNewLanguageEvidence(t *
 	got := projectionQuestionnaire(trackers.PreparationInput{Meta: meta})
 	if got == nil || len(got.Fields) != 1 || got.Fields[0].Value != "yes" || got.Fields[0].Required {
 		t.Fatalf("retained optional Mandarin answer = %#v", got)
+	}
+}
+
+func TestProjectionMandarinOverrideReadiness(t *testing.T) {
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
+	for _, answer := range []string{"", "invalid", "no", "yes"} {
+		projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{Tracker: "PTS", Meta: api.UploadSubject{
+			ReleaseName: "Example.Movie.2026.1080p-GRP",
+			TrackerQuestionnaireAnswers: map[string]map[string]string{"PTS": {"mandarin_override": answer}},
+		}}, "input", "catalog", "config")
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		switch answer {
+		case "no":
+			if projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0 || len(projection.RequiredActions) != 0 {
+				t.Fatalf("declined override requested more input: %+v", projection)
+			}
+		case "yes":
+			if !projection.UploadReady || len(projection.RequiredActions) != 0 {
+				t.Fatalf("approved override remained blocked: %+v", projection)
+			}
+		default:
+			if projection.Readiness != api.ReadinessStatusBlocked || len(projection.Questionnaire) != 1 ||
+				projection.Questionnaire[0].Value != "" || len(projection.RequiredActions) != 1 {
+				t.Fatalf("missing or invalid override lost corrective input: %+v", projection)
+			}
+		}
 	}
 }

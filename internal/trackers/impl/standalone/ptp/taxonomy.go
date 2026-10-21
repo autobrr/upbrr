@@ -548,6 +548,8 @@ func editionFeatures(meta api.UploadSubject) []api.TrackerEditionFeature {
 	for _, feature := range meta.ReleaseFeatures {
 		var label string
 		switch feature {
+		case api.ReleaseFeatureHybrid, api.ReleaseFeatureRemaster, api.ReleaseFeatureRestoration:
+			// Non-catalogue annotations retain their prepared display labels below.
 		case api.ReleaseFeatureTwoDiscSet:
 			label = "2-Disc Set"
 		case api.ReleaseFeature4KRestoration:
@@ -576,6 +578,18 @@ func editionFeatures(meta api.UploadSubject) []api.TrackerEditionFeature {
 		residue := value.text
 		matched := false
 		for _, option := range editionFeatureCatalogue {
+			// Explicit feature controls own these selections; opaque Edition
+			// text remains display wording rather than restoring cleared facts.
+			if meta.ReleaseNameOverrides.ReleaseFeatures != nil {
+				switch option.label {
+				case "2-Disc Set", "4K Restoration", "4K Remaster", "Extras", "2D/3D Edition", "3D Anaglyph", "3D Full SBS", "3D Half OU", "3D Half SBS":
+					if selected[option.label] != "" && option.pattern.MatchString(value.text) {
+						matched = true
+						residue = option.pattern.ReplaceAllString(residue, "")
+					}
+					continue
+				}
+			}
 			if option.pattern.MatchString(value.text) {
 				matched = true
 				// Commentary is controlled by the presence-aware metadata correction,
@@ -645,6 +659,25 @@ func editionFeatures(meta api.UploadSubject) []api.TrackerEditionFeature {
 			Evidence: evidence,
 		})
 	}
+	if slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid) {
+		options = append(options, api.TrackerEditionFeature{
+			Label:    "Hybrid",
+			Category: "Feature",
+			Selected: true,
+			Evidence: "Prepared mixed-source release marker",
+		})
+	}
+	for _, part := range meta.EditionDisplay {
+		if (part.Feature == api.ReleaseFeatureRemaster || part.Feature == api.ReleaseFeatureRestoration) &&
+			slices.Contains(meta.ReleaseFeatures, part.Feature) {
+			options = append(options, api.TrackerEditionFeature{
+				Label:    part.Text,
+				Category: "Feature",
+				Selected: true,
+				Evidence: "Prepared annotation display label",
+			})
+		}
+	}
 	if label := strings.Join(remaining, " "); label != "" {
 		options = append(options, api.TrackerEditionFeature{
 			Label:    label,
@@ -656,11 +689,47 @@ func editionFeatures(meta api.UploadSubject) []api.TrackerEditionFeature {
 	return options
 }
 
+// resolveRemasterTitle formats prepared features and legacy display wording.
+// Display text never supplies feature selection. Catalogue stripping avoids
+// repeating selected labels and retains commentary/theatrical suppression.
 func resolveRemasterTitle(meta api.UploadSubject) string {
 	var labels []string
 	for _, option := range editionFeatures(meta) {
-		if option.Selected {
-			labels = append(labels, option.Label)
+		if !option.Selected {
+			continue
+		}
+		if len(meta.EditionDisplay) > 0 &&
+			(option.Evidence == "Prepared annotation display label" || option.Evidence == "Additional prepared edition/presentation wording") {
+			continue
+		}
+		labels = append(labels, option.Label)
+	}
+	if len(meta.EditionDisplay) > 0 {
+		var remaining []string
+		for _, value := range []string{meta.Cut, api.EditionDisplayText(meta.EditionDisplay), meta.Presentation, meta.EditionSet} {
+			residue := value
+			matched := false
+			for _, option := range editionFeatureCatalogue {
+				if (slices.Contains(labels, option.label) || option.label == "With Commentary" || option.label == "Theatrical Cut") &&
+					option.pattern.MatchString(value) {
+					matched = true
+					residue = option.pattern.ReplaceAllString(residue, "")
+				}
+			}
+			residue = strings.TrimSpace(residue)
+			if matched {
+				if strings.Trim(residue, " ./_-+") == "" {
+					residue = ""
+				} else {
+					residue = strings.Trim(strings.Join(strings.Fields(residue), " "), " ./_-")
+				}
+			}
+			if residue != "" {
+				remaining = append(remaining, residue)
+			}
+		}
+		if residue := strings.Join(remaining, " "); residue != "" {
+			labels = append(labels, residue)
 		}
 	}
 	return strings.Join(labels, " / ")

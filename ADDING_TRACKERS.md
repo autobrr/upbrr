@@ -138,10 +138,13 @@ the exact prepared generation. Prepared naming facts store it in `api.NamingFact
 The versioned document is retained through prepared-state persistence and transport; it is not
 reconstructed by parsing `ReleaseName`.
 
-The canonical DVDRip layout includes a known resolution after the movie year or rendered TV
-season/episode segment, while omitting the DVD/PAL/NTSC source label. Reuse these components
-instead of inserting resolution into a rendered name. Exact-name and display-title policies
-retain their own contracts; an unknown resolution must not be inferred from the source label.
+The explicit `DVDRIP` layout includes a known resolution after the movie year or rendered TV
+season/episode segment, while omitting the DVD/PAL/NTSC source label. An `ENCODE` with exactly
+`DVD`, `PAL DVD`, or `NTSC DVD` source instead presents its Source component as `DVDRip` and
+retains the ENCODE layout, including TV episode titles. Its canonical Type and Source facts
+remain unchanged. Reuse these components instead of inserting tokens into a rendered name.
+Exact-name and display-title policies retain their own contracts; an unknown resolution must
+not be inferred from the source label.
 
 Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete supported role set is:
 
@@ -189,13 +192,27 @@ Filename edition evidence takes precedence over provider runtime labels; IMDb at
 categorized only as fallback when the filename has no edition evidence. Selected multi-edition
 playlists have a separate set identity: two distinct variants render only `2in1`, while larger
 sets retain their existing labeled aggregate. Individual category facts remain available for
-validation, but the generated document does not expose them for inclusion while a set label is
-active. A manual edition value is not reclassified as cut or presentation evidence and protects the set
-and all three category roles; clearing or omitting edition
-protects their absence. Do not classify edition text to recover these roles. For tracker payload
+validation, but automatic cut/edition/presentation components are omitted while a set label is
+active. Explicit independent presentation and feature corrections remain available immediately
+after the set label. Manual Edition replaces cut/edition/set identity without erasing independent
+presentation or feature facts. Preparation separates only complete supported manual compounds; opaque wording remains unchanged. Presentation and ReleaseFeatures corrections independently distinguish automatic (nil), explicit empty, and supported values. Trackers must not classify edition text to recover these roles. For tracker payload
 fields that need a combined label, `UploadSubject.EditionLabel()` joins the finalized categories;
 name policies must still edit their individual components. Older prepared contracts require
 preparation again rather than parsing stored names to fill the new roles.
+
+Automatic/provider non-edition annotations belong in `ReleaseFeatures`, never an edition-ID mapping.
+`EditionDisplay` is an ordered display-only projection of previously rendered wording. Each fragment
+retains its text and an optional reference to an already-classified feature; an empty reference is
+not evidence of an edition. `NameRoleEditionDisplay` replaces rendered `NameRoleEdition` when this
+projection is present, preserving its old position and ordering without duplicating genuine edition
+words. Naming policies that normalize or omit the old edition text apply that same display policy
+to the replacement role. Manual Edition edits replace only its editorial display fragments. Explicit feature selections rebuild their display fragments after Edition; Hybrid retains its separate role. Features occupy the Edition position when there is no edition. Preserve tracker-specific display policies and complete-name authority.
+
+Only display consumers may use `EditionDisplayText` or `UploadSubject.EditionDisplayLabel()`.
+Edition validation and duplicate facts continue using canonical `EditionLabel()` and independent
+feature facts; never parse display wording to infer semantic identity. Payloads with combined display
+labels and feature-review rows may retain the prepared annotation spelling. Copy the ordered slice
+when projecting a prepared generation. Older cached generations require preparation again.
 
 These roles are defined in `pkg/api/naming_document.go`; not every release layout contains every
 role. Editing targets the whole component, so audio subfields, for example, are not separately
@@ -265,6 +282,12 @@ manual components unchanged and skips unavailable targets. `Mandatory` runs afte
 has absolute authority over the role/aspect pairs declared in `Authority`, including conflicting
 manual values or omissions. This is a tracker-owned policy declaration, not a user-configurable
 permission switch. Undeclared aspects remain protected.
+
+DVD-encode Type, Source, and known Resolution corrections select facts, not exact display
+labels. The generated-document producer leaves those derived roles available to optional site
+formatting; an explicitly cleared or `OTHER` resolution stays protected. This exception applies
+only to `ENCODE` with the three DVD sources above. It does not clear manual flags on supplied
+components or give defaults authority over complete manual names or component omissions.
 
 For example, put this optional AKA omission in the tracker's `name.go` (using the `config`,
 `trackers`, and `api` packages):
@@ -974,7 +997,10 @@ evidence, and use that same mapping for payload construction and `TrackerDryRunE
 The shared projection binds the catalogue to review fingerprints and rejects changed selections
 or evidence during final preparation. Inspection fields are separate from tracker wire payloads.
 Canonical `ReleaseFeatures` annotations are distinct from Cut, Edition, Presentation, and
-EditionSet. Consume those prepared feature values directly; do not recover them from rendered
+EditionSet. Automatic Hybrid evidence is carried as `api.ReleaseFeatureHybrid`, not
+as Edition text. Preserve the separate Hybrid naming role and any supported source-composition
+payload tags; never send this annotation to editorial edition-ID mappings. Duplicate targets
+retain these annotations independently from their edition label. Consume those prepared feature values directly; do not recover them from rendered
 names or promote them into edition identity just to expose tracker tags.
 
 Keep all endpoint, payload, protocol auth, parser, rule, validation, and policy behavior in this
@@ -1082,6 +1108,12 @@ deterministic after confirmed success. A registered-artifact download or persist
 use `trackers.LogRegisteredTorrentUnavailable` and leave the successful remote upload successful.
 Client injection consumes this registered authority; never substitute the pre-upload prepared
 torrent as if it were tracker-registered.
+
+A successful draft may retain registered authority before publication. BHD returns
+`PendingPublication: true` with an `UploadedTorrents` entry and reconstructs the personalized
+artifact after confirmed draft success. Leave unavailable remote IDs and URLs empty. A matching
+entry enables normal client injection, including actionable artifact failures; pending summaries
+without that authority remain deferred. Explicit skip-client-injection options still apply.
 
 ### 4. Keep category/type handling local
 
@@ -1222,9 +1254,17 @@ and question requiredness separately when the destination can supply an omitted 
 same normalized defaults with upload preparation, preserve explicit values and deliberate clears,
 and only fall back between providers when no usable primary-provider value remains. The projection's exact
 `QuestionnaireAnswers` map owns accepted answers for descriptions and upload. An allocated empty
-map clears earlier answers; an omitted legacy map has no new answer authority. The
-projector emits a tracker-scoped questionnaire action even alongside an unrelated strict failure;
-answering the questionnaire never waives that failure. Preflight publication must use the same
+map clears earlier answers; an omitted legacy map has no new answer authority. Independent
+eligibility or preparation failures suppress questionnaire fields and answer actions. For a strict
+failure that a questionnaire answer can correct, use `NewQuestionnaireRuleFailure` and provide the
+matching pure schema. Mark rejected populated or optional fields `NeedsReview` so CLI and WebUI can
+offer corrections. The projector also emits a tracker-scoped answer action for an `input_required`
+policy decision, even when a field's review flag is missing; this fallback does not supply a missing
+schema or identify the rejected field. The CLI stops with an error rather than resubmitting retained
+answers when that action has no reviewable fields. Execution stays blocked until validation accepts
+the answer.
+Optional multiselect answers may be cleared; nonempty choices still require valid options.
+Preflight publication must use the same
 stamped action IDs, workflow revision and expiry in the aggregate assessment and each tracker
 projection; tracker lanes must not retain stale or duplicate unstamped questions.
 Do not turn an upload review into a global
@@ -1238,6 +1278,10 @@ render select, text, and comma-separated
 multiselect answers. Multiselect option labels must not contain commas. Accepted values travel in
 the exact projection and are reused during payload preparation. Keep canonical fact corrections
 in Input rather than mutating media facts from a tracker answer.
+Evidence-backed site policies may require source- and generation-bound review answers. Keep
+reviewed evidence distinct from inspected facts, invalidate answers when their relevant evidence
+changes, and preserve unresolved states. Typed submission requirements are finalized after family
+defaults; validate final descriptions after overrides so preview and submission share one result.
 
 Keep speculative new-group metadata out of the normal question panel. PTP and GPW retain those
 fields in their private accepted-answer schemas for CLI staging. If existing upload preparation
@@ -1256,7 +1300,10 @@ incomplete answer retains only a private reuse baseline, with no current duplica
 authority. Rebinding never extends duplicate freshness. Canonical prepared-release contract versions do not change for
 tracker-only questionnaire semantics; version the tracker projector instead.
 
-Non-disc TV-pack preparation uses the selected primary video's MediaInfo report. Passive pack
+By default, non-disc TV-pack preparation uses the selected primary video's MediaInfo report. A typed
+metadata requirement may request per-resource inspection for an explicit site policy; preserve
+resource identity and incomplete coverage. The following passive guidance defaults do not override
+evidence-backed site requirements. Passive pack
 consistency guidance must not request all-file collection, block on missing per-file reports,
 or ask users to establish source variation. A primary report cannot prove pack-wide consistency.
 Track-order recommendations use explicit measured container stream order, never MediaInfo document
@@ -1273,8 +1320,9 @@ programme-language gate. Keep canonical language statuses and `TrackCoverageComp
 they still describe collection-wide evidence and protect naming, source binding and independent
 requirements. Do not rewrite language facts to bypass coverage; questionnaire keys use those facts.
 
-Source-history, retention, provenance, quality and hypothetical subtitle concerns are passive
-advisories, not questionnaires or unresolved answer gates. Keep unknown facts unknown; warnings
+Without an explicit evidence-backed site requirement, source-history, retention, provenance,
+quality and hypothetical subtitle concerns are passive advisories, not questionnaires or unresolved
+answer gates. Keep unknown facts unknown; warnings
 must not assert source compliance or grant staff permission, replacement qualification, or an
 exception to independent measured constraints. Use inspected languages, titles, default/forced
 flags and container order before asking for genuinely missing upload input. Use an advisory

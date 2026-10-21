@@ -83,6 +83,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		TVPack:                      release.Episode.Pack,
 		DailyEpisodeDate:            release.Episode.DailyDate,
 		Anime:                       release.Media.Anime,
+		AnimeKnown:                  release.Media.AnimeKnown,
 		EpisodeTitle:                release.Episode.Title,
 		EpisodeOverview:             release.Episode.Overview,
 		SelectedBDMVPlaylists:       selectedPlaylists,
@@ -106,9 +107,11 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		Region:                      release.Media.Region,
 		VideoCodec:                  release.Media.VideoCodec,
 		VideoEncode:                 release.Media.VideoEncode,
+		VideoEncoder:                release.Media.VideoEncoder,
 		HasEncodeSettings:           release.Media.HasEncodeSettings,
 		BitDepth:                    release.Media.BitDepth,
 		ReleaseFeatures:             append([]api.ReleaseFeature(nil), release.Media.ReleaseFeatures...),
+		EditionDisplay:              append([]api.EditionDisplayPart(nil), release.Media.EditionDisplay...),
 		EditionSet:                  release.Media.EditionSet,
 		Cut:                         release.Media.Cut,
 		Presentation:                release.Media.Presentation,
@@ -605,6 +608,8 @@ func releaseInfo(release api.PreparedRelease) api.ReleaseInfo {
 		Cut:          singletonFact(release.Media.Cut),
 		Edition:      singletonFact(release.Media.Edition),
 		Other:        append([]string(nil), naming.Other...),
+
+		ReleaseFeatures: append([]api.ReleaseFeature(nil), release.Media.ReleaseFeatures...),
 	}
 }
 

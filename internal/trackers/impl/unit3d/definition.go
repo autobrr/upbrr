@@ -328,6 +328,11 @@ func (d *Definition) prepareUpload(ctx context.Context, req trackers.Preparation
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s rule authorization: %w", d.profile.Name, err)
 	}
 	if blockingFailure != nil {
+		if blockingFailure.QuestionnaireInput {
+			if schema := d.ProjectionQuestionnaire(req); schema != nil {
+				return trackers.PreparedOperation{}, trackers.NewQuestionnairePreparationFailure(req.Tracker, blockingFailure.Reason, schema)
+			}
+		}
 		return trackers.PreparedOperation{}, fmt.Errorf(
 			"trackers: %s constructibility %s: %s",
 			d.profile.Name,

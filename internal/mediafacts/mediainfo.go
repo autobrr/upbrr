@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -290,4 +292,67 @@ func AddHDRFormat(formats *[]api.HDRFormat, format api.HDRFormat) {
 	if formats != nil && !slices.Contains(*formats, format) {
 		*formats = append(*formats, format)
 	}
+}
+
+// EnglishSubtitlesFromMediaInfoText requires an explicit language in an inspected text track.
+func EnglishSubtitlesFromMediaInfoText(value string) bool {
+	english, _ := EnglishSubtitleEvidenceFromMediaInfoText(value)
+	return english
+}
+
+// EnglishSubtitleEvidenceFromMediaInfoText distinguishes inspected absence from missing languages.
+func EnglishSubtitleEvidenceFromMediaInfoText(value string) (english, known bool) {
+	section := ""
+	general, video := false, false
+	textCount, declaredCount := 0, -1
+	textKnown, allKnown := true, true
+	for line := range strings.SplitSeq(strings.ReplaceAll(value, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if match := mediaInfoSectionPattern.FindStringSubmatch(line); len(match) == 2 {
+			if section == "text" {
+				allKnown = allKnown && textKnown
+			}
+			section = strings.ToLower(match[1])
+			if section == "text" {
+				textCount++
+				textKnown = false
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key, value = strings.ToLower(strings.TrimSpace(key)), strings.TrimSpace(value)
+		if key == "format" && value != "" {
+			if section == "general" {
+				general = true
+			}
+			if section == "video" {
+				video = true
+			}
+		}
+		if section == "general" && key == "count of text streams" {
+			if count, err := strconv.Atoi(value); err == nil && count >= 0 {
+				declaredCount = count
+			}
+		}
+		if section == "text" && key == "language" {
+			languages := languageutil.NormalizeLanguageList([]string{value})
+			if slices.Contains(languages, "English") {
+				english = true
+			}
+			textKnown = knownLanguages(languages)
+		}
+	}
+	if section == "text" {
+		allKnown = allKnown && textKnown
+	}
+	if english {
+		return true, true
+	}
+	if !general || !video || !allKnown || declaredCount < 0 || declaredCount != textCount {
+		return false, false
+	}
+	return false, true
 }

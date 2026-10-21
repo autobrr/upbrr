@@ -42,7 +42,7 @@ func TestTrackerAudioOrderDoesNotReplaceOriginalPresence(t *testing.T) {
 	}
 }
 
-func TestTrackerAudioOrderRecommendationsRemainNonBlocking(t *testing.T) {
+func TestTrackerAudioOrderRecommendationsRespectPersonalPolicy(t *testing.T) {
 	for _, tracker := range []string{"LST", "LUME"} {
 		for _, personal := range []bool{false, true} {
 			subject := languageSubject("Japanese", "English", "Japanese")
@@ -56,10 +56,18 @@ func TestTrackerAudioOrderRecommendationsRemainNonBlocking(t *testing.T) {
 					continue
 				}
 				found = true
+				strict := tracker == "LST" && personal
+				want := api.RuleDispositionAdvisory
+				if strict {
+					want = api.RuleDispositionStrict
+				}
 				for _, acknowledged := range []bool{false, true} {
-					if failure.Disposition != api.RuleDispositionAdvisory || trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, acknowledged) {
-						t.Fatalf("%s personal=%t ordering requires approval: %+v", tracker, personal, failure)
+					if failure.Disposition != want || trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, acknowledged) != strict {
+						t.Fatalf("%s personal=%t acknowledgement=%t changed ordering policy: %+v", tracker, personal, acknowledged, failure)
 					}
+				}
+				if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeDebug, false) {
+					t.Fatalf("%s personal=%t ordering overrode debug bypass: %+v", tracker, personal, failure)
 				}
 			}
 			if !found {

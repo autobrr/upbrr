@@ -34,38 +34,59 @@ func (m *Module) CorrectionsCurrent(ctx context.Context, source string, revision
 // Title and original-title corrections are discarded, along with manual year
 // when the category is already TV. Final identity resolution repeats this cleanup.
 func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error) {
+	resolved, _, err := m.resolveInput(ctx, raw, update, nil)
+	return resolved, err
+}
+
+// CorrectionsUnchanged validates an update without writing corrections. It requires
+// the expected saved revision, complete correction record, and effective input
+// instructions to remain unchanged after the ordinary owner normalization.
+func (m *Module) CorrectionsUnchanged(
+	ctx context.Context, raw api.PrepareInput, update api.ReleaseCorrectionUpdate, expectedRevision uint64,
+) (bool, error) {
+	_, unchanged, err := m.resolveInput(ctx, raw, update, &expectedRevision)
+	return unchanged, err
+}
+
+// resolveInput shares correction validation between acceptance and read-only
+// comparison. A non-nil expectedRevision suppresses all correction writes.
+func (m *Module) resolveInput(
+	ctx context.Context, raw api.PrepareInput, update api.ReleaseCorrectionUpdate, expectedRevision *uint64,
+) (api.ResolvedPreparationInput, bool, error) {
 	if m == nil || m.store == nil || ctx == nil {
-		return api.ResolvedPreparationInput{}, errors.New("prepared release: initialized module and context are required")
+		return api.ResolvedPreparationInput{}, false, errors.New("prepared release: initialized module and context are required")
 	}
 	normalized, err := normalizePrepareInput(raw)
 	if err != nil {
-		return api.ResolvedPreparationInput{}, err
+		return api.ResolvedPreparationInput{}, false, err
 	}
 	raw = normalized.input
 	if err := api.NormalizeReleaseFactInstructionsCategory(&raw.Instructions); err != nil {
-		return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: normalize correction category: %w", err)
+		return api.ResolvedPreparationInput{}, false, fmt.Errorf("prepared release: normalize correction category: %w", err)
 	}
 	releaseGate, err := m.gates.acquire(ctx, normalized.sourceKey)
 	if err != nil {
-		return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: resolve input gate: %w", err)
+		return api.ResolvedPreparationInput{}, false, fmt.Errorf("prepared release: resolve input gate: %w", err)
 	}
 	defer releaseGate()
 	layout, err := sourcelayout.Resolve(ctx, raw.SourcePath)
 	if err != nil {
-		return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: inspect correction source: %w", err)
+		return api.ResolvedPreparationInput{}, false, fmt.Errorf("prepared release: inspect correction source: %w", err)
 	}
 	_, fingerprint, err := inspectSource(ctx, raw, layout)
 	if err != nil {
-		return api.ResolvedPreparationInput{}, err
+		return api.ResolvedPreparationInput{}, false, err
 	}
 	values := correctionValues(raw.Instructions)
 	if update.Mode != api.ReleaseCorrectionUpdateInherit {
 		// Explicit updates own new version writes; raw instructions may be retained
 		// workflow state that the update replaces or resets.
 		values.ReleaseName.Repack = nil
+		values.ReleaseName.Presentation = nil
+		values.ReleaseName.ReleaseFeatures = nil
 	}
 	if err := (api.ReleaseCorrectionPatch{Values: values}).Validate(); err != nil {
-		return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: validate correction values: %w", err)
+		return api.ResolvedPreparationInput{}, false, fmt.Errorf("prepared release: validate correction values: %w", err)
 	}
 	// Source-start instructions patch inherited intent. Explicit replacement
 	// and reset envelopes are chosen by their workflow adapters instead.
@@ -78,19 +99,19 @@ func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update 
 	}
 	current, hasCurrent, err := m.loadCurrent(ctx, raw.SourcePath)
 	if err != nil {
-		return api.ResolvedPreparationInput{}, err
+		return api.ResolvedPreparationInput{}, false, err
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: resolve corrections canceled: %w", err)
+			return api.ResolvedPreparationInput{}, false, fmt.Errorf("prepared release: resolve corrections canceled: %w", err)
 		}
 		stored, err := m.store.LoadReleaseCorrections(ctx, raw.SourcePath)
 		if err != nil {
-			return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: load corrections: %w", err)
+			return api.ResolvedPreparationInput{}, false, fmt.Errorf("prepared release: load corrections: %w", err)
 		}
 		accepted, err := api.ApplyReleaseCorrectionUpdate(stored, update)
 		if err != nil {
-			return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: apply correction update: %w", err)
+			return api.ResolvedPreparationInput{}, false, fmt.Errorf("prepared release: apply correction update: %w", err)
 		}
 		binding := api.ContentBinding{SourceFingerprint: fingerprint}
 		if hasCurrent && current.Compatibility.SourceFingerprint == fingerprint {
@@ -99,11 +120,11 @@ func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update 
 		applyCorrectionIdentity(&binding, accepted)
 		discardProviderOwnedCorrections(&accepted, binding.Category)
 		if err := normalizeAcceptedCorrections(&accepted); err != nil {
-			return api.ResolvedPreparationInput{}, err
+			return api.ResolvedPreparationInput{}, false, err
 		}
 		confirmedBinding, hasConfirmation, err := correctionConfirmationBinding(update, stored, accepted, fingerprint)
 		if err != nil {
-			return api.ResolvedPreparationInput{}, err
+			return api.ResolvedPreparationInput{}, false, err
 		}
 		if hasConfirmation {
 			binding = confirmedBinding
@@ -116,21 +137,42 @@ func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update 
 			}
 		}
 		if err := validateTrackCorrections(accepted.Metadata.TrackLanguages, current, fingerprint); err != nil {
-			return api.ResolvedPreparationInput{}, err
+			return api.ResolvedPreparationInput{}, false, err
 		}
 		if len(correctionValuesFromStored(accepted).Fields()) != 0 {
 			accepted.SourceFingerprint = fingerprint
 		}
-		snapshot, err := m.store.CompareAndSwapReleaseCorrections(ctx, raw.SourcePath, stored.Revision, accepted)
-		if err != nil {
-			if errors.Is(err, api.ErrCorrectionConflict) && (update.Patch == nil || update.Patch.ExpectedRevision == nil) {
-				continue
+		snapshot := api.ReleaseCorrectionsSnapshot{Corrections: accepted, Revision: stored.Revision}
+		if expectedRevision == nil {
+			snapshot, err = m.store.CompareAndSwapReleaseCorrections(ctx, raw.SourcePath, stored.Revision, accepted)
+			if err != nil {
+				if errors.Is(err, api.ErrCorrectionConflict) && (update.Patch == nil || update.Patch.ExpectedRevision == nil) {
+					continue
+				}
+				return api.ResolvedPreparationInput{}, false, fmt.Errorf("prepared release: accept corrections: %w", err)
 			}
-			return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: accept corrections: %w", err)
 		}
 		effective, err := effectiveCorrectionInstructions(raw.Instructions, snapshot.Corrections)
 		if err != nil {
-			return api.ResolvedPreparationInput{}, err
+			return api.ResolvedPreparationInput{}, false, err
+		}
+		unchanged := false
+		if expectedRevision != nil {
+			// Compare the JSON representations used by correction persistence,
+			// including complete binding/reset state and nil/omitempty semantics.
+			type comparison struct {
+				Corrections  api.StoredReleaseCorrectionsV1
+				Instructions api.ReleaseFactInstructions
+			}
+			before, err := fingerprintJSON(comparison{Corrections: stored.Corrections, Instructions: raw.Instructions})
+			if err != nil {
+				return api.ResolvedPreparationInput{}, false, err
+			}
+			after, err := fingerprintJSON(comparison{Corrections: accepted, Instructions: effective})
+			if err != nil {
+				return api.ResolvedPreparationInput{}, false, err
+			}
+			unchanged = stored.Revision == *expectedRevision && before == after
 		}
 		raw.Instructions = effective
 		return api.ResolvedPreparationInput{
@@ -138,7 +180,7 @@ func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update 
 			Corrections:       snapshot,
 			SourceFingerprint: fingerprint,
 			ExplicitFields:    explicit,
-		}, nil
+		}, unchanged, nil
 	}
 }
 

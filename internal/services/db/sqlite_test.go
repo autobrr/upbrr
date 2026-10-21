@@ -356,7 +356,10 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get external metadata: %v", err)
 	}
-	if metadata.TMDB == nil || metadata.TMDB.TMDBID != 100 || metadata.IMDB == nil || metadata.IMDB.IMDBID != 200 || metadata.AniList == nil || metadata.AniList.AniListID != 300 || metadata.Bluray == nil || metadata.Bluray.SelectedReleaseID != "123" {
+	if metadata.TMDB == nil || metadata.TMDB.TMDBID != 100 || metadata.IMDB == nil || metadata.IMDB.IMDBID != 200 || metadata.AniList == nil ||
+		metadata.AniList.AniListID != 300 ||
+		metadata.Bluray == nil ||
+		metadata.Bluray.SelectedReleaseID != "123" {
 		t.Fatalf("unexpected external metadata: %#v", metadata)
 	}
 	if !metadata.UpdatedAt.Equal(idsStamp) {
@@ -1173,7 +1176,14 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 	}
 
 	var updatedAt string
-	if err := dbConn.QueryRowContext(context.Background(), `SELECT updated_at FROM description_overrides WHERE source_path = ? AND group_key = ?`, "/tmp/source", "").Scan(&updatedAt); err != nil {
+	if err := dbConn.QueryRowContext(
+		context.Background(),
+		`SELECT updated_at FROM description_overrides WHERE source_path = ? AND group_key = ?`,
+		"/tmp/source",
+		"",
+	).Scan(
+		&updatedAt,
+	); err != nil {
 		t.Fatalf("read migrated updated_at: %v", err)
 	}
 	if strings.TrimSpace(updatedAt) == "" {
@@ -1386,7 +1396,12 @@ func TestSQLiteMigrationUnknownAppliedIDsAreTolerated(t *testing.T) {
 	if err := Migrate(rawDB); err != nil {
 		t.Fatalf("initial migrate: %v", err)
 	}
-	if _, err := rawDB.ExecContext(context.Background(), `INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "branch_only_future_migration", "2026-04-18T00:00:00Z"); err != nil {
+	if _, err := rawDB.ExecContext(
+		context.Background(),
+		`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`,
+		"branch_only_future_migration",
+		"2026-04-18T00:00:00Z",
+	); err != nil {
 		t.Fatalf("insert unknown migration: %v", err)
 	}
 
@@ -1460,7 +1475,12 @@ func TestSQLiteMigrationFailsWhenAppliedMigrationIsMissingDependency(t *testing.
 	if err := ensureSchemaMigrationsTable(context.Background(), rawDB); err != nil {
 		t.Fatalf("ensure schema_migrations: %v", err)
 	}
-	if _, err := rawDB.ExecContext(context.Background(), `INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "child", "2026-04-18T00:00:00Z"); err != nil {
+	if _, err := rawDB.ExecContext(
+		context.Background(),
+		`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`,
+		"child",
+		"2026-04-18T00:00:00Z",
+	); err != nil {
 		t.Fatalf("insert inconsistent applied migration: %v", err)
 	}
 
@@ -1584,7 +1604,16 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("create legacy ui_states: %v", err)
 	}
-	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO ui_states (source_path, payload) VALUES (?, ?), (?, ?), (?, ?)`, targetPath, "target", equivalentTargetPath, "target-equivalent", otherPath, "other"); err != nil {
+	if _, err := repo.RawDB().ExecContext(
+		ctx,
+		`INSERT INTO ui_states (source_path, payload) VALUES (?, ?), (?, ?), (?, ?)`,
+		targetPath,
+		"target",
+		equivalentTargetPath,
+		"target-equivalent",
+		otherPath,
+		"other",
+	); err != nil {
 		t.Fatalf("insert legacy ui_states: %v", err)
 	}
 
@@ -1750,7 +1779,14 @@ func TestSQLitePurgeContentData(t *testing.T) {
 		t.Fatalf("expected screenshot slots removed, got len=%d err=%v", len(slots), err)
 	}
 	var legacyRows int
-	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE source_path IN (?, ?)`, targetPath, equivalentTargetPath).Scan(&legacyRows); err != nil {
+	if err := repo.RawDB().QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM ui_states WHERE source_path IN (?, ?)`,
+		targetPath,
+		equivalentTargetPath,
+	).Scan(
+		&legacyRows,
+	); err != nil {
 		t.Fatalf("query target legacy ui_states: %v", err)
 	}
 	if legacyRows != 0 {
@@ -1839,7 +1875,12 @@ func TestSQLitePurgeContentDataRemovesSourceAssociatedWorkflowState(t *testing.T
 	if _, err := repo.LoadReleaseWorkflowState(ctx, other.OwnerID, other.WorkflowID); err != nil {
 		t.Fatalf("other workflow after purge: %v", err)
 	}
-	if fence, err := repo.LoadSubmissionFence(ctx, otherIdentity, "ALPHA|https://alpha.example/"); err != nil || fence.Status != api.WorkflowEffectStatusSucceeded {
+	if fence, err := repo.LoadSubmissionFence(
+		ctx,
+		otherIdentity,
+		"ALPHA|https://alpha.example/",
+	); err != nil ||
+		fence.Status != api.WorkflowEffectStatusSucceeded {
 		t.Fatalf("other fence after purge = %#v, %v", fence, err)
 	}
 	if count := workflowHistoryEffectCount(t, repo, other); count != 1 {
@@ -1929,7 +1970,7 @@ func TestSQLiteListHistoryProtectedSourcePathsIncludesActiveInputSources(t *test
 	active.State, active.Revision = api.ActiveInputActive, opening.Revision+1
 	active.InputID, active.SourceVersion, active.WorkflowID = input.ID, input.SourceVersion, workflow.WorkflowID
 	active.ReservationID, active.RequestedPath = "", ""
-	if err := repo.FinalizeActiveInput(ctx, opening, active, input, nil, now); err != nil {
+	if err := repo.FinalizeActiveInput(ctx, opening, active, input, nil, now, nil); err != nil {
 		t.Fatalf("activate input: %v", err)
 	}
 	if err := repo.RelinquishActiveInput(ctx, active.CoordinatorID, active.Fence, now); err != nil {
@@ -2223,7 +2264,16 @@ func TestSQLitePurgeContentDataPreservesOtherSourceReusableTombstoneSuppression(
 	captureFingerprint := mediaReuseTestSHA256("shared-capture")
 	contentSHA256 := mediaReuseTestSHA256("shared-content")
 	for _, asset := range []struct{ sourcePath, imagePath string }{{sourceA, imageA}, {sourceB, imageB}} {
-		insertReusableMediaAssetForTest(t, repo, asset.sourcePath, asset.imagePath, string(compatibilityKey), captureFingerprint, contentSHA256, time.Now().UTC())
+		insertReusableMediaAssetForTest(
+			t,
+			repo,
+			asset.sourcePath,
+			asset.imagePath,
+			string(compatibilityKey),
+			captureFingerprint,
+			contentSHA256,
+			time.Now().UTC(),
+		)
 		binding := api.PreparedMediaBinding{
 			SourcePath:               asset.sourcePath,
 			PreparedMediaFingerprint: "prepared",
@@ -2483,7 +2533,17 @@ func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
 	}
 
 	var count int
-	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?, ?, ?, ?)`, "target-by-data", "target-by-equivalent-data", "target-by-nested-data", targetPath, equivalentTargetPath).Scan(&count); err != nil {
+	if err := repo.RawDB().QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?, ?, ?, ?)`,
+		"target-by-data",
+		"target-by-equivalent-data",
+		"target-by-nested-data",
+		targetPath,
+		equivalentTargetPath,
+	).Scan(
+		&count,
+	); err != nil {
 		t.Fatalf("query removed legacy ui_states: %v", err)
 	}
 	if count != 0 {
@@ -2567,7 +2627,12 @@ func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 		t.Fatalf("insert orphan reusable tombstone: %v", err)
 	}
 	insertReusableMediaAssetForTest(t, repo, "/media/orphan-reusable.mkv", "/tmp/orphan-reusable.png", "key", "capture", "content", now)
-	workflow := workflowStateRecordForTest("orphan-workflow", api.WorkflowStatusActive, now, string(workflowHistoryPayloadForTest(t, "/media/orphan-workflow.mkv")))
+	workflow := workflowStateRecordForTest(
+		"orphan-workflow",
+		api.WorkflowStatusActive,
+		now,
+		string(workflowHistoryPayloadForTest(t, "/media/orphan-workflow.mkv")),
+	)
 	if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
 		t.Fatalf("create orphan workflow: %v", err)
 	}
@@ -2712,7 +2777,12 @@ func TestSQLiteMigrationBackfillsUploadedImageUsageScope(t *testing.T) {
 		t.Fatalf("legacy uploaded images must remain hidden, got %d", len(images))
 	}
 	var usageScope string
-	if err := rawDB.QueryRowContext(context.Background(), `SELECT usage_scope FROM uploaded_images WHERE source_path = "/tmp/source"`).Scan(&usageScope); err != nil {
+	if err := rawDB.QueryRowContext(
+		context.Background(),
+		`SELECT usage_scope FROM uploaded_images WHERE source_path = "/tmp/source"`,
+	).Scan(
+		&usageScope,
+	); err != nil {
 		t.Fatalf("load migrated usage scope: %v", err)
 	}
 	if usageScope != "global" {

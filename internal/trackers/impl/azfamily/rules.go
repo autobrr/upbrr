@@ -670,15 +670,14 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 				outcome = trackers.LanguageProhibited
 			}
 			if outcome != "" {
-				failures = append(
-					failures,
-					trackers.LanguageRuleFailure(
-						subject,
-						"regional_dialect",
-						"regional-dialect exception for "+strings.Join(dialects, ", ")+" must be established against the original language",
-						outcome,
-					),
+				failure := trackers.LanguageRuleFailure(
+					subject,
+					"regional_dialect",
+					"regional-dialect exception for "+strings.Join(dialects, ", ")+" must be established against the original language",
+					outcome,
 				)
+				failure.QuestionnaireInput = outcome == trackers.LanguageUnresolved
+				failures = append(failures, failure)
 			}
 		} else if facts.OriginalLanguagesKnown && programmeStatus == api.MetadataEvidenceStatusComplete &&
 			!facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {

@@ -142,6 +142,7 @@ var trackerAliases = map[string]string{
 	"DIGITALCORE":     "DC",
 	"HDSPACE":         "HDS",
 	"RACING4EVERYONE": "R4E",
+	"SEEDCORE":        "SC",
 	"UPLOAD.CX":       "ULCX",
 	"IMMORTALSEED":    "IS",
 	"LUMINARR":        "LUME",

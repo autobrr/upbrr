@@ -675,3 +675,21 @@ func TestNormalizePreservesUnrecognizedStructuredEdition(t *testing.T) {
 		t.Fatalf("structured edition fact = %#v", facts.Edition)
 	}
 }
+
+func TestCandidateEvidenceFingerprintBindsSourceFactsNotDownloadLinks(t *testing.T) {
+	entry := api.DupeEntry{
+		ID:        "123",
+		Name:      "Example Release",
+		MediaInfo: "Text\nLanguage : English",
+		Download:  "https://example.test/one",
+	}
+	first := candidateEvidenceFingerprint(NormalizeCandidate(entry, "LST"))
+	entry.Download = "https://example.test/two"
+	if got := candidateEvidenceFingerprint(NormalizeCandidate(entry, "LST")); got != first {
+		t.Fatal("rotated private download link invalidated source proof")
+	}
+	entry.MediaInfo = "Text\nLanguage : Japanese"
+	if got := candidateEvidenceFingerprint(NormalizeCandidate(entry, "LST")); got == first {
+		t.Fatal("changed inspected source retained comparison proof")
+	}
+}

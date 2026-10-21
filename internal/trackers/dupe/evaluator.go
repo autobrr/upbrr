@@ -67,6 +67,7 @@ func Evaluate(
 		setCandidates = append(setCandidates, candidate)
 		setCandidateFacts = append(setCandidateFacts, facts)
 		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy, search.WorkScope)
+		findings = appendEvidenceFinding(target, targetFacts, candidate, facts, policy, search.WorkScope, findings)
 		evaluation.Candidates = append(evaluation.Candidates, resolveCandidateFindings(candidate, facts, findings))
 	}
 	evaluation.SetFindings = evaluateSetRules(targetFacts, setCandidates, setCandidateFacts, policy, search)
@@ -476,34 +477,35 @@ func publicCandidateEvaluations(evaluation Evaluation) []api.DupeCandidateEvalua
 	for _, item := range evaluation.Candidates {
 		candidate := item.Candidate
 		result = append(result, api.DupeCandidateEvaluation{
-			ID:             candidate.ID,
-			Name:           candidate.Name,
-			Link:           sanitizePublicURL(candidate.DetailsLink),
-			SizeBytes:      candidate.SizeBytes,
-			Relation:       item.Relation,
-			Reasons:        append([]api.DupeReason(nil), item.Reasons...),
-			Flags:          append([]string(nil), candidate.Flags...),
-			HDR:            cloneHDRFacts(item.Facts.HDR),
-			Category:       candidate.Category,
-			Type:           candidate.Type,
-			Resolution:     firstNonEmpty(candidate.Resolution, item.Facts.Resolution.Value),
-			Source:         candidate.Source,
-			Codec:          candidate.Codec,
-			Container:      candidate.Container,
-			Provider:       candidate.Provider,
-			Group:          candidate.Group,
-			ReleaseOrigin:  candidate.ReleaseOrigin,
-			Edition:        candidate.Edition,
-			Region:         candidate.Region,
-			ThreeD:         candidate.ThreeD,
-			Repack:         candidate.Repack,
-			Season:         candidate.Season,
-			Episode:        candidate.Episode,
-			Date:           candidate.Date,
-			Pack:           candidate.Pack,
-			Internal:       candidate.Internal,
-			Trumpable:      candidate.Trumpable,
-			EvidenceStatus: item.Facts.HDR.Status,
+			EvidenceFingerprint: candidateEvidenceFingerprint(candidate),
+			ID:                  candidate.ID,
+			Name:                candidate.Name,
+			Link:                sanitizePublicURL(candidate.DetailsLink),
+			SizeBytes:           candidate.SizeBytes,
+			Relation:            item.Relation,
+			Reasons:             append([]api.DupeReason(nil), item.Reasons...),
+			Flags:               append([]string(nil), candidate.Flags...),
+			HDR:                 cloneHDRFacts(item.Facts.HDR),
+			Category:            candidate.Category,
+			Type:                candidate.Type,
+			Resolution:          firstNonEmpty(candidate.Resolution, item.Facts.Resolution.Value),
+			Source:              candidate.Source,
+			Codec:               candidate.Codec,
+			Container:           candidate.Container,
+			Provider:            candidate.Provider,
+			Group:               candidate.Group,
+			ReleaseOrigin:       candidate.ReleaseOrigin,
+			Edition:             candidate.Edition,
+			Region:              candidate.Region,
+			ThreeD:              candidate.ThreeD,
+			Repack:              candidate.Repack,
+			Season:              candidate.Season,
+			Episode:             candidate.Episode,
+			Date:                candidate.Date,
+			Pack:                candidate.Pack,
+			Internal:            candidate.Internal,
+			Trumpable:           candidate.Trumpable,
+			EvidenceStatus:      item.Facts.HDR.Status,
 		})
 	}
 	return result

@@ -18,17 +18,18 @@ type persistedAssessment struct {
 }
 
 type persistedAssessmentEntry struct {
-	Tracker       string            `json:"tracker"`
-	Binding       string            `json:"binding"`
-	OutcomeID     string            `json:"outcomeId"`
-	Disposition   Disposition       `json:"disposition"`
-	Code          string            `json:"code,omitempty"`
-	HasDupes      bool              `json:"hasDupes"`
-	Verdict       Verdict           `json:"verdict"`
-	Authorization AuthorizationKind `json:"authorization,omitempty"`
-	Match         api.DupeMatch     `json:"match"`
-	PrivateRaw    []api.DupeEntry   `json:"privateRaw,omitempty"`
-	ReviewReasons []api.DupeReason  `json:"reviewReasons,omitempty"`
+	Tracker        string            `json:"tracker"`
+	BindingSubject json.RawMessage   `json:"bindingSubject,omitempty"`
+	Binding        string            `json:"binding"`
+	OutcomeID      string            `json:"outcomeId"`
+	Disposition    Disposition       `json:"disposition"`
+	Code           string            `json:"code,omitempty"`
+	HasDupes       bool              `json:"hasDupes"`
+	Verdict        Verdict           `json:"verdict"`
+	Authorization  AuthorizationKind `json:"authorization,omitempty"`
+	Match          api.DupeMatch     `json:"match"`
+	PrivateRaw     []api.DupeEntry   `json:"privateRaw,omitempty"`
+	ReviewReasons  []api.DupeReason  `json:"reviewReasons,omitempty"`
 }
 
 // MarshalBinary serializes private duplicate decision authority for the scoped artifact vault.
@@ -40,17 +41,18 @@ func (a Assessment) MarshalBinary() ([]byte, error) {
 	for _, tracker := range sortedAssessmentTrackers(a.entries) {
 		entry := a.entries[tracker]
 		persisted.Entries = append(persisted.Entries, persistedAssessmentEntry{
-			Tracker:       entry.tracker,
-			Binding:       entry.binding,
-			OutcomeID:     entry.outcomeID,
-			Disposition:   entry.disposition,
-			Code:          entry.code,
-			HasDupes:      entry.hasDupes,
-			Verdict:       entry.verdict,
-			Authorization: entry.authorization,
-			Match:         clonePrivateMatch(entry.match),
-			PrivateRaw:    cloneEntries(entry.privateRaw),
-			ReviewReasons: append([]api.DupeReason(nil), entry.reviewReasons...),
+			Tracker:        entry.tracker,
+			Binding:        entry.binding,
+			BindingSubject: entry.bindingSubject,
+			OutcomeID:      entry.outcomeID,
+			Disposition:    entry.disposition,
+			Code:           entry.code,
+			HasDupes:       entry.hasDupes,
+			Verdict:        entry.verdict,
+			Authorization:  entry.authorization,
+			Match:          clonePrivateMatch(entry.match),
+			PrivateRaw:     cloneEntries(entry.privateRaw),
+			ReviewReasons:  append([]api.DupeReason(nil), entry.reviewReasons...),
 		})
 	}
 	payload, err := json.Marshal(persisted)
@@ -93,17 +95,18 @@ func UnmarshalAssessment(payload []byte) (Assessment, error) {
 			return Assessment{}, errors.New("duplicate assessment contains invalid authorization")
 		}
 		assessment.entries[tracker] = assessmentEntry{
-			tracker:       tracker,
-			binding:       strings.TrimSpace(persistedEntry.Binding),
-			outcomeID:     strings.TrimSpace(persistedEntry.OutcomeID),
-			disposition:   persistedEntry.Disposition,
-			code:          strings.TrimSpace(persistedEntry.Code),
-			hasDupes:      persistedEntry.HasDupes,
-			verdict:       persistedEntry.Verdict,
-			authorization: persistedEntry.Authorization,
-			match:         clonePrivateMatch(persistedEntry.Match),
-			privateRaw:    cloneEntries(persistedEntry.PrivateRaw),
-			reviewReasons: append([]api.DupeReason(nil), persistedEntry.ReviewReasons...),
+			tracker:        tracker,
+			binding:        strings.TrimSpace(persistedEntry.Binding),
+			bindingSubject: persistedEntry.BindingSubject,
+			outcomeID:      strings.TrimSpace(persistedEntry.OutcomeID),
+			disposition:    persistedEntry.Disposition,
+			code:           strings.TrimSpace(persistedEntry.Code),
+			hasDupes:       persistedEntry.HasDupes,
+			verdict:        persistedEntry.Verdict,
+			authorization:  persistedEntry.Authorization,
+			match:          clonePrivateMatch(persistedEntry.Match),
+			privateRaw:     cloneEntries(persistedEntry.PrivateRaw),
+			reviewReasons:  append([]api.DupeReason(nil), persistedEntry.ReviewReasons...),
 		}
 	}
 	if len(assessment.entries) == 0 && !assessment.assessed {

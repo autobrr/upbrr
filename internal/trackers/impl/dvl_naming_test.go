@@ -82,7 +82,7 @@ func TestRegistryProjectsDVLStructuredName(t *testing.T) {
 		t.Fatal("DVL projection mutated canonical naming")
 	}
 	descriptor, ok := registry.LookupDescriptor("DVL")
-	if !ok || descriptor.ReleaseNamePolicy.ID != "unit3d/dvl/v2" || descriptor.ReleaseNamePolicy.Structured == nil {
+	if !ok || descriptor.ReleaseNamePolicy.ID != "unit3d/dvl/v3" || descriptor.ReleaseNamePolicy.Structured == nil {
 		t.Fatal("DVL must register its v2 structured policy")
 	}
 }

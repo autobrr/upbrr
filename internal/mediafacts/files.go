@@ -7,12 +7,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// ResolveFiles finalizes the primary file from current corrected release facts.
-// Other files retain their own inspected evidence; primary corrections are not
-// assertions about every episode in a pack.
+// ResolveFiles preserves measured resources and applies current track corrections.
+// Aggregate language corrections apply only to the primary file.
 func ResolveFiles(media api.MediaFacts, resolution string) api.MediaFileFacts {
 	facts := media.MediaFileFacts.Clone()
 	if len(facts.Files) == 0 {
@@ -21,7 +21,38 @@ func ResolveFiles(media api.MediaFacts, resolution string) api.MediaFileFacts {
 	facts.OriginalLanguage = media.OriginalLanguage
 	for i := range facts.Files {
 		file := &facts.Files[i]
+		if file.ResourceID != "" {
+			*file = ResolveResourceLanguages(*file, media.Tracks)
+		}
 		if !file.Primary {
+			continue
+		}
+		if file.ResourceID != "" {
+			if media.AudioLanguagesProvenance == api.FactProvenanceManual || media.AudioLanguagesProvenance == api.FactProvenanceManualEmpty {
+				file.AudioLanguages = slices.Clone(media.AudioLanguages)
+				file.AudioStatus = fileLanguageStatus(
+					nil,
+					api.MediaTrackAudio,
+					file.AudioLanguages,
+					media.AudioLanguagesProvenance,
+					file.VideoTrackCount > 0,
+					file.AudioStatus,
+				)
+			}
+			if media.SubtitleLanguagesProvenance == api.FactProvenanceManual || media.SubtitleLanguagesProvenance == api.FactProvenanceManualEmpty {
+				file.SubtitleLanguages = slices.Clone(media.SubtitleLanguages)
+				file.SubtitleStatus = fileLanguageStatus(
+					nil,
+					api.MediaTrackSubtitle,
+					file.SubtitleLanguages,
+					media.SubtitleLanguagesProvenance,
+					file.VideoTrackCount > 0,
+					file.SubtitleStatus,
+				)
+			}
+			if media.AudioLanguagesProvenance.IsManual() && media.LanguageFacts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory {
+				file.AudioStatus = api.MetadataEvidenceStatusContradictory
+			}
 			continue
 		}
 		file.Container, file.Source, file.Resolution = media.Container, media.Source, resolution
@@ -55,6 +86,29 @@ func ResolveFiles(media api.MediaFacts, resolution string) api.MediaFileFacts {
 		)
 	}
 	return SummarizeFiles(facts)
+}
+
+// ResolveResourceLanguages applies current track corrections to their inspected resource.
+func ResolveResourceLanguages(file api.MediaFileFact, tracks []api.MediaTrackFacts) api.MediaFileFact {
+	var resourceTracks []api.MediaTrackFacts
+	file.AudioLanguages, file.SubtitleLanguages = nil, nil
+	for _, track := range tracks {
+		if track.ResourceID != file.ResourceID {
+			continue
+		}
+		resourceTracks = append(resourceTracks, track)
+		if track.Kind == api.MediaTrackAudio && !track.Commentary {
+			file.AudioLanguages = append(file.AudioLanguages, track.Languages...)
+		}
+		if track.Kind == api.MediaTrackSubtitle {
+			file.SubtitleLanguages = append(file.SubtitleLanguages, track.Languages...)
+		}
+	}
+	file.AudioLanguages = languageutil.NormalizeLanguageList(file.AudioLanguages)
+	file.SubtitleLanguages = languageutil.NormalizeLanguageList(file.SubtitleLanguages)
+	file.AudioStatus = fileLanguageStatus(resourceTracks, api.MediaTrackAudio, file.AudioLanguages, "", file.VideoTrackCount > 0, file.AudioStatus)
+	file.SubtitleStatus = fileLanguageStatus(resourceTracks, api.MediaTrackSubtitle, file.SubtitleLanguages, "", file.VideoTrackCount > 0, file.SubtitleStatus)
+	return file
 }
 
 func fileLanguageStatus(

@@ -137,3 +137,11 @@ The level follows asynchronous work and feedback-driven continuation. Stage-base
 ## Browser session API
 
 Routes below `/api/auth`, `/api/app`, and `/api/events` serve the embedded Web UI and use browser-session authentication. They are not a substitute for the versioned bearer-token API. External integrations should use `/api/v1`.
+
+## Edition and independent annotations
+
+Release-name corrections keep `Edition` separate from `Presentation` and `ReleaseFeatures`. In a complete correction snapshot, omitted or `null` independent fields mean Auto (detected); `Presentation: ""` and `ReleaseFeatures: []` mean None (explicitly cleared). A patch leaves omitted or `null` values unchanged: use `resetFields` entries such as `{ "field": "release_name.presentation" }` or `{ "field": "release_name.release_features" }` to return that field to Auto.
+
+Presentation accepts `IMAX`, `Open Matte`, or `IMAX Open Matte`. Release features accept multiple supported feature IDs; see [the CLI reference](../cli/index.md) for the vocabulary. Unknown values are rejected. Editing Edition preserves independent corrections. Complete recognized legacy compounds such as `Director's Cut / Hybrid` are separated into those fields, while opaque custom wording is preserved. Explicit independent values take precedence over compound-derived values.
+
+Generated annotations appear immediately after Edition, or in its position when Edition is absent, subject to tracker-specific naming rules. Complete release-name overrides retain the existing optional and mandatory tracker-name policy behavior, including rejection or rebuilding where required.

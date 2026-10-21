@@ -265,6 +265,13 @@ func TestBTNCountryAutofillPreservesExplicitAnswers(t *testing.T) {
 			if question.Fields[0].Value != test.value {
 				t.Fatalf("explicit country answer = %q, want %q", question.Fields[0].Value, test.value)
 			}
+			failures := languageAssessment(api.NewTrackerValidationSubject(meta, "BTN"))
+			pending := slices.ContainsFunc(failures, func(failure api.RuleFailure) bool {
+				return failure.Rule == "language_primary_country" && failure.QuestionnaireInput && failure.Disposition == api.RuleDispositionStrict
+			})
+			if pending != (test.country == "") {
+				t.Fatalf("country input gate does not match the answer: %+v", failures)
+			}
 		})
 	}
 }

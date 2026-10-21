@@ -52,6 +52,57 @@ func baseReleaseName(meta api.UploadSubject) string {
 	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
 }
 
+// ApplyDVDNameDefaults presents DVD encodes and remuxes using their finalized
+// source system. Compact names omit separate video tokens and use DVD; otherwise
+// encodes use DVDRip and retain their layout. Direct manual components are protected.
+// Generic DVD requires a supported release-level resolution unless Source is manual.
+func ApplyDVDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, compact bool) error {
+	releaseType := strings.ToUpper(strings.TrimSpace(meta.Type))
+	if releaseType != "ENCODE" && releaseType != "REMUX" {
+		return nil
+	}
+	source := strings.ToUpper(strings.TrimSpace(meta.Source))
+	if source != "DVD" && source != "PAL DVD" && source != "NTSC DVD" {
+		return nil
+	}
+	component, _ := editor.Component(api.NameRoleSource)
+	if !component.Manual {
+		system := strings.TrimSuffix(source, " DVD")
+		if source == "DVD" {
+			switch strings.ToLower(strings.TrimSpace(meta.Release.Resolution)) {
+			case "576i", "576p":
+				system = "PAL"
+			case "480i", "480p":
+				system = "NTSC"
+			default:
+				return &trackers.NameRuleError{
+					Rule: "dvd_system",
+					Role: api.NameRoleSource,
+					Reason: "DVD naming requires PAL DVD or NTSC DVD Source, or finalized 480i/480p/576i/576p Resolution; " +
+						"correct Source or Resolution and reprepare",
+				}
+			}
+		}
+		label := system + " DVD"
+		if !compact && releaseType == "ENCODE" {
+			label += "Rip"
+		}
+		if err := editor.Set(api.NameRoleSource, label); err != nil {
+			return fmt.Errorf("set DVD source: %w", err)
+		}
+	}
+	if compact {
+		for _, role := range []api.ReleaseNameRole{
+			api.NameRoleVideoFormat, api.NameRoleResolution, api.NameRoleVideoCodec, api.NameRoleVideoEncode,
+		} {
+			if err := editor.Omit(role); err != nil {
+				return fmt.Errorf("omit DVD %s: %w", role, err)
+			}
+		}
+	}
+	return nil
+}
+
 // LocalizedReleaseNamePolicy applies the shared Portuguese-localized naming
 // convention used by Unit3D sites that opt into it.
 func LocalizedReleaseNamePolicy(id string) trackers.ReleaseNamePolicyBinding {

@@ -15,7 +15,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v5", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v6", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
 }
 
 func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -35,8 +35,10 @@ func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, 
 		return err
 	}
 	if !isLumeFullDisc(meta) {
-		if err := editor.Omit(api.NameRoleEdition); err != nil {
-			return fmt.Errorf("omit LUME edition: %w", err)
+		for _, role := range []api.ReleaseNameRole{api.NameRoleEdition, api.NameRoleEditionDisplay} {
+			if err := editor.Omit(role); err != nil {
+				return fmt.Errorf("omit LUME %s: %w", role, err)
+			}
 		}
 	}
 	if err := applyLumeHDR(editor, meta.HDRFacts); err != nil {

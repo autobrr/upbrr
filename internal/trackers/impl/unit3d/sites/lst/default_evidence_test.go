@@ -27,6 +27,7 @@ func TestLSTDefaultCountUsesKnownFlags(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			subject := lstValidationSubject()
 			subject.Anime = test.anime
+			subject.PersonalRelease = true
 			subject.LanguageFacts = lstTestLanguageFacts("English", []string{"English"}, []string{"English"})
 			base := subject.LanguageFacts.Tracks[0]
 			base.Default = false
@@ -49,5 +50,27 @@ func TestLSTDefaultCountUsesKnownFlags(t *testing.T) {
 				t.Fatalf("wrong count evidence: %+v", failures)
 			}
 		})
+	}
+}
+
+func TestOrdinaryLanguagePreferenceMissingEvidenceIsAdvisory(t *testing.T) {
+	subject := lstValidationSubject()
+	subject.LanguageFacts.OriginalLanguages = nil
+	subject.LanguageFacts.OriginalLanguagesKnown = false
+	for _, personal := range []bool{false, true} {
+		subject.PersonalRelease = personal
+		failures := languageAssessment(subject)
+		found := false
+		for _, failure := range failures {
+			if failure.Rule == "language_original_evidence" {
+				found = true
+				if (failure.Disposition == api.RuleDispositionStrict) != personal || failure.EvidenceStatus != api.MetadataEvidenceStatusPartial {
+					t.Fatalf("wrong preference priority: %+v", failure)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("unknown original was silently resolved")
+		}
 	}
 }
