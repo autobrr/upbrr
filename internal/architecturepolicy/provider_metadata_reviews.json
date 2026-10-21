@@ -720,12 +720,12 @@
     "sha256": "c167e166843a683aa3c0717c800e0950df4e6552f013a0af1a551debe13f8463"
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnOriginalAudioCountryID": {
-    "reason": "Country inference requires the inspected primary language to equal the sole finalized original language, current source/generation and matching known provider IDs. All populated country values must agree, including the complete IMDb list; dubs, conflicts and unknown values remain unresolved.",
-    "sha256": "feebf612c84b3c2894fc45354e8c3d2e4b2dd7c1fb153efbd0cf92ff9a38b8ce"
+    "sha256": "feebf612c84b3c2894fc45354e8c3d2e4b2dd7c1fb153efbd0cf92ff9a38b8ce",
+    "reason": "Country inference requires the inspected primary language to equal the sole finalized original language, current source/generation and matching known provider IDs. All populated country values must agree, including the complete IMDb list; dubs, conflicts and unknown values remain unresolved."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnPrimaryCountryID": {
-    "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced.",
-    "sha256": "348f649ee711c24c033ca0e3a7ba1d1f4b4d5aff4aefaaad90564b231fe5ed4e"
+    "sha256": "348f649ee711c24c033ca0e3a7ba1d1f4b4d5aff4aefaaad90564b231fe5ed4e",
+    "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:resolveBTNOriginalLanguage": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -844,8 +844,8 @@
     "sha256": "79c22141472eb9036f87b2ee9b22ab7bbf124edfe6284bbb7671185760b61c1c"
   },
   "internal/trackers/impl/standalone/gpw/questionnaire.go:resolveDirectorFields": {
-    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged.",
-    "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1"
+    "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1",
+    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged."
   },
   "internal/trackers/impl/standalone/gpw/taxonomy.go:resolveMovieType": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1602,18 +1602,6 @@
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",
     "sha256": "0631a672653bf72afb4214c9c8e3cfb771c050f4a98ce7cf926124acc15b47ec"
-  },
-  "internal/trackers/impl/standalone/gpw/questionnaire.go:resolveDirectorFields": {
-    "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1",
-    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged."
-  },
-  "internal/trackers/impl/standalone/btn/taxonomy.go:btnPrimaryCountryID": {
-    "sha256": "348f649ee711c24c033ca0e3a7ba1d1f4b4d5aff4aefaaad90564b231fe5ed4e",
-    "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced."
-  },
-  "internal/trackers/impl/standalone/btn/taxonomy.go:btnOriginalAudioCountryID": {
-    "sha256": "feebf612c84b3c2894fc45354e8c3d2e4b2dd7c1fb153efbd0cf92ff9a38b8ce",
-    "reason": "Country inference requires the inspected primary language to equal the sole finalized original language, current source/generation and matching known provider IDs. All populated country values must agree, including the complete IMDb list; dubs, conflicts and unknown values remain unresolved."
   },
   "internal/trackers/impl/unit3d/name.go:ApplyLocalizedNameDefaults": {
     "sha256": "82e109766652173612b4b32ff803a01088c0f7f2a26a9729266d197dc815959e",
