@@ -975,3 +975,35 @@ func TestDuplicateTargetSeparatesHybridFromEdition(t *testing.T) {
 		t.Fatal("target shares mutable features")
 	}
 }
+
+func TestDuplicateTargetUsesPerTrackAudioEvidence(t *testing.T) {
+	t.Parallel()
+
+	target := duplicateTarget(api.UploadSubject{
+		Audio:                 "DDP 5.1",
+		Channels:              "5.1",
+		AudioCodecs:           []string{"E-AC-3", "AAC"},
+		AudioChannels:         []string{"6", "2"},
+		AudioCodecsComplete:   true,
+		AudioChannelsComplete: true,
+		AudioLanguages:        []string{"en", "pt-BR"},
+	})
+	if got, want := target.AudioCodecs, []string{"E-AC-3", "AAC"}; !slices.Equal(got, want) {
+		t.Fatalf("audio codecs = %#v, want %#v", got, want)
+	}
+	if got, want := target.AudioChannels, []string{"6", "2"}; !slices.Equal(got, want) {
+		t.Fatalf("audio channels = %#v, want %#v", got, want)
+	}
+	if !target.AudioCodecsComplete || !target.AudioChannelsComplete {
+		t.Fatalf("audio completeness = %t/%t, want complete", target.AudioCodecsComplete, target.AudioChannelsComplete)
+	}
+}
+
+func TestDuplicateTargetDoesNotProjectAudioLabelAsCodec(t *testing.T) {
+	t.Parallel()
+
+	target := duplicateTarget(api.UploadSubject{Audio: "DDP 5.1", Channels: "5.1"})
+	if len(target.AudioCodecs) != 0 || len(target.AudioChannels) != 0 {
+		t.Fatalf("audio evidence = %#v/%#v, want no derived track evidence", target.AudioCodecs, target.AudioChannels)
+	}
+}

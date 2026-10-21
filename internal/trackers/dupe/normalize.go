@@ -1521,6 +1521,7 @@ func canonicalAudioCodec(value string) string {
 func canonicalAudioChannels(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.ReplaceAll(value, " channels", "")
+	value = strings.TrimSuffix(value, " channel")
 	switch value {
 	case "1":
 		return "1.0"

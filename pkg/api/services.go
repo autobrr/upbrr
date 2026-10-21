@@ -83,44 +83,48 @@ type ProjectionDupeService interface {
 // contains only facts, instructions, and prior workflow outcomes that affect
 // duplicate search or authorization.
 type DuplicateSubject struct {
-	EffectiveMetadata    EffectiveMetadata
-	SourcePath           string
-	SourceSize           int64
-	VideoPath            string
-	FileList             []string
-	Filename             string
-	SceneName            string
-	ReleaseName          string
-	Release              ReleaseInfo
-	ReleaseNameOverrides ReleaseNameOverrides
-	Identity             ExternalIdentity
-	ProviderMetadata     SourceScopedMetadata
-	TrackerIDs           map[string]string
-	DiscType             string
-	Disc                 DiscFacts
-	Type                 string
-	Source               string
-	AudioLanguages       []string
-	Audio                string
-	Channels             string
-	Tag                  string
-	HDR                  string
-	HDRFacts             HDRFacts
-	UHD                  string
-	VideoEncode          string
-	VideoCodec           string
-	HasEncodeSettings    bool
-	SeasonInt            int
-	EpisodeInt           int
-	SeasonStr            string
-	EpisodeStr           string
-	DailyEpisodeDate     string
-	TVPack               bool
-	Anime                bool
-	MatchedTrackers      []string
-	TrackerRuleFailures  map[string][]RuleFailure
-	BlockedTrackers      map[string][]TrackerBlockReason
-	CrossSeedTorrents    []UploadedTorrent
+	EffectiveMetadata     EffectiveMetadata
+	SourcePath            string
+	SourceSize            int64
+	VideoPath             string
+	FileList              []string
+	Filename              string
+	SceneName             string
+	ReleaseName           string
+	Release               ReleaseInfo
+	ReleaseNameOverrides  ReleaseNameOverrides
+	Identity              ExternalIdentity
+	ProviderMetadata      SourceScopedMetadata
+	TrackerIDs            map[string]string
+	DiscType              string
+	Disc                  DiscFacts
+	Type                  string
+	Source                string
+	AudioLanguages        []string
+	Audio                 string
+	AudioCodecs           []string
+	AudioChannels         []string
+	AudioCodecsComplete   bool
+	AudioChannelsComplete bool
+	Channels              string
+	Tag                   string
+	HDR                   string
+	HDRFacts              HDRFacts
+	UHD                   string
+	VideoEncode           string
+	VideoCodec            string
+	HasEncodeSettings     bool
+	SeasonInt             int
+	EpisodeInt            int
+	SeasonStr             string
+	EpisodeStr            string
+	DailyEpisodeDate      string
+	TVPack                bool
+	Anime                 bool
+	MatchedTrackers       []string
+	TrackerRuleFailures   map[string][]RuleFailure
+	BlockedTrackers       map[string][]TrackerBlockReason
+	CrossSeedTorrents     []UploadedTorrent
 	// Projection is the exact safe tracker-local interpretation used for this search.
 	Projection *TrackerReleaseProjection
 }
@@ -476,6 +480,10 @@ type UploadSubject struct {
 	SubtitleLanguages           []string
 	Container                   string
 	Audio                       string
+	AudioCodecs                 []string
+	AudioChannels               []string
+	AudioCodecsComplete         bool
+	AudioChannelsComplete       bool
 	Channels                    string
 	HasCommentary               bool
 	Is3D                        string
