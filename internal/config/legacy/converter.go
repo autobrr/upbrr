@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -204,7 +205,9 @@ func Convert(legacy *Config, template *config.Config) (*config.Config, []string,
 
 // legacyTrackerNameAliases maps legacy Upload-Assistant tracker section names to upbrr names.
 var legacyTrackerNameAliases = map[string]string{
-	"SEEDCORE": "SC",
+	"0DAYFILES":    "ZDF",
+	"SEEDCORE":     "SC",
+	"ZERODAYFILES": "ZDF",
 }
 
 func normalizeLegacyTrackerName(name string) string {
@@ -238,13 +241,43 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		knownTrackers[name] = true
 	}
 
-	for trackerName, raw := range legacyTrackers {
-		trackerName = normalizeLegacyTrackerName(trackerName)
-		if strings.EqualFold(strings.TrimSpace(trackerName), "THR") {
-			warnings = append(warnings, "ignored removed tracker entry: "+trackerName)
+	trackerNames := make([]string, 0, len(legacyTrackers))
+	for name := range legacyTrackers {
+		if name == "default_trackers" || name == "preferred_tracker" {
 			continue
 		}
-		if trackerName == "default_trackers" || trackerName == "preferred_tracker" {
+		trackerNames = append(trackerNames, name)
+	}
+
+	// Sort tracker sections deterministically: canonical sections take precedence over alias sections.
+	// Between sections of the same precedence, sort alphabetically.
+	slices.SortFunc(trackerNames, func(a, b string) int {
+		aCanon := normalizeLegacyTrackerName(a)
+		bCanon := normalizeLegacyTrackerName(b)
+		aIsCanonical := strings.EqualFold(strings.TrimSpace(a), aCanon)
+		bIsCanonical := strings.EqualFold(strings.TrimSpace(b), bCanon)
+		if aIsCanonical != bIsCanonical {
+			if aIsCanonical {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+
+	processedTrackers := make(map[string]string) // canonicalName -> originalSectionName
+	for _, origName := range trackerNames {
+		raw := legacyTrackers[origName]
+		trackerName := normalizeLegacyTrackerName(origName)
+
+		if prev, ok := processedTrackers[trackerName]; ok {
+			warnings = append(warnings, fmt.Sprintf("ignored duplicate tracker section %q (already configured from %q as %s)", origName, prev, trackerName))
+			continue
+		}
+		processedTrackers[trackerName] = origName
+
+		if strings.EqualFold(strings.TrimSpace(trackerName), "THR") {
+			warnings = append(warnings, "ignored removed tracker entry: "+trackerName)
 			continue
 		}
 		trackerValues, ok := raw.(map[string]any)
