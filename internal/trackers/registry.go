@@ -165,7 +165,7 @@ func (r *Registry) Register(def Definition) error {
 			descriptor.TorrentIdentity = &TorrentIdentityPolicy{
 				TrackerURLPatterns: []string{descriptor.BaseURL},
 				CommentURLPatterns: []string{descriptor.BaseURL},
-				DetailIDPattern:    `/(\d+)`,
+				DetailIDPattern:    `(?i)/torrents/(\d+)`,
 			}
 		}
 		if provider, ok := def.(AuthSessionProvider); ok {

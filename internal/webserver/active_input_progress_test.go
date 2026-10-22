@@ -5,7 +5,6 @@ package webserver
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -19,8 +18,8 @@ func TestActiveInputVerificationReporterCorrelatesAndSanitizes(t *testing.T) {
 	report(api.PreparationProgressUpdate{
 		Phase:          api.PreparationPhaseSourceInspection,
 		Status:         api.PreparationProgressRunning,
-		Label:          "Inspect C:\\private\\Release.mkv",
-		Message:        "Verifying C:\\private\\Release.mkv",
+		Label:          `Inspect C:\private\Release.mkv api_token=label-secret`,
+		Message:        `Verifying C:\private\Release.mkv token=message-secret`,
 		CompletedBytes: 2048,
 		TotalBytes:     1024,
 	})
@@ -39,8 +38,9 @@ func TestActiveInputVerificationReporterCorrelatesAndSanitizes(t *testing.T) {
 	if update.CompletedBytes != 1024 || update.TotalBytes != 1024 {
 		t.Fatalf("normalized byte progress = %#v", update)
 	}
-	if strings.Contains(update.Label, "private") || strings.Contains(update.Message, "private") {
-		t.Fatalf("source path leaked to event payload: %#v", update)
+	if update.Label != `Inspect C:\private\Release.mkv api_token=[REDACTED]` ||
+		update.Message != `Verifying C:\private\Release.mkv token=[REDACTED]` {
+		t.Fatalf("diagnostic progress did not preserve paths and redact credentials: %#v", update)
 	}
 }
 

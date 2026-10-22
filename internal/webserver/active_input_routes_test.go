@@ -153,16 +153,21 @@ func TestActiveInputOpenReportsUnresolvedEffectWithoutPrivateDetails(t *testing.
 	}
 	select {
 	case entry := <-entries:
-		if !strings.Contains(entry.Message, "reserve input") || !strings.Contains(entry.Message, "[REDACTED]") {
-			t.Fatalf("missing sanitized admission diagnostic: %q", entry.Message)
-		}
-		for _, private := range []string{`D:\private`, "Example.mkv", "secret-value"} {
-			if strings.Contains(entry.Message, private) || strings.Contains(responseBody, private) {
-				t.Fatal("admission failure leaked private diagnostic data")
+		for _, expected := range []string{`reserve input source=D:\private\Example.mkv`, "api_token=[REDACTED]"} {
+			if !strings.Contains(entry.Message, expected) {
+				t.Fatalf("admission diagnostic %q missing %q", entry.Message, expected)
 			}
+		}
+		if strings.Contains(entry.Message, "secret-value") {
+			t.Fatal("admission diagnostic leaked a credential")
 		}
 	default:
 		t.Fatal("admission failure was not logged")
+	}
+	for _, private := range []string{`D:\private`, "Example.mkv", "secret-value"} {
+		if strings.Contains(responseBody, private) {
+			t.Fatal("admission response leaked private diagnostic data")
+		}
 	}
 }
 

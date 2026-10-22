@@ -1352,20 +1352,20 @@ func TestProjectLoggerSecretRedactionFlagsSanitizerRegression(t *testing.T) {
 	}
 }
 
-func TestProjectLoggerApostrophePathRedactionFlagsSanitizerRegression(t *testing.T) {
+func TestProjectLoggerDiagnosticPathPreservationFlagsSanitizerRegression(t *testing.T) {
 	t.Parallel()
 
-	violations := checkProjectLoggerApostrophePathRedaction(
+	violations := checkProjectLoggerDiagnosticPathPreservation(
 		token.NewFileSet(),
 		"internal/logging/logger.go",
 		token.NoPos,
-		func(value string) string { return value },
+		func(string) string { return "source=[local path]: state=failed" },
 	)
 	if len(violations) != 1 {
 		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
 	}
-	if !strings.Contains(violations[0].Message, "apostrophes") {
-		t.Fatalf("expected apostrophe path violation, got %q", violations[0].Message)
+	if !strings.Contains(violations[0].Message, "diagnostic filesystem paths") {
+		t.Fatalf("expected diagnostic path preservation violation, got %q", violations[0].Message)
 	}
 }
 

@@ -71,6 +71,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ulcx"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/utp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/yus"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/zdf"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/znth"
 )
 
@@ -138,6 +139,7 @@ func unit3DDefinitions() []trackers.Definition {
 		ulcx.Profile(),
 		utp.Profile(),
 		yus.Profile(),
+		zdf.Profile(),
 		znth.Profile(),
 	}
 	definitions := make([]trackers.Definition, 0, len(profiles))
