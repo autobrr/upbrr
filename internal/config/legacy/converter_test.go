@@ -465,14 +465,77 @@ func TestConvertTrackers(t *testing.T) {
 	}
 }
 
+func TestConvertTrackersMapsLegacyTrackerAliases(t *testing.T) {
+	digitalCoreAPIKey := t.Name() + "-digitalcore"
+	hdSpaceAPIKey := t.Name() + "-hdspace"
+	racingForEveryoneAPIKey := t.Name() + "-racing4everyone"
+	ulcxAPIKey := t.Name() + "-ulcx"
+
+	input := []byte(fmt.Sprintf(`
+config = {
+    'DEFAULT': {'tmdb_api': 'test', 'screens': 6},
+    'TRACKERS': {
+        'default_trackers': 'DIGITALCORE, HDSPACE, RACING4EVERYONE, UNWALLED, dc, ULCX, upload.cx',
+        'preferred_tracker': 'UNWALLED',
+        'DIGITALCORE': {'api_key': %q},
+        'HDSPACE': {'api_key': %q},
+        'RACING4EVERYONE': {'api_key': %q},
+        'dc': {'api_key': %q},
+        'ULCX': {'api_key': %q},
+        'upload.cx': {'api_key': %q},
+    },
+    'TORRENT_CLIENTS': {},
+}
+`, digitalCoreAPIKey, hdSpaceAPIKey, racingForEveryoneAPIKey, t.Name()+"-lowercase-dc", ulcxAPIKey, t.Name()+"-upload-cx"))
+
+	cfg, warnings, err := ImportFromContent(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.Trackers.DefaultTrackers; len(got) != 4 || strings.Join(got, ",") != "DC,HDS,R4E,ULCX" {
+		t.Fatalf("DefaultTrackers: got %v, want [DC HDS R4E ULCX]", got)
+	}
+	if got := cfg.Trackers.Trackers["DC"].APIKey; got != digitalCoreAPIKey {
+		t.Fatalf("DC API key did not preserve the deterministic entry")
+	}
+	if got := cfg.Trackers.Trackers["HDS"].APIKey; got != hdSpaceAPIKey {
+		t.Fatalf("HDS API key did not preserve the legacy alias entry")
+	}
+	if got := cfg.Trackers.Trackers["R4E"].APIKey; got != racingForEveryoneAPIKey {
+		t.Fatalf("R4E API key did not preserve the legacy alias entry")
+	}
+	if !slices.Contains(warnings, "skipped unsupported default tracker: UNWALLED") {
+		t.Fatalf("missing unsupported default tracker warning: %v", warnings)
+	}
+	if got := cfg.Trackers.Trackers["DC"].APIKey; got != digitalCoreAPIKey {
+		t.Fatalf("case-insensitive DC API key did not preserve the deterministic entry")
+	}
+	if got := cfg.Trackers.Trackers["ULCX"].APIKey; got != ulcxAPIKey {
+		t.Fatalf("ULCX API key did not preserve the canonical entry")
+	}
+	if !slices.Contains(warnings, "skipped duplicate tracker entry for DC: dc") {
+		t.Fatalf("missing duplicate DC tracker warning: %v", warnings)
+	}
+	if !slices.Contains(warnings, "skipped duplicate tracker entry for ULCX: upload.cx") {
+		t.Fatalf("missing duplicate ULCX tracker warning: %v", warnings)
+	}
+	if got := cfg.Trackers.PreferredTracker; got != "" {
+		t.Fatalf("unsupported preferred tracker: got %q, want empty", got)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "skipped unsupported preferred tracker: UNWALLED") {
+		t.Fatalf("missing unsupported preferred tracker warning: %v", warnings)
+	}
+}
+
 func TestConvertLegacyTrackerAliases(t *testing.T) {
+	seedCoreAPIKey := t.Name() + "-seedcore"
 	legacy := &Config{
 		Default: map[string]any{},
 		Trackers: map[string]any{
 			"default_trackers":  "SEEDCORE, BHD",
 			"preferred_tracker": "SEEDCORE",
 			"SEEDCORE": map[string]any{
-				"api_key": "sc-api-key",
+				"api_key": seedCoreAPIKey,
 			},
 		},
 		TorrentClients: make(map[string]any),
@@ -487,8 +550,8 @@ func TestConvertLegacyTrackerAliases(t *testing.T) {
 	if !ok {
 		t.Fatal("SC tracker not found from SEEDCORE alias")
 	}
-	if sc.APIKey != "sc-api-key" {
-		t.Errorf("SC.APIKey: got %q, want sc-api-key", sc.APIKey)
+	if sc.APIKey != seedCoreAPIKey {
+		t.Error("SC API key did not preserve the legacy alias entry")
 	}
 
 	if len(cfg.Trackers.DefaultTrackers) != 2 || cfg.Trackers.DefaultTrackers[0] != "SC" || cfg.Trackers.DefaultTrackers[1] != "BHD" {
