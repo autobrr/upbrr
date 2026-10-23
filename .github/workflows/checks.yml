@@ -102,8 +102,13 @@ jobs:
 
       - name: Run Go tests
         id: tests
+        shell: pwsh
         # These flags limit each package's test binary; package concurrency keeps Go's default -p.
-        run: go test -race -v -cpu=4 -parallel=4 -timeout 20m ./...
+        run: |
+          # Native stdout redirection avoids processing every test event through
+          # PowerShell and the Actions live logger. The full log is uploaded below.
+          go test -race -json -cpu=4 -parallel=4 -timeout 20m ./... > "$env:RUNNER_TEMP/go-tests.jsonl"
+          exit $LASTEXITCODE
 
       # Go caches successful compile actions even if another package/test fails.
       # Keep the test's failure status and never upload after cancellation. Reuse
@@ -114,6 +119,31 @@ jobs:
         with:
           path: ${{ steps.go-cache-paths.outputs.build }}
           key: ${{ steps.go-tests.outputs.cache-primary-key }}
+
+      - name: Setup Node for test timing report
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Test and summarize Go test timings
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
+        shell: pwsh
+        env:
+          TIMING_LABEL: ${{ runner.os }}-${{ runner.arch }}
+        run: |
+          node --test scripts/ci/go-test-summary.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/ci/go-test-summary.mjs "$env:RUNNER_TEMP/go-tests.jsonl" "$env:TIMING_LABEL"
+          exit $LASTEXITCODE
+
+      - name: Upload Go test timings
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-timings-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/go-tests.jsonl
+          retention-days: 7
 
   test-frontend:
     if: github.event_name != 'push'

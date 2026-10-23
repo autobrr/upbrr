@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	dovi "github.com/Audionut/go-dovi-extract"
@@ -72,6 +74,68 @@ func TestMeasurementReportRoundTripAndBounds(t *testing.T) {
 	decoded.Grade = append(decoded.Grade, decoded.Grade[0])
 	if err := decoded.Validate(); err == nil {
 		t.Fatal("accepted unordered comparison coordinates")
+	}
+}
+
+func TestMeasurementPreflightPreservesPathBounds(t *testing.T) {
+	for name, field := range map[string]string{
+		"array objects":    `"selected":[{},{},{}]`,
+		"array containers": `"selected":[[],[],[]]`,
+		"array nulls":      `"selected":[null,null,null]`,
+		"object names":     `"selected":{"2":null}`,
+		"foreign scalar":   `"boundary":{"escaped~/name":true}`,
+		"foreign object":   `"boundary":{"windows":{}}`,
+		"foreign array":    `"areaSamples":[[]]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := fmt.Sprintf(`{"schema":"hdr-measurement-v1","result":{"mode":%q},%s}`, api.HDRDecodedGrade, field)
+			if _, err := ReadMeasurement(t.Context(), strings.NewReader(data)); err == nil || !strings.Contains(err.Error(), "observation bounds") {
+				t.Fatalf("unbounded evidence reached typed decoding: %v", err)
+			}
+		})
+	}
+	for _, value := range []string{`0`, `null`, `true`, `false`, `"synthetic"`} {
+		t.Run("selected scalars "+value, func(t *testing.T) {
+			data := fmt.Sprintf(`{"schema":"hdr-measurement-v1","result":{"mode":%q},"selected":[[%s%s]]}`,
+				api.HDRDecodedGrade, strings.Repeat(value+",", 600), value)
+			if _, err := ReadMeasurement(t.Context(), strings.NewReader(data)); err == nil || !strings.Contains(err.Error(), "observation bounds") {
+				t.Fatalf("oversized scalar array reached typed decoding: %v", err)
+			}
+		})
+	}
+	data := fmt.Sprintf(`{"schema":"hdr-measurement-v1","result":{"mode":%q},"unknown":%s0%s}`,
+		api.HDRDecodedGrade, strings.Repeat(`{"nested":`, 16), strings.Repeat(`}`, 16))
+	if _, err := ReadMeasurement(t.Context(), strings.NewReader(data)); err == nil || !strings.Contains(err.Error(), "allocation bounds") {
+		t.Fatalf("deep scalar object reached typed decoding: %v", err)
+	}
+}
+
+func BenchmarkReadMeasurementAutomatic(b *testing.B) {
+	report := automaticReportFixture()
+	report.Automatic.Frames = make([]AutomaticFrame, 4096)
+	for i := range report.Automatic.Frames {
+		report.Automatic.Frames[i] = AutomaticFrame{
+			Index: i,
+			PTS: MeasurementTimestamp{
+				Value:     strconv.Itoa(i),
+				Timescale: "25",
+				Known:     true,
+			},
+			MaxRGBNits: 100,
+			FALLNits:   50,
+		}
+	}
+	report.Result.Selected, report.Result.Measured = len(report.Automatic.Frames), len(report.Automatic.Frames)
+	var encoded bytes.Buffer
+	if err := WriteMeasurement(b.Context(), &encoded, report); err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(encoded.Len()))
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := ReadMeasurement(b.Context(), bytes.NewReader(encoded.Bytes())); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

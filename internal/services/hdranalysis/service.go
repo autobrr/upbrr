@@ -399,7 +399,9 @@ func (s *Service) renderWithBinding(ctx context.Context, extraction *extract.Ext
 		return Classify(err)
 	}
 	s.progress(ctx, "saving")
-	if err := PublishFile(ctx, target, func(out io.Writer) error { return png.Encode(out, image) }); err != nil {
+	// Favor encoding speed for full-resolution lossless plots.
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := PublishFile(ctx, target, func(out io.Writer) error { return encoder.Encode(out, image) }); err != nil {
 		return fmt.Errorf(
 			"publish HDR plot: %w",
 			api.NewHDRAnalysisError(api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureOutput, Message: "the HDR plot could not be saved"}, err),

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -116,7 +117,9 @@ func TestRepeatedInputVerificationPreservesPendingHDR(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
+			databasePath := filepath.Join(t.TempDir(), "input.sqlite")
+			dbfixture.WriteMigrated(t, databasePath)
+			repo, err := db.Open(databasePath)
 			if err != nil {
 				t.Fatal(err)
 			}

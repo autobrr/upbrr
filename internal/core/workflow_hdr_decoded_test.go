@@ -23,6 +23,7 @@ import (
 func TestDecodedWorkflowRetainsUnsupportedAndRequiresExplicitRetryForMissingReport(t *testing.T) {
 	for _, name := range []string{"legacy_scene", "bounded_boundary", "v3_scene"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			boundary := name == "bounded_boundary"
 			builder, resolver, _ := hdrFixture(t)
 			data, err := os.ReadFile(filepath.Join("..", "services", "hdranalysis", "testdata", "single-hybrid.mkv"))

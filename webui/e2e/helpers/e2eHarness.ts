@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test as base, type Page } from "@playwright/test";
 import type { ActiveInputSnapshot } from "../../src/api/generated/release-workflow";
+import { waitForHTTP } from "./appReadiness";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(here, "../../..");
@@ -428,13 +429,20 @@ async function startAppOnce(
     windowsHide: true,
   });
   const output: string[] = [];
-  child.stdout?.on("data", (chunk) => output.push(String(chunk)));
-  child.stderr?.on("data", (chunk) => output.push(String(chunk)));
+  const streams: string[][] = [[], []];
+  [child.stdout, child.stderr].forEach((stream, index) => {
+    stream?.on("data", (chunk) => {
+      const text = String(chunk);
+      output.push(text);
+      streams[index].push(text);
+    });
+  });
   try {
     await waitForHTTP(
       `${origin}${basePath}/api/auth/status`,
       child,
       output,
+      streams,
       options.startupTimeoutMs,
     );
   } catch (error) {
@@ -770,23 +778,6 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 function writeJSON(res: ServerResponse, status: number, payload: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(payload));
-}
-
-async function waitForHTTP(url: string, child: ChildProcess, output: string[], timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`server exited with ${child.exitCode}:\n${output.join("")}`);
-    }
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {
-      // Retry until the server is ready or the deadline expires.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`server did not become ready:\n${output.join("")}`);
 }
 
 function stopProcess(child: ChildProcess): Promise<void> {

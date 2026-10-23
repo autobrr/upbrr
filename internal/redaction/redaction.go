@@ -9,6 +9,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Block identifies a candidate JSON object's or array's half-open byte range
@@ -148,6 +151,9 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 		}
 	}
 
+	original := value
+	value = normalizeSecretText(value)
+	normalized := value
 	value = urlRe.ReplaceAllStringFunc(value, func(raw string) string {
 		return redactURL(raw, keys)
 	})
@@ -159,8 +165,27 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = cookieTailRe.ReplaceAllString(value, `${1}`)
 	value = authTailRe.ReplaceAllString(value, `${1}`)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
+	if value == normalized {
+		return original
+	}
 
 	return value
+}
+
+// normalizeSecretText prevents terminal controls from hiding a secret key.
+// Callers retain the original spelling when the redaction pass leaves the
+// normalized text unchanged.
+func normalizeSecretText(value string) string {
+	if !strings.ContainsFunc(value, unicode.IsControl) && !strings.ContainsAny(value, "\u202a\u202b\u202d\u202e\u2066\u2067\u2068\u2069") {
+		return value
+	}
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && (unicode.IsControl(r) || r == '\u202a' || r == '\u202b' || r == '\u202d' || r == '\u202e' ||
+			r == '\u2066' || r == '\u2067' || r == '\u2068' || r == '\u2069') {
+			return -1
+		}
+		return r
+	}, ansi.Strip(value))
 }
 
 // redactURL preserves ordinary URL context while structurally redacting known
@@ -308,5 +333,5 @@ func isSensitiveKey(key string, keys map[string]struct{}) bool {
 // canonicalSensitiveKey removes separators and case from keys before matching
 // them against the sensitive-key set.
 func canonicalSensitiveKey(key string) string {
-	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(key)))
+	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(normalizeSecretText(key))))
 }

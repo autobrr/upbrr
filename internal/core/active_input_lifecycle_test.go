@@ -128,6 +128,7 @@ func preparedIdleInputForTest(t *testing.T) (*Core, *db.SQLiteRepository, string
 	if err != nil {
 		t.Fatal(err)
 	}
+	var lifetimes activeInputFixtureLifetimes
 	workflow, err := releaseworkflow.New(persistent, releaseworkflow.NewMemoryPrivateResourceStore(),
 		releaseworkflow.ReleasePreparerFunc{DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
 			return api.PreparedReleaseDisplay{}, nil
@@ -141,6 +142,10 @@ func preparedIdleInputForTest(t *testing.T) (*Core, *db.SQLiteRepository, string
 			}
 			return api.PrepareResult{Release: api.PreparedRelease{Generation: 1, Source: api.SourceManifest{SourcePath: input.SourcePath}}}, nil
 		}},
+		func(module *releaseworkflow.Module) error {
+			module.SetOperationLifetime(lifetimes.acquire)
+			return nil
+		},
 		releaseworkflow.WithActiveInputs(repo, func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
 			return api.InputRecord{
 				CanonicalPath: input.SourcePath,
@@ -174,24 +179,17 @@ func preparedIdleInputForTest(t *testing.T) (*Core, *db.SQLiteRepository, string
 	if opened.Current.Operation != nil {
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			operation, err := workflow.Operation(ctx, "input-owner", opened.Current.Workflow.ID, opened.Current.Operation.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if operation.Status == api.StageStatusCompleted {
-				break
-			}
-			if operation.Status != api.StageStatusQueued && operation.Status != api.StageStatusRunning {
-				t.Fatalf("preparation did not complete: %s, failures=%+v", operation.Status, operation.Failures)
-			}
-			select {
-			case <-ctx.Done():
-				t.Fatal("preparation did not finish")
-			case <-ticker.C:
-			}
+		// Admission has finished, so all preparation lifetimes are already counted.
+		// Join the worker before validating persistence without racing its checkpoint writes.
+		if err := lifetimes.wait(ctx); err != nil {
+			t.Fatalf("preparation did not finish: %v", err)
+		}
+		operation, err := workflow.Operation(ctx, "input-owner", opened.Current.Workflow.ID, opened.Current.Operation.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if operation.Status != api.StageStatusCompleted || operation.Result == nil || operation.Result.Kind != api.WorkflowOperationResultRelease {
+			t.Fatalf("preparation did not complete: %s, failures=%+v", operation.Status, operation.Failures)
 		}
 	}
 	return core, repo, source, opened

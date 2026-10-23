@@ -28,6 +28,7 @@ const (
 	cliQueueResultBytes = 4096
 	cliArtifactLimit    = 128
 	cliTelemetryLimit   = 256
+	cliOversizedLogText = "[oversized diagnostic omitted]"
 )
 
 type cliLogLine struct{ Time, Level, Text string }
@@ -194,13 +195,22 @@ func (b *cliTUIBridge) Ask(ctx context.Context, prompt cliPrompt) (cliAnswer, er
 }
 
 func (b *cliTUIBridge) AppendLog(level, message string) {
+	b.appendLog(level, message, false)
+}
+
+func (b *cliTUIBridge) appendLog(level, message string, sanitized bool) {
 	// Bound before splitting: a single huge write cannot allocate an unbounded
-	// slice of lines or retained transcript. Prefixes are sanitized as a unit.
+	// slice of lines or retained transcript. Untrusted oversized lines cannot be
+	// truncated safely: incomplete structured text may hide secret fields.
 	for len(message) > 0 {
 		line, rest, _ := strings.Cut(message, "\n")
 		message = rest
 		if len(line) > cliLogLineLimit {
-			line = line[:cliLogLineLimit-12] + " [truncated]"
+			if sanitized {
+				line = line[:cliLogLineLimit-12] + " [truncated]"
+			} else {
+				line = cliOversizedLogText
+			}
 		}
 		line = safeDiagnosticText(line)
 		if len(line) > cliLogLineLimit {
@@ -351,9 +361,10 @@ func (b *cliTUIBridge) summary(err error) string {
 
 // Console output is a bounded compatibility sink, never an action protocol.
 type cliTUILogWriter struct {
-	bridge   *cliTUIBridge
-	mu       sync.Mutex
-	fragment string
+	bridge    *cliTUIBridge
+	mu        sync.Mutex
+	fragment  string
+	oversized bool
 }
 
 func (w *cliTUILogWriter) Write(data []byte) (int, error) {
@@ -366,20 +377,28 @@ func (w *cliTUILogWriter) Write(data []byte) (int, error) {
 		if index >= 0 {
 			part = data[:index]
 		}
-		remaining := max(0, cliLogLineLimit-len(w.fragment))
-		w.fragment += string(part[:min(len(part), remaining)])
+		if !w.oversized {
+			if len(part) > cliLogLineLimit-len(w.fragment) {
+				w.fragment = cliOversizedLogText
+				w.oversized = true
+			} else {
+				w.fragment += string(part)
+			}
+		}
 		if index < 0 {
 			break
 		}
 		w.bridge.AppendLog("", w.fragment)
 		w.fragment = ""
+		w.oversized = false
 		data = data[index+1:]
 	}
 	return count, nil
 }
 
 func (w *cliTUILogWriter) WriteConsoleLog(label, message string) {
-	w.bridge.AppendLog(label, message)
+	// The logging writer contract supplies a complete, already-redacted message.
+	w.bridge.appendLog(label, message, true)
 }
 
 func cliBridgeFromOutput(output io.Writer) *cliTUIBridge {

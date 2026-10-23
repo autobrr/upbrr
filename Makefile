@@ -109,6 +109,7 @@ e2e: e2e-build
 	pnpm --dir webui run test:e2e:full
 
 e2e-build:
+	node --test webui/e2e/helpers/appReadiness.test.mjs
 	pnpm --dir webui install --frozen-lockfile
 	pnpm --dir webui run build
 ifeq ($(OS),Windows_NT)

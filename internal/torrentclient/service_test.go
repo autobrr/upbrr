@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -183,12 +184,12 @@ func TestInjectQbitClient(t *testing.T) {
 	svc := NewService(config.Config{
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"qbit": {
-				Type:     "qbit",
-				URL:      server.URL,
-				Username: "user",
-				Password: "pass",
-				Category: "ua",
-				Tags:     []string{"tag1", "tag2"},
+				Type:       "qbit",
+				URL:        server.URL,
+				Username:   "user",
+				Password:   "pass",
+				Category:   "ua",
+				Tags:       []string{"tag1", "tag2"},
 				LocalPath:  config.StringList{""},
 				RemotePath: config.StringList{""},
 			},
@@ -3304,6 +3305,56 @@ func TestInjectHonorsGlobalDelayCancellation(t *testing.T) {
 	}
 }
 
+func TestInjectDelaySelectionBeforeClientDispatch(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		override *int
+		elapsed  time.Duration
+		wantErr  error
+	}{
+		{
+			name:    "global delay",
+			elapsed: 100 * time.Millisecond,
+			wantErr: context.DeadlineExceeded,
+		},
+		{
+			name:     "zero tracker override",
+			override: new(int),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				// Disabled clients still pass through Inject's shared pre-dispatch delay.
+				// The global control prevents this no-I/O fixture from bypassing that policy.
+				svc := NewService(config.Config{
+					PostUpload: config.PostUploadConfig{InjectDelay: 1},
+					Trackers: config.TrackersConfig{
+						Trackers: map[string]config.TrackerConfig{
+							"AITHER": {InjectDelay: tc.override},
+						},
+					},
+					TorrentClients: map[string]config.TorrentClientConfig{
+						"noop": {Type: "disabled"},
+					},
+				}, nil)
+				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+				defer cancel()
+
+				start := time.Now()
+				err := svc.Inject(ctx, api.ClientSubject{}, api.TorrentResult{Path: "fixture.torrent", Tracker: "aither"})
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("inject error = %v, want %v", err, tc.wantErr)
+				}
+				if elapsed := time.Since(start); elapsed != tc.elapsed {
+					t.Fatalf("injection delay = %v, want %v", elapsed, tc.elapsed)
+				}
+			})
+		})
+	}
+}
+
 func TestInjectTrackerDelayOverrideBeatsGlobalDelay(t *testing.T) {
 	t.Parallel()
 
@@ -3345,10 +3396,8 @@ func TestInjectTrackerDelayOverrideBeatsGlobalDelay(t *testing.T) {
 		},
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	if err := svc.Inject(ctx, api.ClientSubject{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://tracker.example/download/1", Tracker: "aither"}); err != nil {
+	// Policy timing is checked with virtual time above; HTTP scheduling is not a latency contract.
+	if err := svc.Inject(t.Context(), api.ClientSubject{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://tracker.example/download/1", Tracker: "aither"}); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
 	if !addCalled {

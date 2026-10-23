@@ -294,7 +294,7 @@ func ReadMeasurement(ctx context.Context, input io.Reader) (*MeasurementReport, 
 	// retained-resource hash is checked separately by its owning workflow.
 	decoder := jsontext.NewDecoder(bytes.NewReader(data))
 	for tokens := 0; ; tokens++ {
-		_, err := decoder.ReadToken()
+		token, err := decoder.ReadToken()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -307,6 +307,16 @@ func ReadMeasurement(ctx context.Context, input io.Reader) (*MeasurementReport, 
 		if tokens%4096 == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("inspect measurement JSON: %w", err)
+			}
+		}
+		container, position := decoder.StackIndex(decoder.StackDepth())
+		if container == '{' && position%2 == 0 {
+			// Scalar object values have the same path as their checked member
+			// names. Container boundaries and every array element still need checks.
+			switch token.Kind() {
+			case jsontext.KindNull, jsontext.KindFalse, jsontext.KindTrue, jsontext.KindString, jsontext.KindNumber:
+				continue
+			case jsontext.KindInvalid, jsontext.KindBeginObject, jsontext.KindEndObject, jsontext.KindBeginArray, jsontext.KindEndArray:
 			}
 		}
 		pointer := string(decoder.StackPointer())

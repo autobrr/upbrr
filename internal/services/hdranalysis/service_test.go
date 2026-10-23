@@ -211,6 +211,41 @@ func TestRenderAllEstimatorsAndCancellation(t *testing.T) {
 	}
 }
 
+func BenchmarkNativePlotPNGEncoding(b *testing.B) {
+	service := New(NewAdmission(), api.NopLogger{})
+	path := filepath.Join(b.TempDir(), "plot.png")
+	if err := service.Render(b.Context(), testExtraction(), api.HDRPeakHistogram, "Synthetic HDR10+", path); err != nil {
+		b.Fatal(err)
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	plot, err := png.Decode(bytes.NewReader(payload))
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		level png.CompressionLevel
+	}{
+		{"default", png.DefaultCompression},
+		{"best-speed", png.BestSpeed},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			encoder := png.Encoder{CompressionLevel: test.level}
+			var output bytes.Buffer
+			for b.Loop() {
+				output.Reset()
+				if err := encoder.Encode(&output, plot); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(output.Len()), "encoded-bytes")
+		})
+	}
+}
+
 func TestPublicationPreservesExistingFilesAndFailures(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "existing.png")

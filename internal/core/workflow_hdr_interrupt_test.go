@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/services/hdranalysis"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -150,8 +151,11 @@ func openHDRRestartFixture(t *testing.T, root string, decoded bool) *hdrRestartF
 	return fixture
 }
 
-func writeHDRRestartSources(t *testing.T, root string, decoded bool) {
+func writeHDRRestartFixture(t *testing.T, root string, decoded bool) {
 	t.Helper()
+	// Seed only fresh cases. The crash helper and recovery path reopen this
+	// database through the production API without replacing retained state.
+	dbfixture.WriteMigrated(t, filepath.Join(root, "state.sqlite"))
 	name := "reordered-hybrid.mkv"
 	if decoded {
 		name = "decoded-pq-cuts-25.mkv"
@@ -221,8 +225,16 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 	if root == "" || phase == "" {
 		t.Skip("subprocess only")
 	}
+	started := time.Now()
+	mark := func(stage string) {
+		t.Logf("checkpoint phase=%s stage=%s elapsed=%s", phase, stage, time.Since(started))
+	}
+	mark("open fixture begin")
 	f := openHDRRestartFixture(t, root, phase == "decoded")
+	mark("open fixture complete")
+	mark("prepare begin")
 	current := f.prepare(t)
+	mark("prepare complete")
 	instructions := api.HDRAnalysisInstructions{
 		Release:        api.ReleaseRef{SourcePath: f.source, Generation: current.Release.Release.Generation},
 		TargetIDs:      []string{current.Release.Display.HDRTargets[0].ID},
@@ -230,12 +242,14 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 	}
 	if strings.HasPrefix(phase, "recovery-") {
 		var err error
+		mark("initial analysis begin")
 		current, err = f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
 			Instructions:     instructions,
 			IdempotencyKey:   "initial",
 		})
+		mark("initial analysis complete")
 		if err != nil || current.HDRAnalysis == nil || current.HDRAnalysis.Status != api.StageStatusCompleted {
 			t.Fatalf("initial analysis: %+v %v", current.HDRAnalysis, err)
 		}
@@ -257,12 +271,14 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 			}
 		}
 		instructions.PeakSource = api.HDRPeakMaxSCLLuminance
+		mark("missing-evidence analysis begin")
 		current, err = f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
 			Instructions:     instructions,
 			IdempotencyKey:   "missing-evidence",
 		})
+		mark("missing-evidence analysis complete")
 		if err != nil || current.HDRAnalysis == nil || !current.HDRAnalysis.TargetNeedsSourceRetry(instructions.TargetIDs[0]) {
 			t.Fatalf("damaged evidence did not require explicit source recovery: %+v %v", current.HDRAnalysis, err)
 		}
@@ -277,12 +293,14 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 			instructions.Decoded = &api.HDRDecodedOptions{SceneSync: true}
 		}
 		var err error
+		mark("older analysis begin")
 		current, err = f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
 			Instructions:     instructions,
 			IdempotencyKey:   "older",
 		})
+		mark("older analysis complete")
 		if err != nil || current.HDRAnalysis == nil {
 			t.Fatalf("older result: %+v %v", current, err)
 		}
@@ -298,6 +316,7 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 	if strings.HasPrefix(phase, "recovery-") {
 		f.builder.phase = "native"
 	}
+	mark("crash command start begin")
 	if _, err := f.core.workflow.Start(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 		WorkflowID:       current.Workflow.ID,
 		ExpectedRevision: current.Workflow.Revision,
@@ -306,6 +325,7 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	mark("crash command start returned")
 	select {
 	case <-time.After(25 * time.Second):
 		t.Fatal("analysis did not reach the crash checkpoint")
@@ -320,14 +340,16 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 			if phase == "decoded" && os.Getenv("UPBRR_HDR_DECODE_CALIBRATION") != "1" {
 				t.Skip("requires calibrated actual decoder")
 			}
+			// Each child performs real extraction and rendering under the race detector.
+			// Keep them sequential so they do not exhaust the hosted runner's CPU budget.
 			root := t.TempDir()
-			writeHDRRestartSources(t, root, phase == "decoded")
+			writeHDRRestartFixture(t, root, phase == "decoded")
 			ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHDRCheckpointProcessDeathHelper$", "-test.count=1")
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHDRCheckpointProcessDeathHelper$", "-test.count=1", "-test.v")
 			command.Env = append(os.Environ(), "UPBRR_HDR_CRASH_ROOT="+root, "UPBRR_HDR_CRASH_PHASE="+phase)
 			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("checkpoint subprocess: %v\n%s", err, output)
+				t.Fatalf("checkpoint subprocess: %v; context: %v\n%s", err, ctx.Err(), output)
 			}
 			f := openHDRRestartFixture(t, root, phase == "decoded")
 			// Expire the dead process's leases without waiting a real minute. The
@@ -431,8 +453,9 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 func TestHDRPreparationRetainsNativeEvidenceWithoutInvalidComparisonReplay(t *testing.T) {
 	for _, transition := range []string{"new generation", "expired comparison", "same generation"} {
 		t.Run(transition, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
-			writeHDRRestartSources(t, root, false)
+			writeHDRRestartFixture(t, root, false)
 			f := openHDRRestartFixture(t, root, false)
 			current := f.prepare(t)
 			current, comparison := f.selectComparison(t, current)
@@ -523,10 +546,10 @@ func TestHDRPreparationRetainsNativeEvidenceWithoutInvalidComparisonReplay(t *te
 				stale := request
 				stale.Release.Generation = prepared.Release.Release.Generation
 				_, err := f.core.workflow.Execute(ctx, "cli", releaseworkflow.AnalyzeHDRCommand{
-					WorkflowID: prepared.Workflow.ID,
+					WorkflowID:       prepared.Workflow.ID,
 					ExpectedRevision: prepared.Workflow.Revision,
-					Instructions: stale,
-					IdempotencyKey: "reject-old-comparison",
+					Instructions:     stale,
+					IdempotencyKey:   "reject-old-comparison",
 				})
 				if err == nil || reads {
 					t.Fatal("retained comparison PNGs authorized another source read")

@@ -51,15 +51,16 @@ func (r *MemoryRepository) CheckpointHDRExtractions(
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	state, ok := r.states[workflowID]
-	if !ok || state.OwnerID != strings.TrimSpace(ownerID) {
+	retained, ok := r.states[workflowID]
+	if !ok || retained.OwnerID != strings.TrimSpace(ownerID) {
 		return ErrWorkflowNotFound
 	}
-	if state.Workflow.Revision != revision {
+	if retained.Workflow.Revision != revision {
 		return ErrRevisionConflict
 	}
+	state := retained.State
 	state.HDRExtractions = maps.Clone(entries)
-	r.states[workflowID] = state
+	r.states[workflowID] = &memoryState{State: state}
 	return nil
 }
 
@@ -98,15 +99,16 @@ func (r *MemoryRepository) CheckpointHDRMeasurements(
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	state, ok := r.states[workflowID]
-	if !ok || state.OwnerID != strings.TrimSpace(ownerID) {
+	retained, ok := r.states[workflowID]
+	if !ok || retained.OwnerID != strings.TrimSpace(ownerID) {
 		return ErrWorkflowNotFound
 	}
-	if state.Workflow.Revision != revision {
+	if retained.Workflow.Revision != revision {
 		return ErrRevisionConflict
 	}
+	state := retained.State
 	state.HDRMeasurements = cloneHDRMeasurements(entries)
-	r.states[workflowID] = state
+	r.states[workflowID] = &memoryState{State: state}
 	return nil
 }
 
@@ -154,17 +156,18 @@ func (r *MemoryRepository) CheckpointHDRRequest(
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	state, ok := r.states[workflowID]
-	if !ok || state.OwnerID != strings.TrimSpace(ownerID) {
+	retained, ok := r.states[workflowID]
+	if !ok || retained.OwnerID != strings.TrimSpace(ownerID) {
 		return ErrWorkflowNotFound
 	}
-	if state.Workflow.Revision != revision {
+	if retained.Workflow.Revision != revision {
 		return ErrRevisionConflict
 	}
+	state := retained.State
 	if err := retainHDRRequest(&state, pending); err != nil {
 		return err
 	}
-	r.states[workflowID] = state
+	r.states[workflowID] = &memoryState{State: state}
 	return nil
 }
 
