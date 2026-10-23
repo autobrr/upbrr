@@ -24,7 +24,7 @@ type creationReceipt struct {
 // MemoryRepository is a concurrency-safe owner-scoped workflow repository.
 type MemoryRepository struct {
 	mu            sync.RWMutex
-	states        map[api.WorkflowID]State
+	states        map[api.WorkflowID]*memoryState
 	creationKeys  map[string]creationReceipt
 	operations    map[api.WorkflowOperationID]api.ReleaseWorkflowOperationRecord
 	intents       map[string]api.ReleaseWorkflowIntentRecord
@@ -35,10 +35,41 @@ type MemoryRepository struct {
 	work          map[string]api.ReleaseWorkflowWorkRecord
 }
 
+// memoryState caches JSON only after a complete normalization round trip.
+// Cached State must not be mutated; writers replace entries. Checkpoint-only
+// entries retain their existing cloning behavior until Save.
+type memoryState struct {
+	State
+	cacheJSON bool
+	once      sync.Once
+	payload   []byte
+	err       error
+}
+
+func (s *memoryState) clone() (State, error) {
+	if !s.cacheJSON {
+		return cloneState(s.State)
+	}
+	s.once.Do(func() {
+		s.payload, s.err = json.Marshal(s.State)
+		if s.err != nil {
+			s.err = fmt.Errorf("clone workflow state: marshal: %w", s.err)
+		}
+	})
+	if s.err != nil {
+		return State{}, s.err
+	}
+	var cloned State
+	if err := json.Unmarshal(s.payload, &cloned); err != nil {
+		return State{}, fmt.Errorf("clone workflow state: unmarshal: %w", err)
+	}
+	return cloned, nil
+}
+
 // NewMemoryRepository returns an empty in-memory workflow repository.
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		states:        make(map[api.WorkflowID]State),
+		states:        make(map[api.WorkflowID]*memoryState),
 		creationKeys:  make(map[string]creationReceipt),
 		operations:    make(map[api.WorkflowOperationID]api.ReleaseWorkflowOperationRecord),
 		intents:       make(map[string]api.ReleaseWorkflowIntentRecord),
@@ -82,7 +113,7 @@ func (r *MemoryRepository) Create(
 			if !ok || priorState.OwnerID != ownerID {
 				return State{}, false, ErrWorkflowNotFound
 			}
-			result, cloneErr := cloneState(priorState)
+			result, cloneErr := priorState.clone()
 			return result, true, cloneErr
 		}
 	}
@@ -90,11 +121,11 @@ func (r *MemoryRepository) Create(
 		return State{}, false, ErrRevisionConflict
 	}
 	cloned.OwnerID = ownerID
-	r.states[state.Workflow.ID] = cloned
+	r.states[state.Workflow.ID] = &memoryState{State: cloned, cacheJSON: true}
 	if strings.TrimSpace(idempotencyKey) != "" {
 		r.creationKeys[key] = creationReceipt{fingerprint: fingerprint, workflowID: state.Workflow.ID}
 	}
-	result, err := cloneState(cloned)
+	result, err := r.states[state.Workflow.ID].clone()
 	return result, false, err
 }
 
@@ -109,7 +140,7 @@ func (r *MemoryRepository) Load(ctx context.Context, ownerID string, workflowID 
 	if !ok || state.OwnerID != strings.TrimSpace(ownerID) {
 		return State{}, ErrWorkflowNotFound
 	}
-	return cloneState(state)
+	return state.clone()
 }
 
 // Save applies one optimistic state update.
@@ -134,7 +165,7 @@ func (r *MemoryRepository) Save(ctx context.Context, ownerID string, expected ap
 		return errors.New("release workflow: revision must advance by one")
 	}
 	cloned.OwnerID = current.OwnerID
-	r.states[state.Workflow.ID] = cloned
+	r.states[state.Workflow.ID] = &memoryState{State: cloned, cacheJSON: true}
 	return nil
 }
 

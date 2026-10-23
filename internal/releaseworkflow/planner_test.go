@@ -665,7 +665,7 @@ func TestContinueExpiredDupesReplansBeforePersistedMediaRecovery(t *testing.T) {
 	dupes.ExpiresAt = module.clock.Now().UTC().Add(-time.Minute)
 	repository.mu.Lock()
 	state.Dupes[dupes.ID] = dupes
-	repository.states[state.Workflow.ID] = state
+	repository.states[state.Workflow.ID] = &memoryState{State: state}
 	repository.mu.Unlock()
 
 	base := module.dupeBuilder
@@ -778,7 +778,7 @@ func TestRefreshPersistedMediaStatusRejectsEmptyApprovedTrackerSet(t *testing.T)
 	state.Workflow.TrackerApproval = &approvalRef
 	state.Workflow.Failures = nil
 	repository.mu.Lock()
-	repository.states[state.Workflow.ID] = state
+	repository.states[state.Workflow.ID] = &memoryState{State: state}
 	repository.mu.Unlock()
 
 	withoutGuard := media
@@ -821,7 +821,7 @@ func preparePersistedWebUIMediaContinuation(
 		additionalAction,
 	)
 	repository.mu.Lock()
-	state := repository.states[workflowID]
+	state := repository.states[workflowID].State
 	state.TrackerDecisionMode = TrackerDecisionModeWebUIControls
 	state.Workflow.TrackerApproval = nil
 	media := state.Media[state.Workflow.Media.ID]
@@ -829,7 +829,7 @@ func preparePersistedWebUIMediaContinuation(
 	state.Media[media.ID] = media
 	state.Composite.ActiveOperationID = ""
 	intent := state.Composite.Intent
-	repository.states[workflowID] = state
+	repository.states[workflowID] = &memoryState{State: state}
 	repository.mu.Unlock()
 	return module, repository, api.ContinueReleaseWorkflowRequest{
 		Authority: &api.WorkflowAuthority{

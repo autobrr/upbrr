@@ -2066,7 +2066,7 @@ func TestCompositeUploadAutomaticPolicyDeselectsExcessAutomaticScreenshots(t *te
 				t.Fatalf("replace retained test media: %v", err)
 			}
 			repository.mu.Lock()
-			state := repository.states[completed.Workflow.ID]
+			state := repository.states[completed.Workflow.ID].State
 			media := state.Media[state.Workflow.Media.ID]
 			media.Artifacts = []api.MediaArtifact{
 				{
@@ -2120,7 +2120,7 @@ func TestCompositeUploadAutomaticPolicyDeselectsExcessAutomaticScreenshots(t *te
 				projectionSnapshot.Projections[index].Artifacts.ScreenshotCount = test.count
 			}
 			state.Projections[projectionSnapshot.ID] = projectionSnapshot
-			repository.states[completed.Workflow.ID] = state
+			repository.states[completed.Workflow.ID] = &memoryState{State: state}
 			repository.mu.Unlock()
 
 			current, err := module.Current(t.Context(), testOwnerID, completed.Workflow.ID)
@@ -2169,7 +2169,7 @@ func seedPersistedCompositeMediaBlock(
 	t.Helper()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
-	state := repository.states[workflowID]
+	state := repository.states[workflowID].State
 	if state.Composite == nil || state.Workflow.Media == nil {
 		t.Fatalf("completed composite state is missing session or media: %#v", state.Workflow)
 	}
@@ -2242,7 +2242,7 @@ func seedPersistedCompositeMediaBlock(
 	state.Composite.ActiveOperationID = operationID
 	state.Composite.TerminalReason = ""
 	state.Composite.Goal = api.WorkflowGoalDescriptionsReady
-	repository.states[workflowID] = state
+	repository.states[workflowID] = &memoryState{State: state}
 	return CompositeUploadCommand{
 		WorkflowID:         workflowID,
 		ExpectedRevision:   state.Workflow.Revision,
