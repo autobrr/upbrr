@@ -60,10 +60,17 @@ func TestDupeAssessmentPolicyOnlyReview(t *testing.T) {
 					t.Fatal("reviewed result without completed status was accepted")
 				}
 				assessment.Results[0].Status = StageStatusCompleted
+				for _, code := range []string{"", " \t\n"} {
+					assessment.Results[0].ReviewReasons = []DupeReason{{Code: code}}
+					if err := assessment.Validate(); err == nil {
+						t.Fatalf("policy-only review with blank reason code %q was accepted", code)
+					}
+				}
 				assessment.Results[0].ReviewReasons = nil
 				if err := assessment.Validate(); err == nil {
 					t.Fatal("review without matches or policy reasons was accepted")
 				}
+				assessment.Results[0].ReviewReasons = []DupeReason{{}}
 				assessment.Results[0].Matches = []DupeMatchProjection{{Name: "Movie.Title.2000.480p-GRP"}}
 				if err := assessment.Validate(); err != nil {
 					t.Fatalf("existing candidate review rejected: %v", err)

@@ -882,7 +882,10 @@ func (s DupeAssessment) Validate() error {
 			}
 		case DupeDecisionAccepted, DupeDecisionIgnored:
 			// Target-level policy review does not require a duplicate candidate.
-			if (len(result.Matches) == 0 && len(result.ReviewReasons) == 0) || result.Status != StageStatusCompleted {
+			hasPolicyReason := slices.ContainsFunc(result.ReviewReasons, func(reason DupeReason) bool {
+				return strings.TrimSpace(reason.Code) != ""
+			})
+			if (len(result.Matches) == 0 && !hasPolicyReason) || result.Status != StageStatusCompleted {
 				return fmt.Errorf("reviewed dupe result %s requires matches or policy review reasons and completed status", id)
 			}
 		case DupeDecisionNoMatch:

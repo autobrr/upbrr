@@ -81,7 +81,8 @@ func TestCompositeUploadPolicyOnlyDuplicateReview(t *testing.T) {
 				t.Fatalf("approval choices = %v, want %v", choices, eligible)
 			}
 			completed := approveCompositeUploadTrackers(t, module, current, eligible, "approve-policy-review")
-			if completed.UploadResult == nil || uploads.execution == nil {
+			if completed.UploadResult == nil || uploads.execution == nil ||
+				!slices.Equal(uploads.execution.selected, eligible) {
 				t.Fatal("eligible trackers did not continue after policy review")
 			}
 		})
