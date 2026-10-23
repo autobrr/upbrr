@@ -225,8 +225,16 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 	if root == "" || phase == "" {
 		t.Skip("subprocess only")
 	}
+	started := time.Now()
+	mark := func(stage string) {
+		t.Logf("checkpoint phase=%s stage=%s elapsed=%s", phase, stage, time.Since(started))
+	}
+	mark("open fixture begin")
 	f := openHDRRestartFixture(t, root, phase == "decoded")
+	mark("open fixture complete")
+	mark("prepare begin")
 	current := f.prepare(t)
+	mark("prepare complete")
 	instructions := api.HDRAnalysisInstructions{
 		Release:        api.ReleaseRef{SourcePath: f.source, Generation: current.Release.Release.Generation},
 		TargetIDs:      []string{current.Release.Display.HDRTargets[0].ID},
@@ -234,12 +242,14 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 	}
 	if strings.HasPrefix(phase, "recovery-") {
 		var err error
+		mark("initial analysis begin")
 		current, err = f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
 			Instructions:     instructions,
 			IdempotencyKey:   "initial",
 		})
+		mark("initial analysis complete")
 		if err != nil || current.HDRAnalysis == nil || current.HDRAnalysis.Status != api.StageStatusCompleted {
 			t.Fatalf("initial analysis: %+v %v", current.HDRAnalysis, err)
 		}
@@ -261,12 +271,14 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 			}
 		}
 		instructions.PeakSource = api.HDRPeakMaxSCLLuminance
+		mark("missing-evidence analysis begin")
 		current, err = f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
 			Instructions:     instructions,
 			IdempotencyKey:   "missing-evidence",
 		})
+		mark("missing-evidence analysis complete")
 		if err != nil || current.HDRAnalysis == nil || !current.HDRAnalysis.TargetNeedsSourceRetry(instructions.TargetIDs[0]) {
 			t.Fatalf("damaged evidence did not require explicit source recovery: %+v %v", current.HDRAnalysis, err)
 		}
@@ -281,12 +293,14 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 			instructions.Decoded = &api.HDRDecodedOptions{SceneSync: true}
 		}
 		var err error
+		mark("older analysis begin")
 		current, err = f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
 			Instructions:     instructions,
 			IdempotencyKey:   "older",
 		})
+		mark("older analysis complete")
 		if err != nil || current.HDRAnalysis == nil {
 			t.Fatalf("older result: %+v %v", current, err)
 		}
@@ -302,6 +316,7 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 	if strings.HasPrefix(phase, "recovery-") {
 		f.builder.phase = "native"
 	}
+	mark("crash command start begin")
 	if _, err := f.core.workflow.Start(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 		WorkflowID:       current.Workflow.ID,
 		ExpectedRevision: current.Workflow.Revision,
@@ -310,6 +325,7 @@ func TestHDRCheckpointProcessDeathHelper(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	mark("crash command start returned")
 	select {
 	case <-time.After(25 * time.Second):
 		t.Fatal("analysis did not reach the crash checkpoint")
@@ -330,10 +346,10 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 			writeHDRRestartFixture(t, root, phase == "decoded")
 			ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHDRCheckpointProcessDeathHelper$", "-test.count=1")
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHDRCheckpointProcessDeathHelper$", "-test.count=1", "-test.v")
 			command.Env = append(os.Environ(), "UPBRR_HDR_CRASH_ROOT="+root, "UPBRR_HDR_CRASH_PHASE="+phase)
 			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("checkpoint subprocess: %v\n%s", err, output)
+				t.Fatalf("checkpoint subprocess: %v; context: %v\n%s", err, ctx.Err(), output)
 			}
 			f := openHDRRestartFixture(t, root, phase == "decoded")
 			// Expire the dead process's leases without waiting a real minute. The
