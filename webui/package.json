@@ -51,7 +51,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-unused-imports": "^4.4.1",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^21.0.4",
     "knip": "^6.14.2",
     "prettier": "^3.8.3",
     "stylelint": "^16.26.1",
