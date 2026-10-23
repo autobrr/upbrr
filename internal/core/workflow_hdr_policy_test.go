@@ -122,6 +122,7 @@ func TestNativeResourcePolicyRecovery(t *testing.T) {
 			if tc.audio && os.Getenv("UPBRR_HDR_DECODE_CALIBRATION") != "1" {
 				t.Skip("requires actual shared decoder")
 			}
+			t.Parallel()
 			builder, resolver, _ := hdrFixture(t)
 			data, err := os.ReadFile(filepath.Join("..", "services", "hdranalysis", "testdata", "single-hybrid.mkv"))
 			if err != nil {

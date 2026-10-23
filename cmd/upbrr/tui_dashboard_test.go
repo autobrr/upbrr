@@ -8,12 +8,14 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -302,118 +304,137 @@ func (core *cliHeldWorkflowShutdown) Close() error {
 	return nil
 }
 
+func testCLIPresentationTime(t *testing.T, run func(*testing.T)) {
+	t.Helper()
+	// The process-wide signal dispatcher blocks in a syscall. Start it outside
+	// the bubble so it cannot prevent the presentation's fake clock advancing.
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	signal.Stop(interrupts)
+	synctest.Test(t, func(t *testing.T) {
+		// Bubble Tea may leave one pending spinner command after Kill. Let its
+		// one-shot timer finish in fake time before the bubble exits.
+		defer time.Sleep(time.Second)
+		run(t)
+	})
+}
+
 func TestNormalWorkflowCleanupHasProductionWatchdog(t *testing.T) {
 	for _, mode := range []string{"interactive", "unattended", "plain"} {
 		t.Run(mode, func(t *testing.T) {
-			core := &cliHeldWorkflowShutdown{entered: make(chan struct{}), release: make(chan struct{})}
-			var output cliSynchronizedOutput
-			ctx, cancel := context.WithCancel(context.WithValue(t.Context(), cliProductionContextKey{}, true))
-			defer cancel()
-			workerDone := make(chan struct{})
-			done := make(chan error, 1)
-			var releaseOnce sync.Once
-			release := func() { releaseOnce.Do(func() { close(core.release) }) }
-			t.Cleanup(release)
-			go func() {
-				done <- runCLIPresentation(ctx, cliIO{
-					in:        strings.NewReader(""),
-					out:       &output,
-					errOut:    io.Discard,
-					dashboard: mode == "unattended",
-					keepOpen:  mode != "plain",
-				}, cliTerminalCapabilities{Width: 120, Height: 40}, mode != "plain", false, true, nil, nil, false, false,
-					func(ctx context.Context, _, _ []string, _ cliIO) error {
-						defer close(workerDone)
-						return closeCLIWorkflowCore(ctx, core)
-					})
-			}()
-			select {
-			case <-core.entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("normal cleanup did not begin")
-			}
-			returned := false
-			select {
-			case err := <-done:
-				returned = true
-				if !errors.Is(err, errCLIShutdownUnconfirmed) {
-					t.Errorf("unconfirmed shutdown lost operational failure: %v", err)
-				}
-				if err != nil && strings.Contains(err.Error(), "terminal presentation failed") {
-					t.Error("cleanup timeout was misreported as terminal failure")
-				}
-			case <-time.After(cliShutdownWatchdog + 500*time.Millisecond):
-				t.Error("normal shutdown exceeded watchdog with live run context")
-			}
-			if core.closed.Load() {
-				t.Error("repository closed before worker termination was confirmed")
-			}
-			release()
-			cancel()
-			if !returned {
+			testCLIPresentationTime(t, func(t *testing.T) {
+				core := &cliHeldWorkflowShutdown{entered: make(chan struct{}), release: make(chan struct{})}
+				var output cliSynchronizedOutput
+				ctx, cancel := context.WithCancel(context.WithValue(t.Context(), cliProductionContextKey{}, true))
+				defer cancel()
+				workerDone := make(chan struct{})
+				done := make(chan error, 1)
+				var releaseOnce sync.Once
+				release := func() { releaseOnce.Do(func() { close(core.release) }) }
+				t.Cleanup(release)
+				go func() {
+					done <- runCLIPresentation(ctx, cliIO{
+						in:        strings.NewReader(""),
+						out:       &output,
+						errOut:    io.Discard,
+						dashboard: mode == "unattended",
+						keepOpen:  mode != "plain",
+					}, cliTerminalCapabilities{Width: 120, Height: 40}, mode != "plain", false, true, nil, nil, false, false,
+						func(ctx context.Context, _, _ []string, _ cliIO) error {
+							defer close(workerDone)
+							return closeCLIWorkflowCore(ctx, core)
+						})
+				}()
 				select {
-				case <-done:
+				case <-core.entered:
 				case <-time.After(5 * time.Second):
-					t.Fatal("failed to release presentation")
+					t.Fatal("normal cleanup did not begin")
 				}
-			}
-			select {
-			case <-workerDone:
-			case <-time.After(5 * time.Second):
-				t.Fatal("released workflow worker did not join")
-			}
-			if !core.closed.Load() {
-				t.Error("confirmed worker termination did not close repository")
-			}
-			if mode != "plain" && (!strings.Contains(output.String(), "\x1b[?1049l") ||
-				!strings.Contains(output.String(), "Workflow stopped.")) {
-				t.Error("terminal restoration omitted the stopped workflow summary")
-			}
+				returned := false
+				select {
+				case err := <-done:
+					returned = true
+					if !errors.Is(err, errCLIShutdownUnconfirmed) {
+						t.Errorf("unconfirmed shutdown lost operational failure: %v", err)
+					}
+					if err != nil && strings.Contains(err.Error(), "terminal presentation failed") {
+						t.Error("cleanup timeout was misreported as terminal failure")
+					}
+				case <-time.After(cliShutdownWatchdog + 500*time.Millisecond):
+					t.Error("normal shutdown exceeded watchdog with live run context")
+				}
+				if core.closed.Load() {
+					t.Error("repository closed before worker termination was confirmed")
+				}
+				release()
+				cancel()
+				if !returned {
+					select {
+					case <-done:
+					case <-time.After(5 * time.Second):
+						t.Fatal("failed to release presentation")
+					}
+				}
+				select {
+				case <-workerDone:
+				case <-time.After(5 * time.Second):
+					t.Fatal("released workflow worker did not join")
+				}
+				if !core.closed.Load() {
+					t.Error("confirmed worker termination did not close repository")
+				}
+				if mode != "plain" && (!strings.Contains(output.String(), "\x1b[?1049l") ||
+					!strings.Contains(output.String(), "Workflow stopped.")) {
+					t.Error("terminal restoration omitted the stopped workflow summary")
+				}
+			})
 		})
 	}
 }
 
 func TestCompletedDashboardDisarmsCleanupWatchdog(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), cliProductionContextKey{}, true))
-	defer cancel()
-	output := &cliCompletedDashboardOutput{rendered: make(chan struct{})}
-	core := &cliWorkflowCoreLifecycleFake{}
-	done := make(chan error, 1)
-	go func() {
-		done <- runCLIPresentation(ctx, cliIO{
-			in:        cliNoInput{t},
-			out:       output,
-			errOut:    io.Discard,
-			dashboard: true,
-			keepOpen:  true,
-		},
-			cliTerminalCapabilities{Width: 120, Height: 40}, true, false, true, nil, nil, false, false,
-			func(ctx context.Context, _, _ []string, _ cliIO) error { return closeCLIWorkflowCore(ctx, core) })
-	}()
-	select {
-	case <-output.rendered:
-	case err := <-done:
-		t.Fatalf("completed dashboard exited without retention: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("dashboard did not complete")
-	}
-	select {
-	case err := <-done:
-		t.Fatalf("cleanup watchdog closed completed dashboard: %v", err)
-	case <-time.After(cliShutdownWatchdog + 500*time.Millisecond):
-	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("dashboard dismissal changed completed result: %v", err)
+	testCLIPresentationTime(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.WithValue(t.Context(), cliProductionContextKey{}, true))
+		defer cancel()
+		output := &cliCompletedDashboardOutput{rendered: make(chan struct{})}
+		core := &cliWorkflowCoreLifecycleFake{}
+		done := make(chan error, 1)
+		go func() {
+			done <- runCLIPresentation(ctx, cliIO{
+				in:        cliNoInput{t},
+				out:       output,
+				errOut:    io.Discard,
+				dashboard: true,
+				keepOpen:  true,
+			},
+				cliTerminalCapabilities{Width: 120, Height: 40}, true, false, true, nil, nil, false, false,
+				func(ctx context.Context, _, _ []string, _ cliIO) error { return closeCLIWorkflowCore(ctx, core) })
+		}()
+		select {
+		case <-output.rendered:
+		case err := <-done:
+			t.Fatalf("completed dashboard exited without retention: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("dashboard did not complete")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("completed dashboard did not close after cancellation")
-	}
-	if !slices.Contains(core.order, "close") || !strings.Contains(output.String(), "\x1b[?1049l") {
-		t.Fatal("completed dashboard did not close repository and restore terminal")
-	}
+		select {
+		case err := <-done:
+			t.Fatalf("cleanup watchdog closed completed dashboard: %v", err)
+		case <-time.After(cliShutdownWatchdog + 500*time.Millisecond):
+		}
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("dashboard dismissal changed completed result: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("completed dashboard did not close after cancellation")
+		}
+		if !slices.Contains(core.order, "close") || !strings.Contains(output.String(), "\x1b[?1049l") {
+			t.Fatal("completed dashboard did not close repository and restore terminal")
+		}
+	})
 }
 
 func TestKeepOpenRuntimeDistinguishesUnconfirmedCleanup(t *testing.T) {
@@ -546,60 +567,62 @@ func (output *cliLateCleanupOutput) Write(data []byte) (int, error) {
 func TestWatchdogFailureSurvivesLateCleanupAcknowledgement(t *testing.T) {
 	for _, mode := range []string{"dashboard", "plain", "parent-canceled-dashboard"} {
 		t.Run(mode, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.WithValue(t.Context(), cliProductionContextKey{}, true))
-			defer cancel()
-			entered, gate, returned := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			var releaseOnce sync.Once
-			release := func() { releaseOnce.Do(func() { close(gate) }) }
-			t.Cleanup(release)
-			output := &cliLateCleanupOutput{release: release, returned: returned}
-			done := make(chan error, 1)
-			go func() {
-				done <- runCLIPresentation(ctx, cliIO{
-					in:        strings.NewReader(""),
-					out:       output,
-					errOut:    io.Discard,
-					dashboard: mode != "plain",
-					keepOpen:  mode != "plain",
-				}, cliTerminalCapabilities{Width: 120, Height: 40}, mode != "plain", false, true, nil, nil, false, false,
-					func(ctx context.Context, _, _ []string, _ cliIO) error {
-						defer close(returned)
-						var closeGate <-chan struct{} = gate
-						if mode == "plain" {
-							closeGate = ctx.Done()
-						}
-						return closeCLIWorkflowCore(ctx, &cliLateCleanupCore{entered: entered, gate: closeGate})
-					})
-			}()
-			select {
-			case <-entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("cleanup did not reach Close")
-			}
-			if mode == "parent-canceled-dashboard" {
-				cancel()
-			}
-			select {
-			case result := <-done:
-				if !errors.Is(result, errCLIShutdownUnconfirmed) {
-					t.Errorf("late cleanup acknowledgement hid forced shutdown: %v", result)
+			testCLIPresentationTime(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.WithValue(t.Context(), cliProductionContextKey{}, true))
+				defer cancel()
+				entered, gate, returned := make(chan struct{}), make(chan struct{}), make(chan struct{})
+				var releaseOnce sync.Once
+				release := func() { releaseOnce.Do(func() { close(gate) }) }
+				t.Cleanup(release)
+				output := &cliLateCleanupOutput{release: release, returned: returned}
+				done := make(chan error, 1)
+				go func() {
+					done <- runCLIPresentation(ctx, cliIO{
+						in:        strings.NewReader(""),
+						out:       output,
+						errOut:    io.Discard,
+						dashboard: mode != "plain",
+						keepOpen:  mode != "plain",
+					}, cliTerminalCapabilities{Width: 120, Height: 40}, mode != "plain", false, true, nil, nil, false, false,
+						func(ctx context.Context, _, _ []string, _ cliIO) error {
+							defer close(returned)
+							var closeGate <-chan struct{} = gate
+							if mode == "plain" {
+								closeGate = ctx.Done()
+							}
+							return closeCLIWorkflowCore(ctx, &cliLateCleanupCore{entered: entered, gate: closeGate})
+						})
+				}()
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("cleanup did not reach Close")
 				}
-				if result != nil && strings.Contains(result.Error(), "terminal presentation failed") {
-					t.Error("forced shutdown was mislabeled as terminal failure")
+				if mode == "parent-canceled-dashboard" {
+					cancel()
 				}
-			case <-time.After(cliShutdownWatchdog + 5*time.Second):
-				release()
-				t.Fatal("late cleanup did not restore the presentation")
-			}
-			select {
-			case <-returned:
-			case <-time.After(5 * time.Second):
-				t.Fatal("late cleanup worker did not join")
-			}
-			if mode != "plain" && (!strings.Contains(output.String(), "\x1b[?1049l") ||
-				!strings.Contains(output.String(), "Workflow stopped.")) {
-				t.Error("terminal restoration omitted the stopped workflow summary")
-			}
+				select {
+				case result := <-done:
+					if !errors.Is(result, errCLIShutdownUnconfirmed) {
+						t.Errorf("late cleanup acknowledgement hid forced shutdown: %v", result)
+					}
+					if result != nil && strings.Contains(result.Error(), "terminal presentation failed") {
+						t.Error("forced shutdown was mislabeled as terminal failure")
+					}
+				case <-time.After(cliShutdownWatchdog + 5*time.Second):
+					release()
+					t.Fatal("late cleanup did not restore the presentation")
+				}
+				select {
+				case <-returned:
+				case <-time.After(5 * time.Second):
+					t.Fatal("late cleanup worker did not join")
+				}
+				if mode != "plain" && (!strings.Contains(output.String(), "\x1b[?1049l") ||
+					!strings.Contains(output.String(), "Workflow stopped.")) {
+					t.Error("terminal restoration omitted the stopped workflow summary")
+				}
+			})
 		})
 	}
 }

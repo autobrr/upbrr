@@ -23,6 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -59,6 +60,7 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 		t.Fatal(err)
 	}
 	cfg.MainSettings.DBPath = filepath.Join(root, "metadata.sqlite")
+	dbfixture.WriteMigrated(t, cfg.MainSettings.DBPath)
 	cfg.MainSettings.SceneDetection = true
 	cfg.Metadata.SkipAutoTorrent = true
 	cfg.Trackers.Trackers["AITHER"] = config.TrackerConfig{APIKey: "synthetic-key"}
