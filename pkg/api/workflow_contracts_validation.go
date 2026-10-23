@@ -881,8 +881,9 @@ func (s DupeAssessment) Validate() error {
 				return fmt.Errorf("pending dupe result %s requires blocked status and an action", id)
 			}
 		case DupeDecisionAccepted, DupeDecisionIgnored:
-			if len(result.Matches) == 0 || result.Status != StageStatusCompleted {
-				return fmt.Errorf("reviewed dupe result %s requires matches and completed status", id)
+			// Target-level policy review does not require a duplicate candidate.
+			if (len(result.Matches) == 0 && len(result.ReviewReasons) == 0) || result.Status != StageStatusCompleted {
+				return fmt.Errorf("reviewed dupe result %s requires matches or policy review reasons and completed status", id)
 			}
 		case DupeDecisionNoMatch:
 			if result.Status != StageStatusCompleted && result.Status != StageStatusSkipped {
