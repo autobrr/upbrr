@@ -145,7 +145,7 @@ func TestProgrammeDubRemediationPreservesDecisions(t *testing.T) {
 				found = true
 				original := trackers.LanguageRuleFailure(subject, "extra_dub", "non-original, non-English programme dub: German", outcome)
 				if test.want == "" {
-					if failure != original {
+					if !reflect.DeepEqual(failure, original) {
 						t.Fatalf("unrelated finding changed: %+v", failure)
 					}
 				} else {
@@ -156,7 +156,7 @@ func TestProgrammeDubRemediationPreservesDecisions(t *testing.T) {
 						t.Fatalf("unsafe track removal advice: %s", failure.Reason)
 					}
 					failure.Reason = original.Reason
-					if failure != original {
+					if !reflect.DeepEqual(failure, original) {
 						t.Fatalf("remediation changed decision: %+v", failure)
 					}
 				}

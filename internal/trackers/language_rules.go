@@ -54,7 +54,8 @@ func IsFullDiscUpload(discType, releaseType string) bool {
 // existing constructibility checks without another upload-authority path.
 func WithLanguageAssessment(binding ValidationPolicyBinding, assess func(api.TrackerValidationSubject) []api.RuleFailure) ValidationPolicyBinding {
 	return ValidationPolicyBinding{
-		ID: binding.ID + "/languages-v1",
+		ID:                 binding.ID + "/languages-v1",
+		LanguageAssessment: assess,
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error) {
 			failures, err := binding.Check(ctx, subject, logger)
 			if err != nil {
@@ -355,6 +356,11 @@ func LanguageRuleFailure(subject api.TrackerValidationSubject, key, reason strin
 	)
 	if outcome == LanguageTrumpable {
 		failure.EvidenceFingerprint = api.WorkflowFingerprint(fmt.Sprintf("%x", sha256.Sum256([]byte(LanguageQuestionKey(subject, key)))))
+	}
+	if key == "evidence" && status == api.MetadataEvidenceStatusPartial {
+		for _, track := range mediafacts.UnresolvedProgrammeLanguages(subject.LanguageFacts) {
+			failure.LanguageCorrectionTrackIDs = append(failure.LanguageCorrectionTrackIDs, track.ID)
+		}
 	}
 	failure.DebugBypass = true
 	return failure

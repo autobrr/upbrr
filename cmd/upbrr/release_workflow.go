@@ -671,6 +671,9 @@ func runCLIWorkflowInteractive(
 			}
 			return exitError(2, errors.New("saved input corrections require confirmation"))
 		}
+		if err := session.reviewInputLanguages(ctx, reader, currentOpts.Debug || coreSvc.LiveTestEnabled(), cfg.Trackers.DefaultTrackers); err != nil {
+			return err
+		}
 		preview := cliWorkflowMetadataPreview(session.current)
 		printMetadataPreview(streams.out, preview, currentOpts.Debug)
 		if currentOpts.InputOnly || currentOpts.interactionMode() == api.InteractionModeUnattended {

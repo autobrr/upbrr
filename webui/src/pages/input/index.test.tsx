@@ -2091,6 +2091,55 @@ describe("InputPage", () => {
     expect(screen.queryByText(/Bitrate:/)).not.toBeInTheDocument();
   });
 
+  it("opens source language correction once for all selected trackers needing it", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Media.Tracks[0].Languages = [];
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release,
+        readiness: {
+          id: "input-language-review",
+          workflowId: "workflow-1",
+          revision: 1,
+          createdAt: "2026-10-23T06:00:00Z",
+          factInstructions: { id: "facts-1", revision: 1 },
+          release: { SourcePath: "C:\\media\\Example.mkv", Generation: 1 },
+          requirementsFingerprint: "a".repeat(64),
+          status: "completed",
+          fields: [
+            {
+              key: "metadata.track_languages.audio:resource-1:1",
+              trackId: "audio:resource-1:1",
+              correctionField: "metadata.track_languages",
+              status: "missing",
+              disposition: "strict",
+              trackerIds: ["ONE", "TWO"],
+            },
+          ],
+        },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    expect(screen.getByTestId("input-track-coverage")).toHaveAttribute("open");
+    expect(screen.getAllByLabelText("Audio track 1 languages")).toHaveLength(1);
+    expect(screen.getByText(/Language identification required for ONE, TWO/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Audio track 1 languages"), {
+      target: { value: "Japanese" },
+    });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({
+      TrackLanguages: [
+        {
+          trackId: "audio:resource-1:1",
+          languages: ["Japanese"],
+          manifestFingerprint: "a".repeat(64),
+        },
+      ],
+    });
+  });
+
   it("binds track corrections and source options to their typed facet commands", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {

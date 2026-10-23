@@ -62,6 +62,24 @@ Web UI refresh verifies the source and reuses provider evidence whose lookup inp
 
 Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
 
+When a selected tracker's current rules need an unidentified programme audio
+language, **Inspected tracks** opens on Input and identifies the affected track.
+Correct its verified languages once, then prepare Input again. The canonical
+correction is reused across selected trackers and retained readiness checks;
+changing the inspected source or track manifest requires a compatible correction.
+Known multilingual tracks, non-linguistic audio, absent audio, and unknown
+commentary languages are not treated as the same missing fact. Language answers
+cannot establish an unknown track role or complete missing inspection evidence.
+
+The interactive CLI and `--unattended_confirm` (`--uac`) collect all required
+track languages in one source review before repreparing. `--unattended` never
+prompts: it reports the affected track and `--track-languages` correction option,
+without authorizing a blocked upload. Enter verified language names or codes,
+separated by commas; do not infer English or the title's original language.
+Generated descriptions retain the corrected audio/subtitle notes without
+duplicating them on repeated preparation. Custom and final descriptions remain
+under their existing override rules.
+
 If a composite upload stops because a required global source or type is missing, its operation reports an input failure rather than a completed upload. Edit the missing fields on Input, then retry from the latest workflow state. If another stage stops without a next action, review its retained stop reason before retrying; a stopped operation is not proof of a successful tracker submission.
 
 Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year still follows eligible TVDB alias evidence.

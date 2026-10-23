@@ -12,7 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const metadataRequirementsVersion = "tracker-metadata-v1"
+const metadataRequirementsVersion = "tracker-metadata-v2"
 
 // CollectMetadataRequirements returns the normalized tracker-ID-free union of
 // declarative metadata demands for the selected trackers. It rejects selections
@@ -105,6 +105,9 @@ func EvaluateInputReadiness(registry *Registry, selected []api.TrackerID, subjec
 		}
 		descriptor, found := registry.LookupDescriptor(string(trackerID))
 		if found {
+			for _, outcome := range inputLanguageReview(descriptor.Validation, subject, trackerID) {
+				addInputReadinessOutcome(byIdentity, &evaluation.Fields, outcome, trackerID)
+			}
 			input := PreparationInput{Tracker: string(trackerID), Meta: subject}
 			var schema *api.TrackerQuestionnaire
 			if provider, ok := descriptor.Definition.(TrackerAnswerSchemaProvider); ok {
@@ -183,7 +186,7 @@ func inputReadinessOutcomeIdentity(outcome api.InputReadinessFieldOutcome) strin
 	if outcome.CorrectionField != nil {
 		correction = string(*outcome.CorrectionField)
 	}
-	return strings.Join([]string{outcome.Key, correction, string(outcome.Status), string(outcome.Disposition), outcome.Message}, "\x00")
+	return strings.Join([]string{outcome.Key, correction, outcome.TrackID, string(outcome.Status), string(outcome.Disposition), outcome.Message}, "\x00")
 }
 
 func metadataCorrectionField(field MetadataField) *api.CorrectionField {

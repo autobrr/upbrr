@@ -25,6 +25,8 @@ type ValidationCheck func(ctx context.Context, subject api.TrackerValidationSubj
 type ValidationPolicyBinding struct {
 	ID    string
 	Check ValidationCheck
+	// LanguageAssessment exposes the same pure language predicates to source review.
+	LanguageAssessment func(api.TrackerValidationSubject) []api.RuleFailure
 }
 
 // NoExtraValidationPolicy returns an explicit versioned policy that reports no
@@ -83,6 +85,7 @@ func NewEvidenceRuleFailure(
 // NormalizeRuleFailure preserves evidence while normalizing legacy fields.
 func NormalizeRuleFailure(failure api.RuleFailure) api.RuleFailure {
 	normalized := NewRuleFailure(failure.Rule, failure.Reason, failure.Disposition)
+	normalized.LanguageCorrectionTrackIDs = slices.Clone(failure.LanguageCorrectionTrackIDs)
 	normalized.QuestionnaireInput = failure.QuestionnaireInput
 	normalized.DebugBypass = failure.DebugBypass
 	normalized.EvidenceFingerprint = failure.EvidenceFingerprint

@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -1093,7 +1094,7 @@ func TestEvaluateRulesNBLPreservesFullDiscLanguages(t *testing.T) {
 				}
 				return
 			}
-			if len(blocking) != 1 || blocking[0] != trackers.NewRuleFailure("language_rule", test.wantReason, api.RuleDispositionWaivable) {
+			if len(blocking) != 1 || !reflect.DeepEqual(blocking[0], trackers.NewRuleFailure("language_rule", test.wantReason, api.RuleDispositionWaivable)) {
 				t.Fatalf("full-disc failures = %+v, want original waivable reason %q", failures, test.wantReason)
 			}
 		})

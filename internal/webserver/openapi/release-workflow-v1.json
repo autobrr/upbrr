@@ -3955,6 +3955,9 @@
           "status": {
             "$ref": "#/components/schemas/InputReadinessFieldStatus"
           },
+          "trackId": {
+            "type": "string"
+          },
           "trackerIds": {
             "type": "array",
             "items": {

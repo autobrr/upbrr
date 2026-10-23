@@ -116,6 +116,8 @@ const (
 // InputReadinessFieldOutcome is one safe local-input outcome. Key is a stable
 // evaluator schema key, while CorrectionField identifies a fact correction when applicable.
 type InputReadinessFieldOutcome struct {
+	// TrackID identifies a canonical per-track correction, never a tracker answer.
+	TrackID         string                    `json:"trackId,omitempty"`
 	Key             string                    `json:"key"`
 	CorrectionField *CorrectionField          `json:"correctionField,omitempty"`
 	TrackerIDs      []TrackerID               `json:"trackerIds,omitempty"`

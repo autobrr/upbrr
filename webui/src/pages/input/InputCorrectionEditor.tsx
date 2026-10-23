@@ -1176,7 +1176,16 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         </div>
       </div>
 
-      <details className={inputSectionClass} data-testid="input-track-coverage">
+      <details
+        className={inputSectionClass}
+        data-testid="input-track-coverage"
+        open={
+          view.readiness?.fields?.some(
+            (field) =>
+              field.correctionField === "metadata.track_languages" && field.status !== "ready",
+          ) || undefined
+        }
+      >
         <summary className="cursor-pointer font-semibold">Inspected tracks</summary>
         <p className="text-muted-foreground">
           {release?.Media?.TrackCoverageComplete
@@ -1210,6 +1219,15 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                   onAuto={() => reset(field, track.ID)}
                   onConfirm={() => confirm(field, track.ID)}
                 >
+                  {(view.readiness?.fields || [])
+                    .filter((outcome) => outcome.trackId === track.ID && outcome.status !== "ready")
+                    .map((outcome) => (
+                      <p key={outcome.key} className={pageStyle.error}>
+                        Language identification required for {(outcome.trackerIds || []).join(", ")}
+                        . Correct this track once, then prepare Input again to reuse it across
+                        trackers.
+                      </p>
+                    ))}
                   <CommaListInput
                     key={draftKey(field, track.ID)}
                     id={`correction-${field}-${track.ID}`}

@@ -1895,6 +1895,9 @@ const (
 
 // RuleFailure describes one stable tracker-rule result.
 type RuleFailure struct {
+	// LanguageCorrectionTrackIDs identifies inspected tracks whose unknown
+	// languages are needed by this exact predicate, including resource scope.
+	LanguageCorrectionTrackIDs []string `json:"languageCorrectionTrackIds,omitempty"`
 	// QuestionnaireInput identifies a missing or invalid tracker answer.
 	// Execution remains blocked while the corrective questionnaire stays available.
 	QuestionnaireInput bool `json:"questionnaireInput,omitempty"`

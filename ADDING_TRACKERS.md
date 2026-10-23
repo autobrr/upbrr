@@ -1320,6 +1320,14 @@ programme-language gate. Keep canonical language statuses and `TrackCoverageComp
 they still describe collection-wide evidence and protect naming, source binding and independent
 requirements. Do not rewrite language facts to bypass coverage; questionnaire keys use those facts.
 
+Use `WithLanguagePolicy` or `WithLanguageAssessment` to expose the same pure language predicate
+through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness. A custom binding
+wrapper must preserve that callback when composing validation. Missing programme-language findings
+carry `LanguageCorrectionTrackIDs`; source review requests only the addressable tracks needed by
+non-advisory current policy, once across selected trackers. Save answers through canonical,
+manifest-bound track-language corrections, not tracker questionnaire answers. Do not turn unknown
+roles, incomplete inspection, or advisory guidance into language-identification requirements.
+
 Without an explicit evidence-backed site requirement, source-history, retention, provenance,
 quality and hypothetical subtitle concerns are passive advisories, not questionnaires or unresolved
 answer gates. Keep unknown facts unknown; warnings

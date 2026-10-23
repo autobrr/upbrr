@@ -205,7 +205,8 @@ func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 		id += "+" + strings.TrimSpace(sitePolicy.ID)
 	}
 	return trackers.ValidationPolicyBinding{
-		ID: id,
+		ID:                 id,
+		LanguageAssessment: sitePolicy.LanguageAssessment,
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error) {
 			failures := validateUnit3DConstructibility(d.profile.Name, subject, d.profile.Site)
 			if sitePolicy.Check == nil {
