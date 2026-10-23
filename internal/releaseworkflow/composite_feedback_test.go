@@ -35,6 +35,7 @@ func TestCompositeFeedbackRebuildsPendingDuplicateReview(t *testing.T) {
 		} {
 			duplicateTracker, priorDecision := test.duplicateTracker, test.priorDecision
 			t.Run(fmt.Sprintf("%s/%s/%s/allow=%t/token=%t", kind, duplicateTracker, priorDecision, test.allowUpload, test.staffToken), func(t *testing.T) {
+				t.Parallel()
 				module, repository, uploads := newCompositeUploadTestModule(t)
 				duplicateBase := compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, duplicateTracker, "similar_release")
 				checks := 0
