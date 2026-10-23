@@ -45,6 +45,19 @@ func TestDupeAssessmentPolicyOnlyReview(t *testing.T) {
 						FreshUntil:            now.Add(time.Hour),
 					}},
 				}
+				wantMatches := 0
+				if !complete {
+					if err := assessment.Validate(); err == nil {
+						t.Fatal("incomplete search without review evidence was accepted as policy-only")
+					}
+					assessment.Results[0].Matches = []DupeMatchProjection{{
+						Name:     "Incomplete search evidence",
+						Reason:   "incomplete_search",
+						Relation: DupeRelationInsufficientEvidence,
+						Reasons:  []DupeReason{{Code: "incomplete_search"}},
+					}}
+					wantMatches = 1
+				}
 				if err := assessment.Validate(); err != nil {
 					t.Fatalf("policy-only review complete=%t: %v", complete, err)
 				}
@@ -52,14 +65,15 @@ func TestDupeAssessmentPolicyOnlyReview(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(cloned.Results[0].Matches) != 0 || cloned.Results[0].Search.Complete != complete || cloned.Results[0].Decision != decision {
-					t.Fatal("review changed empty evidence, search completeness, or explicit decision")
+				if len(cloned.Results[0].Matches) != wantMatches || cloned.Results[0].Search.Complete != complete || cloned.Results[0].Decision != decision {
+					t.Fatal("review changed evidence, search completeness, or explicit decision")
 				}
 				assessment.Results[0].Status = StageStatusBlocked
 				if err := assessment.Validate(); err == nil {
 					t.Fatal("reviewed result without completed status was accepted")
 				}
 				assessment.Results[0].Status = StageStatusCompleted
+				assessment.Results[0].Matches = nil
 				for _, code := range []string{"", " \t\n"} {
 					assessment.Results[0].ReviewReasons = []DupeReason{{Code: code}}
 					if err := assessment.Validate(); err == nil {
