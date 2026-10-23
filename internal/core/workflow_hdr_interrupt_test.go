@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/services/hdranalysis"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -150,8 +151,11 @@ func openHDRRestartFixture(t *testing.T, root string, decoded bool) *hdrRestartF
 	return fixture
 }
 
-func writeHDRRestartSources(t *testing.T, root string, decoded bool) {
+func writeHDRRestartFixture(t *testing.T, root string, decoded bool) {
 	t.Helper()
+	// Seed only fresh cases. The crash helper and recovery path reopen this
+	// database through the production API without replacing retained state.
+	dbfixture.WriteMigrated(t, filepath.Join(root, "state.sqlite"))
 	name := "reordered-hybrid.mkv"
 	if decoded {
 		name = "decoded-pq-cuts-25.mkv"
@@ -320,8 +324,9 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 			if phase == "decoded" && os.Getenv("UPBRR_HDR_DECODE_CALIBRATION") != "1" {
 				t.Skip("requires calibrated actual decoder")
 			}
+			t.Parallel()
 			root := t.TempDir()
-			writeHDRRestartSources(t, root, phase == "decoded")
+			writeHDRRestartFixture(t, root, phase == "decoded")
 			ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 			defer cancel()
 			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHDRCheckpointProcessDeathHelper$", "-test.count=1")
@@ -431,8 +436,9 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 func TestHDRPreparationRetainsNativeEvidenceWithoutInvalidComparisonReplay(t *testing.T) {
 	for _, transition := range []string{"new generation", "expired comparison", "same generation"} {
 		t.Run(transition, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
-			writeHDRRestartSources(t, root, false)
+			writeHDRRestartFixture(t, root, false)
 			f := openHDRRestartFixture(t, root, false)
 			current := f.prepare(t)
 			current, comparison := f.selectComparison(t, current)
@@ -523,10 +529,10 @@ func TestHDRPreparationRetainsNativeEvidenceWithoutInvalidComparisonReplay(t *te
 				stale := request
 				stale.Release.Generation = prepared.Release.Release.Generation
 				_, err := f.core.workflow.Execute(ctx, "cli", releaseworkflow.AnalyzeHDRCommand{
-					WorkflowID: prepared.Workflow.ID,
+					WorkflowID:       prepared.Workflow.ID,
 					ExpectedRevision: prepared.Workflow.Revision,
-					Instructions: stale,
-					IdempotencyKey: "reject-old-comparison",
+					Instructions:     stale,
+					IdempotencyKey:   "reject-old-comparison",
 				})
 				if err == nil || reads {
 					t.Fatal("retained comparison PNGs authorized another source read")
