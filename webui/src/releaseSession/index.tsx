@@ -2498,7 +2498,8 @@ export function ReleaseSessionProvider({
         ? "ready"
         : "idle";
   const hdrMutationBlockedReason =
-    activeWorkflowOperation && !isActiveWorkflowOperation(hdrOperation ?? undefined)
+    questionnaireRefreshPending ||
+    (activeWorkflowOperation && !isActiveWorkflowOperation(hdrOperation ?? undefined))
       ? "Wait for the running workflow operation before changing HDR analysis."
       : "";
   const runHDRAnalysis = (input: HDRAnalysisGenerateInput): Promise<boolean> =>
