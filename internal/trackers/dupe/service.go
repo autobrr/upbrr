@@ -957,28 +957,35 @@ func (s *Service) duplicatePolicy(tracker string, meta api.DuplicateSubject) tra
 	return policy
 }
 
+// duplicateTargetForEvaluation returns the projection target or derives it from resolved facts.
 func duplicateTargetForEvaluation(meta api.DuplicateSubject) api.TrackerDuplicateTarget {
 	if meta.Projection != nil {
 		return meta.Projection.DuplicateTarget
 	}
 	return api.TrackerDuplicateTarget{
-		Names:       append([]string(nil), meta.ReleaseName, meta.Filename),
-		Category:    string(meta.Identity.Category),
-		Type:        meta.Type,
-		Source:      meta.Source,
-		Resolution:  meta.Release.Resolution,
-		VideoCodec:  meta.VideoCodec,
-		VideoEncode: meta.VideoEncode,
-		HDR:         cloneHDRFacts(meta.HDRFacts),
-		Edition:     meta.Release.EditionLabel(),
-		Region:      meta.Release.Region,
-		Group:       meta.Tag,
-		Season:      meta.SeasonInt,
-		Episode:     meta.EpisodeInt,
-		Date:        meta.DailyEpisodeDate,
-		Pack:        meta.TVPack,
-		SizeBytes:   meta.SourceSize,
-		FileNames:   append([]string(nil), meta.FileList...),
+		Names:                  append([]string(nil), meta.ReleaseName, meta.Filename),
+		Category:               string(meta.Identity.Category),
+		Type:                   meta.Type,
+		Source:                 meta.Source,
+		Resolution:             meta.Release.Resolution,
+		VideoCodec:             meta.VideoCodec,
+		VideoEncode:            meta.VideoEncode,
+		AudioCodecs:            append([]string(nil), meta.AudioCodecs...),
+		AudioChannels:          append([]string(nil), meta.AudioChannels...),
+		AudioLanguages:         append([]string(nil), meta.AudioLanguages...),
+		AudioCodecsComplete:    meta.AudioCodecsComplete,
+		AudioChannelsComplete:  meta.AudioChannelsComplete,
+		AudioLanguagesComplete: meta.AudioLanguagesComplete,
+		HDR:                    cloneHDRFacts(meta.HDRFacts),
+		Edition:                meta.Release.EditionLabel(),
+		Region:                 meta.Release.Region,
+		Group:                  meta.Tag,
+		Season:                 meta.SeasonInt,
+		Episode:                meta.EpisodeInt,
+		Date:                   meta.DailyEpisodeDate,
+		Pack:                   meta.TVPack,
+		SizeBytes:              meta.SourceSize,
+		FileNames:              append([]string(nil), meta.FileList...),
 
 		ReleaseFeatures: append([]api.ReleaseFeature(nil), meta.Release.ReleaseFeatures...),
 	}
