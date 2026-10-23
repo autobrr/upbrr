@@ -34,8 +34,8 @@ github.com/autobrr/go-torrent v1.1.1 h1:Vc5R3QGZlmAEoEyEYqT2B9j/CX7to82GzFlHhXbp
 github.com/autobrr/go-torrent v1.1.1/go.mod h1:MNqAUt4SVvZTVyVSD3iQHXgi+ARVM3Z6dY0aTvXTnvY=
 github.com/autobrr/mkbrr v1.27.0 h1:uDD7iGyOrlmTy+P4T//+3vWk7gFmRZQXBDVsC09aQJw=
 github.com/autobrr/mkbrr v1.27.0/go.mod h1:fOZYEK3+ocl2G+zz71yjhVukXjCwyiAIOMBnj7jqsq0=
-github.com/autobrr/rls v0.9.0 h1:WVUiZ5YAFW/huwMKXskoaH0XGRCIjHYG+Wg2Y0heUkg=
-github.com/autobrr/rls v0.9.0/go.mod h1:WQDGkyT95o26XEdRIzP2CSXZFyufh8xvpQdckaC2khM=
+github.com/autobrr/rls v0.10.0 h1:0coSaXgxpH5mwQQziHqAvxK3NjT2bna2c5a5Y9KqwxI=
+github.com/autobrr/rls v0.10.0/go.mod h1:Kg9MouMj3Kdg1ql0r8Hl4bcSyC1QidxiKiip5QWUlBc=
 github.com/avast/retry-go v3.0.0+incompatible h1:4SOWQ7Qs+oroOTQOYnAHqelpCO0biHSxpiH9JdtuBj0=
 github.com/avast/retry-go v3.0.0+incompatible/go.mod h1:XtSnn+n/sHqQIpZ10K1qAevBhOOCWBLXXy3hyiqqBrY=
 github.com/aymanbagabas/go-udiff v0.4.1 h1:OEIrQ8maEeDBXQDoGCbbTTXYJMYRCRO1fnodZ12Gv5o=
