@@ -105,7 +105,9 @@ jobs:
         shell: pwsh
         # These flags limit each package's test binary; package concurrency keeps Go's default -p.
         run: |
-          go test -race -json -cpu=4 -parallel=4 -timeout 20m ./... | Tee-Object -FilePath "$env:RUNNER_TEMP/go-tests.jsonl"
+          # Native stdout redirection avoids processing every test event through
+          # PowerShell and the Actions live logger. The full log is uploaded below.
+          go test -race -json -cpu=4 -parallel=4 -timeout 20m ./... > "$env:RUNNER_TEMP/go-tests.jsonl"
           exit $LASTEXITCODE
 
       # Go caches successful compile actions even if another package/test fails.

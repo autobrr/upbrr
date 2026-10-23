@@ -87,6 +87,31 @@ test("reports expensive parallel children when the parent has zero elapsed time"
   assert.match(summary.markdown, /TestMatrix\/slow \| pass \| 45\.00/);
 });
 
+test("lists fast failures even when they are outside the slowest ten tests", () => {
+  const summary = summarizeGoTests(
+    log(
+      ...Array.from({ length: 11 }, (_, index) => ({
+        Package: "example",
+        Action: "pass",
+        Test: `TestSlow${index}`,
+        Elapsed: 10,
+      })),
+      {
+        Package: "example",
+        Action: "fail",
+        Test: "TestFastFailure",
+        Elapsed: 0.1,
+      },
+      { Package: "example", Action: "fail", Elapsed: 111 },
+    ),
+    "Windows",
+  );
+  const failures = summary.markdown.split("### Slowest executed packages")[0];
+  assert.match(failures, /### Failures/);
+  assert.match(failures, /example: TestFastFailure \| fail \| 0\.10/);
+  assert.match(failures, /example \| fail \| 111\.00/);
+});
+
 test("escapes table and workflow-command line breaks in names", () => {
   const summary = summarizeGoTests(
     log(

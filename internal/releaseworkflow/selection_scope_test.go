@@ -12,13 +12,16 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestPersistedAcknowledgementRetainsScopeAfterDemandRefresh(t *testing.T) {
 	t.Parallel()
 
-	database, err := db.Open(filepath.Join(t.TempDir(), "selection.sqlite"))
+	databasePath := filepath.Join(t.TempDir(), "selection.sqlite")
+	dbfixture.WriteMigrated(t, databasePath)
+	database, err := db.Open(databasePath)
 	if err != nil {
 		t.Fatal(err)
 	}

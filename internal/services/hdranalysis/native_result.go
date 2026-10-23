@@ -319,7 +319,8 @@ func (s *Session) renderDolbyVision(ctx context.Context, analysis *dovi.Analysis
 		return fmt.Errorf("render Dolby Vision L1: %w", err)
 	}
 	s.service.progress(ctx, "saving_dolby_vision")
-	if err := PublishFile(ctx, target, func(out io.Writer) error { return png.Encode(out, image) }); err != nil {
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := PublishFile(ctx, target, func(out io.Writer) error { return encoder.Encode(out, image) }); err != nil {
 		return fmt.Errorf("publish Dolby Vision L1: %w", err)
 	}
 	return nil

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -74,6 +75,7 @@ func TestPersistentWorkflowRestartRetriesAuthBlockedProjectionOnce(t *testing.T)
 	t.Parallel()
 
 	databasePath := filepath.Join(t.TempDir(), "auth-restart.sqlite")
+	dbfixture.WriteMigrated(t, databasePath)
 	repoA, err := db.Open(databasePath)
 	if err != nil {
 		t.Fatalf("open first repository: %v", err)
@@ -279,14 +281,15 @@ func TestPersistentWorkflowRestartRetriesAuthBlockedProjectionOnce(t *testing.T)
 	if projecting.Operation == nil {
 		t.Fatalf("auth restart projection operation = %#v", projecting)
 	}
-	waitForWorkflowOperation(t, moduleB, recovered.Workflow.ID, projecting.Operation.ID, func(status api.WorkflowOperationStatus) bool {
-		return isTerminalProgressStatus(status.Status)
-	})
+	if err := moduleB.waitForOperationCleanup(t.Context(), projecting.Operation.ID); err != nil {
+		t.Fatal(err)
+	}
 	projected, err := moduleB.Current(context.Background(), testOwnerID, recovered.Workflow.ID)
 	if err != nil {
 		t.Fatalf("load fresh input readiness: %v", err)
 	}
-	if projected.InputReadiness == nil || projected.Projections != nil {
+	if projected.Operation == nil || projected.Operation.ID != projecting.Operation.ID || !isTerminalProgressStatus(projected.Operation.Status) ||
+		projected.InputReadiness == nil || projected.Projections != nil {
 		t.Fatalf("fresh input readiness = %#v", projected)
 	}
 	request.Authority.ExpectedRevision = projected.Workflow.Revision
@@ -298,12 +301,15 @@ func TestPersistentWorkflowRestartRetriesAuthBlockedProjectionOnce(t *testing.T)
 	if projecting.Operation == nil {
 		t.Fatalf("auth restart projection after readiness = %#v", projecting)
 	}
-	waitForWorkflowOperation(t, moduleB, recovered.Workflow.ID, projecting.Operation.ID, func(status api.WorkflowOperationStatus) bool {
-		return isTerminalProgressStatus(status.Status)
-	})
+	if err := moduleB.waitForOperationCleanup(t.Context(), projecting.Operation.ID); err != nil {
+		t.Fatal(err)
+	}
 	projected, err = moduleB.Current(context.Background(), testOwnerID, recovered.Workflow.ID)
 	if err != nil {
 		t.Fatalf("load fresh projection: %v", err)
+	}
+	if projected.Operation == nil || projected.Operation.ID != projecting.Operation.ID || !isTerminalProgressStatus(projected.Operation.Status) {
+		t.Fatalf("fresh projection operation = %#v", projected.Operation)
 	}
 	request.Authority.ExpectedRevision = projected.Workflow.Revision
 	request.IdempotencyKey = "continue-auth-restart-preflight"
@@ -314,14 +320,15 @@ func TestPersistentWorkflowRestartRetriesAuthBlockedProjectionOnce(t *testing.T)
 	if preflighting.Operation == nil {
 		t.Fatalf("auth restart preflight operation = %#v", preflighting)
 	}
-	waitForWorkflowOperation(t, moduleB, recovered.Workflow.ID, preflighting.Operation.ID, func(status api.WorkflowOperationStatus) bool {
-		return isTerminalProgressStatus(status.Status)
-	})
+	if err := moduleB.waitForOperationCleanup(t.Context(), preflighting.Operation.ID); err != nil {
+		t.Fatal(err)
+	}
 	fresh, err := moduleB.Current(context.Background(), testOwnerID, recovered.Workflow.ID)
 	if err != nil {
 		t.Fatalf("load fresh preflight: %v", err)
 	}
-	if fresh.Preflight == nil || fresh.Projections == nil ||
+	if fresh.Operation == nil || fresh.Operation.ID != preflighting.Operation.ID || !isTerminalProgressStatus(fresh.Operation.Status) ||
+		fresh.Preflight == nil || fresh.Projections == nil ||
 		len(fresh.Preflight.Results) != 2 ||
 		fresh.Preflight.Results[1].State != api.TrackerPreflightStateReady ||
 		fresh.Projections.Projections[1].Readiness != api.ReadinessStatusReady {
@@ -346,6 +353,7 @@ func TestPersistentRestartHandlesLegacyAuthStateSafely(t *testing.T) {
 	t.Parallel()
 
 	databasePath := filepath.Join(t.TempDir(), "legacy-auth-restart.sqlite")
+	dbfixture.WriteMigrated(t, databasePath)
 	repoA, err := db.Open(databasePath)
 	if err != nil {
 		t.Fatalf("open first repository: %v", err)
@@ -561,6 +569,7 @@ func TestPersistentWorkflowRestartPreservesTrackerApproval(t *testing.T) {
 	t.Parallel()
 
 	databasePath := filepath.Join(t.TempDir(), "tracker-approval.sqlite")
+	dbfixture.WriteMigrated(t, databasePath)
 	repoA, err := db.Open(databasePath)
 	if err != nil {
 		t.Fatalf("open first repository: %v", err)
@@ -665,6 +674,7 @@ func TestPersistentWorkflowRestartPreservesSafePreparedRelease(t *testing.T) {
 	t.Parallel()
 
 	databasePath := filepath.Join(t.TempDir(), "release-workflows.sqlite")
+	dbfixture.WriteMigrated(t, databasePath)
 	repoA, err := db.Open(databasePath)
 	if err != nil {
 		t.Fatalf("open first repository: %v", err)
@@ -830,6 +840,7 @@ func TestPersistentWorkflowOperationRestartIsInterrupted(t *testing.T) {
 	t.Parallel()
 
 	databasePath := filepath.Join(t.TempDir(), "release-workflow-operation.sqlite")
+	dbfixture.WriteMigrated(t, databasePath)
 	repoA, err := db.Open(databasePath)
 	if err != nil {
 		t.Fatalf("open first repository: %v", err)
@@ -928,10 +939,12 @@ func TestPersistentWorkflowSuccessfulOperationReplayRetainsValidResultAfterResta
 	t.Parallel()
 
 	databasePath := filepath.Join(t.TempDir(), "release-workflow-stale-replay.sqlite")
+	dbfixture.WriteMigrated(t, databasePath)
 	repoA, err := db.Open(databasePath)
 	if err != nil {
 		t.Fatalf("open first repository: %v", err)
 	}
+	t.Cleanup(func() { _ = repoA.Close() })
 	if err := repoA.Migrate(); err != nil {
 		_ = repoA.Close()
 		t.Fatalf("migrate first repository: %v", err)
@@ -968,12 +981,16 @@ func TestPersistentWorkflowSuccessfulOperationReplayRetainsValidResultAfterResta
 		_ = repoA.Close()
 		t.Fatalf("start preparation: %v", err)
 	}
-	terminal := waitForWorkflowOperation(t, moduleA, created.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
-		return status.Status == api.StageStatusCompleted
-	})
-	if terminal.Result == nil || terminal.Result.Kind != api.WorkflowOperationResultRelease {
+	if err := moduleA.waitForOperationCleanup(t.Context(), operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := moduleA.Operation(t.Context(), testOwnerID, created.Workflow.ID, operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal.Status != api.StageStatusCompleted || terminal.Result == nil || terminal.Result.Kind != api.WorkflowOperationResultRelease {
 		_ = repoA.Close()
-		t.Fatalf("successful operation result = %#v", terminal.Result)
+		t.Fatalf("successful operation = %#v", terminal)
 	}
 	if err := repoA.Close(); err != nil {
 		t.Fatalf("close first repository: %v", err)

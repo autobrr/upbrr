@@ -66,13 +66,13 @@ export function summarizeGoTests(log, label) {
     (entry) => entry.seconds > packageBudget,
   ).length;
   const slowTests = tests.filter((entry) => entry.seconds > testBudget).length;
-  const table = (entries) =>
+  const table = (entries, limit = 10) =>
     [
       "| Name | Result | Seconds |",
       "| --- | --- | ---: |",
       ...entries
         .toSorted((a, b) => b.seconds - a.seconds)
-        .slice(0, 10)
+        .slice(0, limit)
         .map(
           (entry) =>
             `| ${cell(entry.name)} | ${entry.status} | ${entry.seconds.toFixed(2)} |`,
@@ -89,6 +89,18 @@ export function summarizeGoTests(log, label) {
     `Warning budgets: ${packageBudget}s per package and ${testBudget}s per test case. ` +
       `${slowPackages} packages and ${slowTests} tests exceeded these budgets.`,
     "",
+    ...(completed.some((entry) => entry.status === "fail")
+      ? [
+          "### Failures",
+          "",
+          "The complete output is in the uploaded go-test-timings artifact.",
+          "",
+          table(
+            [...completed, ...tests].filter((entry) => entry.status === "fail"),
+            Infinity,
+          ),
+        ]
+      : []),
     "### Slowest executed packages",
     "",
     table(executed),

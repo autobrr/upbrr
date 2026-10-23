@@ -324,7 +324,8 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 			if phase == "decoded" && os.Getenv("UPBRR_HDR_DECODE_CALIBRATION") != "1" {
 				t.Skip("requires calibrated actual decoder")
 			}
-			t.Parallel()
+			// Each child performs real extraction and rendering under the race detector.
+			// Keep them sequential so they do not exhaust the hosted runner's CPU budget.
 			root := t.TempDir()
 			writeHDRRestartFixture(t, root, phase == "decoded")
 			ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
