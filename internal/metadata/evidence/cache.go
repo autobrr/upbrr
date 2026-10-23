@@ -172,7 +172,7 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 				(scope.freshness.RequiresRefresh() && refreshesProviderDomain(domain) || (scope.freshness == api.ExternalFreshnessLoad && record.Outcome == api.MetadataEvidenceEmpty))
 		if record.Outcome == api.MetadataEvidenceFailed {
 			if scope.logger != nil {
-				scope.logger.Debugf("metadata: evidence domain=%s decision=retain_failed", domain)
+				scope.logger.Tracef("metadata: evidence domain=%s decision=retain_failed", domain)
 			}
 			if len(record.Payload) > 0 {
 				var partial T
@@ -187,14 +187,14 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 			var result T
 			if err := json.Unmarshal(record.Payload, &result); err == nil {
 				if scope.logger != nil {
-					scope.logger.Debugf("metadata: evidence domain=%s decision=reuse", domain)
+					scope.logger.Tracef("metadata: evidence domain=%s decision=reuse", domain)
 				}
 				return result, nil
 			}
 		}
 	}
 	if scope.logger != nil {
-		scope.logger.Debugf("metadata: evidence domain=%s decision=collect", domain)
+		scope.logger.Tracef("metadata: evidence domain=%s decision=collect", domain)
 	}
 	result, fetchErr := fetch()
 	if ctxErr := ctx.Err(); ctxErr != nil {

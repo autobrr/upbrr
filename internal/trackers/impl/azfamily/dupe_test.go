@@ -87,7 +87,7 @@ func TestAZRequestTraceIncludesFallbackAndGroupPages(t *testing.T) {
 			t.Fatalf("request TRACE missing %q", want)
 		}
 	}
-	if len(logger.trace) != 4 || strings.Contains(logs, "private-cookie") || strings.Contains(logs, server.URL) {
+	if strings.Count(logs, "dupechecking: request ") != 4 || strings.Contains(logs, "private-cookie") || strings.Contains(logs, server.URL) {
 		t.Fatal("request TRACE has the wrong request count or exposed authentication/URL")
 	}
 }

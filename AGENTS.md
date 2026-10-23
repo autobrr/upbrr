@@ -64,8 +64,8 @@ Before commit: `git diff --check`, changed-package `make gofix-check-changed`, o
 - Log operator-visible progress/decisions, not only final errors: operation start, external/local check, decision, affected count.
 - `INFO`: concise, relevant end-user progress/outcomes for uploads and top-level workflows.
 - Warnings: failed/blocked outcomes requiring attention.
-- `DEBUG`: richer developer troubleshooting and decision context.
-- `TRACE`: near-complete operational flow.
+- `DEBUG`: finalized effective facts (including compatible cached generations), concise provider outcomes, and one bounded outcome per tracker/client check. Empty facts stay explicit; provider availability does not imply a new fetch.
+- `TRACE`: near-complete operational flow, including repeated cache decisions, parser intermediates, per-candidate evidence, pagination, and detailed workflow lifecycle/counters.
 - Prefer searchable, stable key/value message fields: `tracker=%s state=%s decision=%s count=%d`.
 
 ## Non-Negotiables

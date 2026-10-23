@@ -452,6 +452,10 @@ trackers:
     link_dir_name: ""
     api_key: ""
     anon: false
+  ZDF:
+    link_dir_name: ""
+    api_key: ""
+    anon: false
   ZNTH:
     link_dir_name: ""
     api_key: ""

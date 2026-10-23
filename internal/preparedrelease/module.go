@@ -103,6 +103,7 @@ type Module struct {
 	store     Store
 	identity  IdentityResolver
 	collector Collector
+	logger    api.Logger
 	now       func() time.Time
 
 	mu        sync.RWMutex
@@ -110,8 +111,8 @@ type Module struct {
 	gates     sourceGates
 }
 
-// New requires and borrows all persistence, identity, and collection ports.
-func New(store Store, identity IdentityResolver, collector Collector) (*Module, error) {
+// New borrows persistence, identity, collection, and an optional diagnostic logger.
+func New(store Store, identity IdentityResolver, collector Collector, logger ...api.Logger) (*Module, error) {
 	if store == nil {
 		return nil, errors.New("prepared release: store is required")
 	}
@@ -121,7 +122,12 @@ func New(store Store, identity IdentityResolver, collector Collector) (*Module, 
 	if collector == nil {
 		return nil, errors.New("prepared release: fact collector is required")
 	}
+	var fallback api.Logger = api.NopLogger{}
+	if len(logger) > 0 && logger[0] != nil {
+		fallback = logger[0]
+	}
 	return &Module{
+		logger:    fallback,
 		store:     store,
 		identity:  identity,
 		collector: collector,
@@ -254,7 +260,9 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 			)
 			return api.PrepareResult{}, err
 		}
+		cache := "memory"
 		if !m.hasPublishedGeneration(current.Source.SourcePath, current.Generation) {
+			cache = "persisted"
 			hydrator, ok := m.collector.(privateResourcesHydrator)
 			if !ok {
 				return api.PrepareResult{}, errors.New("prepared release: collector cannot hydrate private resources")
@@ -290,6 +298,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		if err != nil {
 			return api.PrepareResult{}, err
 		}
+		m.logPreparedFacts(ctx, current, cache, resolved.Corrections.Revision)
 		return cloneResult(api.PrepareResult{
 			Diagnostics:           sourceSeasonDiagnostics(owned),
 			Release:               current,
@@ -482,6 +491,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	m.publish(owned)
 	capturesPublished = true
 	commitFinish(nil)
+	m.logPreparedFacts(ctx, release, "collected", committedRevision)
 	return cloneResult(owned.result)
 }
 

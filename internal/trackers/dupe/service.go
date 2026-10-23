@@ -271,6 +271,7 @@ func (s *Service) checkWithAssessment(
 		result := completedResult.result
 		byIndex[completedResult.index] = &result
 		entry := completedResult.entry
+		s.logCheckOutcome(result, entry)
 		assessmentByIndex[completedResult.index] = &entry
 		completed++
 		s.emitDupeProgress(ctx, api.DupeProgressUpdate{
@@ -299,6 +300,24 @@ func (s *Service) checkWithAssessment(
 		}
 	}
 	return summary, assessment, nil
+}
+
+func (s *Service) logCheckOutcome(result api.DupeCheckResult, entry assessmentEntry) {
+	source := "remote"
+	if result.Search.Scope == "local_client" {
+		source = "local_client"
+	} else if entry.disposition == DispositionNotRun {
+		source = "not_run"
+	}
+	code := entry.code
+	if code == "" {
+		code = "none"
+	}
+	s.logger.Debugf(
+		//logpolicy:allow one bounded outcome per tracker check; candidate and protocol details stay at trace
+		"dupechecking: search tracker=%s state=%s source=%s candidates=%d complete=%t candidate_action=%t decision=%s code=%s",
+		result.Tracker, result.Status, source, result.Search.CandidateCount, result.Search.Complete, result.HasDupes, entry.verdict, code,
+	)
 }
 
 func duplicateSubjectForProjection(
@@ -465,11 +484,6 @@ func (s *Service) checkTracker(
 			Status:    "completed",
 			CheckedAt: checkedAt,
 		}
-		s.logger.Debugf(
-			//logpolicy:allow local-client duplicate outcomes require debug visibility alongside remote search outcomes
-			"dupechecking: search tracker=%s state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=false",
-			tracker,
-		)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionResolved, "", true, match, nil), false
 	}
 	if options.SkipRemote {
@@ -531,7 +545,7 @@ func (s *Service) checkTracker(
 		result = failedPublicResult(tracker, FailureInternal, "duplicate adapter unavailable", checkedAt)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
 	}
-	s.logger.Debugf("dupechecking: search tracker=%s state=start", tracker)
+	s.logger.Tracef("dupechecking: search tracker=%s state=start", tracker)
 	adapterResult := adapter.Search(ctx, cloneDuplicateSubject(meta))
 	if err := adapterResult.cause(); err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && ctx.Err() != nil {
 		return api.DupeCheckResult{}, assessmentEntry{}, true
@@ -582,7 +596,7 @@ func (s *Service) projectAdapterResult(
 				Warnings:       cloneNotes(search.Warnings),
 			},
 		}
-		s.logger.Debugf(
+		s.logger.Tracef(
 			"dupechecking: search tracker=%s state=completed work_scope=%s received=%d evaluated=%d wrong_work=%d exhaustive=%t effective_complete=%t candidate_action=%t review_required=%t",
 			tracker,
 			search.WorkScope,
@@ -598,7 +612,7 @@ func (s *Service) projectAdapterResult(
 		for _, finding := range evaluation.SetFindings {
 			s.logSetFinding(tracker, finding)
 		}
-		s.logger.Debugf(
+		s.logger.Tracef(
 			"dupechecking: search tracker=%s pages=%d exhaustive=%t effective_complete=%t work_scope=%s scope=%s wrong_work=%d warnings=%q",
 			tracker,
 			search.Pages,
@@ -659,7 +673,7 @@ func (s *Service) logSetFinding(tracker string, finding SetFinding) {
 	if finding.SeparationKnown {
 		observed = fmt.Sprintf("%.2f", finding.ObservedMinimumSeparationPercent)
 	}
-	s.logger.Debugf(
+	s.logger.Tracef(
 		"dupechecking: set tracker=%s rule=%s relation=%s reason=%s occupancy=%d capacity=%d "+
 			"minimum_size_separation=%.2f observed_size_separation=%s candidates=%q facts=%q missing=%q",
 		tracker,
@@ -687,7 +701,7 @@ func (s *Service) logCandidateEvaluation(tracker string, evaluation CandidateEva
 	if evidence == "" {
 		evidence = api.HDREvidenceMissing
 	}
-	s.logger.Debugf(
+	s.logger.Tracef(
 		"dupechecking: candidate tracker=%s candidate_id=%q relation=%s winning_rule=%s raw_type=%q comparison_type=%q "+
 			"kind=%s class=%s source_family=%s resolution=%s "+
 			"hdr_status=%s compared=%q missing=%q matched=%q indeterminate=%q name=%q facts=%q hdr=%q hdr_origin=%s reasons=%q",
@@ -726,7 +740,7 @@ func (s *Service) logTargetEvaluation(
 	if hdrStatus == "" {
 		hdrStatus = api.HDREvidenceMissing
 	}
-	s.logger.Debugf(
+	s.logger.Tracef(
 		"dupechecking: target tracker=%s general_policy=%s tracker_policy=%s comparison_type=%q type_status=%s type_origin=%s "+
 			"kind=%s class=%s source_family=%s source=%s resolution=%s hdr_status=%s scope=%s",
 		tracker,

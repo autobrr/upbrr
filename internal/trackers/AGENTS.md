@@ -29,6 +29,10 @@ Scope: `internal/trackers/` and changes elsewhere to tracker definitions, regist
 - `internal/architecturepolicy` keeps validation algorithms out of tracker `upload.go`; enforces static banned-group locality, Unit3D callback-file bindings, name locality, reviewed-name payload fences, forbidden imports. Extend rules with accepted/rejected fixtures.
 - Standard Unit3D addition: site profile, optional rules/validation, one registry entry, one example-config stanza without `url`, combined rule/validation cases. Never infer configured custom trackers; unsupported saved entries remain inert and preserve unknown non-URL fields.
 
+## Logging
+
+- Shared duplicate coordination emits one bounded DEBUG outcome per tracker check, including local-client, skipped, not-run and failed outcomes. Adapter pagination, starts/completions and candidate evidence stay at TRACE; preserve actionable warnings and errors and existing sanitization.
+
 ## Checks
 
 Follow the root and backend check selection. Test the implementation and touched shared tracker packages; include config/default/catalog checks when definitions or auth material change. Duplicate behavior also follows `internal/trackers/dupe/AGENTS.md`.

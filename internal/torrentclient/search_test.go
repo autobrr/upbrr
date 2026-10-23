@@ -30,6 +30,7 @@ import (
 )
 
 type captureLogger struct {
+	trace []string
 	debug []string
 }
 
@@ -42,7 +43,9 @@ func trackerPatternRegistry(t *testing.T) *trackers.Registry {
 	return registry
 }
 
-func (l *captureLogger) Tracef(string, ...any) {}
+func (l *captureLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
 
 func (l *captureLogger) Debugf(format string, args ...any) {
 	l.debug = append(l.debug, fmt.Sprintf(format, args...))
@@ -811,12 +814,15 @@ func TestLogPathedSearchMatchesRedactsTrackerURLs(t *testing.T) {
 		TrackerURLs:       []api.TrackerMatch{{ID: "bhd", TrackerID: "10001"}},
 	}})
 
-	joined := strings.Join(logger.debug, "\n")
+	if len(logger.debug) != 0 {
+		t.Fatal("per-match details must not log at debug")
+	}
+	joined := strings.Join(logger.trace, "\n")
 	if !strings.Contains(joined, "Fixture.Title.2024") || !strings.Contains(joined, "BHD:10001") {
-		t.Fatalf("expected match details in debug log, got %q", joined)
+		t.Fatalf("expected match details in trace log, got %q", joined)
 	}
 	if strings.Contains(joined, "announce") || strings.Contains(joined, "passkey") || strings.Contains(joined, "beyond-hd.me") {
-		t.Fatalf("expected tracker URLs redacted from debug log, got %q", joined)
+		t.Fatalf("expected tracker URLs redacted from trace log, got %q", joined)
 	}
 }
 

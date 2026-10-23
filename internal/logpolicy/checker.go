@@ -320,7 +320,7 @@ func checkProjectLoggerPathSanitization(fset *token.FileSet, root string) ([]Vio
 		sanitizeMessagePosition(file, file.Package),
 		logging.SanitizeMessage,
 	)...)
-	violations = append(violations, checkProjectLoggerApostrophePathRedaction(
+	violations = append(violations, checkProjectLoggerDiagnosticPathPreservation(
 		fset,
 		relPath,
 		sanitizeMessagePosition(file, file.Package),
@@ -361,7 +361,7 @@ func checkProjectLoggerURLPathPreservation(fset *token.FileSet, relPath string, 
 	} {
 		sanitized := sanitize(value)
 		if sanitized != value {
-			return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must preserve URL path segments before local path redaction")}
+			return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must preserve URL path segments without modification")}
 		}
 	}
 	return nil
@@ -390,14 +390,17 @@ func checkProjectLoggerURLUserinfoRedaction(fset *token.FileSet, relPath string,
 	return nil
 }
 
-// checkProjectLoggerApostrophePathRedaction guards complete path labeling for
-// valid release names that contain apostrophes.
-func checkProjectLoggerApostrophePathRedaction(fset *token.FileSet, relPath string, pos token.Pos, sanitize func(string) string) []Violation {
-	sanitized := sanitize(`source=C:\media\Example's.Release.2026-GRP: state=failed`)
-	if strings.Contains(sanitized, `C:\media`) ||
-		strings.Contains(sanitized, "Example's.Release.2026-GRP") ||
-		!strings.Contains(sanitized, "source=[local path]: state=failed") {
-		return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must redact complete local paths containing apostrophes")}
+// checkProjectLoggerDiagnosticPathPreservation guards useful filesystem context
+// without weakening the independent credential-redaction checks.
+func checkProjectLoggerDiagnosticPathPreservation(fset *token.FileSet, relPath string, pos token.Pos, sanitize func(string) string) []Violation {
+	for _, value := range []string{
+		`source=C:\media\Example's Release.2026-GRP: state=failed`,
+		`source=/media/Example's Release.2026-GRP: state=failed`,
+		`source=\\server\share\Example Release.mkv state=failed`,
+	} {
+		if sanitize(value) != value {
+			return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must preserve ordinary diagnostic filesystem paths")}
+		}
 	}
 	return nil
 }

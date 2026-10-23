@@ -30,10 +30,13 @@ type arRoundTripFunc func(*http.Request) (*http.Response, error)
 func (f arRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 type dupeCaptureLogger struct {
+	trace []string
 	debug []string
 }
 
-func (l *dupeCaptureLogger) Tracef(string, ...any) {}
+func (l *dupeCaptureLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
 func (l *dupeCaptureLogger) Infof(string, ...any)  {}
 func (l *dupeCaptureLogger) Warnf(string, ...any)  {}
 func (l *dupeCaptureLogger) Errorf(string, ...any) {}
@@ -145,7 +148,7 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 		search.Pages != 2 || search.Scope != "title_year" || len(search.Warnings) != 0 {
 		t.Fatalf("unexpected search evidence: %#v", search)
 	}
-	logs := strings.Join(logger.debug, "\n")
+	logs := strings.Join(logger.trace, "\n")
 	if !strings.Contains(logs, `AR search request method=GET action=browse searchstr="Example Release 2026"`) {
 		t.Fatalf("missing safe AR request diagnostics: %q", logs)
 	}

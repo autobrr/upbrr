@@ -96,7 +96,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/tvdb id for HDB dupe search", nil)
 		}
 		request.Search, searchMethod = query, "text_fallback"
-		s.logger.Debugf("dupechecking: HDB falling back to text search for %s", meta.SourcePath)
+		s.logger.Tracef("dupechecking: HDB falling back to text search for %s", meta.SourcePath)
 	}
 	maxPages := s.maxPages
 	if maxPages <= 0 {
@@ -192,7 +192,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if warning != "" {
 		warnings = []string{warning}
 	}
-	s.logger.Debugf(
+	s.logger.Tracef(
 		"dupechecking: HDB returned %d entries for %s method=%s pages=%d complete=%t",
 		len(entries),
 		meta.SourcePath,

@@ -20,6 +20,12 @@ These edits require **Save** before they become active.
 
 File logging requires positive **Max total size** and **Max files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled.
 
+## Choosing a level
+
+- **Info** shows concise progress and outcomes. Source-inspection bookkeeping without a known byte total is kept at debug; failures remain warnings.
+- **Debug** adds effective prepared-generation facts, including compatible cached results and explicit empty fields, concise provider results, and a bounded outcome for each tracker duplicate check. Provider metadata availability does not mean a new network fetch occurred.
+- **Trace** adds detailed cache decisions, parser intermediates, search pages, candidate evidence, and workflow lifecycle counters. Use it when debug does not answer the specific question being investigated.
+
 ## Upload run verbosity
 
 On **Upload**, choose **Run options → Log level** before starting a dry run or upload. The selected level applies to that run's application logs, including background work and resumed work. It reaches the live viewer, retained log entries, and file output when enabled.
@@ -37,4 +43,4 @@ This choice does not save the global logging setting or change another operation
 
 Torrent-client connection diagnostics omit configured private endpoints and retain safe operation and failure context.
 
-The viewer receives centrally sanitized messages, but inspect entries before sharing them. Never publish credentials, cookies, tokens, announce URLs, filesystem details, or private tracker data.
+The viewer receives centrally sanitized messages, but ordinary filesystem paths remain visible for troubleshooting, including in CLI diagnostics and log files. Paths may contain usernames, directories, filenames, and release names. Automatic redaction is intended to protect credentials, not to make every log safe to share. Inspect each excerpt and remove any remaining credentials, cookies, tokens, private URLs, private tracker data, and unrelated personal information before sharing.

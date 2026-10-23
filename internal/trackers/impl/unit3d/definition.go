@@ -240,7 +240,7 @@ func (d *Definition) TorrentIdentityPolicy() *trackers.TorrentIdentityPolicy {
 	policy := trackers.TorrentIdentityPolicy{
 		TrackerURLPatterns: []string{d.profile.BaseURL},
 		CommentURLPatterns: []string{d.profile.BaseURL},
-		DetailIDPattern:    `/(\d+)`,
+		DetailIDPattern:    `(?i)/torrents/(\d+)`,
 	}
 	if d.profile.TorrentIdentity != nil {
 		policy.TrackerURLPatterns = append(policy.TrackerURLPatterns, d.profile.TorrentIdentity.TrackerURLPatterns...)

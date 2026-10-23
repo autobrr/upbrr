@@ -170,11 +170,11 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		meta.SubtitleLanguages = bdSubtitleLanguages
 	}
 	if len(meta.AudioLanguages) > 0 || len(meta.SubtitleLanguages) > 0 {
-		logger.Debugf("metadata: media languages audio=%v subs=%v", meta.AudioLanguages, meta.SubtitleLanguages)
+		logger.Tracef("metadata: media languages audio=%v subs=%v", meta.AudioLanguages, meta.SubtitleLanguages)
 	}
 
 	meta.Container = containerFromMeta(meta)
-	logger.Debugf("metadata: media details container=%q", meta.Container)
+	logger.Tracef("metadata: media details container=%q", meta.Container)
 
 	audio, channels, hasCommentary := audioFromMedia(meta, miDoc, bdinfo)
 	meta.Audio = audio
@@ -182,10 +182,10 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	meta.HasCommentary = hasCommentary || slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool {
 		return track.Kind == api.MediaTrackAudio && track.BitrateBitsPerSecond > 0 && track.Commentary
 	})
-	logger.Debugf("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
+	logger.Tracef("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
 
 	meta.Is3D = threeDFromMedia(miDoc, bdinfo)
-	logger.Debugf("metadata: media details 3d=%q", meta.Is3D)
+	logger.Tracef("metadata: media details 3d=%q", meta.Is3D)
 
 	source, typeValue := sourceAndType(meta, miDoc)
 	if source != "" {
@@ -222,12 +222,12 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			logger.Debugf("metadata: resolution derived from mediainfo %q", res)
 		}
 	}
-	logger.Debugf("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)
+	logger.Tracef("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)
 
 	meta.UHD = uhdFromMeta(meta)
 	meta.HDRFacts = hdrFactsFromMedia(miDoc, bdinfo, meta)
 	meta.HDR = hdrFactsDisplay(meta.HDRFacts)
-	logger.Debugf("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
+	logger.Tracef("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 
 	meta = s.applyBlurayMetadata(ctx, meta, bdinfo)
 	if err := ctx.Err(); err != nil {
@@ -244,7 +244,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	}
 
 	meta.Distributor = normalizeDistributor(meta.Distributor)
-	logger.Debugf("metadata: media details distributor=%q", meta.Distributor)
+	logger.Tracef("metadata: media details distributor=%q", meta.Distributor)
 
 	if strings.EqualFold(meta.DiscType, "BDMV") {
 		meta.Region = regionFromBDInfo(bdinfo, meta.Region)
@@ -255,7 +255,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	} else {
 		meta.VideoEncode, meta.VideoCodec, meta.HasEncodeSettings, meta.BitDepth = videoEncodeFromMedia(miDoc, meta.Type)
 	}
-	logger.Debugf(
+	logger.Tracef(
 		"metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q",
 		meta.Region,
 		meta.VideoEncode,
@@ -268,7 +268,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	meta.ReleaseFeatures = parts.Features
 	meta.EditionDisplay = parts.EditionDisplay
 	meta.WebDV = false
-	logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
+	logger.Tracef("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
 
 	meta.MediaInfoEncodeSettingsPresent = true
 	if !strings.EqualFold(meta.DiscType, "BDMV") && strings.EqualFold(meta.Type, "ENCODE") && !strings.EqualFold(meta.VideoCodec, "AV1") {
@@ -281,7 +281,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if meta.StreamOptimized != 0 {
 		meta.StreamOptimized = 1
 	}
-	logger.Debugf("metadata: media details stream_optimized=%d", meta.StreamOptimized)
+	logger.Tracef("metadata: media details stream_optimized=%d", meta.StreamOptimized)
 
 	service, longName, filename := resolveService(meta)
 	if meta.Service == "" && service != "" {
@@ -293,7 +293,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if meta.Filename == "" && filename != "" {
 		meta.Filename = filename
 	}
-	logger.Debugf("metadata: media details service=%q service_longname=%q", meta.Service, meta.ServiceLongName)
+	logger.Tracef("metadata: media details service=%q service_longname=%q", meta.Service, meta.ServiceLongName)
 
 	if err := applyMetadataOverrides(&meta); err != nil {
 		return preparationstate.State{}, err

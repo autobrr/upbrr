@@ -192,8 +192,8 @@
     "sha256": "6accac9c71c892b592d4aef8f20baa5192bc234cfb8f5efa40e4691cf550541b"
   },
   "internal/trackers/impl/standalone/ar/dupe.go:dupeSearcher.Search": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Operation-local logger binding leaves these selectors and search filters unchanged.",
-    "sha256": "0b22314039761630425b696cd742d8ca96758dd81563d99496927425f80dd7df"
+    "reason": "Only DEBUG-to-TRACE diagnostics changed. arSearchQuery retains provider title ordering, explicit manual title/year authority including clears, and suppression of projected-name fallback for manual titles.",
+    "sha256": "aeca7cb86f52a83d886c39f975b8bbfa71e97b284c5ec032b7396acac0f240ed"
   },
   "internal/trackers/impl/standalone/ar/name.go:resolveARSearchName": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -644,8 +644,8 @@
     "sha256": "de2e983edec5e25ae3657d7210c032802f55e5795199b53e43c1fec30f79ad63"
   },
   "internal/trackers/impl/standalone/btn/dupe.go:*dupeSearcher.Search": {
-    "reason": "Explicit identity IDs precede source-torrent identity lookup; the existing manual-aware title helper remains an incomplete search fallback. Operation-local logger binding leaves these selectors and search filters unchanged.",
-    "sha256": "44b1639803c2e19e250dfb34657057fb7b9c12626ef32115de2d9f9719b5a87d"
+    "reason": "Only DEBUG-to-TRACE diagnostics changed. Canonical TVDB/IMDb identities still precede source-torrent lookup; unchanged manual-aware searchTitle governs title fallback, while provider-bound searches remain free of title narrowing.",
+    "sha256": "e837bec43938006367197c533da371f86427011532a8dab20b6c82ef0930372d"
   },
   "internal/trackers/impl/standalone/btn/dupe.go:btnDupeFilter": {
     "reason": "TVDB and IMDb bind search identity without title narrowing; title-only searches retain the reviewed manual-aware preference and incomplete scope.",
@@ -880,8 +880,8 @@
     "sha256": "fcab19e1b595ab8db08f615dc4f7d4cd91ca3d64a961b6354d3e0027631f48b6"
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:*dupeSearcher.Search": {
-    "reason": "TRACE request logging review: removing the DEBUG payload dump preserves hdbDupeCategoryID manual precedence, IMDb/TVDB priority, and manual-aware title fallback. Operation-local logger binding leaves these selectors and search filters unchanged.",
-    "sha256": "0644b520661d845dabd378cd543207464cadcc8c4db3e272fd8bec01882bf0e4"
+    "reason": "Only DEBUG-to-TRACE diagnostics changed. IMDb precedes TV-only TVDB search; PreferredTitle preserves manual text-search authority. hdbDupeCategoryID retains manual-genre precedence, source/current-provider identity checks, and existing independent IMDb subtype handling.",
+    "sha256": "5d7d6ccd6f16ed633c1acf7852fab16754908c50ef36777e402572f9b2f61bf4"
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:hdbDupeCategoryID": {
     "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence.",

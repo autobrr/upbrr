@@ -42,7 +42,7 @@ func TestPrintCLIErrorPreservesCleanupFailures(t *testing.T) {
 		{
 			name:        "repository close",
 			closeErr:    fmt.Errorf("synthetic close token=cleanup-secret at %s", privatePath),
-			wantCleanup: "close workflow repository: synthetic close token=[REDACTED] at [local path]",
+			wantCleanup: "close workflow repository: synthetic close token=[REDACTED] at " + privatePath,
 		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {

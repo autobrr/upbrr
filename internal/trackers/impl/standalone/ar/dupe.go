@@ -66,11 +66,11 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid AR cookies", nil)
 	}
 	if h.logger != nil && cookiePath != "" {
-		h.logger.Debugf("dupechecking: AR using stored cookies from %s", cookiePath)
+		h.logger.Tracef("dupechecking: AR using stored cookies from %s", cookiePath)
 	}
 
 	if h.logger != nil {
-		h.logger.Debugf(
+		h.logger.Tracef(
 			"dupechecking: AR search request method=GET action=browse searchstr=%q",
 			query,
 		)
@@ -156,7 +156,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		Warnings:  warnings,
 	}
 	if h.logger != nil {
-		h.logger.Debugf(
+		h.logger.Tracef(
 			"dupechecking: AR search response pages=%d advertised_pages=%d accepted_results=%d complete=%t decision=completed",
 			pages,
 			expectedPages,
@@ -201,7 +201,7 @@ func (h dupeSearcher) fetchARPage(
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		if h.logger != nil {
-			h.logger.Debugf(
+			h.logger.Tracef(
 				"dupechecking: AR search response page=%d status_code=%d content_type=%q decision=reject_non_success",
 				page,
 				resp.StatusCode,
@@ -213,7 +213,7 @@ func (h dupeSearcher) fetchARPage(
 	var payload arResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		if h.logger != nil {
-			h.logger.Debugf(
+			h.logger.Tracef(
 				"dupechecking: AR search response page=%d status_code=%d content_type=%q decision=decode_failed error=%v",
 				page,
 				resp.StatusCode,
@@ -297,7 +297,7 @@ func (h dupeSearcher) resolveCookies(ctx context.Context) ([]*http.Cookie, strin
 	}
 	if len(merged) > 0 {
 		if h.logger != nil {
-			h.logger.Debugf("dupechecking: AR using %d cookies from HTTP client jar", len(merged))
+			h.logger.Tracef("dupechecking: AR using %d cookies from HTTP client jar", len(merged))
 		}
 		return mapCookiesToSlice(merged), "", nil
 	}

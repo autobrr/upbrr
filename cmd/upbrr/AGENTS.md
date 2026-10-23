@@ -27,7 +27,7 @@ Focused `go test`: include touched service/tracker/internal packages.
 
 ## CLI Output / Logging
 
-- Follow root log-level guidance for CLI logs + stdout/stderr.
+- Follow root log-level guidance for CLI logs + stdout/stderr. Keep meaningful measured source progress at INFO and unknown-total source-inspection bookkeeping at DEBUG; failed inspection remains WARN. Log bounded command/phase/state changes at DEBUG and detailed lifecycle/scope/counters at TRACE.
 - User-facing stdout/stderr may enter issues. Never print credentials, usernames, passwords, tokens, API keys, auth keys, passkeys, cookie values, 2FA codes, challenge IDs, refreshed API tokens, or secret payloads.
 - CLI debug payload stdout is shareable diagnostics: redact endpoints + payload values via existing safe dry-run helpers before printing.
 - Shared preflight owns auth-readiness logging. Use stable secret-free fields: `tracker`, `state`, `decision=blocked`. CLI renders retained workflow outcomes only.

@@ -541,7 +541,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		len(release.Audio) > 0 ||
 		len(release.HDR) > 0 ||
 		len(release.Language) > 0 {
-		logger.Debugf(
+		logger.Tracef(
 			"metadata: release parsed category=%q type=%q artist=%q title=%q subtitle=%q alt=%q year=%d month=%d day=%d source=%q resolution=%q codec=%v audio=%v hdr=%v ext=%q language=%v site=%q genre=%q channels=%q collection=%q region=%q size=%q group=%q disc=%q",
 			release.Category,
 			release.Type,

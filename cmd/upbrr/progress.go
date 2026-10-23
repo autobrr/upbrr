@@ -94,6 +94,10 @@ func withCLISourceVerificationProgressLogger(ctx context.Context, logger api.Log
 			logger.Warnf(format, update.Status, percent, completed, total)
 			return
 		}
+		if total == 0 {
+			logger.Debugf(format, update.Status, percent, completed, total)
+			return
+		}
 		logger.Infof(format, update.Status, percent, completed, total)
 	})
 }
@@ -201,9 +205,13 @@ func logCLIWorkflowOperation(logger api.Logger, operation api.WorkflowOperationS
 	if *state == next {
 		return
 	}
+	summaryChanged := !state.logged || state.command != command || state.phase != phase || state.status != operation.Status
 	*state = next
 	format := "workflow: command=%s phase=%s state=%s progress=%d completed=%d total=%d message=%s"
-	logger.Debugf(format, command, phase, operation.Status, operation.Progress, operation.Completed, operation.Total, message)
+	logger.Tracef(format, command, phase, operation.Status, operation.Progress, operation.Completed, operation.Total, message)
+	if summaryChanged {
+		logger.Debugf("workflow: command=%s phase=%s state=%s", command, phase, operation.Status)
+	}
 }
 
 func logCLIWorkflowEvents(logger api.Logger, events []api.WorkflowEvent, state *cliWorkflowEventLogState) {
@@ -243,7 +251,7 @@ func logCLIWorkflowEvents(logger api.Logger, events []api.WorkflowEvent, state *
 		}
 		state.loggedEvents[key] = struct{}{}
 		if logger != nil {
-			logger.Debugf(format, args...)
+			logger.Tracef(format, args...)
 		}
 		state.lastSequence = event.Sequence
 	}

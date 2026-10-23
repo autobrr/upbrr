@@ -242,7 +242,7 @@ func logPathedSearchMatches(logger api.Logger, matches []api.TorrentMatch) {
 		return
 	}
 	for idx, match := range matches {
-		logger.Debugf(
+		logger.Tracef(
 			"clients: pathed search match #%d name=%q hash=%s size=%d seeders=%d category=%q working_tracker=%t tracker_ids=%q save_path=%q content_path=%q",
 			idx+1,
 			match.Name,
@@ -1398,12 +1398,13 @@ func (s *Service) selectValidTorrent(
 					considerClientMatch(match)
 				}
 				if validation.reusable && strings.EqualFold(validation.infoHash, normalizedHash) {
-					s.logger.Debugf("clients: validated existing torrent for %s (piece=%d)", normalizedHash, validation.pieceSize)
+					s.logger.Tracef("clients: validated existing torrent for %s (piece=%d)", normalizedHash, validation.pieceSize)
 					considerReusable(normalizedHash, outputPath, data, validation.pieceSize, dataVerifiedByHash[normalizedHash])
 					continue
 				}
 				if validation.reason != "" {
-					s.logger.Debugf("clients: existing torrent failed validation for %s: %s", normalizedHash, validation.reason)
+					//logpolicy:allow expected per-candidate rejection; bounded search outcome remains at debug
+					s.logger.Tracef("clients: existing torrent failed validation for %s: %s", normalizedHash, validation.reason)
 				}
 			}
 		}
@@ -1421,12 +1422,13 @@ func (s *Service) selectValidTorrent(
 		validation := validateTorrentData(meta, normalizedHash, data)
 		if !validation.clientMatch {
 			if validation.reason != "" {
-				s.logger.Debugf("clients: exported torrent failed validation for %s: %s", normalizedHash, validation.reason)
+				//logpolicy:allow expected per-candidate rejection; bounded search outcome remains at debug
+				s.logger.Tracef("clients: exported torrent failed validation for %s: %s", normalizedHash, validation.reason)
 			}
 			continue
 		}
 		if !strings.EqualFold(validation.infoHash, normalizedHash) {
-			s.logger.Debugf("clients: exported torrent infohash mismatch for %s", normalizedHash)
+			s.logger.Tracef("clients: exported torrent infohash mismatch for %s", normalizedHash)
 			continue
 		}
 		if err := forceRecheckValidated(normalizedHash); err != nil {

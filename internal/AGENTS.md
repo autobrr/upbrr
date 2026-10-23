@@ -79,7 +79,7 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 ## Logging / Redaction
 
 - Use context-aware APIs when meaningful.
-- Follow root levels via `Infof`, `Warnf`, `Debugf`, `Tracef`.
+- Follow root levels via `Infof`, `Warnf`, `Debugf`, `Tracef`. Log exact finalized prepared-generation facts at DEBUG after collection or reuse, not raw parser/intermediate values. Never fetch or derive facts only for diagnostics; hydration/projection must not repeat full summaries. Cache decisions and per-candidate evidence belong at TRACE.
 - Before logging, redact auth status, remote response details, URLs, raw errors when secret-bearing; use `internal/redaction.RedactValue` or tracker/common helpers.
 - No stdlib print/log under `internal/**`.
 - Satisfy `cmd/logpolicy`.

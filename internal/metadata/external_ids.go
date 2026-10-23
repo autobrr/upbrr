@@ -1118,7 +1118,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		appendProviderRefreshWarning(&meta, "TVmaze", tvmazeErr)
 		appendProviderRefreshWarning(&meta, "AniList", anilistErr)
 	}
-	logger.Debugf(
+	logger.Tracef(
 		"metadata: external ids resolved tmdb=%d(%s) imdb=%d(%s) tvdb=%d(%s) tvmaze=%d(%s) mal=%d(%s)",
 		ids.TMDBID,
 		ids.Provenance.TMDB,
@@ -1131,8 +1131,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		ids.MALID,
 		ids.Provenance.MAL,
 	)
-	logger.Debugf(
-		"metadata: external metadata fetched tmdb=%t imdb=%t tvdb=%t tvmaze=%t anilist=%t bluray=%t",
+	logger.Tracef(
+		"metadata: external metadata available tmdb=%t imdb=%t tvdb=%t tvmaze=%t anilist=%t bluray=%t",
 		metadata.TMDB != nil,
 		metadata.IMDB != nil,
 		metadata.TVDB != nil,

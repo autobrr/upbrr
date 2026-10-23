@@ -127,7 +127,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if daily {
 		mode = "daily"
 	}
-	s.logger.Debugf(
+	s.logger.Tracef(
 		"dupechecking: BTN search started tracker=BTN mode=%s work_scope=%s page_limit=%d max_pages=%d",
 		mode,
 		workScope,
@@ -213,7 +213,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			warning,
 		)
 	} else {
-		s.logger.Debugf(
+		s.logger.Tracef(
 			"dupechecking: BTN search finished tracker=BTN mode=%s work_scope=%s pages=%d reported_total=%d unique_rows=%d complete=true decision=complete",
 			mode,
 			workScope,
