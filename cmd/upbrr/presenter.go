@@ -241,7 +241,13 @@ func stripTerminalControls(value string) string {
 }
 
 func safeDiagnosticText(value string) string {
-	return safeTerminalText(logging.SanitizeMessage(safeTerminalText(value)))
+	redacted := redaction.RedactValue(value, nil)
+	stripped := stripTerminalControls(redacted)
+	// Unchanged input is a fixed point of the remaining redaction and control passes.
+	if redacted == value && stripped == value {
+		return stripped
+	}
+	return safeTerminalText(logging.SanitizeMessage(redaction.RedactValue(stripped, nil)))
 }
 
 func safeCLIView(view cliView) cliView {
