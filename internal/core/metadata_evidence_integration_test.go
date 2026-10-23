@@ -521,24 +521,17 @@ func TestDefaultCoreLocalCorrectionMatrix(t *testing.T) {
 			return test
 		}(),
 	}
-	for _, borrowed := range []bool{false, true} {
-		ownership := "CLI-owned repository"
-		if borrowed {
-			ownership = "WebUI-borrowed repository"
-		}
-		t.Run(ownership, func(t *testing.T) {
-			for _, test := range cases {
-				t.Run(string(test.field), func(t *testing.T) {
-					fixture := newCoreEvidenceFixture(t, borrowed)
-					if !reflect.DeepEqual(test.before, api.ReleaseCorrectionValues{}) {
-						fixture.initial = fixture.prepare(t, api.ReleaseCorrectionPatch{Values: test.before})
-					}
-					if test.field == api.CorrectionFieldReleaseNameNoAKA {
-						fixture.initial = fixture.prepare(t, api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{AlternateTitle: new("Other Signal")}}})
-					}
-					test.run(t, fixture)
-				})
+	// Both ownership modes are covered by TestDefaultCoreMetadataEvidenceSurvivesServiceCorrection.
+	for _, test := range cases {
+		t.Run(string(test.field), func(t *testing.T) {
+			fixture := newCoreEvidenceFixture(t, false)
+			if !reflect.DeepEqual(test.before, api.ReleaseCorrectionValues{}) {
+				fixture.initial = fixture.prepare(t, api.ReleaseCorrectionPatch{Values: test.before})
 			}
+			if test.field == api.CorrectionFieldReleaseNameNoAKA {
+				fixture.initial = fixture.prepare(t, api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{AlternateTitle: new("Other Signal")}}})
+			}
+			test.run(t, fixture)
 		})
 	}
 }
