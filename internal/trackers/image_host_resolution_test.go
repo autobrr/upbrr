@@ -404,51 +404,68 @@ func TestPreparedExactMediaExcludesFailedHosts(t *testing.T) {
 }
 
 func TestOptionalTrackerRehostsSourceOnlyScreenshotFromExactMedia(t *testing.T) {
-	for _, tone := range []api.ScreenshotTonemapping{api.ScreenshotTonemapped, api.ScreenshotNotTonemapped, ""} {
-		t.Run(string(tone), func(t *testing.T) {
-			root := t.TempDir()
-			sourcePath := filepath.Join(root, "source.mkv")
-			imagePath := filepath.Join(root, "image.png")
-			if err := os.WriteFile(imagePath, []byte("image"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			repo := &stubRepo{}
-			images := &stubImageService{repo: repo}
-			skipUpload := true
-			meta := api.UploadSubject{
-				SourcePath:   sourcePath,
-				MediaBinding: trackerTestMediaBinding(sourcePath),
-				ExactMedia: &api.ExactMediaAssets{Screenshots: []api.ScreenshotImage{{
-					Tonemapping:   tone,
-					ContentSHA256: "6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d",
-					Path:          imagePath,
-					Purpose:       api.ScreenshotPurposeFinal,
-					RawURL:        "https://passthepopcorn.me/static/shot.png",
-				}}},
-				Options:            api.UploadOptions{KeepImages: true},
-				ImageHostOverrides: api.ImageHostOverrides{SkipUpload: &skipUpload},
-			}
-			registry := NewRegistry()
-			if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
-				t.Fatal(err)
-			}
-			cfg := config.Config{
-				MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
-				ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
-			}
-			preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
-			if err != nil {
-				t.Fatal(err)
-			}
-			resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, cfg, config.TrackerConfig{}, repo, images, api.NopLogger{}, registry, preloaded)
-			if err != nil || len(resolution.screenshots) != 1 || len(images.calls) != 1 || images.calls[0] != "imgbox" {
-				t.Fatalf("optional source-only rehost = %#v, calls=%#v, err=%v", resolution, images.calls, err)
-			}
+	for _, alias := range []string{"original", "symlink", "windows case"} {
+		t.Run(alias, func(t *testing.T) {
+			for _, tone := range []api.ScreenshotTonemapping{api.ScreenshotTonemapped, api.ScreenshotNotTonemapped, ""} {
+				t.Run(string(tone), func(t *testing.T) {
+					root := t.TempDir()
+					sourcePath := filepath.Join(root, "source.mkv")
+					imagePath := filepath.Join(root, "image.png")
+					if err := os.WriteFile(imagePath, []byte("image"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					repo := &stubRepo{}
+					images := &stubImageService{repo: repo}
+					skipUpload := true
+					meta := api.UploadSubject{
+						SourcePath:   sourcePath,
+						MediaBinding: trackerTestMediaBinding(sourcePath),
+						ExactMedia: &api.ExactMediaAssets{Screenshots: []api.ScreenshotImage{{
+							Tonemapping:   tone,
+							ContentSHA256: "6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d",
+							Path:          imagePath,
+							Purpose:       api.ScreenshotPurposeFinal,
+							RawURL:        "https://passthepopcorn.me/static/shot.png",
+						}}},
+						Options:            api.UploadOptions{KeepImages: true},
+						ImageHostOverrides: api.ImageHostOverrides{SkipUpload: &skipUpload},
+					}
+					registry := NewRegistry()
+					if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
+						t.Fatal(err)
+					}
+					cfg := config.Config{
+						MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+						ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
+					}
+					preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
+					if err != nil {
+						t.Fatal(err)
+					}
+					switch alias {
+					case "symlink":
+						aliasPath := filepath.Join(root, "alias.png")
+						if err := os.Symlink(imagePath, aliasPath); err != nil {
+							t.Skipf("symlink unavailable on this host: %v", err)
+						}
+						preloaded.screenshotSlots[0].ImagePath = aliasPath
+					case "windows case":
+						if runtime.GOOS != "windows" {
+							t.Skip("case-insensitive paths require Windows")
+						}
+						preloaded.screenshotSlots[0].ImagePath = strings.ToUpper(imagePath)
+					}
+					resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "TL", meta, cfg, config.TrackerConfig{}, repo, images, api.NopLogger{}, registry, preloaded)
+					if err != nil || len(resolution.screenshots) != 1 || len(images.calls) != 1 || images.calls[0] != "imgbox" {
+						t.Fatalf("optional source-only rehost = %#v, calls=%#v, err=%v", resolution, images.calls, err)
+					}
 
-			assets := DescriptionAssets{}
-			applyResolvedDescriptionScreenshots(t.Context(), "TL", meta, repo, preloaded, &assets, resolution.uploads, resolution.screenshots)
-			if len(resolution.uploads) != 1 || resolution.uploads[0].Tonemapping != tone || len(assets.Screenshots) != 1 || assets.Screenshots[0].Tonemapping != tone {
-				t.Fatalf("rehost processing lost: uploads=%+v assets=%+v", resolution.uploads, assets.Screenshots)
+					assets := DescriptionAssets{}
+					applyResolvedDescriptionScreenshots(t.Context(), "TL", meta, repo, preloaded, &assets, resolution.uploads, resolution.screenshots)
+					if len(resolution.uploads) != 1 || resolution.uploads[0].Tonemapping != tone || len(assets.Screenshots) != 1 || assets.Screenshots[0].Tonemapping != tone {
+						t.Fatalf("rehost processing lost: uploads=%+v assets=%+v", resolution.uploads, assets.Screenshots)
+					}
+				})
 			}
 		})
 	}

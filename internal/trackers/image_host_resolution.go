@@ -27,6 +27,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -462,7 +463,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	if meta.ExactMedia != nil {
 		for i := range sourceImages {
 			for _, candidate := range meta.ExactMedia.Screenshots {
-				if filepath.Clean(candidate.Path) == filepath.Clean(sourceImages[i].Path) {
+				if pathing.SamePath(candidate.Path, sourceImages[i].Path) {
 					sourceImages[i].Tonemapping = candidate.Tonemapping
 					sourceImages[i].ContentSHA256 = candidate.ContentSHA256
 					break

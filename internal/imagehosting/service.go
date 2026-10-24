@@ -422,7 +422,7 @@ func (s *Service) Upload(
 				screenshotsLoaded = true
 			}
 			for _, shot := range storedScreenshots {
-				if filepath.Clean(shot.ImagePath) == absPath && strings.EqualFold(shot.ContentSHA256, digest) &&
+				if pathutil.SamePath(shot.ImagePath, absPath) && strings.EqualFold(shot.ContentSHA256, digest) &&
 					(shot.Tonemapping == api.ScreenshotTonemapped || shot.Tonemapping == api.ScreenshotNotTonemapped) {
 					tone = shot.Tonemapping
 					break

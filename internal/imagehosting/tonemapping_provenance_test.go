@@ -8,6 +8,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/imageevidence"
@@ -65,40 +67,57 @@ func TestUploadPreservesOnlyContentBoundTonemapping(t *testing.T) {
 }
 
 func TestUploadRecoversCurrentLocalEvidenceWithoutChangingOldURL(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "regenerated.png")
-	if err := os.WriteFile(path, []byte("new pixels"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	digest, err := imageevidence.Digest(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := api.UploadedImageLink{
-		ImagePath:     path,
-		RawURL:        "https://example.invalid/old.png",
-		ContentSHA256: "old",
-		Tonemapping:   api.ScreenshotNotTonemapped,
-	}
-	repo := &recordingRepo{screens: []api.Screenshot{{
-		ImagePath:     path,
-		ContentSHA256: digest,
-		Tonemapping:   api.ScreenshotTonemapped,
-	}}, uploads: []api.UploadedImageLink{old}}
-	svc := &Service{repo: repo, uploaders: map[string]uploader{"test": &fakeUploader{result: uploadResult{RawURL: "https://example.invalid/new.png"}}}}
-	got, err := svc.Upload(t.Context(), imageHostingTestSubject("source"), "test", "global", []api.ScreenshotImage{{
-		Path:          path,
-		RawURL:        old.RawURL,
-		Tonemapping:   old.Tonemapping,
-		ContentSHA256: old.ContentSHA256,
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].Tonemapping != api.ScreenshotTonemapped || got[0].ContentSHA256 != digest {
-		t.Fatalf("current local evidence lost: %+v", got)
-	}
-	if repo.uploads[0] != old {
-		t.Fatal("old hosted evidence changed")
+	for _, alias := range []string{"original", "symlink", "windows case"} {
+		t.Run(alias, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "regenerated.png")
+			if err := os.WriteFile(path, []byte("new pixels"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			digest, err := imageevidence.Digest(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := api.UploadedImageLink{
+				ImagePath:     path,
+				RawURL:        "https://example.invalid/old.png",
+				ContentSHA256: "old",
+				Tonemapping:   api.ScreenshotNotTonemapped,
+			}
+			storedPath := path
+			switch alias {
+			case "symlink":
+				storedPath = filepath.Join(filepath.Dir(path), "alias.png")
+				if err := os.Symlink(path, storedPath); err != nil {
+					t.Skipf("symlink unavailable on this host: %v", err)
+				}
+			case "windows case":
+				if runtime.GOOS != "windows" {
+					t.Skip("case-insensitive paths require Windows")
+				}
+				storedPath = strings.ToUpper(path)
+			}
+			repo := &recordingRepo{screens: []api.Screenshot{{
+				ImagePath:     storedPath,
+				ContentSHA256: digest,
+				Tonemapping:   api.ScreenshotTonemapped,
+			}}, uploads: []api.UploadedImageLink{old}}
+			svc := &Service{repo: repo, uploaders: map[string]uploader{"test": &fakeUploader{result: uploadResult{RawURL: "https://example.invalid/new.png"}}}}
+			got, err := svc.Upload(t.Context(), imageHostingTestSubject("source"), "test", "global", []api.ScreenshotImage{{
+				Path:          path,
+				RawURL:        old.RawURL,
+				Tonemapping:   old.Tonemapping,
+				ContentSHA256: old.ContentSHA256,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Tonemapping != api.ScreenshotTonemapped || got[0].ContentSHA256 != digest {
+				t.Fatalf("current local evidence lost: %+v", got)
+			}
+			if repo.uploads[0] != old {
+				t.Fatal("old hosted evidence changed")
+			}
+		})
 	}
 }
 
