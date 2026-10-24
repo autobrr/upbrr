@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -352,6 +353,14 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 				t.Fatalf("checkpoint subprocess: %v; context: %v\n%s", err, ctx.Err(), output)
 			}
 			f := openHDRRestartFixture(t, root, phase == "decoded")
+			previous, err := f.repository.LoadActiveInput(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			retainedBeforeReset, err := f.persistent.Load(t.Context(), "cli", previous.WorkflowID)
+			if err != nil {
+				t.Fatal(err)
+			}
 			// Expire the dead process's leases without waiting a real minute. The
 			// clock is restored before starting new work; DB fencing stays active.
 			f.clock.offset.Store(int64(2 * time.Minute))
@@ -360,10 +369,13 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 			}
 			f.clock.offset.Store(0)
 			active, err := f.core.GetActiveInput(t.Context(), "cli")
-			if err != nil || active.Current == nil || active.Current.HDRPendingRequest == nil {
-				t.Fatalf("pending request lost: %+v %v", active, err)
+			if err != nil || active.State != api.ActiveInputEmpty || active.Current != nil {
+				t.Fatalf("restart restored the previous input: %+v %v", active, err)
 			}
-			current := *active.Current
+			current, err := f.core.workflow.Current(t.Context(), "cli", previous.WorkflowID)
+			if err != nil || current.HDRPendingRequest == nil {
+				t.Fatalf("retained pending request lost: %+v %v", current, err)
+			}
 			pending := *current.HDRPendingRequest
 			if pending.Release.Generation != current.Release.Release.Generation || pending.Release.SourcePath != f.source {
 				t.Fatal("pending request crossed generation")
@@ -382,22 +394,13 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 			if phase == "newer" && (pending.PeakSource != api.HDRPeakMaxSCLLuminance || pending.Decoded == nil || !pending.Decoded.SceneSync) {
 				t.Fatal("resume fell back to older options")
 			}
+			if !reflect.DeepEqual(retainedBeforeReset.HDRPendingRequest, before.HDRPendingRequest) ||
+				!reflect.DeepEqual(retainedBeforeReset.HDRExtractions, before.HDRExtractions) ||
+				!reflect.DeepEqual(retainedBeforeReset.HDRMeasurements, before.HDRMeasurements) {
+				t.Fatal("startup changed retained request or checkpoints")
+			}
 			if phase != "native" && !strings.HasPrefix(phase, "recovery-") && len(before.HDRMeasurements) == 0 {
 				t.Fatal("decoded checkpoint lost")
-			}
-			if phase == "native" || phase == "retry" {
-				if _, err := f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.PrepareReleaseCommand{
-					WorkflowID:       current.Workflow.ID,
-					ExpectedRevision: current.Workflow.Revision,
-					Input:            api.PrepareInput{SourcePath: f.source},
-					IdempotencyKey:   "prepare-retained",
-				}); err != nil {
-					t.Fatal(err)
-				}
-				current, err = f.core.workflow.Current(t.Context(), "cli", current.Workflow.ID)
-				if err != nil || current.HDRPendingRequest == nil || !reflect.DeepEqual(*current.HDRPendingRequest, pending) {
-					t.Fatalf("same-generation preparation lost request: %+v %v", current.HDRPendingRequest, err)
-				}
 			}
 			if phase == "decoded" {
 				for _, record := range before.HDRMeasurements {
@@ -405,46 +408,48 @@ func TestHDRCheckpointProcessDeathRetainsExactResumeRequest(t *testing.T) {
 						t.Fatalf("not a completed grade checkpoint: %+v", record)
 					}
 				}
-			} else if err := os.Remove(f.source); err != nil {
-				t.Fatal(err)
 			}
 			if _, err := f.core.workflow.Current(t.Context(), "foreign", current.Workflow.ID); err == nil {
 				t.Fatal("foreign owner obtained pending request")
 			}
-			resumed, err := f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
+			_, err = f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
 				WorkflowID:       current.Workflow.ID,
 				ExpectedRevision: current.Workflow.Revision,
 				Instructions:     pending,
-				IdempotencyKey:   "resume",
+				IdempotencyKey:   "inactive-resume",
 			})
-			if err != nil || resumed.HDRAnalysis == nil {
-				t.Fatalf("explicit resume: %+v %v", resumed, err)
+			if !errors.Is(err, api.ErrActiveInputChanged) {
+				t.Fatalf("inactive workflow resumed without an explicit open: %v", err)
 			}
-			if strings.HasPrefix(phase, "recovery-") && resumed.HDRAnalysis.Status != api.StageStatusCompleted {
-				t.Fatalf("recovered checkpoint was not reusable without source: %+v", resumed.HDRAnalysis)
+			reopened, err := f.core.workflow.OpenInput(t.Context(), "cli", releaseworkflow.OpenInputRequest{
+				ExpectedRevision: active.Revision,
+				Input:            api.PrepareInput{SourcePath: f.source},
+				IdempotencyKey:   "explicit-reopen",
+			})
+			if err != nil || reopened.WorkflowID == current.Workflow.ID {
+				t.Fatalf("reopen did not establish a fresh workflow: %+v %v", reopened, err)
+			}
+			fresh, err := f.core.workflow.Current(t.Context(), "cli", reopened.WorkflowID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fresh, err = f.core.workflow.Execute(t.Context(), "cli", releaseworkflow.PrepareReleaseCommand{
+				WorkflowID:       fresh.Workflow.ID,
+				ExpectedRevision: fresh.Workflow.Revision,
+				Input:            api.PrepareInput{SourcePath: f.source},
+				IdempotencyKey:   "explicit-prepare",
+			})
+			if err != nil || fresh.Release == nil || fresh.HDRPendingRequest != nil {
+				t.Fatalf("fresh preparation replayed pending authority: %+v %v", fresh, err)
+			}
+			freshState, err := f.persistent.Load(t.Context(), "cli", reopened.WorkflowID)
+			if err != nil || freshState.Workflow.HDRComparison != nil || len(freshState.HDRMeasurements) != 0 || freshState.HDRPendingRequest != nil {
+				t.Fatalf("fresh workflow inherited or executed decoded authority: %+v %v", freshState, err)
 			}
 			after, err := f.persistent.Load(t.Context(), "cli", current.Workflow.ID)
-			if err != nil || after.HDRPendingRequest != nil || !reflect.DeepEqual(before.HDRExtractions, after.HDRExtractions) {
-				t.Fatalf("resume reread native evidence or retained stale request: %v", err)
-			}
-			wantMeasurements := len(before.HDRMeasurements)
-			if phase == "decoded" {
-				wantMeasurements++
-			}
-			if len(after.HDRMeasurements) != wantMeasurements {
-				t.Fatalf("completed measurement was repeated: before=%d after=%d", len(before.HDRMeasurements), len(after.HDRMeasurements))
-			}
-			for id, record := range before.HDRMeasurements {
-				if !reflect.DeepEqual(record, after.HDRMeasurements[id]) {
-					t.Fatal("resume replaced a checkpointed mode")
-				}
-			}
-			if phase == "decoded" {
-				for _, result := range resumed.HDRAnalysis.Targets[0].Decoded {
-					if result.State != api.HDRDecodedComplete {
-						t.Fatalf("resumed comparison: %+v", result)
-					}
-				}
+			if err != nil || !reflect.DeepEqual(before.HDRPendingRequest, after.HDRPendingRequest) ||
+				!reflect.DeepEqual(before.HDRExtractions, after.HDRExtractions) || !reflect.DeepEqual(before.HDRMeasurements, after.HDRMeasurements) {
+				t.Fatalf("explicit reopen changed retained request or checkpoints: %v", err)
 			}
 		})
 	}

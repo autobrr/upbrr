@@ -245,7 +245,7 @@ func InitializeRuntimeConfigActivation(
 			if changed {
 				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", ctx.Err())
 			}
-			return api.ConfigActivation{}, fmt.Errorf("discard unresolved startup workflow effects: %w", ctx.Err())
+			return api.ConfigActivation{}, fmt.Errorf("initialize runtime config activation fingerprint: %w", ctx.Err())
 		case <-timer.C:
 		}
 	}
