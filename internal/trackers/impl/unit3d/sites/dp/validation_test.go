@@ -165,9 +165,10 @@ func TestDPOriginalAudioUsesCorrectedFactsOverRawMetadata(t *testing.T) {
 		OriginalLanguage:      "Japanese",
 		TrackCoverageComplete: true,
 		Tracks: []api.MediaTrackFacts{{
-			Kind:      api.MediaTrackAudio,
-			Role:      api.AudioRoleProgramme,
-			Languages: []string{"Japanese", "Danish", "Swedish"},
+			Kind:        api.MediaTrackAudio,
+			Role:        api.AudioRoleProgramme,
+			Languages:   []string{"Japanese", "Danish", "Swedish"},
+			AudioOrigin: api.TrackAudioOriginal,
 		}},
 	})
 	if failures := dpValidationFailures(t, meta); len(failures) != 0 {
@@ -175,6 +176,7 @@ func TestDPOriginalAudioUsesCorrectedFactsOverRawMetadata(t *testing.T) {
 	}
 	meta = dpEligibilitySubject("Danish", "Swedish", "English")
 	meta.LanguageFacts.OriginalLanguages = []string{"Danish"}
+	meta.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioOriginal
 	if failures := dpValidationFailures(t, meta); len(failures) != 0 {
 		t.Fatalf("corrected original language did not clear prohibition: %+v", failures)
 	}
@@ -357,4 +359,24 @@ func requireDPLanguageFailure(t *testing.T, failures []api.RuleFailure, rule str
 func chooseDPMarker(meta *api.UploadSubject, marker string) {
 	key := trackers.LanguageQuestionKey(api.NewTrackerValidationSubject(*meta, "DP"), manualLanguageMarkerKey)
 	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"DP": {key: marker}}
+}
+
+func TestDPOriginalWitnessDoesNotRequireSecondaryOriginReview(t *testing.T) {
+	for _, original := range []bool{true, false} {
+		meta := dpEligibilitySubject("Japanese", "English", "German")
+		for index := range meta.LanguageFacts.Tracks {
+			meta.LanguageFacts.Tracks[index].AudioOrigin = ""
+		}
+		if !original {
+			meta.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioUnresolved
+		}
+		failures := dpValidationFailures(t, meta)
+		if original {
+			if len(failures) != 0 {
+				t.Fatalf("established original/MULTi row requested irrelevant origin evidence: %+v", failures)
+			}
+		} else {
+			requireDPLanguageFailure(t, failures, "language_origin", trackers.LanguageUnresolved)
+		}
+	}
 }

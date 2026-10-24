@@ -129,7 +129,20 @@ func TestAitherMultilingualBalanceNamingUsesSourceEvidence(t *testing.T) {
 	}
 	subject.TrackerQuestionnaireAnswers["AITHER"][key] = "evenly_split"
 	validation = api.NewTrackerValidationSubject(subject, "AITHER")
-	assertAitherFailure(t, evaluateAitherEvidence(t, validation), "language_extra_dub", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	assertAitherFailure(t, evaluateAitherEvidence(t, validation), "language_origin", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	for _, origin := range []api.TrackAudioOrigin{api.TrackAudioOriginal, api.TrackAudioDubbed} {
+		reviewed := subject
+		reviewed.LanguageFacts = subject.LanguageFacts.Clone()
+		reviewed.LanguageFacts.Tracks[0].AudioOrigin = origin
+		reviewedValidation := api.NewTrackerValidationSubject(reviewed, "AITHER")
+		reviewedValidation.QuestionnaireAnswers = map[string]string{
+			trackers.LanguageQuestionKey(reviewedValidation, "multilingual_balance_audio-0"): "evenly_split",
+		}
+		failures := evaluateAitherEvidence(t, reviewedValidation)
+		if got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_extra_dub" }); got != (origin == api.TrackAudioDubbed) {
+			t.Fatalf("balance answer changed source origin %q: %+v", origin, failures)
+		}
+	}
 	subject.Identity.Generation++
 	if got := aitherLanguage(subject); got != "" {
 		t.Fatalf("stale balance answer reused: %q", got)

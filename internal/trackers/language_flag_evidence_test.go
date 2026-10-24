@@ -131,6 +131,7 @@ func TestOriginalAudioOrderUsesMeasuredEvidence(t *testing.T) {
 					Kind:             api.MediaTrackAudio,
 					Role:             api.AudioRoleProgramme,
 					Languages:        []string{"English"},
+					AudioOrigin:      api.TrackAudioDubbed,
 					StreamOrder:      test.dubOrder,
 					StreamOrderKnown: test.dubKnown,
 				}
@@ -221,6 +222,7 @@ func TestOriginalFirstDoesNotRequireEveryOriginalBeforeDubs(t *testing.T) {
 		Kind:             api.MediaTrackAudio,
 		Role:             api.AudioRoleProgramme,
 		Languages:        []string{"English"},
+		AudioOrigin:      api.TrackAudioDubbed,
 		StreamOrder:      2,
 		StreamOrderKnown: true,
 	}
@@ -245,9 +247,10 @@ func TestOriginalFirstDoesNotRequireEveryOriginalBeforeDubs(t *testing.T) {
 			Languages: []string{"Japanese"},
 		}}, ""},
 		{"known earliest dub plus unknown dub", []api.MediaTrackFacts{alternate, dub, {
-			Kind:      api.MediaTrackAudio,
-			Role:      api.AudioRoleProgramme,
-			Languages: []string{"English"},
+			Kind:        api.MediaTrackAudio,
+			Role:        api.AudioRoleProgramme,
+			Languages:   []string{"English"},
+			AudioOrigin: api.TrackAudioDubbed,
 		}}, api.MetadataEvidenceStatusComplete},
 	} {
 		t.Run(test.name, func(t *testing.T) {

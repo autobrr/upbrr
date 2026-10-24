@@ -15,23 +15,34 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
 		return nil
 	}
+	remux := strings.EqualFold(subject.Type, "REMUX")
 	policy := trackers.LanguagePolicy{ExtraDubs: trackers.LanguageProhibited, DisallowedRoles: []api.AudioTrackRole{api.AudioRoleDescription}}
-	if strings.EqualFold(subject.Type, "REMUX") {
+	if remux {
 		policy.OriginalAudio = trackers.LanguageProhibited
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
-	if subject.LanguageFacts.HasEnglishDub() {
-		animated := subject.Anime ||
-			slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
-		if !animated {
-			outcome := trackers.LanguageProhibited
-			if len(subject.EffectiveMetadata.Genres) == 0 {
-				outcome = trackers.LanguageUnresolved
-			}
-			failures = append(failures, trackers.LanguageRuleFailure(subject, "english_dub", "English dubs require established animated content", outcome))
+	animated := subject.Anime ||
+		slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
+	facts := subject.LanguageFacts
+	if !animated && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") &&
+		!slices.Contains(facts.OriginalLanguages, "ZXX") &&
+		slices.Contains(facts.ProgrammeLanguages, "English") {
+		englishSubject := subject
+		englishSubject.LanguageFacts.Tracks = slices.DeleteFunc(slices.Clone(facts.Tracks), func(track api.MediaTrackFacts) bool {
+			return !slices.Contains(track.Languages, "English")
+		})
+		if len(englishSubject.LanguageFacts.Tracks) > 0 {
+			failures = append(failures, trackers.ProgrammeAudioOriginFailures(englishSubject)...)
 		}
 	}
-	if strings.EqualFold(subject.Type, "REMUX") {
+	if facts.HasEnglishDub() && !animated {
+		outcome := trackers.LanguageProhibited
+		if len(subject.EffectiveMetadata.Genres) == 0 {
+			outcome = trackers.LanguageUnresolved
+		}
+		failures = append(failures, trackers.LanguageRuleFailure(subject, "english_dub", "English dubs require established animated content", outcome))
+	}
+	if remux {
 		failure := trackers.LanguageRuleFailure(
 			subject,
 			"source_audio",

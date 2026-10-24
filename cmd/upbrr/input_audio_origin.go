@@ -20,7 +20,7 @@ func parseCLITrackAudioOrigins(values []string) ([]api.TrackAudioOriginCorrectio
 	for _, raw := range values {
 		id, value, ok := strings.Cut(raw, "=")
 		id = strings.TrimSpace(id)
-		origin := api.TrackAudioOrigin(strings.TrimSpace(value))
+		origin := api.TrackAudioOrigin(strings.ToLower(strings.TrimSpace(value)))
 		if !ok || id == "" || (origin != api.TrackAudioOriginal && origin != api.TrackAudioDubbed && origin != api.TrackAudioUnresolved) {
 			return nil, fmt.Errorf("track-audio-origin requires track-id=original|dubbed|unresolved: %q", raw)
 		}

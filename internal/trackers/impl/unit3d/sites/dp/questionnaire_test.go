@@ -382,6 +382,12 @@ func dpManualMarkerSubject(t *testing.T, originals []string, languages ...string
 	}
 	meta.LanguageFacts.OriginalLanguages = slices.Clone(originals)
 	for index := range meta.LanguageFacts.Tracks {
+		track := &meta.LanguageFacts.Tracks[index]
+		if slices.Contains(originals, track.Languages[0]) {
+			track.AudioOrigin = api.TrackAudioOriginal
+		} else {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
 		meta.LanguageFacts.Tracks[index].Codec = "DD+"
 		meta.LanguageFacts.Tracks[index].AudioLabel = "DD+ 5.1"
 	}

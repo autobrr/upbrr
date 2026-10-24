@@ -103,6 +103,7 @@ func TestHDBLanguageReviewCannotWaiveIndependentStrictRules(t *testing.T) {
 	subject := hdbLanguageSubject()
 	subject.Type = "WEBDL"
 	subject.LanguageFacts.OriginalLanguages = []string{"Japanese"}
+	subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioDubbed
 	subject.EffectiveMetadata.Genres = []string{"Drama"}
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
 		Kind:      api.MediaTrackAudio,
@@ -140,6 +141,7 @@ func TestHDBEnglishDubUsesFinalizedManualGenres(t *testing.T) {
 			subject := hdbLanguageSubject()
 			subject.Type = "WEBDL"
 			subject.LanguageFacts.OriginalLanguages = []string{"Japanese"}
+			subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioDubbed
 			subject.ProviderMetadata = api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "English", Genres: "Animation"}}
 			subject.EffectiveMetadata = api.EffectiveMetadata{
 				OriginalLanguage:           "Japanese",
@@ -235,5 +237,51 @@ func TestHDBSourceAndHypotheticalSubtitleWarningsNeedNoAnswers(t *testing.T) {
 		}) {
 			t.Fatalf("source history answer %q created a gate: %+v", answer, failures)
 		}
+	}
+}
+
+func TestHDBEnglishDubReviewRequiresRelevantOriginEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name                string
+		origin              api.TrackAudioOrigin
+		genres              []string
+		anime               bool
+		wantOrigin, wantDub bool
+	}{
+		{"unclassified live action", "", []string{"Drama"}, false, true, false},
+		{"unclassified genre unknown", "", nil, false, true, false},
+		{"reviewed multilingual original", api.TrackAudioOriginal, []string{"Drama"}, false, false, false},
+		{"confirmed live action dub", api.TrackAudioDubbed, []string{"Drama"}, false, false, true},
+		{"animation exception", "", []string{"Animation"}, false, false, false},
+		{"anime exception", "", nil, true, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := hdbLanguageSubject()
+			subject.Type = "WEBDL"
+			subject.LanguageFacts.OriginalLanguages = []string{"Japanese"}
+			subject.LanguageFacts.Tracks[0].AudioOrigin = test.origin
+			subject.LanguageFacts.Tracks[0].ManifestFingerprint = "current-report"
+			subject.EffectiveMetadata.Genres = test.genres
+			subject.Anime = test.anime
+			failures := languageAssessment(subject)
+			for _, expectation := range []struct {
+				rule string
+				want bool
+			}{
+				{"language_origin", test.wantOrigin}, {"language_english_dub", test.wantDub},
+			} {
+				if got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+					return f.Rule == expectation.rule && trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, true)
+				}); got != expectation.want {
+					t.Fatalf("%s = %t, want %t: %+v", expectation.rule, got, expectation.want, failures)
+				}
+			}
+			for _, failure := range failures {
+				if failure.Rule == "language_origin" && (failure.EvidenceStatus != api.MetadataEvidenceStatusPartial ||
+					!slices.Equal(failure.AudioOriginCorrectionTrackIDs, []string{"main"})) {
+					t.Fatalf("origin review lost its source-bound correction: %+v", failure)
+				}
+			}
+		})
 	}
 }

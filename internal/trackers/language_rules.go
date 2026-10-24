@@ -121,22 +121,8 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	originalDefault := slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
 		return facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal && track.DefaultKnown && track.Default
 	})
-	originalFirst := false
-	firstOrder, firstOriginal, orderKnown := -1, false, true
-	orders := map[int]bool{}
-	for _, track := range facts.Tracks {
-		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
-			continue
-		}
-		if !track.StreamOrderKnown || track.StreamOrder < 0 || orders[track.StreamOrder] {
-			orderKnown = false
-		}
-		orders[track.StreamOrder] = true
-		if firstOrder < 0 || track.StreamOrder < firstOrder {
-			firstOrder, firstOriginal = track.StreamOrder, facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal
-		}
-	}
-	originalFirst = orderKnown && firstOrder >= 0 && firstOriginal
+	originalOrderStatus := originalAudioOrderStatus(facts)
+	originalFirst := originalOrderStatus == "" && facts.HasOriginalAudio()
 	couldContainEnglish := func(track api.MediaTrackFacts) bool {
 		return len(track.Languages) == 0 || slices.ContainsFunc(track.Languages, func(language string) bool {
 			code := languageutil.NormalizeLanguageCode(language)
@@ -267,44 +253,13 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 		}
 	}
 	if policy.OriginalFirst != "" && originalKnown && programmeStatus == api.MetadataEvidenceStatusComplete && (!originUnresolved || originalFirst) {
-		// The first programme track must be original; later original mixes may follow dubs.
-		var originals, others []api.MediaTrackFacts
-		orders := make(map[int]int)
-		for _, track := range facts.Tracks {
-			if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
-				continue
-			}
-			if track.StreamOrderKnown && track.StreamOrder >= 0 {
-				orders[track.StreamOrder]++
-			}
-			if facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal {
-				originals = append(originals, track)
-			} else {
-				others = append(others, track)
-			}
-		}
-		firstOrder := func(tracks []api.MediaTrackFacts) (int, bool) {
-			first, known := -1, true
-			for _, track := range tracks {
-				if !track.StreamOrderKnown || track.StreamOrder < 0 || orders[track.StreamOrder] != 1 {
-					known = false
-					continue
-				}
-				if first < 0 || track.StreamOrder < first {
-					first = track.StreamOrder
-				}
-			}
-			return first, known
-		}
-		originalFirst, originalsKnown := firstOrder(originals)
-		otherFirst, othersKnown := firstOrder(others)
-		switch {
-		case len(others) == 0:
-		case len(originals) == 0 || originalsKnown && otherFirst >= 0 && otherFirst < originalFirst:
+		switch originalOrderStatus {
+		case api.MetadataEvidenceStatusComplete:
 			add("original_order", "original programme audio should come first", policy.OriginalFirst)
-		case othersKnown && originalFirst >= 0 && originalFirst < otherFirst:
-		default:
+		case api.MetadataEvidenceStatusPartial:
 			addUnknown("original_order", "programme stream order must establish original audio first", policy.OriginalFirst)
+		case "", api.MetadataEvidenceStatusUnavailable, api.MetadataEvidenceStatusContradictory:
+			// No order finding for the satisfied or unused statuses.
 		}
 	}
 	if policy.OriginalDefault != "" {
@@ -349,6 +304,52 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 		}
 	}
 	return failures
+}
+
+// originalAudioOrderStatus assesses the first original witness, not whether every
+// original mix has measured order. Unclassified tracks remain possible contenders.
+// Empty means satisfied; complete/partial describe the evidence for an order failure.
+func originalAudioOrderStatus(facts api.LanguageFacts) api.MetadataEvidenceStatus {
+	var originals, others []api.MediaTrackFacts
+	orders := make(map[int]int)
+	for _, track := range facts.Tracks {
+		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
+			continue
+		}
+		if track.StreamOrderKnown && track.StreamOrder >= 0 {
+			orders[track.StreamOrder]++
+		}
+		if facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal {
+			originals = append(originals, track)
+		} else {
+			others = append(others, track)
+		}
+	}
+	firstOrder := func(tracks []api.MediaTrackFacts) (int, bool) {
+		first, known := -1, true
+		for _, track := range tracks {
+			if !track.StreamOrderKnown || track.StreamOrder < 0 || orders[track.StreamOrder] != 1 {
+				known = false
+				continue
+			}
+			if first < 0 || track.StreamOrder < first {
+				first = track.StreamOrder
+			}
+		}
+		return first, known
+	}
+	originalFirst, originalsKnown := firstOrder(originals)
+	otherFirst, othersKnown := firstOrder(others)
+	switch {
+	case len(others) == 0:
+		return ""
+	case len(originals) == 0 || originalsKnown && otherFirst >= 0 && otherFirst < originalFirst:
+		return api.MetadataEvidenceStatusComplete
+	case othersKnown && originalFirst >= 0 && originalFirst < otherFirst:
+		return ""
+	default:
+		return api.MetadataEvidenceStatusPartial
+	}
 }
 
 // ProgrammeAudioOriginFailures requests source-level classification without turning

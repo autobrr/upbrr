@@ -912,8 +912,8 @@
     "sha256": "f12e2fe2d186d5e8c57909b25204131b0da1291ba1460ced2db4eec3e2c32566"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
-    "sha256": "fff8af5b1063bd43108625944172a4a021b6b1e4a661cbf365c1d5451866a18a"
+    "reason": "Soundtrack-origin review: potential English dubs require source-bound origin evidence only when the finalized Anime/Genres do not establish the animation exception. Confirmed dub restrictions and explicit manual genre clears remain authoritative; no raw provider fallback was added.",
+    "sha256": "64de8b1389fc395095cbbe073a14adb166318c4aea66ddd8c2a08a91a3f60c26"
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

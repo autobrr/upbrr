@@ -41,21 +41,27 @@ func TestResolveTagsReleaseVersion(t *testing.T) {
 
 func TestBHDLanguageTagsAreIndependentFromPresentation(t *testing.T) {
 	for _, test := range []struct {
-		languages []string
-		dual, dub bool
+		languages     []string
+		englishOrigin api.TrackAudioOrigin
+		dual, dub     bool
 	}{
-		{[]string{"Japanese", "English"}, true, true},
-		{[]string{"Japanese", "English", "German"}, true, true},
-		{[]string{"English"}, false, true},
-		{[]string{"Japanese", "German"}, false, false},
+		{[]string{"Japanese", "English"}, api.TrackAudioDubbed, true, true},
+		{[]string{"Japanese", "English", "German"}, api.TrackAudioDubbed, true, true},
+		{[]string{"English"}, api.TrackAudioDubbed, false, true},
+		{[]string{"Japanese", "German"}, "", false, false},
+		{[]string{"Japanese", "English"}, "", false, false},
 	} {
 		media := api.MediaFacts{OriginalLanguage: "Japanese", TrackCoverageComplete: true}
 		for _, language := range test.languages {
-			media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+			track := api.MediaTrackFacts{
 				Kind:      api.MediaTrackAudio,
 				Role:      api.AudioRoleProgramme,
 				Languages: []string{language},
-			})
+			}
+			if language == "English" {
+				track.AudioOrigin = test.englishOrigin
+			}
+			media.Tracks = append(media.Tracks, track)
 		}
 		facts := mediafacts.ResolveLanguages(media)
 		for _, audio := range []string{"FLAC 2.0", "Dubbed FLAC 2.0", "Dual-Audio FLAC 2.0"} {

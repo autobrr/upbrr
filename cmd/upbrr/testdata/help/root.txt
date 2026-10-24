@@ -162,6 +162,8 @@ Input Corrections:
       Use a tracker source URL for metadata lookup
   -track-languages, --track-languages stringArray
       Override track languages as track-id=language[,language]
+  -track-audio-origin, --track-audio-origin stringArray
+      Classify programme soundtrack as track-id=original|dubbed|unresolved
   -reset-input, --reset-input stringArray
       Reset a saved correction field or field:track-id
   -confirm-input, --confirm-input stringArray

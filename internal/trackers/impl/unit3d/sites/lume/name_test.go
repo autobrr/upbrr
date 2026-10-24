@@ -12,9 +12,10 @@ import (
 
 func TestLumeLanguageMarkersCountKnownProgrammeLanguages(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		languages []string
-		wantAudio string
+		name                string
+		languages           []string
+		confirmedEnglishDub bool
+		wantAudio           string
 	}{
 		{
 			name:      "unknown language is not a second language",
@@ -32,14 +33,16 @@ func TestLumeLanguageMarkersCountKnownProgrammeLanguages(t *testing.T) {
 			wantAudio: "DD 2.0",
 		},
 		{
-			name:      "original and English remain dual with unknown language",
-			languages: []string{"Japanese", "English", "Unknown language"},
-			wantAudio: "DD 2.0 Dual-Audio",
+			name:                "original and English remain dual with unknown language",
+			languages:           []string{"Japanese", "English", "Unknown language"},
+			confirmedEnglishDub: true,
+			wantAudio:           "DD 2.0 Dual-Audio",
 		},
 		{
-			name:      "aliases do not inflate the language count",
-			languages: []string{"Japanese", "jpn", "English", "eng"},
-			wantAudio: "DD 2.0 Dual-Audio",
+			name:                "aliases do not inflate the language count",
+			languages:           []string{"Japanese", "jpn", "English", "eng"},
+			confirmedEnglishDub: true,
+			wantAudio:           "DD 2.0 Dual-Audio",
 		},
 		{
 			name:      "unknown language leaves non-English composition unresolved",
@@ -63,11 +66,15 @@ func TestLumeLanguageMarkersCountKnownProgrammeLanguages(t *testing.T) {
 				TrackCoverageComplete: true,
 			}
 			for _, language := range test.languages {
-				media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+				track := api.MediaTrackFacts{
 					Kind:      api.MediaTrackAudio,
 					Role:      api.AudioRoleProgramme,
 					Languages: []string{language},
-				})
+				}
+				if test.confirmedEnglishDub && (language == "English" || language == "eng") {
+					track.AudioOrigin = api.TrackAudioDubbed
+				}
+				media.Tracks = append(media.Tracks, track)
 			}
 			subject := lumeSubject(t, api.ReleaseNameRequest{
 				Category: "MOVIE",

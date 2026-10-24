@@ -129,9 +129,14 @@ func TestAggregateOnlyAudioNeedsInspectionNotDubClassification(t *testing.T) {
 		ProgrammeLanguages:     []string{"German"},
 		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
 	}}
-	failures := EvaluateLanguagePolicy(subject, LanguagePolicy{OriginalAudio: LanguageProhibited, ExtraDubs: LanguageProhibited})
-	if len(failures) != 1 || failures[0].Rule != "language_origin" || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial || len(failures[0].AudioOriginCorrectionTrackIDs) != 0 {
-		t.Fatalf("aggregate-only evidence was classified or invented a track: %#v", failures)
+	for _, policy := range []LanguagePolicy{
+		{OriginalAudio: LanguageProhibited, ExtraDubs: LanguageProhibited},
+		{OriginalFirst: LanguageProhibited},
+	} {
+		failures := EvaluateLanguagePolicy(subject, policy)
+		if len(failures) != 1 || failures[0].Rule != "language_origin" || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial || len(failures[0].AudioOriginCorrectionTrackIDs) != 0 {
+			t.Fatalf("aggregate-only evidence was classified or invented a track: %#v", failures)
+		}
 	}
 }
 
@@ -201,5 +206,46 @@ func TestUncertainDubDoesNotPromoteSubtitleAdviceToStrict(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("subtitle guidance disappeared")
+	}
+}
+
+func TestOriginalFirstWitnessSurvivesUnknownAdditionalOriginalOrder(t *testing.T) {
+	facts := mediafacts.ResolveLanguages(api.MediaFacts{
+		OriginalLanguage:      "Japanese",
+		TrackCoverageComplete: true,
+		Tracks: []api.MediaTrackFacts{
+			{
+				Kind:             api.MediaTrackAudio,
+				Role:             api.AudioRoleProgramme,
+				Languages:        []string{"Japanese"},
+				StreamOrder:      1,
+				StreamOrderKnown: true,
+			},
+			{
+				ID:                  "unclassified",
+				ManifestFingerprint: "current",
+				Kind:                api.MediaTrackAudio,
+				Role:                api.AudioRoleProgramme,
+				Languages:           []string{"English"},
+				StreamOrder:         2,
+				StreamOrderKnown:    true,
+			},
+			{
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleAlternateMix,
+				Languages: []string{"Japanese"},
+			},
+		},
+	})
+	for _, orderKnown := range []bool{true, false} {
+		facts.Tracks[1].StreamOrderKnown = orderKnown
+		failures := EvaluateLanguagePolicy(api.TrackerValidationSubject{LanguageFacts: facts}, LanguagePolicy{OriginalFirst: LanguageProhibited})
+		if orderKnown {
+			if len(failures) != 0 {
+				t.Fatalf("later unclassified track displaced the measured original-first witness: %+v", failures)
+			}
+		} else if len(failures) != 1 || failures[0].Rule != "language_origin" || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+			t.Fatalf("potential earlier unclassified track did not need review: %+v", failures)
+		}
 	}
 }

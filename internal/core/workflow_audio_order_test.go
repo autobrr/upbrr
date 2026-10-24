@@ -75,6 +75,10 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 				}
 				// Original audio stays default, but follows a dub and separates normal dubs.
 				for index, language := range []string{"German", "Japanese", "English"} {
+					origin := api.TrackAudioDubbed
+					if language == "Japanese" {
+						origin = api.TrackAudioOriginal
+					}
 					media.Tracks = append(media.Tracks, api.MediaTrackFacts{
 						ID:                  language,
 						Kind:                api.MediaTrackAudio,
@@ -83,6 +87,7 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 						Role:                api.AudioRoleProgramme,
 						Title:               language + " main audio",
 						Languages:           []string{language},
+						AudioOrigin:         origin,
 						Codec:               "FLAC",
 						Channels:            2,
 						ChannelsKnown:       true,

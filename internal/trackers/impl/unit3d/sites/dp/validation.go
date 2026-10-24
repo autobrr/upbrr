@@ -50,7 +50,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		)}
 	}
 	_, manualMarker := manualAudioLabel(subject)
-	if facts.HasUnresolvedProgrammeAudioOrigin() && (count >= 3 || !manualMarker) {
+	if facts.HasUnresolvedProgrammeAudioOrigin() && (count >= 3 && !facts.HasOriginalAudio() || count < 3 && !manualMarker) {
 		return trackers.ProgrammeAudioOriginFailures(subject)
 	}
 	var failures []api.RuleFailure

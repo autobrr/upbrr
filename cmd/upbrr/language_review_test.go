@@ -44,11 +44,16 @@ func TestCLIDubRemediationIsVisibleWithoutWaiver(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			media := api.MediaFacts{OriginalLanguage: "Japanese", TrackCoverageComplete: true}
 			for _, language := range test.languages {
-				media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+				track := api.MediaTrackFacts{
 					Kind:      api.MediaTrackAudio,
 					Role:      api.AudioRoleProgramme,
 					Languages: []string{language},
-				})
+				}
+				// These remediation cases contain a confirmed German dub.
+				if language == "German" {
+					track.AudioOrigin = api.TrackAudioDubbed
+				}
+				media.Tracks = append(media.Tracks, track)
 			}
 			subject := api.TrackerValidationSubject{
 				Tracker:         "EXAMPLE",
@@ -123,13 +128,29 @@ func TestCLILanguageReviewUsesBackendDecisions(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			subject := api.TrackerValidationSubject{Tracker: "EXAMPLE", LanguageFacts: api.LanguageFacts{
-				OriginalLanguages:  []string{"Japanese"},
-				ProgrammeLanguages: []string{"Japanese", "English", "German"},
-				ProgrammeStatus:    api.MetadataEvidenceStatusComplete,
-				AudioStatus:        api.MetadataEvidenceStatusComplete,
-				SubtitleStatus:     api.MetadataEvidenceStatusComplete,
-			}}
+			subject := api.TrackerValidationSubject{Tracker: "EXAMPLE", LanguageFacts: mediafacts.ResolveLanguages(api.MediaFacts{
+				OriginalLanguage:      "Japanese",
+				TrackCoverageComplete: true,
+				Tracks: []api.MediaTrackFacts{
+					{
+						Kind:      api.MediaTrackAudio,
+						Role:      api.AudioRoleProgramme,
+						Languages: []string{"Japanese"},
+					},
+					{
+						Kind:        api.MediaTrackAudio,
+						Role:        api.AudioRoleProgramme,
+						Languages:   []string{"English"},
+						AudioOrigin: api.TrackAudioDubbed,
+					},
+					{
+						Kind:        api.MediaTrackAudio,
+						Role:        api.AudioRoleProgramme,
+						Languages:   []string{"German"},
+						AudioOrigin: api.TrackAudioDubbed,
+					},
+				},
+			})}
 			if test.disc {
 				subject.DiscType = "BDMV"
 			}

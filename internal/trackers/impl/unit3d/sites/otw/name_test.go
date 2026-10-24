@@ -178,6 +178,19 @@ func TestOTWAudioMarkersUseProgrammeFactsAndPresentationControls(t *testing.T) {
 		OriginalLanguagesKnown: true,
 		ProgrammeLanguages:     []string{"Japanese", "English"},
 		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+		Tracks: []api.MediaTrackFacts{
+			{
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"Japanese"},
+			},
+			{
+				Kind:        api.MediaTrackAudio,
+				Role:        api.AudioRoleProgramme,
+				Languages:   []string{"English"},
+				AudioOrigin: api.TrackAudioDubbed,
+			},
+		},
 	}
 	for _, audio := range []string{"DD+ 5.1 Dual-Audio", "Dual-Audio DD+ 5.1", "Dubbed Dual-Audio DD+ 5.1"} {
 		meta := api.UploadSubject{
@@ -211,6 +224,7 @@ func TestOTWAudioMarkersUseProgrammeFactsAndPresentationControls(t *testing.T) {
 	}
 	meta := api.UploadSubject{Audio: "DD+ 5.1", LanguageFacts: original}
 	meta.LanguageFacts.ProgrammeLanguages = []string{"English"}
+	meta.LanguageFacts.Tracks = original.Tracks[1:]
 	if got := otwAudio(meta); got != "Dubbed DD+ 5.1" {
 		t.Fatalf("dub-only marker: %q", got)
 	}
@@ -220,10 +234,18 @@ func TestOTWAudioMarkersUseProgrammeFactsAndPresentationControls(t *testing.T) {
 	}
 	meta.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusComplete
 	meta.LanguageFacts.ProgrammeLanguages = []string{"Japanese", "English", "German"}
+	meta.LanguageFacts.Tracks = original.Clone().Tracks
+	meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
+		Kind:        api.MediaTrackAudio,
+		Role:        api.AudioRoleProgramme,
+		Languages:   []string{"German"},
+		AudioOrigin: api.TrackAudioDubbed,
+	})
 	if got := otwAudio(meta); got != "MULTI DD+ 5.1" {
 		t.Fatalf("multiple marker: %q", got)
 	}
 	meta.LanguageFacts.ProgrammeLanguages = []string{"Japanese"}
+	meta.LanguageFacts.Tracks = original.Tracks[:1]
 	meta.LanguageFacts.SubtitleLanguages = []string{"English", "German"}
 	if got := otwAudio(meta); got != "DD+ 5.1" {
 		t.Fatalf("subtitles created audio marker: %q", got)

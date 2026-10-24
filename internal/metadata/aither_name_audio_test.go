@@ -79,6 +79,11 @@ func TestAitherNamesFromInspectedAudio(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if test.name == "automatic dual audio DVD rip" {
+				// Naming consumes reviewed soundtrack evidence, not the English tag or track title alone.
+				tracks[1].AudioOrigin = api.TrackAudioDubbed
+				tracks[1].AudioOriginProvenance = api.FactProvenanceManual
+			}
 			generated := BuildReleaseName(api.ReleaseNameRequest{
 				Category:    "MOVIE",
 				Type:        test.releaseType,

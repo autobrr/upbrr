@@ -1108,7 +1108,9 @@ test("embedded web persists Release Details audio track language edits, clear an
     await page.getByText("Edit Release Details", { exact: true }).click();
     const tracks = page.getByTestId("input-track-coverage");
     await tracks.locator("summary").click();
-    const row = tracks.locator(`[data-track-id="${track.ID}"]`);
+    const row = tracks.locator(
+      `[data-correction-field="metadata.track_languages"][data-track-id="${track.ID}"]`,
+    );
     const languages = row.getByRole("textbox", { name: "Audio track 1 languages", exact: true });
     for (const value of [["Japanese", "Spanish"], ["French"], []]) {
       await languages.fill(value.join(", "));

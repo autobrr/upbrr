@@ -6,11 +6,33 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestCLITrackAudioOriginsNormalizeValuesOnly(t *testing.T) {
+	opts, _, _, err := parseCLIOptions([]string{
+		"--track-audio-origin", " Audio = Original ",
+		"--track-audio-origin", "audio=DuBbEd",
+		"--track-audio-origin", "other= UNRESOLVED ",
+		"example.mkv",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := parseCLITrackAudioOrigins(opts.TrackAudioOrigins)
+	want := []api.TrackAudioOriginCorrection{
+		{TrackID: "Audio", Origin: api.TrackAudioOriginal},
+		{TrackID: "audio", Origin: api.TrackAudioDubbed},
+		{TrackID: "other", Origin: api.TrackAudioUnresolved},
+	}
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("corrections=%#v, err=%v, want=%#v", got, err, want)
+	}
+}
 
 func TestCLITrackAudioOriginsRemainManifestBound(t *testing.T) {
 	tracks := []api.MediaTrackFacts{{
@@ -49,7 +71,7 @@ func TestCLITrackAudioOriginReviewBatchesWithoutWaivingUnknown(t *testing.T) {
 	}}
 	for _, mode := range []api.InteractionMode{api.InteractionModeInteractive, api.InteractionModeUnattendedConfirm} {
 		var out bytes.Buffer
-		got, err := collectCLIInputAudioOrigins(bufio.NewReader(strings.NewReader("unresolved\n")), &out, mode, []api.InputReadinessFieldOutcome{field, field}, tracks)
+		got, err := collectCLIInputAudioOrigins(bufio.NewReader(strings.NewReader(" UnReSoLvEd \n")), &out, mode, []api.InputReadinessFieldOutcome{field, field}, tracks)
 		if err != nil || len(got) != 1 || got[0].Origin != api.TrackAudioUnresolved || got[0].ManifestFingerprint != "current" || strings.Count(out.String(), "soundtrack origin:") != 1 {
 			t.Fatalf("got=%#v err=%v output=%s", got, err, out.String())
 		}
