@@ -1,12 +1,13 @@
 package lume
 
 import (
+	"testing"
+
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
-	"testing"
 )
 
 func TestLumeLanguageMarkersCountKnownProgrammeLanguages(t *testing.T) {
@@ -222,7 +223,7 @@ func TestLumeOmitsExactHi10PWithoutOverwritingManualComponent(t *testing.T) {
 }
 func TestLumePolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/lume/v6" || p.Structured == nil {
+	if p.ID != "unit3d/lume/v7" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }

@@ -186,6 +186,13 @@ export const cloneIntent = (intent: PreparationIntent): PreparationIntent => ({
     ...(intent.metadata.HardcodedSubtitleLanguages
       ? { HardcodedSubtitleLanguages: [...intent.metadata.HardcodedSubtitleLanguages] }
       : {}),
+    ...(intent.metadata.TrackAudioOrigins
+      ? {
+          TrackAudioOrigins: intent.metadata.TrackAudioOrigins.map((correction) => ({
+            ...correction,
+          })),
+        }
+      : {}),
     ...(intent.metadata.TrackLanguages
       ? {
           TrackLanguages: intent.metadata.TrackLanguages.map((correction) => ({

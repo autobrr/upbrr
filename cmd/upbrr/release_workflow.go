@@ -623,7 +623,7 @@ func runCLIWorkflowInteractive(
 	defer func() { session.releaseActiveInput(ctx) }()
 	for {
 		publishCLIInvocation(streams, currentArgs, currentOpts.Debug || currentOpts.SiteCheck || coreSvc.LiveTestEnabled())
-		if len(currentOpts.TrackLanguages) > 0 && inputTracks == nil {
+		if (len(currentOpts.TrackLanguages) > 0 || len(currentOpts.TrackAudioOrigins) > 0) && inputTracks == nil {
 			history, historyErr := coreSvc.GetInputHistory(ctx, sourcePath)
 			if historyErr != nil || len(history.Tracks) == 0 {
 				if historyErr != nil {

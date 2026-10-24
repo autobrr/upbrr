@@ -1,7 +1,12 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { MediaFileFacts, SubtitleLanguageCoverage } from "./api/generated/release-workflow";
+import type {
+  MediaFileFacts,
+  SubtitleLanguageCoverage,
+  TrackAudioOrigin,
+  TrackAudioOriginCorrection,
+} from "./api/generated/release-workflow";
 
 /** Editable identity projection derived from the canonical prepared release. */
 export type ExternalIdentityDraft = {
@@ -267,6 +272,9 @@ export type MediaTrackFacts = {
   DetectedLanguages: string[];
   Languages: string[];
   LanguageProvenance: FactProvenance;
+  Role?: string;
+  AudioOrigin?: TrackAudioOrigin;
+  AudioOriginProvenance?: FactProvenance;
   Default: boolean;
   Commentary: boolean;
 };
@@ -335,6 +343,7 @@ export type PrepareInput = {
       HardcodedSubs?: boolean | null;
       HardcodedSubtitleLanguages?: readonly string[] | null;
       TrackLanguages?: readonly TrackLanguageCorrection[];
+      TrackAudioOrigins?: readonly TrackAudioOriginCorrection[];
     };
     SourceLookup: string;
     BlurayReleaseID?: string;

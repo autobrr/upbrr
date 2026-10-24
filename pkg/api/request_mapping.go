@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 )
 
@@ -133,6 +134,7 @@ func cloneMetadataOverrides(value MetadataOverrides) MetadataOverrides {
 		HardcodedSubs:              cloneBool(value.HardcodedSubs),
 		HardcodedSubtitleLanguages: cloneStringSlice(value.HardcodedSubtitleLanguages),
 		TrackLanguages:             cloneTrackLanguageCorrections(value.TrackLanguages),
+		TrackAudioOrigins:          slices.Clone(value.TrackAudioOrigins),
 	}
 }
 

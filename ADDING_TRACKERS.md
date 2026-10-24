@@ -1328,6 +1328,16 @@ non-advisory current policy, once across selected trackers. Save answers through
 manifest-bound track-language corrections, not tracker questionnaire answers. Do not turn unknown
 roles, incomplete inspection, or advisory guidance into language-identification requirements.
 
+Soundtrack origin is a separate per-track fact: a language mismatch alone does not establish
+an original soundtrack or a dub. Use `ProgrammeAudioOrigin` for original/dub classification,
+`HasEnglishDub` for confirmed English dubbing, and `HasUnresolvedProgrammeAudioOrigin` before
+asserting original audio is absent. Reviewed multilingual originals retain all identified
+languages without acquiring dub tags. Ordinary matching-language programme tracks need no
+special title or flag. Origin findings use `AudioOriginCorrectionTrackIDs` and independent
+`metadata.track_audio_origins` corrections bound to the same inspected manifest. Preserve
+advisory-only outcomes, secondary-role exclusions, full-disc exceptions and selected-file pack
+coverage. Never convert an unresolved answer into permission to bypass a site rule.
+
 Without an explicit evidence-backed site requirement, source-history, retention, provenance,
 quality and hypothetical subtitle concerns are passive advisories, not questionnaires or unresolved
 answer gates. Keep unknown facts unknown; warnings

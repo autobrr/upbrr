@@ -10,6 +10,30 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestAudioLanguageClearPreservesUnknownProgrammeOrigin(t *testing.T) {
+	facts := ResolveLanguages(api.MediaFacts{
+		OriginalLanguage:         "Japanese",
+		TrackCoverageComplete:    true,
+		AudioLanguagesProvenance: api.FactProvenanceManualEmpty,
+		Tracks: []api.MediaTrackFacts{
+			{
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"Japanese"},
+			},
+			{
+				Kind:        api.MediaTrackAudio,
+				Role:        api.AudioRoleProgramme,
+				Languages:   []string{"English"},
+				AudioOrigin: api.TrackAudioDubbed,
+			},
+		},
+	})
+	if len(facts.ProgrammeLanguages) != 0 || facts.ProgrammeStatus != api.MetadataEvidenceStatusPartial || facts.HasOriginalAudio() || facts.HasEnglishDub() {
+		t.Fatal("cleared programme languages recovered original or dub evidence")
+	}
+}
+
 func TestResolveLanguagesSeparatesProgrammeAndSecondaryAudio(t *testing.T) {
 	media := api.MediaFacts{OriginalLanguage: "ja", TrackCoverageComplete: true}
 	for _, item := range []struct{ title, language string }{
@@ -23,6 +47,9 @@ func TestResolveLanguagesSeparatesProgrammeAndSecondaryAudio(t *testing.T) {
 			Languages: []string{item.language},
 		})
 	}
+	// These two separate programme streams are confirmed dubs, not inferred from their tags.
+	media.Tracks[1].AudioOrigin = api.TrackAudioDubbed
+	media.Tracks[2].AudioOrigin = api.TrackAudioDubbed
 	facts := ResolveLanguages(media)
 	if !slices.Equal(facts.ProgrammeLanguages, []string{"Japanese", "English", "German"}) || !facts.HasEnglishDub() || !facts.HasOriginalAudio() {
 		t.Fatalf("programme facts = %#v", facts)
@@ -113,9 +140,10 @@ func TestSecondaryUnknownLanguageDoesNotInvalidateProgrammeFacts(t *testing.T) {
 				Languages: []string{"Japanese"},
 			},
 			{
-				Kind:      api.MediaTrackAudio,
-				Role:      api.AudioRoleProgramme,
-				Languages: []string{"English"},
+				Kind:        api.MediaTrackAudio,
+				Role:        api.AudioRoleProgramme,
+				Languages:   []string{"English"},
+				AudioOrigin: api.TrackAudioDubbed,
 			},
 			{Kind: api.MediaTrackAudio, Role: api.AudioRoleCommentary},
 		},

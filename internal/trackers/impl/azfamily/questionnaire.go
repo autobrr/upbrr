@@ -50,9 +50,15 @@ func azDialectLanguages(subject api.TrackerValidationSubject) []string {
 		return nil
 	}
 	var dialects []string
-	for _, language := range facts.ProgrammeLanguages {
-		if language != "English" && !slices.Contains(facts.OriginalLanguages, language) {
-			dialects = append(dialects, language)
+	for _, track := range facts.Tracks {
+		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) ||
+			facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal {
+			continue
+		}
+		for _, language := range track.Languages {
+			if language != "English" && !slices.Contains(facts.OriginalLanguages, language) && !slices.Contains(dialects, language) {
+				dialects = append(dialects, language)
+			}
 		}
 	}
 	return dialects

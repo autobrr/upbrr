@@ -105,6 +105,7 @@ type cliOptions struct {
 	HardcodedSubtitleLanguages string
 	HardcodedSubs              bool
 	TrackLanguages             []string
+	TrackAudioOrigins          []string
 	ResetInput                 []string
 	ConfirmInput               []string
 	TrackerInput               []string
@@ -389,6 +390,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.HardcodedSubtitleLanguages, "hardcoded-subtitle-languages", "", "Override hardcoded subtitle languages (comma-separated)")
 	fs.BoolVar(&opts.HardcodedSubs, "hardcoded-subs", false, "Mark release as containing hardcoded subtitles")
 	fs.BoolVar(&opts.HardcodedSubs, "hc", false, "Mark release as containing hardcoded subtitles")
+	fs.StringArrayVar(&opts.TrackAudioOrigins, "track-audio-origin", nil, "Classify programme soundtrack as track-id=original|dubbed|unresolved")
 	fs.StringArrayVar(&opts.TrackLanguages, "track-languages", nil, "Override track languages as track-id=language[,language]")
 	fs.StringArrayVar(&opts.ResetInput, "reset-input", nil, "Reset a saved correction field or field:track-id")
 	fs.StringArrayVar(&opts.ConfirmInput, "confirm-input", nil, "Confirm a saved content correction field or field:track-id")
@@ -547,6 +549,9 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 		return err
 	}
 	if _, err := buildCLITrackerInput(opts.TrackerInput); err != nil {
+		return err
+	}
+	if _, err := parseCLITrackAudioOrigins(opts.TrackAudioOrigins); err != nil {
 		return err
 	}
 	if err := validateCLITrackLanguageInputs(opts.TrackLanguages); err != nil {
@@ -939,7 +944,10 @@ func cliHelpSections(name string) []helpSection {
 			"hardcoded-subs",
 			"hardcoded-subtitle-languages",
 		}},
-		{title: "Input Corrections", names: []string{"source-lookup", "track-languages", "reset-input", "confirm-input", "tracker-input"}},
+		{
+			title: "Input Corrections",
+			names: []string{"source-lookup", "track-languages", "track-audio-origin", "reset-input", "confirm-input", "tracker-input"},
+		},
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
 		{title: "Tracker Overrides", names: []string{
 			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
@@ -1242,7 +1250,7 @@ func isCLIInputCorrectionFlag(name string) bool {
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
 		"original-language", "commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "alternate-title",
 		"genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
-		"track-languages", "reset-input", "confirm-input",
+		"track-languages", "track-audio-origin", "reset-input", "confirm-input",
 	}, name)
 }
 
@@ -1395,7 +1403,22 @@ func buildCLIInputCorrectionPatch(opts cliOptions, visited map[string]bool, trac
 			seen[key] = struct{}{}
 		}
 	}
-	if len(patch.ResetFields) == 0 && len(patch.ConfirmFields) == 0 && len(patch.Values.Metadata.TrackLanguages) == 0 {
+	if len(opts.TrackAudioOrigins) > 0 && tracks != nil {
+		corrections, err := buildCLITrackAudioOriginCorrections(opts.TrackAudioOrigins, tracks)
+		if err != nil {
+			return nil, err
+		}
+		patch.Values.Metadata.TrackAudioOrigins = corrections
+		for _, correction := range corrections {
+			key := string(api.CorrectionFieldMetadataTrackAudioOrigins) + "\x00" + correction.TrackID
+			if _, duplicate := seen[key]; duplicate {
+				return nil, fmt.Errorf("duplicate input correction target %s:%s", api.CorrectionFieldMetadataTrackAudioOrigins, correction.TrackID)
+			}
+			seen[key] = struct{}{}
+		}
+	}
+	if len(patch.ResetFields) == 0 && len(patch.ConfirmFields) == 0 && len(patch.Values.Metadata.TrackLanguages) == 0 &&
+		len(patch.Values.Metadata.TrackAudioOrigins) == 0 {
 		return nil, nil
 	}
 	if len(patch.ConfirmFields) > 0 {

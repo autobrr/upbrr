@@ -26,6 +26,11 @@ func languageSubject(original string, audio ...string) api.TrackerValidationSubj
 		SubtitleLanguages:     []string{"English"},
 	}
 	for i, language := range audio {
+		// These rule fixtures model established original-plus-dub compositions.
+		origin := api.TrackAudioOriginal
+		if language != original {
+			origin = api.TrackAudioDubbed
+		}
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
 			ID:               fmt.Sprintf("audio_%d", i),
 			Kind:             api.MediaTrackAudio,
@@ -34,6 +39,7 @@ func languageSubject(original string, audio ...string) api.TrackerValidationSubj
 			StreamOrder:      i + 1,
 			StreamOrderKnown: true,
 			Languages:        []string{language},
+			AudioOrigin:      origin,
 			Default:          i == 0,
 			DefaultKnown:     true,
 			Codec:            "FLAC",

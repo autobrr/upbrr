@@ -86,6 +86,7 @@ func NewEvidenceRuleFailure(
 func NormalizeRuleFailure(failure api.RuleFailure) api.RuleFailure {
 	normalized := NewRuleFailure(failure.Rule, failure.Reason, failure.Disposition)
 	normalized.LanguageCorrectionTrackIDs = slices.Clone(failure.LanguageCorrectionTrackIDs)
+	normalized.AudioOriginCorrectionTrackIDs = slices.Clone(failure.AudioOriginCorrectionTrackIDs)
 	normalized.QuestionnaireInput = failure.QuestionnaireInput
 	normalized.DebugBypass = failure.DebugBypass
 	normalized.EvidenceFingerprint = failure.EvidenceFingerprint

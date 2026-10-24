@@ -20,14 +20,17 @@ import (
 func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	version := "constructibility-v2"
 	if d.site.Name == "AZ" {
-		version = "policy-v5"
+		version = "policy-v6"
 	}
 	if d.site.Name == "CZ" {
-		version = "policy-v6"
+		version = "policy-v7"
 	}
 	return trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,
 		Check: d.evaluateRules,
+		LanguageAssessment: func(subject api.TrackerValidationSubject) []api.RuleFailure {
+			return evaluateAZLanguageRules(d.site, subject)
+		},
 	}
 }
 
@@ -679,6 +682,8 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 				failure.QuestionnaireInput = outcome == trackers.LanguageUnresolved
 				failures = append(failures, failure)
 			}
+		} else if facts.OriginalLanguagesKnown && !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") && facts.HasUnresolvedProgrammeAudioOrigin() {
+			failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
 		} else if facts.OriginalLanguagesKnown && programmeStatus == api.MetadataEvidenceStatusComplete &&
 			!facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
 			failures = append(
@@ -697,7 +702,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 		for _, track := range facts.Tracks {
 			if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) &&
 				trackers.AutomaticDolbyCompatibilityMix(facts, track) == "" &&
-				slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) }) {
+				facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal {
 				originalCount++
 			}
 		}

@@ -15,7 +15,7 @@ import (
 )
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.NewReleaseNamePolicy("unit3d/otw/v7", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+	return trackers.NewReleaseNamePolicy("unit3d/otw/v8", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 		if input.RequestedName != nil {
 			return trackers.ResolvedReleaseNames{Upload: *input.RequestedName}, nil
 		}

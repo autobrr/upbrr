@@ -196,7 +196,7 @@ func TestDPOriginalAudioDiscBoundary(t *testing.T) {
 func TestDPOriginalAudioPreservesConstructibility(t *testing.T) {
 	t.Parallel()
 	definition := unit3d.NewWithProfile(Profile())
-	if got := definition.ValidationPolicy().ID; got != "unit3d-dp-constructibility-v1+unit3d-dp-policy-v3" {
+	if got := definition.ValidationPolicy().ID; got != "unit3d-dp-constructibility-v1+unit3d-dp-policy-v4" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 	meta := dpEligibilitySubject("Danish", "Swedish", "English")
@@ -306,6 +306,13 @@ func dpEligibilitySubject(languages ...string) api.UploadSubject {
 			Default:      index == 0,
 			DefaultKnown: true,
 		})
+	}
+	// These fixtures represent reviewed alternate-language programme dubs.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if len(track.Languages) == 1 && track.Languages[0] != "Japanese" && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
 	}
 	return api.UploadSubject{
 		Identity:  api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 1234567},

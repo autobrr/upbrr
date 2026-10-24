@@ -5,9 +5,10 @@ package hhd
 
 import (
 	"context"
-	"github.com/autobrr/upbrr/internal/mediafacts"
 	"strconv"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/mediafacts"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -157,6 +158,14 @@ func hhdTestLanguageFacts(original string, programme, subtitles []string) api.La
 			Languages: []string{language},
 			Default:   index == 0,
 		})
+	}
+	// These existing policy fixtures describe reviewed alternate-language dubs.
+	// Unreviewed tag-only evidence is exercised separately by origin regressions.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if track.Kind == api.MediaTrackAudio && len(track.Languages) == 1 && track.Languages[0] != original && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" && track.Languages[0] != "Multiple Languages" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
 	}
 	return mediafacts.ResolveLanguages(media)
 }

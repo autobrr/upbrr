@@ -703,15 +703,18 @@ const changedCorrectionFields = (
   compareFields(previous.releaseName, next.releaseName, releaseNameFieldKeys);
   compareFields(previous.metadata, next.metadata, metadataFieldKeys);
 
-  const previousTracks = new Map(
-    (previous.metadata.TrackLanguages || []).map((track) => [track.trackId, track]),
-  );
-  const nextTracks = new Map(
-    (next.metadata.TrackLanguages || []).map((track) => [track.trackId, track]),
-  );
-  for (const trackID of new Set([...previousTracks.keys(), ...nextTracks.keys()])) {
-    if (!sameCorrectionValue(previousTracks.get(trackID), nextTracks.get(trackID))) {
-      changed.push({ field: "metadata.track_languages", trackId: trackID });
+  for (const [field, key] of [
+    ["metadata.track_languages", "TrackLanguages"],
+    ["metadata.track_audio_origins", "TrackAudioOrigins"],
+  ] as const) {
+    const previousTracks = new Map(
+      (previous.metadata[key] || []).map((track) => [track.trackId, track]),
+    );
+    const nextTracks = new Map((next.metadata[key] || []).map((track) => [track.trackId, track]));
+    for (const trackID of new Set([...previousTracks.keys(), ...nextTracks.keys()])) {
+      if (!sameCorrectionValue(previousTracks.get(trackID), nextTracks.get(trackID))) {
+        changed.push({ field, trackId: trackID });
+      }
     }
   }
   return changed;
@@ -751,6 +754,15 @@ export const correctionValuesFor = (
     trackIDs.has(track.trackId),
   );
   if (trackLanguages.length > 0) metadata.TrackLanguages = trackLanguages;
+  const originTrackIDs = new Set(
+    fields
+      .filter((field) => field.field === "metadata.track_audio_origins")
+      .map((field) => field.trackId || ""),
+  );
+  const trackAudioOrigins = (intent.metadata.TrackAudioOrigins || []).filter((track) =>
+    originTrackIDs.has(track.trackId),
+  );
+  if (trackAudioOrigins.length > 0) metadata.TrackAudioOrigins = trackAudioOrigins;
   return {
     Identity: identity,
     ReleaseName: releaseName,
@@ -773,6 +785,18 @@ const withoutCorrection = (
   const releaseNameKey = releaseNameFieldKeys[ref.field as keyof typeof releaseNameFieldKeys];
   if (releaseNameKey) {
     return { ...intent, releaseName: withoutProperty(intent.releaseName, releaseNameKey) };
+  }
+  if (ref.field === "metadata.track_audio_origins") {
+    const retained = (intent.metadata.TrackAudioOrigins || []).filter(
+      (correction) => correction.trackId !== ref.trackId,
+    );
+    return {
+      ...intent,
+      metadata:
+        retained.length > 0
+          ? { ...intent.metadata, TrackAudioOrigins: retained }
+          : withoutProperty(intent.metadata, "TrackAudioOrigins"),
+    };
   }
   if (ref.field === "metadata.track_languages") {
     const retained = (intent.metadata.TrackLanguages || []).filter(

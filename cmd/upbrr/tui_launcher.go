@@ -193,7 +193,7 @@ func validateCLILaunch(original []string, draft cliLaunchRequest) ([]string, err
 	if opts.QueueName != "" && len(draft.Sources) != 1 {
 		return nil, errors.New("input: --queue requires exactly one queue root path")
 	}
-	if len(opts.TrackLanguages) > 0 && (len(draft.Sources) != 1 || opts.QueueName != "") {
+	if (len(opts.TrackLanguages) > 0 || len(opts.TrackAudioOrigins) > 0) && (len(draft.Sources) != 1 || opts.QueueName != "") {
 		return nil, errors.New("input: track corrections require exactly one source")
 	}
 	return args, nil

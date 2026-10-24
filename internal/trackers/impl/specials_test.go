@@ -12,12 +12,12 @@ import (
 
 func TestOnlyOptedInUnit3DSitesAllowExplicitSingleSpecials(t *testing.T) {
 	allowedPolicies := map[string]string{
-		"AITHER": "unit3d-aither-constructibility-v1+unit3d-aither-policy-v9/languages-v1",
-		"DP":     "unit3d-dp-constructibility-v1+unit3d-dp-policy-v3",
-		"HHD":    "unit3d-hhd-constructibility-v1+unit3d-hhd-deterministic-v6/languages-v1",
-		"LUME":   "unit3d-lume-constructibility-v1+unit3d-lume-constructibility-v5/languages-v1",
+		"AITHER": "unit3d-aither-constructibility-v1+unit3d-aither-policy-v9/languages-v2",
+		"DP":     "unit3d-dp-constructibility-v1+unit3d-dp-policy-v4",
+		"HHD":    "unit3d-hhd-constructibility-v1+unit3d-hhd-deterministic-v6/languages-v2",
+		"LUME":   "unit3d-lume-constructibility-v1+unit3d-lume-constructibility-v5/languages-v2",
 		"OTW":    "unit3d-otw-constructibility-v1+unit3d-otw-policy-v6",
-		"ULCX":   "unit3d-ulcx-constructibility-v1+unit3d-ulcx-policy-v12/languages-v1",
+		"ULCX":   "unit3d-ulcx-constructibility-v1+unit3d-ulcx-policy-v12/languages-v2",
 		"YUS":    "unit3d-yus-constructibility-v1+unit3d-yus-policy-v2",
 	}
 	registry, err := NewRegistry()

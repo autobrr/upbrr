@@ -219,10 +219,11 @@ func runUploadDriver(
 	if opts.AudioAnalysisOnly {
 		return runAudioAnalysisOnly(ctx, opts, visitedFlags, paths, streams)
 	}
-	trackScoped := len(opts.TrackLanguages) > 0
+	trackScoped := len(opts.TrackLanguages) > 0 || len(opts.TrackAudioOrigins) > 0
 	for _, raw := range opts.ResetInput {
 		field, _, _ := strings.Cut(raw, ":")
-		trackScoped = trackScoped || strings.TrimSpace(field) == string(api.CorrectionFieldMetadataTrackLanguages)
+		trackScoped = trackScoped || strings.TrimSpace(field) == string(api.CorrectionFieldMetadataTrackLanguages) ||
+			strings.TrimSpace(field) == string(api.CorrectionFieldMetadataTrackAudioOrigins)
 	}
 	if trackScoped && (len(paths) != 1 || strings.TrimSpace(opts.QueueName) != "") {
 		return exitError(2, errors.New("track-specific input corrections require exactly one source and cannot use --queue"))

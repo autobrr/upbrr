@@ -23,10 +23,11 @@ func TestPrepareRecollectsPreProgrammeRoleFactsAfterRestart(t *testing.T) {
 				PrimaryAudioTrackID:   "english",
 				Tracks: []api.MediaTrackFacts{
 					{
-						ID:        "english",
-						Kind:      api.MediaTrackAudio,
-						Role:      api.AudioRoleProgramme,
-						Languages: []string{"English"},
+						ID:          "english",
+						AudioOrigin: api.TrackAudioDubbed,
+						Kind:        api.MediaTrackAudio,
+						Role:        api.AudioRoleProgramme,
+						Languages:   []string{"English"},
 					},
 					{
 						ID:        "japanese",

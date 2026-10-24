@@ -100,8 +100,14 @@ func TestInputLanguageReviewUsesReadinessBeforeProjection(t *testing.T) {
 	for _, test := range []struct {
 		name                        string
 		selected, defaults, removed []string
+		originReview                bool
 	}{
 		{name: "explicit", selected: []string{"AITHER"}},
+		{
+			name:         "combined source facts",
+			selected:     []string{"AITHER"},
+			originReview: true,
+		},
 		{
 			name:     "configured default",
 			defaults: []string{"AITHER", "BHD", "UNREGISTERED"},
@@ -119,6 +125,18 @@ func TestInputLanguageReviewUsesReadinessBeforeProjection(t *testing.T) {
 					Status:          api.InputReadinessFieldMissing,
 					TrackerIDs:      []api.TrackerID{"AITHER"},
 				}}},
+			}
+			answers := "Japanese\n"
+			if test.originReview {
+				current.Release.Release.Media.Tracks[0].Kind = api.MediaTrackAudio
+				current.Release.Release.Media.Tracks[0].Role = api.AudioRoleProgramme
+				current.InputReadiness.Fields = append(current.InputReadiness.Fields, api.InputReadinessFieldOutcome{
+					TrackID:         "track",
+					CorrectionField: new(api.CorrectionFieldMetadataTrackAudioOrigins),
+					Status:          api.InputReadinessFieldMissing,
+					TrackerIDs:      []api.TrackerID{"AITHER"},
+				})
+				answers += "original\n"
 			}
 			core := &cliWorkflowCoreFake{current: current}
 			core.continueFn = func(request api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
@@ -142,7 +160,7 @@ func TestInputLanguageReviewUsesReadinessBeforeProjection(t *testing.T) {
 				uploadRequest: api.Request{Trackers: test.selected, TrackersRemove: test.removed},
 				streams:       cliIO{out: &output},
 			}
-			if err := session.reviewInputLanguages(t.Context(), bufio.NewReader(strings.NewReader("Japanese\n")), false, test.defaults); err != nil {
+			if err := session.reviewInputLanguages(t.Context(), bufio.NewReader(strings.NewReader(answers)), false, test.defaults); err != nil {
 				t.Fatal(err)
 			}
 			if len(core.continuations) != 2 {
@@ -151,6 +169,9 @@ func TestInputLanguageReviewUsesReadinessBeforeProjection(t *testing.T) {
 			patch := core.continuations[1].Intent.CorrectionPatch
 			if patch == nil || patch.ExpectedRevision == nil || *patch.ExpectedRevision != 2 || len(patch.Values.Metadata.TrackLanguages) != 1 {
 				t.Fatalf("missing bound correction: %#v", patch)
+			}
+			if test.originReview && (len(patch.Values.Metadata.TrackAudioOrigins) != 1 || patch.Values.Metadata.TrackAudioOrigins[0].ManifestFingerprint != "current" || patch.Values.Metadata.TrackAudioOrigins[0].Origin != api.TrackAudioOriginal) {
+				t.Fatalf("origin did not share one source-bound reprepare patch: %#v", patch)
 			}
 		})
 	}

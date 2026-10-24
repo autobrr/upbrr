@@ -16,9 +16,13 @@ func inputLanguageReview(binding ValidationPolicyBinding, subject api.UploadSubj
 	}
 	failures := binding.LanguageAssessment(api.NewTrackerValidationSubject(subject, string(trackerID)))
 	required := make(map[string]bool)
+	origins := make(map[string]bool)
 	for _, failure := range failures {
 		if failure.EvidenceStatus != api.MetadataEvidenceStatusPartial || api.NormalizeRuleDisposition(failure.Disposition) == api.RuleDispositionAdvisory {
 			continue
+		}
+		for _, id := range failure.AudioOriginCorrectionTrackIDs {
+			origins[id] = true
 		}
 		for _, id := range failure.LanguageCorrectionTrackIDs {
 			required[id] = true
@@ -36,6 +40,19 @@ func inputLanguageReview(binding ValidationPolicyBinding, subject api.UploadSubj
 			Status:          api.InputReadinessFieldMissing,
 			Disposition:     api.RuleDispositionStrict,
 			Message:         "Identify this programme track's languages in Inspected tracks or with --track-languages; do not infer a language from the title.",
+		})
+	}
+	for _, track := range mediafacts.UnresolvedProgrammeAudioOrigins(subject.LanguageFacts) {
+		if !origins[track.ID] {
+			continue
+		}
+		outcomes = append(outcomes, api.InputReadinessFieldOutcome{
+			Key:             "metadata.track_audio_origins." + track.ID,
+			TrackID:         track.ID,
+			CorrectionField: new(api.CorrectionFieldMetadataTrackAudioOrigins),
+			Status:          api.InputReadinessFieldMissing,
+			Disposition:     api.RuleDispositionStrict,
+			Message:         "Review whether this programme track is an original soundtrack or a dub in Inspected tracks; language tags alone do not establish dubbing.",
 		})
 	}
 	return outcomes

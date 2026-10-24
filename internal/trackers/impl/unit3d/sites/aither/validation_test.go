@@ -5,11 +5,12 @@ package aither
 
 import (
 	"context"
-	"github.com/autobrr/upbrr/internal/mediafacts"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/trackers"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -71,7 +72,7 @@ func TestAitherRequiresThreeScreenshots(t *testing.T) {
 func TestAitherValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-aither-policy-v9/languages-v1" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-aither-policy-v9/languages-v2" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -166,6 +167,14 @@ func aitherTestLanguageFacts(original string, programme, subtitles []string) api
 			Languages: []string{language},
 			Default:   index == 0,
 		})
+	}
+	// These existing policy fixtures describe reviewed alternate-language dubs.
+	// Unreviewed tag-only evidence is exercised separately by origin regressions.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if track.Kind == api.MediaTrackAudio && len(track.Languages) == 1 && track.Languages[0] != original && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" && track.Languages[0] != "Multiple Languages" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
 	}
 	return mediafacts.ResolveLanguages(media)
 }

@@ -31,6 +31,13 @@ func ptpLanguageSubject(original string, programme ...string) api.TrackerValidat
 			DefaultKnown: true,
 		})
 	}
+	// These fixtures represent reviewed alternate-language programme dubs.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if len(track.Languages) == 1 && track.Languages[0] != original && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
+	}
 	return api.TrackerValidationSubject{
 		Tracker:       "PTP",
 		SourcePath:    "ptp-language",

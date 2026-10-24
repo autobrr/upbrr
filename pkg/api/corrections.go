@@ -116,6 +116,7 @@ const (
 	CorrectionFieldMetadataHardcodedSubs              CorrectionField = "metadata.hardcoded_subs"
 	CorrectionFieldMetadataHardcodedSubtitleLanguages CorrectionField = "metadata.hardcoded_subtitle_languages"
 	CorrectionFieldMetadataTrackLanguages             CorrectionField = "metadata.track_languages"
+	CorrectionFieldMetadataTrackAudioOrigins          CorrectionField = "metadata.track_audio_origins"
 )
 
 // CorrectionFieldRef identifies one scalar field or one exact track correction.
@@ -475,6 +476,19 @@ func correctionValueRefs(values ReleaseCorrectionValues) (map[string]CorrectionF
 			}
 		}
 	}
+	for _, correction := range values.Metadata.TrackAudioOrigins {
+		ref := CorrectionFieldRef{Field: CorrectionFieldMetadataTrackAudioOrigins, TrackID: correction.TrackID}
+		if strings.TrimSpace(correction.ManifestFingerprint) == "" {
+			return nil, correctionConflict(ref, "track correction requires a manifest fingerprint")
+		}
+		if correction.Origin != TrackAudioOriginal && correction.Origin != TrackAudioDubbed && correction.Origin != TrackAudioUnresolved {
+			return nil, correctionConflict(ref, "track audio origin must be original, dubbed or unresolved")
+		}
+		if err := add(ref.Field, true, ref.TrackID); err != nil {
+			return nil, err
+		}
+	}
+
 	return refs, nil
 }
 
@@ -497,17 +511,17 @@ func correctionFieldRefKey(ref CorrectionFieldRef, confirm bool) (string, error)
 	if !isCorrectionField(ref.Field) {
 		return "", correctionConflict(ref, "unknown correction field")
 	}
-	if ref.Field == CorrectionFieldMetadataTrackLanguages {
+	if ref.Field == CorrectionFieldMetadataTrackLanguages || ref.Field == CorrectionFieldMetadataTrackAudioOrigins {
 		if confirm {
-			return "", correctionConflict(ref, "track language corrections cannot be confirmed")
+			return "", correctionConflict(ref, "track corrections cannot be confirmed")
 		}
 		if strings.TrimSpace(ref.TrackID) == "" {
-			return "", correctionConflict(ref, "track language correction requires a track ID")
+			return "", correctionConflict(ref, "track correction requires a track ID")
 		}
 		return string(ref.Field) + ":" + ref.TrackID, nil
 	}
 	if strings.TrimSpace(ref.TrackID) != "" {
-		return "", correctionConflict(ref, "track ID is only valid for track languages")
+		return "", correctionConflict(ref, "track ID is only valid for track corrections")
 	}
 	if confirm && !ref.Field.IsContentBound() {
 		return "", correctionConflict(ref, "field cannot be confirmed")
@@ -632,6 +646,7 @@ var allCorrectionFields = []CorrectionField{
 	CorrectionFieldMetadataHardcodedSubs,
 	CorrectionFieldMetadataHardcodedSubtitleLanguages,
 	CorrectionFieldMetadataTrackLanguages,
+	CorrectionFieldMetadataTrackAudioOrigins,
 }
 
 // IsContentBound identifies corrections that require confirmation when content identity changes.
@@ -760,6 +775,14 @@ func applyMetadataOverrides(destination *MetadataOverrides, source MetadataOverr
 			destination.TrackLanguages[index] = cloneTrackLanguageCorrections([]TrackLanguageCorrection{correction})[0]
 		}
 	}
+	for _, correction := range source.TrackAudioOrigins {
+		index := slices.IndexFunc(destination.TrackAudioOrigins, func(value TrackAudioOriginCorrection) bool { return value.TrackID == correction.TrackID })
+		if index < 0 {
+			destination.TrackAudioOrigins = append(destination.TrackAudioOrigins, correction)
+		} else {
+			destination.TrackAudioOrigins[index] = correction
+		}
+	}
 }
 
 func resetStoredCorrectionField(stored *StoredReleaseCorrectionsV1, ref CorrectionFieldRef) {
@@ -862,6 +885,14 @@ func resetStoredCorrectionField(stored *StoredReleaseCorrectionsV1, ref Correcti
 		stored.Metadata.HardcodedSubs = nil
 	case CorrectionFieldMetadataHardcodedSubtitleLanguages:
 		stored.Metadata.HardcodedSubtitleLanguages = nil
+	case CorrectionFieldMetadataTrackAudioOrigins:
+		stored.Metadata.TrackAudioOrigins = slices.DeleteFunc(
+			stored.Metadata.TrackAudioOrigins,
+			func(value TrackAudioOriginCorrection) bool { return value.TrackID == ref.TrackID },
+		)
+		if len(stored.Metadata.TrackAudioOrigins) == 0 {
+			stored.Metadata.TrackAudioOrigins = nil
+		}
 	case CorrectionFieldMetadataTrackLanguages:
 		stored.Metadata.TrackLanguages = slices.DeleteFunc(
 			stored.Metadata.TrackLanguages,
@@ -923,6 +954,16 @@ func (v ReleaseCorrectionValues) Fields() []CorrectionFieldRef {
 	}
 	fields := make([]CorrectionFieldRef, 0, len(refs))
 	for _, field := range allCorrectionFields {
+		if field == CorrectionFieldMetadataTrackAudioOrigins {
+			for _, correction := range v.Metadata.TrackAudioOrigins {
+				ref := CorrectionFieldRef{Field: field, TrackID: correction.TrackID}
+				if _, ok := refs[string(field)+":"+correction.TrackID]; ok {
+					fields = append(fields, ref)
+				}
+			}
+			continue
+		}
+
 		if field == CorrectionFieldMetadataTrackLanguages {
 			for _, correction := range v.Metadata.TrackLanguages {
 				ref := CorrectionFieldRef{Field: field, TrackID: correction.TrackID}
@@ -966,5 +1007,5 @@ func releaseCorrectionValuesZero(value ReleaseCorrectionValues) bool {
 		value.Metadata.Commentary == nil && value.Metadata.WebDV == nil && value.Metadata.StreamOptimized == nil && value.Metadata.Anime == nil &&
 		value.Metadata.Title == nil && value.Metadata.AlternateTitle == nil && value.Metadata.OriginalTitle == nil && value.Metadata.Genres == nil &&
 		value.Metadata.AudioLanguages == nil && value.Metadata.SubtitleLanguages == nil && value.Metadata.HardcodedSubs == nil &&
-		value.Metadata.HardcodedSubtitleLanguages == nil && value.Metadata.TrackLanguages == nil
+		value.Metadata.HardcodedSubtitleLanguages == nil && value.Metadata.TrackLanguages == nil && value.Metadata.TrackAudioOrigins == nil
 }

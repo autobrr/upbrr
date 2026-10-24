@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { MetadataPreview } from "../types";
 import type { ReleaseWorkflowCurrent } from "../api/generated/release-workflow";
+import { cloneIntent } from "./projections";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import { correctionValuesFor, initialSessionState, sessionReducer } from "./reducer";
 
@@ -415,6 +416,49 @@ describe("sessionReducer upload intent", () => {
       { ...suggestedSelections[0], TimestampSeconds: 30, Frame: 720 },
       suggestedSelections[1],
     ]);
+  });
+
+  it("keeps source-bound soundtrack origin edits and resets independent of languages", () => {
+    const language = {
+      trackId: "audio-1",
+      languages: ["Japanese", "English"],
+      manifestFingerprint: "scan",
+    };
+    const origin = { trackId: "audio-1", origin: "original" as const, manifestFingerprint: "scan" };
+    let state = sessionReducer(initialSessionState(), {
+      type: "metadata_changed",
+      value: { TrackLanguages: [language], TrackAudioOrigins: [origin] },
+    });
+    const copied = cloneIntent(state.preparationIntent);
+    expect(copied.metadata.TrackAudioOrigins).toEqual([origin]);
+    expect(copied.metadata.TrackAudioOrigins).not.toBe(
+      state.preparationIntent.metadata.TrackAudioOrigins,
+    );
+    expect(copied.metadata.TrackAudioOrigins?.[0]).not.toBe(
+      state.preparationIntent.metadata.TrackAudioOrigins?.[0],
+    );
+    expect(
+      correctionValuesFor(state.preparationIntent, state.correctionValueFields).Metadata,
+    ).toEqual({ TrackLanguages: [language], TrackAudioOrigins: [origin] });
+    state = sessionReducer(state, {
+      type: "correction_reset",
+      field: { field: "metadata.track_audio_origins", trackId: "audio-1" },
+    });
+    expect(state.preparationIntent.metadata).toEqual({ TrackLanguages: [language] });
+    expect(
+      correctionValuesFor(state.preparationIntent, state.correctionValueFields).Metadata,
+    ).toEqual({ TrackLanguages: [language] });
+    state = sessionReducer(state, {
+      type: "metadata_changed",
+      value: { TrackLanguages: [language], TrackAudioOrigins: [origin] },
+    });
+    state = sessionReducer(state, {
+      type: "correction_reset",
+      field: { field: "metadata.track_languages", trackId: "audio-1" },
+    });
+    expect(state.preparationIntent.metadata).toEqual({ TrackAudioOrigins: [origin] });
+    state = sessionReducer(state, { type: "source_selected", sourcePath: "C:\\media\\Other.mkv" });
+    expect(state.preparationIntent.metadata).toEqual({});
   });
 
   it("tracks only changed correction values and keeps unrelated confirmations", () => {

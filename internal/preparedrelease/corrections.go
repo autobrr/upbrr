@@ -139,6 +139,9 @@ func (m *Module) resolveInput(
 		if err := validateTrackCorrections(accepted.Metadata.TrackLanguages, current, fingerprint); err != nil {
 			return api.ResolvedPreparationInput{}, false, err
 		}
+		if err := validateTrackAudioOriginCorrections(accepted.Metadata.TrackAudioOrigins, current, fingerprint); err != nil {
+			return api.ResolvedPreparationInput{}, false, err
+		}
 		if len(correctionValuesFromStored(accepted).Fields()) != 0 {
 			accepted.SourceFingerprint = fingerprint
 		}
@@ -402,17 +405,52 @@ func contentBindingChanged(previous, current api.ContentBinding) bool {
 
 func validateTrackCorrections(corrections []api.TrackLanguageCorrection, current api.PreparedRelease, fingerprint string) error {
 	for _, correction := range corrections {
-		index := slices.IndexFunc(current.Media.Tracks, func(track api.MediaTrackFacts) bool { return track.ID == correction.TrackID })
-		if current.Compatibility.SourceFingerprint != fingerprint || index < 0 ||
-			current.Media.Tracks[index].ManifestFingerprint != correction.ManifestFingerprint {
+		if _, err := currentCorrectionTrack(
+			current,
+			fingerprint,
+			api.CorrectionFieldMetadataTrackLanguages,
+			correction.TrackID,
+			correction.ManifestFingerprint,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTrackAudioOriginCorrections(corrections []api.TrackAudioOriginCorrection, current api.PreparedRelease, fingerprint string) error {
+	for _, correction := range corrections {
+		track, err := currentCorrectionTrack(
+			current,
+			fingerprint,
+			api.CorrectionFieldMetadataTrackAudioOrigins,
+			correction.TrackID,
+			correction.ManifestFingerprint,
+		)
+		if err != nil {
+			return err
+		}
+		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
 			return &api.CorrectionConflictError{
-				Field:   api.CorrectionFieldMetadataTrackLanguages,
+				Field:   api.CorrectionFieldMetadataTrackAudioOrigins,
 				TrackID: correction.TrackID,
-				Reason:  "track manifest changed; select a current inspected track",
+				Reason:  "audio origin requires an inspected programme track",
 			}
 		}
 	}
 	return nil
+}
+
+func currentCorrectionTrack(current api.PreparedRelease, fingerprint string, field api.CorrectionField, trackID, manifest string) (api.MediaTrackFacts, error) {
+	index := slices.IndexFunc(current.Media.Tracks, func(track api.MediaTrackFacts) bool { return track.ID == trackID })
+	if current.Compatibility.SourceFingerprint != fingerprint || index < 0 || current.Media.Tracks[index].ManifestFingerprint != manifest {
+		return api.MediaTrackFacts{}, &api.CorrectionConflictError{
+			Field:   field,
+			TrackID: trackID,
+			Reason:  "track manifest changed; select a current inspected track",
+		}
+	}
+	return current.Media.Tracks[index], nil
 }
 
 // finalizeCorrectionBindings checks accepted corrections against the final identity.

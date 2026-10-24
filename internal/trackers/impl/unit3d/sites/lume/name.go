@@ -15,7 +15,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v6", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v7", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
 }
 
 func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
