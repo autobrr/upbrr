@@ -114,14 +114,19 @@ Production documentation is built from the exact release tag and published only 
 
 ### Temporary dependency exceptions
 
-The scheduled vulnerability workflow retains Stylelint and all CSS checks. The WebUI-only
-exception for GHSA-vfj7-8cjw-p6xm expires on 1 November 2026 at 00:00 UTC. It records
-[temporary risk acceptance](https://github.com/autobrr/upbrr/issues/585), not remediation.
-All other advisories remain scanned. Expiry restores failure and is never extended automatically.
+The scheduled vulnerability workflow retains Stylelint and all CSS checks. The former
+WebUI-only exception for GHSA-vfj7-8cjw-p6xm was removed after the advisory was withdrawn
+and a full WebUI scan without exceptions passed. The earlier
+[temporary risk acceptance](https://github.com/autobrr/upbrr/issues/585) was not remediation;
+[the cleanup](https://github.com/autobrr/upbrr/issues/770) does not establish that braces was patched.
+All advisories remain scanned without that exception.
 
-While the exception remains, the workflow checks OSV and npm for a confirmed published
+If a braces exception is present, the workflow checks OSV and npm for a confirmed published
 stable fix and checks every resolved braces version in the WebUI lockfile. Lookup failures
-fail monitoring explicitly. A bot-created follow-up is deduplicated across open and closed
+fail monitoring explicitly, and a withdrawn advisory requires reassessment rather than being
+treated as a fixed release. Expiry restores failure and is never extended automatically.
+With no exception, the remediation monitor exits without upstream lookups or follow-up issues;
+the scheduled vulnerability scan still runs. A bot-created follow-up is deduplicated across open and closed
 issues, including later fixed-version or cleanup-only observations. Update every affected
 copy, verify a scan without exceptions passes, and remove the exception. An already-clean
 lockfile produces a cleanup-only follow-up after that unignored scan passes.
