@@ -55,7 +55,7 @@ func TestReleaseCorrectionPatchAcceptsClosedResetFields(t *testing.T) {
 	refs := make([]CorrectionFieldRef, 0, len(allCorrectionFields))
 	for _, field := range allCorrectionFields {
 		ref := CorrectionFieldRef{Field: field}
-		if field == CorrectionFieldMetadataTrackLanguages {
+		if field == CorrectionFieldMetadataTrackLanguages || field == CorrectionFieldMetadataTrackAudioOrigins {
 			ref.TrackID = "audio:1"
 		}
 		refs = append(refs, ref)
@@ -63,8 +63,8 @@ func TestReleaseCorrectionPatchAcceptsClosedResetFields(t *testing.T) {
 	if err := (ReleaseCorrectionPatch{ResetFields: refs}).Validate(); err != nil {
 		t.Fatalf("full reset enum validation: %v", err)
 	}
-	if len(refs) != 48 {
-		t.Fatalf("reset enum count = %d, want 48", len(refs))
+	if len(refs) != 49 {
+		t.Fatalf("reset enum count = %d, want 49", len(refs))
 	}
 }
 

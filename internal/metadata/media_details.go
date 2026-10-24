@@ -393,6 +393,9 @@ func applyMetadataOverrides(meta *preparationstate.State) error {
 	if err := applyTrackLanguageOverrides(meta, overrides.TrackLanguages); err != nil {
 		return err
 	}
+	if err := applyTrackAudioOriginOverrides(meta, overrides.TrackAudioOrigins); err != nil {
+		return err
+	}
 	trackAudioLanguages := aggregateTrackLanguages(meta.MediaTracks, api.MediaTrackAudio)
 	trackSubtitleLanguages := aggregateTrackLanguages(meta.MediaTracks, api.MediaTrackSubtitle)
 	meta.TrackAudioLanguages = append([]string(nil), trackAudioLanguages...)

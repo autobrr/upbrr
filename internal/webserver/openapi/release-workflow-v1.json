@@ -4908,6 +4908,12 @@
           "AudioLabel": {
             "type": "string"
           },
+          "AudioOrigin": {
+            "$ref": "#/components/schemas/TrackAudioOrigin"
+          },
+          "AudioOriginProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
           "BitDepth": {
             "type": "integer"
           },
@@ -5189,6 +5195,12 @@
                 "type": "null"
               }
             ]
+          },
+          "TrackAudioOrigins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackAudioOriginCorrection"
+            }
           },
           "TrackLanguages": {
             "type": "array",
@@ -10554,6 +10566,28 @@
             ]
           }
         }
+      },
+      "TrackAudioOrigin": {
+        "type": "string"
+      },
+      "TrackAudioOriginCorrection": {
+        "type": "object",
+        "properties": {
+          "manifestFingerprint": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/TrackAudioOrigin"
+          },
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifestFingerprint",
+          "origin",
+          "trackId"
+        ]
       },
       "TrackLanguageCorrection": {
         "type": "object",

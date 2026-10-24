@@ -3,7 +3,7 @@
 
 import { pageStyle } from "../../components/ui/pageStyle";
 import type { ChangeEvent, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type {
   ContentBinding,
   CorrectionFieldRef,
@@ -1182,7 +1182,9 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         open={
           view.readiness?.fields?.some(
             (field) =>
-              field.correctionField === "metadata.track_languages" && field.status !== "ready",
+              (field.correctionField === "metadata.track_languages" ||
+                field.correctionField === "metadata.track_audio_origins") &&
+              field.status !== "ready",
           ) || undefined
         }
       >
@@ -1201,6 +1203,10 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               const correction = (view.intent.metadata.TrackLanguages || []).find(
                 (item) => item.trackId === track.ID,
               );
+              const originField = "metadata.track_audio_origins";
+              const originCorrection = (view.intent.metadata.TrackAudioOrigins || []).find(
+                (item) => item.trackId === track.ID,
+              );
               const ordinal =
                 track.Ordinal > 0
                   ? track.Ordinal
@@ -1209,65 +1215,137 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                       .filter((candidate) => candidate.Kind === track.Kind).length;
               const label = `${track.Kind === "audio" ? "Audio" : "Subtitle"} track ${ordinal} languages`;
               return (
-                <CorrectionRow
-                  key={track.ID}
-                  field={field}
-                  trackId={track.ID}
-                  label={label}
-                  status={statusFor(field, Boolean(correction), track.ID)}
-                  stale={false}
-                  onAuto={() => reset(field, track.ID)}
-                  onConfirm={() => confirm(field, track.ID)}
-                >
-                  {(view.readiness?.fields || [])
-                    .filter((outcome) => outcome.trackId === track.ID && outcome.status !== "ready")
-                    .map((outcome) => (
-                      <p key={outcome.key} className={pageStyle.error}>
-                        Language identification required for {(outcome.trackerIds || []).join(", ")}
-                        . Correct this track once, then prepare Input again to reuse it across
-                        trackers.
-                      </p>
-                    ))}
-                  <CommaListInput
-                    key={draftKey(field, track.ID)}
-                    id={`correction-${field}-${track.ID}`}
+                <Fragment key={track.ID}>
+                  <CorrectionRow
+                    field={field}
+                    trackId={track.ID}
                     label={label}
-                    value={correction?.languages || track.Languages}
-                    onChange={(languages) => {
-                      const retained = (view.intent.metadata.TrackLanguages || []).filter(
-                        (item) => item.trackId !== track.ID,
-                      );
-                      facet.changeMetadata({
-                        ...view.intent.metadata,
-                        TrackLanguages: [
-                          ...retained,
-                          {
-                            trackId: track.ID,
-                            languages,
-                            manifestFingerprint: track.ManifestFingerprint,
-                          },
-                        ],
-                      });
-                    }}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Track ID: {track.ID} · Resource: {track.ResourceID || "unknown"} · Detected:{" "}
-                    {listText(track.DetectedLanguages) || "unknown"}
-                  </span>
-                  {track.Kind === "audio" && (track.DiscID || track.PlaylistID) ? (
-                    <span className="break-words text-xs text-muted-foreground">
-                      {track.DiscID ? `Disc: ${track.DiscID} · ` : ""}
-                      {track.PlaylistID ? `Playlist: ${track.PlaylistID} · ` : ""}
-                      {track.NativeID ? `Native ID: ${track.NativeID}` : `Ordinal: ${ordinal}`}
-                      {" · "}Bitrate:{" "}
-                      {track.BitrateBitsPerSecond && track.BitrateBitsPerSecond > 0
-                        ? `${track.BitrateBitsPerSecond} bps`
-                        : "unknown"}
-                      {" · "}Hidden: {track.Hidden ? "yes" : "no"}
-                      {" · "}Commentary: {track.Commentary ? "yes" : "no"}
+                    status={statusFor(field, Boolean(correction), track.ID)}
+                    stale={false}
+                    onAuto={() => reset(field, track.ID)}
+                    onConfirm={() => confirm(field, track.ID)}
+                  >
+                    {(view.readiness?.fields || [])
+                      .filter(
+                        (outcome) =>
+                          outcome.trackId === track.ID &&
+                          outcome.correctionField === field &&
+                          outcome.status !== "ready",
+                      )
+                      .map((outcome) => (
+                        <p key={outcome.key} className={pageStyle.error}>
+                          Language identification required for{" "}
+                          {(outcome.trackerIds || []).join(", ")}. Correct this track once, then
+                          prepare Input again to reuse it across trackers.
+                        </p>
+                      ))}
+                    <CommaListInput
+                      key={draftKey(field, track.ID)}
+                      id={`correction-${field}-${track.ID}`}
+                      label={label}
+                      value={correction?.languages || track.Languages}
+                      onChange={(languages) => {
+                        const retained = (view.intent.metadata.TrackLanguages || []).filter(
+                          (item) => item.trackId !== track.ID,
+                        );
+                        facet.changeMetadata({
+                          ...view.intent.metadata,
+                          TrackLanguages: [
+                            ...retained,
+                            {
+                              trackId: track.ID,
+                              languages,
+                              manifestFingerprint: track.ManifestFingerprint,
+                            },
+                          ],
+                        });
+                      }}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Track ID: {track.ID} · Resource: {track.ResourceID || "unknown"} · Detected:{" "}
+                      {listText(track.DetectedLanguages) || "unknown"}
                     </span>
+                    {track.Kind === "audio" && (track.DiscID || track.PlaylistID) ? (
+                      <span className="break-words text-xs text-muted-foreground">
+                        {track.DiscID ? `Disc: ${track.DiscID} · ` : ""}
+                        {track.PlaylistID ? `Playlist: ${track.PlaylistID} · ` : ""}
+                        {track.NativeID ? `Native ID: ${track.NativeID}` : `Ordinal: ${ordinal}`}
+                        {" · "}Bitrate:{" "}
+                        {track.BitrateBitsPerSecond && track.BitrateBitsPerSecond > 0
+                          ? `${track.BitrateBitsPerSecond} bps`
+                          : "unknown"}
+                        {" · "}Hidden: {track.Hidden ? "yes" : "no"}
+                        {" · "}Commentary: {track.Commentary ? "yes" : "no"}
+                      </span>
+                    ) : null}
+                  </CorrectionRow>
+                  {track.Kind === "audio" &&
+                  (track.Role === "programme" || track.Role === "alternate_mix") ? (
+                    <CorrectionRow
+                      field={originField}
+                      trackId={track.ID}
+                      label={`Audio track ${ordinal} soundtrack origin`}
+                      status={statusFor(originField, Boolean(originCorrection), track.ID)}
+                      stale={false}
+                      onAuto={() => reset(originField, track.ID)}
+                      onConfirm={() => confirm(originField, track.ID)}
+                    >
+                      {(view.readiness?.fields || [])
+                        .filter(
+                          (outcome) =>
+                            outcome.trackId === track.ID &&
+                            outcome.correctionField === originField &&
+                            outcome.status !== "ready",
+                        )
+                        .map((outcome) => (
+                          <p key={outcome.key} className={pageStyle.error}>
+                            Soundtrack origin review required for{" "}
+                            {(outcome.trackerIds || []).join(", ")}. Correct this track once, then
+                            prepare Input again.
+                          </p>
+                        ))}
+                      <Select
+                        id={`correction-${originField}-${track.ID}`}
+                        value={originCorrection?.origin || track.AudioOrigin || ""}
+                        onChange={(event) => {
+                          const origin = event.target.value;
+                          if (origin === "") {
+                            reset(originField, track.ID);
+                            return;
+                          }
+                          if (
+                            origin !== "original" &&
+                            origin !== "dubbed" &&
+                            origin !== "unresolved"
+                          )
+                            return;
+                          facet.changeMetadata({
+                            ...view.intent.metadata,
+                            TrackAudioOrigins: [
+                              ...(view.intent.metadata.TrackAudioOrigins || []).filter(
+                                (item) => item.trackId !== track.ID,
+                              ),
+                              {
+                                trackId: track.ID,
+                                origin,
+                                manifestFingerprint: track.ManifestFingerprint,
+                              },
+                            ],
+                          });
+                        }}
+                      >
+                        <option value="">Auto</option>
+                        <option value="original">Original soundtrack</option>
+                        <option value="dubbed">Dubbed soundtrack</option>
+                        <option value="unresolved">Not yet established</option>
+                      </Select>
+                      <span className="text-xs text-muted-foreground">
+                        Use source evidence, not language tags alone. This does not identify unknown
+                        languages or confirm tracker eligibility.
+                      </span>
+                    </CorrectionRow>
                   ) : null}
-                </CorrectionRow>
+                </Fragment>
               );
             })}
           </div>

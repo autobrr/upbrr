@@ -122,6 +122,7 @@ func TestCinemaZIncompletePackOriginalDefaultRemainsStrict(t *testing.T) {
 				audio = append(audio, "Japanese")
 			}
 			meta := azIncompletePackSubject(t, "Japanese", audio...)
+			meta.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioDubbed
 			if test.original {
 				meta.LanguageFacts.Tracks[0].Default = !test.isDefault
 				meta.LanguageFacts.Tracks[1].Default = test.isDefault

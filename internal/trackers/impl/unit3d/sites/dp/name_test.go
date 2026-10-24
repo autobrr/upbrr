@@ -53,6 +53,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		ProgrammeLanguages:     subject.AudioLanguages,
 		ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
 	}
+	subject.LanguageFacts.Tracks[0].Languages = []string{"English"}
 	if got, want := dpReviewedName(t, subject, nil), "Dual-Audio Series AKA Example Original US 2026 S01E02 Example Episode 1080p WEB-DL MULTi DD+ 5.1 H.265-GRP"; got != want {
 		t.Fatalf("DP name = %q, want %q", got, want)
 	}
@@ -72,7 +73,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v9" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v10" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -324,6 +325,18 @@ func TestDPApprovedAudioCompositionRows(t *testing.T) {
 				ProgrammeLanguages:     test.languages,
 				ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
 			}}
+			for _, language := range test.languages {
+				origin := api.TrackAudioDubbed
+				if language == test.original {
+					origin = api.TrackAudioOriginal
+				}
+				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
+					Kind:        api.MediaTrackAudio,
+					Role:        api.AudioRoleProgramme,
+					Languages:   []string{language},
+					AudioOrigin: origin,
+				})
+			}
 			for _, languages := range [][]string{test.languages, reversedDPLanguages(test.languages)} {
 				subject.LanguageFacts.ProgrammeLanguages = languages
 				label, established, err := audioLabelForFacts(subject)
@@ -371,6 +384,14 @@ func TestDPDiscRemuxAndDefaultAudioBoundaries(t *testing.T) {
 			AudioLabel:   "DD+ 5.1",
 		}},
 	}
+	base.LanguageFacts.Tracks[0].Languages = []string{"Japanese"}
+	base.LanguageFacts.Tracks = append(base.LanguageFacts.Tracks, api.MediaTrackFacts{
+		Kind:         api.MediaTrackAudio,
+		Role:         api.AudioRoleProgramme,
+		Languages:    []string{"English"},
+		AudioOrigin:  api.TrackAudioDubbed,
+		DefaultKnown: true,
+	})
 	base.Type = "DISC"
 	if got := dpReviewedName(t, base, nil); !strings.Contains(got, "MULTi AAC 2.0") {
 		t.Fatalf("canonical full-disc baseline changed: %q", got)
@@ -467,6 +488,11 @@ func TestDPLanguageMultiNameIgnoresPrimaryAndDefaultLanguage(t *testing.T) {
 									Languages:    []string{"English"},
 								},
 							},
+						}
+						for index := range 2 {
+							if languages[index] != test.original {
+								subject.LanguageFacts.Tracks[index].AudioOrigin = api.TrackAudioDubbed
+							}
 						}
 						want := "Example 2026 1080p WEB-DL " + test.want + " " + subject.LanguageFacts.Tracks[defaultTrack].AudioLabel + " H.265-GRP"
 						if got := dpReviewedName(t, subject, nil); got != want {
@@ -594,6 +620,7 @@ func dpNordicDubSubject(t *testing.T) api.UploadSubject {
 				ID:           "Swedish",
 				Kind:         api.MediaTrackAudio,
 				Role:         api.AudioRoleProgramme,
+				AudioOrigin:  api.TrackAudioDubbed,
 				Languages:    []string{"Swedish"},
 				Default:      true,
 				DefaultKnown: true,
@@ -605,6 +632,7 @@ func dpNordicDubSubject(t *testing.T) api.UploadSubject {
 				DefaultKnown: true,
 				Kind:         api.MediaTrackAudio,
 				Role:         api.AudioRoleProgramme,
+				AudioOrigin:  api.TrackAudioDubbed,
 				Languages:    []string{"Finnish"},
 				Codec:        "DD+",
 				AudioLabel:   "DD+ 5.1",

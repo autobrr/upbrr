@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -25,6 +26,10 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		policy.OriginalAudio = trackers.LanguageProhibited
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
+	if !remux && facts.OriginalLanguagesKnown &&
+		(slices.Contains(facts.OriginalLanguages, "English") || (!subject.Anime && !facts.HasOriginalAudio())) {
+		failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
+	}
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
 		failure := trackers.LanguageRuleFailure(subject, key, reason, outcome)
 		failure.QuestionnaireInput = key == "primary_country"
@@ -44,15 +49,21 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		if !remux {
 			add("original_evidence", "original language is unresolved for the programme dub assessment", trackers.LanguageUnresolved)
 		}
-	} else {
-		for _, language := range facts.ProgrammeLanguages {
-			if slices.Contains(facts.OriginalLanguages, language) {
+	} else if programmeStatus != api.MetadataEvidenceStatusContradictory {
+		for _, track := range facts.Tracks {
+			if facts.ProgrammeAudioOrigin(track) != api.TrackAudioDubbed {
 				continue
 			}
-			if slices.Contains(facts.OriginalLanguages, "English") {
-				add("staff_dub", "dubs of English-original shows require staff approval", trackers.LanguageStaffException)
-			} else if language != "English" {
-				add("optional_dub", "other non-English dubs should be omitted", trackers.LanguageAdvisory)
+			for _, language := range track.Languages {
+				code := languageutil.NormalizeLanguageCode(language)
+				if code == "" || code == "und" || code == "mul" || slices.Contains(facts.OriginalLanguages, language) {
+					continue
+				}
+				if slices.Contains(facts.OriginalLanguages, "English") {
+					add("staff_dub", "dubs of English-original shows require staff approval", trackers.LanguageStaffException)
+				} else if language != "English" {
+					add("optional_dub", "other non-English dubs should be omitted", trackers.LanguageAdvisory)
+				}
 			}
 		}
 	}
@@ -64,7 +75,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		add("anime_audio", "anime requires Japanese audio with English subtitles or English programme audio", outcome)
 	}
 	if !subject.Anime && !remux && facts.OriginalLanguagesKnown &&
-		programmeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.OriginalLanguages, "English") && !facts.HasOriginalAudio() {
+		programmeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.OriginalLanguages, "English") && !facts.HasUnresolvedProgrammeAudioOrigin() && !facts.HasOriginalAudio() {
 		add("original_pack", "a foreign non-anime release lacking original audio can be replaced by an original-audio pack", trackers.LanguageTrumpable)
 	}
 	return append(failures, sourceLanguageFailures(subject)...)

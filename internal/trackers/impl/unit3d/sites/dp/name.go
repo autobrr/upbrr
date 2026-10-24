@@ -16,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v9", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v10", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -202,7 +202,9 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 		return "Dubbed", true, nil
 	}
 	nordic := []string{"Danish", "Finnish", "Icelandic", "Norwegian", "Swedish"}
-	if len(languages) == 1 && !original && !english && !slices.Contains(facts.OriginalLanguages, "English") &&
+	if len(languages) == 1 && !original && !english && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+		return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed && slices.Contains(track.Languages, languages[0])
+	}) && !slices.Contains(facts.OriginalLanguages, "English") &&
 		!slices.ContainsFunc(
 			facts.OriginalLanguages,
 			func(language string) bool { return slices.Contains(nordic, language) },

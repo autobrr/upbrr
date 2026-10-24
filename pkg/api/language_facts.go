@@ -22,6 +22,16 @@ const (
 	AudioRoleVoiceOver     AudioTrackRole = "voice_over"
 )
 
+// TrackAudioOrigin distinguishes original programme content from a confirmed dub.
+// Empty means no explicit source-level classification has been established.
+type TrackAudioOrigin string
+
+const (
+	TrackAudioOriginal   TrackAudioOrigin = "original"
+	TrackAudioDubbed     TrackAudioOrigin = "dubbed"
+	TrackAudioUnresolved TrackAudioOrigin = "unresolved"
+)
+
 // LanguageFacts retains finalized language and inspected-track evidence from one
 // prepared generation. Presentation overrides cannot alter these facts.
 type LanguageFacts struct {
@@ -53,23 +63,60 @@ func (f LanguageFacts) Clone() LanguageFacts {
 	return f
 }
 
-// HasEnglishDub and HasOriginalAudio describe programme audio, never names or
-// commentary. Unresolved original-language evidence cannot establish a dub.
-func (f LanguageFacts) HasEnglishDub() bool {
-	return f.OriginalLanguagesKnown && len(f.OriginalLanguages) > 0 && !slices.Contains(f.OriginalLanguages, "English") &&
-		!slices.Contains(f.OriginalLanguages, "ZXX") &&
-		!slices.Contains(f.OriginalLanguages, "Multiple Languages") &&
-		slices.Contains(f.ProgrammeLanguages, "English")
+// ProgrammeAudioOrigin preserves explicit source evidence. Ordinary matching-language
+// tracks remain original without a special flag; a mismatch alone never proves dubbing.
+func (f LanguageFacts) ProgrammeAudioOrigin(track MediaTrackFacts) TrackAudioOrigin {
+	if track.Kind != MediaTrackAudio || (track.Role != AudioRoleProgramme && track.Role != AudioRoleAlternateMix) {
+		return ""
+	}
+	if track.AudioOrigin != "" {
+		if track.AudioOrigin != TrackAudioOriginal && track.AudioOrigin != TrackAudioDubbed {
+			return ""
+		}
+		return track.AudioOrigin
+	}
+	if f.OriginalLanguagesKnown && len(track.Languages) > 0 && !slices.ContainsFunc(track.Languages, func(language string) bool {
+		return !slices.Contains(f.OriginalLanguages, language)
+	}) {
+		return TrackAudioOriginal
+	}
+	return ""
 }
 
-func (f LanguageFacts) HasOriginalAudio() bool {
-	if !f.OriginalLanguagesKnown {
-		return false
-	}
-	for _, language := range f.OriginalLanguages {
-		if slices.Contains(f.ProgrammeLanguages, language) {
+// HasUnresolvedProgrammeAudioOrigin distinguishes missing soundtrack evidence from
+// a proven absence of original audio. Commentary and other non-programme roles do not count.
+func (f LanguageFacts) HasUnresolvedProgrammeAudioOrigin() bool {
+	found := false
+	for _, track := range f.Tracks {
+		if track.Kind != MediaTrackAudio || (track.Role != AudioRoleProgramme && track.Role != AudioRoleAlternateMix) {
+			continue
+		}
+		found = true
+		if f.ProgrammeAudioOrigin(track) == "" {
 			return true
 		}
 	}
-	return false
+	return !found && len(f.ProgrammeLanguages) > 0
+}
+
+// HasEnglishDub requires a classified English programme dub, not English dialogue
+// within an original multilingual stream or an aggregate language correction.
+func (f LanguageFacts) HasEnglishDub() bool {
+	if !f.OriginalLanguagesKnown || len(f.OriginalLanguages) == 0 || !slices.Contains(f.ProgrammeLanguages, "English") ||
+		slices.Contains(f.OriginalLanguages, "English") || slices.Contains(f.OriginalLanguages, "ZXX") ||
+		f.ProgrammeStatus == MetadataEvidenceStatusContradictory {
+		return false
+	}
+	return slices.ContainsFunc(f.Tracks, func(track MediaTrackFacts) bool {
+		return f.ProgrammeAudioOrigin(track) == TrackAudioDubbed && slices.Contains(track.Languages, "English")
+	})
+}
+
+// HasOriginalAudio accepts original programme tracks, including verified multilingual
+// content whose main-language tag differs from the title's recorded original language.
+func (f LanguageFacts) HasOriginalAudio() bool {
+	return f.OriginalLanguagesKnown && len(f.ProgrammeLanguages) > 0 && f.ProgrammeStatus != MetadataEvidenceStatusContradictory &&
+		slices.ContainsFunc(f.Tracks, func(track MediaTrackFacts) bool {
+			return f.ProgrammeAudioOrigin(track) == TrackAudioOriginal
+		})
 }

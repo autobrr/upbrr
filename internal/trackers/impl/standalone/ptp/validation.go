@@ -15,7 +15,8 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "standalone-ptp-constructibility-v5",
+		ID:                 "standalone-ptp-constructibility-v6",
+		LanguageAssessment: languageFailures,
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)

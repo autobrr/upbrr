@@ -182,18 +182,22 @@ func TestBTNCountryAutofillPreservesLegacyScopeCompatibility(t *testing.T) {
 
 func TestBTNCountryAutofillRespectsCorrectedOriginalLanguage(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		original   string
-		provenance api.FactProvenance
-		country    string
-		staffDub   bool
+		name         string
+		original     string
+		provenance   api.FactProvenance
+		country      string
+		origin       api.TrackAudioOrigin
+		staffDub     bool
+		originReview bool
 	}{
-		{"original primary", "Japanese", api.FactProvenanceManual, "17", false},
-		{"corrected to English original", "English", api.FactProvenanceManual, "", true},
-		{"original language cleared", "", api.FactProvenanceManualEmpty, "", false},
+		{"original primary", "Japanese", api.FactProvenanceManual, "17", "", false, false},
+		{"corrected to English original", "English", api.FactProvenanceManual, "", "", false, true},
+		{"confirmed Japanese dub of English original", "English", api.FactProvenanceManual, "", api.TrackAudioDubbed, true, false},
+		{"original language cleared", "", api.FactProvenanceManualEmpty, "", "", false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			meta := btnCountryAutofillSubject()
+			meta.LanguageFacts.Tracks[0].AudioOrigin = test.origin
 			meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
 				OriginalLanguage:           test.original,
 				OriginalLanguageProvenance: test.provenance,
@@ -206,7 +210,12 @@ func TestBTNCountryAutofillRespectsCorrectedOriginalLanguage(t *testing.T) {
 			if staffDub := slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 				return f.Rule == "language_staff_dub" && f.Disposition == api.RuleDispositionStrict
 			}); staffDub != test.staffDub {
-				t.Fatalf("corrected original language did not control the dub boundary: %#v", failures)
+				t.Fatalf("source origin did not control the dub boundary: %#v", failures)
+			}
+			if originReview := slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+				return f.Rule == "language_origin" && f.Disposition == api.RuleDispositionStrict && f.EvidenceStatus == api.MetadataEvidenceStatusPartial
+			}); originReview != test.originReview {
+				t.Fatalf("title language correction established soundtrack origin: %#v", failures)
 			}
 		})
 	}

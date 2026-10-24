@@ -165,9 +165,10 @@ func TestDPOriginalAudioUsesCorrectedFactsOverRawMetadata(t *testing.T) {
 		OriginalLanguage:      "Japanese",
 		TrackCoverageComplete: true,
 		Tracks: []api.MediaTrackFacts{{
-			Kind:      api.MediaTrackAudio,
-			Role:      api.AudioRoleProgramme,
-			Languages: []string{"Japanese", "Danish", "Swedish"},
+			Kind:        api.MediaTrackAudio,
+			Role:        api.AudioRoleProgramme,
+			Languages:   []string{"Japanese", "Danish", "Swedish"},
+			AudioOrigin: api.TrackAudioOriginal,
 		}},
 	})
 	if failures := dpValidationFailures(t, meta); len(failures) != 0 {
@@ -175,6 +176,7 @@ func TestDPOriginalAudioUsesCorrectedFactsOverRawMetadata(t *testing.T) {
 	}
 	meta = dpEligibilitySubject("Danish", "Swedish", "English")
 	meta.LanguageFacts.OriginalLanguages = []string{"Danish"}
+	meta.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioOriginal
 	if failures := dpValidationFailures(t, meta); len(failures) != 0 {
 		t.Fatalf("corrected original language did not clear prohibition: %+v", failures)
 	}
@@ -196,7 +198,7 @@ func TestDPOriginalAudioDiscBoundary(t *testing.T) {
 func TestDPOriginalAudioPreservesConstructibility(t *testing.T) {
 	t.Parallel()
 	definition := unit3d.NewWithProfile(Profile())
-	if got := definition.ValidationPolicy().ID; got != "unit3d-dp-constructibility-v1+unit3d-dp-policy-v3" {
+	if got := definition.ValidationPolicy().ID; got != "unit3d-dp-constructibility-v1+unit3d-dp-policy-v4" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 	meta := dpEligibilitySubject("Danish", "Swedish", "English")
@@ -307,6 +309,13 @@ func dpEligibilitySubject(languages ...string) api.UploadSubject {
 			DefaultKnown: true,
 		})
 	}
+	// These fixtures represent reviewed alternate-language programme dubs.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if len(track.Languages) == 1 && track.Languages[0] != "Japanese" && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
+	}
 	return api.UploadSubject{
 		Identity:  api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 1234567},
 		Type:      "WEBDL",
@@ -350,4 +359,24 @@ func requireDPLanguageFailure(t *testing.T, failures []api.RuleFailure, rule str
 func chooseDPMarker(meta *api.UploadSubject, marker string) {
 	key := trackers.LanguageQuestionKey(api.NewTrackerValidationSubject(*meta, "DP"), manualLanguageMarkerKey)
 	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"DP": {key: marker}}
+}
+
+func TestDPOriginalWitnessDoesNotRequireSecondaryOriginReview(t *testing.T) {
+	for _, original := range []bool{true, false} {
+		meta := dpEligibilitySubject("Japanese", "English", "German")
+		for index := range meta.LanguageFacts.Tracks {
+			meta.LanguageFacts.Tracks[index].AudioOrigin = ""
+		}
+		if !original {
+			meta.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioUnresolved
+		}
+		failures := dpValidationFailures(t, meta)
+		if original {
+			if len(failures) != 0 {
+				t.Fatalf("established original/MULTi row requested irrelevant origin evidence: %+v", failures)
+			}
+		} else {
+			requireDPLanguageFailure(t, failures, "language_origin", trackers.LanguageUnresolved)
+		}
+	}
 }

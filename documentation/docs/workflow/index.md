@@ -72,10 +72,26 @@ commentary languages are not treated as the same missing fact. Language answers
 cannot establish an unknown track role or complete missing inspection evidence.
 
 The interactive CLI and `--unattended_confirm` (`--uac`) collect all required
-track languages in one source review before repreparing. `--unattended` never
+track languages and required soundtrack origins in one source review before repreparing. `--unattended` never
 prompts: it reports the affected track and `--track-languages` correction option,
 without authorizing a blocked upload. Enter verified language names or codes,
 separated by commas; do not infer English or the title's original language.
+Soundtrack origin is independent of language identification. In **Inspected tracks**,
+choose **Original soundtrack**, **Dubbed soundtrack**, or **Unresolved** only from
+verified source knowledge. **Auto** removes that origin correction without changing
+the track's language correction. A `mul` tag does not identify the languages, and a
+known language differing from the title's recorded original language does not prove
+a dub. Ordinary matching-language original tracks need no special title or flag.
+Commentary is not programme audio.
+
+For a previously inspected source, the CLI accepts
+`--track-audio-origin 'TRACK_ID=original'` (or `dubbed` or `unresolved`). It binds the
+answer to that track's current manifest; changed sources require review again.
+`--reset-input 'metadata.track_audio_origins:TRACK_ID'` restores Auto independently
+of `--track-languages`. Unresolved answers do not waive tracker restrictions, and
+unattended runs still never prompt. English dialogue within one multilingual
+original soundtrack does not by itself establish an English dub or Dual-Audio.
+
 Generated descriptions retain the corrected audio/subtitle notes without
 duplicating them on repeated preparation. Custom and final descriptions remain
 under their existing override rules.

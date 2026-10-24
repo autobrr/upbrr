@@ -97,6 +97,9 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Review only the selected English programme stream, not uninspected pack files.
+			derived.MediaTracks[0].AudioOrigin = api.TrackAudioDubbed
+			derived.MediaTracks[0].AudioOriginProvenance = api.FactProvenanceManual
 			facts := mediafacts.ResolveLanguages(api.MediaFacts{
 				OriginalLanguage:      "Japanese",
 				AudioLanguages:        derived.AudioLanguages,

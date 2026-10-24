@@ -137,6 +137,13 @@ func TestProgrammeDubRemediationPreservesDecisions(t *testing.T) {
 				outcome = trackers.LanguageProhibited
 			}
 			failures := trackers.EvaluateLanguagePolicy(subject, trackers.LanguagePolicy{ExtraDubs: outcome})
+			if subject.LanguageFacts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory {
+				if len(failures) != 1 || failures[0].Rule != "language_evidence" || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial ||
+					!reflect.DeepEqual(before, subject.LanguageFacts) {
+					t.Fatalf("contradictory evidence claimed a proven dub or changed prepared facts: %+v", failures)
+				}
+				return
+			}
 			found := false
 			for _, failure := range failures {
 				if failure.Rule != "language_extra_dub" {

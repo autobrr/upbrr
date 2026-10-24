@@ -5,11 +5,12 @@ package ulcx
 
 import (
 	"context"
-	"github.com/autobrr/upbrr/internal/mediafacts"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"math"
 	"strconv"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/trackers"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -66,7 +67,7 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v12/languages-v1" {
+	if policy.ID != "unit3d-ulcx-policy-v12/languages-v2" {
 		t.Fatalf("validation policy = %q", policy.ID)
 	}
 	tests := []struct {
@@ -525,6 +526,14 @@ func ulcxTestLanguageFacts(original string, programme, subtitles []string) api.L
 			Default:      index == 0 && original != "English" && original != "ZXX",
 			DefaultKnown: true,
 		})
+	}
+	// These existing policy fixtures describe reviewed alternate-language dubs.
+	// Unreviewed tag-only evidence is exercised separately by origin regressions.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if track.Kind == api.MediaTrackAudio && len(track.Languages) == 1 && track.Languages[0] != original && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" && track.Languages[0] != "Multiple Languages" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
 	}
 	return mediafacts.ResolveLanguages(media)
 }

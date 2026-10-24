@@ -81,6 +81,11 @@ func TestProgrammeLanguageStatusSelectedResourceBoundaries(t *testing.T) {
 func TestProgrammeLanguageStatusCommentaryDoesNotSupplyOriginal(t *testing.T) {
 	subject := packProgrammeSubject(t)
 	subject.LanguageFacts.OriginalLanguages = []string{"French"}
+	for index := range subject.LanguageFacts.Tracks {
+		if subject.LanguageFacts.Tracks[index].Role == api.AudioRoleProgramme {
+			subject.LanguageFacts.Tracks[index].AudioOrigin = api.TrackAudioDubbed
+		}
+	}
 	before := subject.LanguageFacts.Clone()
 	if status := trackers.ProgrammeLanguageStatus(subject); status != api.MetadataEvidenceStatusComplete {
 		t.Fatalf("known programme evidence needs review: %s", status)

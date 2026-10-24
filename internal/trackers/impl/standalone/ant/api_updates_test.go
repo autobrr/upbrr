@@ -275,7 +275,23 @@ func TestANTEnglishDubUsesProgrammeLanguagesAndExcludesDiscs(t *testing.T) {
 		OriginalLanguagesKnown: true,
 		OriginalLanguages:      []string{"Japanese"},
 		ProgrammeLanguages:     []string{"Japanese", "English"},
+		Tracks: []api.MediaTrackFacts{
+			{
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"Japanese"},
+			},
+			{
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"English"},
+			},
+		},
 	}}
+	if slices.Contains(resolveFlags(meta), "EnglishDub") {
+		t.Fatal("unclassified English audio tagged EnglishDub")
+	}
+	meta.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioDubbed
 	if !slices.Contains(resolveFlags(meta), "EnglishDub") {
 		t.Fatal("missing EnglishDub flag")
 	}
@@ -290,6 +306,7 @@ func TestANTEnglishDubUsesProgrammeLanguagesAndExcludesDiscs(t *testing.T) {
 	}
 	meta.LanguageFacts.OriginalLanguages = []string{"Japanese"}
 	meta.LanguageFacts.ProgrammeLanguages = []string{"English"}
+	meta.LanguageFacts.Tracks = meta.LanguageFacts.Tracks[1:]
 	if slices.Contains(resolveFlags(meta), "EnglishDub") {
 		t.Fatal("dub without original audio tagged EnglishDub")
 	}

@@ -93,7 +93,7 @@ func TestNBLDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
 func TestNBLValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v5/languages-v1" {
+	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v5/languages-v2" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -238,17 +238,17 @@ func TestNBLContradictoryEnglishCorrectionDoesNotEstablishAccessibility(t *testi
 		TrackCoverageComplete:    true,
 		Tracks: []api.MediaTrackFacts{
 			{
-ID: "programme",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
- Languages: []string{"Japanese"},
-},
+				ID:        "programme",
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"Japanese"},
+			},
 			{
-ID: "commentary",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleCommentary,
- Languages: []string{"English"},
-},
+				ID:        "commentary",
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleCommentary,
+				Languages: []string{"English"},
+			},
 		},
 	}
 	subject := nblPassingSubject()

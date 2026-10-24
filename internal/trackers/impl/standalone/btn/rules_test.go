@@ -15,28 +15,36 @@ import (
 
 func btnLanguageFacts(original string, audio ...string) api.LanguageFacts {
 	media := api.MediaFacts{
-OriginalLanguage: original,
- TrackCoverageComplete: true,
- PrimaryAudioTrackID: "audio-0",
-}
+		OriginalLanguage:      original,
+		TrackCoverageComplete: true,
+		PrimaryAudioTrackID:   "audio-0",
+	}
 	for i, language := range audio {
 		media.Tracks = append(media.Tracks, api.MediaTrackFacts{
-			ID: "audio-" + strconv.Itoa(i),
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
+			ID:        "audio-" + strconv.Itoa(i),
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
 			Languages: []string{language},
- Default: i == 0,
+			Default:   i == 0,
 		})
+	}
+	// These existing policy fixtures describe reviewed alternate-language dubs.
+	// Unreviewed tag-only evidence is exercised separately by origin regressions.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if track.Kind == api.MediaTrackAudio && len(track.Languages) == 1 && track.Languages[0] != original && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" && track.Languages[0] != "Multiple Languages" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
 	}
 	return mediafacts.ResolveLanguages(media)
 }
 
 func TestBTNPrimaryLanguagePayloadAndCountryEvidence(t *testing.T) {
 	meta := api.UploadSubject{
-		Type: "WEBDL",
- Source: "WEB-DL",
- Container: "MKV",
- VideoEncode: "x265",
+		Type:             "WEBDL",
+		Source:           "WEB-DL",
+		Container:        "MKV",
+		VideoEncode:      "x265",
 		Release:          api.ReleaseInfo{Resolution: "1080p"},
 		Identity:         api.ExternalIdentity{SourcePath: "btn-language", Generation: 1},
 		LanguageFacts:    btnLanguageFacts("Japanese", "Japanese", "English"),
@@ -49,15 +57,15 @@ func TestBTNPrimaryLanguagePayloadAndCountryEvidence(t *testing.T) {
 	key := question.Fields[0].Key
 	meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"BTN": {key: "Japan"}}
 	input := trackers.PreparationInput{
-Tracker: "BTN",
- Meta: meta,
- Projection: &api.TrackerReleaseProjection{
-		TrackerID: "BTN",
- UploadReleaseName: "Example.Show.S01E01.1080p.WEB-DL.H.265-GRP",
- UploadReady: true,
- Readiness: api.ReadinessStatusReady,
-	},
-}
+		Tracker: "BTN",
+		Meta:    meta,
+		Projection: &api.TrackerReleaseProjection{
+			TrackerID:         "BTN",
+			UploadReleaseName: "Example.Show.S01E01.1080p.WEB-DL.H.265-GRP",
+			UploadReady:       true,
+			Readiness:         api.ReadinessStatusReady,
+		},
+	}
 	payload, err := buildBTNUploadPayload(input, nil)
 	if err != nil || payload["foreign"] != "on" || payload["country"] != "17" {
 		t.Fatalf("primary Japanese payload = %#v, %v", payload, err)
@@ -113,10 +121,10 @@ func TestBTNCountryAnswerCannotWaiveStaffOrUnknownPrimary(t *testing.T) {
 func TestBTNUnresolvedProgrammeAndClearsStayBlocking(t *testing.T) {
 	for _, status := range []api.MetadataEvidenceStatus{api.MetadataEvidenceStatusPartial, api.MetadataEvidenceStatusContradictory} {
 		subject := api.TrackerValidationSubject{
-Tracker: "BTN",
- Type: "WEBDL",
- LanguageFacts: btnLanguageFacts("English", "English"),
-}
+			Tracker:       "BTN",
+			Type:          "WEBDL",
+			LanguageFacts: btnLanguageFacts("English", "English"),
+		}
 		subject.LanguageFacts.ProgrammeStatus = status
 		subject.LanguageFacts.ProgrammeLanguages = nil
 		if failures := languageAssessment(subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
@@ -126,20 +134,20 @@ Tracker: "BTN",
 		}
 	}
 	media := api.MediaFacts{
-		OriginalLanguage: "English",
- TrackCoverageComplete: true,
- AudioLanguagesProvenance: api.FactProvenanceManualEmpty,
+		OriginalLanguage:         "English",
+		TrackCoverageComplete:    true,
+		AudioLanguagesProvenance: api.FactProvenanceManualEmpty,
 		Tracks: []api.MediaTrackFacts{{
-Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
- Languages: []string{"English"},
-}},
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleProgramme,
+			Languages: []string{"English"},
+		}},
 	}
 	subject := api.TrackerValidationSubject{
-Tracker: "BTN",
- Type: "WEBDL",
- LanguageFacts: mediafacts.ResolveLanguages(media),
-}
+		Tracker:       "BTN",
+		Type:          "WEBDL",
+		LanguageFacts: mediafacts.ResolveLanguages(media),
+	}
 	if failures := languageAssessment(subject); len(failures) == 0 {
 		t.Fatal("manual audio clear silently accepted")
 	}

@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "Advances AZ/CZ policy versions for compatibility assessment over finalized LanguageFacts. Existing TMDB country routing, PreferredYear manual/explicit-clear precedence, and constructibility callbacks are unchanged; no provider fallback is added.",
-    "sha256": "0c5b2bda19c197925bec51d9a79df8156c812a072dd8b67cd8d4c80dc1c043d9"
+    "reason": "Adds the pure existing language assessment to input readiness and advances AZ/CZ validation versions. Per-track source review distinguishes original soundtracks from confirmed dubs while preserving the established dialect exception, exact-source evidence, manual metadata precedence and independent eligibility checks.",
+    "sha256": "9b706cdf581e6ba7913e27d04d570896fb5a6bca796ab35111e9d3322847fc8e"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
@@ -384,8 +384,8 @@
     "sha256": "fd11af9de2fb77db136a7fcaff830b30d5bff684b96b612cea0c1ee12926db79"
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "reason": "Binds centrally validated current matching IMDb primary titles and movie years. Manual component/name authority, independent TVDB year qualifiers and both required IMDb/TMDB identities remain intact; v8 invalidates old reviewed projections.",
-    "sha256": "379328612fbf3820991d43805f2ccf1e773b502795ff58f4dbf542f1094e9235"
+    "reason": "Advances the naming policy for source-reviewed original-versus-dubbed programme audio. Existing provider selection, manual title/year precedence, full-disc behavior and independent validation remain unchanged; factual audio tags remain independent of presentation overrides.",
+    "sha256": "decefcf3d0673414a20c705ed0ee021269a9234f6c30b818d3f33477abcd7c32"
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
     "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections.",
@@ -700,8 +700,8 @@
     "sha256": "4f28f2bb7db460b918bdc55682b0a9d289800e06d51d3d811459844220a708e8"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Questionnaire gating review: only the primary-country answer requirement is marked actionable. Explicit-answer precedence and source/identity-bound provider evidence remain unchanged; unresolved programme evidence and other language eligibility rules stay independent.",
-    "sha256": "280bb71eb83422f5fc0cc83b203bb503ee2c7a1bd1fe8b03e472f579ae003243"
+    "reason": "Programme dub and missing-original conclusions now require per-track source evidence rather than language-tag mismatch. Original-language provider evidence remains scoped and manual-aware; staff approval, anime, primary-country and source-retention boundaries remain unchanged.",
+    "sha256": "e45da3410bccc10f3bfa2f5cb7dc68f85f5eb62a148cdaabde68370396aacdc6"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -912,8 +912,8 @@
     "sha256": "f12e2fe2d186d5e8c57909b25204131b0da1291ba1460ced2db4eec3e2c32566"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
-    "sha256": "fff8af5b1063bd43108625944172a4a021b6b1e4a661cbf365c1d5451866a18a"
+    "reason": "Soundtrack-origin review: potential English dubs require source-bound origin evidence only when the finalized Anime/Genres do not establish the animation exception. Confirmed dub restrictions and explicit manual genre clears remain authoritative; no raw provider fallback was added.",
+    "sha256": "64de8b1389fc395095cbbe073a14adb166318c4aea66ddd8c2a08a91a3f60c26"
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1140,8 +1140,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Conflicting or invalid saved subtitle answers remain strict corrective questionnaire prerequisites. Independent category, taxonomy, container, and language gates retain their finalized facts and provider precedence.",
-    "sha256": "92093ca2ef3236282379ba8e758bfaea5b6bd044a00405202268b39e58866542"
+    "reason": "Exposes the same pure language assessment to source input readiness and advances validation compatibility. Unknown soundtrack origin remains unresolved rather than a proven dub; existing canonical category, manual-aware taxonomy, subtitle-manager and upload constructibility checks remain unchanged.",
+    "sha256": "c559cd902f476d004ce4a7fbccd79c7b29461d1af907441ae7f109a1c58dd842"
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1464,8 +1464,8 @@
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
-    "reason": "An explicit requested upload name is returned unchanged before automatic formatting. Without that override, buildName preserves manual title/year provenance and finalized edition/presentation omissions. Shared projection keeps automatic duplicate names separate; language eligibility remains independently validated.",
-    "sha256": "c3356c2ecf5b4d433f5f9b4c4c5f9e1706ed0aeaa9f14c0f3ad564ec5f6dc323"
+    "reason": "Advances the automatic naming policy after original-versus-dubbed programme classification changed. Explicit upload names, independent automatic search names, finalized manual title/year/edition precedence and current provider evidence guards remain unchanged.",
+    "sha256": "501cf5247fe39a7f26a51e8c17d34aad3ddb8bcecb1c6fd4ad2b3ebe502076c5"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
     "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",

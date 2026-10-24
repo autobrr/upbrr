@@ -19,16 +19,22 @@ type audioDefect struct{ key, reason string }
 func audioDefects(subject api.TrackerValidationSubject) []audioDefect {
 	facts := subject.LanguageFacts
 	var defects []audioDefect
-	if facts.OriginalLanguagesKnown {
-		for _, language := range facts.ProgrammeLanguages {
-			if language == "English" || slices.Contains(facts.OriginalLanguages, language) {
+	if facts.OriginalLanguagesKnown && facts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
+		for _, track := range facts.Tracks {
+			if facts.ProgrammeAudioOrigin(track) != api.TrackAudioDubbed {
 				continue
 			}
-			key, label := "extra_dub", "Redundant Audio Tracks — extra programme dub: "
-			if !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
-				key, label = "non_original_non_english_dub", "Non-Original Non-English Dub — programme audio contains only non-original, non-English dubs: "
+			for _, language := range track.Languages {
+				code := languageutil.NormalizeLanguageCode(language)
+				if code == "" || code == "und" || code == "mul" || language == "English" || slices.Contains(facts.OriginalLanguages, language) {
+					continue
+				}
+				key, label := "extra_dub", "Redundant Audio Tracks — extra programme dub: "
+				if !facts.HasUnresolvedProgrammeAudioOrigin() && !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
+					key, label = "non_original_non_english_dub", "Non-Original Non-English Dub — programme audio contains only non-original, non-English dubs: "
+				}
+				defects = append(defects, audioDefect{key: key, reason: label + language})
 			}
-			defects = append(defects, audioDefect{key: key, reason: label + language})
 		}
 	}
 	counts := map[string]map[string]int{}

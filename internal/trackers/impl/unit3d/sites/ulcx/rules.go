@@ -32,7 +32,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	if !subject.PersonalRelease && subject.LanguageFacts.OriginalLanguagesKnown &&
 		subject.LanguageFacts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
-		subject.LanguageFacts.HasEnglishDub() && !subject.LanguageFacts.HasOriginalAudio() {
+		subject.LanguageFacts.HasEnglishDub() && !subject.LanguageFacts.HasUnresolvedProgrammeAudioOrigin() && !subject.LanguageFacts.HasOriginalAudio() {
 		failures = append(failures, trackers.LanguageRuleFailure(subject, "original_recommendation",
 			"original audio should accompany the English dub", trackers.LanguageAdvisory))
 	}

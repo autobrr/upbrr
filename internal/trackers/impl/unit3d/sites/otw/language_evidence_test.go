@@ -293,6 +293,13 @@ func otwLanguageMedia(original string, languages ...string) api.MediaFacts {
 			Languages: []string{language},
 		})
 	}
+	// Existing naming rows describe reviewed programme dubs, not tag-only guesses.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if len(track.Languages) == 1 && track.Languages[0] != original && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
+	}
 	return media
 }
 

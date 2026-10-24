@@ -1298,6 +1298,8 @@ export type MediaPlanSavedImage = Readonly<{
 
 export type MediaTrackFacts = Readonly<{
   AudioLabel: string;
+  AudioOrigin?: TrackAudioOrigin;
+  AudioOriginProvenance?: FactProvenance;
   BitDepth?: number;
   BitrateBitsPerSecond: number;
   ChannelLayout: string;
@@ -1347,6 +1349,7 @@ export type MetadataOverrides = Readonly<{
   StreamOptimized?: boolean | null;
   SubtitleLanguages?: readonly string[] | null;
   Title?: string | null;
+  TrackAudioOrigins?: readonly TrackAudioOriginCorrection[];
   TrackLanguages?: readonly TrackLanguageCorrection[];
   WebDV?: boolean | null;
 }>;
@@ -2547,6 +2550,14 @@ export type TorrentOverrides = Readonly<{
   MaxPieceSizeMiB?: number | null;
   NoHash?: boolean | null;
   Rehash?: boolean | null;
+}>;
+
+export type TrackAudioOrigin = string;
+
+export type TrackAudioOriginCorrection = Readonly<{
+  manifestFingerprint: string;
+  origin: TrackAudioOrigin;
+  trackId: string;
 }>;
 
 export type TrackLanguageCorrection = Readonly<{

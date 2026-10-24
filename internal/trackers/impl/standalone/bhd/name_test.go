@@ -167,7 +167,7 @@ func TestBHDStructuredNamePolicyKeepsTVYearWithoutDisambiguationEvidence(t *test
 func TestBHDNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
 	policy := New().ReleaseNamePolicy()
-	if policy.ID != "standalone/bhd/v8" || policy.TitleProvider != api.IdentityProviderIMDB || policy.MovieYearProvider != api.IdentityProviderIMDB {
+	if policy.ID != "standalone/bhd/v9" || policy.TitleProvider != api.IdentityProviderIMDB || policy.MovieYearProvider != api.IdentityProviderIMDB {
 		t.Fatalf("BHD naming policy = %+v", policy)
 	}
 }

@@ -13,7 +13,11 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-dp-policy-v3", Check: checkLanguageRequirements}
+	return trackers.ValidationPolicyBinding{
+		ID:                 "unit3d-dp-policy-v4",
+		Check:              checkLanguageRequirements,
+		LanguageAssessment: languageAssessment,
+	}
 }
 
 // checkLanguageRequirements preserves audio eligibility independently of naming.
@@ -23,23 +27,31 @@ func checkLanguageRequirements(ctx context.Context, subject api.TrackerValidatio
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
+	return languageAssessment(subject), nil
+}
+
+func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
-		return nil, nil
+		return nil
 	}
 	facts := subject.LanguageFacts
 	count := trackers.KnownProgrammeLanguageCount(facts)
 	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || count != len(facts.ProgrammeLanguages) || count == 0 && !facts.AudioAbsent {
-		return []api.RuleFailure{trackers.LanguageRuleFailure(
-			subject, "multilingual_evidence", "complete programme-language evidence is required", trackers.LanguageUnresolved,
-		)}, nil
+		failure := trackers.LanguageRuleFailure(subject, "evidence", "complete programme-language evidence is required", trackers.LanguageUnresolved)
+		failure.Rule = "language_multilingual_evidence"
+		return []api.RuleFailure{failure}
 	}
 	if count == 0 && facts.AudioAbsent {
-		return nil, nil
+		return nil
 	}
 	if !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) == 0 {
 		return []api.RuleFailure{trackers.LanguageRuleFailure(
 			subject, "multilingual_evidence", "original-language evidence is required for DP language naming", trackers.LanguageUnresolved,
-		)}, nil
+		)}
+	}
+	_, manualMarker := manualAudioLabel(subject)
+	if facts.HasUnresolvedProgrammeAudioOrigin() && (count >= 3 && !facts.HasOriginalAudio() || count < 3 && !manualMarker) {
+		return trackers.ProgrammeAudioOriginFailures(subject)
 	}
 	var failures []api.RuleFailure
 	if count >= 3 && !facts.HasOriginalAudio() {
@@ -68,5 +80,5 @@ func checkLanguageRequirements(ctx context.Context, subject api.TrackerValidatio
 			failures = append(failures, failure)
 		}
 	}
-	return failures, nil
+	return failures
 }

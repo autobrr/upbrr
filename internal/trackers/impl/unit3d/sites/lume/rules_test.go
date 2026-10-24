@@ -323,6 +323,7 @@ func TestLumeSilentDiscAndMandatoryBoundaries(t *testing.T) {
 	})
 	requireLUMEValidationFailure(t, languageAssessment(subject), "language_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	subject = lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("English", api.AudioRoleProgramme)})
+	subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioDubbed
 	subject.PersonalRelease = true
 	setLumeAnswer(&subject, "language_personal_exemption", "previously_uploaded")
 	requireLUMEValidationFailure(t, languageAssessment(subject), "language_original", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
@@ -449,6 +450,7 @@ func TestLumePersonalExemptionsPreserveMandatoryLanguages(t *testing.T) {
 	for _, exemption := range []string{"trash_tier", "previously_uploaded", "anime_tier"} {
 		t.Run(exemption, func(t *testing.T) {
 			subject := lumeLanguageSubject([]api.MediaTrackFacts{lumeAudio("English", api.AudioRoleProgramme)})
+			subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioDubbed
 			subject.PersonalRelease = true
 			subject.Anime = exemption == "anime_tier"
 			subject.LanguageFacts.SubtitleLanguages = nil

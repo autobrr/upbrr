@@ -162,11 +162,18 @@ func TestULCXCompatibilityAnswersCannotWaiveOtherRules(t *testing.T) {
 	subject.PersonalRelease = true
 	subject.LanguageFacts.OriginalLanguages = []string{"Japanese"}
 	subject.LanguageFacts.ProgrammeLanguages = []string{"English", "German"}
+	subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioDubbed
+	subject.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioDubbed
+	subject.LanguageFacts.Tracks[1].Languages = []string{"German"}
+	subject.LanguageFacts.Tracks[3].Languages = []string{"German"}
 	ulcxCompatibilityAnswer(&subject, "compatibility_mix_compat-0", "audio-0")
 	ulcxCompatibilityAnswer(&subject, "compatibility_mix_compat-1", "audio-1")
 	failures := languageAssessment(subject)
 	requireULCXSourceFailure(t, failures, "language_original", api.RuleDispositionStrict)
 	requireULCXSourceFailure(t, failures, "language_extra_dub", api.RuleDispositionStrict)
+	if failures := compatibilityFailures(subject); len(failures) != 0 {
+		t.Fatalf("fixture lost confirmed TrueHD compatibility pairs: %+v", failures)
+	}
 }
 
 func ulcxCompatibilitySubject() api.TrackerValidationSubject {

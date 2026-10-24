@@ -81,6 +81,9 @@ func TestInspectedAudioLanguagesDriveTrackerEligibility(t *testing.T) {
 			if tracks[1].Role != test.wantRole || tracks[2].Role != api.AudioRoleCommentary || primary != tracks[0].ID {
 				t.Fatalf("roles or primary changed: second=%q third=%q primary=%q", tracks[1].Role, tracks[2].Role, primary)
 			}
+			// This fixture tests original-track recognition with a separately reviewed English dub.
+			tracks[0].AudioOrigin = api.TrackAudioDubbed
+			tracks[0].AudioOriginProvenance = api.FactProvenanceManual
 			facts := mediafacts.ResolveLanguages(api.MediaFacts{
 				OriginalLanguage:      "Japanese",
 				TrackCoverageComplete: true,
@@ -104,7 +107,9 @@ func TestInspectedAudioLanguagesDriveTrackerEligibility(t *testing.T) {
 					t.Fatalf("%s evidence gate=%v, status=%s", tracker, got, facts.ProgrammeStatus)
 				}
 				if tracker != "LST" && test.wantStatus == api.MetadataEvidenceStatusComplete && !test.wantOriginal &&
-					!slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_original" }) {
+					!slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+						return (f.Rule == "language_original" || f.Rule == "language_origin") && trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, false)
+					}) {
 					t.Fatalf("%s accepted secondary or mismatched language as original", tracker)
 				}
 				if test.wantOriginal {

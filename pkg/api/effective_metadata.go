@@ -128,17 +128,20 @@ type MediaTrackFacts struct {
 	Ordinal             int
 	// StreamOrder is the measured container order, not the per-kind Ordinal or NativeID.
 	// StreamOrderKnown is false when MediaInfo has no unambiguous nonnegative order.
-	StreamOrder           int
-	StreamOrderKnown      bool
-	Title                 string
-	Codec                 string
-	AudioLabel            string
-	ChannelLayout         string
-	Channels              int
-	SampleRate            int
-	DetectedLanguages     []string
-	Languages             []string
-	LanguageProvenance    FactProvenance
+	StreamOrder        int
+	StreamOrderKnown   bool
+	Title              string
+	Codec              string
+	AudioLabel         string
+	ChannelLayout      string
+	Channels           int
+	SampleRate         int
+	DetectedLanguages  []string
+	Languages          []string
+	LanguageProvenance FactProvenance
+	// AudioOrigin is independent of language identification and describes the soundtrack.
+	AudioOrigin           TrackAudioOrigin `json:",omitempty"`
+	AudioOriginProvenance FactProvenance   `json:",omitempty"`
 	Default               bool
 	DefaultKnown          bool // True only for an explicit inspected MediaInfo Yes/No value.
 	Forced                bool

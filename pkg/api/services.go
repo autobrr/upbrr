@@ -1815,7 +1815,8 @@ type MetadataOverrides struct {
 	SubtitleLanguages          *[]string
 	HardcodedSubs              *bool
 	HardcodedSubtitleLanguages *[]string
-	TrackLanguages             []TrackLanguageCorrection `json:"TrackLanguages,omitempty"`
+	TrackLanguages             []TrackLanguageCorrection    `json:"TrackLanguages,omitempty"`
+	TrackAudioOrigins          []TrackAudioOriginCorrection `json:"TrackAudioOrigins,omitempty"`
 }
 
 // TrackLanguageCorrection replaces the languages for one inspected track.
@@ -1825,6 +1826,14 @@ type TrackLanguageCorrection struct {
 	TrackID             string   `json:"trackId"`
 	Languages           []string `json:"languages"`
 	ManifestFingerprint string   `json:"manifestFingerprint"`
+}
+
+// TrackAudioOriginCorrection classifies one inspected soundtrack independently
+// from its language list, using the same source-manifest binding as track languages.
+type TrackAudioOriginCorrection struct {
+	TrackID             string           `json:"trackId"`
+	Origin              TrackAudioOrigin `json:"origin"`
+	ManifestFingerprint string           `json:"manifestFingerprint"`
 }
 
 type ClientOverrides struct {
@@ -1898,6 +1907,8 @@ type RuleFailure struct {
 	// LanguageCorrectionTrackIDs identifies inspected tracks whose unknown
 	// languages are needed by this exact predicate, including resource scope.
 	LanguageCorrectionTrackIDs []string `json:"languageCorrectionTrackIds,omitempty"`
+	// AudioOriginCorrectionTrackIDs identifies source-level soundtrack classification review.
+	AudioOriginCorrectionTrackIDs []string `json:"audioOriginCorrectionTrackIds,omitempty"`
 	// QuestionnaireInput identifies a missing or invalid tracker answer.
 	// Execution remains blocked while the corrective questionnaire stays available.
 	QuestionnaireInput bool `json:"questionnaireInput,omitempty"`

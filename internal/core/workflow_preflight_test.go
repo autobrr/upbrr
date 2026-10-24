@@ -561,7 +561,30 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: policyRegistry}
 		subject := api.UploadSubject{
 			LanguageFacts: api.LanguageFacts{
-				OriginalLanguages:  []string{"Japanese"},
+				OriginalLanguages:      []string{"Japanese"},
+				OriginalLanguagesKnown: true,
+				Tracks: []api.MediaTrackFacts{
+					{
+						ID:        "original",
+						Kind:      api.MediaTrackAudio,
+						Role:      api.AudioRoleProgramme,
+						Languages: []string{"Japanese"},
+					},
+					{
+						ID:          "english-dub",
+						Kind:        api.MediaTrackAudio,
+						Role:        api.AudioRoleProgramme,
+						Languages:   []string{"English"},
+						AudioOrigin: api.TrackAudioDubbed,
+					},
+					{
+						ID:          "french-dub",
+						Kind:        api.MediaTrackAudio,
+						Role:        api.AudioRoleProgramme,
+						Languages:   []string{"French"},
+						AudioOrigin: api.TrackAudioDubbed,
+					},
+				},
 				ProgrammeLanguages: []string{"Japanese", "English", "French"},
 				ProgrammeStatus:    api.MetadataEvidenceStatusComplete,
 				AudioStatus:        api.MetadataEvidenceStatusComplete,
@@ -739,7 +762,23 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		debugProjections.ExecutionMode = api.WorkflowExecutionModeDebug
 		debugProjections.Projections = slices.Clone(projections.Projections)
 		debugSubject := api.UploadSubject{Tag: "-GRP", LanguageFacts: api.LanguageFacts{
-			OriginalLanguages:  []string{"English"},
+			OriginalLanguages:      []string{"English"},
+			OriginalLanguagesKnown: true,
+			Tracks: []api.MediaTrackFacts{
+				{
+					ID:        "original",
+					Kind:      api.MediaTrackAudio,
+					Role:      api.AudioRoleProgramme,
+					Languages: []string{"English"},
+				},
+				{
+					ID:          "french-dub",
+					Kind:        api.MediaTrackAudio,
+					Role:        api.AudioRoleProgramme,
+					Languages:   []string{"French"},
+					AudioOrigin: api.TrackAudioDubbed,
+				},
+			},
 			ProgrammeLanguages: []string{"English", "French"},
 			ProgrammeStatus:    api.MetadataEvidenceStatusComplete,
 			AudioStatus:        api.MetadataEvidenceStatusComplete,

@@ -19,3 +19,17 @@ func UnresolvedProgrammeLanguages(facts api.LanguageFacts) []api.MediaTrackFacts
 	}
 	return tracks
 }
+
+// UnresolvedProgrammeAudioOrigins identifies source-addressable programme tracks
+// whose languages do not establish whether the soundtrack is original or dubbed.
+func UnresolvedProgrammeAudioOrigins(facts api.LanguageFacts) []api.MediaTrackFacts {
+	var tracks []api.MediaTrackFacts
+	for _, track := range facts.Tracks {
+		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) ||
+			track.ID == "" || track.ManifestFingerprint == "" || facts.ProgrammeAudioOrigin(track) != "" {
+			continue
+		}
+		tracks = append(tracks, track)
+	}
+	return tracks
+}

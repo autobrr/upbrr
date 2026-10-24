@@ -57,7 +57,12 @@ func (s *cliWorkflowSession) reviewInputLanguages(ctx context.Context, reader *b
 		s.current.InputReadiness.Fields,
 		s.current.Release.Release.Media.Tracks,
 	)
-	if err != nil || len(corrections) == 0 {
+	if err != nil {
+		return err
+	}
+	origins, err := collectCLIInputAudioOrigins(reader, s.streams.out, s.intent.interaction,
+		s.current.InputReadiness.Fields, s.current.Release.Release.Media.Tracks)
+	if err != nil || (len(corrections) == 0 && len(origins) == 0) {
 		return err
 	}
 	if s.current.Corrections == nil {
@@ -65,6 +70,7 @@ func (s *cliWorkflowSession) reviewInputLanguages(ctx context.Context, reader *b
 	}
 	patch := &api.ReleaseCorrectionPatch{ExpectedRevision: new(s.current.Corrections.Revision)}
 	patch.Values.Metadata.TrackLanguages = corrections
+	patch.Values.Metadata.TrackAudioOrigins = origins
 	return s.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
 		IdempotencyKey: s.nextIdempotencyKey("language-corrections"),
 		Goal:           api.WorkflowGoalInputReady,

@@ -101,6 +101,7 @@ func TestAZCZRemuxAndManualClearBoundaries(t *testing.T) {
 			ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "German"}},
 			EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: "Japanese", OriginalLanguageProvenance: api.FactProvenanceManual},
 		}
+		subject.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioDubbed
 		if failures := evaluateAZLanguageRules(siteFor(site), subject); len(failures) != 0 {
 			t.Fatalf("%s original and English remux blocked: %#v", site, failures)
 		}
@@ -145,12 +146,15 @@ func TestAZCZRemuxAndManualClearBoundaries(t *testing.T) {
 		Type:          "REMUX",
 		LanguageFacts: azTestLanguageFacts("Japanese", "Japanese", "German", "French"),
 	}
+	subject.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioDubbed
+	subject.LanguageFacts.Tracks[2].AudioOrigin = api.TrackAudioDubbed
 	if failures := evaluateAZLanguageRules(siteFor("AZ"), subject); len(failures) != 0 {
 		t.Fatalf("per-language remux dub allowance lost: %#v", failures)
 	}
 	// The general English-dub exception remains applicable to remuxes; the
 	// one-original-track limit does not establish a mandatory-original rule.
 	subject.LanguageFacts = azTestLanguageFacts("Japanese", "English")
+	subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioDubbed
 	if failures := evaluateAZLanguageRules(siteFor("AZ"), subject); len(failures) != 0 {
 		t.Fatalf("general English-dub exception lost for remux: %#v", failures)
 	}
@@ -160,12 +164,14 @@ func TestAZCZRemuxAndManualClearBoundaries(t *testing.T) {
 	}
 	subject.Tracker = "CZ"
 	subject.LanguageFacts = azTestLanguageFacts("Japanese", "English")
+	subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioDubbed
 	if failures := evaluateAZLanguageRules(siteFor("CZ"), subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 		return f.Rule == "language_original" && f.Disposition == api.RuleDispositionStrict
 	}) {
 		t.Fatalf("AZ exception leaked into CZ: %#v", failures)
 	}
 	subject.LanguageFacts = azTestLanguageFacts("Japanese", "Japanese", "English")
+	subject.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioDubbed
 	subject.LanguageFacts.Tracks[0].Default = false
 	if failures := evaluateAZLanguageRules(siteFor("CZ"), subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 		return f.Rule == "language_original_default" && f.Disposition == api.RuleDispositionStrict

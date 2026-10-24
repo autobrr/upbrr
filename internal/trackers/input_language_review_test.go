@@ -56,16 +56,17 @@ func TestInputLanguageReviewDeduplicatesSelectedTrackers(t *testing.T) {
 		return result
 	}
 	result := evaluate()
-	if len(result.Fields) != 2 {
-		t.Fatalf("expected one question per programme track: %#v", result.Fields)
+	if len(result.Fields) != 4 {
+		t.Fatalf("expected independent language and origin questions per programme track: %#v", result.Fields)
 	}
 	for _, field := range result.Fields {
-		if field.TrackID == "commentary" || field.TrackID == "" || field.CorrectionField == nil || *field.CorrectionField != api.CorrectionFieldMetadataTrackLanguages || !slices.Equal(field.TrackerIDs, []api.TrackerID{"ONE", "TWO"}) {
+		if field.TrackID == "commentary" || field.TrackID == "" || field.CorrectionField == nil || (*field.CorrectionField != api.CorrectionFieldMetadataTrackLanguages && *field.CorrectionField != api.CorrectionFieldMetadataTrackAudioOrigins) || !slices.Equal(field.TrackerIDs, []api.TrackerID{"ONE", "TWO"}) {
 			t.Fatalf("bad correction target: %#v", field)
 		}
 	}
 	media.Tracks[0].Languages = []string{"Japanese"}
 	media.Tracks[1].Languages = []string{"Japanese", "English"}
+	media.Tracks[1].AudioOrigin = api.TrackAudioOriginal
 	if result := evaluate(); len(result.Fields) != 0 {
 		t.Fatalf("resolved tracks asked again: %#v", result.Fields)
 	}

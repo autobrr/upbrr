@@ -191,6 +191,14 @@ func lumeTestLanguageFacts(original string, programme, subtitles []string) api.L
 			Default:   index == 0,
 		})
 	}
+	// These existing policy fixtures describe reviewed alternate-language dubs.
+	// Unreviewed tag-only evidence is exercised separately by origin regressions.
+	for index := range media.Tracks {
+		track := &media.Tracks[index]
+		if track.Kind == api.MediaTrackAudio && len(track.Languages) == 1 && track.Languages[0] != original && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" && track.Languages[0] != "Multiple Languages" {
+			track.AudioOrigin = api.TrackAudioDubbed
+		}
+	}
 	return mediafacts.ResolveLanguages(media)
 }
 

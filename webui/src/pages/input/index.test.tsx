@@ -2091,6 +2091,82 @@ describe("InputPage", () => {
     expect(screen.queryByText(/Bitrate:/)).not.toBeInTheDocument();
   });
 
+  it("edits soundtrack origin without changing the inspected track languages", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Media.Tracks[0].Role = "programme";
+    release.Media.Tracks[0].Languages = ["Multiple Languages"];
+    const language = {
+      trackId: "audio:resource-1:1",
+      languages: ["Japanese", "English"],
+      manifestFingerprint: "a".repeat(64),
+    };
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release,
+        intent: { ...base.view.intent, metadata: { TrackLanguages: [language] } },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    const control = screen.getByLabelText("Audio track 1 soundtrack origin");
+    expect(control).toHaveValue("");
+    fireEvent.change(control, { target: { value: "original" } });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({
+      TrackLanguages: [language],
+      TrackAudioOrigins: [
+        { trackId: "audio:resource-1:1", origin: "original", manifestFingerprint: "a".repeat(64) },
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Auto Audio track 1 soundtrack origin" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({
+      field: "metadata.track_audio_origins",
+      trackId: "audio:resource-1:1",
+    });
+    expect(screen.queryByLabelText("Subtitle track 1 soundtrack origin")).not.toBeInTheDocument();
+  });
+
+  it("shows one origin question for the backend tracker scope and no commentary origin control", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Media.Tracks[0].Role = "programme";
+    const readiness = {
+      id: "origin-review",
+      workflowId: "workflow-1",
+      revision: 1,
+      createdAt: "2026-10-24T00:00:00Z",
+      factInstructions: { id: "facts-1", revision: 1 },
+      release: { SourcePath: "C:\\media\\Example.mkv", Generation: 1 },
+      requirementsFingerprint: "a".repeat(64),
+      status: "completed" as const,
+      fields: [
+        {
+          key: "metadata.track_audio_origins.audio:resource-1:1",
+          trackId: "audio:resource-1:1",
+          correctionField: "metadata.track_audio_origins",
+          status: "missing" as const,
+          disposition: "strict" as const,
+          trackerIds: ["ONE", "TWO"],
+        },
+      ],
+    };
+    const { rerender } = render(
+      <InputCorrectionEditor facet={{ ...base, view: { ...base.view, release, readiness } }} />,
+    );
+    expect(screen.getByTestId("input-track-coverage")).toHaveAttribute("open");
+    expect(screen.getAllByLabelText("Audio track 1 soundtrack origin")).toHaveLength(1);
+    expect(screen.getByText(/Soundtrack origin review required for ONE, TWO/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Language identification required for ONE, TWO/),
+    ).not.toBeInTheDocument();
+    release.Media.Tracks[0].Role = "commentary";
+    rerender(
+      <InputCorrectionEditor facet={{ ...base, view: { ...base.view, release, readiness } }} />,
+    );
+    expect(screen.queryByLabelText("Audio track 1 soundtrack origin")).not.toBeInTheDocument();
+  });
+
   it("opens source language correction once for all selected trackers needing it", () => {
     const base = readyInputFacet(1);
     const release = preparedRelease();

@@ -1859,6 +1859,49 @@ func TestCLITrackerInputPreservesSetAndAutoIntent(t *testing.T) {
 	}
 }
 
+func TestCLITrackCorrectionsRequireRetainedHistory(t *testing.T) {
+	for _, correction := range []struct {
+		flag, value string
+	}{
+		{"--track-languages", "audio=Japanese"},
+		{"--track-audio-origin", "audio=original"},
+	} {
+		for _, history := range []struct {
+			name string
+			err  error
+		}{
+			{name: "missing tracks"},
+			{name: "history failure", err: errors.New("history unavailable")},
+		} {
+			t.Run(correction.flag+"/"+history.name, func(t *testing.T) {
+				args := []string{correction.flag, correction.value, "example.mkv"}
+				opts, visited, _, err := parseCLIOptions(args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				coreSvc := &cliWorkflowCoreFake{inputHistoryErr: history.err}
+				err = runCLIWorkflowInteractive(
+					t.Context(), coreSvc, args, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0,
+					config.Config{}, cliIO{
+						in:     strings.NewReader(""),
+						out:    io.Discard,
+						errOut: io.Discard,
+					}, api.NopLogger{},
+				)
+				if err == nil || !strings.Contains(err.Error(), "track corrections require retained input history; run --input-only first") {
+					t.Fatalf("missing track correction guidance: %v", err)
+				}
+				if history.err != nil && !errors.Is(err, history.err) {
+					t.Fatalf("history error was not preserved: %v", err)
+				}
+				if len(coreSvc.commands) != 0 || len(coreSvc.continuations) != 0 || len(coreSvc.uploadRequests) != 0 {
+					t.Fatal("workflow started without retained track history")
+				}
+			})
+		}
+	}
+}
+
 func TestCLIInputOnlyDoesNotStartCompositeUpload(t *testing.T) {
 	opts, visited, _, err := parseCLIOptions([]string{"--input-only", "--tracker-input", "OE:source_notes=Example source", "example.mkv"})
 	if err != nil {

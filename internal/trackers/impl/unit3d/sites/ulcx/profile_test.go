@@ -1,11 +1,12 @@
 package ulcx
 
 import (
+	"testing"
+
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
-	"testing"
 )
 
 func TestULCXStructuredName(t *testing.T) {
@@ -85,7 +86,7 @@ func TestULCXStructuredName(t *testing.T) {
 }
 func TestULCXPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/ulcx/v8" || p.Structured == nil {
+	if p.ID != "unit3d/ulcx/v9" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }

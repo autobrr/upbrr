@@ -28,9 +28,12 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
 	}
 	needsOriginal := slices.ContainsFunc(facts.ProgrammeLanguages, func(language string) bool { return language != "English" && language != "ZXX" })
-	if (needsOriginal && !facts.OriginalLanguagesKnown) || programmeStatus != api.MetadataEvidenceStatusComplete {
+	switch {
+	case (needsOriginal && !facts.OriginalLanguagesKnown) || programmeStatus != api.MetadataEvidenceStatusComplete:
 		add("evidence", "original/programme language and track-role evidence is unresolved", trackers.LanguageUnresolved)
-	} else if len(facts.ProgrammeLanguages) > 0 && !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
+	case !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") && facts.HasUnresolvedProgrammeAudioOrigin():
+		failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
+	case len(facts.ProgrammeLanguages) > 0 && !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English"):
 		add("non_english_dub", "Non-English Language Dub; a replacement must resolve this defect", trackers.LanguageTrumpable)
 	}
 	failures = append(failures, ptpRemuxLanguageFailures(subject)...)
