@@ -19,23 +19,59 @@ func TestULCXAnimeAlternateTitle(t *testing.T) {
 	}{
 		{name: "current MAL movie"},
 		{name: "current MAL TV", change: func(s *api.UploadSubject) { s.Identity.Category = api.CanonicalCategoryTV }},
-		{name: "no MAL", change: func(s *api.UploadSubject) { s.Identity.MALID = 0 }, wantAlternate: true},
-		{name: "anime without MAL", change: func(s *api.UploadSubject) {
-			s.Identity.MALID = 0
-			s.Anime = true
-		}, wantAlternate: true},
-		{name: "raw MAL only", change: func(s *api.UploadSubject) {
-			s.Identity.MALID = 0
-			s.ProviderMetadata.AniList = &api.AniListMetadata{MALID: 123}
-		}, wantAlternate: true},
-		{name: "wrong identity source", change: func(s *api.UploadSubject) { s.Identity.SourcePath = "other" }, wantAlternate: true},
-		{name: "wrong metadata source", change: func(s *api.UploadSubject) { s.ProviderMetadata.SourcePath = "other" }, wantAlternate: true},
-		{name: "stale generation", change: func(s *api.UploadSubject) { s.ProviderMetadata.Generation = 2 }, wantAlternate: true},
-		{name: "unbound identity", change: func(s *api.UploadSubject) { s.Identity.Generation = 0 }, wantAlternate: true},
-		{name: "manual metadata", change: func(s *api.UploadSubject) {
-			s.EffectiveMetadata.AlternateTitleProvenance = api.FactProvenanceManual
-		}, wantAlternate: true},
-		{name: "manual component", change: func(s *api.UploadSubject) { s.GeneratedName.Components[1].Manual = true }, wantAlternate: true},
+		{
+			name:          "no MAL",
+			change:        func(s *api.UploadSubject) { s.Identity.MALID = 0 },
+			wantAlternate: true,
+		},
+		{
+			name: "anime without MAL",
+			change: func(s *api.UploadSubject) {
+				s.Identity.MALID = 0
+				s.Anime = true
+			},
+			wantAlternate: true,
+		},
+		{
+			name: "raw MAL only",
+			change: func(s *api.UploadSubject) {
+				s.Identity.MALID = 0
+				s.ProviderMetadata.AniList = &api.AniListMetadata{MALID: 123}
+			},
+			wantAlternate: true,
+		},
+		{
+			name:          "wrong identity source",
+			change:        func(s *api.UploadSubject) { s.Identity.SourcePath = "other" },
+			wantAlternate: true,
+		},
+		{
+			name:          "wrong metadata source",
+			change:        func(s *api.UploadSubject) { s.ProviderMetadata.SourcePath = "other" },
+			wantAlternate: true,
+		},
+		{
+			name:          "stale generation",
+			change:        func(s *api.UploadSubject) { s.ProviderMetadata.Generation = 2 },
+			wantAlternate: true,
+		},
+		{
+			name:          "unbound identity",
+			change:        func(s *api.UploadSubject) { s.Identity.Generation = 0 },
+			wantAlternate: true,
+		},
+		{
+			name: "manual metadata",
+			change: func(s *api.UploadSubject) {
+				s.EffectiveMetadata.AlternateTitleProvenance = api.FactProvenanceManual
+			},
+			wantAlternate: true,
+		},
+		{
+			name:          "manual component",
+			change:        func(s *api.UploadSubject) { s.GeneratedName.Components[1].Manual = true },
+			wantAlternate: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			subject := ulcxAnimeNameSubject()
@@ -72,7 +108,9 @@ func TestULCXAnimeAlternateTitlePreservesOverrides(t *testing.T) {
 	subject := ulcxAnimeNameSubject()
 	requested := "Complete Custom Name"
 	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
-		Tracker: "ULCX", Meta: subject, RequestedUploadName: &requested,
+		Tracker:             "ULCX",
+		Meta:                subject,
+		RequestedUploadName: &requested,
 	}, namePolicy())
 	if failure != nil {
 		t.Fatal(failure)
@@ -102,15 +140,41 @@ func ulcxAnimeNameSubject() api.UploadSubject {
 	document := &api.ReleaseNameDocument{
 		Version: api.ReleaseNameDocumentVersionV1,
 		Components: []api.ReleaseNameComponent{
-			{Role: api.NameRoleTitle, Value: "Example", Present: true},
-			{Role: api.NameRoleAlternateTitle, Value: "AKA Other", Present: true, Join: " "},
-			{Role: api.NameRoleYear, Value: "2026", Present: true, Join: " "},
-			{Role: api.NameRoleResolution, Value: "1080p", Present: true, Join: " "},
+			{
+				Role:    api.NameRoleTitle,
+				Value:   "Example",
+				Present: true,
+			},
+			{
+				Role:    api.NameRoleAlternateTitle,
+				Value:   "AKA Other",
+				Present: true,
+				Join:    " ",
+			},
+			{
+				Role:    api.NameRoleYear,
+				Value:   "2026",
+				Present: true,
+				Join:    " ",
+			},
+			{
+				Role:    api.NameRoleResolution,
+				Value:   "1080p",
+				Present: true,
+				Join:    " ",
+			},
 		},
 	}
 	return api.UploadSubject{
-		SourcePath: "source", GeneratedName: document, ReleaseName: document.Render().Name,
-		Identity:         api.ExternalIdentity{SourcePath: "source", Generation: 1, MALID: 123, Category: api.CanonicalCategoryMovie},
+		SourcePath:    "source",
+		GeneratedName: document,
+		ReleaseName:   document.Render().Name,
+		Identity: api.ExternalIdentity{
+			SourcePath: "source",
+			Generation: 1,
+			MALID:      123,
+			Category:   api.CanonicalCategoryMovie,
+		},
 		ProviderMetadata: api.SourceScopedMetadata{SourcePath: "source", Generation: 1},
 	}
 }
