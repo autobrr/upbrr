@@ -92,6 +92,10 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: load stored tracker metadata: %w", err)
 		}
+		// Source-level caches never establish current lookup receipt authority.
+		for index := range stored {
+			stored[index].ImportedScreenshotEvidence = nil
+		}
 		if !meta.Policy.OnlyID && meta.Policy.KeepImages {
 			for index := range stored {
 				record := &stored[index]
@@ -345,6 +349,7 @@ func (s *Service) enrichTrackerDataPriority(
 				record.Description = ""
 				record.ImageURLs = nil
 				record.ImagePreviews = nil
+				record.ImportedScreenshotEvidence = nil
 			}
 		}
 
@@ -441,6 +446,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 				outcome.record.Description = ""
 				outcome.record.ImageURLs = nil
 				outcome.record.ImagePreviews = nil
+				outcome.record.ImportedScreenshotEvidence = nil
 			}
 		}
 
@@ -519,10 +525,8 @@ func (s *Service) lookupTrackerData(
 		return record, trackerRecordHasPathedData(record), hasTrackerMetadataIDs(record), nil
 	}
 
-	result, err := evidence.Lookup(ctx, "tracker.lookup", query, func() (trackerdata.Result, error) {
+	result, err := lookupTrackerDataEvidence(ctx, query, meta.Policy.OnlyID, meta.Policy.KeepImages, func() (trackerdata.Result, error) {
 		return s.tracker.Lookup(ctx, tracker, record.TrackerID, trackerLookupSubject(meta), searchName, meta.Policy.OnlyID, meta.Policy.KeepImages)
-	}, func(value trackerdata.Result) bool {
-		return !value.HasData() || !meta.Policy.OnlyID && strings.TrimSpace(value.Description) == "" || meta.Policy.KeepImages && len(value.Images) == 0
 	})
 	if err != nil && (isContextError(ctx, err) || !result.HasData()) {
 		return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
@@ -544,15 +548,17 @@ func (s *Service) lookupTrackerData(
 
 	applyTrackerDataResult(&record, result)
 	if strings.TrimSpace(result.Description) != "" || len(result.Images) > 0 {
-		downloadedImages := s.persistTrackerArtifacts(
+		downloadedImages, unavailableImages := s.persistTrackerArtifacts(
 			ctx,
 			meta,
 			tracker,
 			trackerdata.Result{Description: result.Description, Validated: result.Images},
 			meta.Policy.KeepImages,
 		)
+		result.UninspectedImages = append(slices.Clone(result.UninspectedImages), unavailableImages...)
 		record.ImageURLs, record.ImagePreviews = trackerImageURLsFromResult(result, downloadedImages, meta.Policy.KeepImages)
 	}
+	record.ImportedScreenshotEvidence = importedScreenshotEvidenceFromResult(meta, record, result)
 	logger.Debugf(
 		"metadata: tracker lookup applied tracker=%s tmdb=%d imdb=%d tvdb=%d desc=%t images=%d infohash=%t file=%t",
 		tracker,
@@ -690,7 +696,7 @@ func trackerRecordHasPathedData(record api.TrackerMetadata) bool {
 }
 
 func trackerRecordHasDescriptionAssets(record api.TrackerMetadata) bool {
-	return strings.TrimSpace(record.Description) != "" || len(record.ImageURLs) > 0
+	return strings.TrimSpace(record.Description) != "" || len(record.ImageURLs) > 0 || record.ImportedScreenshotEvidence != nil
 }
 
 func trackerAssetTimestampKey(tracker string) string {

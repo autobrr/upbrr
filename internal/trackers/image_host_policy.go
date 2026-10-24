@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -348,6 +349,41 @@ func ReusableImageHostAllowedWithRegistry(
 		return false, nil
 	}
 	return reusableSelectionMatchesPolicy(host, policy), nil
+}
+
+// FilterImportedScreenshotEvidenceForTrackerWithRegistry returns an operation-local
+// view containing only current references allowed by the target's reuse capability
+// and image-host policy. It never changes canonical metadata or creates local media.
+func FilterImportedScreenshotEvidenceForTrackerWithRegistry(
+	registry *Registry,
+	appCfg config.Config,
+	tracker string,
+	subject api.UploadSubject,
+) api.UploadSubject {
+	evidence := subject.CurrentImportedScreenshotEvidence()
+	subject.ProviderMetadata.ImportedScreenshotEvidence = nil
+	if registry == nil || evidence == nil || subject.SuppressImportedScreenshotReferences[strings.ToUpper(strings.TrimSpace(tracker))] {
+		return subject
+	}
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	if !ok || descriptor.WorkflowMedia == nil || !descriptor.WorkflowMedia.AllowImportedScreenshotReferences {
+		return subject
+	}
+	references := evidence.References[:0]
+	for _, reference := range evidence.References {
+		if imagehost.IsSourceOnlyURL(reference.RawURL) {
+			continue
+		}
+		allowed, err := ReusableImageHostAllowedWithRegistry(registry, appCfg, tracker, imagehost.ExtractHost(reference.RawURL), subject.ImageHostOverrides)
+		if err == nil && allowed {
+			references = append(references, reference)
+		}
+	}
+	if len(references) > 0 {
+		evidence.References = references
+		subject.ProviderMetadata.ImportedScreenshotEvidence = evidence
+	}
+	return subject
 }
 
 // NeededImageUploadTargetsForMetadataWithRegistry resolves image upload targets from tracker-owned policies.

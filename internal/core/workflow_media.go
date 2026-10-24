@@ -23,6 +23,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/imageevidence"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/pathing"
@@ -158,20 +159,46 @@ func (b workflowMediaBuilder) PreviewFrame(
 	}, nil
 }
 
+type workflowLegacyImageFormat struct {
+	Format      string
+	Conflicting bool
+}
+
 type workflowMediaPrivateArtifacts struct {
-	Screenshots       []api.ScreenshotImage
-	DVDMenus          []api.DVDMenuCaptureImage
-	ArtifactImages    map[api.PublicResourceID]api.ScreenshotImage
-	DVDMenuImages     map[api.PublicResourceID]api.DVDMenuCaptureImage
-	HostedImages      map[api.PublicResourceID]api.UploadedImageLink
-	HostedSources     map[api.PublicResourceID]api.PublicResourceID
-	screenshotService mediaScreenshotService
-	screenshotSubject api.ScreenshotSubject
-	dvdMenuService    mediaDVDMenuService
-	dvdMenuSubject    api.DVDMenuSubject
-	hostedRepository  mediaRepository
-	mediaReuse        api.MediaReuseRepository
-	commitState       *workflowMediaCommitState
+	Screenshots        []api.ScreenshotImage
+	DVDMenus           []api.DVDMenuCaptureImage
+	ArtifactImages     map[api.PublicResourceID]api.ScreenshotImage
+	DVDMenuImages      map[api.PublicResourceID]api.DVDMenuCaptureImage
+	HostedImages       map[api.PublicResourceID]api.UploadedImageLink
+	HostedSources      map[api.PublicResourceID]api.PublicResourceID
+	screenshotService  mediaScreenshotService
+	screenshotSubject  api.ScreenshotSubject
+	dvdMenuService     mediaDVDMenuService
+	dvdMenuSubject     api.DVDMenuSubject
+	hostedRepository   mediaRepository
+	mediaReuse         api.MediaReuseRepository
+	legacyImageFormats map[string]workflowLegacyImageFormat
+	commitState        *workflowMediaCommitState
+}
+
+// recordLegacyImageFormat retains exact old labels only for description compatibility.
+// Blank is a real claim; conflicting labels for one path cannot authorize legacy reuse.
+func recordLegacyImageFormat(a *workflowMediaPrivateArtifacts, path, format string) {
+	if path == "" {
+		return
+	}
+	if a.legacyImageFormats == nil {
+		a.legacyImageFormats = make(map[string]workflowLegacyImageFormat)
+	}
+	previous, found := a.legacyImageFormats[path]
+	if !found {
+		a.legacyImageFormats[path] = workflowLegacyImageFormat{Format: format}
+		return
+	}
+	if previous.Format != format {
+		previous.Conflicting = true
+		a.legacyImageFormats[path] = previous
+	}
 }
 
 type workflowMediaPendingDelete struct {
@@ -222,16 +249,17 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		deleted[artifactID] = struct{}{}
 	}
 	result := workflowMediaPrivateArtifacts{
-		screenshotService: a.screenshotService,
-		screenshotSubject: a.screenshotSubject,
-		dvdMenuService:    a.dvdMenuService,
-		dvdMenuSubject:    a.dvdMenuSubject,
-		hostedRepository:  a.hostedRepository,
-		mediaReuse:        a.mediaReuse,
-		ArtifactImages:    cloneScreenshotImageMap(a.ArtifactImages),
-		DVDMenuImages:     cloneDVDMenuImageMap(a.DVDMenuImages),
-		HostedImages:      cloneUploadedImageMap(a.HostedImages),
-		HostedSources:     cloneHostedSourceMap(a.HostedSources),
+		screenshotService:  a.screenshotService,
+		screenshotSubject:  a.screenshotSubject,
+		dvdMenuService:     a.dvdMenuService,
+		dvdMenuSubject:     a.dvdMenuSubject,
+		hostedRepository:   a.hostedRepository,
+		mediaReuse:         a.mediaReuse,
+		ArtifactImages:     cloneScreenshotImageMap(a.ArtifactImages),
+		DVDMenuImages:      cloneDVDMenuImageMap(a.DVDMenuImages),
+		HostedImages:       cloneUploadedImageMap(a.HostedImages),
+		HostedSources:      cloneHostedSourceMap(a.HostedSources),
+		legacyImageFormats: maps.Clone(a.legacyImageFormats),
 	}
 	pending := a.pendingDeletes()
 	screenshotIndex, menuIndex := 0, 0
@@ -435,19 +463,20 @@ func cloneHostedSourceMap(values map[api.PublicResourceID]api.PublicResourceID) 
 
 func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) workflowMediaPrivateArtifacts {
 	return workflowMediaPrivateArtifacts{
-		Screenshots:       append([]api.ScreenshotImage(nil), value.Screenshots...),
-		DVDMenus:          append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
-		ArtifactImages:    cloneScreenshotImageMap(value.ArtifactImages),
-		DVDMenuImages:     cloneDVDMenuImageMap(value.DVDMenuImages),
-		HostedImages:      cloneUploadedImageMap(value.HostedImages),
-		HostedSources:     cloneHostedSourceMap(value.HostedSources),
-		screenshotService: value.screenshotService,
-		screenshotSubject: value.screenshotSubject,
-		dvdMenuService:    value.dvdMenuService,
-		dvdMenuSubject:    value.dvdMenuSubject,
-		hostedRepository:  value.hostedRepository,
-		mediaReuse:        value.mediaReuse,
-		commitState:       &workflowMediaCommitState{pending: value.pendingDeletes()},
+		Screenshots:        append([]api.ScreenshotImage(nil), value.Screenshots...),
+		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
+		ArtifactImages:     cloneScreenshotImageMap(value.ArtifactImages),
+		DVDMenuImages:      cloneDVDMenuImageMap(value.DVDMenuImages),
+		HostedImages:       cloneUploadedImageMap(value.HostedImages),
+		HostedSources:      cloneHostedSourceMap(value.HostedSources),
+		legacyImageFormats: maps.Clone(value.legacyImageFormats),
+		screenshotService:  value.screenshotService,
+		screenshotSubject:  value.screenshotSubject,
+		dvdMenuService:     value.dvdMenuService,
+		dvdMenuSubject:     value.dvdMenuSubject,
+		hostedRepository:   value.hostedRepository,
+		mediaReuse:         value.mediaReuse,
+		commitState:        &workflowMediaCommitState{pending: value.pendingDeletes()},
 	}
 }
 
@@ -1385,6 +1414,7 @@ func (b workflowMediaBuilder) RestoreCompatible(
 			}
 			localAvailable = materializeErr == nil
 			if localAvailable {
+				recordLegacyImageFormat(&retained, materialized.Path, image.Format)
 				image = materialized
 			}
 		}
@@ -2661,6 +2691,8 @@ func workflowMediaContentSHA256(ctx context.Context, pathValue string) (string, 
 // lifetime before its reusable association can be published. Reused media may
 // be compatible across sources, but a history deletion owns the old source's
 // managed files and can run in another process.
+// Format is re-inspected without changing persisted capture geometry; undecodable
+// content keeps an unknown format.
 func (b workflowMediaBuilder) materializeReusableMediaImage(
 	ctx context.Context,
 	binding api.PreparedMediaBinding,
@@ -2683,6 +2715,7 @@ func (b workflowMediaBuilder) materializeReusableMediaImage(
 		return api.ScreenshotImage{}, errors.New("workflow media reusable destination escapes tmp root")
 	}
 	if pathing.IsWithinRoot(reuseRoot, image.Path) {
+		image.Format = reusableMediaImageFormat(image.Path)
 		return image, nil
 	}
 	destination := filepath.Join(reuseRoot,
@@ -2695,7 +2728,12 @@ func (b workflowMediaBuilder) materializeReusableMediaImage(
 		return api.ScreenshotImage{}, err
 	}
 	image.Path = materialized
+	image.Format = reusableMediaImageFormat(image.Path)
 	return image, nil
+}
+
+func reusableMediaImageFormat(pathValue string) string {
+	return imageevidence.VerifiedFormat(pathValue)
 }
 
 // reusableMediaTempRoot returns the reserved first-level directory for local

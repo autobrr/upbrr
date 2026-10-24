@@ -38,49 +38,46 @@ func lstDescriptionScreenshots(meta *api.UploadSubject) string {
 	if meta.TrackerQuestionnaireAnswers["LST"] == nil {
 		meta.TrackerQuestionnaireAnswers["LST"] = make(map[string]string)
 	}
-	subject := api.NewTrackerValidationSubject(*meta, "LST")
-	for _, field := range assetReviewQuestions(subject) {
-		value := "Reviewed track notes"
-		if field.Kind == "select" {
-			value = field.Options[1]
-		} else if field.Key != assetQuestionKey(subject, "track_notes") {
-			value = "https://images.example.invalid/source-evidence"
-		}
-		meta.TrackerQuestionnaireAnswers["LST"][field.Key] = value
-	}
-	subject = api.NewTrackerValidationSubject(*meta, "LST")
-	for _, field := range sourceReviewQuestions(subject) {
-		meta.TrackerQuestionnaireAnswers["LST"][field.Key] = field.Options[1]
-	}
 	return strings.Join(images, "\n")
 }
 
-func TestLSTFinalDescriptionRequiresActualPreparedImages(t *testing.T) {
+func countPreparedDescriptionImages(meta api.UploadSubject, description string) int {
+	return countDescriptionScreenshotReferences(api.NewTrackerValidationSubject(meta, "LST").AssetFacts.ScreenshotReferences, description)
+}
+
+func TestLSTFinalDescriptionCountsActualPreparedImages(t *testing.T) {
 	meta := api.UploadSubject{}
 	description := lstDescriptionScreenshots(&meta)
 	for _, tc := range []struct {
 		name, description string
-		valid             bool
+		count             int
 	}{
 		{
 			name:        "full images",
 			description: description,
-			valid:       true,
+			count:       3,
 		},
 		{name: "text URLs do not embed", description: strings.NewReplacer("[img]", "", "[/img]", "").Replace(description)},
 		{name: "code block is literal", description: "[code]" + description + "[/code]"},
+		{name: "pre block is literal", description: "[pre]" + description + "[/pre]"},
+		{name: "noparse block is literal", description: "[noparse]" + description + "[/noparse]"},
+		{name: "comparison is not an image group", description: "[comparison]" + description + "[/comparison]"},
 		{name: "unclosed image", description: strings.ReplaceAll(description, "[/img]", "")},
-		{name: "repeated image", description: strings.Repeat("[img]"+meta.ExactMedia.ScreenshotUploads[0].RawURL+"[/img]", 3)},
+		{
+			name:        "repeated image",
+			description: strings.Repeat("[img]"+meta.ExactMedia.ScreenshotUploads[0].RawURL+"[/img]", 3),
+			count:       1,
+		},
 		{name: "unprepared images", description: strings.ReplaceAll(description, "full-", "unprepared-")},
 		{
 			name:        "independent blocks",
 			description: strings.ReplaceAll(description, "\n", "\n\nRelease note\n\n"),
-			valid:       true,
+			count:       3,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := validateFinalDescription(meta, tc.description, "MediaInfo", ""); (err == nil) != tc.valid {
-				t.Fatalf("valid=%t, error=%v", tc.valid, err)
+			if got := countPreparedDescriptionImages(meta, tc.description); got != tc.count {
+				t.Fatalf("prepared image count=%d, want %d", got, tc.count)
 			}
 		})
 	}
@@ -88,8 +85,8 @@ func TestLSTFinalDescriptionRequiresActualPreparedImages(t *testing.T) {
 	for _, link := range meta.ExactMedia.ScreenshotUploads {
 		linked = append(linked, "[url="+link.WebURL+"][img=350]"+link.ImgURL+"[/img][/url]")
 	}
-	if err := validateFinalDescription(meta, strings.Join(linked, "\n"), "MediaInfo", ""); err != nil {
-		t.Fatalf("linked thumbnails: %v", err)
+	if got := countPreparedDescriptionImages(meta, strings.Join(linked, "\n")); got != 3 {
+		t.Fatalf("linked thumbnail count=%d", got)
 	}
 }
 
@@ -123,7 +120,7 @@ func TestLSTFinalDescriptionDoesNotCountHostedAliasesAsDistinctScreenshots(t *te
 	for i := range meta.ExactMedia.ScreenshotUploads {
 		meta.ExactMedia.ScreenshotUploads[i].ImagePath = meta.ExactMedia.Screenshots[0].Path
 	}
-	if err := validateFinalDescription(meta, description, "", ""); err == nil {
-		t.Fatal("same screenshot hosted at three URLs counted three times")
+	if got := countPreparedDescriptionImages(meta, description); got != 1 {
+		t.Fatalf("same screenshot hosted at three URLs counted %d times", got)
 	}
 }

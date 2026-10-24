@@ -4,7 +4,6 @@
 package lst
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -18,6 +17,10 @@ func primaryTechnicalSubject(subject api.TrackerValidationSubject) api.TrackerVa
 			continue
 		}
 		subject.Container, subject.VideoCodec, subject.VideoEncoder = file.Container, file.VideoCodec, file.VideoEncoder
+		// Programme inspection may not provide source provenance.
+		if strings.TrimSpace(file.Source) != "" {
+			subject.Source = file.Source
+		}
 		subject.HDRFacts = file.HDRFacts
 		subject.Release.Resolution = file.Resolution
 		subject.HasEncodeSettings = file.HasEncodeSettings
@@ -60,7 +63,8 @@ func singleLegacyContainerCandidate(subject api.TrackerValidationSubject) bool {
 }
 
 // containerException identifies only supported exception candidates; eligibility
-// and required source evidence are checked independently before submission.
+// and the required explanation are checked independently before submission.
+// An unresolved source remains unverified and is still sent to moderation.
 func containerException(subject api.TrackerValidationSubject) string {
 	subject = primaryTechnicalSubject(subject)
 	if legacyContainerCandidate(subject) {
@@ -78,11 +82,10 @@ func containerException(subject api.TrackerValidationSubject) string {
 }
 
 func containerFileSubject(subject api.TrackerValidationSubject, file api.MediaFileFact) api.TrackerValidationSubject {
-	source := file.Source
-	if source == "" && file.ResourceID != "" && strings.EqualFold(file.Container, "ts") {
-		source = subject.QuestionnaireAnswers[sourceQuestionKey(subject, "resource_source_"+file.ResourceID)]
+	subject.Container = file.Container
+	if !file.Primary || file.ResourceID == "" || strings.TrimSpace(file.Source) != "" {
+		subject.Source = file.Source
 	}
-	subject.Container, subject.Source = file.Container, source
 	subject.VideoCodec, subject.VideoEncoder = file.VideoCodec, file.VideoEncoder
 	subject.MediaFileFacts = api.MediaFileFacts{}
 	subject.HDRFacts = file.HDRFacts
@@ -91,14 +94,7 @@ func containerFileSubject(subject api.TrackerValidationSubject, file api.MediaFi
 
 func singleContainerException(subject api.TrackerValidationSubject) string {
 	subject = primaryTechnicalSubject(subject)
-	if subject.Source == "" && strings.EqualFold(subject.Container, "ts") {
-		for _, file := range subject.MediaFileFacts.Files {
-			if file.Primary && file.ResourceID != "" {
-				subject.Source = subject.QuestionnaireAnswers[sourceQuestionKey(subject, "resource_source_"+file.ResourceID)]
-				break
-			}
-		}
-	}
+
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
 		return ""
 	}
@@ -110,6 +106,8 @@ func singleContainerException(subject api.TrackerValidationSubject) string {
 		switch strings.ToUpper(strings.TrimSpace(subject.Source)) {
 		case "UHDTV", "HDTV", "SDTV":
 			return "broadcast"
+		case "":
+			return "unresolved_broadcast"
 		}
 	case "mp4":
 		if strings.EqualFold(subject.Type, "WEBDL") &&
@@ -132,7 +130,7 @@ func exceptionValidationFailures(subject api.TrackerValidationSubject) []api.Rul
 	failure := func(rule, reason string, status api.MetadataEvidenceStatus) []api.RuleFailure {
 		f := trackers.NewEvidenceRuleFailure(rule, reason, api.RuleDispositionStrict, status)
 		f.DebugBypass = true
-		f.QuestionnaireInput = rule == "lst_exception_note" || rule == "lst_legacy_source_evidence"
+		f.QuestionnaireInput = rule == "lst_exception_note"
 		return []api.RuleFailure{f}
 	}
 	if subject.MediaFileFacts.ExpectedFileCount > len(subject.MediaFileFacts.Files) {
@@ -149,9 +147,7 @@ func exceptionValidationFailures(subject api.TrackerValidationSubject) []api.Rul
 			strings.EqualFold(file.Container, "avi") && file.VideoCodec == "" && file.VideoEncoder == "" {
 			status = api.MetadataEvidenceStatusPartial
 		}
-		failures := failure("lst_resource_container", "A programme resource has an unsupported container or unresolved container-exception evidence", status)
-		failures[0].QuestionnaireInput = strings.EqualFold(file.Container, "ts") && file.Source == "" && file.ResourceID != ""
-		return failures
+		return failure("lst_resource_container", "A programme resource has an unsupported container or unresolved container-exception evidence", status)
 	}
 	container := strings.ToLower(strings.TrimSpace(subject.Container))
 	kind := containerException(subject)
@@ -171,47 +167,49 @@ func exceptionValidationFailures(subject api.TrackerValidationSubject) []api.Rul
 	if kind == "" {
 		return nil
 	}
-	if kind == "legacy" {
-		evidence := subject.TitleSearchEvidence
-		if subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "sole_source")] == "other_version_exists" {
-			return failure(
-				"lst_legacy_source",
-				"Legacy preservation requires the sole known version in any format; another version exists",
-				api.MetadataEvidenceStatusComplete,
-			)
-		}
-		if !evidence.Current(subject.Identity) || subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "sole_source")] != "sole_source_verified" {
-			return failure(
-				"lst_legacy_source_evidence",
-				"Legacy preservation is unresolved: complete the title-wide search and verify source availability in every format",
-				api.MetadataEvidenceStatusPartial,
-			)
-		}
-	}
-	if strings.TrimSpace(subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "exception_note")]) == "" {
+
+	if strings.TrimSpace(subject.QuestionnaireAnswers[exceptionQuestionKey(subject)]) == "" {
 		return failure(
 			"lst_exception_note",
 			"Enter a container exception explanation in LST upload inputs before submission",
 			api.MetadataEvidenceStatusPartial,
 		)
 	}
-	return nil
+	var guidance []api.RuleFailure
+	if kind == "legacy" {
+		guidance = append(
+			guidance,
+			trackers.NewEvidenceRuleFailure(
+				"guidance_lst_container_source",
+				"Source availability in every format cannot be established from the prepared media or a title-search count. Review source records and explain the preservation exception; this does not establish staff permission.",
+				api.RuleDispositionAdvisory,
+				api.MetadataEvidenceStatusPartial,
+			),
+		)
+	}
+	unresolvedBroadcast := singleContainerException(subject) == "unresolved_broadcast" ||
+		slices.ContainsFunc(subject.MediaFileFacts.Files, func(file api.MediaFileFact) bool {
+			return singleContainerException(containerFileSubject(subject, file)) == "unresolved_broadcast"
+		})
+	if unresolvedBroadcast {
+		guidance = append(
+			guidance,
+			trackers.NewEvidenceRuleFailure(
+				"guidance_lst_broadcast_source",
+				"An inspected transport stream has no established broadcast source. Check each resource's source records and explain the container exception; neither its container nor a saved answer establishes broadcast provenance.",
+				api.RuleDispositionAdvisory,
+				api.MetadataEvidenceStatusPartial,
+			),
+		)
+	}
+	return guidance
 }
 
-func exceptionQuestionKey(subject api.TrackerValidationSubject, name string) string {
+func exceptionQuestionKey(subject api.TrackerValidationSubject) string {
 	subject = primaryTechnicalSubject(subject)
 	evidence := exceptionFingerprint(subject)
-	if name == "sole_source" {
-		search := subject.TitleSearchEvidence
-		fingerprint, _ := api.CanonicalWorkflowFingerprint(struct {
-			Source                string
-			Title, Result, Config api.WorkflowFingerprint
-			Policy                string
-			Count                 int
-		}{evidence, search.TitleFingerprint, search.ResultFingerprint, search.ConfigFingerprint, search.PolicyID, search.TorrentCount})
-		evidence = string(fingerprint)
-	}
-	return trackers.LanguageQuestionKey(subject, fmt.Sprintf("%s_%s", name, evidence))
+
+	return trackers.LanguageQuestionKey(subject, "exception_note_"+evidence)
 }
 
 func exceptionFingerprint(subject api.TrackerValidationSubject) string {

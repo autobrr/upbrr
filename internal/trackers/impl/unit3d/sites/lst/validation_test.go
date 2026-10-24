@@ -6,6 +6,7 @@ package lst
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -47,12 +48,12 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			wantStatus:      api.MetadataEvidenceStatusUnavailable,
 		},
 		{
-			name: "too few screenshots is strict",
+			name: "too few inspected screenshots is waivable",
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.AssetFacts.HostedScreenshots.Count = 2
 			},
-			wantRule:        "lst_required_assets_hosted_screenshot",
-			wantDisposition: api.RuleDispositionStrict,
+			wantRule:        "lst_screenshot_format",
+			wantDisposition: api.RuleDispositionWaivable,
 			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
@@ -60,9 +61,9 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.AssetFacts.HostedScreenshots.Status = api.MetadataEvidenceStatusUnavailable
 			},
-			wantRule:        "lst_required_assets_hosted_screenshot",
+			wantRule:        "guidance_lst_screenshot_format",
 			wantDisposition: api.RuleDispositionAdvisory,
-			wantStatus:      api.MetadataEvidenceStatusUnavailable,
+			wantStatus:      api.MetadataEvidenceStatusPartial,
 		},
 	}
 	for _, test := range tests {
@@ -78,6 +79,7 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			}
 			failures = withoutLSTStreamProcessingGuidance(t, failures)
 			failures = withoutLSTTrackPresentationGuidance(t, failures)
+			failures = withoutLSTUploadGuidance(t, failures)
 			if test.wantRule == "" {
 				if len(failures) != 0 {
 					t.Fatalf("unexpected failures: %#v", failures)
@@ -129,13 +131,7 @@ func lstValidationSubject() api.TrackerValidationSubject {
 			},
 		},
 	}
-	subject.QuestionnaireAnswers = map[string]string{assetQuestionKey(subject, "screenshot_preservation"): "lossless_preserved"}
-	for _, field := range presentationReviewQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = "reviewed_correct"
-	}
-	for _, field := range sourceReviewQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
-	}
+	subject.QuestionnaireAnswers = map[string]string{}
 	return subject
 }
 
@@ -166,6 +162,7 @@ func TestLSTValidationAllowsUnmappedEditions(t *testing.T) {
 			}
 			failures = withoutLSTStreamProcessingGuidance(t, failures)
 			failures = withoutLSTTrackPresentationGuidance(t, failures)
+			failures = withoutLSTUploadGuidance(t, failures)
 			if len(failures) != 0 {
 				t.Fatalf("cut %q failures = %#v", cut, failures)
 			}
@@ -176,7 +173,8 @@ func TestLSTValidationAllowsUnmappedEditions(t *testing.T) {
 			}
 			failures = withoutLSTStreamProcessingGuidance(t, failures)
 			failures = withoutLSTTrackPresentationGuidance(t, failures)
-			requireLSTValidationFailure(t, failures, "lst_required_assets_hosted_screenshot", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+			failures = withoutLSTUploadGuidance(t, failures)
+			requireLSTValidationFailure(t, failures, "lst_screenshot_format", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 		})
 	}
 }
@@ -249,7 +247,7 @@ func TestLSTLanguageDefaultAndTitleEvidenceBoundaries(t *testing.T) {
 	requireLSTValidationFailure(t, failures, "language_subtitles_search", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 	subject.Anime = true
 	subject.LanguageFacts.Tracks[0].Default = false
-	requireLSTValidationFailure(t, languageAssessment(subject), "language_default_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
+	requireLSTValidationFailure(t, languageAssessment(subject), "language_default_audio", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 	subject.TitleSearchEvidence.Status = api.MetadataEvidenceStatusPartial
 	subject.TitleSearchEvidence.TorrentCount = 1
 	subject.TitleSearchEvidence.ResultFingerprint = "positive-partial"
@@ -260,4 +258,20 @@ func TestLSTLanguageDefaultAndTitleEvidenceBoundaries(t *testing.T) {
 	if failures := languageAssessment(subject); len(failures) != 0 {
 		t.Fatalf("full disc acquired subtitle/default gates: %+v", failures)
 	}
+}
+
+func withoutLSTUploadGuidance(t *testing.T, failures []api.RuleFailure) []api.RuleFailure {
+	t.Helper()
+	for _, rule := range []string{"guidance_lst_duplicate_evidence", "language_web_source_naming"} {
+		index := slices.IndexFunc(failures, func(f api.RuleFailure) bool { return f.Rule == rule })
+		if index < 0 {
+			t.Fatalf("missing passive guidance %s: %+v", rule, failures)
+		}
+		failure := failures[index]
+		if failure.Disposition != api.RuleDispositionAdvisory || failure.QuestionnaireInput || failure.EvidenceStatus != api.MetadataEvidenceStatusPartial {
+			t.Fatalf("guidance requires acknowledgement or input: %+v", failure)
+		}
+		failures = slices.Delete(failures, index, index+1)
+	}
+	return failures
 }

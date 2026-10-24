@@ -655,6 +655,7 @@ func (s *Service) preparationInput(
 ) PreparationInput {
 	logger := logging.FromContext(ctx, s.logger)
 	meta, groupPolicy := ApplyGroupPolicy(trackerCfg, meta)
+	meta = FilterImportedScreenshotEvidenceForTrackerWithRegistry(s.registry, s.cfg, tracker, meta)
 	input := PreparationInput{
 		validationRegistry: s.registry,
 		Intent:             intent,

@@ -78,6 +78,8 @@ func (m *Module) restoreReusableMedia(
 	if err != nil {
 		return fmt.Errorf("release workflow restore saved media: %w", err)
 	}
+	// Cross-workflow saved media does not carry authoritative selection intent.
+	snapshot.AutomaticScreenshotSelection = existing != nil && existing.AutomaticScreenshotSelection
 	if len(snapshot.Artifacts) == 0 {
 		return nil
 	}

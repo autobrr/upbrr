@@ -12,9 +12,10 @@ import (
 // Profile returns LST's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:    "LST",
-		BaseURL: "https://lst.gg",
-		Rules:   Rules(),
+		Name:          "LST",
+		BaseURL:       "https://lst.gg",
+		Rules:         Rules(),
+		WorkflowMedia: &trackers.WorkflowMediaRequirements{AllowImportedScreenshotReferences: true},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			InspectProgrammeTracks: true,
 			Requirements: []trackers.MetadataRequirement{
@@ -28,6 +29,7 @@ func Profile() unit3d.Profile {
 		ValidationPolicy:  trackers.WithLanguageAssessment(validationPolicy(), languageAssessment),
 		TitleSearchPolicy: titleSearchPolicy(),
 		Site: unit3d.SiteProfile{
+			FinalizeDescription:      finalizeImportedScreenshotDescription,
 			ProjectionQuestionnaire:  languageQuestionnaire,
 			ApplyAdditionalPayload:   additionalPayload,
 			SubmissionRequirements:   submissionRequirements,

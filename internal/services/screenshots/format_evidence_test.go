@@ -4,6 +4,7 @@
 package screenshots
 
 import (
+	"bytes"
 	"image"
 	"image/png"
 	"os"
@@ -33,5 +34,20 @@ func TestScreenshotFormatUsesBytesRatherThanExtension(t *testing.T) {
 	got, _ = buildScreenshotImage(path, 1)
 	if got.Format != "" {
 		t.Fatal("invalid content gained format evidence")
+	}
+}
+
+func TestImportedScreenshotIncompleteFormatKeepsReference(t *testing.T) {
+	var payload bytes.Buffer
+	if err := png.Encode(&payload, image.NewRGBA(image.Rect(0, 0, 19, 11))); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "synthetic.png")
+	if err := os.WriteFile(path, payload.Bytes()[:33], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := buildScreenshotImage(path, 3)
+	if !ok || got.Path != path || got.Index != 3 || got.Format != "" || got.Width != 19 || got.Height != 11 {
+		t.Fatalf("unknown inspection rejected reference or retained format: %+v found=%t", got, ok)
 	}
 }

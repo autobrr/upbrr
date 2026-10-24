@@ -48,28 +48,18 @@ func TestLSTRetailSubtitleCoverageIsGuidance(t *testing.T) {
 	}
 }
 
-func TestLSTAlternateMixPriority(t *testing.T) {
-	subject := ordinaryCompatibilitySubject()
-	subject.LanguageFacts.Tracks[0].Role = api.AudioRoleAlternateMix
-	subject.QuestionnaireAnswers = map[string]string{}
-	fields := alternateMixQuestions(subject)
-	if len(fields) != 1 {
-		t.Fatalf("fields: %#v", fields)
-	}
+func TestLSTAlternateMixRemainsGuidanceForPersonalReleases(t *testing.T) {
+	s := ordinaryCompatibilitySubject()
+	s.LanguageFacts.Tracks[0].Role = api.AudioRoleAlternateMix
 	for _, personal := range []bool{false, true} {
-		subject.PersonalRelease = personal
-		fields = alternateMixQuestions(subject)
-		if fields[0].Required != personal {
-			t.Fatal("wrong priority")
+		s.PersonalRelease = personal
+		for _, answer := range []string{"", "additional_original_or_unique_remix", "not_unique"} {
+			track := s.LanguageFacts.Tracks[0]
+			s.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(s, "alternate_mix_"+track.ResourceID+"_"+track.ID): answer}
+			failures := alternateMixFailures(s)
+			if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionAdvisory || failures[0].QuestionnaireInput || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+				t.Fatalf("attestation changed guidance: %+v", failures)
+			}
 		}
-		failures := alternateMixFailures(subject)
-		if len(failures) != 1 || (failures[0].Disposition == api.RuleDispositionStrict) != personal {
-			t.Fatalf("priority: %#v", failures)
-		}
-		subject.QuestionnaireAnswers[fields[0].Key] = "additional_original_or_unique_remix"
-		if len(alternateMixFailures(subject)) != 0 {
-			t.Fatal("current review failed")
-		}
-		subject.QuestionnaireAnswers = map[string]string{}
 	}
 }

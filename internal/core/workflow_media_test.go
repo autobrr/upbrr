@@ -201,6 +201,7 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 		CompatibilityKey:         compatibilityKey,
 	}
 	image := api.ScreenshotImage{
+		Format:           "png",
 		DiscID:           "disc-a",
 		Index:            1,
 		TimestampSeconds: 90,
@@ -286,6 +287,10 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 	}
 	if !strings.HasPrefix(filepath.Base(filepath.Dir(repository.saved[0].Image.Path)), "@reused-") {
 		t.Fatalf("restored image path = %q, want dedicated reusable root", repository.saved[0].Image.Path)
+	}
+	claim, found := retained.legacyImageFormats[retained.Screenshots[0].Path]
+	if !found || claim.Format != "png" || claim.Conflicting || retained.Screenshots[0].Format != "" {
+		t.Fatalf("materialization lost original compatibility label or promoted it as evidence: %+v image=%+v", claim, retained.Screenshots[0])
 	}
 	hosted := retained.HostedImages[snapshot.Artifacts[1].ID]
 	if hosted.ImagePath != retained.Screenshots[0].Path {
@@ -2334,10 +2339,7 @@ func TestDecodeWorkflowMediaPrivateArtifactsHandlesLegacyHostedDeleteBinding(t *
 			if err != nil {
 				t.Fatalf("decode fixture: %v", err)
 			}
-			artifacts, ok := decoded.(workflowMediaPrivateArtifacts)
-			if !ok {
-				t.Fatalf("decoded fixture type = %T", decoded)
-			}
+			artifacts := decoded
 			if !test.wantDelete {
 				if artifacts.commitState != nil {
 					t.Fatalf("unsafe legacy delete remained queued: %#v", artifacts.commitState.pending)

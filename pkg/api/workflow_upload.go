@@ -227,7 +227,10 @@ type ReleaseWorkflowUploadMedia struct {
 
 // ReleaseWorkflowUploadScreenshots carries capture, manual, comparison, and selection intent.
 type ReleaseWorkflowUploadScreenshots struct {
-	Count                  *int               `json:"count,omitempty"`
+	Count *int `json:"count,omitempty"`
+	// CountIsDefault allows tracker policy to replace automatic capture with
+	// imported references. Omitted and false retain explicit-count semantics.
+	CountIsDefault         bool               `json:"countIsDefault,omitempty"`
 	Frames                 []int              `json:"frames,omitempty"`
 	ComparisonPaths        []string           `json:"comparisonPaths,omitempty"`
 	ComparisonPrimaryIndex *int               `json:"comparisonPrimaryIndex,omitempty"`
@@ -330,6 +333,9 @@ func (r CreateReleaseWorkflowUploadRequest) Validate() error {
 	}
 	if r.Media.Screenshots.Count != nil && *r.Media.Screenshots.Count < 0 {
 		return errors.New("screenshot count must not be negative")
+	}
+	if r.Media.Screenshots.CountIsDefault && r.Media.Screenshots.Count == nil {
+		return errors.New("default screenshot count origin requires a count")
 	}
 	if r.Media.Screenshots.ComparisonPrimaryIndex != nil {
 		index := *r.Media.Screenshots.ComparisonPrimaryIndex

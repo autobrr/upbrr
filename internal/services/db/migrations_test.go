@@ -78,7 +78,7 @@ func TestBaselineSchemaIncludesCurrentMigrationColumns(t *testing.T) {
 				"dependency_json",
 			},
 		},
-		{name: "external_metadata", columns: []string{"generation"}},
+		{name: "external_metadata", columns: []string{"generation", "imported_screenshot_evidence_json"}},
 		{name: "release_overrides", columns: []string{"use_season_episode", "no_episode_title", "no_distributor"}},
 		{name: "description_overrides", columns: []string{"group_key"}},
 	} {

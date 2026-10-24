@@ -24,49 +24,19 @@ func remuxSubtitleFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 	return []api.RuleFailure{failure}
 }
 
-func alternateMixQuestions(subject api.TrackerValidationSubject) []api.TrackerQuestionnaireField {
-	var fields []api.TrackerQuestionnaireField
+func alternateMixFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	var failures []api.RuleFailure
 	for _, track := range subject.LanguageFacts.Tracks {
 		if track.Kind != api.MediaTrackAudio || track.Role != api.AudioRoleAlternateMix {
 			continue
 		}
-		key := trackers.LanguageQuestionKey(subject, "alternate_mix_"+track.ResourceID+"_"+track.ID)
-		value := subject.QuestionnaireAnswers[key]
-		fields = append(
-			fields,
-			api.TrackerQuestionnaireField{
-				Key:         key,
-				Label:       "Alternate mix source for resource " + track.ResourceID + ", track " + track.ID,
-				Kind:        "select",
-				Options:     []string{"unresolved", "additional_original_or_unique_remix", "not_unique"},
-				Required:    subject.PersonalRelease,
-				Value:       value,
-				NeedsReview: value == "" || value == "unresolved",
-				Help:        "Review the exact source mix and its distinguishing content; track labels alone do not establish uniqueness.",
-			},
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"alternate_mix",
+			"resource "+track.ResourceID+", track "+track.ID+": retain an additional original mix or unique remix; the final track's labels do not establish source-mix uniqueness",
+			trackers.LanguageAdvisory,
 		)
-	}
-	return fields
-}
-
-func alternateMixFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
-	var failures []api.RuleFailure
-	for _, field := range alternateMixQuestions(subject) {
-		if field.Value == "additional_original_or_unique_remix" {
-			continue
-		}
-		outcome := trackers.LanguageAdvisory
-		if subject.PersonalRelease {
-			outcome = trackers.LanguageUnresolved
-			if field.Value == "not_unique" {
-				outcome = trackers.LanguageProhibited
-			}
-		}
-		failure := trackers.LanguageRuleFailure(subject, "alternate_mix", field.Label+": original-mix or unique-remix evidence is needed", outcome)
-		failure.QuestionnaireInput = true
-		if field.Value != "not_unique" {
-			failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
-		}
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		failures = append(failures, failure)
 	}
 	return failures
