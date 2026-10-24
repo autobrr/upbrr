@@ -557,9 +557,9 @@ export async function fetchMetadata(
 ): Promise<ActiveInputSnapshot> {
   await page.goto(appUrl);
   await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
-  await page.getByLabel("Source path").fill(sourcePath);
+  await page.getByLabel("Source path", { exact: true }).fill(sourcePath);
   // Source history can cover the fetch button at narrow viewport widths.
-  await page.getByLabel("Source path").press("Escape");
+  await page.getByLabel("Source path", { exact: true }).press("Escape");
   await expect(page.getByRole("listbox", { name: "Source path history" })).toBeHidden();
   const opened = page.waitForResponse((response) =>
     response.url().endsWith("/api/app/OpenActiveInput"),
