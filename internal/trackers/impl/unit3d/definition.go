@@ -349,12 +349,7 @@ func (d *Definition) prepareUpload(ctx context.Context, req trackers.Preparation
 				return trackers.PreparedOperation{}, trackers.NewQuestionnairePreparationFailure(req.Tracker, blockingFailure.Reason, schema)
 			}
 		}
-		return trackers.PreparedOperation{}, trackers.NewPreparationFailure(
-			req.Tracker,
-			"constructibility",
-			blockingFailure.Reason,
-			nil,
-		)
+		return trackers.PreparedOperation{}, fmt.Errorf("%s: %s", blockingFailure.Rule, blockingFailure.Reason)
 	}
 	if d.profile.BaseURL != "" {
 		return prepareUnit3DUpload(ctx, req, d.profile.BaseURL, d.profile.Site)

@@ -50,7 +50,8 @@ func TestPersistUnit3DArtifactsLogsDownloadReasonWithoutImageURL(t *testing.T) {
 	successful, _ := svc.persistTrackerArtifacts(t.Context(), preparationstate.State{SourcePath: filepath.Join(tempDir, "source")},
 		"AITHER", trackerdata.Result{Validated: []bbcode.Image{{RawURL: imageURL}}}, true)
 	if len(successful) != 0 || len(logger.warnings) != 1 ||
-		!strings.Contains(logger.warnings[0], "index=1 reason=request_failed") ||
+		!strings.Contains(logger.warnings[0], "index=1 reason=tracker image attempt: request_failed") ||
+		strings.Contains(logger.warnings[0], "93.184.216.34") || strings.Contains(logger.warnings[0], "https://") ||
 		strings.Contains(logger.warnings[0], "private-image") || strings.Contains(logger.warnings[0], "marker=example") {
 		t.Fatalf("expected URL-free download failure reason, got warnings=%v successful=%v", logger.warnings, successful)
 	}

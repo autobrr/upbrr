@@ -31,7 +31,7 @@ func (b workflowDescriptionBuilder) PrepareReusableDescriptions(
 	if b.reuse == nil || !workflowDescriptionSnapshotFullyCompleted(projections, snapshot) {
 		return nil, nil
 	}
-	sourcePath, compatibilityFingerprint, available, err := b.reusableDescriptionInputs(
+	sourcePath, compatibilityFingerprint, _, available, err := b.reusableDescriptionInputs(
 		ctx, release, projections, media, privateMedia, instructions,
 	)
 	if err != nil {
@@ -74,7 +74,7 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 	if b.reuse == nil || len(instructions.Overrides) > 0 {
 		return api.DescriptionSet{}, instructions, nil
 	}
-	sourcePath, compatibilityFingerprint, available, err := b.reusableDescriptionInputs(
+	sourcePath, compatibilityFingerprint, legacyFingerprint, available, err := b.reusableDescriptionInputs(
 		ctx, release, projections, media, privateMedia, instructions,
 	)
 	if err != nil {
@@ -87,7 +87,8 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 	if err != nil {
 		return api.DescriptionSet{}, instructions, fmt.Errorf("workflow reusable descriptions: load: %w", err)
 	}
-	if !found || !reusable.Valid() || reusable.CompatibilityFingerprint != compatibilityFingerprint {
+	if !found || !reusable.Valid() ||
+		reusable.CompatibilityFingerprint != compatibilityFingerprint && reusable.CompatibilityFingerprint != legacyFingerprint {
 		return api.DescriptionSet{}, instructions, nil
 	}
 
@@ -124,41 +125,45 @@ func (b workflowDescriptionBuilder) reusableDescriptionInputs(
 	media api.MediaArtifactSet,
 	privateMedia any,
 	instructions api.DescriptionInstructions,
-) (string, api.WorkflowFingerprint, bool, error) {
+) (string, api.WorkflowFingerprint, api.WorkflowFingerprint, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", "", false, fmt.Errorf("workflow reusable descriptions: %w", err)
+		return "", "", "", false, fmt.Errorf("workflow reusable descriptions: %w", err)
 	}
 	compatibilityInstructions := instructions
 	compatibilityInstructions.Overrides = nil
 	subject, err := b.resolveSubject(ctx, release, projections, compatibilityInstructions)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	retainWorkflowScreenshotSelection(&subject, privateMedia)
 	binding := subject.MediaBinding
 	if !binding.Valid() || !binding.CompatibilityKey.Valid() {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
 	resourceSubject := subject
 	if len(instructions.Overrides) > 0 {
 		resourceSubject, err = b.resolveSubject(ctx, release, projections, instructions)
 		if err != nil {
-			return "", "", false, err
+			return "", "", "", false, err
 		}
 	}
 	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, resourceSubject, privateMedia, media)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	descriptionSubject := api.NewDescriptionSubject(subject)
 	descriptionSubject.ExactMedia = exactMedia
-	fingerprint, available, err := workflowReusableDescriptionFingerprint(
-		ctx, b.config, binding.CompatibilityKey, projections, compatibilityInstructions, descriptionSubject,
+	if resources, wrapped := privateMedia.(releaseworkflow.DescriptionResources); wrapped {
+		privateMedia = resources.Media
+	}
+	retained, _ := privateMedia.(workflowMediaPrivateArtifacts)
+	fingerprint, legacyFingerprint, available, err := workflowReusableDescriptionFingerprint(
+		ctx, b.config, binding.CompatibilityKey, projections, compatibilityInstructions, descriptionSubject, retained.legacyImageFormats,
 	)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
-	return binding.SourcePath, fingerprint, available, nil
+	return binding.SourcePath, fingerprint, legacyFingerprint, available, nil
 }
 
 type workflowReusableDescriptionImage struct {
@@ -213,16 +218,17 @@ func workflowReusableDescriptionFingerprint(
 	projections api.TrackerReleaseProjectionSet,
 	instructions api.DescriptionInstructions,
 	subject api.DescriptionSubject,
-) (api.WorkflowFingerprint, bool, error) {
+	legacyFormats map[string]workflowLegacyImageFormat,
+) (api.WorkflowFingerprint, api.WorkflowFingerprint, bool, error) {
 	normalizedSubject, localResources, available, err := normalizeReusableDescriptionSubject(ctx, subject)
 	if err != nil || !available {
-		return "", available, err
+		return "", "", available, err
 	}
 	normalizedMedia, available, err := normalizeReusableDescriptionMedia(ctx, subject.ExactMedia)
 	if err != nil || !available {
-		return "", available, err
+		return "", "", available, err
 	}
-	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+	payload := struct {
 		Version                              string
 		Config                               config.Config
 		CompatibilityKey                     api.MediaCompatibilityKey
@@ -242,11 +248,40 @@ func workflowReusableDescriptionFingerprint(
 		SuppressImportedScreenshotReferences: subject.SuppressImportedScreenshotReferences,
 		LocalResources:                       localResources,
 		ExactMedia:                           normalizedMedia,
-	})
-	if err != nil {
-		return "", false, fmt.Errorf("workflow reusable descriptions: canonical fingerprint: %w", err)
 	}
-	return fingerprint, true, nil
+	legacyAvailable := true
+	for index := range payload.ExactMedia.Screenshots {
+		if original, exists := legacyFormats[subject.ExactMedia.Screenshots[index].Path]; exists {
+			legacyAvailable = legacyAvailable && !original.Conflicting
+			payload.ExactMedia.Screenshots[index].Image.Format = original.Format
+		}
+	}
+	for index := range payload.ExactMedia.DVDMenus {
+		if original, exists := legacyFormats[subject.ExactMedia.DVDMenus[index].Path]; exists {
+			legacyAvailable = legacyAvailable && !original.Conflicting
+			payload.ExactMedia.DVDMenus[index].Image.Format = original.Format
+		}
+	}
+	var legacyFingerprint api.WorkflowFingerprint
+	if legacyAvailable {
+		legacyFingerprint, err = api.CanonicalWorkflowFingerprint(payload)
+		if err != nil {
+			return "", "", false, fmt.Errorf("workflow reusable descriptions: canonical fingerprint: %w", err)
+		}
+	}
+	// Older records included the format label. Accept that exact dependency hash,
+	// but store byte-bound compatibility so later format inspection preserves edits.
+	for index := range payload.ExactMedia.Screenshots {
+		payload.ExactMedia.Screenshots[index].Image.Format = ""
+	}
+	for index := range payload.ExactMedia.DVDMenus {
+		payload.ExactMedia.DVDMenus[index].Image.Format = ""
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint(payload)
+	if err != nil {
+		return "", "", false, fmt.Errorf("workflow reusable descriptions: canonical fingerprint: %w", err)
+	}
+	return fingerprint, legacyFingerprint, true, nil
 }
 
 func reusableDescriptionProjections(projections []api.TrackerReleaseProjection) []api.TrackerReleaseProjection {

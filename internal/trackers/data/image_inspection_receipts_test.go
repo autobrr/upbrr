@@ -287,11 +287,14 @@ func TestLookupUnit3DUninspectedImageReferences(t *testing.T) {
 func TestCheckImageWithholdsReferenceAfterResponseBodyTimeout(t *testing.T) {
 	t.Parallel()
 	requestContexts := make(chan context.Context, 1)
+	bodyStarted := make(chan struct{})
 	transport := imageReceiptHTTPTransport(t, func(*http.Request) *http.Response {
 		requestContext := <-requestContexts
 		reader, writer := io.Pipe()
 		go func() {
-			_, _ = writer.Write([]byte("\x89PNG\r\n\x1a\n"))
+			if _, err := writer.Write([]byte("\x89PNG\r\n\x1a\n")); err == nil {
+				close(bodyStarted)
+			}
 			<-requestContext.Done()
 			_ = writer.CloseWithError(requestContext.Err())
 		}()
@@ -306,8 +309,13 @@ func TestCheckImageWithholdsReferenceAfterResponseBodyTimeout(t *testing.T) {
 		requestContexts <- req.Context()
 		return nil, nil
 	}
-	client := Unit3DImageHTTPClient(&http.Client{Transport: transport, Timeout: 100 * time.Millisecond})
+	client := Unit3DImageHTTPClient(&http.Client{Transport: transport, Timeout: 2 * time.Second})
 	reason, reference := checkImage(t.Context(), client, "http://93.184.216.34/timeout.png", true)
+	select {
+	case <-bodyStarted:
+	default:
+		t.Fatal("timeout occurred before the response body was consumed")
+	}
 	if reason != "image_decode_failed" || reference != "" || t.Context().Err() != nil {
 		t.Fatalf("response-body timeout became a receipt: reason=%q reference=%q parent=%v", reason, reference, t.Context().Err())
 	}

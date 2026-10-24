@@ -1356,8 +1356,12 @@ Guidance panel; language guidance retains its existing `language_` codes.
 Reference-only imported screenshots require an explicit tracker workflow capability and a
 current source/generation-bound inspection receipt. Keep them separate from local screenshot
 artifacts: accepted URL checks do not prove image format, dimensions, preservation, or a complete
-download. Preserve existing URL, redirect, public-address, response and byte-limit checks;
-legacy metadata and generic request failures are not receipts. Apply the normal tracker host
+download. Local format evidence requires a successful full decode of at most 20 MiB and
+35,389,440 total pixels, processed one image at a time. The pixel budget is independent of
+aspect ratio. Larger, malformed or unreadable images keep unknown format; this evidence
+limit must not reject otherwise accepted references or force new screenshots. Preserve existing
+URL, redirect, public-address, response and byte-limit checks; legacy metadata and generic
+request failures are not receipts. Apply the normal tracker host
 policy before using references for capture planning, preflight, descriptions or guidance.
 The capability may suppress automatic capture defaults, not explicit screenshot requests or
 another selected tracker's requirements. Retain receipts atomically with their prepared generation;

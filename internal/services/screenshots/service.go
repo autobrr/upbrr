@@ -1604,13 +1604,13 @@ func buildScreenshotImage(pathValue string, index int) (api.ScreenshotImage, boo
 		SizeBytes:        stat.Size(),
 	}
 	if f, err := os.Open(pathValue); err == nil {
-		if cfg, format, err := image.DecodeConfig(f); err == nil {
-			img.Format = format
+		if cfg, _, err := image.DecodeConfig(f); err == nil {
 			img.Width = cfg.Width
 			img.Height = cfg.Height
 		}
 		_ = f.Close()
 	}
+	img.Format = imageevidence.VerifiedFormat(pathValue)
 	return img, true
 }
 
