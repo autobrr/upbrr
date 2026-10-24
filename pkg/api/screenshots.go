@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+// ScreenshotTonemapping records observed image processing, never capture preferences.
+// The zero value deliberately preserves unknown legacy and imported images.
+type ScreenshotTonemapping string
+
+const (
+	ScreenshotTonemapped    ScreenshotTonemapping = "tonemapped"
+	ScreenshotNotTonemapped ScreenshotTonemapping = "not_tonemapped"
+)
+
 // ScreenshotPurpose classifies an image within preview, final-selection, and
 // disc-menu workflows.
 type ScreenshotPurpose string
@@ -171,14 +180,20 @@ type ScreenshotDiscPlan struct {
 }
 
 type ScreenshotLinkedImage struct {
-	Tracker    string
-	URL        string
-	PreviewURL string
-	Path       string
-	Host       string // Normalized host name (e.g., "imgbb", "pixhost") or domain name
+	// Tonemapping records actual processing; empty means unknown. ContentSHA256 binds it to image bytes.
+	Tonemapping   ScreenshotTonemapping `json:",omitempty"`
+	ContentSHA256 string                `json:",omitempty"`
+	Tracker       string
+	URL           string
+	PreviewURL    string
+	Path          string
+	Host          string // Normalized host name (e.g., "imgbb", "pixhost") or domain name
 }
 
 type ScreenshotImage struct {
+	// Tonemapping records actual processing; empty means unknown. ContentSHA256 binds it to image bytes.
+	Tonemapping   ScreenshotTonemapping `json:",omitempty"`
+	ContentSHA256 string                `json:",omitempty"`
 	// Format is decoded from the image bytes; empty means uninspected.
 	Format           string `json:",omitempty"`
 	DiscID           string

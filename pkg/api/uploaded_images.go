@@ -6,6 +6,9 @@ package api
 import "time"
 
 type UploadedImageLink struct {
+	// Tonemapping records actual processing; empty means unknown. ContentSHA256 binds it to image bytes.
+	Tonemapping              ScreenshotTonemapping `json:",omitempty"`
+	ContentSHA256            string                `json:",omitempty"`
 	SourcePath               string
 	PreparedMediaFingerprint string
 	PreparedGeneration       PreparedGeneration

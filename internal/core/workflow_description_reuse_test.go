@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -43,8 +44,8 @@ func (r *workflowDescriptionReuseRepositoryFake) LoadReusableDescription(
 }
 
 type workflowDescriptionReuseResolverFake struct {
-	subject api.UploadSubject
-	inputs  []api.UploadSubjectInput
+	subject        api.UploadSubject
+	inputs         []api.UploadSubjectInput
 	useInputGroups bool
 }
 
@@ -193,6 +194,22 @@ func TestWorkflowDescriptionReuseRejectsChangedDependencies(t *testing.T) {
 			mutate: func(fixture *workflowDescriptionReuseFixture) {
 				fixture.currentMedia.Artifacts[0].Order, fixture.currentMedia.Artifacts[1].Order =
 					fixture.currentMedia.Artifacts[1].Order, fixture.currentMedia.Artifacts[0].Order
+			},
+		},
+		{
+			name: "hosted processing evidence",
+			mutate: func(fixture *workflowDescriptionReuseFixture) {
+				link := fixture.currentPrivate.HostedImages["host-screen-one"]
+				link.Tonemapping = api.ScreenshotTonemapped
+				fixture.currentPrivate.HostedImages["host-screen-one"] = link
+			},
+		},
+		{
+			name: "hosted account binding",
+			mutate: func(fixture *workflowDescriptionReuseFixture) {
+				link := fixture.currentPrivate.HostedImages["host-screen-one"]
+				link.AccountScope = "different-account"
+				fixture.currentPrivate.HostedImages["host-screen-one"] = link
 			},
 		},
 		{
@@ -540,67 +557,69 @@ func reusableDescriptionPrivateMedia(t *testing.T, root, prefix string) workflow
 }
 
 func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *testing.T) {
-	for _, mode := range []string{"generated", "mixed", "final"} {
-		t.Run(mode, func(t *testing.T) {
-			f := newWorkflowDescriptionReuseFixture(t)
-			for i, name := range []api.TrackerID{"AITHER", "STC"} {
-				f.projections.Projections[i].TrackerID = name
-				f.projections.Projections[i].DescriptionGroup = "unit3d"
-				f.snapshot.Descriptions[i].TrackerIDs = []api.TrackerID{name}
-				f.snapshot.Descriptions[i].GroupKey = "unit3d|" + strings.ToLower(string(name))
-				f.snapshot.TrackerResults[i].TrackerID = name
-			}
-			f.instructions.Overrides = nil
-			if mode != "generated" {
-				f.snapshot.Descriptions[0].Source = "Final AITHER text"
-				f.snapshot.Descriptions[0].Rendered = "<p>Final AITHER text</p>"
-				f.instructions.Overrides = append(f.instructions.Overrides, api.DescriptionOverrideInput{
-					GroupKey:   "unit3d|aither",
-					TrackerIDs: []api.TrackerID{"AITHER"},
-					Source:     "Final AITHER text",
-					Final:      true,
-				})
-			}
-			if mode == "final" {
-				f.snapshot.Descriptions[1].Source = "Final STC text"
-				f.snapshot.Descriptions[1].Rendered = "<p>Final STC text</p>"
-				f.instructions.Overrides = append(f.instructions.Overrides, api.DescriptionOverrideInput{
-					GroupKey:   "unit3d|stc",
-					TrackerIDs: []api.TrackerID{"STC"},
-					Source:     "Final STC text",
-					Final:      true,
-				})
-			}
-			if err := f.recordReusableDescriptions(t, f.oldRelease, f.oldMedia, f.oldPrivate, f.snapshot); err != nil {
-				t.Fatal(err)
-			}
-			// Pre-upgrade persisted JSON has no renderer version, but the dependencies still match.
-			f.repository.value.RendererVersion = ""
-			f.resolver.subject = reusableDescriptionSubjectForFixture(f.currentRelease, 2)
-			f.resolver.useInputGroups = true
-			f.builder.trackers = trackers.NewServiceWithRegistry(f.builder.config, api.NopLogger{}, nil, trackerimpl.MustNewRegistry())
-			current := f.instructions
-			current.Overrides = nil
-			got, restored, err := f.builder.RestoreCompatibleDescriptions(t.Context(), f.currentRelease, f.projections, f.currentMedia, f.currentPrivate, current)
-			if err != nil || got.Status != api.StageStatusCompleted || !reflect.DeepEqual(restored.Overrides, f.instructions.Overrides) {
-				t.Fatalf("refresh=%+v instructions=%+v err=%v", got, restored, err)
-			}
-			for _, output := range got.Descriptions {
-				for _, tracker := range output.TrackerIDs {
-					final := mode == "final" || mode == "mixed" && tracker == "AITHER"
-					if final && output.Source != "Final "+string(tracker)+" text" {
-						t.Fatalf("final edit changed: %+v", output)
-					}
-					if !final && (!strings.Contains(output.Source, "Template v1") || strings.Contains(output.Source, "saved beta source") || strings.Contains(output.Source, "saved alpha source")) {
-						t.Fatalf("generated text not refreshed: %+v", output)
+	for _, renderer := range []string{"", "description-renderer-v1"} {
+		for _, mode := range []string{"generated", "mixed", "final"} {
+			t.Run(renderer+"/"+mode, func(t *testing.T) {
+				f := newWorkflowDescriptionReuseFixture(t)
+				for i, name := range []api.TrackerID{"AITHER", "STC"} {
+					f.projections.Projections[i].TrackerID = name
+					f.projections.Projections[i].DescriptionGroup = "unit3d"
+					f.snapshot.Descriptions[i].TrackerIDs = []api.TrackerID{name}
+					f.snapshot.Descriptions[i].GroupKey = "unit3d|" + strings.ToLower(string(name))
+					f.snapshot.TrackerResults[i].TrackerID = name
+				}
+				f.instructions.Overrides = nil
+				if mode != "generated" {
+					f.snapshot.Descriptions[0].Source = "Final AITHER text"
+					f.snapshot.Descriptions[0].Rendered = "<p>Final AITHER text</p>"
+					f.instructions.Overrides = append(f.instructions.Overrides, api.DescriptionOverrideInput{
+						GroupKey:   "unit3d|aither",
+						TrackerIDs: []api.TrackerID{"AITHER"},
+						Source:     "Final AITHER text",
+						Final:      true,
+					})
+				}
+				if mode == "final" {
+					f.snapshot.Descriptions[1].Source = "Final STC text"
+					f.snapshot.Descriptions[1].Rendered = "<p>Final STC text</p>"
+					f.instructions.Overrides = append(f.instructions.Overrides, api.DescriptionOverrideInput{
+						GroupKey:   "unit3d|stc",
+						TrackerIDs: []api.TrackerID{"STC"},
+						Source:     "Final STC text",
+						Final:      true,
+					})
+				}
+				if err := f.recordReusableDescriptions(t, f.oldRelease, f.oldMedia, f.oldPrivate, f.snapshot); err != nil {
+					t.Fatal(err)
+				}
+				// Older output must rebuild without discarding final edits.
+				f.repository.value.RendererVersion = renderer
+				f.resolver.subject = reusableDescriptionSubjectForFixture(f.currentRelease, 2)
+				f.resolver.useInputGroups = true
+				f.builder.trackers = trackers.NewServiceWithRegistry(f.builder.config, api.NopLogger{}, nil, trackerimpl.MustNewRegistry())
+				current := f.instructions
+				current.Overrides = nil
+				got, restored, err := f.builder.RestoreCompatibleDescriptions(t.Context(), f.currentRelease, f.projections, f.currentMedia, f.currentPrivate, current)
+				if err != nil || got.Status != api.StageStatusCompleted || !reflect.DeepEqual(restored.Overrides, f.instructions.Overrides) {
+					t.Fatalf("refresh=%+v instructions=%+v err=%v", got, restored, err)
+				}
+				for _, output := range got.Descriptions {
+					for _, tracker := range output.TrackerIDs {
+						final := mode == "final" || mode == "mixed" && tracker == "AITHER"
+						if final && output.Source != "Final "+string(tracker)+" text" {
+							t.Fatalf("final edit changed: %+v", output)
+						}
+						if !final && (!strings.Contains(output.Source, "Template v1") || strings.Contains(output.Source, "saved beta source") || strings.Contains(output.Source, "saved alpha source")) {
+							t.Fatalf("generated text not refreshed: %+v", output)
+						}
 					}
 				}
-			}
-			record, err := f.builder.PrepareReusableDescriptions(t.Context(), f.currentRelease, f.projections, f.currentMedia, f.currentPrivate, restored, got)
-			if err != nil || record == nil || record.Description.RendererVersion == "" {
-				t.Fatalf("refreshed record=%+v err=%v", record, err)
-			}
-		})
+				record, err := f.builder.PrepareReusableDescriptions(t.Context(), f.currentRelease, f.projections, f.currentMedia, f.currentPrivate, restored, got)
+				if err != nil || record == nil || record.Description.RendererVersion == "" {
+					t.Fatalf("refreshed record=%+v err=%v", record, err)
+				}
+			})
+		}
 	}
 }
 
@@ -619,5 +638,98 @@ func TestWorkflowDescriptionFingerprintsInvalidateLegacyRenderer(t *testing.T) {
 	}
 	if current == legacy {
 		t.Fatal("active snapshot from old renderer remains compatible")
+	}
+}
+
+func TestWorkflowDescriptionReusePreservesEditsWhenUnknownImageDigestIsRecorded(t *testing.T) {
+	for _, mode := range []string{"local", "hosted", "both"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := newWorkflowDescriptionReuseFixture(t)
+			fixture.instructions.Overrides[0].Final = true
+			if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, fixture.oldPrivate, fixture.snapshot); err != nil {
+				t.Fatal(err)
+			}
+			// Reusable-media persistence records identity without inventing processing.
+			for index := range fixture.currentPrivate.Screenshots {
+				image := &fixture.currentPrivate.Screenshots[index]
+				digest, err := workflowMediaContentSHA256(t.Context(), image.Path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode != "hosted" {
+					image.ContentSHA256 = digest
+				}
+				if image.Tonemapping != "" {
+					t.Fatal("legacy fixture must remain unknown")
+				}
+			}
+			if mode != "hosted" {
+				for index := range fixture.currentPrivate.DVDMenus {
+					menu := &fixture.currentPrivate.DVDMenus[index]
+					digest, err := workflowMediaContentSHA256(t.Context(), menu.Path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					menu.ContentSHA256 = digest
+				}
+			}
+			if mode != "local" {
+				for id, link := range fixture.currentPrivate.HostedImages {
+					digest, err := workflowMediaContentSHA256(t.Context(), link.ImagePath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					link.ContentSHA256 = digest
+					fixture.currentPrivate.HostedImages[id] = link
+				}
+			}
+			fixture.resolver.subject = reusableDescriptionSubjectForFixture(fixture.currentRelease, 2)
+			current := fixture.instructions
+			current.Overrides = nil
+			restored, instructions, err := fixture.builder.RestoreCompatibleDescriptions(t.Context(), fixture.currentRelease,
+				fixture.projections, fixture.currentMedia, fixture.currentPrivate, current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(restored.Descriptions, fixture.snapshot.Descriptions) ||
+				!reflect.DeepEqual(instructions.Overrides, fixture.instructions.Overrides) || fixture.service.builds != 0 {
+				t.Fatalf("unchanged image bytes lost saved edits: descriptions=%+v overrides=%+v builds=%d", restored.Descriptions, instructions.Overrides, fixture.service.builds)
+			}
+		})
+	}
+}
+
+func TestUnknownHostedProvenanceKeepsLegacyFingerprintShape(t *testing.T) {
+	link := api.UploadedImageLink{
+		ImagePath:    "image.png",
+		Host:         "images.example",
+		UsageScope:   "global",
+		AccountScope: "account-one",
+		RawURL:       "https://images.example/image.png",
+	}
+	normalized, err := normalizeReusableDescriptionHostedImages([]api.UploadedImageLink{link}, map[string]string{"image.png": "digest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exact normalized JSON produced before screenshot provenance was introduced.
+	const legacy = `[{"ImageSHA256":"digest","Host":"images.example","UsageScope":"global","AccountScope":"account-one","ImgURL":"","RawURL":"https://images.example/image.png","WebURL":"","SizeBytes":0}]`
+	if string(payload) != legacy {
+		t.Fatalf("unknown evidence changed legacy compatibility: %s", payload)
+	}
+	link.Tonemapping = api.ScreenshotNotTonemapped
+	normalized, err = normalizeReusableDescriptionHostedImages([]api.UploadedImageLink{link}, map[string]string{"image.png": "digest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	known, err := json.Marshal(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(known) == legacy {
+		t.Fatal("known processing status must change compatibility")
 	}
 }

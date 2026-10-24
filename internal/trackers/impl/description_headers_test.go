@@ -55,12 +55,13 @@ func TestDescriptionHeadersSurvivePreparationWithAnalysis(t *testing.T) {
 				url := fmt.Sprintf("https://images.example.invalid/screen-%d.png", index)
 				media.Screenshots = append(media.Screenshots, api.ScreenshotImage{Path: path, Purpose: api.ScreenshotPurposeFinal})
 				media.ScreenshotUploads = append(media.ScreenshotUploads, api.UploadedImageLink{
-					ImagePath:  path,
-					Host:       host,
-					UsageScope: "global",
-					ImgURL:     url,
-					RawURL:     url,
-					WebURL:     url,
+					Tonemapping: api.ScreenshotTonemapped,
+					ImagePath:   path,
+					Host:        host,
+					UsageScope:  "global",
+					ImgURL:      url,
+					RawURL:      url,
+					WebURL:      url,
 				})
 			}
 			meta := api.UploadSubject{
@@ -76,9 +77,21 @@ func TestDescriptionHeadersSurvivePreparationWithAnalysis(t *testing.T) {
 					"OE": {"encoding_settings": "SVT-AV1 preset=4 crf=20", "source_notes": "Synthetic BluRay source"},
 				}
 			}
-			for _, mode := range []string{"tonemapped", "disabled", "SDR", "plots only"} {
+			for _, mode := range []string{"tonemapped", "disabled", "SDR", "unknown", "not tonemapped", "mixed", "plots only"} {
 				t.Run(mode, func(t *testing.T) {
 					subject := meta
+					subject.ExactMedia = media.Clone()
+					if mode == "unknown" || mode == "not tonemapped" {
+						for i := range subject.ExactMedia.ScreenshotUploads {
+							subject.ExactMedia.ScreenshotUploads[i].Tonemapping = ""
+							if mode == "not tonemapped" {
+								subject.ExactMedia.ScreenshotUploads[i].Tonemapping = api.ScreenshotNotTonemapped
+							}
+						}
+					}
+					if mode == "mixed" {
+						subject.ExactMedia.ScreenshotUploads[0].Tonemapping = ""
+					}
 					if mode == "plots only" {
 						subject.ExactMedia = media.Clone()
 						subject.ExactMedia.Screenshots, subject.ExactMedia.ScreenshotUploads = nil, nil
@@ -104,7 +117,10 @@ func TestDescriptionHeadersSurvivePreparationWithAnalysis(t *testing.T) {
 						t.Fatalf("preview=%+v err=%v", preview, err)
 					}
 					got := preview.Descriptions[0].RawDescription
-					if strings.Contains(got, "TONEMAPPED HEADER") != (mode == "tonemapped") {
+					if mode == "mixed" && !strings.Contains(got, "2 tonemapped, 0 not tonemapped, 1 with unknown processing") {
+						t.Fatalf("mixed evidence missing: %s", got)
+					}
+					if strings.Contains(got, "TONEMAPPED HEADER") != (mode == "tonemapped" || mode == "disabled" || mode == "SDR") {
 						t.Fatalf("incorrect tonemap notice: %s", got)
 					}
 					switch tracker {

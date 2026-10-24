@@ -370,6 +370,7 @@ func applyResolvedDescriptionScreenshots(
 	repo UploadPersistence,
 	preloaded *preloadedDescriptionAssetData,
 	assets *DescriptionAssets,
+	resolvedUploads []api.UploadedImageLink,
 	screenshots []api.ScreenshotImage,
 ) {
 	if assets == nil {
@@ -383,6 +384,15 @@ func applyResolvedDescriptionScreenshots(
 	}
 	assets.MenuImages = orderDescriptionMedia(meta, assets.MenuImages)
 	assets.Screenshots = orderDescriptionMedia(meta, assets.Screenshots)
+	uploads := slices.Clone(resolvedUploads)
+	if meta.ExactMedia != nil {
+		uploads = append(uploads, meta.ExactMedia.ScreenshotUploads...)
+	} else if preloaded != nil || repo != nil {
+		if saved, err := uploadedImagesFromSource(ctx, meta, repo, preloaded); err == nil {
+			uploads = append(uploads, saved...)
+		}
+	}
+	applyScreenshotURLProvenance(assets.Screenshots, uploads)
 }
 
 func orderDescriptionMedia(meta api.UploadSubject, images []api.ScreenshotImage) []api.ScreenshotImage {
@@ -1473,4 +1483,19 @@ func StripDefaultDescriptionSignature(value string) string {
 	cleaned := defaultSignaturePattern.ReplaceAllString(value, "")
 	cleaned = descriptionSpacingPattern.ReplaceAllString(cleaned, "\n\n")
 	return strings.TrimSpace(cleaned)
+}
+
+// applyScreenshotURLProvenance restores evidence discarded by slot projection.
+// A reused path alone never transfers processing evidence to a different URL.
+func applyScreenshotURLProvenance(images []api.ScreenshotImage, uploads []api.UploadedImageLink) {
+	for index := range images {
+		image := &images[index]
+		image.Tonemapping, image.ContentSHA256 = "", ""
+		for _, upload := range uploads {
+			if image.RawURL != "" && image.RawURL == upload.RawURL || image.ImgURL != "" && image.ImgURL == upload.ImgURL {
+				image.Tonemapping, image.ContentSHA256 = upload.Tonemapping, upload.ContentSHA256
+				break
+			}
+		}
+	}
 }

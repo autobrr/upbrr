@@ -35,3 +35,7 @@ Frame type reports FFmpeg's picture type (I, P, or B), or **Unknown** when that 
 ## Verify the change
 
 Save, open **Screenshots**, generate a small set, and inspect output before uploading. Libplacebo retries and falls back to the software chain when its capture path fails.
+
+Tone mapping changes apply to new captures, not pixels in existing images. Saved screenshots retain their processing evidence for later descriptions; replacing an image does not transfer the old image's evidence.
+
+This version adds screenshot-processing fields to the state database. Before testing a development build, stop the service and back up the whole state directory, or use a separate test state directory. Changing back to an older binary or image tag does not undo database changes; restore the matching pre-test state when returning to that release.

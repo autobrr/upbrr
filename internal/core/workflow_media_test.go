@@ -1914,6 +1914,8 @@ func (f *durableWorkflowScreenshotFake) Capture(
 			return api.ScreenshotResult{}, fmt.Errorf("write captured screenshot: %w", err)
 		}
 		images = append(images, api.ScreenshotImage{
+			ContentSHA256:    workflowMediaTestSHA256(string(content)),
+			Tonemapping:      api.ScreenshotNotTonemapped,
 			Path:             pathValue,
 			Purpose:          purpose,
 			Index:            selection.Index,
@@ -1985,12 +1987,14 @@ func (h *countingWorkflowImageHost) Upload(
 	links := make([]api.UploadedImageLink, 0, len(images))
 	for _, image := range images {
 		links = append(links, api.UploadedImageLink{
-			ImagePath:  image.Path,
-			Host:       host,
-			UsageScope: usageScope,
-			RawURL:     rawURL,
-			SizeBytes:  image.SizeBytes,
-			UploadedAt: time.Now().UTC(),
+			Tonemapping:   image.Tonemapping,
+			ContentSHA256: image.ContentSHA256,
+			ImagePath:     image.Path,
+			Host:          host,
+			UsageScope:    usageScope,
+			RawURL:        rawURL,
+			SizeBytes:     image.SizeBytes,
+			UploadedAt:    time.Now().UTC(),
 		})
 	}
 	return links, nil
@@ -3617,10 +3621,12 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 			SizeBytes: int64(len("saved screenshot")),
 		}},
 		TrackerImageLinks: []api.ScreenshotLinkedImage{{
-			Tracker: "AITHER",
-			Path:    imagePath,
-			Host:    "imgbb",
-			URL:     "https://i.ibb.co/saved.png",
+			Tonemapping:   api.ScreenshotTonemapped,
+			ContentSHA256: workflowMediaTestSHA256("saved screenshot"),
+			Tracker:       "AITHER",
+			Path:          imagePath,
+			Host:          "imgbb",
+			URL:           "https://i.ibb.co/saved.png",
 		}},
 	}
 	builder := workflowMediaBuilder{
@@ -3676,7 +3682,8 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 	builder.media.mediaReuse = repository
 	assets, err := repository.LoadReusableMediaAssets(t.Context(), compatibilityKey)
 	if err != nil || len(assets) != 1 || !assets[0].Imported || len(assets[0].HostedLinks) != 1 ||
-		assets[0].HostedLinks[0].RawURL != plan.TrackerImageLinks[0].URL {
+		assets[0].HostedLinks[0].RawURL != plan.TrackerImageLinks[0].URL ||
+		assets[0].Image.Tonemapping != api.ScreenshotTonemapped || assets[0].HostedLinks[0].Tonemapping != api.ScreenshotTonemapped {
 		t.Fatalf("persisted imported media = %#v err=%v", assets, err)
 	}
 	nextRelease := release
@@ -3693,6 +3700,10 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 	}
 	for _, candidateURL := range []string{originalURL, "https://i.ibb.co/replaced.png"} {
 		plan.TrackerImageLinks[0].URL = candidateURL
+		if candidateURL != originalURL {
+			plan.TrackerImageLinks[0].Tonemapping = ""
+			plan.TrackerImageLinks[0].ContentSHA256 = ""
+		}
 		currentPlan, planErr := builder.Plan(t.Context(), nextRelease, projections, time.Now())
 		if planErr != nil {
 			t.Fatal(planErr)
@@ -3717,6 +3728,13 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 			len(exact.ScreenshotUploads) != 1 || exact.ScreenshotUploads[0].RawURL != candidateURL ||
 			exact.ScreenshotUploads[0].ImagePath != privateArtifacts.ArtifactImages[restored.Artifacts[0].ID].Path {
 			t.Fatalf("restored incremental images = %#v uploads=%#v err=%v", combined.Artifacts, exact.ScreenshotUploads, exactErr)
+		}
+		wantTone := api.ScreenshotTonemapped
+		if candidateURL != originalURL {
+			wantTone = ""
+		}
+		if exact.ScreenshotUploads[0].Tonemapping != wantTone {
+			t.Fatalf("reused URL processing = %q, want %q", exact.ScreenshotUploads[0].Tonemapping, wantTone)
 		}
 		if candidateURL != originalURL {
 			combined.WorkflowID, combined.ID, combined.Revision = "workflow-imported-next", "media-imported-next", 1

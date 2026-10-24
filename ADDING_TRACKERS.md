@@ -457,8 +457,7 @@ ANT composes the full description through the shared section builder, then appli
 adjustments. Ordinary selected screenshots use the API screenshot field, so the description omits
 their image tags and the configured screenshot header while retaining unrelated artwork, disc menus,
 audio analysis, and release notes. Reviewed final description overrides remain authoritative.
-Automatic tonemapping notices are omitted because selected screenshots do not retain evidence of
-applied conversion; user-authored tonemapping notes are preserved.
+Automatic tonemapping notices are omitted for ANT; user-authored tonemapping notes are preserved.
 
 Set `standalone.Profile.UsesMenuImages` when the adapter consumes selected DVD menu images,
 so shared preparation can rehost source-only menus for that tracker. Unit3D and AvistaZ families

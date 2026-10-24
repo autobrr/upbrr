@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/imageevidence"
 	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -156,6 +157,8 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 		}
 
 		img := api.ScreenshotImage{
+			Tonemapping:      imageevidence.Tonemapping(pathValue, shot.ContentSHA256, shot.Tonemapping),
+			ContentSHA256:    shot.ContentSHA256,
 			DiscID:           shot.DiscID,
 			DiscName:         discNames[shot.DiscID],
 			Path:             pathValue,
@@ -173,6 +176,8 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 
 		// If this image has been uploaded, include the upload info
 		if uploadInfo, exists := uploadedByPath[pathValue]; exists {
+			img.Tonemapping = uploadInfo.Tonemapping
+			img.ContentSHA256 = uploadInfo.ContentSHA256
 			img.Host = uploadInfo.Host
 			img.ImgURL = uploadInfo.ImgURL
 			img.RawURL = uploadInfo.RawURL
@@ -222,6 +227,8 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 		}
 
 		if uploadInfo, exists := uploadedByPath[pathValue]; exists {
+			img.Tonemapping = uploadInfo.Tonemapping
+			img.ContentSHA256 = uploadInfo.ContentSHA256
 			img.Host = uploadInfo.Host
 			img.ImgURL = uploadInfo.ImgURL
 			img.RawURL = uploadInfo.RawURL
@@ -260,16 +267,18 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 			discID = selectionDiscByPath[pathValue]
 		}
 		images = append(images, api.ScreenshotImage{
-			DiscID:     discID,
-			DiscName:   discNames[discID],
-			Path:       pathValue,
-			Purpose:    purpose,
-			SizeBytes:  info.Size(),
-			Host:       upload.Host,
-			ImgURL:     upload.ImgURL,
-			RawURL:     upload.RawURL,
-			WebURL:     upload.WebURL,
-			UploadedAt: upload.UploadedAt,
+			Tonemapping:   upload.Tonemapping,
+			ContentSHA256: upload.ContentSHA256,
+			DiscID:        discID,
+			DiscName:      discNames[discID],
+			Path:          pathValue,
+			Purpose:       purpose,
+			SizeBytes:     info.Size(),
+			Host:          upload.Host,
+			ImgURL:        upload.ImgURL,
+			RawURL:        upload.RawURL,
+			WebURL:        upload.WebURL,
+			UploadedAt:    upload.UploadedAt,
 		})
 		seenPaths[pathValue] = struct{}{}
 		logger.Tracef(
@@ -367,6 +376,8 @@ func (s *Service) Upload(
 	logger.Infof("image hosting: uploading images count=%d host=%s tracker=%s", len(images), normalizedHost, logTracker)
 	logger.Debugf("image hosting: upload source path=%s host=%s tracker=%s", meta.SourcePath, normalizedHost, logTracker)
 
+	var storedScreenshots []api.Screenshot
+	screenshotsLoaded := false
 	unique := make([]imageCandidate, 0, len(images))
 	seen := make(map[string]struct{}, len(images))
 	for _, image := range images {
@@ -393,11 +404,38 @@ func (s *Service) Upload(
 			return nil, internalerrors.ErrInvalidInput
 		}
 		seen[absPath] = struct{}{}
+		digest, digestErr := imageevidence.Digest(absPath)
+		if digestErr != nil {
+			return nil, fmt.Errorf("image hosting: identify upload content: %w", digestErr)
+		}
+		tone := image.Tonemapping
+		if !strings.EqualFold(digest, image.ContentSHA256) || (tone != api.ScreenshotTonemapped && tone != api.ScreenshotNotTonemapped) {
+			tone = ""
+		}
+		// A candidate may describe an older hosted URL at this path. Only the
+		// current local bytes can recover capture evidence for a fresh upload.
+		if tone == "" && !image.Purpose.IsAnalysis() && s.repo != nil {
+			if !screenshotsLoaded {
+				if stored, lookupErr := s.repo.ListScreenshotsByPath(ctx, meta.MediaBinding); lookupErr == nil {
+					storedScreenshots = stored
+				}
+				screenshotsLoaded = true
+			}
+			for _, shot := range storedScreenshots {
+				if pathutil.SamePath(shot.ImagePath, absPath) && strings.EqualFold(shot.ContentSHA256, digest) &&
+					(shot.Tonemapping == api.ScreenshotTonemapped || shot.Tonemapping == api.ScreenshotNotTonemapped) {
+					tone = shot.Tonemapping
+					break
+				}
+			}
+		}
 		unique = append(unique, imageCandidate{
-			DiscID:    image.DiscID,
-			Path:      absPath,
-			Purpose:   image.Purpose,
-			SizeBytes: info.Size(),
+			Tonemapping:   tone,
+			ContentSHA256: digest,
+			DiscID:        image.DiscID,
+			Path:          absPath,
+			Purpose:       image.Purpose,
+			SizeBytes:     info.Size(),
 		})
 		logger.Tracef(
 			"image hosting: queued file=%s host=%s tracker=%s size_kb=%.2f",
@@ -522,6 +560,8 @@ func (s *Service) Upload(
 				SourcePath:               meta.MediaBinding.SourcePath,
 				PreparedMediaFingerprint: meta.MediaBinding.PreparedMediaFingerprint,
 				PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
+				Tonemapping:              candidate.Tonemapping,
+				ContentSHA256:            candidate.ContentSHA256,
 				DiscID:                   candidate.DiscID,
 				ImagePath:                candidate.Path,
 				Purpose:                  candidate.Purpose,
@@ -719,6 +759,8 @@ dispatchLoop:
 					SourcePath:               meta.MediaBinding.SourcePath,
 					PreparedMediaFingerprint: meta.MediaBinding.PreparedMediaFingerprint,
 					PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
+					Tonemapping:              candidate.Tonemapping,
+					ContentSHA256:            candidate.ContentSHA256,
 					DiscID:                   candidate.DiscID,
 					ImagePath:                candidate.Path,
 					Purpose:                  candidate.Purpose,
@@ -1015,10 +1057,12 @@ func imagePurposeCounts(images []imageCandidate) (normal int, menus int, audio i
 }
 
 type imageCandidate struct {
-	DiscID    string
-	Path      string
-	Purpose   api.ScreenshotPurpose
-	SizeBytes int64
+	Tonemapping   api.ScreenshotTonemapping
+	ContentSHA256 string
+	DiscID        string
+	Path          string
+	Purpose       api.ScreenshotPurpose
+	SizeBytes     int64
 }
 
 type indexedUploadResult struct {

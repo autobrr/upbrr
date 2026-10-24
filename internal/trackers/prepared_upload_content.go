@@ -95,7 +95,7 @@ func (s *Service) prepareUploadContent(
 	if err != nil {
 		return failedPreparedUploadContent(tracker, mode, err)
 	}
-	applyResolvedDescriptionScreenshots(ctx, tracker, meta, s.repo, preloaded, &assets, resolution.screenshots)
+	applyResolvedDescriptionScreenshots(ctx, tracker, meta, s.repo, preloaded, &assets, resolution.uploads, resolution.screenshots)
 	if mode.UsesDescription() || trackerUsesMenuImages(s.registry, tracker) {
 		if err := s.rehostSourceOnlyDescriptionImages(ctx, tracker, meta, trackerCfg, &assets, preloaded); err != nil {
 			return failedPreparedUploadContent(tracker, mode, err)

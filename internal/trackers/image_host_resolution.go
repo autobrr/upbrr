@@ -27,12 +27,14 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type descriptionImageHostResolution struct {
+	uploads     []api.UploadedImageLink
 	screenshots []api.ScreenshotImage
 	feedback    api.ImageHostFeedback
 	usageScope  string
@@ -456,6 +458,19 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
+	// Slot projection carries paths only; preserve exact capture evidence for upload.
+	// Non-exact callers recover local evidence at the image service boundary.
+	if meta.ExactMedia != nil {
+		for i := range sourceImages {
+			for _, candidate := range meta.ExactMedia.Screenshots {
+				if pathing.SamePath(candidate.Path, sourceImages[i].Path) {
+					sourceImages[i].Tonemapping = candidate.Tonemapping
+					sourceImages[i].ContentSHA256 = candidate.ContentSHA256
+					break
+				}
+			}
+		}
+	}
 	var lastErr error
 	for _, host := range uploadAttemptHosts(policy, preferredHosts...) {
 		usageScope := usageScopeForHost(registry, host)
@@ -522,6 +537,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		}
 		return descriptionImageHostResolution{
 			screenshots: screenshots,
+			uploads:     uploaded,
 			feedback:    feedback,
 			usageScope:  usageScope,
 		}, nil

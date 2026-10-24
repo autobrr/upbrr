@@ -829,6 +829,8 @@ func importedTrackerScreenshots(plan api.ScreenshotPlan) []importedTrackerScreen
 			continue
 		}
 		seenURLs[url] = struct{}{}
+		image.Tonemapping = link.Tonemapping
+		image.ContentSHA256 = link.ContentSHA256
 		image.Host = strings.ToLower(strings.TrimSpace(link.Host))
 		image.ImgURL, image.RawURL, image.WebURL = url, url, url
 		imported = append(imported, importedTrackerScreenshot{image: image, link: link})
@@ -862,6 +864,8 @@ func (b workflowMediaBuilder) retainImportedScreenshot(
 		SourcePath:               binding.SourcePath,
 		PreparedMediaFingerprint: binding.PreparedMediaFingerprint,
 		PreparedGeneration:       binding.PreparedGeneration,
+		Tonemapping:              linked.Tonemapping,
+		ContentSHA256:            linked.ContentSHA256,
 		DiscID:                   image.DiscID,
 		ImagePath:                image.Path,
 		Purpose:                  api.ScreenshotPurposeFinal,
@@ -2503,6 +2507,10 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 		if err != nil {
 			return fmt.Errorf("workflow media hash reusable artifact: %w", err)
 		}
+		if image.ContentSHA256 != contentSHA256 {
+			image.Tonemapping = ""
+		}
+		image.ContentSHA256 = contentSHA256
 		captureFingerprint, err := workflowMediaReuseCaptureFingerprint(b.config, binding.CompatibilityKey, artifact.Kind, image)
 		if err != nil {
 			return fmt.Errorf("workflow media fingerprint reusable artifact: %w", err)
@@ -2538,6 +2546,9 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 				return fmt.Errorf("workflow media fingerprint hosted account scope: %w", scopeErr)
 			}
 			if link.AccountScope != accountScope {
+				continue
+			}
+			if link.ContentSHA256 != "" && link.ContentSHA256 != contentSHA256 {
 				continue
 			}
 			asset.HostedLinks = append(asset.HostedLinks, link)

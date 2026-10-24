@@ -58,10 +58,7 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	}
 
 	// Tonemapped Header
-	if tonemapHeader := strings.TrimSpace(
-		req.Runtime.Description.TonemappedHeader,
-	); tonemapHeader != "" &&
-		descriptionunit3d.ShouldIncludeTonemappedHeader(api.NewDescriptionSubject(meta), req.Runtime.DescriptionConfig(), assets.Screenshots) {
+	if tonemapHeader := descriptionunit3d.TonemappingNotice(req.Runtime.Description.TonemappedHeader, assets.Screenshots); tonemapHeader != "" {
 		parts = append(parts, tonemapHeader)
 	}
 

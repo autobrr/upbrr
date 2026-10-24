@@ -1142,7 +1142,12 @@ export type ScreenshotSelection = {
   Source: string;
 };
 
+/** Actual image processing. Omitted evidence is unknown, not false. */
+export type ScreenshotTonemapping = "tonemapped" | "not_tonemapped";
+
 export type ScreenshotImage = {
+  Tonemapping?: ScreenshotTonemapping;
+  ContentSHA256?: string;
   /** Prepared disc identity; omitted only for unscoped single-disc artifacts. */
   DiscID?: string;
   /** Safe prepared-disc label used for grouped display. */
@@ -1270,6 +1275,8 @@ export type ScreenshotDiscPlan = {
 };
 
 export type ScreenshotLinkedImage = {
+  Tonemapping?: ScreenshotTonemapping;
+  ContentSHA256?: string;
   Tracker: string;
   URL: string;
   PreviewURL?: string;
@@ -1278,6 +1285,8 @@ export type ScreenshotLinkedImage = {
 };
 
 export type UploadedImageLink = {
+  Tonemapping?: ScreenshotTonemapping;
+  ContentSHA256?: string;
   SourcePath: string;
   ImagePath: string;
   Purpose?: "preview" | "final" | "menu" | "audio_analysis" | "hdr_analysis";

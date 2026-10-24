@@ -194,8 +194,8 @@ func (r *SQLiteRepository) CommitReusableMedia(
 			INSERT INTO media_reusable_assets (
 				source_path, prepared_media_fingerprint, prepared_generation, compatibility_key,
 				capture_fingerprint, content_sha256, kind, purpose, disc_id, image_path,
-			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at, tonemapping
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		if err != nil {
 			return fmt.Errorf("db reusable media: prepare asset: %w", err)
@@ -205,14 +205,14 @@ func (r *SQLiteRepository) CommitReusableMedia(
 			INSERT INTO media_reusable_hosted_links (
 				source_path, prepared_media_fingerprint, prepared_generation, compatibility_key,
 				capture_fingerprint, content_sha256, host, usage_scope, account_scope,
-				img_url, raw_url, web_url, size_bytes, uploaded_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				img_url, raw_url, web_url, size_bytes, uploaded_at, tonemapping
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(
 				source_path, prepared_media_fingerprint, prepared_generation,
 				capture_fingerprint, content_sha256, host, usage_scope, account_scope
 			)
 			DO UPDATE SET img_url = excluded.img_url, raw_url = excluded.raw_url, web_url = excluded.web_url,
-				size_bytes = excluded.size_bytes, uploaded_at = excluded.uploaded_at
+				size_bytes = excluded.size_bytes, uploaded_at = excluded.uploaded_at, tonemapping = excluded.tonemapping
 		`)
 		if err != nil {
 			return fmt.Errorf("db reusable media: prepare hosted link: %w", err)
@@ -226,7 +226,7 @@ func (r *SQLiteRepository) CommitReusableMedia(
 				asset.CaptureFingerprint, strings.ToLower(asset.ContentSHA256), asset.Kind, image.Purpose,
 				strings.TrimSpace(image.DiscID), strings.TrimSpace(image.Path), image.Index, image.TimestampSeconds,
 				image.Width, image.Height, image.SizeBytes, boolToInt(asset.Imported), boolToInt(asset.Selected), asset.Order,
-				time.Now().UTC().Format(time.RFC3339Nano),
+				time.Now().UTC().Format(time.RFC3339Nano), image.Tonemapping,
 			); err != nil {
 				return fmt.Errorf("db reusable media: insert asset: %w", err)
 			}
@@ -236,7 +236,7 @@ func (r *SQLiteRepository) CommitReusableMedia(
 					asset.CaptureFingerprint, strings.ToLower(asset.ContentSHA256),
 					strings.ToLower(strings.TrimSpace(link.Host)), strings.TrimSpace(link.UsageScope), strings.TrimSpace(link.AccountScope),
 					strings.TrimSpace(link.ImgURL), strings.TrimSpace(link.RawURL), strings.TrimSpace(link.WebURL), link.SizeBytes,
-					link.UploadedAt.UTC().Format(time.RFC3339Nano),
+					link.UploadedAt.UTC().Format(time.RFC3339Nano), link.Tonemapping,
 				); err != nil {
 					return fmt.Errorf("db reusable media: insert hosted link: %w", err)
 				}
@@ -298,7 +298,7 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT source_path, prepared_media_fingerprint, prepared_generation, capture_fingerprint, content_sha256,
 			kind, purpose, disc_id, image_path, image_index, timestamp_seconds, width, height, size_bytes,
-			imported, selected, sort_order
+			imported, selected, sort_order, tonemapping
 		FROM media_reusable_assets AS asset
 		WHERE compatibility_key = ? AND NOT EXISTS (
 			SELECT 1 FROM media_reusable_tombstones AS tombstone
@@ -322,11 +322,12 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 			&asset.Binding.SourcePath, &asset.Binding.PreparedMediaFingerprint, &asset.Binding.PreparedGeneration,
 			&asset.CaptureFingerprint, &asset.ContentSHA256, &asset.Kind, &asset.Image.Purpose, &asset.Image.DiscID,
 			&asset.Image.Path, &asset.Image.Index, &asset.Image.TimestampSeconds, &asset.Image.Width, &asset.Image.Height,
-			&asset.Image.SizeBytes, &imported, &selected, &asset.Order,
+			&asset.Image.SizeBytes, &imported, &selected, &asset.Order, &asset.Image.Tonemapping,
 		); err != nil {
 			return nil, fmt.Errorf("db reusable media: scan asset: %w", err)
 		}
 		asset.CompatibilityKey = compatibilityKey
+		asset.Image.ContentSHA256 = asset.ContentSHA256
 		asset.Imported = imported != 0
 		asset.Selected = selected != 0
 		key := reusableMediaClaimKey(asset.CaptureFingerprint, asset.ContentSHA256)
@@ -424,7 +425,7 @@ func (r *SQLiteRepository) loadReusableHostedLinks(
 ) (map[string][]api.UploadedImageLink, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT source_path, prepared_media_fingerprint, prepared_generation,
-			capture_fingerprint, content_sha256, host, usage_scope, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+			capture_fingerprint, content_sha256, host, usage_scope, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at, tonemapping
 		FROM media_reusable_hosted_links WHERE compatibility_key = ?
 		ORDER BY host ASC, usage_scope ASC
 	`, compatibilityKey)
@@ -436,20 +437,19 @@ func (r *SQLiteRepository) loadReusableHostedLinks(
 	for rows.Next() {
 		var binding api.PreparedMediaBinding
 		var captureFingerprint string
-		var contentSHA256 string
 		var link api.UploadedImageLink
 		var uploadedAt string
 		if err := rows.Scan(
 			&binding.SourcePath, &binding.PreparedMediaFingerprint, &binding.PreparedGeneration,
-			&captureFingerprint, &contentSHA256, &link.Host, &link.UsageScope, &link.AccountScope, &link.ImgURL, &link.RawURL,
-			&link.WebURL, &link.SizeBytes, &uploadedAt,
+			&captureFingerprint, &link.ContentSHA256, &link.Host, &link.UsageScope, &link.AccountScope, &link.ImgURL, &link.RawURL,
+			&link.WebURL, &link.SizeBytes, &uploadedAt, &link.Tonemapping,
 		); err != nil {
 			return nil, fmt.Errorf("db reusable media: scan hosted link: %w", err)
 		}
 		if parsed, parseErr := time.Parse(time.RFC3339Nano, uploadedAt); parseErr == nil {
 			link.UploadedAt = parsed
 		}
-		key := reusableMediaAssetKey(binding, api.WorkflowFingerprint(captureFingerprint), contentSHA256)
+		key := reusableMediaAssetKey(binding, api.WorkflowFingerprint(captureFingerprint), link.ContentSHA256)
 		links[key] = append(links[key], link)
 	}
 	if err := rows.Err(); err != nil {
@@ -509,6 +509,9 @@ func normalizeReusableMediaAssets(
 			return nil, errors.New("invalid reusable media asset")
 		}
 		asset.ContentSHA256 = strings.ToLower(strings.TrimSpace(asset.ContentSHA256))
+		if asset.Image.ContentSHA256 != "" && !strings.EqualFold(strings.TrimSpace(asset.Image.ContentSHA256), asset.ContentSHA256) {
+			return nil, errors.New("contradictory reusable image digest")
+		}
 		pathValue := strings.TrimSpace(asset.Image.Path)
 		if _, exists := paths[pathValue]; exists {
 			return nil, errors.New("duplicate reusable media path")
@@ -516,6 +519,12 @@ func normalizeReusableMediaAssets(
 		paths[pathValue] = struct{}{}
 		for linkIndex := range asset.HostedLinks {
 			link := &asset.HostedLinks[linkIndex]
+			if link.ContentSHA256 != "" && !strings.EqualFold(strings.TrimSpace(link.ContentSHA256), asset.ContentSHA256) {
+				return nil, errors.New("contradictory reusable hosted digest")
+			}
+			if asset.Image.Tonemapping != "" && link.Tonemapping != "" && asset.Image.Tonemapping != link.Tonemapping {
+				return nil, errors.New("contradictory reusable hosted processing")
+			}
 			link.Host = strings.ToLower(strings.TrimSpace(link.Host))
 			link.UsageScope = strings.TrimSpace(link.UsageScope)
 			if link.Host == "" || link.UsageScope == "" || strings.TrimSpace(link.AccountScope) == "" ||

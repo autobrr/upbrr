@@ -430,7 +430,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
-		applyResolvedDescriptionScreenshots(ctx, tracker, trackerMeta, s.repo, trackerPreloaded, &assets, resolution.screenshots)
+		applyResolvedDescriptionScreenshots(ctx, tracker, trackerMeta, s.repo, trackerPreloaded, &assets, resolution.uploads, resolution.screenshots)
 		if err := s.rehostSourceOnlyDescriptionImages(ctx, tracker, trackerMeta, trackerCfg, &assets, trackerPreloaded); err != nil {
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
 			contentFailures = append(contentFailures, *failed.Failure)

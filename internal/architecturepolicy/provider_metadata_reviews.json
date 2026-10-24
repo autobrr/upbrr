@@ -408,8 +408,8 @@
     "sha256": "ed1c1a77df8f4845f3ab494b716917891fbfe438061dc6bd5497ba744cb622d6"
   },
   "internal/trackers/impl/standalone/bjs/description.go:buildDescription": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "b7f9b79d1767a877d4b4b2602243c3e27f13cd980782157644c4742cb5129cbd"
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
+    "sha256": "9db75f72ab2ad7bb99e0ac73f90c380b379bf6397f9d607a2eb409b62647ef23"
   },
   "internal/trackers/impl/standalone/bjs/description.go:resolveDirectors": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -500,8 +500,8 @@
     "sha256": "063f69eacb649728e0b339bb5635fc3cdcca378bacbdff4b7335b86610b45897"
   },
   "internal/trackers/impl/standalone/bt/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "3fc4d32161436639ebe894760286785201ecaea265e6f363b069021e936524ae"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
+    "sha256": "06fa3c2d727a2fdc154dcc7d754f17de4ad36d830a30ab1e8e7b85e16f375687"
   },
   "internal/trackers/impl/standalone/bt/description.go:resolveDirectors": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -956,8 +956,8 @@
     "sha256": "b908b9df8a0790ac83c3c2d463c9f7e041d41e156c86a6590c127f5cc759785f"
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "be3fc460d57922b119c9226638acd3a247c86460fbeceaa9906a9607cf323c48"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
+    "sha256": "95322fe614377ca5a3cfe731d1fe4900d097eaff0b6cdcc142e62b22ba739113"
   },
   "internal/trackers/impl/standalone/hds/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1004,8 +1004,8 @@
     "sha256": "7e89c7505b94a7bd7ae8bf30d82c1752e5fdc97dc7ce7f992ed45ac629a810a8"
   },
   "internal/trackers/impl/standalone/hdt/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "477ebe3fdc1f267bbd9008020c29c23d00915dc002feaddcd44c12efe701effc"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
+    "sha256": "f191aea957958376b0a58ba5bd2fb251777ebe8f6941b80abb3b601f3ee93e08"
   },
   "internal/trackers/impl/standalone/hdt/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
