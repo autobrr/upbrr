@@ -22,13 +22,23 @@ func TestPrivatePCMOutputRejectsOtherProcess(t *testing.T) {
 	}
 	defer closePCMOutputs(outputs)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
 	type result struct {
 		reader io.ReadCloser
 		err    error
 	}
 	accepted := make(chan result, 1)
+	defer func() {
+		cancel()
+		// Cancellation does not join Reader. Drain before closing its pipe, even
+		// when an earlier assertion exits without receiving the accepted reader.
+		for got := range accepted {
+			if got.reader != nil {
+				_ = got.reader.Close()
+			}
+		}
+	}()
 	go func() {
+		defer close(accepted)
 		reader, acceptErr := outputs[0].reader(ctx, os.Getpid())
 		accepted <- result{reader: reader, err: acceptErr}
 	}()
@@ -80,7 +90,13 @@ func TestPrivatePCMOutputCancelsWithoutWriter(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	accepted := make(chan error, 1)
+	defer func() {
+		// Join the accepting goroutine before deferred pipe cleanup on timeout.
+		for range accepted {
+		}
+	}()
 	go func() {
+		defer close(accepted)
 		reader, acceptErr := outputs[0].reader(ctx, os.Getpid())
 		if reader != nil {
 			_ = reader.Close()

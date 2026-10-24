@@ -27,6 +27,9 @@ var errDecodedOutput = errors.New("decoded HDR output is incomplete or invalid")
 type pictureDecoder struct {
 	executable string
 	command    func(context.Context, string, ...string) *exec.Cmd
+	// phase observes synchronous lifecycle boundaries for subprocess tests.
+	// Ordinary callers leave it nil; observers must not block or alter execution.
+	phase func(string)
 }
 
 type pictureDecodeRequest struct {
@@ -286,6 +289,11 @@ func (p *decodedPipeProof) await(ctx context.Context, index int) error {
 }
 
 func (d pictureDecoder) decode(ctx context.Context, request pictureDecodeRequest, consume func(int, []byte) error) error {
+	mark := func(phase string) {
+		if d.phase != nil {
+			d.phase(phase)
+		}
+	}
 	frameBytes, err := request.geometry()
 	if err != nil || consume == nil || d.executable == "" {
 		return errDecodedMapping
@@ -308,7 +316,10 @@ func (d pictureDecoder) decode(ctx context.Context, request pictureDecodeRequest
 		return fmt.Errorf("open HDR decoder diagnostics: %w", err)
 	}
 	defer stderr.Close()
-	if err := cmd.Start(); err != nil {
+	mark("start_before")
+	startErr := cmd.Start()
+	mark("start_after")
+	if err := startErr; err != nil {
 		return fmt.Errorf("start HDR decoder: %w", err)
 	}
 	stop := context.AfterFunc(runCtx, func() {
@@ -358,15 +369,22 @@ func (d pictureDecoder) decode(ctx context.Context, request pictureDecodeRequest
 	}
 	if consumeErr == nil {
 		var extra [1]byte
-		if n, err := io.ReadFull(stdout, extra[:]); n != 0 || !errors.Is(err, io.EOF) {
+		mark("stdout_eof_before")
+		n, err := io.ReadFull(stdout, extra[:])
+		mark("stdout_eof_after")
+		if n != 0 || !errors.Is(err, io.EOF) {
 			consumeErr = errDecodedOutput
 		}
 	}
 	if consumeErr != nil {
 		cancel()
 	}
+	mark("diagnostics_wait_before")
 	<-proof.done
+	mark("diagnostics_wait_after")
+	mark("process_wait_before")
 	waitErr := cmd.Wait()
+	mark("process_wait_after")
 	if ctx.Err() != nil {
 		return fmt.Errorf("HDR decode canceled: %w", ctx.Err())
 	}

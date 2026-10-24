@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -126,22 +127,60 @@ func TestDecodedProcessFramingAndCancellation(t *testing.T) {
 				request.selected = append(request.selected, request.selected[0])
 				request.crop = &api.HDRCrop{Width: 2, Height: 2}
 			}
-			decoder := pictureDecoder{executable: os.Args[0], command: func(ctx context.Context, name string, _ ...string) *exec.Cmd {
-				cmd := exec.CommandContext(ctx, name, "-test.run=^TestHDRDecoderChild$")
-				cmd.Env = append(os.Environ(), "UPBRR_HDR_DECODER_CHILD="+mode)
-				return cmd
-			}}
+			// One parent-process clock covers only these fixed lifecycle boundaries.
+			// Keep the child unchanged: tracing must not add pipe or file writes there.
+			started := time.Now()
+			type phaseEvent struct {
+				Name    string
+				Elapsed time.Duration
+			}
+			phases := make([]phaseEvent, 0, 12)
+			mark := func(name string) {
+				phases = append(phases, phaseEvent{Name: name, Elapsed: time.Since(started)})
+			}
+			defer func() {
+				if t.Failed() {
+					t.Logf("decoder phases (parent monotonic offsets): %v", phases)
+				}
+			}()
+			decoder := pictureDecoder{
+				phase:      mark,
+				executable: os.Args[0],
+				command: func(ctx context.Context, name string, _ ...string) *exec.Cmd {
+					cmd := exec.CommandContext(ctx, name, "-test.run=^TestHDRDecoderChild$")
+					cmd.Env = append(os.Environ(), "UPBRR_HDR_DECODER_CHILD="+mode)
+					return cmd
+				},
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
 			defer cancel()
+			mark("context_created")
 			if mode == "blocked" {
 				time.AfterFunc(200*time.Millisecond, cancel)
 			}
 			count := 0
-			err := decoder.decode(ctx, request, func(_ int, _ []byte) error { count++; return nil })
+			err := decoder.decode(ctx, request, func(index int, _ []byte) error {
+				count++
+				mark(fmt.Sprintf("frame_%d", index))
+				return nil
+			})
+			mark("decode_returned")
 			switch mode {
 			case "normal", "flood", "paired-ahead":
 				if err != nil || count != 2 {
 					t.Fatalf("valid process frames=%d err=%v", count, err)
+				}
+				names := make([]string, 0, len(phases))
+				for _, event := range phases {
+					names = append(names, event.Name)
+				}
+				want := []string{
+					"context_created", "start_before", "start_after", "frame_0", "frame_1",
+					"stdout_eof_before", "stdout_eof_after", "diagnostics_wait_before", "diagnostics_wait_after",
+					"process_wait_before", "process_wait_after", "decode_returned",
+				}
+				if !slices.Equal(names, want) {
+					t.Fatalf("decoder phases = %v, want %v", names, want)
 				}
 			case "tail-failure":
 				if err == nil || !strings.Contains(err.Error(), "031:") || strings.Contains(err.Error(), "000:") {
