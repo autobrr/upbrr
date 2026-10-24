@@ -1901,8 +1901,8 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 	result, err := r.execWrite(ctx, "save screenshot", `
 		INSERT INTO screenshots (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-			image_path, timestamp, frame_number, width, height, purpose, captured_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(image_path) DO UPDATE SET
 			source_path = excluded.source_path,
 			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
@@ -1913,7 +1913,9 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 			width = excluded.width,
 			height = excluded.height,
 			purpose = excluded.purpose,
-			captured_at = excluded.captured_at
+			captured_at = excluded.captured_at,
+			tonemapping = excluded.tonemapping,
+			content_sha256 = excluded.content_sha256
 		WHERE screenshots.source_path = excluded.source_path AND (
 			(screenshots.prepared_generation = excluded.prepared_generation AND
 			 screenshots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
@@ -1927,7 +1929,8 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 		)
 	`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, strings.TrimSpace(screenshot.DiscID),
 		screenshot.ImagePath, screenshot.Timestamp, screenshot.FrameNumber,
-		screenshot.Width, screenshot.Height, screenshot.Purpose, screenshot.CapturedAt.UTC().Format(time.RFC3339Nano))
+		screenshot.Width, screenshot.Height, screenshot.Purpose, screenshot.CapturedAt.UTC().Format(time.RFC3339Nano),
+		screenshot.Tonemapping, screenshot.ContentSHA256)
 	if err != nil {
 		return fmt.Errorf("db save screenshot: %w", err)
 	}
@@ -1946,7 +1949,7 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, binding Pr
 		return nil, internalerrors.ErrInvalidInput
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT disc_id, image_path, timestamp, frame_number, width, height, purpose, captured_at
+		SELECT disc_id, image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
 		FROM screenshots
 		WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
 		ORDER BY disc_id ASC, timestamp ASC, image_path ASC
@@ -1970,6 +1973,8 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, binding Pr
 			&shot.Height,
 			&purpose,
 			&capturedAt,
+			&shot.Tonemapping,
+			&shot.ContentSHA256,
 		); err != nil {
 			return nil, fmt.Errorf("db list screenshots: %w", err)
 		}
@@ -2341,7 +2346,7 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(
 		var purpose string
 		var capturedAt string
 		err = tx.QueryRowContext(ctx, `
-			SELECT disc_id, timestamp, frame_number, width, height, purpose, captured_at
+			SELECT disc_id, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
 			FROM screenshots
 			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ?
 		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, trimmedImage).Scan(
@@ -2352,6 +2357,8 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(
 			&screenshot.Height,
 			&purpose,
 			&capturedAt,
+			&screenshot.Tonemapping,
+			&screenshot.ContentSHA256,
 		)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("db delete disc menu screenshot: load screenshot: %w", err)
@@ -2736,7 +2743,7 @@ func listUploadedImagesForImageTx(
 	imagePath string,
 ) ([]UploadedImageLink, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT disc_id, purpose, host, usage_scope, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+		SELECT disc_id, purpose, host, usage_scope, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at, tonemapping, content_sha256
 		FROM uploaded_images
 		WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ?
 		ORDER BY id ASC
@@ -2761,6 +2768,8 @@ func listUploadedImagesForImageTx(
 			&image.WebURL,
 			&image.SizeBytes,
 			&uploadedAt,
+			&image.Tonemapping,
+			&image.ContentSHA256,
 		); err != nil {
 			return nil, fmt.Errorf("db delete disc menu screenshot: scan uploaded image: %w", err)
 		}
@@ -2814,8 +2823,8 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO screenshots (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-			image_path, timestamp, frame_number, width, height, purpose, captured_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(image_path) DO UPDATE SET
 			source_path = excluded.source_path,
 			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
@@ -2826,7 +2835,9 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 			width = excluded.width,
 			height = excluded.height,
 			purpose = excluded.purpose,
-			captured_at = excluded.captured_at
+			captured_at = excluded.captured_at,
+			tonemapping = excluded.tonemapping,
+			content_sha256 = excluded.content_sha256
 		WHERE screenshots.source_path = excluded.source_path AND (
 			(screenshots.prepared_generation = excluded.prepared_generation AND
 			 screenshots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
@@ -2862,6 +2873,8 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 			screenshot.Height,
 			screenshot.Purpose,
 			capturedAt.UTC().Format(time.RFC3339Nano),
+			screenshot.Tonemapping,
+			screenshot.ContentSHA256,
 		)
 		if err != nil {
 			return fmt.Errorf("db save menu screenshots: insert: %w", err)
@@ -3436,8 +3449,9 @@ func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, binding PreparedMed
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO uploaded_images (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-			image_path, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_path, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at,
+			tonemapping, content_sha256
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path, usage_scope, host, image_path)
 		DO UPDATE SET
 			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
@@ -3449,7 +3463,9 @@ func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, binding PreparedMed
 			raw_url = excluded.raw_url,
 			web_url = excluded.web_url,
 			size_bytes = excluded.size_bytes,
-			uploaded_at = excluded.uploaded_at
+			uploaded_at = excluded.uploaded_at,
+			tonemapping = excluded.tonemapping,
+			content_sha256 = excluded.content_sha256
 		WHERE (uploaded_images.prepared_generation = excluded.prepared_generation AND
 			 uploaded_images.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
 			(uploaded_images.prepared_generation <> excluded.prepared_generation AND EXISTS (
@@ -3497,6 +3513,8 @@ func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, binding PreparedMed
 			strings.TrimSpace(image.WebURL),
 			image.SizeBytes,
 			uploadedAt.UTC().Format(time.RFC3339Nano),
+			image.Tonemapping,
+			image.ContentSHA256,
 		)
 		if err != nil {
 			return fmt.Errorf("db save uploaded images: insert: %w", err)
@@ -3518,7 +3536,8 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, binding
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT disc_id, image_path, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+		SELECT disc_id, image_path, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at,
+			tonemapping, content_sha256
 		FROM uploaded_images
 		WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
 		ORDER BY id ASC
@@ -3545,6 +3564,8 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, binding
 			&image.WebURL,
 			&image.SizeBytes,
 			&uploadedAt,
+			&image.Tonemapping,
+			&image.ContentSHA256,
 		); err != nil {
 			return nil, fmt.Errorf("db list uploaded images: %w", err)
 		}

@@ -370,13 +370,15 @@ func (s *stubImageService) Upload(_ context.Context, meta api.ImageHostingSubjec
 	results := make([]api.UploadedImageLink, 0, len(images))
 	for idx, image := range images {
 		results = append(results, api.UploadedImageLink{
-			SourcePath: meta.SourcePath,
-			ImagePath:  image.Path,
-			Host:       host,
-			UsageScope: usageScope,
-			ImgURL:     fmt.Sprintf("https://%s/%d.png", host, idx),
-			RawURL:     fmt.Sprintf("https://%s/%d.png", host, idx),
-			WebURL:     fmt.Sprintf("https://%s/%d", host, idx),
+			Tonemapping:   image.Tonemapping,
+			ContentSHA256: image.ContentSHA256,
+			SourcePath:    meta.SourcePath,
+			ImagePath:     image.Path,
+			Host:          host,
+			UsageScope:    usageScope,
+			ImgURL:        fmt.Sprintf("https://%s/%d.png", host, idx),
+			RawURL:        fmt.Sprintf("https://%s/%d.png", host, idx),
+			WebURL:        fmt.Sprintf("https://%s/%d", host, idx),
 		})
 	}
 	if s.repo != nil {
@@ -630,7 +632,7 @@ func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T
 		{Path: "/tmp/screen2.png", ImgURL: "https://img.example/screen2.png"},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolved)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, nil, resolved)
 
 	if len(assets.MenuImages) != 1 || !strings.Contains(assets.MenuImages[0].ImgURL, "menu1.png") {
 		t.Fatalf("expected menu image to stay separate, got %#v", assets.MenuImages)
@@ -701,7 +703,7 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve rehosted assets: %v", err)
 	}
-	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.screenshots)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.uploads, resolution.screenshots)
 	assertScreenshotPaths(t, assets.MenuImages, paths[:2])
 	assertScreenshotPaths(t, assets.Screenshots, paths[2:])
 	for _, image := range append(append([]api.ScreenshotImage(nil), assets.MenuImages...), assets.Screenshots...) {
@@ -1025,7 +1027,7 @@ func TestResolveDescriptionAssetsPreservesFinalDescriptionThatSanitizerWouldEmpt
 		t.Fatal("expected final override flag preserved")
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), "", meta, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, nil, nil, &assets, nil, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
@@ -1050,7 +1052,7 @@ func TestApplyResolvedDescriptionScreenshotsRetainsFinalBuilderScreenshotAssets(
 		}},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, nil, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
@@ -1127,7 +1129,7 @@ func TestApplyResolvedDescriptionScreenshotsPreservesFinalNonRenderableImages(t 
 		},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, nil, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
@@ -2701,7 +2703,7 @@ func TestEditedOverrideKeepsComparisonOutOfStoredSlots(t *testing.T) {
 		Slots:       filtered,
 		Override:    true,
 	}
-	applyResolvedDescriptionScreenshots(t.Context(), "AITHER", meta, nil, nil, &assets, []api.ScreenshotImage{{Path: "/tmp/screen.png", RawURL: "https://img.example/rehosted.png"}})
+	applyResolvedDescriptionScreenshots(t.Context(), "AITHER", meta, nil, nil, &assets, nil, []api.ScreenshotImage{{Path: "/tmp/screen.png", RawURL: "https://img.example/rehosted.png"}})
 	if !strings.Contains(assets.Description, comparisonBlock) || !strings.Contains(assets.Description, "https://img.example/rehosted.png") {
 		t.Fatalf("edited override rewrote comparison or missed ordinary screenshot: %q", assets.Description)
 	}
@@ -3239,7 +3241,7 @@ func TestFinalPreparedDescriptionPreservesImportedComparison(t *testing.T) {
 		Override:    true,
 		Final:       true,
 	}
-	applyResolvedDescriptionScreenshots(t.Context(), "AITHER", meta, nil, preloaded, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(t.Context(), "AITHER", meta, nil, preloaded, &assets, nil, []api.ScreenshotImage{{
 		RawURL: "https://img.example/rehosted.png",
 	}})
 	if !strings.Contains(assets.Description, comparisonBlock) || strings.Count(assets.Description, screenshotURL) != 1 ||
@@ -3333,7 +3335,7 @@ https://lostimg.cc/encode.png
 		Slots:       slots,
 		Override:    true,
 	}
-	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: "/tmp/source"}, nil, nil, &assets, []api.ScreenshotImage{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: "/tmp/source"}, nil, nil, &assets, nil, []api.ScreenshotImage{
 		{Path: "/tmp/source-copy.png", RawURL: "https://pixhost/source.png"},
 		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-comparison.png"},
 		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-normal.png"},
@@ -4031,7 +4033,7 @@ func TestEnsureDescriptionImageHostCopiesImportedComparisonAndRehostsSeparateScr
 	if err != nil {
 		t.Fatalf("resolve assets: %v", err)
 	}
-	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.screenshots)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.uploads, resolution.screenshots)
 	comparisonBlock := meta.TrackerData[0].Description[:strings.Index(meta.TrackerData[0].Description, "[/comparison]")+len("[/comparison]")]
 	if !strings.Contains(assets.Description, comparisonBlock) {
 		t.Fatalf("imported comparison was changed: %q", assets.Description)
@@ -4626,10 +4628,10 @@ func TestResolveDescriptionAssetsKeepsFinalSourceScopedToGroup(t *testing.T) {
 func TestResolveDescriptionAssetsDoesNotApplyScopedCanonicalGroupToOtherTracker(t *testing.T) {
 	t.Parallel()
 	meta := api.UploadSubject{DescriptionGroups: []api.DescriptionBuilderGroup{{
-		GroupKey: "unit3d",
- Trackers: []string{"AITHER"},
- RawDescription: "Saved complete description.",
- Final: true,
+		GroupKey:       "unit3d",
+		Trackers:       []string{"AITHER"},
+		RawDescription: "Saved complete description.",
+		Final:          true,
 	}}}
 	assets, err := ResolveDescriptionAssets(t.Context(), "BLU", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {

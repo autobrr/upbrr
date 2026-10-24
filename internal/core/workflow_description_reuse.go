@@ -170,6 +170,7 @@ type workflowReusableDescriptionDVDMenu struct {
 }
 
 type workflowReusableDescriptionHostedImage struct {
+	Tonemapping  api.ScreenshotTonemapping `json:",omitempty"`
 	ImageSHA256  string
 	Host         string
 	UsageScope   string
@@ -359,6 +360,8 @@ func normalizeReusableDescriptionMedia(
 		}
 		digestsByPath[image.Path] = digest
 		image.Path = ""
+		// Actual bytes are already bound below; optional provenance enrichment is not a content change.
+		image.ContentSHA256 = ""
 		image.UploadedAt = time.Time{}
 		normalized.Screenshots = append(normalized.Screenshots, workflowReusableDescriptionImage{
 			ContentSHA256: digest,
@@ -375,6 +378,7 @@ func normalizeReusableDescriptionMedia(
 		}
 		digestsByPath[menu.Path] = digest
 		menu.Path = ""
+		menu.ContentSHA256 = ""
 		menu.UploadedAt = time.Time{}
 		normalized.DVDMenus = append(normalized.DVDMenus, workflowReusableDescriptionDVDMenu{
 			ContentSHA256: digest,
@@ -407,6 +411,7 @@ func normalizeReusableDescriptionHostedImages(
 			return nil, errors.New("workflow reusable descriptions: hosted image source is unavailable")
 		}
 		result = append(result, workflowReusableDescriptionHostedImage{
+			Tonemapping:  link.Tonemapping,
 			ImageSHA256:  digest,
 			Host:         link.Host,
 			UsageScope:   link.UsageScope,

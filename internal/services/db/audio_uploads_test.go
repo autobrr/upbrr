@@ -21,11 +21,12 @@ func TestAudioUploadClonesPreserveProvenanceAndHistoryOwnership(t *testing.T) {
 	from, to := filepath.Join(root, "original.png"), filepath.Join(root, "restored.png")
 	for _, scope := range []string{"global", "tracker:ONE"} {
 		if err := repo.SaveUploadedImages(t.Context(), binding, "example-host", []api.UploadedImageLink{{
-			ImagePath:    from,
-			Purpose:      api.ScreenshotPurposeAudioAnalysis,
-			UsageScope:   scope,
-			AccountScope: "account-fingerprint",
-			RawURL:       "https://example.invalid/audio.png",
+			ImagePath:     from,
+			Purpose:       api.ScreenshotPurposeAudioAnalysis,
+			UsageScope:    scope,
+			AccountScope:  "account-fingerprint",
+			RawURL:        "https://example.invalid/audio.png",
+			ContentSHA256: mediaReuseTestSHA256("audio analysis image"),
 		}}); err != nil {
 			t.Fatal(err)
 		}
@@ -52,6 +53,9 @@ func TestAudioUploadClonesPreserveProvenanceAndHistoryOwnership(t *testing.T) {
 		t.Fatalf("cloned links = %#v, %v", links, err)
 	}
 	for _, link := range links {
+		if link.ContentSHA256 != mediaReuseTestSHA256("audio analysis image") || link.Tonemapping != "" {
+			t.Fatalf("changed content evidence: %#v", link)
+		}
 		if link.ImagePath != to || link.AccountScope != "account-fingerprint" || link.Host != "example-host" || link.Purpose != api.ScreenshotPurposeAudioAnalysis {
 			t.Fatalf("changed provenance: %#v", link)
 		}

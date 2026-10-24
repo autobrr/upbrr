@@ -184,10 +184,9 @@ func ComposeDescription(
 		appConfig.Description.ThumbnailSize,
 		parseScreensPerRow(appConfig.Description.ScreensPerRow),
 	)
-	if tonemapHeader := strings.TrimSpace(
-		appConfig.Description.TonemappedHeader,
-	); tonemapHeader != "" &&
-		screenshotSection != "" && ShouldIncludeTonemappedHeader(meta, appConfig, filteredScreenshots) {
+	// Selected images already present in kept text still count toward the notice.
+	noticeScreenshots := filterScreenshotDuplicates(screenshots, "", menuImages)
+	if tonemapHeader := TonemappingNotice(appConfig.Description.TonemappedHeader, noticeScreenshots); tonemapHeader != "" {
 		appendUniquePart(tonemapHeader, "tonemap_header")
 		logger.Tracef("trackers: unit3d desc part=tonemap_header len=%d", len(tonemapHeader))
 	}
@@ -467,16 +466,34 @@ func extractUnit3DBlockImages(value string) []Image {
 	return images
 }
 
-// ShouldIncludeTonemappedHeader reports whether the description should label tonemapped screenshots.
-func ShouldIncludeTonemappedHeader(meta api.DescriptionSubject, appConfig config.Config, screenshots []api.ScreenshotImage) bool {
-	if !appConfig.ScreenshotHandling.ToneMap {
-		return false
+// TonemappingNotice describes only renderable selected images. The configured
+// blanket header is used only when every included image is known tonemapped.
+// Mixed selections receive explicit counts rather than a blanket claim.
+func TonemappingNotice(header string, screenshots []api.ScreenshotImage) string {
+	if strings.TrimSpace(header) == "" {
+		return ""
 	}
-	if len(screenshots) == 0 {
-		return false
+	var mapped, unmapped, unknown int
+	for _, image := range screenshots {
+		if pickScreenshotURL(image) == "" {
+			continue
+		}
+		switch image.Tonemapping {
+		case api.ScreenshotTonemapped:
+			mapped++
+		case api.ScreenshotNotTonemapped:
+			unmapped++
+		default:
+			unknown++
+		}
 	}
-	hdr := strings.ToUpper(strings.TrimSpace(meta.HDR))
-	return strings.Contains(hdr, "HDR") || strings.Contains(hdr, "DV")
+	if mapped == 0 {
+		return ""
+	}
+	if unmapped == 0 && unknown == 0 {
+		return strings.TrimSpace(header)
+	}
+	return fmt.Sprintf("Screenshots: %d tonemapped, %d not tonemapped, %d with unknown processing.", mapped, unmapped, unknown)
 }
 
 // ResolveLogo returns the configured description logo URL and display width for meta.

@@ -60,6 +60,11 @@ type migrationExecutor interface {
 //     bridge mapping also changed historically.
 var migrationRegistry = []migrationStep{
 	{
+		id:        "2026_10_add_screenshot_provenance",
+		dependsOn: []string{"2026_09_add_media_reuse_associations"},
+		apply:     migrateAddScreenshotProvenance,
+	},
+	{
 		id:        "2026_10_add_hdr_analysis_association",
 		dependsOn: []string{"2026_09_retain_input_workflow"},
 		apply:     migrateHDRAnalysisAssociation,
@@ -1959,6 +1964,42 @@ func migrateUploadedImageAccountScope(ctx context.Context, exec migrationExecuto
 	_, err = exec.ExecContext(ctx, `ALTER TABLE uploaded_images ADD COLUMN account_scope TEXT NOT NULL DEFAULT ''`)
 	if err != nil {
 		return fmt.Errorf("db add uploaded image account scope: %w", err)
+	}
+	return nil
+}
+
+// migrateAddScreenshotProvenance leaves legacy processing unknown. A reusable
+// asset and its hosted links already have content digests. Hosted processing
+// stays independent so unknown URLs cannot inherit a local capture's evidence.
+func migrateAddScreenshotProvenance(ctx context.Context, exec migrationExecutor) error {
+	for _, table := range []struct {
+		name    string
+		columns []string
+	}{
+		{name: "screenshots", columns: []string{"tonemapping", "content_sha256"}},
+		{name: "uploaded_images", columns: []string{"tonemapping", "content_sha256"}},
+		{name: "media_reusable_assets", columns: []string{"tonemapping"}},
+		{name: "media_reusable_hosted_links", columns: []string{"tonemapping"}},
+	} {
+		present, err := tableExists(ctx, exec, table.name)
+		if err != nil {
+			return fmt.Errorf("db: inspect screenshot provenance table %s: %w", table.name, err)
+		}
+		if !present {
+			continue
+		}
+		for _, column := range table.columns {
+			exists, err := tableColumnExists(ctx, exec, table.name, column)
+			if err != nil {
+				return fmt.Errorf("db: inspect %s.%s: %w", table.name, column, err)
+			}
+			if exists {
+				continue
+			}
+			if _, err := exec.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s TEXT NOT NULL DEFAULT ''`, table.name, column)); err != nil {
+				return fmt.Errorf("db: add %s.%s: %w", table.name, column, err)
+			}
+		}
 	}
 	return nil
 }

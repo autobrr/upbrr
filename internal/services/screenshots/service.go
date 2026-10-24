@@ -29,6 +29,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/imageevidence"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
@@ -55,6 +56,7 @@ type Service struct {
 }
 
 type repository interface {
+	ListUploadedImagesByPath(context.Context, api.PreparedMediaBinding) ([]api.UploadedImageLink, error)
 	api.ScreenshotLifecycleRepository
 	SaveScreenshot(context.Context, api.PreparedMediaBinding, api.Screenshot) error
 	ListScreenshotsByPath(context.Context, api.PreparedMediaBinding) ([]api.Screenshot, error)
@@ -190,6 +192,11 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	if tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release); err == nil {
 		trackerRecords := s.loadTrackerMetadata(ctx, meta.SourcePath)
 		trackerLinks := buildTrackerImageLinks(trackerRecords, tmpDir, s.registry)
+		if s.repo != nil {
+			if uploaded, err := s.repo.ListUploadedImagesByPath(ctx, meta.MediaBinding); err == nil {
+				restoreLinkedTonemapping(trackerLinks, uploaded)
+			}
+		}
 		plan.TrackerImageLinks = trackerLinks
 		plan.FinalSelections = filterProtectedTrackerFinalSelections(plan.FinalSelections, trackerLinks, trackerRecords, s.registry)
 		plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
@@ -298,6 +305,7 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 	baselineByIndex := screenshotSelectionsByIndex(baselineSelections)
 
 	// Load existing screenshots from database that still exist on disk.
+	var storedScreenshots []api.Screenshot
 	var missingIndexTimestamps []float64
 	var existingIndices map[int]struct{}
 	if s.repo != nil {
@@ -305,6 +313,7 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 		if err != nil {
 			s.logger.Debugf("screenshots: failed to load existing screenshots: %v", err)
 		} else {
+			storedScreenshots = dbScreenshots
 			existingIndices = make(map[int]struct{}, len(dbScreenshots))
 			kept := 0
 			for _, shot := range dbScreenshots {
@@ -394,6 +403,9 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 
 	// Automatically include tracker images in final selections
 	plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, plan.TrackerImageLinks)
+	for _, images := range [][]api.ScreenshotImage{plan.ExistingScreenshots, plan.ExistingTrackerScreenshots, plan.FinalSelections} {
+		restoreScreenshotTonemapping(images, storedScreenshots)
+	}
 	s.logger.Tracef(
 		"screenshots: capture plan inventory baseline_frames=%d suggested_frames=%d matching_disk_images=%d tracker_links=%d unlinked_tracker_images=%d planned_final_images=%d",
 		len(baselineSelections),
@@ -690,6 +702,13 @@ func (s *Service) captureDisc(
 				Path:             output,
 				Purpose:          purpose,
 			}
+			if digest, err := imageevidence.Digest(output); err == nil {
+				img.ContentSHA256 = digest
+				img.Tonemapping = api.ScreenshotNotTonemapped
+				if tonemap {
+					img.Tonemapping = api.ScreenshotTonemapped
+				}
+			}
 			if stat, err := os.Stat(output); err == nil {
 				img.SizeBytes = stat.Size()
 			}
@@ -753,14 +772,16 @@ func (s *Service) captureDisc(
 	if s.repo != nil && len(images) > 0 && purpose != api.ScreenshotPurposePreview {
 		for _, img := range images {
 			screenshot := api.Screenshot{
-				DiscID:      meta.DiscID,
-				ImagePath:   img.Path,
-				Timestamp:   img.TimestampSeconds,
-				FrameNumber: int(img.TimestampSeconds * info.FrameRate),
-				Width:       img.Width,
-				Height:      img.Height,
-				Purpose:     purpose,
-				CapturedAt:  time.Now().UTC(),
+				Tonemapping:   img.Tonemapping,
+				ContentSHA256: img.ContentSHA256,
+				DiscID:        meta.DiscID,
+				ImagePath:     img.Path,
+				Timestamp:     img.TimestampSeconds,
+				FrameNumber:   int(img.TimestampSeconds * info.FrameRate),
+				Width:         img.Width,
+				Height:        img.Height,
+				Purpose:       purpose,
+				CapturedAt:    time.Now().UTC(),
 			}
 			if err := s.repo.SaveScreenshot(ctx, meta.MediaBinding, screenshot); err != nil {
 				s.logger.Debugf("screenshots: failed to persist screenshot: %v", err)
@@ -1952,5 +1973,42 @@ func isAllowedImageExt(path string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// restoreScreenshotTonemapping requires a content match, so replacing a file at
+// an old path cannot inherit the previous image's processing claim.
+func restoreScreenshotTonemapping(images []api.ScreenshotImage, stored []api.Screenshot) {
+	byPath := make(map[string]api.Screenshot, len(stored))
+	for _, shot := range stored {
+		byPath[shot.ImagePath] = shot
+	}
+	for index := range images {
+		images[index].Tonemapping, images[index].ContentSHA256 = "", ""
+		shot, ok := byPath[images[index].Path]
+		if !ok {
+			continue
+		}
+		images[index].Tonemapping = imageevidence.Tonemapping(images[index].Path, shot.ContentSHA256, shot.Tonemapping)
+		if images[index].Tonemapping != "" {
+			images[index].ContentSHA256 = shot.ContentSHA256
+		}
+	}
+}
+
+// restoreLinkedTonemapping uses the exact stored URL association, not an image
+// extension, pathname, source HDR flag, or current capture preference.
+func restoreLinkedTonemapping(links []api.ScreenshotLinkedImage, uploads []api.UploadedImageLink) {
+	for index := range links {
+		for _, upload := range uploads {
+			if links[index].URL == upload.RawURL || links[index].URL == upload.ImgURL {
+				if links[index].URL == "" {
+					continue
+				}
+				links[index].Tonemapping = upload.Tonemapping
+				links[index].ContentSHA256 = upload.ContentSHA256
+				break
+			}
+		}
 	}
 }

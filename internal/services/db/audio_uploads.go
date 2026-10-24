@@ -64,8 +64,8 @@ func (r *SQLiteRepository) cloneAnalysisUploads(
 		for from, to := range paths {
 			_, err := tx.ExecContext(ctx, `INSERT INTO uploaded_images (
     source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-    image_path, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
-   ) SELECT source_path, ?, ?, disc_id, ?, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+    image_path, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at, tonemapping, content_sha256
+   ) SELECT source_path, ?, ?, disc_id, ?, host, usage_scope, purpose, account_scope, img_url, raw_url, web_url, size_bytes, uploaded_at, tonemapping, content_sha256
     FROM uploaded_images WHERE source_path = ? AND prepared_generation = ? AND image_path = ? AND purpose = ?
     ON CONFLICT(source_path, usage_scope, host, image_path) DO NOTHING`,
 				bound.PreparedMediaFingerprint, bound.PreparedGeneration, to, bound.SourcePath, prior.Generation, from,

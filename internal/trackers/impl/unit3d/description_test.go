@@ -332,7 +332,7 @@ func TestBuildUnit3DDescriptionSkipsDVDVOBMediaInfoWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildUnit3DDescriptionIncludesTonemapHeaderForHDRScreens(t *testing.T) {
+func TestBuildUnit3DDescriptionIncludesTonemapHeaderForKnownScreens(t *testing.T) {
 	meta := api.UploadSubject{HDR: "HDR10"}
 	cfg := config.Config{
 		ScreenshotHandling: config.ScreenshotHandlingConfig{ToneMap: true},
@@ -340,7 +340,7 @@ func TestBuildUnit3DDescriptionIncludesTonemapHeaderForHDRScreens(t *testing.T) 
 			TonemappedHeader: "[center]tone[/center]",
 		},
 	}
-	screens := []api.ScreenshotImage{{ImgURL: "https://img.example/s1.png"}}
+	screens := []api.ScreenshotImage{{Tonemapping: api.ScreenshotTonemapped, ImgURL: "https://img.example/s1.png"}}
 
 	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, screens)
 	if err != nil {
