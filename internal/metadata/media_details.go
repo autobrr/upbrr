@@ -919,7 +919,7 @@ func releaseNameRoleUsesManualFact(
 		api.NameRoleUHD, api.NameRoleDVDSize, api.NameRoleHDR,
 		api.NameRoleVideoCodec, api.NameRoleVideoEncode, api.NameRoleAudio,
 		api.NameRoleLanguageMarker, api.NameRoleLocale, api.NameRoleDistributor,
-		api.NameRoleSubtitleMarker, api.NameRoleOriginalGroup:
+		api.NameRoleSubtitleMarker, api.NameRoleOriginalGroup, api.NameRoleDownscale:
 		return false
 	default:
 		return false
@@ -1011,7 +1011,7 @@ func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseName
 	case api.NameRoleTitle, api.NameRolePart, api.NameRoleThreeD,
 		api.NameRoleUHD, api.NameRoleDVDSystem, api.NameRoleDVDSize, api.NameRoleVideoFormat, api.NameRoleHDR,
 		api.NameRoleVideoCodec, api.NameRoleVideoEncode, api.NameRoleLanguageMarker,
-		api.NameRoleLocale, api.NameRoleDistributor, api.NameRoleSubtitleMarker, api.NameRoleOriginalGroup:
+		api.NameRoleLocale, api.NameRoleDistributor, api.NameRoleSubtitleMarker, api.NameRoleOriginalGroup, api.NameRoleDownscale:
 		return false
 	default:
 		return false

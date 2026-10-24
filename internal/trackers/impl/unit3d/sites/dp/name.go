@@ -16,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v10", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v11", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -24,6 +24,9 @@ func namePolicy() trackers.ReleaseNamePolicyBinding {
 func applyDPNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
 	if err := unit3d.ApplyDVDNameDefaults(editor, meta, false); err != nil {
 		return fmt.Errorf("apply DP DVD naming: %w", err)
+	}
+	if err := applyDPDownscaleMarker(editor, meta); err != nil {
+		return err
 	}
 	if err := applyDPTVDBDisambiguation(editor, meta); err != nil {
 		return err
@@ -272,4 +275,27 @@ func primaryProgrammeLanguage(facts api.LanguageFacts) string {
 		return ""
 	}
 	return language
+}
+
+// applyDPDownscaleMarker projects retained source evidence without changing the
+// canonical document or inferring a source resolution from the delivered video.
+func applyDPDownscaleMarker(editor *trackers.NameEditor, meta api.UploadSubject) error {
+	marker, ok := editor.Component(api.NameRoleDownscale)
+	if !ok || marker.Manual {
+		return nil
+	}
+	if err := editor.Omit(api.NameRoleDownscale); err != nil {
+		return fmt.Errorf("omit DP downscale marker: %w", err)
+	}
+	web := strings.EqualFold(meta.Source, "Web") || strings.EqualFold(meta.Type, "WEBRIP") || strings.EqualFold(meta.Type, "WEBDL")
+	television := strings.EqualFold(meta.Type, "HDTV") || strings.EqualFold(meta.Source, "HDTV") ||
+		strings.EqualFold(meta.Source, "UHDTV") || strings.EqualFold(meta.Source, "SDTV")
+	if trackers.IsFullDiscUpload(meta.DiscType, meta.Type) || strings.EqualFold(meta.Source, "BluRay") ||
+		strings.EqualFold(meta.Source, "UHD BluRay") || (!web && !television) || marker.AvailableValue != "DS4K" {
+		return nil
+	}
+	if err := editor.InsertAfter(api.NameRoleDownscale, "DS4K", api.NameRoleResolution); err != nil {
+		return fmt.Errorf("insert DP downscale marker: %w", err)
+	}
+	return nil
 }
