@@ -14,7 +14,7 @@ concurrency:
 
 env:
   GOVULNCHECK_VERSION: v1.6.0
-  OSV_SCANNER_VERSION: v2.4.0
+  OSV_SCANNER_VERSION: v2.6.0
 
 jobs:
   vuln:
