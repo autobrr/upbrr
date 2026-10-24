@@ -14,13 +14,14 @@ import (
 
 // printMetadataPreview writes the canonical workflow metadata projection shown
 // by the CLI before tracker projection and upload review.
-func printMetadataPreview(output io.Writer, preview api.MetadataPreview, debug bool) {
+func printMetadataPreview(output io.Writer, preview api.MetadataPreview, release api.PreparedRelease, debug bool) {
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Release details")
 	if debug {
 		fmt.Fprintln(output, "Debug mode: validates the end-to-end workflow while suppressing tracker submission.")
 	}
-	fmt.Fprintf(output, "Source: %s\n", formatPathLabel(preview.SourcePath))
+	fmt.Fprintf(output, "Path: %s\n", formatPathLabel(preview.SourcePath))
+	fmt.Fprintf(output, "Type: %s\nResolution: %s\nSource: %s\n\n", release.Media.Type, release.Naming.Resolution, release.Media.Source)
 	fmt.Fprintf(output, "Upload name: %s\n", preview.ReleaseName)
 	fmt.Fprintf(output, "Commentary: %t\n", preview.Display.Commentary)
 	if external := primaryMetadataPreview(preview); external != nil {
