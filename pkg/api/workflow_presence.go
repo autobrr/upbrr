@@ -124,6 +124,9 @@ func (i TrackerProjectionInstructions) MarshalJSON() ([]byte, error) {
 	if i.ScreenshotCount != nil {
 		fields["screenshotCount"] = *i.ScreenshotCount
 	}
+	if i.ScreenshotCountIsDefault {
+		fields["screenshotCountIsDefault"] = true
+	}
 	if i.AdditionalNames != nil {
 		fields["additionalNames"] = i.AdditionalNames
 	}
@@ -163,6 +166,11 @@ func (i *TrackerProjectionInstructions) UnmarshalJSON(payload []byte) error {
 	if raw, ok := fields["screenshotCount"]; ok {
 		if err := json.Unmarshal(raw, &i.ScreenshotCount); err != nil {
 			return fmt.Errorf("unmarshal tracker projection screenshot count: %w", err)
+		}
+	}
+	if raw, ok := fields["screenshotCountIsDefault"]; ok {
+		if err := json.Unmarshal(raw, &i.ScreenshotCountIsDefault); err != nil {
+			return fmt.Errorf("unmarshal tracker projection screenshot count origin: %w", err)
 		}
 	}
 	if raw, ok := fields["additionalNames"]; ok {

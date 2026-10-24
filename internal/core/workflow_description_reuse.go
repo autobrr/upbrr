@@ -64,7 +64,8 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 	privateMedia any,
 	instructions api.DescriptionInstructions,
 ) (api.DescriptionSet, api.DescriptionInstructions, error) {
-	if _, hasAudio := privateMedia.(releaseworkflow.DescriptionResources); hasAudio {
+	if resources, wrapped := privateMedia.(releaseworkflow.DescriptionResources); wrapped &&
+		(resources.AudioAnalysis.ID != "" || resources.AudioPaths != nil || resources.HDR != nil || len(resources.HDRArtifacts) > 0) {
 		return api.DescriptionSet{}, instructions, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -133,6 +134,7 @@ func (b workflowDescriptionBuilder) reusableDescriptionInputs(
 	if err != nil {
 		return "", "", false, err
 	}
+	retainWorkflowScreenshotSelection(&subject, privateMedia)
 	binding := subject.MediaBinding
 	if !binding.Valid() || !binding.CompatibilityKey.Valid() {
 		return "", "", false, nil
@@ -221,23 +223,25 @@ func workflowReusableDescriptionFingerprint(
 		return "", available, err
 	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Version          string
-		Config           config.Config
-		CompatibilityKey api.MediaCompatibilityKey
-		Projections      []api.TrackerReleaseProjection
-		Instructions     api.DescriptionInstructions
-		Subject          api.DescriptionSubject
-		LocalResources   workflowReusableDescriptionLocalResources
-		ExactMedia       workflowReusableDescriptionMedia
+		Version                              string
+		Config                               config.Config
+		CompatibilityKey                     api.MediaCompatibilityKey
+		Projections                          []api.TrackerReleaseProjection
+		Instructions                         api.DescriptionInstructions
+		Subject                              api.DescriptionSubject
+		SuppressImportedScreenshotReferences map[string]bool
+		LocalResources                       workflowReusableDescriptionLocalResources
+		ExactMedia                           workflowReusableDescriptionMedia
 	}{
-		Version:          "description-reuse-v2",
-		Config:           cfg,
-		CompatibilityKey: compatibilityKey,
-		Projections:      reusableDescriptionProjections(projections.Projections),
-		Instructions:     instructions,
-		Subject:          normalizedSubject,
-		LocalResources:   localResources,
-		ExactMedia:       normalizedMedia,
+		Version:                              "description-reuse-v3",
+		Config:                               cfg,
+		CompatibilityKey:                     compatibilityKey,
+		Projections:                          reusableDescriptionProjections(projections.Projections),
+		Instructions:                         instructions,
+		Subject:                              normalizedSubject,
+		SuppressImportedScreenshotReferences: subject.SuppressImportedScreenshotReferences,
+		LocalResources:                       localResources,
+		ExactMedia:                           normalizedMedia,
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("workflow reusable descriptions: canonical fingerprint: %w", err)

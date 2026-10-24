@@ -133,7 +133,7 @@ func TestCLICompositeMediaUsesConfiguredScreenshotsUnlessOverridden(t *testing.T
 			if request.Options.Screens != tc.count {
 				t.Fatalf("description screenshot count = %d, want %d", request.Options.Screens, tc.count)
 			}
-			mapped, err := mapCLICompositeUploadRequest(request, false, "media-test")
+			mapped, err := mapCLICompositeUploadRequest(request, false, "media-test", !visited["screens"])
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -160,7 +160,7 @@ func TestCLICompositePreservesProviderClears(t *testing.T) {
 	if request.ReleaseNameOverrides.Category == nil || *request.ReleaseNameOverrides.Category != "MOVIE" {
 		t.Fatalf("clearing TMDB replaced the explicit category: %#v", request.ReleaseNameOverrides.Category)
 	}
-	mapped, err := mapCLICompositeUploadRequest(request, false, "provider-clear-test")
+	mapped, err := mapCLICompositeUploadRequest(request, false, "provider-clear-test", !visited["screens"])
 	if err != nil {
 		t.Fatalf("map request: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		ConfirmBDMVRescan: true,
 	}
 
-	mapped, err := mapCLICompositeUploadRequest(request, false, "cli-parity")
+	mapped, err := mapCLICompositeUploadRequest(request, false, "cli-parity", false)
 	if err != nil {
 		t.Fatalf("map CLI composite upload: %v", err)
 	}

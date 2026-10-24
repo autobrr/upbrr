@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"maps"
 	"mime"
@@ -2661,6 +2662,8 @@ func workflowMediaContentSHA256(ctx context.Context, pathValue string) (string, 
 // lifetime before its reusable association can be published. Reused media may
 // be compatible across sources, but a history deletion owns the old source's
 // managed files and can run in another process.
+// Format is re-inspected without changing persisted capture geometry; undecodable
+// content keeps an unknown format.
 func (b workflowMediaBuilder) materializeReusableMediaImage(
 	ctx context.Context,
 	binding api.PreparedMediaBinding,
@@ -2683,6 +2686,7 @@ func (b workflowMediaBuilder) materializeReusableMediaImage(
 		return api.ScreenshotImage{}, errors.New("workflow media reusable destination escapes tmp root")
 	}
 	if pathing.IsWithinRoot(reuseRoot, image.Path) {
+		image.Format = reusableMediaImageFormat(image.Path)
 		return image, nil
 	}
 	destination := filepath.Join(reuseRoot,
@@ -2695,7 +2699,21 @@ func (b workflowMediaBuilder) materializeReusableMediaImage(
 		return api.ScreenshotImage{}, err
 	}
 	image.Path = materialized
+	image.Format = reusableMediaImageFormat(image.Path)
 	return image, nil
+}
+
+func reusableMediaImageFormat(pathValue string) string {
+	file, err := os.Open(pathValue)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	_, format, err := image.DecodeConfig(file)
+	if err != nil {
+		return ""
+	}
+	return format
 }
 
 // reusableMediaTempRoot returns the reserved first-level directory for local

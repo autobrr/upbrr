@@ -6,15 +6,14 @@ package lst
 import (
 	"errors"
 	"html"
+	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/frustra/bbcode"
 
-	"strings"
-
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -27,26 +26,9 @@ func exceptionDescriptionAppendix(note string) string {
 	return "[b]Container exception[/b]\n" + note
 }
 
-// validateFinalDescription checks the exact content captured for preview and submission.
+// validateFinalDescription preserves mandatory disc parser fields and embedded
+// VOB reports. Screenshot deficiencies use the normal evidence-bound review.
 func validateFinalDescription(meta api.UploadSubject, description, mediaInfo, bdInfo string) error {
-	if countPreparedDescriptionImages(meta, description) < 3 {
-		return errors.New("LST: include three distinct prepared screenshots as full images or linked thumbnails in the final description")
-	}
-	subject := api.NewTrackerValidationSubject(meta, "LST")
-	if hybridAssetsRequired(subject) && !generatedHybridEvidenceIncluded(subject, description) &&
-		subject.QuestionnaireAnswers[assetQuestionKey(subject, "hybrid_will_add")] != "will_add_required_data" {
-		subject.DescriptionOverride = description
-		subject.DescriptionGroupsFinal = true
-		var fields []api.TrackerQuestionnaireField
-		for _, field := range assetReviewQuestions(subject) {
-			if field.HDRGradeComparison {
-				fields = append(fields, field)
-			}
-		}
-		return trackers.NewQuestionnairePreparationFailure("LST",
-			"Include the source-linked grade comparison and HDR10+ plot, or confirm that you will add the required data to the description",
-			&api.TrackerQuestionnaire{Fields: fields})
-	}
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV", "HDDVD":
 		summary, _, _ := discparse.SplitBDInfoReport(bdInfo)
@@ -68,17 +50,23 @@ func validateFinalDescription(meta api.UploadSubject, description, mediaInfo, bd
 
 var dvdIFOFormat = regexp.MustCompile(`(?mi)^Format\s*:\s*DVD Video\s*$`)
 
-func countPreparedDescriptionImages(meta api.UploadSubject, description string) int {
-	if meta.ExactMedia == nil {
-		return 0
-	}
-	prepared := make(map[string]bool)
-	for _, image := range meta.ExactMedia.Screenshots {
-		if image.Purpose == api.ScreenshotPurposeFinal && image.Format == "png" && strings.TrimSpace(image.Path) != "" {
-			prepared[image.Path] = true
+func validScreenshotFullURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+// countDescriptionScreenshotReferences counts rendered prepared images, merging
+// aliases that share either a selected image identity or a full image URL.
+func countDescriptionScreenshotReferences(references []api.ScreenshotReference, description string) int {
+	images := make([]api.ScreenshotReference, 0, len(references))
+	for _, image := range references {
+		image.RawURL = strings.TrimSpace(image.RawURL)
+		if !validScreenshotFullURL(image.RawURL) || strings.TrimSpace(string(image.ID)) == "" {
+			continue
 		}
+		images = append(images, image)
 	}
-	seen := make(map[string]bool)
+	var included []api.ScreenshotReference
 	var visit func(*bbcode.BBCodeNode)
 	visit = func(node *bbcode.BBCodeNode) {
 		if tag := node.GetOpeningTag(); tag != nil {
@@ -100,13 +88,9 @@ func countPreparedDescriptionImages(meta api.UploadSubject, description string) 
 						linkURL = html.UnescapeString(link.Value)
 					}
 				}
-				for _, image := range meta.ExactMedia.ScreenshotUploads {
-					raw := strings.TrimSpace(image.RawURL)
-					if raw == "" || !prepared[image.ImagePath] {
-						continue
-					}
-					if imageURL == raw || imageURL == image.ImgURL && (linkURL == raw || linkURL != "" && linkURL == image.WebURL) {
-						seen[image.ImagePath] = true
+				for _, image := range images {
+					if imageURL == image.RawURL || imageURL == image.ImgURL && (linkURL == image.RawURL || linkURL != "" && linkURL == image.WebURL) {
+						included = append(included, image)
 					}
 				}
 				return
@@ -117,5 +101,16 @@ func countPreparedDescriptionImages(meta api.UploadSubject, description string) 
 		}
 	}
 	visit(bbcode.Parse(bbcode.Lex(description)))
-	return len(seen)
+	return api.CountDistinctScreenshotReferences(images, included)
+}
+
+func finalizeImportedScreenshotDescription(description string, meta api.UploadSubject) string {
+	for _, image := range importedReferences(meta.CurrentImportedScreenshotEvidence()) {
+		// Match the existing Unit3D renderer's BBCode URL escaping.
+		image.RawURL = strings.NewReplacer("[", "%5B", "]", "%5D").Replace(image.RawURL)
+		if countDescriptionScreenshotReferences([]api.ScreenshotReference{image}, description) == 0 {
+			description = strings.TrimRight(description, "\r\n") + "\n[img]" + image.RawURL + "[/img]"
+		}
+	}
+	return description
 }

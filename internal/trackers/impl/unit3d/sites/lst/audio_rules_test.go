@@ -191,8 +191,8 @@ func TestAudioEvidenceAndProcessing(t *testing.T) {
 	}
 	key := trackers.LanguageQuestionKey(s, "audio_processing_"+track.ID)
 	s.QuestionnaireAnswers = map[string]string{key: "reduced_without_dither"}
-	if got := audioTierFailures(s); len(got) != 1 || got[0].Rule != "language_lst_audio_dither" {
-		t.Fatalf("missing dither failure: %+v", got)
+	if got := audioTierFailures(s); len(got) != 0 {
+		t.Fatalf("retired dither answer manufactured a finding: %+v", got)
 	}
 	s.QuestionnaireAnswers[key] = "reduced_with_dither"
 	if got := audioTierFailures(s); len(got) != 0 {
@@ -300,7 +300,7 @@ func TestAudioUnknownAnimeAndRole(t *testing.T) {
 	}
 }
 
-func TestKnownReductionNeedsDitherEvidence(t *testing.T) {
+func TestDitherHistoryCannotBeEstablishedBySavedAnswers(t *testing.T) {
 	s := lstValidationSubject()
 	s.Type = "ENCODE"
 	s.Release.Resolution = "1080p"
@@ -309,18 +309,15 @@ func TestKnownReductionNeedsDitherEvidence(t *testing.T) {
 	track.ChannelLayout = "2.0"
 	track.BitDepth = 16
 	key := trackers.LanguageQuestionKey(s, "audio_processing_"+track.ID)
-	s.QuestionnaireAnswers[key] = "reduced_dither_unknown"
-	failures := audioTierFailures(s)
-	if len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial || !failures[0].QuestionnaireInput {
-		t.Fatalf("known reduction silently accepted: %+v", failures)
-	}
-	fields := audioProcessingQuestions(s)
-	if len(fields) != 1 || !fields[0].Required || !fields[0].NeedsReview {
-		t.Fatalf("no corrective input: %+v", fields)
-	}
-	s.QuestionnaireAnswers[key] = "native_16_bit"
-	if len(audioTierFailures(s)) != 0 {
-		t.Fatal("native source needs no dithering")
+	for _, answer := range []string{"reduced_dither_unknown", "native_16_bit", "reduced_without_dither"} {
+		s.QuestionnaireAnswers[key] = answer
+		if failures := audioTierFailures(s); len(failures) != 0 {
+			t.Fatalf("saved answer manufactured source history: %+v", failures)
+		}
+		failures := audioProcessingGuidance(s)
+		if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionAdvisory || failures[0].QuestionnaireInput {
+			t.Fatalf("dither guidance not passive: %+v", failures)
+		}
 	}
 }
 

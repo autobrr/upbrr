@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v44"
+const ContractVersion = "prepared-release-v46"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -54,8 +54,10 @@ type Collector interface {
 }
 
 // CollectedFacts is the collector-to-owner handoff. Identity and provider
-// metadata are supplied only by IdentityResolver.
+// metadata are supplied by IdentityResolver; source-tracker image receipts
+// remain separate until the owner stamps their exact prepared generation.
 type CollectedFacts struct {
+	ImportedScreenshotEvidence *api.ImportedScreenshotEvidence
 	// NamingCategory records the category used to derive the collected names.
 	// A concrete movie/TV mismatch with the resolved identity prevents generation commit.
 	NamingCategory api.CanonicalCategory
@@ -417,6 +419,9 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		collected.Media.AnimeKnown = true
 	}
 	preparedAt := m.now().UTC()
+	// Only current collection receipts enter the generation; prior provider
+	// snapshots cannot restore missing or superseded image acceptance.
+	identityResult.ProviderMetadata.ImportedScreenshotEvidence = collected.ImportedScreenshotEvidence.Clone()
 	release := api.PreparedRelease{
 		Generation:       generation,
 		Compatibility:    compatibility,

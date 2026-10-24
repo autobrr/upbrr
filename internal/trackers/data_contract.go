@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // DataLookupResult contains tracker-derived metadata for one release.
@@ -33,6 +34,13 @@ type DataLookupResult struct {
 	Images []bbcode.Image
 	// Validated contains extracted images that passed remote URL validation.
 	Validated []bbcode.Image
+	// UninspectedImages contains current policy-accepted raw URLs with unavailable
+	// byte inspection, never validated image or complete-body-size evidence.
+	UninspectedImages []api.ImportedScreenshotReference
+	// ImportedImagePolicyVersion identifies the current image-request policy.
+	ImportedImagePolicyVersion string
+	// ImportedImageDescriptionFingerprint binds the original description and selected normalized raw URLs.
+	ImportedImageDescriptionFingerprint api.WorkflowFingerprint
 	// FileName is the tracker-provided torrent or release filename.
 	FileName string
 }
@@ -44,7 +52,8 @@ func (r DataLookupResult) HasIDs() bool {
 
 // HasData reports whether the result contains any usable metadata or release identity.
 func (r DataLookupResult) HasData() bool {
-	return r.HasIDs() || strings.TrimSpace(r.TorrentURL) != "" || strings.TrimSpace(r.Description) != "" || len(r.Images) > 0 || len(r.Validated) > 0 ||
+	return r.HasIDs() || strings.TrimSpace(r.TorrentURL) != "" || strings.TrimSpace(r.Description) != "" ||
+		len(r.Images) > 0 || len(r.Validated) > 0 || len(r.UninspectedImages) > 0 ||
 		strings.TrimSpace(r.InfoHash) != "" ||
 		strings.TrimSpace(r.FileName) != "" ||
 		strings.TrimSpace(r.Category) != ""

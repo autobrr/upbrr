@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,8 +50,8 @@ func exceptionTestSubject(t *testing.T, container, source, encoder string) api.T
 		TitleFingerprint:  fingerprint,
 		ResultFingerprint: "complete",
 	}
-	subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "exception_note")] = "Checked the source and applicable exception."
-	subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "sole_source")] = "sole_source_verified"
+	subject.QuestionnaireAnswers[exceptionQuestionKey(subject)] = "Checked the source and applicable exception."
+	subject.QuestionnaireAnswers[legacySoleSourceQuestionKey(subject)] = "sole_source_verified"
 	return subject
 }
 
@@ -128,7 +129,7 @@ func TestContainerExceptionBoundaries(t *testing.T) {
 			container: "ts",
 			source:    "HDTV",
 			mutate: func(s *api.TrackerValidationSubject) {
-				s.QuestionnaireAnswers[exceptionQuestionKey(*s, "exception_note")] = " \n\t "
+				s.QuestionnaireAnswers[exceptionQuestionKey(*s)] = " \n\t "
 			},
 			rule: "lst_exception_note",
 		},
@@ -139,25 +140,22 @@ func TestContainerExceptionBoundaries(t *testing.T) {
 			mutate: func(s *api.TrackerValidationSubject) {
 				s.TitleSearchEvidence.Status = api.MetadataEvidenceStatusPartial
 			},
-			rule: "lst_legacy_source_evidence",
 		},
 		{
 			name:      "other version blocks",
 			container: "mkv",
 			encoder:   "XviD",
 			mutate: func(s *api.TrackerValidationSubject) {
-				s.QuestionnaireAnswers[exceptionQuestionKey(*s, "sole_source")] = "other_version_exists"
+				s.QuestionnaireAnswers[legacySoleSourceQuestionKey(*s)] = "other_version_exists"
 			},
-			rule: "lst_legacy_source",
 		},
 		{
 			name:      "manual source evidence missing",
 			container: "avi",
 			encoder:   "XviD",
 			mutate: func(s *api.TrackerValidationSubject) {
-				delete(s.QuestionnaireAnswers, exceptionQuestionKey(*s, "sole_source"))
+				delete(s.QuestionnaireAnswers, legacySoleSourceQuestionKey(*s))
 			},
-			rule: "lst_legacy_source_evidence",
 		},
 		{
 			name:      "disc exemption",
@@ -170,7 +168,7 @@ func TestContainerExceptionBoundaries(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(&subject)
 			}
-			failures := exceptionValidationFailures(subject)
+			failures := blockingExceptionTestFailures(subject)
 			if tc.rule == "" {
 				if len(failures) != 0 {
 					t.Fatalf("failures = %#v", failures)
@@ -239,7 +237,7 @@ func TestExceptionPreviewAndSubmissionPreserveOverride(t *testing.T) {
 		}
 		subject := api.NewTrackerValidationSubject(meta, "LST")
 		note := "This transport stream is the original broadcast capture."
-		meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"LST": {exceptionQuestionKey(subject, "exception_note"): note}}
+		meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"LST": {exceptionQuestionKey(subject): note}}
 		screens := lstDescriptionScreenshots(&meta)
 		input := trackers.PreparationInput{
 			Intent:  trackers.PreparationIntentUpload,
@@ -286,7 +284,7 @@ func TestExceptionPreviewAndSubmissionPreserveOverride(t *testing.T) {
 		if !called {
 			t.Fatal("submission not observed")
 		}
-		delete(input.Meta.TrackerQuestionnaireAnswers["LST"], exceptionQuestionKey(subject, "exception_note"))
+		delete(input.Meta.TrackerQuestionnaireAnswers["LST"], exceptionQuestionKey(subject))
 		if _, failure := unit3d.NewWithProfile(Profile()).Prepare(t.Context(), input); failure == nil {
 			t.Fatal("missing explanation accepted")
 		}
@@ -306,31 +304,31 @@ func TestExceptionDescriptionEscapesMarkup(t *testing.T) {
 func TestLSTContainerPackEvidence(t *testing.T) {
 	subject := exceptionTestSubject(t, "mkv", "WEB-DL", "x264")
 	subject.MediaFileFacts = api.MediaFileFacts{ExpectedFileCount: 2, Files: []api.MediaFileFact{{Container: "mkv", Primary: true}, {Container: "avi", VideoEncoder: "x264"}}}
-	failures := exceptionValidationFailures(subject)
+	failures := blockingExceptionTestFailures(subject)
 	if len(failures) != 1 || failures[0].Rule != "lst_resource_container" || failures[0].EvidenceStatus != api.MetadataEvidenceStatusComplete {
 		t.Fatalf("unsupported resource = %#v", failures)
 	}
 	subject.MediaFileFacts.Files[1] = api.MediaFileFact{Container: "mp4", Source: "WEB-DL"}
-	failures = exceptionValidationFailures(subject)
+	failures = blockingExceptionTestFailures(subject)
 	if len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
 		t.Fatalf("borrowed primary DV proof = %#v", failures)
 	}
 	subject.MediaFileFacts.Files[1].HDRFacts = subject.HDRFacts
-	subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "exception_note")] = "Profile 5 source evidence reviewed."
-	if failures := exceptionValidationFailures(subject); len(failures) != 0 {
+	subject.QuestionnaireAnswers[exceptionQuestionKey(subject)] = "Profile 5 source evidence reviewed."
+	if failures := blockingExceptionTestFailures(subject); len(failures) != 0 {
 		t.Fatalf("per-resource profile 5 = %#v", failures)
 	}
 	subject.MediaFileFacts.Files[1] = api.MediaFileFact{Container: "mkv", VideoEncoder: "DivX"}
 	if !legacyContainerCandidate(subject) || containerException(subject) != "legacy" {
 		t.Fatal("secondary legacy source not identified")
 	}
-	subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "sole_source")] = "sole_source_verified"
-	subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "exception_note")] = "Sole source evidence reviewed."
-	if failures := exceptionValidationFailures(subject); len(failures) != 0 {
+	subject.QuestionnaireAnswers[legacySoleSourceQuestionKey(subject)] = "sole_source_verified"
+	subject.QuestionnaireAnswers[exceptionQuestionKey(subject)] = "Sole source evidence reviewed."
+	if failures := blockingExceptionTestFailures(subject); len(failures) != 0 {
 		t.Fatalf("reviewed legacy resource = %#v", failures)
 	}
 	subject.MediaFileFacts.Files = subject.MediaFileFacts.Files[:1]
-	failures = exceptionValidationFailures(subject)
+	failures = blockingExceptionTestFailures(subject)
 	if len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
 		t.Fatalf("incomplete pack = %#v", failures)
 	}
@@ -338,17 +336,36 @@ func TestLSTContainerPackEvidence(t *testing.T) {
 
 func TestLSTLegacySearchChangesInvalidateReview(t *testing.T) {
 	subject := exceptionTestSubject(t, "avi", "DVD", "XviD")
-	if failures := exceptionValidationFailures(subject); len(failures) != 0 {
+	if failures := blockingExceptionTestFailures(subject); len(failures) != 0 {
 		t.Fatalf("initial evidence = %#v", failures)
 	}
 	subject.TitleSearchEvidence.TorrentCount = 1
 	subject.TitleSearchEvidence.ResultFingerprint = "changed-results"
-	failures := exceptionValidationFailures(subject)
-	if len(failures) != 1 || failures[0].Rule != "lst_legacy_source_evidence" {
-		t.Fatalf("changed search retained review = %#v", failures)
+	failures := blockingExceptionTestFailures(subject)
+	if len(failures) != 0 {
+		t.Fatalf("changed search recreated an availability assurance gate: %#v", failures)
 	}
-	subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "sole_source")] = "sole_source_verified"
-	if failures := exceptionValidationFailures(subject); len(failures) != 0 {
+	subject.QuestionnaireAnswers[legacySoleSourceQuestionKey(subject)] = "sole_source_verified"
+	if failures := blockingExceptionTestFailures(subject); len(failures) != 0 {
 		t.Fatalf("same-source mirror after review = %#v", failures)
 	}
+}
+
+// Guidance does not block container preparation; genuine payload inputs still do.
+func blockingExceptionTestFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	return slices.DeleteFunc(exceptionValidationFailures(subject), func(f api.RuleFailure) bool { return f.Disposition == api.RuleDispositionAdvisory })
+}
+
+// legacySoleSourceQuestionKey reconstructs persisted historical answers without
+// retaining their retired authority in production code.
+func legacySoleSourceQuestionKey(subject api.TrackerValidationSubject) string {
+	subject = primaryTechnicalSubject(subject)
+	search := subject.TitleSearchEvidence
+	fingerprint, _ := api.CanonicalWorkflowFingerprint(struct {
+		Source                string
+		Title, Result, Config api.WorkflowFingerprint
+		Policy                string
+		Count                 int
+	}{exceptionFingerprint(subject), search.TitleFingerprint, search.ResultFingerprint, search.ConfigFingerprint, search.PolicyID, search.TorrentCount})
+	return trackers.LanguageQuestionKey(subject, "sole_source_"+string(fingerprint))
 }

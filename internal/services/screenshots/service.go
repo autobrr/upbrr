@@ -1481,6 +1481,8 @@ func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
 		image, _ := buildScreenshotImage(match, parseScreenshotIndex(match, base))
 		results = append(results, api.ScreenshotImage{
 			Format:           image.Format,
+			Width:            image.Width,
+			Height:           image.Height,
 			Index:            parseScreenshotIndex(match, base),
 			TimestampSeconds: ts,
 			Path:             match,
@@ -1530,6 +1532,8 @@ func listTrackerScreens(tmpDir, base string) []api.ScreenshotImage {
 		image, _ := buildScreenshotImage(path, 0)
 		results = append(results, api.ScreenshotImage{
 			Format:    image.Format,
+			Width:     image.Width,
+			Height:    image.Height,
 			Path:      path,
 			Purpose:   api.ScreenshotPurposeFinal,
 			SizeBytes: info.Size(),

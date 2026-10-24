@@ -4,52 +4,42 @@
 package lst
 
 import (
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 	"testing"
 )
 
 func TestDiscReviewUnknownAndGeneration(t *testing.T) {
 	subject := lstValidationSubject()
-	subject.DiscType = "BDMV"
-	subject.Type = "DISC"
-	if failures := discReviewFailures(subject); len(failures) != 4 {
-		t.Fatalf("missing review: %+v", failures)
-	} else {
-		for _, f := range failures {
-			if f.Disposition != api.RuleDispositionStrict || f.EvidenceStatus != api.MetadataEvidenceStatusPartial {
-				t.Fatalf("unknown treated as violation: %+v", f)
-			}
+	subject.DiscType, subject.Type = "BDMV", "DISC"
+	for range 2 {
+		failures := discReviewFailures(subject)
+		if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionAdvisory || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial || failures[0].QuestionnaireInput {
+			t.Fatalf("unknown provenance became a gate: %+v", failures)
 		}
-	}
-	for _, field := range discReviewQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
-	}
-	if failures := discReviewFailures(subject); len(failures) != 0 {
-		t.Fatalf("reviewed: %+v", failures)
-	}
-	subject.Identity.Generation++
-	if len(discReviewFailures(subject)) == 0 {
-		t.Fatal("stale disc review reused")
+		subject.Identity.Generation++
 	}
 }
-func TestCustomDiscAvailabilityCannotBeAcknowledged(t *testing.T) {
+
+func TestCustomDiscAvailabilityIsNotEstablishedBySavedAnswer(t *testing.T) {
 	subject := lstValidationSubject()
-	subject.DiscType = "BDMV"
-	subject.Type = "DISC"
-	for _, field := range discReviewQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
+	subject.DiscType, subject.Type = "BDMV", "DISC"
+	for _, answer := range []string{"unmodified_same_disc_exists", "no_unmodified_same_disc"} {
+		subject.QuestionnaireAnswers[discQuestionKey(subject, "form")] = "custom"
+		subject.QuestionnaireAnswers[discQuestionKey(subject, "custom_availability")] = answer
+		failures := discReviewFailures(subject)
+		if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionAdvisory || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+			t.Fatalf("saved answer created authority: %+v", failures)
+		}
 	}
-	subject.QuestionnaireAnswers[discQuestionKey(subject, "form")] = "custom"
-	if len(discReviewFailures(subject)) != 1 {
-		t.Fatal("custom availability must be reviewed")
-	}
-	subject.QuestionnaireAnswers[discQuestionKey(subject, "custom_availability")] = "unmodified_same_disc_exists"
-	failures := discReviewFailures(subject)
-	if len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusComplete || failures[0].Disposition != api.RuleDispositionStrict {
-		t.Fatalf("known unavailable: %+v", failures)
-	}
-	subject.QuestionnaireAnswers[discQuestionKey(subject, "custom_availability")] = "no_unmodified_same_disc"
-	if len(discReviewFailures(subject)) != 0 {
-		t.Fatal("reviewed custom disc rejected")
-	}
+}
+
+// Reconstruct legacy saved keys solely to verify that retired answers are ignored.
+func discQuestionKey(subject api.TrackerValidationSubject, key string) string {
+	fingerprint, _ := api.CanonicalWorkflowFingerprint(struct {
+		Disc         api.DiscFacts
+		Files        []string
+		Presentation string
+	}{subject.Disc, subject.FileList, subject.Is3D})
+	return trackers.LanguageQuestionKey(subject, "disc_"+key+"_"+string(fingerprint))
 }

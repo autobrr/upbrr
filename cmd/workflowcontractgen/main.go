@@ -1332,6 +1332,7 @@ func (b *schemaBuilder) definition(value reflect.Type) *schema {
 				"uploadReleaseName":        stringOrNull(),
 				"confirmedNameFingerprint": b.inline(reflect.TypeFor[api.WorkflowFingerprint]()),
 				"screenshotCount":          {AnyOf: []*schema{{Type: "integer", Minimum: new(0)}, {Type: "null"}}},
+				"screenshotCountIsDefault": {Type: "boolean"},
 				"additionalNames": {
 					Type:                 "object",
 					AdditionalProperties: stringOrNull(),

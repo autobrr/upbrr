@@ -278,6 +278,10 @@ func (p *WorkflowProjector) projectSelected(
 		instruction := instructions[trackerID]
 		trackerSubject.TrackerConfigOverrides = instruction.TrackerConfig
 		trackerSubject.TrackerSiteOverrides = instruction.TrackerSite
+		if instruction.ScreenshotCount != nil && !instruction.ScreenshotCountIsDefault {
+			trackerSubject.ProviderMetadata.ImportedScreenshotEvidence = nil
+		}
+		trackerSubject = FilterImportedScreenshotEvidenceForTrackerWithRegistry(p.registry, p.config, string(trackerID), trackerSubject)
 		trackerConfig := applyTrackerConfigOverrides(trackerConfigFor(p.config, string(trackerID)), instruction.TrackerConfig)
 		var groupPolicy GroupPolicyDecision
 		trackerSubject, groupPolicy = ApplyGroupPolicy(trackerConfig, trackerSubject)
@@ -304,7 +308,14 @@ func (p *WorkflowProjector) projectSelected(
 			Logger:                    logger,
 		}, inputFingerprint, catalogFingerprint, configFingerprints[trackerID])
 		if descriptor, ok := p.registry.LookupDescriptor(string(trackerID)); ok {
-			applyWorkflowProjectionRequirements(&projection, descriptor, instruction.ScreenshotCount, p.config)
+			applyWorkflowProjectionRequirements(
+				&projection,
+				descriptor,
+				instruction.ScreenshotCount,
+				instruction.ScreenshotCountIsDefault,
+				p.config,
+				trackerSubject,
+			)
 		}
 		if failure != nil {
 			failures = append(failures, api.WorkflowFailure{
@@ -363,13 +374,20 @@ func applyWorkflowProjectionRequirements(
 	projection *api.TrackerReleaseProjection,
 	descriptor Descriptor,
 	screenshotCount *int,
+	screenshotCountIsDefault bool,
 	cfg config.Config,
+	subject api.UploadSubject,
 ) {
 	if descriptor.UploadContentMode.UsesImages() {
 		trackerScreenshotCount := trackerConfigFor(cfg, descriptor.Name).ImageCount
-		if screenshotCount != nil {
+		switch {
+		case (screenshotCount == nil || screenshotCountIsDefault) && descriptor.WorkflowMedia != nil &&
+			descriptor.WorkflowMedia.AllowImportedScreenshotReferences &&
+			subject.CurrentImportedScreenshotEvidence() != nil:
+			projection.Artifacts.ScreenshotCount = 0
+		case screenshotCount != nil:
 			projection.Artifacts.ScreenshotCount = max(trackerScreenshotCount, *screenshotCount)
-		} else {
+		default:
 			projection.Artifacts.ScreenshotCount = trackerScreenshotCount
 			if projection.Artifacts.ScreenshotCount <= 0 {
 				projection.Artifacts.ScreenshotCount = cfg.ScreenshotHandling.Screens

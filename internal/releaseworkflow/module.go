@@ -4848,6 +4848,7 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve tracker projection subject: %w", err)
 	}
+	subject.SuppressImportedScreenshotReferences = screenshotReferenceSuppression(state, command.TrackerIDs, command.Instructions)
 	subject.TrackerDuplicateReviewCandidates = questionnaireDuplicateCandidates(state, release, now)
 	applyDescriptionHDRQuestionnaireEvidence(&subject, state)
 	// Acknowledgement reprojects the same generation; preserve only server-owned
@@ -5075,6 +5076,7 @@ func (m *Module) preflightTrackers(
 	if api.NormalizeWorkflowExecutionMode(command.ExecutionMode) != api.NormalizeWorkflowExecutionMode(initial.ExecutionMode) {
 		return CommandResult{}, fmt.Errorf("%w: tracker preflight execution mode does not match projections", ErrInvalidTransition)
 	}
+	subject.SuppressImportedScreenshotReferences = currentScreenshotReferenceSuppression(state)
 	assessment, finalized, err := m.trackerPreflight.Build(ctx, subject, catalog, runtime, initial, now)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build tracker preflight: %w", err)
@@ -5932,6 +5934,8 @@ func (m *Module) captureMedia(
 				return CommandResult{}, fmt.Errorf("release workflow restore compatible media: %w", restoreErr)
 			}
 			if len(restored.Artifacts) > 0 {
+				// Saved media from another workflow has unknown selection provenance.
+				restored.AutomaticScreenshotSelection = false
 				priorMedia, priorPrivate = &restored, retained
 			}
 		}
@@ -5958,6 +5962,7 @@ func (m *Module) captureMedia(
 	if err != nil {
 		return CommandResult{}, err
 	}
+	snapshot.AutomaticScreenshotSelection = automaticScreenshotSelection(command.Instructions, priorMedia)
 	// Stale prep flags from priorMedia would skip UploadMediaImages / MediaSelection.
 	// Fresh builds keep any ImageRequirementsPrepared set by the builder.
 	if priorMedia != nil {
@@ -6169,6 +6174,9 @@ func (m *Module) setMediaSelection(
 			snapshot.Artifacts[index].Selected = command.Selected
 		}
 	}
+	if !command.preserveAutomaticScreenshotSelection {
+		markExplicitScreenshotSelection(&snapshot, command.ArtifactIDs)
+	}
 	snapshot.ImageRequirementsPrepared = false
 	snapshot.ImageHostUploadSkipped = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
@@ -6200,6 +6208,7 @@ func (m *Module) reorderMediaArtifacts(
 		snapshot.Artifacts[index].Order = nextOrder
 		nextOrder++
 	}
+	markExplicitScreenshotSelection(&snapshot, command.ArtifactIDs)
 	snapshot.ImageRequirementsPrepared = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
 }
@@ -6264,6 +6273,12 @@ func (m *Module) attachMediaArtifacts(
 	if err := validateMediaRequirementsFingerprint(updated, projections); err != nil {
 		return CommandResult{}, err
 	}
+	updated.AutomaticScreenshotSelection = snapshot != nil && snapshot.AutomaticScreenshotSelection
+	for _, attachment := range command.Attachments {
+		if attachment.Kind == api.MediaArtifactScreenshot {
+			updated.AutomaticScreenshotSelection = false
+		}
+	}
 	refreshMutatedMediaStatus(&updated, eligible.Projections, projections.Projections)
 	updated.ImageRequirementsPrepared = false
 	updated.ImageHostUploadSkipped = false
@@ -6296,6 +6311,7 @@ func (m *Module) uploadMediaImages(
 	}
 	if strings.TrimSpace(command.Host) == "" && len(command.ArtifactIDs) > 0 {
 		selectExplicitMediaArtifacts(&snapshot, artifactIDs)
+		markExplicitScreenshotSelection(&snapshot, artifactIDs)
 	}
 	if command.SkipUpload {
 		snapshot.ImageRequirementsPrepared = true
@@ -6349,6 +6365,7 @@ func (m *Module) uploadMediaImages(
 		}
 		return CommandResult{}, fmt.Errorf("release workflow upload media images: %w", err)
 	}
+	updated.AutomaticScreenshotSelection = snapshot.AutomaticScreenshotSelection
 	updated.HostAttempts = append(updated.HostAttempts, attempts...)
 	switch {
 	case strings.TrimSpace(command.Host) == "":
@@ -6407,7 +6424,12 @@ func selectExplicitMediaArtifacts(snapshot *api.MediaArtifactSet, artifactIDs []
 		if snapshot.Artifacts[index].Kind != api.MediaArtifactScreenshot && snapshot.Artifacts[index].Kind != api.MediaArtifactDVDMenu {
 			continue
 		}
-		_, snapshot.Artifacts[index].Selected = selected[snapshot.Artifacts[index].ID]
+		_, keep := selected[snapshot.Artifacts[index].ID]
+		// Replacing the final list also expresses intent for omitted screenshots.
+		if snapshot.Artifacts[index].Kind == api.MediaArtifactScreenshot && snapshot.Artifacts[index].Selected && !keep {
+			snapshot.AutomaticScreenshotSelection = false
+		}
+		snapshot.Artifacts[index].Selected = keep
 	}
 }
 
@@ -6538,6 +6560,7 @@ func (m *Module) deleteMediaArtifacts(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow delete media artifacts: %w", err)
 	}
+	markExplicitScreenshotSelection(&snapshot, command.ArtifactIDs)
 	deleted := make(map[api.PublicResourceID]struct{}, len(command.ArtifactIDs))
 	for _, artifactID := range command.ArtifactIDs {
 		deleted[artifactID] = struct{}{}
@@ -6630,12 +6653,13 @@ func (m *Module) publishMediaMutation(
 	refreshMutatedMediaStatus(&snapshot, eligible.Projections, projections.Projections)
 	snapshot.TrackerApproval = targets.TrackerApproval()
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Prior                     api.WorkflowFingerprint
-		Artifacts                 []api.MediaArtifact
-		HostAttempts              []api.HostedImageAttempt
-		FailedHosts               []string
-		ImageRequirementsPrepared bool
-		ImageHostUploadSkipped    bool
+		Prior                        api.WorkflowFingerprint
+		Artifacts                    []api.MediaArtifact
+		HostAttempts                 []api.HostedImageAttempt
+		FailedHosts                  []string
+		ImageRequirementsPrepared    bool
+		ImageHostUploadSkipped       bool
+		AutomaticScreenshotSelection bool
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
@@ -6643,6 +6667,7 @@ func (m *Module) publishMediaMutation(
 		snapshot.FailedHosts,
 		snapshot.ImageRequirementsPrepared,
 		snapshot.ImageHostUploadSkipped,
+		snapshot.AutomaticScreenshotSelection,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media mutation: %w", err)
@@ -6684,12 +6709,13 @@ func (m *Module) publishMediaReplacement(
 	}
 	snapshot.TrackerApproval = targets.TrackerApproval()
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Prior                     api.WorkflowFingerprint
-		Artifacts                 []api.MediaArtifact
-		HostAttempts              []api.HostedImageAttempt
-		FailedHosts               []string
-		ImageRequirementsPrepared bool
-		ImageHostUploadSkipped    bool
+		Prior                        api.WorkflowFingerprint
+		Artifacts                    []api.MediaArtifact
+		HostAttempts                 []api.HostedImageAttempt
+		FailedHosts                  []string
+		ImageRequirementsPrepared    bool
+		ImageHostUploadSkipped       bool
+		AutomaticScreenshotSelection bool
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
@@ -6697,6 +6723,7 @@ func (m *Module) publishMediaReplacement(
 		snapshot.FailedHosts,
 		snapshot.ImageRequirementsPrepared,
 		snapshot.ImageHostUploadSkipped,
+		snapshot.AutomaticScreenshotSelection,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media replacement: %w", err)
@@ -7547,6 +7574,7 @@ func (m *Module) prepareUploads(
 	if err != nil {
 		return preparedUploads{}, fmt.Errorf("release workflow load description inputs for upload: %w", err)
 	}
+	privateMedia = screenshotDescriptionResources(state, privateMedia)
 	plan, execution, err := m.uploadPlanBuilder.Build(
 		ctx,
 		projections,

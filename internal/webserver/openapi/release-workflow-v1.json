@@ -3930,6 +3930,55 @@
           "FailedHosts"
         ]
       },
+      "ImportedScreenshotEvidence": {
+        "type": "object",
+        "properties": {
+          "DescriptionFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "InfoHash": {
+            "type": "string"
+          },
+          "PolicyVersion": {
+            "type": "string"
+          },
+          "References": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedScreenshotReference"
+            }
+          },
+          "SourceFingerprint": {
+            "type": "string"
+          },
+          "Tracker": {
+            "type": "string"
+          },
+          "TrackerID": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "DescriptionFingerprint",
+          "InfoHash",
+          "PolicyVersion",
+          "References",
+          "SourceFingerprint",
+          "Tracker",
+          "TrackerID"
+        ]
+      },
+      "ImportedScreenshotReference": {
+        "type": "object",
+        "properties": {
+          "RawURL": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "RawURL"
+        ]
+      },
       "InputReadinessFieldOutcome": {
         "type": "object",
         "properties": {
@@ -4228,6 +4277,9 @@
             "items": {
               "$ref": "#/components/schemas/MediaArtifact"
             }
+          },
+          "automaticScreenshotSelection": {
+            "type": "boolean"
           },
           "captureFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
@@ -4719,6 +4771,9 @@
           "Primary": {
             "type": "boolean"
           },
+          "RateControl": {
+            "$ref": "#/components/schemas/VideoRateControl"
+          },
           "Resolution": {
             "type": "string"
           },
@@ -4760,6 +4815,7 @@
           "HDRFacts",
           "HasEncodeSettings",
           "Primary",
+          "RateControl",
           "Resolution",
           "ResourceID",
           "Source",
@@ -8711,6 +8767,9 @@
               }
             ]
           },
+          "countIsDefault": {
+            "type": "boolean"
+          },
           "frames": {
             "type": "array",
             "items": {
@@ -9680,6 +9739,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/IMDBMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ImportedScreenshotEvidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImportedScreenshotEvidence"
               },
               {
                 "type": "null"
@@ -11760,6 +11829,9 @@
               }
             ]
           },
+          "screenshotCountIsDefault": {
+            "type": "boolean"
+          },
           "trackerConfig": {
             "$ref": "#/components/schemas/TrackerConfigOverrides"
           },
@@ -12877,6 +12949,9 @@
         ]
       },
       "VideoBitrateStatus": {
+        "type": "string"
+      },
+      "VideoRateControl": {
         "type": "string"
       },
       "WorkflowAuthority": {

@@ -76,6 +76,7 @@ func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint
 		MovieYearProvider api.IdentityProvider
 		TitleProvider     api.IdentityProvider
 		UploadContentMode UploadContentMode
+		WorkflowMedia     *WorkflowMediaRequirements
 		Rules             *ruleFingerprint
 		ValidationPolicy  string
 		RuleContract      string
@@ -106,6 +107,7 @@ func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint
 		MovieYearProvider: descriptor.ReleaseNamePolicy.MovieYearProvider,
 		TitleProvider:     descriptor.ReleaseNamePolicy.TitleProvider,
 		UploadContentMode: descriptor.UploadContentMode,
+		WorkflowMedia:     descriptor.WorkflowMedia,
 		Rules:             rules,
 		ValidationPolicy:  descriptor.Validation.ID,
 		RuleContract:      ValidationContractID,

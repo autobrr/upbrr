@@ -557,7 +557,7 @@ func reusableDescriptionPrivateMedia(t *testing.T, root, prefix string) workflow
 }
 
 func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *testing.T) {
-	for _, renderer := range []string{"", "description-renderer-v1"} {
+	for _, renderer := range []string{"", "description-renderer-v1", "description-renderer-v2"} {
 		for _, mode := range []string{"generated", "mixed", "final"} {
 			t.Run(renderer+"/"+mode, func(t *testing.T) {
 				f := newWorkflowDescriptionReuseFixture(t)

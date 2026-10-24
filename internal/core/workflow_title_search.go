@@ -42,7 +42,8 @@ func (b workflowPreflightBuilder) assessTitleSearchRules(
 			continue
 		}
 		policy := provider.TitleSearchPolicy()
-		validation := api.NewTrackerValidationSubject(subject, string(projection.TrackerID))
+		trackerSubject := trackers.FilterImportedScreenshotEvidenceForTrackerWithRegistry(b.registry, b.config, string(projection.TrackerID), subject)
+		validation := api.NewTrackerValidationSubject(trackerSubject, string(projection.TrackerID))
 		validation.FinalizedUploadName = projection.UploadReleaseName
 		if policy.ID == "" || policy.Required == nil || !policy.Required(validation) {
 			continue

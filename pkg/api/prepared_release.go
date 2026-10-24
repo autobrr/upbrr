@@ -747,16 +747,18 @@ func (i ExternalIdentity) RequireCategory() (CanonicalCategory, error) {
 // SourceScopedMetadata stores optional provider enrichment for one source and
 // prepared generation.
 type SourceScopedMetadata struct {
-	SourcePath           string
-	Generation           PreparedGeneration
-	TMDB                 *TMDBMetadata
-	IMDB                 *IMDBMetadata
-	TVDB                 *TVDBMetadata
-	TVmaze               *TVmazeMetadata
-	AniList              *AniListMetadata
-	Bluray               *BlurayMetadata
-	ProviderAvailability []ProviderAvailabilityEvidence
-	UpdatedAt            time.Time `ts_type:"string"`
+	// ImportedScreenshotEvidence is a receipt snapshot, not a local image asset.
+	ImportedScreenshotEvidence *ImportedScreenshotEvidence `json:",omitempty"`
+	SourcePath                 string
+	Generation                 PreparedGeneration
+	TMDB                       *TMDBMetadata
+	IMDB                       *IMDBMetadata
+	TVDB                       *TVDBMetadata
+	TVmaze                     *TVmazeMetadata
+	AniList                    *AniListMetadata
+	Bluray                     *BlurayMetadata
+	ProviderAvailability       []ProviderAvailabilityEvidence
+	UpdatedAt                  time.Time `ts_type:"string"`
 }
 
 // IsCurrentFor reports whether provider metadata belongs to the current source

@@ -4,10 +4,8 @@
 package lst
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -143,38 +141,6 @@ func nonInternalCandidate(context *api.DupeEvidenceContext) {
 	context.Target.Comparisons[0].Candidate.InternalStatus = "non_internal"
 }
 
-func TestDuplicateEvidenceAnswersBindSourceGenerationAndGroup(t *testing.T) {
-	meta := api.UploadSubject{
-		Tag:                         "GRP",
-		Identity:                    api.ExternalIdentity{Generation: 1},
-		TrackerQuestionnaireAnswers: map[string]map[string]string{"LST": {}},
-	}
-	subject := api.NewTrackerValidationSubject(meta, "LST")
-	for key, value := range map[string]string{"source": "https://example.test/source", "internal_status": "internal"} {
-		meta.TrackerQuestionnaireAnswers["LST"][duplicateEvidenceKey(subject, key)] = value
-	}
-	subject = api.NewTrackerValidationSubject(meta, "LST")
-	meta.TrackerQuestionnaireAnswers["LST"][duplicateEvidenceKey(subject, "source_reviewed")] = "yes"
-	evidence, _ := duplicateEvidence(meta)
-	if evidence.InternalStatus != "internal" {
-		t.Fatalf("reviewed source lost: %+v", evidence)
-	}
-	meta.Identity.Generation++
-	evidence, _ = duplicateEvidence(meta)
-	if evidence.InternalStatus != "" {
-		t.Fatal("stale generation accepted")
-	}
-	meta.Identity.Generation--
-	meta.Tag = "OTHER"
-	evidence, _ = duplicateEvidence(meta)
-	if evidence.InternalStatus != "" {
-		t.Fatal("changed group accepted")
-	}
-	if len(duplicateEvidenceQuestionnaire(trackers.PreparationInput{Meta: meta})) != 0 {
-		t.Fatal("comparison controls without duplicate candidates")
-	}
-}
-
 func TestHybridAndDiscEvidence(t *testing.T) {
 	for _, test := range []struct {
 		name                                   string
@@ -292,113 +258,5 @@ func TestPersonalInternalBenefitIsIndependentOfQuality(t *testing.T) {
 	context.Target.Comparisons[0].MeaningfulBenefit = "no"
 	if got := compareDuplicateEvidence(context); got.Relation != api.DupeRelationCoexists {
 		t.Fatalf("back catalogue exemption: %+v", got)
-	}
-}
-
-func TestIndependentCandidateQuestionnaireProofs(t *testing.T) {
-	meta := api.UploadSubject{
-		Tag:                         "GRP",
-		Identity:                    api.ExternalIdentity{Generation: 1},
-		TrackerQuestionnaireAnswers: map[string]map[string]string{"LST": {}},
-	}
-	subject := api.NewTrackerValidationSubject(meta, "LST")
-	set := func(key, value string) {
-		subject = api.NewTrackerValidationSubject(meta, "LST")
-		meta.TrackerQuestionnaireAnswers["LST"][duplicateEvidenceKey(subject, key)] = value
-	}
-	for _, id := range []string{"123", "456"} {
-		candidate := api.DupeMatchProjection{
-			ID:                  id,
-			Name:                "Existing " + id,
-			EvidenceFingerprint: api.WorkflowFingerprint("fingerprint-" + id),
-			Relation:            api.DupeRelationManualReview,
-			Reason:              "lst_internal_comparison_required",
-		}
-		if meta.TrackerDuplicateReviewCandidates == nil {
-			meta.TrackerDuplicateReviewCandidates = map[string][]api.DupeMatchProjection{}
-		}
-		meta.TrackerDuplicateReviewCandidates["LST"] = append(meta.TrackerDuplicateReviewCandidates["LST"], candidate)
-		prefix := duplicateCandidatePrefix(candidate)
-		set(prefix+"comparison_source", "https://example.test/comparison/"+id)
-		set(prefix+"quality", "superior")
-		set(prefix+"comparison_reviewed", "yes")
-	}
-	_, proofs := duplicateEvidence(meta)
-	if len(proofs) != 2 || proofs[0].CandidateID != "123" || proofs[1].CandidateID != "456" || proofs[0].CandidateFingerprint == proofs[1].CandidateFingerprint {
-		t.Fatalf("independent proofs: %+v", proofs)
-	}
-	fields := duplicateEvidenceQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if len(fields) == 0 {
-		t.Fatal("missing candidate controls")
-	}
-	for _, field := range fields {
-		if strings.Contains(field.Key, "candidate_ids") || strings.Contains(field.Key, "candidate_fingerprint") {
-			t.Fatalf("editable candidate binding: %s", field.Key)
-		}
-	}
-	meta.TrackerDuplicateReviewCandidates["LST"][0].Relation = api.DupeRelationCoexists
-	_, proofs = duplicateEvidence(meta)
-	if len(proofs) != 2 || !proofs[0].Reviewed || !proofs[1].Reviewed {
-		t.Fatal("reviewing another candidate discarded a resolved comparison")
-	}
-	if candidates := duplicateReviewCandidates(meta); len(candidates) != 1 || candidates[0].ID != "456" {
-		t.Fatalf("resolved comparison remains in questionnaire: %+v", candidates)
-	}
-	meta.TrackerDuplicateReviewCandidates["LST"][0].EvidenceFingerprint = "changed"
-	_, proofs = duplicateEvidence(meta)
-	if proofs[0].Reviewed || !proofs[1].Reviewed {
-		t.Fatal("candidate evidence change did not invalidate only the affected comparison")
-	}
-}
-
-func TestDuplicateQuestionsRequireRelevantUnresolvedCandidate(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		candidate api.DupeMatchProjection
-		want      bool
-	}{
-		{"missing binding", api.DupeMatchProjection{
-			ID:       "1",
-			Reason:   "lst_internal_protected",
-			Relation: api.DupeRelationExistingPreferred,
-		}, false},
-		{"coexists", api.DupeMatchProjection{
-			ID:                  "1",
-			EvidenceFingerprint: "proof",
-			Reason:              "lst_equivalent_internal_coexists",
-			Relation:            api.DupeRelationCoexists,
-		}, false},
-		{"exact", api.DupeMatchProjection{
-			ID:                  "1",
-			EvidenceFingerprint: "proof",
-			Reason:              "lst_internal_protected",
-			Relation:            api.DupeRelationExactDuplicate,
-		}, false},
-		{"same slot", api.DupeMatchProjection{
-			ID:                  "1",
-			EvidenceFingerprint: "proof",
-			Reason:              "same_slot",
-			Relation:            api.DupeRelationSameSlot,
-		}, true},
-		{"internal protection", api.DupeMatchProjection{
-			ID:                  "1",
-			EvidenceFingerprint: "proof",
-			Reason:              "lst_internal_protected",
-			Relation:            api.DupeRelationExistingPreferred,
-		}, true},
-		{"WEBRip comparison", api.DupeMatchProjection{
-			ID:                  "1",
-			EvidenceFingerprint: "proof",
-			Reason:              "lst_webrip_comparison_required",
-			Relation:            api.DupeRelationManualReview,
-		}, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			meta := api.UploadSubject{TrackerDuplicateReviewCandidates: map[string][]api.DupeMatchProjection{"LST": {test.candidate}}}
-			fields := duplicateEvidenceQuestionnaire(trackers.PreparationInput{Meta: meta})
-			if (len(fields) > 0) != test.want {
-				t.Fatalf("questions = %+v; want %t", fields, test.want)
-			}
-		})
 	}
 }

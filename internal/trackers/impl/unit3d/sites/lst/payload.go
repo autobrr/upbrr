@@ -4,7 +4,6 @@
 package lst
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -91,18 +90,15 @@ func submissionRequirements(req trackers.PreparationInput) (unit3d.SubmissionReq
 	if req.Projection != nil {
 		subject.FinalizedUploadName = req.Projection.UploadReleaseName
 	}
-	if failures := exceptionValidationFailures(
-		subject,
-	); len(failures) > 0 &&
-		api.NormalizeWorkflowExecutionMode(req.ExecutionMode) != api.WorkflowExecutionModeDebug {
-		return unit3d.SubmissionRequirements{}, fmt.Errorf("LST: %s", failures[0].Reason)
-	}
-	requirements := unit3d.SubmissionRequirements{DescriptionAppendix: requiredAssetDescription(subject)}
+	// The Unit3D preparation boundary validates the complete policy and its
+	// warning authorization before payload construction; a subset recheck here
+	// would invalidate an otherwise compatible acknowledgement.
+	requirements := unit3d.SubmissionRequirements{}
 	if containerException(subject) != "" {
 		requirements.ForceModeration = true
 		requirements.DescriptionAppendix = strings.TrimSpace(
 			requirements.DescriptionAppendix + "\n\n" + exceptionDescriptionAppendix(
-				subject.QuestionnaireAnswers[exceptionQuestionKey(subject, "exception_note")],
+				subject.QuestionnaireAnswers[exceptionQuestionKey(subject)],
 			),
 		)
 	}

@@ -183,15 +183,6 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 					add(track, "depth", "FLAC must be 16-bit; dither when reducing a higher source depth", trackers.LanguageProhibited)
 				}
 			}
-			if track.BitDepth == 16 &&
-				subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "audio_processing_"+track.ID)] == "reduced_dither_unknown" {
-				add(track, "dither_evidence", "higher-depth reduction is established but dithering remains unresolved", trackers.LanguageUnresolved)
-				failures[len(failures)-1].QuestionnaireInput = true
-			}
-			if track.BitDepth == 16 &&
-				subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "audio_processing_"+track.ID)] == "reduced_without_dither" {
-				add(track, "dither", "a confirmed higher-depth reduction requires dithering", trackers.LanguageProhibited)
-			}
 		}
 		if hd {
 			continue
@@ -223,24 +214,24 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	return failures
 }
 
-func audioProcessingQuestions(subject api.TrackerValidationSubject) []api.TrackerQuestionnaireField {
+// audioProcessingGuidance cannot infer source processing from the final sample depth.
+func audioProcessingGuidance(subject api.TrackerValidationSubject) []api.RuleFailure {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
 		return nil
 	}
-	var fields []api.TrackerQuestionnaireField
+	var failures []api.RuleFailure
 	for _, track := range subject.LanguageFacts.Tracks {
-		if track.Kind != api.MediaTrackAudio || track.ID == "" || !strings.EqualFold(track.Codec, "FLAC") || track.BitDepth != 16 {
+		if track.Kind != api.MediaTrackAudio || !strings.EqualFold(track.Codec, "FLAC") || track.BitDepth != 16 {
 			continue
 		}
-		fields = append(fields, api.TrackerQuestionnaireField{
-			Key:         trackers.LanguageQuestionKey(subject, "audio_processing_"+track.ID),
-			Label:       "Audio processing for resource " + track.ResourceID + ", track " + track.ID,
-			Kind:        "select",
-			Required:    subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "audio_processing_"+track.ID)] == "reduced_dither_unknown",
-			NeedsReview: subject.QuestionnaireAnswers[trackers.LanguageQuestionKey(subject, "audio_processing_"+track.ID)] == "reduced_dither_unknown",
-			Options:     []string{"unknown", "native_16_bit", "reduced_with_dither", "reduced_without_dither", "reduced_dither_unknown"},
-			Help:        "Use source logs or your direct knowledge of this exact track. The final sample depth alone does not establish processing history.",
-		})
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"lst_audio_dither_guidance",
+			"resource "+track.ResourceID+", track "+track.ID+": dither when reducing a higher source depth; final 16-bit sample depth does not establish processing history",
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
-	return fields
+	return failures
 }
