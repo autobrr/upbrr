@@ -1452,8 +1452,8 @@
     "sha256": "1d2e6c4777073ecc7d623f65cffda22c444db8a48442dd84a1282d2e5664d3e0"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
-    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence.",
-    "sha256": "e0ad8fcbaadc5cdd22ada99268edbb3618588ff67b08ff9f2b0df1bfe2712d3a"
+    "reason": "Manual title and year provenance override current TMDB evidence, including explicit clears. Modifiers consume finalized GeneratedName presence and manual edition components without raw-field fallback; complete-name overrides are resolved before this automatic formatter.",
+    "sha256": "6259b3ed01e300e63c8046cdfea06389fc9b9b759d67e02151de37bdb4b76625"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:currentOTWTMDBTitleYear": {
     "reason": "OTW buildName applies PreferredTitle and PreferredYear; snapshot currentness remains an identity prerequisite.",
@@ -1463,9 +1463,13 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
+  "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
+    "reason": "An explicit requested upload name is returned unchanged before automatic formatting. Without that override, buildName preserves manual title/year provenance and finalized edition/presentation omissions. Shared projection keeps automatic duplicate names separate; language eligibility remains independently validated.",
+    "sha256": "c3356c2ecf5b4d433f5f9b4c4c5f9e1706ed0aeaa9f14c0f3ad564ec5f6dc323"
+  },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
-    "reason": "Enables the shared explicit single-special predicate using finalized season, episode and source-membership facts. Existing provider selectors, manual naming and metadata precedence, site callbacks, and independent eligibility checks remain unchanged.",
-    "sha256": "994d5a208f2e874c37d0d3edb3eb481a46b01399fc7f042514e37d7c1cdcd68a"
+    "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",
+    "sha256": "fbd0fecbceb671c4a492e27adc1a4b13a58a7c8ec23469bf4ad3c2627642abf9"
   },
   "internal/trackers/impl/unit3d/sites/otw/rules.go:ValidationPolicy": {
     "reason": "Advances the validation fingerprint for season-zero support without changing provider consumers, callback wiring, finalized metadata authority, manual precedence, or independent eligibility checks.",
