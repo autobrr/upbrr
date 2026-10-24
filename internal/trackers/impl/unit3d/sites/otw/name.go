@@ -14,6 +14,15 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
+	return trackers.NewReleaseNamePolicy("unit3d/otw/v7", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+		if input.RequestedName != nil {
+			return trackers.ResolvedReleaseNames{Upload: *input.RequestedName}, nil
+		}
+		return trackers.ResolvedReleaseNames{Upload: buildName(input.Subject, input.TrackerConfig)}, nil
+	})
+}
+
 func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	title, year := currentOTWTMDBTitleYear(meta)
 	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
@@ -30,7 +39,9 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if year > 0 {
 		parts = append(parts, strconv.Itoa(year))
 	}
-	parts = append(parts, otwSeasonEpisode(meta), otwEpisodeTitle(meta), meta.Repack, meta.Release.Resolution)
+	parts = append(parts, otwSeasonEpisode(meta), otwEpisodeTitle(meta))
+	parts = append(parts, otwNameModifiers(meta)...)
+	parts = append(parts, meta.Repack, meta.Release.Resolution)
 	if isOTWCompleteDisc(meta) {
 		parts = append(parts, meta.Distributor, meta.Region)
 	}
@@ -50,6 +61,26 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 		name = strings.TrimRight(name, " -") + "-" + tag
 	}
 	return strings.Join(strings.Fields(name), " ")
+}
+
+// otwNameModifiers follows AITHER's component order without resurrecting omitted
+// aggregate-set details or manual omissions. Generic editions remain manual-only.
+func otwNameModifiers(meta api.UploadSubject) []string {
+	var values []string
+	for _, role := range []api.ReleaseNameRole{
+		api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition,
+		api.NameRoleEditionDisplay, api.NameRolePresentation, api.NameRoleHybrid,
+	} {
+		component, ok := meta.GeneratedName.Component(role)
+		if !ok || !component.Present {
+			continue
+		}
+		if (role == api.NameRoleEdition || role == api.NameRoleEditionDisplay) && !component.Manual {
+			continue
+		}
+		values = append(values, component.Value)
+	}
+	return values
 }
 
 func currentOTWTMDBTitleYear(meta api.UploadSubject) (string, int) {

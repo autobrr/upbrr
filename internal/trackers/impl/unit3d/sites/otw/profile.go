@@ -10,11 +10,12 @@ import (
 // resolution-mismatch rejection, rules, and banned groups.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		NameProviders:    &unit3d.NameProviders{MovieYear: api.IdentityProviderTMDB},
-		Name:             "OTW",
-		BaseURL:          "https://oldtoons.world",
-		ValidationPolicy: ValidationPolicy(),
-		BannedGroups:     BannedGroups(),
+		NameProviders:     &unit3d.NameProviders{MovieYear: api.IdentityProviderTMDB},
+		Name:              "OTW",
+		ReleaseNamePolicy: releaseNamePolicy(),
+		BaseURL:           "https://oldtoons.world",
+		ValidationPolicy:  ValidationPolicy(),
+		BannedGroups:      BannedGroups(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
@@ -30,7 +31,7 @@ func Profile() unit3d.Profile {
 		Site: unit3d.SiteProfile{
 			AllowSeasonZeroEpisodes: true,
 			BuildName:               buildName,
-			BuildNameVersion:        "v6",
+			BuildNameVersion:        "v7",
 			ResolveTypeID:           typeID,
 		},
 		DupePolicy: &trackers.DupePolicy{

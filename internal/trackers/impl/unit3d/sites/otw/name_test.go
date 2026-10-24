@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -127,8 +129,8 @@ func TestBuildNameUsesPreparedSeasonFactsOnly(t *testing.T) {
 
 func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().Site.BuildNameVersion; got != "v6" {
-		t.Fatalf("OTW BuildNameVersion = %q, want v6", got)
+	if got := Profile().Site.BuildNameVersion; got != "v7" {
+		t.Fatalf("OTW BuildNameVersion = %q, want v7", got)
 	}
 }
 
@@ -225,5 +227,203 @@ func TestOTWAudioMarkersUseProgrammeFactsAndPresentationControls(t *testing.T) {
 	meta.LanguageFacts.SubtitleLanguages = []string{"English", "German"}
 	if got := otwAudio(meta); got != "DD+ 5.1" {
 		t.Fatalf("subtitles created audio marker: %q", got)
+	}
+}
+
+func TestBuildNameRetainsCanonicalModifiersInAitherOrder(t *testing.T) {
+	t.Parallel()
+	for _, releaseType := range []string{"DISC", "REMUX", "WEBDL", "ENCODE"} {
+		t.Run(releaseType, func(t *testing.T) {
+			meta := api.UploadSubject{
+				Release: api.ReleaseInfo{
+					Title:      "Example",
+					Year:       2026,
+					Resolution: "1080p",
+				},
+				Type:   releaseType,
+				Repack: "REPACK2",
+				GeneratedName: &api.ReleaseNameDocument{
+					Version: api.ReleaseNameDocumentVersionV1,
+					Components: []api.ReleaseNameComponent{
+						{
+							Role:    api.NameRoleHybrid,
+							Value:   "Hybrid",
+							Present: true,
+						},
+						{
+							Role:    api.NameRolePresentation,
+							Value:   "Open Matte IMAX",
+							Present: true,
+						},
+						{
+							Role:    api.NameRoleEdition,
+							Value:   "Collector Edition",
+							Present: true,
+						},
+						{
+							Role:    api.NameRoleCut,
+							Value:   "Extended Cut",
+							Present: true,
+						},
+					},
+				},
+			}
+			const prefix = "Example 2026 Extended Cut Open Matte IMAX Hybrid REPACK2 1080p"
+			if got := buildName(meta, config.TrackerConfig{}); !strings.HasPrefix(got, prefix) {
+				t.Fatalf("OTW modifiers = %q, want prefix %q", got, prefix)
+			}
+		})
+	}
+}
+
+func TestBuildNamePreservesCanonicalModifierPresenceAndManualEdition(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{
+		Release: api.ReleaseInfo{
+			Title:      "Example",
+			Year:       2026,
+			Resolution: "1080p",
+		},
+		Cut:          "Extended Cut",
+		Presentation: "IMAX",
+		GeneratedName: &api.ReleaseNameDocument{
+			Version: api.ReleaseNameDocumentVersionV1,
+			Components: []api.ReleaseNameComponent{
+				{
+					Role:    api.NameRoleEditionSet,
+					Value:   "2in1",
+					Present: true,
+				},
+				{
+					Role:    api.NameRoleCut,
+					Value:   "Extended Cut",
+					Present: false,
+				},
+				{
+					Role:    api.NameRoleEdition,
+					Value:   "Custom Edition",
+					Present: true,
+					Manual:  true,
+				},
+				{
+					Role:    api.NameRolePresentation,
+					Value:   "IMAX",
+					Present: false,
+					Manual:  true,
+				},
+				{
+					Role:    api.NameRoleHybrid,
+					Value:   "Hybrid",
+					Present: false,
+					Manual:  true,
+				},
+			},
+		},
+	}
+	const want = "Example 2026 2in1 Custom Edition 1080p"
+	if got := buildName(meta, config.TrackerConfig{}); got != want {
+		t.Fatalf("OTW modifier presence = %q, want %q", got, want)
+	}
+}
+
+func TestOTWReleaseNamePolicyPreservesRequestedName(t *testing.T) {
+	t.Parallel()
+	requested := "My exact release name"
+	binding := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
+	resolved, err := binding.Resolver(trackers.ReleaseNameInput{
+		Subject:       api.UploadSubject{Release: api.ReleaseInfo{Title: "Automatic title"}},
+		RequestedName: &requested,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Upload != requested {
+		t.Fatalf("requested upload name = %q, want %q", resolved.Upload, requested)
+	}
+}
+
+func TestOTWReviewedProjectionUsesSameModifiersForUploadAndSearch(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{
+		Release: api.ReleaseInfo{
+			Title:      "Example",
+			Year:       2026,
+			Resolution: "1080p",
+		},
+		Type:       "WEBDL",
+		Source:     "WEB",
+		Service:    "NF",
+		Audio:      "DD+ 5.1",
+		VideoCodec: "H.264",
+		Tag:        "-GRP",
+		GeneratedName: &api.ReleaseNameDocument{
+			Version: api.ReleaseNameDocumentVersionV1,
+			Components: []api.ReleaseNameComponent{
+				{
+					Role:    api.NameRoleEditionDisplay,
+					Value:   "Custom Cut / Hybrid",
+					Present: true,
+					Manual:  true,
+				},
+				{
+					Role:    api.NameRolePresentation,
+					Value:   "IMAX",
+					Present: true,
+				},
+			},
+		},
+	}
+	const want = "Example 2026 Custom Cut / Hybrid IMAX 1080p NF WEB-DL DD+ 5.1 H.264-GRP"
+	binding := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
+	for _, requested := range []*string{nil, new("Exact manual title")} {
+		prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+			Tracker:             "OTW",
+			Meta:                meta,
+			RequestedUploadName: requested,
+		}, binding)
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		name, err := prepared.ReviewedUploadName()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantUpload := want
+		if requested != nil {
+			wantUpload = *requested
+		}
+		if name != wantUpload || prepared.Projection.DuplicateCriteria.Name != want {
+			t.Fatalf("upload/search = %q / %q, want %q / %q", name, prepared.Projection.DuplicateCriteria.Name, wantUpload, want)
+		}
+	}
+}
+
+func TestOTWNameModifiersRetainIndividualComponents(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		role  api.ReleaseNameRole
+		value string
+	}{
+		{api.NameRoleEditionSet, "3in1"},
+		{api.NameRoleCut, "Director's Cut"},
+		{api.NameRolePresentation, "Open Matte"},
+		{api.NameRoleHybrid, "Hybrid"},
+	} {
+		t.Run(string(test.role), func(t *testing.T) {
+			meta := api.UploadSubject{GeneratedName: &api.ReleaseNameDocument{
+				Version: api.ReleaseNameDocumentVersionV1,
+				Components: []api.ReleaseNameComponent{{
+					Role:    test.role,
+					Value:   test.value,
+					Present: true,
+				}},
+			}}
+			if got := otwNameModifiers(meta); len(got) != 1 || got[0] != test.value {
+				t.Fatalf("individual modifier = %q, want %q", got, test.value)
+			}
+		})
+	}
+	if got := otwNameModifiers(api.UploadSubject{Cut: "Extended", Presentation: "IMAX"}); len(got) != 0 {
+		t.Fatalf("missing document reconstructed modifiers: %q", got)
 	}
 }

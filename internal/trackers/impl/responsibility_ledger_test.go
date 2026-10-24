@@ -91,7 +91,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("LUME", "lume", "", "v6"),
 	unit3DResponsibility("MNS"),
 	unit3DResponsibilityVersion("OE", "oe", "oe", "v2"),
-	unit3DResponsibilityVersion("OTW", "otw", "", "v6"),
+	unit3DResponsibilityVersion("OTW", "otw", "", "v7"),
 	unit3DResponsibility("PT"),
 	unit3DResponsibility("PTT"),
 	unit3DResponsibility("R4E"),

@@ -250,8 +250,8 @@ func TestOTWLanguageNamingPresentationAndDebug(t *testing.T) {
 					t.Fatal(failure)
 				}
 				name, err := prepared.ReviewedUploadName()
-				// OTW retains its tracker-owned normalization of requested names.
-				if err != nil || name != "Example Release 2026 1080p WEB-DL" {
+				// Manual naming never changes the evidence required for language eligibility.
+				if err != nil || name != requested {
 					t.Fatalf("manual name = %q, err = %v", name, err)
 				}
 				subject.ReleaseName = name
