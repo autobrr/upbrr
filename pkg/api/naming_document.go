@@ -37,6 +37,7 @@ const (
 	NameRoleHybrid         ReleaseNameRole = "hybrid"
 	NameRoleRepack         ReleaseNameRole = "repack"
 	NameRoleResolution     ReleaseNameRole = "resolution"
+	NameRoleDownscale      ReleaseNameRole = "downscale"
 	NameRoleRegion         ReleaseNameRole = "region"
 	NameRoleUHD            ReleaseNameRole = "uhd"
 	NameRoleSource         ReleaseNameRole = "source"
@@ -195,7 +196,7 @@ func (role ReleaseNameRole) Valid() bool {
 	switch role {
 	case NameRoleTitle, NameRoleAlternateTitle, NameRoleYear, NameRoleSeason, NameRoleEpisode,
 		NameRoleEpisodeTitle, NameRoleDailyDate, NameRolePart, NameRoleThreeD,
-		NameRoleEditionSet, NameRoleCut, NameRoleEdition, NameRoleEditionDisplay, NameRolePresentation, NameRoleHybrid, NameRoleRepack, NameRoleResolution,
+		NameRoleEditionSet, NameRoleCut, NameRoleEdition, NameRoleEditionDisplay, NameRolePresentation, NameRoleHybrid, NameRoleRepack, NameRoleResolution, NameRoleDownscale,
 		NameRoleRegion, NameRoleUHD, NameRoleSource, NameRoleDVDSystem, NameRoleDVDSize, NameRoleService,
 		NameRoleVideoFormat, NameRoleHDR, NameRoleVideoCodec, NameRoleVideoEncode, NameRoleAudio,
 		NameRoleDubbed, NameRoleDualAudio, NameRoleLanguageMarker, NameRoleLocale, NameRoleDistributor, NameRoleSubtitleMarker, NameRoleGroup, NameRoleOriginalGroup:

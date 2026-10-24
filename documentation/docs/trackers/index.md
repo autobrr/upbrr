@@ -86,6 +86,8 @@ Questions remain for genuine upload inputs, naming choices and ambiguous track a
 
 ## Names and payloads
 
+Automatic downscale markers require explicit evidence in the source name; output resolution alone does not establish a downscaled source. A destination may omit or position an evidenced marker differently. Review the projected name, and use a complete name override when a source does not provide enough evidence.
+
 upbrr resolves upload and search names before duplicate checking. Review the projected name for every selected tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. Manual naming controls are presentation choices and do not grant upload eligibility or replace required factual evidence.
 
 Correct `PROPER`, `REPACK`, their supported numbered variants, or `RERIP` with the independent **Release version** control on **Input**, then refresh metadata and review the projected names again. Clearing **Edition** does not clear the release version; see [Input corrections](../web-ui/index.md#correct-input-facts) for **None**, **Auto**, and the legacy **No edition** behavior.

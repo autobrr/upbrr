@@ -66,12 +66,14 @@ type ReleaseNameRequest struct {
 	Category string
 	Type     string
 	// ManualType keeps an explicit type correction authoritative over inferred source signals.
-	ManualType   bool
-	Title        string
-	AltTitle     string
-	Year         int
-	ManualYear   int
-	Resolution   string
+	ManualType bool
+	Title      string
+	AltTitle   string
+	Year       int
+	ManualYear int
+	Resolution string
+	// Downscale is an explicit source marker, not inferred from output dimensions.
+	Downscale    string
 	Audio        string
 	Service      string
 	Season       string
