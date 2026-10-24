@@ -637,7 +637,7 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 	}
 }
 
-func TestStartupInterruptedCompositeCanRetry(t *testing.T) {
+func TestStartupInterruptedCompositeRequiresExplicitOpen(t *testing.T) {
 	ctx := t.Context()
 	repo := openActiveInputRecoveryRepository(ctx, t)
 	persistent, err := NewPersistentRepository(repo)
@@ -736,12 +736,23 @@ func TestStartupInterruptedCompositeCanRetry(t *testing.T) {
 	retry := command
 	retry.ExpectedRevision = current.Workflow.Revision
 	retry.IdempotencyKey = "retry-composite"
-	if _, err := restarted.Start(ctx, testOwnerID, retry); err != nil {
-		t.Fatalf("retry interrupted composite: %v", err)
+	if _, err := restarted.Start(ctx, testOwnerID, retry); err == nil {
+		t.Fatal("retried interrupted composite without explicitly reopening its source")
+	}
+	slot, err := repo.LoadActiveInput(ctx)
+	if err != nil || slot.State != api.ActiveInputEmpty {
+		t.Fatalf("input after interrupted composite = %#v, err=%v", slot, err)
+	}
+	if _, err := restarted.OpenInput(ctx, testOwnerID, OpenInputRequest{
+		ExpectedRevision: slot.Revision,
+		Input:            api.PrepareInput{SourcePath: state.SourcePath},
+		IdempotencyKey:   "explicit-reopen",
+	}); err != nil {
+		t.Fatalf("explicitly reopen interrupted composite source: %v", err)
 	}
 }
 
-func TestResetIdleInputOnStartupRetainsPendingCompositeWorkflow(t *testing.T) {
+func TestResetIdleInputOnStartupClosesPendingCompositeWorkflow(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
@@ -777,8 +788,12 @@ func TestResetIdleInputOnStartupRetainsPendingCompositeWorkflow(t *testing.T) {
 		t.Fatalf("reset pending composite workflow: %v", err)
 	}
 	persisted, err := repo.LoadActiveInput(ctx)
-	if err != nil || persisted != opened {
+	if err != nil || persisted.State != api.ActiveInputEmpty {
 		t.Fatalf("pending composite input after reset = %#v, err=%v", persisted, err)
+	}
+	retained, err := persistent.Load(ctx, testOwnerID, opened.WorkflowID)
+	if err != nil || retained.Composite == nil || retained.Composite.TerminalReason != "feedback_required" {
+		t.Fatalf("retained composite workflow = %#v, err=%v", retained.Composite, err)
 	}
 }
 

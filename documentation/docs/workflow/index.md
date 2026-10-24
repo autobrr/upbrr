@@ -19,9 +19,9 @@ If **Legacy workflow recovery** lists an unresolved external effect, inspect the
 
 Every explicit open, history restore, or refresh checks the source path and inventory and hashes at most the first 1 MiB of each file. File sizes and modification times are checked before and after sampling. This is a lightweight identity check, not verification of every source byte. Torrent creation still performs its required piece hashing. A plain page reload reads the current state without starting another verification.
 
-A fresh application start leaves the previous idle input closed while retaining its History and saved corrections. Open it explicitly to continue. Startup retains completed operation checkpoints and interrupts unfinished work rather than automatically resuming it. A workflow already waiting for API feedback remains available for explicit continuation.
+A fresh application start leaves Input empty, including when the previous input had retained HDR analysis or an unfinished upload workflow. History, saved corrections, reusable artifacts, and completed operation checkpoints remain available. Open the source explicitly to continue; startup does not inspect the previous source or automatically resume its processing. Reloading a browser page in the same running application retains the current session.
 
-Once prior-process input and work leases expire, startup marks unresolved external attempts failed locally and removes their local retry blocks. This does not establish whether the remote action completed. Check the tracker and torrent client before retrying an interrupted upload or injection. Confirmed successful submissions remain recorded. See [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart).
+Once prior-process input and work leases expire, startup interrupts unfinished operations and retains uncertain external outcomes for reconciliation. An interrupted operation does not establish whether the remote action completed and does not authorize a duplicate attempt. Check the tracker and torrent client before resolving an uncertain upload or injection. Confirmed successful submissions remain recorded. Changed configuration remains blocked until uncertain effects are reconciled. See [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart).
 
 Folder handling matters. `--keep-folder` preserves a supplied folder instead of processing only a selected video file.
 
@@ -182,7 +182,7 @@ After confirmed tracker success, upbrr records the tracker result and attempts t
 
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
-Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Startup recovery can clear its retry block as described above; verify the remote outcome before another attempt.
+Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Restarting does not clear its retry block; verify and reconcile the remote outcome before another attempt.
 
 ## 8. Inject into clients
 

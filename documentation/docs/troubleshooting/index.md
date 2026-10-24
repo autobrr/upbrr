@@ -44,9 +44,11 @@ See the [reverse proxy guide](../configuration/web-server.md#path-prefix-proxy).
 
 ## An operation was interrupted by restart
 
-Startup retains completed operation checkpoints and marks unfinished operations interrupted. It can wait for prior-process input and work leases to expire before cleanup. It does not automatically repeat the interrupted command. Reopen the retained input from **History**, or explicitly continue a workflow that was waiting for feedback.
+Startup retains completed operation checkpoints and marks unfinished operations interrupted. It can wait for prior-process input and work leases to expire before cleanup. It does not automatically repeat the interrupted command. Input starts empty, even when the prior workflow retained HDR analysis or was waiting for feedback. Explicitly reopen the source from **History** or Input before continuing. Startup does not require the old source to be available; the explicit open checks availability.
 
-For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup marks unresolved external attempts failed locally and clears their retry blocks after leases expire; a local failure is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
+For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
+
+If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.
 
 If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
 

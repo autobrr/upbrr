@@ -113,8 +113,8 @@ func (m *Module) PreparationForInputOpen(
 
 // ResetIdleInputOnStartup claims an expired foreign input, settles interrupted
 // prior-process operations, and closes the slot when it becomes idle. It waits
-// for live work leases, preserves completed checkpoints, and retains an active
-// composite workflow or retained HDR analysis for an explicit retry. It waits for a foreign recovery
+// for live work leases and preserves workflow checkpoints and uncertain effects
+// without retaining the previous input as an active session. It waits for a foreign recovery
 // lease within a bounded deadline; other live foreign leases are deferred.
 // It does not verify source bytes or start a new workflow.
 func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
@@ -238,27 +238,6 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 			if err := m.finishCompositeSession(authorityCtx, slot.OwnerID, slot.WorkflowID, operationID, "interrupted_by_restart"); err != nil {
 				return fmt.Errorf("release workflow settle composite session on startup: %w", err)
 			}
-			sourceState, err = m.repository.Load(ctx, slot.OwnerID, slot.WorkflowID)
-			if err != nil {
-				return fmt.Errorf("release workflow reload composite session on startup: %w", err)
-			}
-		}
-	}
-	if sourceState.Workflow.HDRAnalysis != nil || len(sourceState.HDRExtractions) > 0 || sourceState.HDRPendingRequest != nil {
-		if m.OwnsActiveInput(slot) {
-			authorityCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
-			if err := m.recoverAfterRestart(authorityCtx, slot.OwnerID, &sourceState); err != nil {
-				return fmt.Errorf("release workflow restore retained HDR state: %w", err)
-			}
-		}
-		m.logger.Debugf("active input: startup reset decision=retain_hdr revision=%d", slot.Revision)
-		return nil
-	}
-	if sourceState.Composite != nil {
-		if sourceState.Workflow.Status != api.WorkflowStatusCompleted && sourceState.Workflow.Status != api.WorkflowStatusCanceled &&
-			sourceState.Workflow.Status != api.WorkflowStatusFailed {
-			m.logger.Debugf("active input: startup reset decision=retain_composite status=%s revision=%d", sourceState.Workflow.Status, slot.Revision)
-			return nil
 		}
 	}
 	deadline := time.Now().Add(workflowWorkLeaseTTL + 5*time.Second)
@@ -824,6 +803,25 @@ func (m *Module) finishActiveInputRecovery(
 		slot, err := m.activeInputs.LoadActiveInput(ctx)
 		if err != nil {
 			return api.ActiveInputRecord{}, fmt.Errorf("release workflow read legacy recovery input: %w", err)
+		}
+		if discardInterrupted && IsLegacyRecoverySlot(slot) {
+			// Detach the prior process's recovery claim, not its uncertain effects
+			// or reconciliation actions. Normal input admission remains blocked.
+			empty := api.ActiveInputRecord{
+				State:          api.ActiveInputEmpty,
+				Revision:       slot.Revision + 1,
+				Fence:          slot.Fence,
+				OwnerID:        slot.OwnerID,
+				CoordinatorID:  slot.CoordinatorID,
+				LeaseExpiresAt: slot.LeaseExpiresAt,
+			}
+			if err := m.activeInputs.CompareAndSwapActiveInput(ctx, slot, empty, m.clock.Now().UTC()); err != nil {
+				return api.ActiveInputRecord{}, fmt.Errorf("release workflow detach legacy recovery on startup: %w", err)
+			}
+			if m.activeCancel != nil {
+				m.activeCancel()
+			}
+			return empty, nil
 		}
 		return slot, nil
 	}
