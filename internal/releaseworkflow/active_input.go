@@ -113,9 +113,9 @@ func (m *Module) PreparationForInputOpen(
 
 // ResetIdleInputOnStartup claims an expired foreign input, settles interrupted
 // prior-process operations, and closes the slot when it becomes idle. It waits
-// for live work leases, preserves completed checkpoints, and retains an active
-// composite workflow or retained HDR analysis for an explicit retry. It waits for a foreign recovery
-// lease within a bounded deadline; other live foreign leases are deferred.
+// for live work leases and preserves workflow checkpoints and uncertain effects
+// without retaining the previous input as an active session. Foreign leases are
+// awaited within a bounded deadline only when the input cannot close immediately.
 // It does not verify source bytes or start a new workflow.
 func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	if m == nil || m.activeInputs == nil {
@@ -141,28 +141,40 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 		(m.OwnsActiveInput(slot) && m.startupResetDone && !m.startupResetPending && slot.State != api.ActiveInputRecovering) {
 		return nil
 	}
-	if slot.State == api.ActiveInputRecovering && !m.OwnsActiveInput(slot) {
+	if slot.State == api.ActiveInputActive && !m.OwnsActiveInput(slot) && slot.LeaseExpiresAt.After(m.clock.Now()) {
+		// An idle input can close without waiting for its coordinator lease.
+		// Busy prior-process work must instead expire and recover under fencing.
+		if err := m.activeInputs.CloseIdleActiveInput(ctx, slot, m.clock.Now().UTC()); err == nil {
+			if m.activeCancel != nil {
+				m.activeCancel()
+			}
+			return nil
+		} else if !errors.Is(err, api.ErrActiveInputBusy) {
+			return fmt.Errorf("release workflow close idle foreign input on startup: %w", err)
+		}
+	}
+	if !m.OwnsActiveInput(slot) {
 		waitCtx, cancel := context.WithTimeoutCause(ctx, workflowWorkLeaseTTL+5*time.Second, api.ErrActiveInputBusy)
 		defer cancel()
-		for slot.State == api.ActiveInputRecovering && !m.OwnsActiveInput(slot) && slot.LeaseExpiresAt.After(m.clock.Now()) {
+		for slot.State != api.ActiveInputEmpty && !m.OwnsActiveInput(slot) && slot.LeaseExpiresAt.After(m.clock.Now()) {
 			delay := slot.LeaseExpiresAt.Sub(m.clock.Now())
-			m.logger.Debugf("active input: startup reset decision=wait_recovery_lease revision=%d remaining=%s", slot.Revision, delay.Round(time.Second))
+			m.logger.Debugf("active input: startup reset decision=wait_foreign_lease revision=%d remaining=%s", slot.Revision, delay.Round(time.Second))
 			timer := time.NewTimer(delay)
 			select {
 			case <-waitCtx.Done():
 				timer.Stop()
-				return fmt.Errorf("release workflow wait for prior recovery lease: %w", context.Cause(waitCtx))
+				return fmt.Errorf("release workflow wait for prior input lease: %w", context.Cause(waitCtx))
 			case <-timer.C:
 			}
 			if waitCtx.Err() != nil {
-				return fmt.Errorf("release workflow wait for prior recovery lease: %w", context.Cause(waitCtx))
+				return fmt.Errorf("release workflow wait for prior input lease: %w", context.Cause(waitCtx))
 			}
 			slot, err = m.activeInputs.LoadActiveInput(waitCtx)
 			if err != nil {
 				if waitCtx.Err() != nil {
-					return fmt.Errorf("release workflow wait for prior recovery lease: %w", context.Cause(waitCtx))
+					return fmt.Errorf("release workflow wait for prior input lease: %w", context.Cause(waitCtx))
 				}
-				return fmt.Errorf("release workflow reload active input after recovery lease: %w", err)
+				return fmt.Errorf("release workflow reload active input after input lease: %w", err)
 			}
 		}
 		if slot.State == api.ActiveInputEmpty {
@@ -238,27 +250,6 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 			if err := m.finishCompositeSession(authorityCtx, slot.OwnerID, slot.WorkflowID, operationID, "interrupted_by_restart"); err != nil {
 				return fmt.Errorf("release workflow settle composite session on startup: %w", err)
 			}
-			sourceState, err = m.repository.Load(ctx, slot.OwnerID, slot.WorkflowID)
-			if err != nil {
-				return fmt.Errorf("release workflow reload composite session on startup: %w", err)
-			}
-		}
-	}
-	if sourceState.Workflow.HDRAnalysis != nil || len(sourceState.HDRExtractions) > 0 || sourceState.HDRPendingRequest != nil {
-		if m.OwnsActiveInput(slot) {
-			authorityCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: m.processEpoch, Fence: slot.Fence})
-			if err := m.recoverAfterRestart(authorityCtx, slot.OwnerID, &sourceState); err != nil {
-				return fmt.Errorf("release workflow restore retained HDR state: %w", err)
-			}
-		}
-		m.logger.Debugf("active input: startup reset decision=retain_hdr revision=%d", slot.Revision)
-		return nil
-	}
-	if sourceState.Composite != nil {
-		if sourceState.Workflow.Status != api.WorkflowStatusCompleted && sourceState.Workflow.Status != api.WorkflowStatusCanceled &&
-			sourceState.Workflow.Status != api.WorkflowStatusFailed {
-			m.logger.Debugf("active input: startup reset decision=retain_composite status=%s revision=%d", sourceState.Workflow.Status, slot.Revision)
-			return nil
 		}
 	}
 	deadline := time.Now().Add(workflowWorkLeaseTTL + 5*time.Second)
@@ -824,6 +815,25 @@ func (m *Module) finishActiveInputRecovery(
 		slot, err := m.activeInputs.LoadActiveInput(ctx)
 		if err != nil {
 			return api.ActiveInputRecord{}, fmt.Errorf("release workflow read legacy recovery input: %w", err)
+		}
+		if discardInterrupted && IsLegacyRecoverySlot(slot) {
+			// Detach the prior process's recovery claim, not its uncertain effects
+			// or reconciliation actions. Normal input admission remains blocked.
+			empty := api.ActiveInputRecord{
+				State:          api.ActiveInputEmpty,
+				Revision:       slot.Revision + 1,
+				Fence:          slot.Fence,
+				OwnerID:        slot.OwnerID,
+				CoordinatorID:  slot.CoordinatorID,
+				LeaseExpiresAt: slot.LeaseExpiresAt,
+			}
+			if err := m.activeInputs.CompareAndSwapActiveInput(ctx, slot, empty, m.clock.Now().UTC()); err != nil {
+				return api.ActiveInputRecord{}, fmt.Errorf("release workflow detach legacy recovery on startup: %w", err)
+			}
+			if m.activeCancel != nil {
+				m.activeCancel()
+			}
+			return empty, nil
 		}
 		return slot, nil
 	}
