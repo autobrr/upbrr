@@ -115,7 +115,14 @@ func TestMetadataEditsReplaceModeBeforeRepreparation(t *testing.T) {
 				Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
 					Generation: 1,
 					Source:     api.SourceManifest{SourcePath: source},
-					Naming:     api.NamingFacts{Title: "Synthetic Film"},
+					Naming: api.NamingFacts{
+						Title:      "Synthetic Film",
+						Type:       "ENCODE",
+						Source:     "BluRay",
+						Resolution: "1080p",
+					},
+					Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+					Media:    api.MediaFacts{Type: "ENCODE", Source: "BluRay"},
 				}},
 			}
 			core := &cliWorkflowCoreFake{current: current, liveTest: test.live}
