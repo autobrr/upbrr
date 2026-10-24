@@ -14,7 +14,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v7", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v8", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
 }
 
 func applyULCXNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -23,6 +23,15 @@ func applyULCXNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, 
 	}
 	if err := trackers.ApplyEnglishAudioNameDefaults(editor, meta); err != nil {
 		return fmt.Errorf("apply ULCX language markers: %w", err)
+	}
+	// Canonical MAL identity is sufficient; optional AniList enrichment is not required.
+	if meta.Identity.MALID > 0 && meta.Identity.Generation > 0 &&
+		strings.TrimSpace(meta.SourcePath) != "" && strings.TrimSpace(meta.Identity.SourcePath) != "" &&
+		strings.TrimSpace(meta.ProviderMetadata.SourcePath) != "" && meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) &&
+		!meta.EffectiveMetadata.AlternateTitleProvenance.IsManual() {
+		if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
+			return fmt.Errorf("omit ULCX anime alternate title: %w", err)
+		}
 	}
 	if err := applyULCXTVDBDisambiguation(editor, meta); err != nil {
 		return err

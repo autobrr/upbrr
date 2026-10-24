@@ -1543,6 +1543,10 @@
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged.",
     "sha256": "27fd3d3afb663df89578f692fabfc9ea6233007df6163827fd5cb7d9950e09e3"
   },
+  "internal/trackers/impl/unit3d/sites/ulcx/name.go:applyULCXNameDefaults": {
+    "reason": "Current source/generation-bound canonical MAL identity gates automatic alternate-title omission; manual and manual-empty metadata, manual name components, and complete-name overrides retain precedence.",
+    "sha256": "ff018a33f3d3e61fd1f573dc84a0834d512066fbe07e0bf8bb0cb93c0cf7b924"
+  },
   "internal/trackers/impl/unit3d/sites/ulcx/name.go:applyULCXTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
     "sha256": "b94af45a6fd7198173702f34b7d0b0e5bd07849496cc1fd851ee0306677fc063"
