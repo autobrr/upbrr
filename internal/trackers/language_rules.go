@@ -44,6 +44,33 @@ type LanguagePolicy struct {
 	CompatibilityOnlyTrueHD      bool
 }
 
+// EnglishLanguagePolicy returns the common AITHER-like original-audio,
+// permitted-dub and English-accessibility predicates, without site extensions.
+func EnglishLanguagePolicy() LanguagePolicy {
+	return LanguagePolicy{
+		OriginalAudio:    LanguageStaffException,
+		ExtraDubs:        LanguageStaffException,
+		EnglishSubtitles: "foreign_without_dub",
+		MissingSubtitles: LanguageStaffException,
+	}
+}
+
+// WithEnglishLanguageFallback explicitly opts an English-oriented tracker into
+// the maintainer-selected default when verified site language rules are unavailable.
+// Sites with their own language policy must retain that policy instead.
+func WithEnglishLanguageFallback(binding ValidationPolicyBinding) ValidationPolicyBinding {
+	result := WithLanguageAssessment(binding, func(subject api.TrackerValidationSubject) []api.RuleFailure {
+		failures := EvaluateLanguagePolicy(subject, EnglishLanguagePolicy())
+		for i := range failures {
+			failures[i].Reason += " Applied upbrr default (AITHER-like); verified tracker-specific language rules are unavailable. " +
+				"Review Inspected tracks for missing evidence, or prepare a compliant source again."
+		}
+		return failures
+	})
+	result.ID += "/english-fallback-v1"
+	return result
+}
+
 // IsFullDiscUpload distinguishes complete disc uploads from remuxes, including
 // canonical DISC subjects whose source-specific disc label is unavailable.
 func IsFullDiscUpload(discType, releaseType string) bool {

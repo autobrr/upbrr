@@ -1336,6 +1336,15 @@ non-advisory current policy, once across selected trackers. Save answers through
 manifest-bound track-language corrections, not tracker questionnaire answers. Do not turn unknown
 roles, incomplete inspection, or advisory guidance into language-identification requirements.
 
+For an explicitly identified English-oriented tracker without verified language requirements,
+use `WithEnglishLanguageFallback`. BLU and PHD opt into this maintainer-selected upbrr default;
+it is not a claim about verified site rules. It reuses `EnglishLanguagePolicy`, the common
+AITHER original-audio, extra-dub and English-accessibility predicates, without AITHER's
+questionnaire, compatibility or music-video extensions. Known failures remain strict in normal
+execution; full-disc exemptions, source-level corrections and the non-submitting debug bypass
+remain shared. Keep a verified tracker-specific policy in preference to this fallback, and do
+not infer English orientation from membership in a tracker family.
+
 Soundtrack origin is a separate per-track fact: a language mismatch alone does not establish
 an original soundtrack or a dub. Use `ProgrammeAudioOrigin` for original/dub classification,
 `HasEnglishDub` for confirmed English dubbing, and `HasUnresolvedProgrammeAudioOrigin` before
