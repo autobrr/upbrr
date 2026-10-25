@@ -110,7 +110,8 @@ func TestUnit3DServicePreparationUsesExactCombinedWarningSet(t *testing.T) {
 			if len(preparations) != 1 || (preparations[0].Failure == nil) != (change == "unchanged") {
 				t.Fatalf("%s preparation = %+v", change, preparations)
 			}
-			if change == "generic strict added" && !strings.Contains(preparations[0].Failure.Message, "require_unique_id") {
+			if change == "generic strict added" && (!strings.Contains(preparations[0].Failure.Message, "require_unique_id: missing MediaInfo Unique ID") ||
+				strings.Count(preparations[0].Failure.Message, "trackers: COMBINED:") != 1) {
 				t.Fatalf("generic strict gate lost: %+v", preparations[0].Failure)
 			}
 		})

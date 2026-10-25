@@ -1344,7 +1344,7 @@ func TestCLIWorkflowMapsProjectionAndExecutionInstructions(t *testing.T) {
 			InteractionMode: api.InteractionModeUnattended,
 		},
 	}
-	mapped, err := mapCLICompositeUploadRequest(request, false, "projection-execution")
+	mapped, err := mapCLICompositeUploadRequest(request, false, "projection-execution", false)
 	if err != nil {
 		t.Fatalf("map composite request: %v", err)
 	}
@@ -1912,7 +1912,13 @@ func TestCLIInputOnlyDoesNotStartCompositeUpload(t *testing.T) {
 		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
 			Generation: 1,
 			Source:     api.SourceManifest{SourcePath: "example.mkv"},
-			Naming:     api.NamingFacts{Title: "Example"},
+			Naming: api.NamingFacts{
+				Title:      "Example",
+				Type:       "ENCODE",
+				Source:     "BluRay",
+				Resolution: "1080p",
+			},
+			Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 		}},
 		InputReadiness: &api.InputReadinessSnapshot{Fields: []api.InputReadinessFieldOutcome{{Key: "title", Status: api.InputReadinessFieldReady}}},
 	}
@@ -1961,7 +1967,14 @@ func TestCLIInteractiveCorrectionTransfersActiveInputClaim(t *testing.T) {
 		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
 			Generation: 1,
 			Source:     api.SourceManifest{SourcePath: "example.mkv"},
-			Naming:     api.NamingFacts{Title: "Example"},
+			Naming: api.NamingFacts{
+				Title:      "Example",
+				Type:       "ENCODE",
+				Source:     "BluRay",
+				Resolution: "1080p",
+			},
+			Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			Media:    api.MediaFacts{Type: "ENCODE", Source: "BluRay"},
 		}},
 		FactInstructions: &api.ReleaseFactInstructionSnapshot{CorrectionRevision: 1},
 	}
@@ -2175,7 +2188,14 @@ func TestCLIConfirmInputUsesCanonicalSourceForNoTrackerCompletion(t *testing.T) 
 		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
 			Generation: 1,
 			Source:     api.SourceManifest{SourcePath: canonicalSource},
-			Naming:     api.NamingFacts{Title: "Example"},
+			Naming: api.NamingFacts{
+				Title:      "Example",
+				Type:       "ENCODE",
+				Source:     "BluRay",
+				Resolution: "1080p",
+			},
+			Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			Media:    api.MediaFacts{Type: "ENCODE", Source: "BluRay"},
 		}},
 		Selection: &api.TrackerSelection{},
 	}
@@ -2340,7 +2360,17 @@ func TestCLIInteractiveCommentaryCorrectionUsesExistingLoop(t *testing.T) {
 			Release: api.PreparedRelease{
 				Generation: 1,
 				Source:     api.SourceManifest{SourcePath: "example.mkv"},
-				Media:      api.MediaFacts{Commentary: true},
+				Media: api.MediaFacts{
+					Commentary: true,
+					Type:       "ENCODE",
+					Source:     "BluRay",
+				},
+				Naming: api.NamingFacts{
+					Type:       "ENCODE",
+					Source:     "BluRay",
+					Resolution: "1080p",
+				},
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 			},
 			Display: api.PreparedReleaseDisplay{Commentary: true},
 		},
@@ -2352,7 +2382,17 @@ func TestCLIInteractiveCommentaryCorrectionUsesExistingLoop(t *testing.T) {
 		Release: api.PreparedRelease{
 			Generation: 2,
 			Source:     api.SourceManifest{SourcePath: "example.mkv"},
-			Media:      api.MediaFacts{Commentary: false},
+			Media: api.MediaFacts{
+				Commentary: false,
+				Type:       "ENCODE",
+				Source:     "BluRay",
+			},
+			Naming: api.NamingFacts{
+				Type:       "ENCODE",
+				Source:     "BluRay",
+				Resolution: "1080p",
+			},
+			Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 		},
 		Display: api.PreparedReleaseDisplay{Commentary: false},
 	}

@@ -4,6 +4,7 @@
 package lst
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 
@@ -19,15 +20,6 @@ func Rules() *trackers.RuleSet { return &trackers.RuleSet{RequireValidMISetting:
 func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
 		return nil
-	}
-	recommendation := trackers.LanguageAdvisory
-	if subject.PersonalRelease {
-		recommendation = trackers.LanguageProhibited
-	}
-	policy := trackers.LanguagePolicy{
-		OriginalFirst:   recommendation,
-		OriginalDefault: recommendation,
-		SubtitleDefault: recommendation,
 	}
 	var failures []api.RuleFailure
 	resources := map[string][]api.MediaTrackFacts{}
@@ -50,18 +42,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	for _, resource := range keys {
 		part := subject
 		part.LanguageFacts = resourceLanguageFacts(subject, resource, resources[resource])
-		resourceFailures := trackers.EvaluateLanguagePolicy(part, policy)
-		if !subject.PersonalRelease &&
-			((part.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(part.LanguageFacts.ProgrammeLanguages, "English")) || (part.LanguageFacts.SubtitleStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(part.LanguageFacts.SubtitleLanguages, "English"))) {
-			for i := range resourceFailures {
-				if resourceFailures[i].Rule == "language_original_evidence" || resourceFailures[i].Rule == "language_evidence" {
-					resourceFailures[i].Disposition = api.RuleDispositionAdvisory
-				}
-			}
-		}
-		for i := range resourceFailures {
-			resourceFailures[i].Reason = "resource " + resource + ": " + resourceFailures[i].Reason
-		}
+		resourceFailures := presentationLanguageFailures(part, resource)
 		failures = append(failures, resourceFailures...)
 	}
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
@@ -89,14 +70,25 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 				defaults++
 			}
 		}
-		if !subject.Anime && defaults > 1 || defaults == 0 && unknownDefaults == 0 {
-			add("default_audio", "resource "+resource+": exactly one primary audio track should be default; anime may have multiple defaults", recommendation)
-		} else if unknownDefaults > 0 && (!subject.Anime || defaults == 0) {
-			outcome := trackers.LanguageAdvisory
-			if subject.PersonalRelease {
-				outcome = trackers.LanguageUnresolved
-			}
-			add("default_audio", "resource "+resource+": primary audio default flags are unresolved", outcome)
+		switch {
+		case facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory:
+			add(
+				"default_audio",
+				"resource "+resource+": primary audio default flags cannot be resolved from contradictory track evidence",
+				trackers.LanguageAdvisory,
+			)
+			failures[len(failures)-1].EvidenceStatus = api.MetadataEvidenceStatusContradictory
+		case !subject.Anime && defaults > 1 || defaults == 0 && unknownDefaults == 0 && facts.TrackCoverageComplete:
+			failure := trackers.NewEvidenceRuleFailure(
+				"language_default_audio",
+				fmt.Sprintf("resource %s: %d primary audio tracks are marked default; set exactly one default, or at least one for anime", resource, defaults),
+				api.RuleDispositionWaivable,
+				api.MetadataEvidenceStatusComplete,
+			)
+			bindPresentationWarning(&failure, subject, resource)
+			failures = append(failures, failure)
+		case unknownDefaults > 0 && (!subject.Anime || defaults == 0) || defaults == 0 && !facts.TrackCoverageComplete:
+			add("default_audio", "resource "+resource+": primary audio default flags are unresolved", trackers.LanguageAdvisory)
 			failures[len(failures)-1].EvidenceStatus = api.MetadataEvidenceStatusPartial
 		}
 	}
@@ -132,6 +124,73 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		}
 	}
 	return failures
+}
+
+// presentationLanguageFailures keeps unverified presentation advice passive and
+// warns only about observed ordering/default flags, without asserting trump eligibility.
+func presentationLanguageFailures(subject api.TrackerValidationSubject, resource string) []api.RuleFailure {
+	failures := trackers.EvaluateLanguagePolicy(subject, trackers.LanguagePolicy{
+		OriginalFirst:   trackers.LanguageAdvisory,
+		OriginalDefault: trackers.LanguageAdvisory,
+		SubtitleDefault: trackers.LanguageAdvisory,
+	})
+	for i := range failures {
+		failure := &failures[i]
+		// Missing canonical language facts still require correction when no known
+		// English coverage makes those facts irrelevant to LST acceptance.
+		canonicalEvidence := failure.Rule == "language_evidence" || failure.Rule == "language_original_evidence"
+		englishCoverage := (subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(subject.LanguageFacts.ProgrammeLanguages, "English")) ||
+			(subject.LanguageFacts.SubtitleStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English"))
+		if !canonicalEvidence || englishCoverage {
+			failure.Disposition = api.RuleDispositionAdvisory
+		}
+		reason := ""
+		switch failure.Rule {
+		case "language_original_order":
+			if subject.LanguageFacts.HasOriginalAudio() {
+				reason = "original programme audio is not first; place an original programme track first"
+			}
+		case "language_original_default":
+			if subject.LanguageFacts.HasOriginalAudio() {
+				reason = "no original programme audio track is marked default; set an original programme track as default"
+			}
+		case "language_subtitle_default":
+			if slices.ContainsFunc(subject.LanguageFacts.Tracks, func(track api.MediaTrackFacts) bool {
+				return track.Kind == api.MediaTrackSubtitle && slices.Contains(track.Languages, "English")
+			}) {
+				reason = "no English subtitle track is marked default for foreign content; set the appropriate English subtitle default flag"
+			}
+		}
+		if reason != "" && failure.EvidenceStatus == api.MetadataEvidenceStatusComplete &&
+			subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory && subject.LanguageFacts.SubtitleStatus != api.MetadataEvidenceStatusContradictory {
+			failure.Disposition = api.RuleDispositionWaivable
+			failure.Reason = reason
+			bindPresentationWarning(failure, subject, resource)
+		} else if reason == "" && slices.Contains([]string{"language_original_order", "language_original_default", "language_subtitle_default"}, failure.Rule) {
+			failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		}
+		failure.Reason = "resource " + resource + ": " + failure.Reason
+	}
+	return failures
+}
+
+func bindPresentationWarning(failure *api.RuleFailure, subject api.TrackerValidationSubject, resource string) {
+	failure.DebugBypass = true
+	failure.EvidenceFingerprint, _ = api.CanonicalWorkflowFingerprint(struct {
+		Identity api.ExternalIdentity
+		Resource string
+		Prepared string
+		Anime    bool
+		Facts    api.LanguageFacts
+		Rule     string
+	}{
+		Identity: subject.Identity,
+		Resource: resource,
+		Prepared: subject.PreparedResourceFingerprint,
+		Anime:    subject.Anime,
+		Facts:    subject.LanguageFacts,
+		Rule:     failure.Rule,
+	})
 }
 
 // resourceLanguageFacts keeps resource eligibility separate from canonical answer identity.

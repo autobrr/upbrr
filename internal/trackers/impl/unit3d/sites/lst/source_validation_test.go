@@ -16,9 +16,6 @@ func reviewedLSTEncode(t *testing.T) api.TrackerValidationSubject {
 	subject.Type = "ENCODE"
 	subject.Release.Resolution = "1080p"
 	subject.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusPresent
-	for _, field := range sourceReviewQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
-	}
 	return subject
 }
 
@@ -39,24 +36,18 @@ func TestLSTSourceReviewBoundaries(t *testing.T) {
 		{
 			name:   "missing review",
 			change: func(s *api.TrackerValidationSubject) { s.QuestionnaireAnswers = nil },
-			rule:   "lst_source_review",
-			status: api.MetadataEvidenceStatusPartial,
 		},
 		{
 			name: "wrong rate control",
 			change: func(s *api.TrackerValidationSubject) {
 				s.QuestionnaireAnswers[sourceQuestionKey(*s, "encode_rate_control")] = "other"
 			},
-			rule:   "lst_source_review",
-			status: api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "uncropped",
 			change: func(s *api.TrackerValidationSubject) {
 				s.QuestionnaireAnswers[sourceQuestionKey(*s, "encode_crop")] = "entirely_uncropped"
 			},
-			rule:   "lst_source_review",
-			status: api.MetadataEvidenceStatusComplete,
 		},
 		{name: "imperfect crop permitted", change: func(s *api.TrackerValidationSubject) {
 			s.QuestionnaireAnswers[sourceQuestionKey(*s, "encode_crop")] = "imperfect_crop"
@@ -74,8 +65,6 @@ func TestLSTSourceReviewBoundaries(t *testing.T) {
 			change: func(s *api.TrackerValidationSubject) {
 				s.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusUnknown
 			},
-			rule:   "lst_encode_settings_evidence",
-			status: api.MetadataEvidenceStatusPartial,
 		},
 		{
 			name:   "720p x265",
@@ -92,8 +81,6 @@ func TestLSTSourceReviewBoundaries(t *testing.T) {
 		{
 			name:   "codec cannot prove encoder",
 			change: func(s *api.TrackerValidationSubject) { s.VideoEncoder = "H.264" },
-			rule:   "lst_source_review",
-			status: api.MetadataEvidenceStatusPartial,
 		},
 		{name: "legacy preservation encoder", change: func(s *api.TrackerValidationSubject) { s.VideoEncoder = "XviD"; s.Release.Resolution = "480p" }},
 		{name: "remux excludes encode checks", change: func(s *api.TrackerValidationSubject) { s.Type = "REMUX"; s.QuestionnaireAnswers = nil }},
@@ -111,7 +98,7 @@ func TestLSTSourceReviewBoundaries(t *testing.T) {
 				return
 			}
 			if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-				return f.Rule == tc.rule && f.EvidenceStatus == tc.status && f.Disposition == api.RuleDispositionStrict
+				return f.Rule == tc.rule && f.EvidenceStatus == tc.status && (f.Disposition == api.RuleDispositionWaivable || tc.rule == "lst_prohibited_source" && f.Disposition == api.RuleDispositionStrict)
 			}) {
 				t.Fatalf("failures = %#v", failures)
 			}
@@ -121,7 +108,7 @@ func TestLSTSourceReviewBoundaries(t *testing.T) {
 
 func TestLSTRetailWorkprintAndBelowHDSource(t *testing.T) {
 	subject := exceptionTestSubject(t, "mkv", "Workprint", "")
-	if failures := requiredSourceFailures(t, subject); len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("unknown workprint = %#v", failures)
 	}
 	subject.QuestionnaireAnswers[sourceQuestionKey(subject, "workprint_retail")] = "official_retail"
@@ -130,14 +117,11 @@ func TestLSTRetailWorkprintAndBelowHDSource(t *testing.T) {
 	}
 	subject = reviewedLSTEncode(t)
 	subject.Release.Resolution = "576p"
-	for _, field := range sourceReviewQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
-	}
 	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("below-HD source = %#v", failures)
 	}
 	subject.QuestionnaireAnswers[sourceQuestionKey(subject, "encode_source_resolution")] = "source_supports_hd"
-	if failures := requiredSourceFailures(t, subject); len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusComplete {
+	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("HD source = %#v", failures)
 	}
 }
@@ -157,7 +141,7 @@ func TestLSTFinishedSeasonEvidenceIsSourceBound(t *testing.T) {
 	}
 	subject.ProviderMetadata.Generation++
 	failures = requiredSourceFailures(t, subject)
-	if len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+	if len(failures) != 0 {
 		t.Fatalf("stale metadata = %#v", failures)
 	}
 	subject.TVPack = true
@@ -189,15 +173,10 @@ func TestLSTSourceReviewBindsEveryResource(t *testing.T) {
 	}) {
 		t.Fatalf("secondary prohibited source = %#v", failures)
 	}
-	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-		return f.Rule == "lst_source_review" && f.EvidenceStatus == api.MetadataEvidenceStatusPartial
-	}) {
-		t.Fatalf("stale review survived resources changing = %#v", failures)
+	if slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.QuestionnaireInput }) {
+		t.Fatalf("resource changes recreated a retired question: %#v", failures)
 	}
 	subject.MediaFileFacts.Files[1].Source = "Blu-ray"
-	for _, field := range sourceReviewQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
-	}
 	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("reviewed pack = %#v", failures)
 	}
@@ -213,18 +192,18 @@ func TestLSTMeasuredEncoderAndAV1Settings(t *testing.T) {
 	subject.VideoEncoder = ""
 	subject.VideoEncode = "x264"
 	failures := requiredSourceFailures(t, subject)
-	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-		return f.Rule == "lst_source_review" && f.EvidenceStatus == api.MetadataEvidenceStatusPartial
+	if len(failures) != 0 {
+		t.Fatalf("unknown encoder became a violation: %#v", failures)
+	}
+	if !slices.ContainsFunc(sourceValidationFailures(subject), func(f api.RuleFailure) bool {
+		return f.Rule == "guidance_lst_encode_encoder_evidence" && f.Disposition == api.RuleDispositionAdvisory
 	}) {
-		t.Fatalf("naming encoder inferred measured identity: %#v", failures)
+		t.Fatal("naming encoder suppressed unknown-identity guidance")
 	}
 	subject.VideoEncoder = "AV1"
 	subject.VideoCodec = "AV1"
 	subject.HasEncodeSettings = true
 	subject.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusNotApplicable
-	for _, field := range sourceReviewQuestions(subject) {
-		subject.QuestionnaireAnswers[field.Key] = field.Options[1]
-	}
 	if failures := requiredSourceFailures(t, subject); len(failures) != 0 {
 		t.Fatalf("measured AV1 settings rejected: %#v", failures)
 	}
@@ -232,5 +211,5 @@ func TestLSTMeasuredEncoderAndAV1Settings(t *testing.T) {
 
 func requiredSourceFailures(t *testing.T, subject api.TrackerValidationSubject) []api.RuleFailure {
 	t.Helper()
-	return withoutLSTStreamProcessingGuidance(t, sourceValidationFailures(subject))
+	return slices.DeleteFunc(withoutLSTStreamProcessingGuidance(t, sourceValidationFailures(subject)), func(f api.RuleFailure) bool { return f.Disposition == api.RuleDispositionAdvisory })
 }

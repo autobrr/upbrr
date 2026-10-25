@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -146,10 +145,16 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 				}
 				preparer := releaseworkflow.ReleasePreparerFunc{
 					PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+						category := api.CanonicalCategoryMovie
+						if test.pack {
+							category = api.CanonicalCategoryTV
+						}
 						return api.PrepareResult{Release: api.PreparedRelease{
 							Generation: 1,
 							Source:     api.SourceManifest{SourcePath: input.SourcePath},
-							Naming:     api.NamingFacts{ReleaseName: releaseName},
+							Naming:     api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
+							Identity:   api.ExternalIdentity{Category: category},
+							Media:      api.MediaFacts{Type: "WEBDL", Source: "Web"},
 						}}, nil
 					},
 					DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
@@ -173,21 +178,6 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 								Resolution: "1080p",
 							},
 						}
-						answers := map[string]string{}
-						questionnaire := lst.Profile().Site.ProjectionQuestionnaire(trackers.PreparationInput{
-							Tracker:    "LST",
-							Meta:       subject,
-							Projection: &api.TrackerReleaseProjection{UploadReleaseName: releaseName},
-						})
-						for _, field := range questionnaire.Fields {
-							switch {
-							case strings.HasPrefix(field.Key, "stream_processing_"):
-								answers[field.Key] = "reviewed_no_user_processing_or_improper_splicing"
-							case strings.HasPrefix(field.Key, "presentation_track_presentation_"), strings.HasPrefix(field.Key, "presentation_web_source_naming_"):
-								answers[field.Key] = "reviewed_correct"
-							}
-						}
-						subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"LST": answers}
 						return subject, nil
 					},
 					DuplicateFunc: func(_ context.Context, input api.DuplicateCheckInput) (api.DuplicateSubject, error) {
@@ -228,48 +218,64 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 					},
 				}
 				var current api.ReleaseWorkflowCurrent
-				deadline := time.Now().Add(30 * time.Second)
-				for {
-					if !time.Now().Before(deadline) {
-						t.Fatalf("audio-order workflow did not settle: %#v", current)
-					}
-					current, err = core.ContinueReleaseWorkflow(ctx, owner, request)
-					if err != nil {
-						t.Fatal(err)
-					}
-					for current.Operation != nil && (current.Operation.Status == api.StageStatusQueued ||
-						current.Operation.Status == api.StageStatusRunning || current.Operation.Status == api.StageStatusPending ||
-						current.Operation.Status == api.StageStatusReady) {
+				settle := func() {
+					t.Helper()
+					deadline := time.Now().Add(30 * time.Second)
+					for {
 						if !time.Now().Before(deadline) {
-							t.Fatalf("audio-order operation did not finish: %#v", current.Operation)
+							t.Fatalf("audio-order workflow did not settle: %#v", current)
 						}
-						time.Sleep(5 * time.Millisecond)
+						current, err = core.ContinueReleaseWorkflow(ctx, owner, request)
+						if err != nil {
+							t.Fatal(err)
+						}
+						for current.Operation != nil && (current.Operation.Status == api.StageStatusQueued ||
+							current.Operation.Status == api.StageStatusRunning || current.Operation.Status == api.StageStatusPending ||
+							current.Operation.Status == api.StageStatusReady) {
+							if !time.Now().Before(deadline) {
+								t.Fatalf("audio-order operation did not finish: %#v", current.Operation)
+							}
+							time.Sleep(5 * time.Millisecond)
+							current, err = core.CurrentReleaseWorkflow(ctx, owner, current.Workflow.ID)
+							if err != nil {
+								t.Fatal(err)
+							}
+						}
 						current, err = core.CurrentReleaseWorkflow(ctx, owner, current.Workflow.ID)
 						if err != nil {
 							t.Fatal(err)
 						}
+						if request.Authority != nil && current.Workflow.Revision == request.Authority.ExpectedRevision {
+							break
+						}
+						request.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision}
 					}
-					current, err = core.CurrentReleaseWorkflow(ctx, owner, current.Workflow.ID)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if request.Authority != nil && current.Workflow.Revision == request.Authority.ExpectedRevision {
-						break
-					}
-					request.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision}
 				}
-				if current.Projections == nil || len(current.Projections.Projections) != 2 || current.Preflight == nil || len(current.Preflight.Results) != 2 {
-					t.Fatalf("audio order blocked preflight: %#v", current)
+				settle()
+				if current.Projections == nil || len(current.Projections.Projections) != 2 {
+					t.Fatalf("audio order lost tracker projections: %#v", current)
 				}
-				lstBlocked := test.pack || personal
+				// The CLI gate requires warning acknowledgement before any tracker
+				// advances; WebUI controls allow an eligible sibling to proceed.
+				awaitingPreflight := test.mode == releaseworkflow.TrackerDecisionModePostDupeGate && !test.pack
+				if awaitingPreflight {
+					if current.Preflight != nil || current.Dupes != nil || len(dupes.projections) != 0 {
+						t.Fatalf("post-dupe mode crossed the warning acknowledgement gate: %#v", current)
+					}
+				} else if current.Preflight == nil || len(current.Preflight.Results) != 2 {
+					t.Fatalf("eligible tracker did not reach preflight: %#v", current)
+				}
 				for _, projection := range current.Projections.Projections {
-					blocked := projection.TrackerID == "LST" && lstBlocked
+					blocked := projection.TrackerID == "LST"
 					wantReadiness := api.ReadinessStatusReady
 					if blocked {
-						wantReadiness = api.ReadinessStatusIneligible
+						wantReadiness = api.ReadinessStatusBlocked
+						if test.pack {
+							wantReadiness = api.ReadinessStatusIneligible
+						}
 					}
 					if projection.Readiness != wantReadiness || projection.DupeReady == blocked ||
-						projection.RuleAuthorizationFingerprint != "" || projection.WaivableRuleFingerprint != "" || len(projection.RequiredActions) != 0 {
+						projection.RuleAuthorizationFingerprint != "" || (projection.WaivableRuleFingerprint != "") != blocked {
 						t.Fatalf("ordering or resource policy changed: %#v", projection)
 					}
 					if projection.TrackerID == "LST" && test.pack && !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
@@ -280,7 +286,7 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 					}
 					for _, decision := range projection.PolicyDecisions {
 						if decision.Blocking && (projection.TrackerID != "LST" ||
-							(!personal || decision.Code != "language_original_order") && (!test.pack || decision.Code != "lst_container_evidence")) {
+							decision.Code != "language_original_order" && (!test.pack || decision.Code != "lst_container_evidence")) {
 							t.Fatalf("unrelated prerequisite masks ordering behavior: %#v", decision)
 						}
 					}
@@ -289,13 +295,13 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 						codes = append(codes, "language_dub_order")
 					}
 					for _, code := range codes {
-						strict := projection.TrackerID == "LST" && personal
+						waivable := projection.TrackerID == "LST"
 						wantDisposition := api.RuleDispositionAdvisory
-						if strict {
-							wantDisposition = api.RuleDispositionStrict
+						if waivable {
+							wantDisposition = api.RuleDispositionWaivable
 						}
 						if !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
-							return decision.Code == code && decision.Disposition == wantDisposition && decision.Blocking == strict
+							return decision.Code == code && decision.Disposition == wantDisposition && decision.Blocking == waivable
 						}) {
 							t.Fatalf("missing expected %s ordering decision: %#v", code, projection)
 						}
@@ -307,34 +313,89 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 						t.Fatalf("pack coverage guidance=%t, want %t: %#v", guidance, test.pack, projection.PolicyDecisions)
 					}
 				}
-				for _, result := range current.Preflight.Results {
-					wantState := api.TrackerPreflightStateReady
-					if result.TrackerID == "LST" && lstBlocked {
-						wantState = api.TrackerPreflightStateFailed
-					}
-					if result.State != wantState || len(result.RequiredActions) != 0 {
-						t.Fatalf("audio-order preflight requires action: %#v", result)
+				if !awaitingPreflight {
+					for _, result := range current.Preflight.Results {
+						wantState := api.TrackerPreflightStateReady
+						if result.TrackerID == "LST" {
+							wantState = api.TrackerPreflightStateActionRequired
+							if test.pack {
+								wantState = api.TrackerPreflightStateFailed
+							}
+						}
+						wantActions := 0
+						if result.TrackerID == "LST" && !test.pack {
+							wantActions = 1
+						}
+						if result.State != wantState || len(result.RequiredActions) != wantActions {
+							t.Fatalf("audio-order preflight requires action: %#v", result)
+						}
 					}
 				}
 				if slices.ContainsFunc(current.Workflow.RequiredActions, func(action api.RequiredAction) bool {
-					return action.Kind == api.RequiredActionAuthorizeRules || action.Kind == api.RequiredActionAnswerQuestionnaire
+					return action.Kind == api.RequiredActionAnswerQuestionnaire
 				}) {
-					t.Fatalf("audio order requested acknowledgement: %#v", current.Workflow.RequiredActions)
+					t.Fatalf("audio order resurrected a retired questionnaire: %#v", current.Workflow.RequiredActions)
 				}
-				wantChecked := 2
-				if lstBlocked {
-					wantChecked = 1
-				}
-				if current.Dupes == nil || len(current.Dupes.Results) != 2 || len(dupes.projections) != wantChecked {
-					t.Fatalf("audio order blocked duplicate progression: results=%#v checked=%#v", current.Dupes, dupes.projections)
-				}
-				for _, result := range current.Dupes.Results {
-					wantDecision := api.DupeDecisionNoMatch
-					if result.TrackerID == "LST" && lstBlocked {
-						wantDecision = api.DupeDecisionSkipped
+				if !awaitingPreflight {
+					if current.Dupes == nil || len(current.Dupes.Results) != 2 || len(dupes.projections) != 1 || dupes.projections[0].TrackerID != "LUME" {
+						t.Fatalf("audio order blocked duplicate progression: results=%#v checked=%#v", current.Dupes, dupes.projections)
 					}
-					if result.Decision != wantDecision {
-						t.Fatalf("unexpected duplicate outcome: %#v", result)
+					for _, result := range current.Dupes.Results {
+						wantDecision := api.DupeDecisionNoMatch
+						if result.TrackerID == "LST" {
+							wantDecision = api.DupeDecisionSkipped
+						}
+						if result.Decision != wantDecision {
+							t.Fatalf("unexpected duplicate outcome: %#v", result)
+						}
+					}
+				}
+				if !test.pack {
+					var pending api.RequiredAction
+					for _, action := range current.Workflow.RequiredActions {
+						if action.TrackerID == "LST" && action.Kind == api.RequiredActionAuthorizeRules && action.Status == api.RequiredActionStatusPending {
+							pending = action
+						}
+					}
+					if pending.ID == "" {
+						t.Fatalf("missing LST warning acknowledgement: %#v", current.Workflow.RequiredActions)
+					}
+					request.IdempotencyKey = "acknowledge-audio-order"
+					request.Intent = api.WorkflowIntent{}
+					request.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision}
+					request.Answers = []api.RequiredActionAnswer{{
+						ActionID:         pending.ID,
+						WorkflowRevision: current.Workflow.Revision,
+						Confirmed:        new(true),
+					}}
+					settle()
+					if current.Preflight == nil || len(current.Preflight.Results) != 2 || current.Dupes == nil || len(current.Dupes.Results) != 2 {
+						t.Fatalf("acknowledgement did not release preflight and duplicate progression: %#v", current)
+					}
+					for _, projection := range current.Projections.Projections {
+						if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
+							t.Fatalf("acknowledgement did not restore eligibility: %#v", projection)
+						}
+						if projection.TrackerID == "LST" && (projection.RuleAuthorizationFingerprint == "" ||
+							projection.RuleAuthorizationFingerprint != projection.WaivableRuleFingerprint ||
+							slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool { return decision.Blocking })) {
+							t.Fatalf("acknowledgement did not authorize the exact warning set: %#v", projection)
+						}
+					}
+					for _, result := range current.Preflight.Results {
+						if result.State != api.TrackerPreflightStateReady {
+							t.Fatalf("acknowledgement did not clear preflight: %#v", result)
+						}
+					}
+					if len(dupes.projections) != 2 ||
+						!slices.ContainsFunc(dupes.projections, func(p api.TrackerReleaseProjection) bool { return p.TrackerID == "LST" }) ||
+						!slices.ContainsFunc(dupes.projections, func(p api.TrackerReleaseProjection) bool { return p.TrackerID == "LUME" }) {
+						t.Fatalf("acknowledgement did not check each tracker exactly once: %#v", dupes.projections)
+					}
+					for _, result := range current.Dupes.Results {
+						if result.Decision != api.DupeDecisionNoMatch {
+							t.Fatalf("unexpected acknowledged duplicate outcome: %#v", result)
+						}
 					}
 				}
 				if !reflect.DeepEqual(canonicalFacts, before) {

@@ -66,13 +66,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			fields[len(fields)-1].Value = inferred
 		}
 	}
-	fields = append(fields, audioProcessingQuestions(subject)...)
-	fields = append(fields, alternateMixQuestions(subject)...)
-	fields = append(fields, presentationReviewQuestions(subject)...)
 	fields = append(fields, exceptionQuestionnaireFields(subject)...)
-	fields = append(fields, assetReviewQuestions(subject)...)
-	fields = append(fields, sourceReviewQuestions(subject)...)
-	fields = append(fields, discReviewQuestions(subject)...)
 	for i := range fields {
 		if value := subject.QuestionnaireAnswers[fields[i].Key]; fields[i].Kind == "text" || slices.Contains(fields[i].Options, value) {
 			fields[i].Value = value

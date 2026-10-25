@@ -415,7 +415,7 @@ func runUploadDriver(
 		}
 		batch = batch.withDefaults(uploadReq)
 		queueMode := strings.TrimSpace(opts.QueueName) != ""
-		return runCLIWorkflowUploadOnly(ctx, coreSvc, batch, opts.Debug, queueMode, cfg, streams, logger)
+		return runCLIWorkflowUploadOnly(ctx, coreSvc, batch, opts.Debug, queueMode, !visitedFlags["screens"], cfg, streams, logger)
 	}
 
 	queueMode := strings.TrimSpace(opts.QueueName) != ""

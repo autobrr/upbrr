@@ -59,6 +59,8 @@ type Profile struct {
 	BannedGroups []string
 	// ImageHost contains accepted image-host restrictions.
 	ImageHost *trackers.ImageHostPolicy
+	// WorkflowMedia contains site-owned media minimums and imported-reference reuse.
+	WorkflowMedia *trackers.WorkflowMediaRequirements
 	// SourceOnlyImageReusable accepts site-local proxy links in imported descriptions.
 	SourceOnlyImageReusable func(string, []api.TrackerMetadata) bool
 	// TorrentIdentity contains site-specific torrent identity aliases or overrides.
@@ -82,7 +84,7 @@ func New(name string) *Definition {
 }
 
 // NewWithProfile normalizes profile identity, copies static banned groups,
-// metadata requirements and naming providers, and retains the remaining site
+// metadata and media requirements and naming providers, and retains the remaining site
 // callbacks and policy pointers as immutable compiled configuration.
 func NewWithProfile(profile Profile) *Definition {
 	profile.Name = strings.ToUpper(strings.TrimSpace(profile.Name))
@@ -90,6 +92,10 @@ func NewWithProfile(profile Profile) *Definition {
 	profile.DescriptionGroup = strings.ToLower(strings.TrimSpace(profile.DescriptionGroup))
 	profile.BannedGroups = append([]string(nil), profile.BannedGroups...)
 	profile.MetadataPolicy = cloneMetadataPolicy(profile.MetadataPolicy)
+	if profile.WorkflowMedia != nil {
+		policy := *profile.WorkflowMedia
+		profile.WorkflowMedia = &policy
+	}
 	if profile.NameProviders != nil {
 		providers := *profile.NameProviders
 		profile.NameProviders = &providers
@@ -136,6 +142,15 @@ func (d *Definition) TitleSearchPolicy() trackers.TitleSearchPolicy {
 
 // DefaultBaseURL returns the site's endpoint used when configuration supplies none.
 func (d *Definition) DefaultBaseURL() string { return d.profile.BaseURL }
+
+// WorkflowMediaRequirements returns an independent copy of the site's media policy.
+func (d *Definition) WorkflowMediaRequirements() *trackers.WorkflowMediaRequirements {
+	if d.profile.WorkflowMedia == nil {
+		return nil
+	}
+	policy := *d.profile.WorkflowMedia
+	return &policy
+}
 
 // ClaimPolicy returns an independent copy of the site's claim policy.
 func (d *Definition) ClaimPolicy() *trackers.ClaimPolicy {
@@ -334,12 +349,7 @@ func (d *Definition) prepareUpload(ctx context.Context, req trackers.Preparation
 				return trackers.PreparedOperation{}, trackers.NewQuestionnairePreparationFailure(req.Tracker, blockingFailure.Reason, schema)
 			}
 		}
-		return trackers.PreparedOperation{}, fmt.Errorf(
-			"trackers: %s constructibility %s: %s",
-			d.profile.Name,
-			blockingFailure.Rule,
-			blockingFailure.Reason,
-		)
+		return trackers.PreparedOperation{}, fmt.Errorf("%s: %s", blockingFailure.Rule, blockingFailure.Reason)
 	}
 	if d.profile.BaseURL != "" {
 		return prepareUnit3DUpload(ctx, req, d.profile.BaseURL, d.profile.Site)

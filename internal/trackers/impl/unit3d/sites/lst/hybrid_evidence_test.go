@@ -4,10 +4,7 @@
 package lst
 
 import (
-	"errors"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -46,10 +43,6 @@ func TestHybridEvidenceUsesIncludedExactArtifactKinds(t *testing.T) {
 			if got := generatedHybridEvidenceIncluded(s, tc.description); got != tc.ready {
 				t.Fatalf("ready=%t", got)
 			}
-			needs := slices.ContainsFunc(assetReviewQuestions(s), func(f api.TrackerQuestionnaireField) bool { return f.HDRGradeComparison })
-			if needs == tc.ready {
-				t.Fatalf("question required=%t", needs)
-			}
 		})
 	}
 	s.AssetFacts.HDRArtifacts[0].GenerationComplete = false
@@ -72,12 +65,9 @@ func TestUnknownHybridDVHDRIsGuidanceOnly(t *testing.T) {
 	s := lstValidationSubject()
 	s.LanguageFacts.Tracks = nil
 	s.HDRFacts = api.HDRFacts{Status: api.HDREvidenceComplete, Formats: []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10}}
-	if slices.ContainsFunc(assetReviewQuestions(s), func(f api.TrackerQuestionnaireField) bool { return f.HDRGradeComparison }) {
-		t.Fatal("unknown hybrid forced questionnaire")
-	}
 	found := false
 	for _, failure := range assetReviewFailures(s) {
-		if failure.Rule == "lst_hybrid_hdr_guidance" {
+		if failure.Rule == "guidance_lst_hybrid_hdr" {
 			found = true
 			if failure.Disposition != api.RuleDispositionAdvisory {
 				t.Fatal("guidance blocked release")
@@ -98,41 +88,24 @@ func TestUnknownHybridDVHDRIsGuidanceOnly(t *testing.T) {
 	}
 }
 
-func TestHybridWillAddNeedsNoExistingArtifactLinks(t *testing.T) {
+func TestHybridPromiseCannotCreateLateQuestionOrEvidence(t *testing.T) {
 	meta := api.UploadSubject{ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureHybrid}, HDRFacts: api.HDRFacts{Status: api.HDREvidenceComplete, Formats: []api.HDRFormat{api.HDRFormatHDR10Plus}}}
 	description := lstDescriptionScreenshots(&meta)
 	subject := api.NewTrackerValidationSubject(meta, "LST")
 	key := assetQuestionKey(subject, "hybrid_will_add")
-	delete(meta.TrackerQuestionnaireAnswers["LST"], key)
-	var failure *trackers.PreparationFailure
-	if err := validateFinalDescription(meta, description, "MediaInfo", ""); !errors.As(err, &failure) || failure.Code() != "questionnaire_required" {
-		t.Fatalf("missing evidence did not return recoverable questionnaire: %v", err)
-	}
-	meta.TrackerQuestionnaireAnswers["LST"][key] = "will_add_required_data"
-	if err := validateFinalDescription(meta, description, "MediaInfo", ""); err != nil {
-		t.Fatalf("will-add confirmation rejected: %v", err)
+	for _, answer := range []string{"", "will_add_required_data"} {
+		meta.TrackerQuestionnaireAnswers["LST"][key] = answer
+		if err := validateFinalDescription(meta, description, "MediaInfo", ""); err != nil {
+			t.Fatalf("late reassurance gate returned: %v", err)
+		}
+		subject = api.NewTrackerValidationSubject(meta, "LST")
+		if generatedHybridEvidenceIncluded(subject, description) {
+			t.Fatal("promise manufactured artifact evidence")
+		}
+		requireLSTValidationFailure(t, assetReviewFailures(subject), "guidance_lst_hybrid_hdr_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	}
 	meta.HDRFacts.Status = api.HDREvidencePartial
-	if validateFinalDescription(meta, description, "MediaInfo", "") == nil {
-		t.Fatal("stale confirmation reused after source evidence change")
-	}
-}
-
-func TestHybridPromiseSurvivesDescriptionAssetPreparation(t *testing.T) {
-	meta := api.UploadSubject{
-		SourcePath:      "synthetic.mkv",
-		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureHybrid},
-		HDRFacts:        api.HDRFacts{Status: api.HDREvidenceComplete, Formats: []api.HDRFormat{api.HDRFormatHDR10Plus}},
-	}
-	initial := api.NewTrackerValidationSubject(meta, "LST")
-	key := assetQuestionKey(initial, "hybrid_will_add")
-	description := lstDescriptionScreenshots(&meta)
-	final := api.NewTrackerValidationSubject(meta, "LST")
-	if got := assetQuestionKey(final, "hybrid_will_add"); got != key {
-		t.Fatal("media preparation invalidated source promise")
-	}
-	meta.TrackerQuestionnaireAnswers["LST"][key] = "will_add_required_data"
 	if err := validateFinalDescription(meta, description, "MediaInfo", ""); err != nil {
-		t.Fatal(err)
+		t.Fatalf("unknown source evidence reinstated promise gate: %v", err)
 	}
 }

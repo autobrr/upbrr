@@ -54,7 +54,7 @@ func (m *Module) evaluateInputReadiness(
 	subject.TrackerHDRArtifacts = descriptionSubject.TrackerHDRArtifacts
 	subject.DescriptionGroups = descriptionSubject.DescriptionGroups
 	subject.DescriptionGroupsFinal = descriptionSubject.DescriptionGroupsFinal
-	globalEvaluation := defaultInputReadinessEvaluation(subject, trackerIDs)
+	globalEvaluation := defaultInputReadinessEvaluation(release.Release, trackerIDs)
 	evaluation := globalEvaluation
 	if m.inputReadiness != nil {
 		evaluation, err = m.inputReadiness.Evaluate(ctx, subject, trackerIDs)
@@ -228,30 +228,24 @@ func cloneTrackerInputAnswers(values map[api.TrackerID]map[string]string) map[st
 	return cloned
 }
 
-func defaultInputReadinessEvaluation(subject api.UploadSubject, trackerIDs []api.TrackerID) api.InputReadinessEvaluation {
+func defaultInputReadinessEvaluation(release api.PreparedRelease, trackerIDs []api.TrackerID) api.InputReadinessEvaluation {
 	fingerprint, _ := api.CanonicalWorkflowFingerprint(struct {
 		Version    string
 		TrackerIDs []api.TrackerID
-	}{"global-input-v1", trackerIDs})
-	fields := []api.InputReadinessFieldOutcome{
-		{
-			Key:         "source",
+	}{"global-input-v2", trackerIDs})
+	missing := release.MissingRequiredUploadFacts()
+	fields := make([]api.InputReadinessFieldOutcome, 0, 4)
+	for _, key := range []string{"category", "type", "source", "resolution"} {
+		field := api.InputReadinessFieldOutcome{
+			Key:         key,
 			Status:      api.InputReadinessFieldReady,
 			Disposition: api.RuleDispositionStrict,
-		},
-		{
-			Key:         "type",
-			Status:      api.InputReadinessFieldReady,
-			Disposition: api.RuleDispositionStrict,
-		},
-	}
-	if strings.TrimSpace(subject.Source) == "" {
-		fields[0].Status = api.InputReadinessFieldMissing
-		fields[0].Message = "Release source is required."
-	}
-	if strings.TrimSpace(subject.Type) == "" {
-		fields[1].Status = api.InputReadinessFieldMissing
-		fields[1].Message = "Release type is required."
+		}
+		if slices.Contains(missing, key) {
+			field.Status = api.InputReadinessFieldMissing
+			field.Message = "Release " + key + " is required."
+		}
+		fields = append(fields, field)
 	}
 	return api.InputReadinessEvaluation{RequirementsFingerprint: fingerprint, Fields: fields}
 }
@@ -274,7 +268,8 @@ func (m *Module) stampInputReadinessActions(snapshot *api.InputReadinessSnapshot
 }
 
 func inputReadinessMatches(snapshot *api.InputReadinessSnapshot, current CommandResult, trackerIDs []api.TrackerID) bool {
-	if snapshot == nil || current.Release == nil || snapshot.Status != api.StageStatusCompleted {
+	if snapshot == nil || current.Release == nil || snapshot.Status != api.StageStatusCompleted ||
+		len(current.Release.Release.MissingRequiredUploadFacts()) > 0 {
 		return false
 	}
 	if snapshot.Release.SourcePath != current.Release.Release.Source.SourcePath || snapshot.Release.Generation != current.Release.Release.Generation {

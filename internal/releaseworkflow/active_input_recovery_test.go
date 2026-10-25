@@ -361,6 +361,7 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 		name           string
 		running        bool
 		liveWork       bool
+		liveInput      bool
 		terminal       bool
 		checkpoint     bool
 		ordinaryFirst  bool
@@ -379,6 +380,12 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			name:     "running with live work lease",
 			running:  true,
 			liveWork: true,
+		},
+		{
+			name:      "crashed with live input and work leases",
+			running:   true,
+			liveWork:  true,
+			liveInput: true,
 		},
 		{
 			name:          "ordinary recovery first with live work lease",
@@ -528,7 +535,19 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 					}
 				}
 			}
-			if err := first.Shutdown(ctx); err != nil {
+			if test.liveInput {
+				// A crash stops renewal without relinquishing the coordinator lease.
+				first.activeCancel()
+				<-first.activeDone
+				opened.LeaseExpiresAt = clock.Now().Add(time.Second)
+				payload, err := json.Marshal(opened)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET record_json = ? WHERE singleton = 1`, payload); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := first.Shutdown(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if !test.liveWork || test.terminal {
@@ -540,7 +559,7 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			recoveryRepository.failList.Store(test.failList)
 			recoveryRepository.failTerminal.Store(test.failTerminal)
 			recoveryRepository.failCompletion.Store(test.failCompletion)
-			if test.failCompletion {
+			if test.failCompletion || test.liveInput {
 				if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
 					owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint, status, started_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, testOwnerID, opened.WorkflowID, operationID, "interrupted-effect",
@@ -552,7 +571,20 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			recoveryInputs := &failOnceStartupActiveInputRepository{ActiveInputRepository: repo}
 			recoveryInputs.failRestore.Store(test.failRestore)
 			recoveryInputs.failClose.Store(test.failClose)
-			restarted := newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, &hashingActiveInputVerifier{}, clock, "second-coordinator")
+			verifier := &hashingActiveInputVerifier{}
+			restarted := newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, verifier, clock, "second-coordinator")
+			if test.liveInput {
+				waitCtx, cancel := context.WithTimeout(ctx, 40*time.Millisecond)
+				err := restarted.ResetIdleInputOnStartup(waitCtx)
+				cancel()
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("live input startup wait = %v, want caller deadline", err)
+				}
+				unchanged, err := repo.LoadActiveInput(ctx)
+				if err != nil || unchanged != opened || restarted.startupResetDone || verifier.calls != 0 {
+					t.Fatalf("input after canceled startup = %#v, done=%t checks=%d err=%v", unchanged, restarted.startupResetDone, verifier.calls, err)
+				}
+			}
 			if test.ordinaryFirst {
 				if err := restarted.ensureOperationRecovery(ctx); err != nil {
 					t.Fatalf("ordinary recovery before startup reset: %v", err)
@@ -618,7 +650,7 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			if err != nil || settled.Status.Status != wantStatus {
 				t.Fatalf("settled operation = %#v, err=%v", settled.Status, err)
 			}
-			if test.failCompletion {
+			if test.failCompletion || test.liveInput {
 				work, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
 				if err != nil || work.CompletedAt == nil {
 					t.Fatalf("settled interrupted work = %#v, err=%v", work, err)
@@ -633,11 +665,24 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			if err != nil || slot.State != api.ActiveInputEmpty {
 				t.Fatalf("input after recovery = %#v, err=%v", slot, err)
 			}
+			if test.liveInput {
+				if verifier.calls != 0 {
+					t.Fatalf("startup verified the prior source %d times", verifier.calls)
+				}
+				_, err := restarted.OpenInput(ctx, testOwnerID, OpenInputRequest{
+					ExpectedRevision: slot.Revision,
+					Input:            api.PrepareInput{SourcePath: "unverified-source.mkv"},
+					IdempotencyKey:   "blocked-by-uncertain-effect",
+				})
+				if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || verifier.calls != 0 {
+					t.Fatalf("open after interrupted effect: source checks=%d err=%v", verifier.calls, err)
+				}
+			}
 		})
 	}
 }
 
-func TestStartupInterruptedCompositeCanRetry(t *testing.T) {
+func TestStartupInterruptedCompositeRequiresExplicitOpen(t *testing.T) {
 	ctx := t.Context()
 	repo := openActiveInputRecoveryRepository(ctx, t)
 	persistent, err := NewPersistentRepository(repo)
@@ -736,12 +781,23 @@ func TestStartupInterruptedCompositeCanRetry(t *testing.T) {
 	retry := command
 	retry.ExpectedRevision = current.Workflow.Revision
 	retry.IdempotencyKey = "retry-composite"
-	if _, err := restarted.Start(ctx, testOwnerID, retry); err != nil {
-		t.Fatalf("retry interrupted composite: %v", err)
+	if _, err := restarted.Start(ctx, testOwnerID, retry); err == nil {
+		t.Fatal("retried interrupted composite without explicitly reopening its source")
+	}
+	slot, err := repo.LoadActiveInput(ctx)
+	if err != nil || slot.State != api.ActiveInputEmpty {
+		t.Fatalf("input after interrupted composite = %#v, err=%v", slot, err)
+	}
+	if _, err := restarted.OpenInput(ctx, testOwnerID, OpenInputRequest{
+		ExpectedRevision: slot.Revision,
+		Input:            api.PrepareInput{SourcePath: state.SourcePath},
+		IdempotencyKey:   "explicit-reopen",
+	}); err != nil {
+		t.Fatalf("explicitly reopen interrupted composite source: %v", err)
 	}
 }
 
-func TestResetIdleInputOnStartupRetainsPendingCompositeWorkflow(t *testing.T) {
+func TestResetIdleInputOnStartupClosesPendingCompositeWorkflow(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
@@ -777,8 +833,12 @@ func TestResetIdleInputOnStartupRetainsPendingCompositeWorkflow(t *testing.T) {
 		t.Fatalf("reset pending composite workflow: %v", err)
 	}
 	persisted, err := repo.LoadActiveInput(ctx)
-	if err != nil || persisted != opened {
+	if err != nil || persisted.State != api.ActiveInputEmpty {
 		t.Fatalf("pending composite input after reset = %#v, err=%v", persisted, err)
+	}
+	retained, err := persistent.Load(ctx, testOwnerID, opened.WorkflowID)
+	if err != nil || retained.Composite == nil || retained.Composite.TerminalReason != "feedback_required" {
+		t.Fatalf("retained composite workflow = %#v, err=%v", retained.Composite, err)
 	}
 }
 

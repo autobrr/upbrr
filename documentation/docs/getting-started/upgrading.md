@@ -9,6 +9,8 @@ upbrr applies forward-only SQLite migrations during startup. Back up application
 
 The upgrade from `v0.3.5.1` to `v0.4.0` adds stored metadata-lookup evidence, release-cut metadata, image-account reuse boundaries, and imported tracker-media details. Older prepared snapshots may need preparation again. Keep the pre-upgrade backup if you might return to `v0.3.5.1`; changing only the binary or image tag does not undo these changes.
 
+The next update also stores source-bound acceptance evidence for imported screenshot links. Existing records without that evidence remain unknown. Evidence survives a restart of the same prepared generation, but preparation for a new or corrected generation requires fresh matching evidence. This additive database migration is forward-only; use a separate test state directory or keep a stopped-service backup before testing a development build.
+
 ## 1. Stop upbrr
 
 Stop every binary, service, and container using the database before upgrading or copying it. Disable scheduled tasks and automatic restarts that could start an older process during the upgrade. Take the backup only after all writers have stopped.

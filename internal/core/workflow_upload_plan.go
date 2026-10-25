@@ -294,6 +294,7 @@ func (b workflowUploadPlanBuilder) Build(
 	if err != nil {
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: resolve subject: %w", err)
 	}
+	retainWorkflowScreenshotSelection(&subject, privateMedia)
 	subject.TrackerTitleSearchEvidence = make(map[string]api.TrackerTitleSearchEvidence)
 	for _, projection := range eligible {
 		if evidence := projection.TitleSearchEvidence; evidence != nil && evidence.Current(subject.Identity) &&

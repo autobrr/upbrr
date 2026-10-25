@@ -109,29 +109,75 @@ func TestHDRProductionAuthoritySurvivesRestartWithoutMedia(t *testing.T) {
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(source); err != nil {
+	parkedSource := source + ".unavailable"
+	if err := os.Rename(source, parkedSource); err != nil {
 		t.Fatal(err)
 	}
 	second, repo := open()
 	t.Cleanup(func() { _ = second.workflow.Shutdown(t.Context()); _ = repo.Close() })
 	active, err := second.GetActiveInput(t.Context(), "cli")
-	if err != nil || active.State != api.ActiveInputActive || active.Current == nil || active.Current.Workflow.ID != slot.WorkflowID || active.Current.HDRAnalysis == nil {
-		t.Fatalf("retained CLI workflow: %+v %v", active, err)
+	if err != nil || active.State != api.ActiveInputEmpty || active.Current != nil {
+		t.Fatalf("restart restored the missing input: %+v %v", active, err)
 	}
-	imageID := active.Current.HDRAnalysis.Targets[0].DescriptionImages()[0].ID
-	content, err := second.workflow.HDRAnalysisArtifact(t.Context(), "cli", slot.WorkflowID, *active.Current.Workflow.HDRAnalysis, imageID)
+	retained, err := second.workflow.Current(t.Context(), "cli", slot.WorkflowID)
+	if err != nil || retained.HDRAnalysis == nil {
+		t.Fatalf("retained CLI workflow: %+v %v", retained, err)
+	}
+	imageID := retained.HDRAnalysis.Targets[0].DescriptionImages()[0].ID
+	content, err := second.workflow.HDRAnalysisArtifact(t.Context(), "cli", slot.WorkflowID, *retained.Workflow.HDRAnalysis, imageID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := content.Body.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.workflow.HDRAnalysisArtifact(t.Context(), "foreign", slot.WorkflowID, *active.Current.Workflow.HDRAnalysis, imageID); err == nil {
+	if _, err := second.workflow.HDRAnalysisArtifact(t.Context(), "foreign", slot.WorkflowID, *retained.Workflow.HDRAnalysis, imageID); err == nil {
 		t.Fatal("foreign owner read retained image")
 	}
+	if _, err := second.workflow.OpenInput(t.Context(), "cli", releaseworkflow.OpenInputRequest{
+		ExpectedRevision: active.Revision,
+		Input:            input,
+		IdempotencyKey:   "missing-reopen",
+	}); err == nil {
+		t.Fatal("explicit reopen accepted missing media")
+	}
+	if err := os.Rename(parkedSource, source); err != nil {
+		t.Fatal(err)
+	}
+	active, err = second.GetActiveInput(t.Context(), "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := second.workflow.OpenInput(t.Context(), "cli", releaseworkflow.OpenInputRequest{
+		ExpectedRevision: active.Revision,
+		Input:            input,
+		IdempotencyKey:   "reopen-after-restart",
+	})
+	if err != nil || reopened.WorkflowID == slot.WorkflowID {
+		t.Fatalf("explicit reopen did not establish a fresh workflow: %+v %v", reopened, err)
+	}
+	retained, err = second.workflow.Current(t.Context(), "cli", reopened.WorkflowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err = second.workflow.Execute(t.Context(), "cli", releaseworkflow.PrepareReleaseCommand{
+		WorkflowID:       reopened.WorkflowID,
+		ExpectedRevision: retained.Workflow.Revision,
+		Input:            input,
+		IdempotencyKey:   "prepare-reopened",
+	})
+	if err != nil || retained.HDRAnalysis == nil {
+		t.Fatalf("explicit preparation lost reusable HDR artifacts: %+v %v", retained, err)
+	}
+	imageID = retained.HDRAnalysis.Targets[0].DescriptionImages()[0].ID
+	instructions.Release = retained.HDRAnalysis.Release
+	// After explicit verification, cached rendering still does not need the media.
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
 	selected, err := second.workflow.Execute(t.Context(), "cli", releaseworkflow.SetHDRAnalysisEnabledCommand{
-		WorkflowID:       slot.WorkflowID,
-		ExpectedRevision: active.Current.Workflow.Revision,
+		WorkflowID:       reopened.WorkflowID,
+		ExpectedRevision: retained.Workflow.Revision,
 		Enabled:          true,
 		ArtifactIDs:      []api.PublicResourceID{imageID},
 		IdempotencyKey:   "select",
@@ -142,7 +188,7 @@ func TestHDRProductionAuthoritySurvivesRestartWithoutMedia(t *testing.T) {
 	// A different peak invalidates the PNG cache, requiring retained metadata to render again.
 	instructions.PeakSource = api.HDRPeakMaxSCLLuminance
 	rerendered, err := second.workflow.Execute(t.Context(), "cli", releaseworkflow.AnalyzeHDRCommand{
-		WorkflowID:       slot.WorkflowID,
+		WorkflowID:       reopened.WorkflowID,
 		ExpectedRevision: selected.Workflow.Revision,
 		Instructions:     instructions,
 		IdempotencyKey:   "rerender",
@@ -160,7 +206,7 @@ func TestHDRProductionAuthoritySurvivesRestartWithoutMedia(t *testing.T) {
 		t.Fatal(err)
 	}
 	imageID = rerendered.HDRAnalysis.Targets[0].DescriptionImages()[0].ID
-	if _, err := second.workflow.HDRAnalysisArtifact(t.Context(), "cli", slot.WorkflowID, *rerendered.Workflow.HDRAnalysis, imageID); err == nil {
+	if _, err := second.workflow.HDRAnalysisArtifact(t.Context(), "cli", reopened.WorkflowID, *rerendered.Workflow.HDRAnalysis, imageID); err == nil {
 		t.Fatal("superseded generation retained image authority")
 	}
 }

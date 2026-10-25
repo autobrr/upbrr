@@ -15,14 +15,21 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "unit3d-lst-payload-v14",
+		ID: "unit3d-lst-payload-v17",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
 			}
 			failures := lstDeterministicFailures(subject)
+			failures = append(failures, trackers.NewEvidenceRuleFailure(
+				"guidance_lst_duplicate_evidence",
+				"Review source and comparison evidence against the tracker's current rules. Unknown quality, source history, internal status or replacement eligibility is not established by an acknowledgement; independent duplicate safeguards still apply.",
+				api.RuleDispositionAdvisory,
+				api.MetadataEvidenceStatusPartial,
+			))
 			failures = append(failures, presentationReviewFailures(subject)...)
 			failures = append(failures, audioTierFailures(subject)...)
+			failures = append(failures, audioProcessingGuidance(subject)...)
 			failures = append(failures, exceptionValidationFailures(subject)...)
 			failures = append(failures, assetReviewFailures(subject)...)
 			failures = append(failures, sourceValidationFailures(subject)...)
@@ -32,8 +39,8 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 	}
 }
 
-// lstDeterministicFailures enforces prohibited-content, description, and
-// full-disc requirements.
+// lstDeterministicFailures enforces prohibited-content and parser requirements.
+// Screenshot deficiencies are reviewed through evidence-bound warnings instead.
 func lstDeterministicFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	extraKinds := []api.PackageFileKind{
 		api.PackageFileKindExternalSubtitle,
@@ -76,20 +83,12 @@ func lstDeterministicFailures(subject api.TrackerValidationSubject) []api.RuleFa
 }
 
 func lstAssetRequirements(discType string) []trackers.AssetRequirement {
-	requirements := []trackers.AssetRequirement{{
-		Kind:         trackers.AssetKindHostedScreenshot,
-		MinimumCount: 3,
-	}}
 	switch strings.ToUpper(strings.TrimSpace(discType)) {
 	case "BDMV", "HDDVD":
-		return append(requirements, trackers.AssetRequirement{Kind: trackers.AssetKindBDInfo})
+		return []trackers.AssetRequirement{{Kind: trackers.AssetKindBDInfo}}
 	case "DVD":
-		return append(
-			requirements,
-			trackers.AssetRequirement{Kind: trackers.AssetKindMediaInfoText},
-			trackers.AssetRequirement{Kind: trackers.AssetKindDVDVOBMediaInfo},
-		)
+		return []trackers.AssetRequirement{{Kind: trackers.AssetKindMediaInfoText}, {Kind: trackers.AssetKindDVDVOBMediaInfo}}
 	default:
-		return append(requirements, trackers.AssetRequirement{Kind: trackers.AssetKindMediaInfoText})
+		return []trackers.AssetRequirement{{Kind: trackers.AssetKindMediaInfoText}}
 	}
 }

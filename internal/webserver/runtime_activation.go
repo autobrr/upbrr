@@ -123,8 +123,9 @@ func (s storedConfigSnapshot) LoadFullConfig(_ context.Context, dest any) error 
 func (s storedConfigSnapshot) DBPath() string { return s.dbPath }
 
 // InitializeRuntimeConfigActivation binds a validated startup config to the
-// durable generation before CLI or WebUI Core admits effects. It discards
-// unresolved prior-process effects only after their input and work leases expire.
+// durable generation before CLI or WebUI Core admits effects. Uncertain
+// prior-process effects remain fenced; a changed config cannot activate until
+// those effects have been explicitly reconciled.
 // A changed fingerprint advances the generation only while the stored config
 // matches the caller's runtime and unfinished work can be invalidated safely.
 // Busy leases are retried for up to 65 seconds, subject to ctx; other errors
@@ -189,36 +190,26 @@ func InitializeRuntimeConfigActivation(
 	}
 	for {
 		attempts++
-		stage := "discard_effects"
-		effects, fences, activationErr := repo.DiscardUnresolvedWorkflowEffectsOnStartup(ctx, time.Now().UTC())
+		stage := "initialize"
+		var next api.ConfigActivation
+		var activationErr error
+		if changed {
+			stage = "reconcile"
+			next, activationErr = repo.ReconcileConfigActivation(ctx, snapshot, activation, fingerprint, releaseworkflow.ApplyConfigImpact)
+		} else {
+			next, activationErr = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
+		}
 		if activationErr == nil {
-			if effects+fences > 0 {
-				logger.Warnf(
-					"config activation: startup recovery decision=discard_uncertain_effects effect_count=%d fence_count=%d remote_outcome=unverified",
-					effects,
-					fences,
+			activation = next
+			if changed {
+				logger.Debugf(
+					"config activation: startup reconcile state=completed generation=%d attempts=%d elapsed=%s",
+					activation.ActiveGeneration,
+					attempts,
+					time.Since(started).Round(time.Second),
 				)
 			}
-			var next api.ConfigActivation
-			if changed {
-				stage = "reconcile"
-				next, activationErr = repo.ReconcileConfigActivation(ctx, snapshot, activation, fingerprint, releaseworkflow.ApplyConfigImpact)
-			} else {
-				stage = "initialize"
-				next, activationErr = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
-			}
-			if activationErr == nil {
-				activation = next
-				if changed {
-					logger.Debugf(
-						"config activation: startup reconcile state=completed generation=%d attempts=%d elapsed=%s",
-						activation.ActiveGeneration,
-						attempts,
-						time.Since(started).Round(time.Second),
-					)
-				}
-				return activation, nil
-			}
+			return activation, nil
 		}
 		busy := errors.Is(activationErr, api.ErrActiveInputBusy)
 		if !busy || !time.Now().Before(deadline) {
@@ -231,8 +222,6 @@ func InitializeRuntimeConfigActivation(
 				logging.SanitizeMessage(activationErr.Error()),
 			)
 			switch stage {
-			case "discard_effects":
-				return api.ConfigActivation{}, fmt.Errorf("discard unresolved startup workflow effects: %w", activationErr)
 			case "initialize":
 				return api.ConfigActivation{}, fmt.Errorf("initialize runtime config activation fingerprint: %w", activationErr)
 			default:
@@ -256,7 +245,7 @@ func InitializeRuntimeConfigActivation(
 			if changed {
 				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", ctx.Err())
 			}
-			return api.ConfigActivation{}, fmt.Errorf("discard unresolved startup workflow effects: %w", ctx.Err())
+			return api.ConfigActivation{}, fmt.Errorf("initialize runtime config activation fingerprint: %w", ctx.Err())
 		case <-timer.C:
 		}
 	}
