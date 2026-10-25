@@ -1725,6 +1725,8 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions
 				"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
 				"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
 				"[right]Created by Upload Assistant[/right]",
+				"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Shared with Upload-Assistant v3.7 (fork)[/size][/url][/right]",
+				"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Shared with Upload-Assistant v10.12.345 (fork)[/size][/url][/right]",
 				"[right][url=https://github.com/Audionut/Upload-Assistant][size=4]Created by Upload Assistant v7.0.2[/size][/url][/right]",
 				"[center][url=https://github.com/Audionut/Upload-Assistant]Created by Audionut's Upload Assistant[/url][/center]",
 				"[center][url=https://aither.cc/forums/topics/1349]Created by L4G's Upload Assistant[/url][/center]",
@@ -1747,6 +1749,17 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions
 	}
 	if strings.Contains(assets.Description, "uploadrr") || strings.Contains(assets.Description, "Upload Assistant") || strings.Contains(assets.Description, "UNIT3D") || strings.Contains(assets.Description, "GG-BOT") || strings.Contains(assets.Description, "Find our uploads") || strings.Contains(assets.Description, "5izwmx.svg") {
 		t.Fatalf("expected all bot text removed, got %q", assets.Description)
+	}
+}
+
+func TestStripDescriptionSignaturesPreservesUploadAssistantReleaseNotes(t *testing.T) {
+	for _, value := range []string{
+		"Shared with Upload-Assistant v3.7 (fork)",
+		"[right]Shared with Upload-Assistant v3.7 (fork) for testing; see release notes.[/right]",
+	} {
+		if got := StripDescriptionSignatures(value); got != value {
+			t.Fatalf("expected release notes preserved, got %q", got)
+		}
 	}
 }
 

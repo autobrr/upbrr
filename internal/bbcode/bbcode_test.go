@@ -170,6 +170,8 @@ func TestCleanBHDDescriptionRemovesKnownBotSignatures(t *testing.T) {
 		"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
 		"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
 		"[right]Created by Upload Assistant[/right]",
+		"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Shared with Upload-Assistant v3.7 (fork)[/size][/url][/right]",
+		"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Shared with Upload-Assistant v10.12.345 (fork)[/size][/url][/right]",
 	}, "\n")
 	report := bhd.CleanDescription(desc, bhd.BBCodeOptions{})
 
@@ -209,6 +211,8 @@ func TestCleanPTPDescriptionRemovesKnownBotSignatures(t *testing.T) {
 		"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
 		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
 		"[right]Created by Upload Assistant[/right]",
+		"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Shared with Upload-Assistant v3.7 (fork)[/size][/url][/right]",
+		"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Shared with Upload-Assistant v10.12.345 (fork)[/size][/url][/right]",
 	}, "\n")
 	report := ptp.CleanDescription(desc, "")
 
