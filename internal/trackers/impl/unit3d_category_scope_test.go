@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -145,6 +146,19 @@ func TestUnit3DCategorySearchIncludesUploadAndRelatedCategories(t *testing.T) {
 		t.Run(test.tracker+"/"+test.name, func(t *testing.T) {
 			t.Parallel()
 			meta := unit3DCategoryScopeSubject(t, test.category)
+			if test.tracker == "BLU" {
+				meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+					OriginalLanguage:      "English",
+					TrackCoverageComplete: true,
+					SubtitleLanguages:     meta.SubtitleLanguages,
+					Tracks: []api.MediaTrackFacts{{
+						ID:        "programme",
+						Kind:      api.MediaTrackAudio,
+						Role:      api.AudioRoleProgramme,
+						Languages: meta.AudioLanguages,
+					}},
+				})
+			}
 			if test.modify != nil {
 				test.modify(&meta)
 			}

@@ -932,7 +932,8 @@ func TestEvaluateRulesBLUContainerRules(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			failures := evaluateNonMetadataRulesForTest(context.Background(), "BLU", tc.meta)
+			meta := withFinalizedLanguageFactsForTest(tc.meta)
+			failures := evaluateNonMetadataRulesForTest(context.Background(), "BLU", meta)
 			if tc.wantBlock && len(failures) == 0 {
 				t.Fatalf("expected BLU container failure")
 			}
