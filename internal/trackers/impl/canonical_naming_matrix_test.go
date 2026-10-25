@@ -4,6 +4,7 @@
 package impl
 
 import (
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,9 +15,7 @@ import (
 )
 
 // This matrix exercises finalized components at the registry boundary. Detection,
-// corrections and persistence belong to their producer tests. OTW's missing
-// components (#638) and effective 3D placement (#675) are deliberately not
-// treated as accepted omissions here.
+// corrections and persistence belong to their producer tests.
 func TestRegistryCanonicalNamingComponents(t *testing.T) {
 	registry := MustNewRegistry()
 	cases := []struct {
@@ -37,16 +36,21 @@ func TestRegistryCanonicalNamingComponents(t *testing.T) {
 			s.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeatureHybrid}
 		}},
 		{api.NameRoleRepack, "REPACK2", func(s *api.UploadSubject, value string) { s.Repack = value }},
+		{api.NameRoleThreeD, "3D", func(s *api.UploadSubject, value string) {
+			s.Is3D = value
+			s.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeature3DHalfSBS}
+		}},
 	}
 	for _, tracker := range registry.Names() {
 		for _, tc := range cases {
 			t.Run(tracker+"/"+string(tc.role), func(t *testing.T) {
-				if tracker == "OTW" && tc.role != api.NameRoleRepack {
-					t.Skip("#638 requires approved applicability and ordering examples")
-				}
 				subject := providerNameSubject(api.CanonicalCategoryMovie)
 				subject.ProviderMetadata.IMDB.AKA = "IMDb Signal"
-				subject.GeneratedName.Components = slices.Insert(subject.GeneratedName.Components, 2, api.ReleaseNameComponent{
+				position := 2
+				if tc.role == api.NameRoleThreeD {
+					position = 5 // After resolution, immediately before the WEB-DL source/format.
+				}
+				subject.GeneratedName.Components = slices.Insert(subject.GeneratedName.Components, position, api.ReleaseNameComponent{
 					Role:           tc.role,
 					Value:          tc.value,
 					AvailableValue: tc.value,
@@ -84,8 +88,9 @@ func TestRegistryCanonicalNamingComponents(t *testing.T) {
 					// Source-preserving and restricted display-title contracts do not append components.
 					want = false
 				case "HDB":
-					want = tc.role == api.NameRoleRepack
-				case "AITHER", "HHD", "YUS":
+					want = tc.role == api.NameRoleRepack || tc.role == api.NameRoleThreeD
+				case "AITHER", "HHD", "YUS", "OTW":
+					// Generic automatic editions remain omitted; manual components are independent.
 					want = tc.role != api.NameRoleEdition && tc.role != api.NameRoleEditionDisplay
 				case "LUME", "ULCX":
 					want = tc.role != api.NameRoleEdition && tc.role != api.NameRoleEditionDisplay && tc.role != api.NameRoleHybrid
@@ -116,6 +121,85 @@ func TestRegistryCanonicalNamingComponents(t *testing.T) {
 	}
 }
 
+// Exact upload/search pairs cover shared, passthrough and reconstructed naming
+// with an independent release version and retained stereoscopic subtype facts.
+func TestRegistryCanonicalThreeDNames(t *testing.T) {
+	registry := MustNewRegistry()
+	for _, tc := range []struct {
+		tracker string
+		want    string
+	}{
+		{"BLU", "TMDB Signal 2001 REPACK2 1080p 3D WEB-DL AAC 2.0 H.264-GRP"},
+		{"AITHER", "TMDB Signal 2001 REPACK2 1080p 3D WEB-DL AAC 2.0 H.264-GRP"},
+		{"OTW", "TMDB Signal 2001 REPACK2 1080p 3D WEB-DL AAC 2.0 H.264-GRP"},
+		{"HDB", "IMDb Signal 2002 REPACK2 1080p 3D WEB-DL AAC 2.0 H.264-GRP"},
+		{"RHD", "TMDB Signal 2001 ENGLISH REPACK2 1080p 3D WEB-DL AAC 2.0 H.264-GRP"},
+		{"ANT", "TVDB Signal 2001 REPACK2 1080p 3D WEB-DL AAC 2.0 H.264-GRP"},
+	} {
+		for _, authority := range []string{"automatic", "manual include", "manual omission"} {
+			t.Run(tc.tracker+"/"+authority, func(t *testing.T) {
+				subject := providerNameSubject(api.CanonicalCategoryMovie)
+				subject.ProviderMetadata.IMDB.AKA = "IMDb Signal"
+				subject.Repack, subject.Is3D = "REPACK2", "3D"
+				subject.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeature3DHalfSBS}
+				subject.GeneratedName.Components = slices.Insert(subject.GeneratedName.Components, 2, api.ReleaseNameComponent{
+					Role:           api.NameRoleRepack,
+					Value:          "REPACK2",
+					AvailableValue: "REPACK2",
+					Present:        true,
+					Join:           " ",
+				})
+				subject.GeneratedName.Components = slices.Insert(subject.GeneratedName.Components, 6, api.ReleaseNameComponent{
+					Role:           api.NameRoleThreeD,
+					Value:          "3D",
+					AvailableValue: "3D",
+					Present:        authority != "manual omission",
+					Manual:         authority != "automatic",
+					Join:           " ",
+				})
+				rendered := subject.GeneratedName.Render()
+				subject.ReleaseName, subject.ReleaseNameNoTag = rendered.Name, rendered.NameNoTag
+				subject.GeneratedReleaseNames.IncludeEpisodeTitle, subject.GeneratedReleaseNames.OmitEpisodeTitle = rendered, rendered
+				before := providerSubjectSnapshot(t, subject)
+				want := tc.want
+				if authority == "manual omission" {
+					want = strings.Replace(want, " 3D", "", 1)
+				}
+				prepared := prepareProviderName(t, registry, tc.tracker, subject, nil)
+				data, err := json.Marshal(prepared.Projection)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var retained api.TrackerReleaseProjection
+				if err := json.Unmarshal(data, &retained); err != nil {
+					t.Fatal(err)
+				}
+				prepared.Projection = &retained
+				descriptor, _ := registry.LookupDescriptor(tc.tracker)
+				reloaded, failure := trackers.PrepareInputWithReleaseNamePolicy(prepared, descriptor.ReleaseNamePolicy)
+				if failure != nil {
+					t.Fatal(failure)
+				}
+				name, err := reloaded.ReviewedUploadName()
+				if err != nil || name != want || reloaded.Projection.DuplicateCriteria.Name != want {
+					t.Fatalf("retained upload/search=%q/%q, want %q: %v", name, reloaded.Projection.DuplicateCriteria.Name, want, err)
+				}
+				// RHD's legacy callback has no exact complete-name override contract.
+				if tc.tracker != "RHD" {
+					requested := "Exact Manual 3D Half SBS Name"
+					reviewed := prepareProviderName(t, registry, tc.tracker, subject, &requested)
+					if reviewed.Projection.UploadReleaseName != requested || reviewed.Projection.DuplicateCriteria.Name != want {
+						t.Fatalf("requested upload/search=%q/%q, want %q/%q", reviewed.Projection.UploadReleaseName, reviewed.Projection.DuplicateCriteria.Name, requested, want)
+					}
+				}
+				if !slices.Equal(before, providerSubjectSnapshot(t, subject)) {
+					t.Fatal("3D naming or retained review changed canonical facts")
+				}
+			})
+		}
+	}
+}
+
 // Explicit structured edits must win over automatic omissions without changing
 // the canonical document. Complete-name overrides retain the automatic search projection.
 func TestRegistryCanonicalNamingManualAuthority(t *testing.T) {
@@ -129,6 +213,7 @@ func TestRegistryCanonicalNamingManualAuthority(t *testing.T) {
 		{api.NameRolePresentation, "Open Matte"},
 		{api.NameRoleHybrid, "Hybrid"},
 		{api.NameRoleRepack, "REPACK2"},
+		{api.NameRoleThreeD, "3D"},
 	}
 	for _, tracker := range registry.Names() {
 		descriptor, _ := registry.LookupDescriptor(tracker)
@@ -138,13 +223,19 @@ func TestRegistryCanonicalNamingManualAuthority(t *testing.T) {
 		for _, omitted := range []bool{false, true} {
 			t.Run(tracker+"/omitted="+strconv.FormatBool(omitted), func(t *testing.T) {
 				subject := providerNameSubject(api.CanonicalCategoryMovie)
-				const title = "Unrated Remastered Open Matte Hybrid REPACK2 Tales"
+				const title = "Unrated Remastered Open Matte Hybrid REPACK2 3D Tales"
 				subject.GeneratedName.Components[0].Value = title
 				subject.Release.Title, subject.EffectiveMetadata.Title = title, title
 				subject.ProviderMetadata.IMDB.Title, subject.ProviderMetadata.IMDB.AKA = title, title
 				subject.ProviderMetadata.TMDB.Title = title
 				for index, component := range components {
-					subject.GeneratedName.Components = slices.Insert(subject.GeneratedName.Components, 2+index, api.ReleaseNameComponent{
+					position := 2 + index
+					if component.role == api.NameRoleThreeD {
+						position = slices.IndexFunc(subject.GeneratedName.Components, func(part api.ReleaseNameComponent) bool {
+							return part.Role == api.NameRoleVideoFormat
+						})
+					}
+					subject.GeneratedName.Components = slices.Insert(subject.GeneratedName.Components, position, api.ReleaseNameComponent{
 						Role:           component.role,
 						Value:          component.value,
 						AvailableValue: component.value,
@@ -154,7 +245,8 @@ func TestRegistryCanonicalNamingManualAuthority(t *testing.T) {
 					})
 				}
 				subject.Cut, subject.Edition, subject.Presentation, subject.Repack = "Unrated", "Collector's", "Open Matte", "REPACK2"
-				subject.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeatureHybrid}
+				subject.Is3D = "3D"
+				subject.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeatureHybrid, api.ReleaseFeature3DHalfSBS}
 				rendered := subject.GeneratedName.Render()
 				subject.ReleaseName, subject.ReleaseNameNoTag = rendered.Name, rendered.NameNoTag
 				subject.GeneratedReleaseNames.IncludeEpisodeTitle, subject.GeneratedReleaseNames.OmitEpisodeTitle = rendered, rendered
@@ -176,7 +268,7 @@ func TestRegistryCanonicalNamingManualAuthority(t *testing.T) {
 					}
 					previous = index
 				}
-				requested := "Manual Hybrid REPACK2 Complete Name"
+				requested := "Manual Hybrid REPACK2 3D Complete Name"
 				reviewed := prepareProviderName(t, registry, tracker, subject, &requested)
 				if reviewed.Projection.UploadReleaseName != requested {
 					t.Errorf("complete name changed to %q", reviewed.Projection.UploadReleaseName)
