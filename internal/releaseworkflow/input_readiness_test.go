@@ -74,6 +74,15 @@ func TestEvaluateInputReadinessRetainsGlobalRequirements(t *testing.T) {
 	t.Parallel()
 
 	preparer := testPreparer()
+	prepare := preparer.PrepareFunc
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		result, err := prepare(ctx, input)
+		result.Release.Identity.Category = api.CanonicalCategoryUnknown
+		result.Release.Media.Type = ""
+		result.Release.Media.Source = ""
+		result.Release.Naming.Resolution = ""
+		return result, err
+	}
 	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
 		return api.UploadSubject{SourcePath: input.Release.SourcePath}, nil
 	}
@@ -92,7 +101,7 @@ func TestEvaluateInputReadinessRetainsGlobalRequirements(t *testing.T) {
 	if current.InputReadiness == nil || inputReadinessGoalSatisfied(current.InputReadiness, current, []api.TrackerID{"ALPHA"}) {
 		t.Fatalf("tracker evaluator bypassed missing global inputs: %#v", current.InputReadiness)
 	}
-	for _, key := range []string{"source", "type"} {
+	for _, key := range []string{"category", "type", "source", "resolution"} {
 		if !inputReadinessFieldMissing(current.InputReadiness.Fields, key) {
 			t.Fatalf("missing global %s outcome: %#v", key, current.InputReadiness.Fields)
 		}
@@ -496,6 +505,36 @@ WorkflowID: current.Workflow.ID,
 						t.Fatalf("staged %s=%q", key, got)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestLegacyReadinessCannotBypassMissingSavedFacts(t *testing.T) {
+	for _, field := range []string{"category", "type", "source", "resolution"} {
+		t.Run(field, func(t *testing.T) {
+			result, err := testPreparer().PrepareFunc(t.Context(), api.PrepareInput{SourcePath: "example.mkv"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch field {
+			case "category":
+				result.Release.Identity.Category = api.CanonicalCategoryUnknown
+			case "type":
+				result.Release.Media.Type = ""
+			case "source":
+				result.Release.Media.Source = "\t"
+			case "resolution":
+				result.Release.Naming.Resolution = " "
+			}
+			current := CommandResult{Release: &api.ReleaseSnapshot{Release: result.Release}}
+			old := &api.InputReadinessSnapshot{Status: api.StageStatusCompleted, Release: api.ReleaseRef{SourcePath: "example.mkv", Generation: result.Release.Generation}}
+			if inputReadinessMatches(old, current, nil) {
+				t.Fatal("old ready snapshot bypassed missing fact")
+			}
+			evaluation := defaultInputReadinessEvaluation(result.Release, nil)
+			if !inputReadinessFieldMissing(evaluation.Fields, field) {
+				t.Fatalf("missing fact lost: %+v", evaluation.Fields)
 			}
 		})
 	}

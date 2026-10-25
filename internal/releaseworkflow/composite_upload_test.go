@@ -123,6 +123,15 @@ func TestCompositeUploadMissingGlobalInputReportsOriginalBlocker(t *testing.T) {
 	module, repository, uploads := newCompositeUploadTestModule(t)
 	preparer := testPreparer()
 	inputsCorrected := false
+	prepare := preparer.PrepareFunc
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		result, err := prepare(ctx, input)
+		if !inputsCorrected {
+			result.Release.Media.Source = ""
+			result.Release.Media.Type = ""
+		}
+		return result, err
+	}
 	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
 		subject := api.UploadSubject{
 			SourcePath:  input.Release.SourcePath,
@@ -184,6 +193,11 @@ func TestCompositeUploadMissingGlobalInputReportsOriginalBlocker(t *testing.T) {
 	}
 
 	inputsCorrected = true
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: request.Source.Path, Force: true},
+	})
 	request.Authority = &api.WorkflowAuthority{
 		WorkflowID:       current.Workflow.ID,
 		ExpectedRevision: current.Workflow.Revision,
@@ -2995,5 +3009,38 @@ func TestNormalizeCompositeUploadRequestPreservesImageHostingWhenNotSkipped(t *t
 	}
 	if session.Intent.SkipImageHostUpload {
 		t.Fatalf("image-host upload was skipped for an explicit false request: %#v", session.Intent)
+	}
+}
+
+func TestCompositeUploadRejectsEachMissingSavedFact(t *testing.T) {
+	for _, field := range []string{"category", "type", "source", "resolution"} {
+		t.Run(field, func(t *testing.T) {
+			module, _, uploads := newCompositeUploadTestModule(t)
+			preparer := testPreparer()
+			prepare := preparer.PrepareFunc
+			preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+				result, err := prepare(ctx, input)
+				switch field {
+				case "category":
+					result.Release.Identity.Category = api.CanonicalCategoryUnknown
+				case "type":
+					result.Release.Media.Type = ""
+				case "source":
+					result.Release.Media.Source = "\t"
+				case "resolution":
+					result.Release.Naming.Resolution = " "
+				}
+				return result, err
+			}
+			module.preparer = preparer
+			started, err := module.StartUpload(t.Context(), testOwnerID, compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "missing-"+field))
+			if err != nil {
+				t.Fatal(err)
+			}
+			current := waitCompositeUploadTestOperation(t, module, started)
+			if current.Operation.Status != api.StageStatusFailed || current.Projections != nil || current.UploadResult != nil || uploads.execution != nil || !inputReadinessFieldMissing(current.InputReadiness.Fields, field) {
+				t.Fatalf("missing %s reached upload: status=%s execution=%v", field, current.Operation.Status, uploads.execution)
+			}
+		})
 	}
 }

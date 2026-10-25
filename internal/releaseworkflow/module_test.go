@@ -5429,7 +5429,14 @@ func testPreparer() ReleasePreparerFunc {
 				Source: api.SourceManifest{
 					SourcePath: input.SourcePath,
 				},
-				Naming: api.NamingFacts{ReleaseName: "Example.Release.2026.1080p-GRP"},
+				Naming: api.NamingFacts{
+					ReleaseName: "Example.Release.2026.1080p-GRP",
+					Type:        "ENCODE",
+					Source:      "BluRay",
+					Resolution:  "1080p",
+				},
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Media:    api.MediaFacts{Type: "ENCODE", Source: "BluRay"},
 			}}, nil
 		},
 		DisplayFunc: func(_ context.Context, _ api.ReleaseRef) (api.PreparedReleaseDisplay, error) {

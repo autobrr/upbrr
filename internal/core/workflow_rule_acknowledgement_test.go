@@ -76,7 +76,9 @@ func testContinueRuleAcknowledgementDuplicateScope(t *testing.T, tracker api.Tra
 			return api.PrepareResult{Release: api.PreparedRelease{
 				Generation: api.PreparedGeneration(generation.Load()),
 				Source:     api.SourceManifest{SourcePath: input.SourcePath},
-				Naming:     api.NamingFacts{ReleaseName: releaseName},
+				Naming:     api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Media:      api.MediaFacts{Type: "WEBDL", Source: "Web"},
 			}}, nil
 		},
 		DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {

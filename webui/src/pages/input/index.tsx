@@ -13,6 +13,7 @@ import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
 import { InputCorrectionEditor, SavedCorrectionReview } from "./InputCorrectionEditor";
 import { settingsStyle } from "../../settings/style";
+import { missingRequiredFacts } from "./requiredFacts";
 import type {
   DetailBlock,
   DetailItem,
@@ -833,6 +834,7 @@ export default function InputPage(props: Props) {
   } = props;
 
   const { view } = facet;
+  const requiredFactsMissing = missingRequiredFacts(view.release).length > 0;
   const path = view.sourceDraft;
   const sourceLookupURL = view.intent.sourceLookupURL;
   const loading = view.status === "running";
@@ -1709,8 +1711,13 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
           {showReleaseDetails ? (
-            <p className="helper max-w-[720px]">
-              Review release facts, source options, and selected tracker input.
+            <p
+              className={`helper max-w-[720px] ${requiredFactsMissing ? "text-destructive-text" : ""}`}
+              role="status"
+            >
+              {requiredFactsMissing
+                ? "Required facts missing, please edit release details."
+                : "Review release facts, source options, and selected tracker input."}
             </p>
           ) : null}
           {showReleaseDetails && view.correctionDirty ? (
