@@ -20,6 +20,9 @@ func validateTrackerProjectionInstructions(instructions map[TrackerID]TrackerPro
 		if instruction.ScreenshotCount != nil && *instruction.ScreenshotCount < 0 {
 			return fmt.Errorf("tracker %s screenshot count must not be negative", trackerID)
 		}
+		if instruction.ScreenshotCountIsDefault && instruction.ScreenshotCount == nil {
+			return fmt.Errorf("tracker %s default screenshot count origin requires a count", trackerID)
+		}
 		if instruction.ConfirmedNameFingerprint != "" {
 			if instruction.UploadReleaseName.Present {
 				return fmt.Errorf("tracker %s confirmed generated name cannot also override upload name", trackerID)

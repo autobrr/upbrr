@@ -17,6 +17,7 @@ func (m *Module) descriptionResources(_ context.Context, ownerID string, state *
 	if err != nil {
 		return nil, err
 	}
+	value = screenshotDescriptionResources(state, value)
 	if !state.Workflow.HDRAnalysisEnabled {
 		return value, nil
 	}

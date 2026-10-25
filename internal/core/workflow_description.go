@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ import (
 )
 
 // workflowDescriptionRendererVersion invalidates generated output when composition changes.
-const workflowDescriptionRendererVersion = "description-renderer-v2"
+const workflowDescriptionRendererVersion = "description-renderer-v3"
 
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
@@ -49,6 +50,7 @@ func (b workflowDescriptionBuilder) Fingerprints(
 	if err != nil {
 		return "", "", err
 	}
+	retainWorkflowScreenshotSelection(&subject, privateMedia)
 	retainWorkflowHDRDescriptionEvidence(&subject, privateMedia)
 	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
@@ -74,37 +76,39 @@ func workflowDescriptionFingerprints(
 		return "", "", fmt.Errorf("workflow description template fingerprint: %w", err)
 	}
 	inputFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Release              api.ReleaseRef
-		ProjectionID         api.TrackerReleaseProjectionSetID
-		ProjectionRevision   api.WorkflowRevision
-		ProjectionInput      api.WorkflowFingerprint
-		ProjectionPolicy     api.WorkflowFingerprint
-		MediaID              api.MediaArtifactSetID
-		MediaRevision        api.WorkflowRevision
-		MediaCapture         api.WorkflowFingerprint
-		MediaRequirements    api.WorkflowFingerprint
-		Artifacts            []api.MediaArtifact
-		ExactMedia           *api.ExactMediaAssets
-		RetainedHDRArtifacts map[string][]api.HDRArtifactEvidence
-		TargetTrackerIDs     []string
-		Instructions         api.DescriptionInstructions
-		TemplateFingerprint  api.WorkflowFingerprint
+		Release                              api.ReleaseRef
+		ProjectionID                         api.TrackerReleaseProjectionSetID
+		ProjectionRevision                   api.WorkflowRevision
+		ProjectionInput                      api.WorkflowFingerprint
+		ProjectionPolicy                     api.WorkflowFingerprint
+		MediaID                              api.MediaArtifactSetID
+		MediaRevision                        api.WorkflowRevision
+		MediaCapture                         api.WorkflowFingerprint
+		MediaRequirements                    api.WorkflowFingerprint
+		Artifacts                            []api.MediaArtifact
+		ExactMedia                           *api.ExactMediaAssets
+		RetainedHDRArtifacts                 map[string][]api.HDRArtifactEvidence
+		SuppressImportedScreenshotReferences map[string]bool
+		TargetTrackerIDs                     []string
+		Instructions                         api.DescriptionInstructions
+		TemplateFingerprint                  api.WorkflowFingerprint
 	}{
-		Release:              release,
-		ProjectionID:         projections.ID,
-		ProjectionRevision:   projections.Revision,
-		ProjectionInput:      projections.InputFingerprint,
-		ProjectionPolicy:     projections.PolicyFingerprint,
-		MediaID:              media.ID,
-		MediaRevision:        media.Revision,
-		MediaCapture:         media.CaptureFingerprint,
-		MediaRequirements:    media.RequirementsFingerprint,
-		Artifacts:            media.Artifacts,
-		ExactMedia:           exactMedia,
-		RetainedHDRArtifacts: subject.TrackerHDRArtifacts,
-		TargetTrackerIDs:     workflowProjectionTrackerNames(workflowDescriptionTargets(projections.Projections)),
-		Instructions:         instructions,
-		TemplateFingerprint:  templateFingerprint,
+		Release:                              release,
+		ProjectionID:                         projections.ID,
+		ProjectionRevision:                   projections.Revision,
+		ProjectionInput:                      projections.InputFingerprint,
+		ProjectionPolicy:                     projections.PolicyFingerprint,
+		MediaID:                              media.ID,
+		MediaRevision:                        media.Revision,
+		MediaCapture:                         media.CaptureFingerprint,
+		MediaRequirements:                    media.RequirementsFingerprint,
+		Artifacts:                            media.Artifacts,
+		ExactMedia:                           exactMedia,
+		RetainedHDRArtifacts:                 subject.TrackerHDRArtifacts,
+		SuppressImportedScreenshotReferences: subject.SuppressImportedScreenshotReferences,
+		TargetTrackerIDs:                     workflowProjectionTrackerNames(workflowDescriptionTargets(projections.Projections)),
+		Instructions:                         instructions,
+		TemplateFingerprint:                  templateFingerprint,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("workflow description input fingerprint: %w", err)
@@ -131,6 +135,7 @@ func (b workflowDescriptionBuilder) Build(
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
+	retainWorkflowScreenshotSelection(&subject, privateMedia)
 	retainWorkflowHDRDescriptionEvidence(&subject, privateMedia)
 	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
@@ -684,5 +689,13 @@ func workflowDescriptionFailure(message string, trackerID api.TrackerID, resourc
 		},
 		TrackerID: trackerID,
 		Resource:  strings.TrimSpace(resource),
+	}
+}
+
+// retainWorkflowScreenshotSelection keeps selection intent operation-local and detached.
+func retainWorkflowScreenshotSelection(subject *api.UploadSubject, privateMedia any) {
+	subject.SuppressImportedScreenshotReferences = nil
+	if resources, ok := privateMedia.(releaseworkflow.DescriptionResources); ok {
+		subject.SuppressImportedScreenshotReferences = maps.Clone(resources.SuppressImportedScreenshotReferences)
 	}
 }

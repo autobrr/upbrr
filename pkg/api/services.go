@@ -376,6 +376,9 @@ func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allo
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
 type UploadSubject struct {
+	// SuppressImportedScreenshotReferences is operation-owned selection policy, never canonical metadata.
+	SuppressImportedScreenshotReferences map[string]bool `json:"-"`
+
 	// TrackerDuplicateReviewCandidates is server-owned, fresh assessment context for comparison questions.
 	// It is never populated from public upload input or canonical prepared facts.
 	TrackerDuplicateReviewCandidates map[string][]DupeMatchProjection `json:"-"`
@@ -638,9 +641,23 @@ type PackageFacts struct {
 	SingleFileFolder          bool
 }
 
+// VideoRateControl identifies a mode explicitly reported by the video encoder.
+// The zero value includes missing, unsupported and contradictory evidence.
+type VideoRateControl string
+
+const (
+	VideoRateControlCRF          VideoRateControl = "crf"
+	VideoRateControlTwoPassVBR   VideoRateControl = "two_pass_vbr"   // #nosec G101 -- public encoder rate-control enum, not a credential.
+	VideoRateControlMultiPassVBR VideoRateControl = "multi_pass_vbr" // #nosec G101 -- public encoder rate-control enum, not a credential.
+	VideoRateControlABR          VideoRateControl = "abr"
+	VideoRateControlCBR          VideoRateControl = "cbr"
+	VideoRateControlCQP          VideoRateControl = "cqp"
+)
+
 // MediaFileFact contains normalized technical and language facts for one
 // media file. Empty values and zero track counts mean unknown.
 type MediaFileFact struct {
+	RateControl         VideoRateControl
 	ResourceID          string
 	HasEncodeSettings   bool
 	EncodeSettingsKnown bool
@@ -709,10 +726,20 @@ type HDRArtifactEvidence struct {
 	ImageURLs              []string         `json:"imageUrls,omitempty"`
 }
 
+// ScreenshotReference binds a prepared image to its hosted representations.
+// ID identifies a distinct selected image without exposing its materialized path.
+type ScreenshotReference struct {
+	ID     WorkflowFingerprint
+	RawURL string
+	ImgURL string
+	WebURL string
+}
+
 // AssetFacts contains prepared-resource readiness without exposing local paths.
 type AssetFacts struct {
 	// ScreenshotFingerprint binds selected images and tracker-usable hosted variants.
 	ScreenshotFingerprint WorkflowFingerprint
+	ScreenshotReferences  []ScreenshotReference
 	HDRArtifacts          []HDRArtifactEvidence
 	EvidenceFingerprint   WorkflowFingerprint
 	Status                MetadataEvidenceStatus
@@ -752,6 +779,8 @@ type ProvenanceFacts struct {
 // tracker answers, and prepared-resource readiness used by side-effect-free
 // pre-duplicate validation.
 type TrackerValidationSubject struct {
+	// ImportedScreenshotEvidence contains only exact-generation accepted references.
+	ImportedScreenshotEvidence *ImportedScreenshotEvidence `json:",omitempty"`
 	// FinalizedUploadName is the resolved tracker-local name, separate from canonical naming facts.
 	FinalizedUploadName        string
 	VideoEncoder               string
@@ -881,9 +910,15 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 	assetFacts := deriveValidationAssetFacts(subject)
 	assetFacts.HDRArtifacts = subject.HDRArtifactEvidence(tracker)
 	assetFacts.ScreenshotFingerprint = validationScreenshotFingerprint(subject.ExactMedia, tracker)
+	assetFacts.ScreenshotReferences = validationScreenshotReferences(subject.ExactMedia, tracker)
+	if subject.ExactMedia != nil {
+		count := CountDistinctScreenshotReferences(assetFacts.ScreenshotReferences, assetFacts.ScreenshotReferences)
+		assetFacts.HostedScreenshots = completeAssetEvidence(count > 0, count)
+	}
 	availabilityFacts := deriveValidationAvailabilityFacts(subject.ProviderMetadata)
 	provenanceFacts := deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata)
 	return TrackerValidationSubject{
+		ImportedScreenshotEvidence:  subject.CurrentImportedScreenshotEvidence(),
 		TitleSearchEvidence:         subject.TrackerTitleSearchEvidence[tracker],
 		Tracker:                     tracker,
 		LanguageFacts:               subject.LanguageFacts.Clone(),
@@ -1379,23 +1414,11 @@ func deriveValidationAssetFacts(subject UploadSubject) AssetFacts {
 		return facts
 	}
 	facts.EvidenceFingerprint, _ = CanonicalWorkflowFingerprint(subject.ExactMedia)
-	screenshotCount := countValidationScreenshots(subject.ExactMedia.Screenshots, ScreenshotPurposeFinal)
 	menuCount := countValidationDVDMenus(subject.ExactMedia.DVDMenus)
 	hostedScreenshotCount := countValidationImageLinks(subject.ExactMedia.ScreenshotUploads)
 	hostedMenuCount := countValidationImageLinks(subject.ExactMedia.DVDMenuUploads)
 	facts.Status = MetadataEvidenceStatusComplete
-	facts.Screenshots = completeAssetEvidence(screenshotCount > 0, screenshotCount)
-	for _, image := range subject.ExactMedia.Screenshots {
-		if image.Purpose != ScreenshotPurposeFinal {
-			continue
-		}
-		if image.Format == "png" || image.Format == "jpeg" {
-			facts.Screenshots.InspectedFormatCount++
-		}
-		if image.Format == "png" {
-			facts.Screenshots.LosslessCount++
-		}
-	}
+	facts.Screenshots = validationScreenshotEvidence(subject.ExactMedia.Screenshots)
 	facts.HostedScreenshots = completeAssetEvidence(hostedScreenshotCount > 0, hostedScreenshotCount)
 	facts.DVDMenus = completeAssetEvidence(menuCount > 0, menuCount)
 	facts.HostedDVDMenus = completeAssetEvidence(hostedMenuCount > 0, hostedMenuCount)
@@ -1484,14 +1507,78 @@ func boolCount(value bool) int {
 	return 0
 }
 
-func countValidationScreenshots(images []ScreenshotImage, purpose ScreenshotPurpose) int {
-	count := 0
-	for _, image := range images {
-		if image.Purpose == purpose && strings.TrimSpace(image.Path) != "" {
-			count++
+// validationScreenshotReferences detaches only hosted links for selected final images.
+func validationScreenshotReferences(exact *ExactMediaAssets, tracker string) []ScreenshotReference {
+	if exact == nil {
+		return nil
+	}
+	selected := make(map[string]WorkflowFingerprint)
+	for _, image := range exact.Screenshots {
+		path := strings.TrimSpace(image.Path)
+		if image.Purpose == ScreenshotPurposeFinal && path != "" {
+			if _, exists := selected[path]; !exists {
+				selected[path], _ = CanonicalWorkflowFingerprint(len(selected))
+			}
 		}
 	}
-	return count
+	var references []ScreenshotReference
+	seen := make(map[ScreenshotReference]bool)
+	for _, link := range exact.ScreenshotUploads {
+		scope := strings.TrimSpace(link.UsageScope)
+		if strings.HasPrefix(strings.ToLower(scope), "tracker:") {
+			owner := strings.TrimSpace(scope[len("tracker:"):])
+			if owner == "" {
+				scope = "global"
+			} else {
+				scope = "tracker:" + strings.ToUpper(owner)
+			}
+		}
+		if scope != "" && !strings.EqualFold(scope, "global") && scope != "tracker:"+strings.ToUpper(strings.TrimSpace(tracker)) {
+			continue
+		}
+		id, ok := selected[strings.TrimSpace(link.ImagePath)]
+		if !ok || (strings.TrimSpace(link.RawURL) == "" && strings.TrimSpace(link.ImgURL) == "" && strings.TrimSpace(link.WebURL) == "") {
+			continue
+		}
+		reference := ScreenshotReference{
+			ID:     id,
+			RawURL: strings.TrimSpace(link.RawURL),
+			ImgURL: strings.TrimSpace(link.ImgURL),
+			WebURL: strings.TrimSpace(link.WebURL),
+		}
+		if !seen[reference] {
+			references = append(references, reference)
+			seen[reference] = true
+		}
+	}
+	return references
+}
+
+// validationScreenshotEvidence counts distinct finalized image identities, not
+// repeated references. Conflicting inspection records cannot establish a format.
+func validationScreenshotEvidence(images []ScreenshotImage) AssetEvidence {
+	formats := make(map[string]string)
+	for _, image := range images {
+		path := strings.TrimSpace(image.Path)
+		if image.Purpose != ScreenshotPurposeFinal || path == "" {
+			continue
+		}
+		if previous, exists := formats[path]; exists && previous != image.Format {
+			formats[path] = ""
+		} else if !exists {
+			formats[path] = image.Format
+		}
+	}
+	evidence := completeAssetEvidence(len(formats) > 0, len(formats))
+	for _, format := range formats {
+		if format == "png" || format == "jpeg" {
+			evidence.InspectedFormatCount++
+		}
+		if format == "png" {
+			evidence.LosslessCount++
+		}
+	}
+	return evidence
 }
 
 func countValidationDVDMenus(images []DVDMenuCaptureImage) int {
@@ -1505,14 +1592,15 @@ func countValidationDVDMenus(images []DVDMenuCaptureImage) int {
 }
 
 func countValidationImageLinks(links []UploadedImageLink) int {
-	count := 0
+	seen := make(map[string]bool)
 	for _, link := range links {
-		if strings.TrimSpace(link.ImagePath) != "" &&
+		path := strings.TrimSpace(link.ImagePath)
+		if path != "" &&
 			(strings.TrimSpace(link.ImgURL) != "" || strings.TrimSpace(link.RawURL) != "" || strings.TrimSpace(link.WebURL) != "") {
-			count++
+			seen[path] = true
 		}
 	}
-	return count
+	return len(seen)
 }
 
 func deriveValidationAvailabilityFacts(metadata SourceScopedMetadata) AvailabilityFacts {
@@ -1685,46 +1773,48 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 // TrackerQuestionnaireAnswers contains operation-local evidence keyed by tracker
 // and field, rather than reusable media facts.
 type DescriptionSubject struct {
-	TrackerHDRArtifacts         map[string][]HDRArtifactEvidence
-	VideoCodec                  string
-	HasEncodeSettings           bool
-	TrackerQuestionnaireAnswers map[string]map[string]string
-	EffectiveMetadata           EffectiveMetadata
-	ManualLanguages             ManualLanguageFacts
-	HardcodedSubs               bool
-	HardcodedSubtitleLanguages  []string
-	HardcodedSubtitleCoverage   []SubtitleLanguageCoverage
-	MediaBinding                PreparedMediaBinding
-	SourcePath                  string
-	DiscType                    string
-	MediaInfoTextPath           string
-	DVDVOBMediaInfoText         string
-	DescriptionTemplate         string
-	DescriptionGroups           []DescriptionBuilderGroup
-	EpisodeOverview             string
-	Options                     UploadOptions
-	Release                     ReleaseInfo
-	SelectedBDMVPlaylists       []PlaylistInfo
-	Disc                        DiscFacts
-	Discs                       []DiscEvidenceResource
-	Tag                         string
-	Identity                    ExternalIdentity
-	ProviderMetadata            SourceScopedMetadata
-	SeasonInt                   int
-	EpisodeInt                  int
-	Filename                    string
-	ReleaseName                 string
-	ReleaseNameNoTag            string
-	ServiceLongName             string
-	Type                        string
-	HDR                         string
-	ArrReleaseGroup             string
-	Trackers                    []string
-	TrackerConfig               TrackerConfigOverrides
-	TrackerSite                 TrackerSiteOverrides
-	ImageHost                   ImageHostOverrides
-	TrackerData                 []TrackerMetadata
-	ExactMedia                  *ExactMediaAssets
+	// SuppressImportedScreenshotReferences preserves exact user selections during composition.
+	SuppressImportedScreenshotReferences map[string]bool `json:"-"`
+	TrackerHDRArtifacts                  map[string][]HDRArtifactEvidence
+	VideoCodec                           string
+	HasEncodeSettings                    bool
+	TrackerQuestionnaireAnswers          map[string]map[string]string
+	EffectiveMetadata                    EffectiveMetadata
+	ManualLanguages                      ManualLanguageFacts
+	HardcodedSubs                        bool
+	HardcodedSubtitleLanguages           []string
+	HardcodedSubtitleCoverage            []SubtitleLanguageCoverage
+	MediaBinding                         PreparedMediaBinding
+	SourcePath                           string
+	DiscType                             string
+	MediaInfoTextPath                    string
+	DVDVOBMediaInfoText                  string
+	DescriptionTemplate                  string
+	DescriptionGroups                    []DescriptionBuilderGroup
+	EpisodeOverview                      string
+	Options                              UploadOptions
+	Release                              ReleaseInfo
+	SelectedBDMVPlaylists                []PlaylistInfo
+	Disc                                 DiscFacts
+	Discs                                []DiscEvidenceResource
+	Tag                                  string
+	Identity                             ExternalIdentity
+	ProviderMetadata                     SourceScopedMetadata
+	SeasonInt                            int
+	EpisodeInt                           int
+	Filename                             string
+	ReleaseName                          string
+	ReleaseNameNoTag                     string
+	ServiceLongName                      string
+	Type                                 string
+	HDR                                  string
+	ArrReleaseGroup                      string
+	Trackers                             []string
+	TrackerConfig                        TrackerConfigOverrides
+	TrackerSite                          TrackerSiteOverrides
+	ImageHost                            ImageHostOverrides
+	TrackerData                          []TrackerMetadata
+	ExactMedia                           *ExactMediaAssets
 }
 
 // NewDescriptionSubject projects upload state into the description builder's
@@ -1781,6 +1871,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 	if err != nil {
 		panic(fmt.Sprintf("clone description subject: %v", err))
 	}
+	cloned.SuppressImportedScreenshotReferences = cloneTrackerValidationValue(subject.SuppressImportedScreenshotReferences)
 	return cloned
 }
 

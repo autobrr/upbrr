@@ -557,7 +557,7 @@ func reusableDescriptionPrivateMedia(t *testing.T, root, prefix string) workflow
 }
 
 func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *testing.T) {
-	for _, renderer := range []string{"", "description-renderer-v1"} {
+	for _, renderer := range []string{"", "description-renderer-v1", "description-renderer-v2"} {
 		for _, mode := range []string{"generated", "mixed", "final"} {
 			t.Run(renderer+"/"+mode, func(t *testing.T) {
 				f := newWorkflowDescriptionReuseFixture(t)
@@ -731,5 +731,163 @@ func TestUnknownHostedProvenanceKeepsLegacyFingerprintShape(t *testing.T) {
 	}
 	if string(known) == legacy {
 		t.Fatal("known processing status must change compatibility")
+	}
+}
+
+func TestWorkflowDescriptionReusePreservesEditsAfterFormatReinspection(t *testing.T) {
+	fixture := newWorkflowDescriptionReuseFixture(t)
+	fixture.instructions.Overrides[0].Final = true
+	fixture.instructions.Overrides[0].Source = "[b]Saved edit[/b]\n<blockquote>Keep this text.</blockquote>"
+	fixture.snapshot.Descriptions[1].Source = fixture.instructions.Overrides[0].Source
+	fixture.snapshot.Descriptions[1].Rendered = "<b>Saved edit</b><br /><blockquote>Keep this text.</blockquote>"
+	payload := reusableFormatEvidenceBytes(t, "png")
+	for _, private := range []workflowMediaPrivateArtifacts{fixture.oldPrivate, fixture.currentPrivate} {
+		for _, image := range private.Screenshots {
+			if err := os.WriteFile(image.Path, payload, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, menu := range private.DVDMenus {
+			if err := os.WriteFile(menu.Path, payload, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, fixture.oldPrivate, fixture.snapshot); err != nil {
+		t.Fatal(err)
+	}
+	fixture.resolver.subject = reusableDescriptionSubjectForFixture(fixture.currentRelease, 2)
+	before, _, err := fixture.builder.Fingerprints(
+		t.Context(), fixture.currentRelease, fixture.projections, fixture.currentMedia, fixture.currentPrivate, fixture.instructions,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Reopening verifies the same saved bytes; learning their format must not discard edits.
+	for index := range fixture.currentPrivate.Screenshots {
+		image := &fixture.currentPrivate.Screenshots[index]
+		image.Format = reusableMediaImageFormat(image.Path)
+		if image.Format != "png" {
+			t.Fatalf("reinspection did not verify PNG: %q", image.Format)
+		}
+	}
+	for index := range fixture.currentPrivate.DVDMenus {
+		menu := &fixture.currentPrivate.DVDMenus[index]
+		menu.Format = reusableMediaImageFormat(menu.Path)
+		if menu.Format != "png" {
+			t.Fatalf("menu reinspection did not verify PNG: %q", menu.Format)
+		}
+	}
+	after, _, err := fixture.builder.Fingerprints(
+		t.Context(), fixture.currentRelease, fixture.projections, fixture.currentMedia, fixture.currentPrivate, fixture.instructions,
+	)
+	if err != nil || before == after {
+		t.Fatalf("current operation fingerprint ignored verified format: err=%v", err)
+	}
+	current := fixture.instructions
+	current.Overrides = nil
+	restored, instructions, err := fixture.builder.RestoreCompatibleDescriptions(t.Context(), fixture.currentRelease,
+		fixture.projections, fixture.currentMedia, fixture.currentPrivate, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(restored.Descriptions, fixture.snapshot.Descriptions) ||
+		!reflect.DeepEqual(instructions.Overrides, fixture.instructions.Overrides) || fixture.service.builds != 0 {
+		t.Fatalf("format reinspection lost saved edits: descriptions=%+v overrides=%+v builds=%d", restored.Descriptions, instructions.Overrides, fixture.service.builds)
+	}
+}
+
+func TestWorkflowDescriptionReuseMigratesExactLegacyFormatFingerprint(t *testing.T) {
+	for _, change := range []string{"unchanged", "mixed", "truncated", "bytes", "config", "conflicting labels"} {
+		t.Run(change, func(t *testing.T) {
+			fixture := newWorkflowDescriptionReuseFixture(t)
+			fixture.instructions.Overrides[0].Final = true
+			format := "png"
+			if change == "truncated" {
+				format = "truncated"
+			}
+			payload := reusableFormatEvidenceBytes(t, format)
+			for _, private := range []workflowMediaPrivateArtifacts{fixture.oldPrivate, fixture.currentPrivate} {
+				for index := range private.Screenshots {
+					image := &private.Screenshots[index]
+					if err := os.WriteFile(image.Path, payload, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					image.Format = "png"
+					if change == "mixed" && index == 1 {
+						image.Format = ""
+					}
+				}
+				for index := range private.DVDMenus {
+					menu := &private.DVDMenus[index]
+					if err := os.WriteFile(menu.Path, payload, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					menu.Format = "png"
+				}
+			}
+			if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, fixture.oldPrivate, fixture.snapshot); err != nil {
+				t.Fatal(err)
+			}
+			_, currentFingerprint, legacyFingerprint, available, err := fixture.builder.reusableDescriptionInputs(
+				t.Context(), fixture.oldRelease, fixture.projections, fixture.oldMedia, fixture.oldPrivate, fixture.instructions,
+			)
+			if err != nil || !available || currentFingerprint == legacyFingerprint || fixture.repository.value.CompatibilityFingerprint != currentFingerprint {
+				t.Fatalf("new record did not use format-independent compatibility: available=%v err=%v", available, err)
+			}
+			// Simulate a persisted pre-normalization record, retaining every other dependency.
+			fixture.repository.value.CompatibilityFingerprint = legacyFingerprint
+			fixture.resolver.subject = reusableDescriptionSubjectForFixture(fixture.currentRelease, 2)
+			switch change {
+			case "truncated", "mixed", "conflicting labels":
+				for index := range fixture.currentPrivate.Screenshots {
+					image := &fixture.currentPrivate.Screenshots[index]
+					recordLegacyImageFormat(&fixture.currentPrivate, image.Path, image.Format)
+					if change == "conflicting labels" {
+						recordLegacyImageFormat(&fixture.currentPrivate, image.Path, "contradictory")
+					}
+					image.Format = reusableMediaImageFormat(image.Path)
+					if change == "truncated" && image.Format != "" {
+						t.Fatal("truncated PNG did not separate current integrity from legacy header evidence")
+					}
+				}
+				for index := range fixture.currentPrivate.DVDMenus {
+					menu := &fixture.currentPrivate.DVDMenus[index]
+					recordLegacyImageFormat(&fixture.currentPrivate, menu.Path, menu.Format)
+					menu.Format = reusableMediaImageFormat(menu.Path)
+					if change == "truncated" && menu.Format != "" {
+						t.Fatal("truncated menu PNG did not separate current integrity from legacy header evidence")
+					}
+				}
+			case "bytes":
+				if err := os.WriteFile(fixture.currentScreen, []byte("changed screenshot"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "config":
+				fixture.builder.config.Description.CustomSignature = "Changed signature"
+			}
+			current := fixture.instructions
+			current.Overrides = nil
+			restored, instructions, err := fixture.builder.RestoreCompatibleDescriptions(t.Context(), fixture.currentRelease,
+				fixture.projections, fixture.currentMedia, fixture.currentPrivate, current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if change == "bytes" || change == "config" || change == "conflicting labels" {
+				if restored.Status != "" || len(instructions.Overrides) != 0 {
+					t.Fatal("legacy compatibility ignored a changed dependency")
+				}
+				return
+			}
+			if !reflect.DeepEqual(restored.Descriptions, fixture.snapshot.Descriptions) ||
+				!reflect.DeepEqual(instructions.Overrides, fixture.instructions.Overrides) || fixture.service.builds != 0 {
+				t.Fatal("exact legacy format fingerprint lost saved edits")
+			}
+			record, err := fixture.builder.PrepareReusableDescriptions(t.Context(), fixture.currentRelease,
+				fixture.projections, fixture.currentMedia, fixture.currentPrivate, instructions, restored)
+			if err != nil || record == nil || record.Description.CompatibilityFingerprint != currentFingerprint {
+				t.Fatalf("legacy record was not migrated to byte-bound compatibility: err=%v", err)
+			}
+		})
 	}
 }

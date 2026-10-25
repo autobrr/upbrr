@@ -1344,7 +1344,7 @@ func TestCLIWorkflowMapsProjectionAndExecutionInstructions(t *testing.T) {
 			InteractionMode: api.InteractionModeUnattended,
 		},
 	}
-	mapped, err := mapCLICompositeUploadRequest(request, false, "projection-execution")
+	mapped, err := mapCLICompositeUploadRequest(request, false, "projection-execution", false)
 	if err != nil {
 		t.Fatalf("map composite request: %v", err)
 	}

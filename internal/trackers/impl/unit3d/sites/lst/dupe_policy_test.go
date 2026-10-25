@@ -556,7 +556,7 @@ func TestLSTDuplicatePolicyMetadata(t *testing.T) {
 	t.Parallel()
 
 	policy := Profile().DupePolicy
-	if policy == nil || policy.ID != "lst/duplicate/v7" || policy.EvidenceID != lstDupeEvidenceID {
+	if policy == nil || policy.ID != "lst/duplicate/v8" || policy.EvidenceID != lstDupeEvidenceID {
 		t.Fatalf("LST duplicate policy = %#v", policy)
 	}
 }

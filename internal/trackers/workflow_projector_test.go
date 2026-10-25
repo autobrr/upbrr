@@ -217,7 +217,9 @@ func TestApplyWorkflowProjectionRequirementsDoesNotInferDVDMenuMinimumFromCaptur
 		&projection,
 		Descriptor{Name: "EXAMPLE", UploadContentMode: UploadContentModeDescription},
 		nil,
+		false,
 		cfg,
+		api.UploadSubject{},
 	)
 
 	if projection.Artifacts.ScreenshotCount != 4 || projection.Artifacts.DVDMenuCount != 0 {
@@ -263,7 +265,9 @@ func TestApplyWorkflowProjectionRequirementsUsesOptionalScreenshotOverride(t *te
 				&projection,
 				Descriptor{Name: "EXAMPLE", UploadContentMode: UploadContentModeDescription},
 				test.override,
+				false,
 				cfg,
+				api.UploadSubject{},
 			)
 			if projection.Artifacts.ScreenshotCount != test.want {
 				t.Fatalf("projected screenshot count = %d, want %d", projection.Artifacts.ScreenshotCount, test.want)
@@ -319,7 +323,9 @@ func TestApplyWorkflowProjectionRequirementsKeepsExplicitDVDMenuMinimum(t *testi
 			WorkflowMedia:     &WorkflowMediaRequirements{DVDMenuCount: 2},
 		},
 		nil,
+		false,
 		config.Config{},
+		api.UploadSubject{},
 	)
 
 	if projection.Artifacts.DVDMenuCount != 2 {

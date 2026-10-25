@@ -4,6 +4,7 @@
 package lst
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestLSTHostedScreenshotQuestionSurvivesSourceOnlyAnswerProjection(t *testing.T) {
+func TestLSTHostedScreenshotEvidenceNeedsNoReassurance(t *testing.T) {
 	root := t.TempDir()
 	meta := api.UploadSubject{
 		SourcePath:        filepath.Join(root, "Example.mkv"),
@@ -89,51 +90,105 @@ func TestLSTHostedScreenshotQuestionSurvivesSourceOnlyAnswerProjection(t *testin
 		})
 		return plan.Preparations()[0]
 	}
-	blocked := prepare(meta)
-	if blocked.Failure == nil || blocked.Preview.Questionnaire == nil {
-		t.Fatalf("missing recoverable late questionnaire: %+v failure=%+v", blocked, blocked.Failure)
+	if ready := prepare(meta); ready.Failure != nil || ready.Preview.Questionnaire != nil {
+		t.Fatalf("verified screenshots created late reassurance: %+v", ready)
 	}
-	found := false
-	for _, field := range blocked.Preview.Questionnaire.Fields {
-		if field.Key == key {
-			found = field.Required && field.NeedsReview
-		}
+	meta.TrackerQuestionnaireAnswers["LST"][key] = "lossy_or_changed"
+	if ready := prepare(meta); ready.Failure != nil {
+		t.Fatalf("retired saved answer blocked preparation: %+v", ready.Failure)
 	}
-	if !found {
-		t.Fatalf("current hosted question missing: %+v", blocked.Preview.Questionnaire)
+	meta.ExactMedia.ScreenshotUploads[0].RawURL += "?replacement=1"
+	meta.DescriptionOverride = strings.ReplaceAll(meta.DescriptionOverride, "full-0.png", "full-0.png?replacement=1")
+	if changed := prepare(meta); changed.Failure != nil || changed.Preview.Questionnaire != nil {
+		t.Fatalf("changed valid host URL created questionnaire: %+v", changed)
 	}
-	// CLI feedback rebuilds projections from source facts before exact assets return.
-	answer := "lossless_preserved"
-	_, _, _, projected, err := projector.Build(t.Context(), api.ReleaseSnapshot{Fingerprint: "source"}, sourceOnly, []api.TrackerID{"LST"},
-		map[api.TrackerID]api.TrackerProjectionInstructions{"LST": {Questionnaire: map[string]*string{key: &answer}}}, nil, api.WorkflowExecutionModeNormal)
+	meta.ExactMedia.Screenshots[0].Format = "jpeg"
+	if invalid := prepare(meta); invalid.Failure == nil || invalid.Preview.Questionnaire != nil ||
+		!strings.Contains(invalid.Failure.Message, "lossless") || strings.Count(invalid.Failure.Message, "trackers: LST") != 1 {
+		t.Fatalf("measured format problem lost direct warning: %+v", invalid)
+	}
+	_, _, _, warningProjection, err := projector.Build(t.Context(), api.ReleaseSnapshot{Fingerprint: "source"}, meta, []api.TrackerID{"LST"}, nil, nil, api.WorkflowExecutionModeNormal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta.TrackerQuestionnaireAnswers["LST"] = projected.Projections[0].QuestionnaireAnswers
-	projections = projected.Projections
-	if meta.TrackerQuestionnaireAnswers["LST"][key] != answer {
-		t.Fatal("source-only projection dropped late answer")
+	warning := warningProjection.Projections[0].WaivableRuleFingerprint
+	if warning == "" {
+		t.Fatal("measured screenshot problem has no acknowledgement fingerprint")
 	}
-	if ready := prepare(meta); ready.Failure != nil {
-		t.Fatalf("answered normal Unit3D preparation blocked: %+v", ready.Failure)
+	_, _, _, acknowledged, err := projector.Build(t.Context(), api.ReleaseSnapshot{Fingerprint: "source"}, meta, []api.TrackerID{"LST"}, nil, map[api.TrackerID]api.WorkflowFingerprint{"LST": warning}, api.WorkflowExecutionModeNormal)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Unrelated late HDR preparation does not invalidate screenshot inspection.
-	meta.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}}
-	if got := assetQuestionKey(api.NewTrackerValidationSubject(meta, "LST"), "screenshot_preservation"); got != key {
-		t.Fatal("unrelated HDR changed screenshot key")
+	projections = acknowledged.Projections
+	if ready := prepare(meta); ready.Failure != nil || ready.Preview.Questionnaire != nil {
+		t.Fatalf("acknowledged warning left a hidden final-description gate: %+v", ready)
 	}
-	meta.Identity.Generation++
-	if got := assetQuestionKey(api.NewTrackerValidationSubject(meta, "LST"), "screenshot_preservation"); got == key {
-		t.Fatal("source generation change retained screenshot key")
+	meta.ExactMedia.Screenshots[1].Format = "jpeg"
+	if stale := prepare(meta); stale.Failure == nil {
+		t.Fatal("changed screenshot evidence reused prior acknowledgement")
 	}
-	meta.Identity.Generation--
-	meta.ExactMedia.ScreenshotUploads[0].RawURL += "?replacement=1"
-	meta.DescriptionOverride = strings.ReplaceAll(meta.DescriptionOverride, "full-0.png", "full-0.png?replacement=1")
-	if changed := prepare(meta); changed.Preview.Questionnaire == nil {
-		t.Fatalf("changed host URL did not ask again: %+v", changed)
+	for i := range meta.ExactMedia.Screenshots {
+		meta.ExactMedia.Screenshots[i].Format = "png"
 	}
-	meta.ExactMedia.Screenshots[0].Format = "jpeg"
-	if invalid := prepare(meta); invalid.Failure == nil || invalid.Preview.Questionnaire != nil || !strings.Contains(invalid.Failure.Message, "lossless") {
-		t.Fatalf("strict format rejection was waived: %+v", invalid)
+	meta.DescriptionOverride = strings.Join(strings.Split(meta.DescriptionOverride, "\n")[:2], "\n")
+	if missing := prepare(meta); missing.Failure == nil || !strings.Contains(missing.Failure.Message, "2 distinct prepared screenshots") {
+		t.Fatalf("final image deficiency lost its measured warning: %+v", missing)
+	}
+	_, _, _, warningProjection, err = projector.Build(t.Context(), api.ReleaseSnapshot{Fingerprint: "source"}, meta, []api.TrackerID{"LST"}, nil, nil, api.WorkflowExecutionModeNormal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warning = warningProjection.Projections[0].WaivableRuleFingerprint
+	if warning == "" {
+		t.Fatal("final description deficiency has no acknowledgement fingerprint")
+	}
+	_, _, _, acknowledged, err = projector.Build(t.Context(), api.ReleaseSnapshot{Fingerprint: "source"}, meta, []api.TrackerID{"LST"}, nil, map[api.TrackerID]api.WorkflowFingerprint{"LST": warning}, api.WorkflowExecutionModeNormal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projections = acknowledged.Projections
+	if ready := prepare(meta); ready.Failure != nil || ready.Preview.Questionnaire != nil {
+		t.Fatalf("acknowledged two-image description hit a late strict gate: %+v", ready)
+	}
+	meta.DescriptionOverride += "\nEdited release note"
+	if stale := prepare(meta); stale.Failure == nil {
+		t.Fatal("changed final description reused prior acknowledgement")
+	}
+	// Uninspected imported screenshots remain uploadable without local images.
+	{
+		meta.ExactMedia = &api.ExactMediaAssets{}
+		meta.Identity.SourcePath = meta.SourcePath
+		meta.Identity.Resolution.SourceFingerprint = "source"
+		meta.MediaBinding = api.PreparedMediaBinding{
+			SourcePath:               meta.SourcePath,
+			PreparedGeneration:       meta.Identity.Generation,
+			PreparedMediaFingerprint: "media",
+		}
+		meta.ProviderMetadata.ImportedScreenshotEvidence = &api.ImportedScreenshotEvidence{
+			Tracker:                "SOURCE",
+			TrackerID:              "42",
+			SourceFingerprint:      "source",
+			PolicyVersion:          api.ImportedScreenshotEvidencePolicyVersion,
+			DescriptionFingerprint: "description",
+		}
+		meta.DescriptionOverride = "Imported release notes"
+		for i := range 8 {
+			raw := fmt.Sprintf("https://images2.imgbox.com/synthetic/shot-%d.png", i)
+			meta.ProviderMetadata.ImportedScreenshotEvidence.References = append(meta.ProviderMetadata.ImportedScreenshotEvidence.References,
+				api.ImportedScreenshotReference{RawURL: raw})
+			meta.DescriptionOverride += "\n[img]" + raw + "[/img]"
+		}
+		_, _, _, imported, err := projector.Build(t.Context(), api.ReleaseSnapshot{Fingerprint: "source"}, meta,
+			[]api.TrackerID{"LST"}, nil, nil, api.WorkflowExecutionModeNormal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projections = imported.Projections
+		if !projections[0].UploadReady || projections[0].Artifacts.ScreenshotCount != 0 || projections[0].WaivableRuleFingerprint != "" {
+			t.Fatalf("unavailable inspection became a capture/confirmation requirement: %+v", projections[0])
+		}
+		if ready := prepare(meta); ready.Failure != nil || ready.Preview.Questionnaire != nil {
+			t.Fatalf("reference-only images hit a late preparation gate: %+v", ready)
+		}
 	}
 }

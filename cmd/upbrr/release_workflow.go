@@ -80,21 +80,22 @@ type cliReleaseWorkflowCore interface {
 }
 
 type cliWorkflowSession struct {
-	core                 cliReleaseWorkflowCore
-	logger               api.Logger
-	current              releaseworkflow.CommandResult
-	intent               cliWorkflowIntent
-	uploadRequest        api.Request
-	idempotencyRun       string
-	intentSequence       uint64
-	printedProgress      map[api.OperationKind]struct{}
-	projectionsPrinted   bool
-	submissionSuppressed bool
-	eventLogState        cliWorkflowEventLogState
-	progressWriter       io.Writer
-	streams              cliIO
-	inputBaseline        cliInputSlotBaseline
-	inputClaim           cliInputSlotClaim
+	core                     cliReleaseWorkflowCore
+	logger                   api.Logger
+	current                  releaseworkflow.CommandResult
+	intent                   cliWorkflowIntent
+	uploadRequest            api.Request
+	screenshotCountIsDefault bool
+	idempotencyRun           string
+	intentSequence           uint64
+	printedProgress          map[api.OperationKind]struct{}
+	projectionsPrinted       bool
+	submissionSuppressed     bool
+	eventLogState            cliWorkflowEventLogState
+	progressWriter           io.Writer
+	streams                  cliIO
+	inputBaseline            cliInputSlotBaseline
+	inputClaim               cliInputSlotClaim
 }
 
 type cliInputSlotBaseline struct {
@@ -642,6 +643,7 @@ func runCLIWorkflowInteractive(
 		if err != nil {
 			return err
 		}
+		replacement.screenshotCountIsDefault = !currentVisited["screens"]
 		if session != nil && replacement.inputClaim.workflowID == "" {
 			replacement.inputClaim = session.inputClaim
 		}
@@ -1597,6 +1599,7 @@ func runCLIWorkflowUploadOnly(
 	batch cliPreparationBatch,
 	debug bool,
 	queueMode bool,
+	screenshotCountIsDefault bool,
 	cfg config.Config,
 	streams cliIO,
 	logger api.Logger,
@@ -1615,6 +1618,7 @@ func runCLIWorkflowUploadOnly(
 		if err != nil {
 			return err
 		}
+		session.screenshotCountIsDefault = screenshotCountIsDefault
 		defer session.releaseActiveInput(itemCtx)
 		count, err := session.complete(itemCtx, debug, reader, cfg, logger)
 		uploaded += count
@@ -1644,6 +1648,7 @@ func runCLIWorkflowSiteCheck(
 	if err != nil {
 		return err
 	}
+	session.screenshotCountIsDefault = !visited["screens"]
 	defer session.releaseActiveInput(ctx)
 	fmt.Fprintf(streams.out, "\n[Site Check] %s\n", formatPathLabel(item.originalPath))
 	_, err = session.complete(ctx, true, reader, cfg, logger)

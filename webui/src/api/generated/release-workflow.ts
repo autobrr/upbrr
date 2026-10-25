@@ -1044,6 +1044,20 @@ export type ImageHostOverrides = Readonly<{
   SkipUpload?: boolean | null;
 }>;
 
+export type ImportedScreenshotEvidence = Readonly<{
+  DescriptionFingerprint: WorkflowFingerprint;
+  InfoHash: string;
+  PolicyVersion: string;
+  References: readonly ImportedScreenshotReference[];
+  SourceFingerprint: string;
+  Tracker: string;
+  TrackerID: string;
+}>;
+
+export type ImportedScreenshotReference = Readonly<{
+  RawURL: string;
+}>;
+
 export type InputReadinessFieldOutcome = Readonly<{
   correctionField?: CorrectionField | null;
   disposition: RuleDisposition;
@@ -1126,6 +1140,7 @@ export type MediaArtifactKind = string;
 
 export type MediaArtifactSet = Readonly<{
   artifacts: readonly MediaArtifact[];
+  automaticScreenshotSelection?: boolean;
   captureFingerprint: WorkflowFingerprint;
   createdAt: string;
   failedHosts?: readonly string[];
@@ -1250,6 +1265,7 @@ export type MediaFileFact = Readonly<{
   HDRFacts: HDRFacts;
   HasEncodeSettings: boolean;
   Primary: boolean;
+  RateControl: VideoRateControl;
   Resolution: string;
   ResourceID: string;
   Source: string;
@@ -2089,6 +2105,7 @@ export type ReleaseWorkflowUploadScreenshots = Readonly<{
   comparisonPaths?: readonly string[];
   comparisonPrimaryIndex?: number | null;
   count?: number | null;
+  countIsDefault?: boolean;
   frames?: readonly number[];
 }>;
 
@@ -2341,6 +2358,7 @@ export type SourceScopedMetadata = Readonly<{
   Bluray?: BlurayMetadata | null;
   Generation: PreparedGeneration;
   IMDB?: IMDBMetadata | null;
+  ImportedScreenshotEvidence?: ImportedScreenshotEvidence | null;
   ProviderAvailability: readonly ProviderAvailabilityEvidence[];
   SourcePath: string;
   TMDB?: TMDBMetadata | null;
@@ -2873,6 +2891,7 @@ export type TrackerProjectionInstructions = Readonly<{
   confirmedNameFingerprint?: WorkflowFingerprint;
   questionnaire?: Readonly<Record<string, string | null>>;
   screenshotCount?: number | null;
+  screenshotCountIsDefault?: boolean;
   trackerConfig?: TrackerConfigOverrides;
   trackerSite?: TrackerSiteOverrides;
   uploadReleaseName?: string | null;
@@ -3182,6 +3201,8 @@ export type VideoBitrateAssessment = Readonly<{
 }>;
 
 export type VideoBitrateStatus = string;
+
+export type VideoRateControl = string;
 
 export type WorkflowAuthority = Readonly<{
   expectedRevision: WorkflowRevision;

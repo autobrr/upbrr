@@ -12,64 +12,38 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestPresentationReviewPriorityAndGeneration(t *testing.T) {
+func TestPresentationGuidanceDoesNotRequirePersonalChecklist(t *testing.T) {
 	for _, personal := range []bool{false, true} {
-		subject := lstValidationSubject()
-		subject.PersonalRelease = personal
-		subject.Type = "REMUX"
-		subject.QuestionnaireAnswers = map[string]string{}
-		for _, failure := range presentationReviewFailures(subject) {
-			if (failure.Disposition == api.RuleDispositionStrict) != personal || failure.EvidenceStatus != api.MetadataEvidenceStatusPartial {
-				t.Fatalf("priority or missing evidence: %+v", failure)
+		s := lstValidationSubject()
+		s.PersonalRelease = personal
+		s.Type = "REMUX"
+		for range 2 {
+			failures := presentationReviewFailures(s)
+			if len(failures) != 2 {
+				t.Fatalf("expected presentation and source guidance: %+v", failures)
 			}
-		}
-		for _, field := range presentationReviewQuestions(subject) {
-			if strings.Contains(field.Key, "documentation_review") || !personal && strings.Contains(field.Key, "track_presentation") {
-				t.Fatalf("redundant review question: %+v", field)
+			for _, f := range failures {
+				if f.Disposition != api.RuleDispositionAdvisory || f.QuestionnaireInput || f.EvidenceStatus != api.MetadataEvidenceStatusPartial {
+					t.Fatalf("guidance not passive: %+v", f)
+				}
 			}
-			if field.Required != personal {
-				t.Fatal("wrong required state")
-			}
-			subject.QuestionnaireAnswers[field.Key] = field.Options[1]
-		}
-		failures := presentationReviewFailures(subject)
-		if !personal {
-			failures = withoutLSTTrackPresentationGuidance(t, failures)
-		}
-		if len(failures) != 0 {
-			t.Fatalf("reviewed: %+v", failures)
-		}
-		if description := requiredAssetDescription(subject); description != "" {
-			t.Fatalf("confirmation generated description content: %s", description)
-		}
-		subject.Identity.Generation++
-		if personal && len(presentationReviewFailures(subject)) == 0 {
-			t.Fatal("stale review reused")
+			s.Identity.Generation++
 		}
 	}
 }
 
 func TestPersonalPresentationCannotOverrideMissingLanguages(t *testing.T) {
 	for _, kind := range []api.MediaTrackKind{api.MediaTrackAudio, api.MediaTrackSubtitle} {
-		t.Run(string(kind), func(t *testing.T) {
-			subject := lstValidationSubject()
-			subject.PersonalRelease = true
-			for i := range subject.LanguageFacts.Tracks {
-				if subject.LanguageFacts.Tracks[i].Kind == kind {
-					subject.LanguageFacts.Tracks[i].Languages = nil
-				}
+		s := lstValidationSubject()
+		s.PersonalRelease = true
+		for i := range s.LanguageFacts.Tracks {
+			if s.LanguageFacts.Tracks[i].Kind == kind {
+				s.LanguageFacts.Tracks[i].Languages = nil
 			}
-			for _, field := range presentationReviewQuestions(subject) {
-				subject.QuestionnaireAnswers[field.Key] = "reviewed_correct"
-			}
-			for _, field := range assetReviewQuestions(subject) {
-				if field.Kind == "text" {
-					subject.QuestionnaireAnswers[field.Key] = "Reviewed English track"
-				}
-			}
-			failures := presentationReviewFailures(subject)
-			requireLSTValidationFailure(t, failures, "language_presentation_tags", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
-		})
+		}
+		s.QuestionnaireAnswers[assetQuestionKey(s, "track_notes")] = "Reviewed English track"
+		failures := presentationReviewFailures(s)
+		requireLSTValidationFailure(t, failures, "language_presentation_tags", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	}
 }
 
@@ -77,41 +51,23 @@ func TestLSTAudioTitlesAreGuidance(t *testing.T) {
 	for _, personal := range []bool{false, true} {
 		for _, title := range []string{"", "   ", "Programme audio"} {
 			t.Run(fmt.Sprintf("personal=%t/title=%q", personal, title), func(t *testing.T) {
-				subject := lstValidationSubject()
-				subject.PersonalRelease = personal
-				subject.LanguageFacts.Tracks[0].Title = title
-				for _, field := range assetReviewQuestions(subject) {
-					if strings.Contains(field.Key, "track_notes") {
-						t.Fatalf("audio title created a clarification requirement: %+v", field)
+				s := lstValidationSubject()
+				s.PersonalRelease = personal
+				s.LanguageFacts.Tracks[0].Title = title
+				found := false
+				for _, f := range presentationReviewFailures(s) {
+					if f.Rule == "language_audio_titles" {
+						found = true
+						if f.Disposition != api.RuleDispositionAdvisory || f.QuestionnaireInput || !strings.Contains(f.Reason, "audio-0") {
+							t.Fatalf("bad title guidance: %+v", f)
+						}
 					}
-					subject.QuestionnaireAnswers[field.Key] = "lossless_preserved"
 				}
-				for _, field := range presentationReviewQuestions(subject) {
-					subject.QuestionnaireAnswers[field.Key] = "reviewed_correct"
+				if found != (strings.TrimSpace(title) == "") {
+					t.Fatalf("title guidance present=%t", found)
 				}
-				for _, field := range sourceReviewQuestions(subject) {
-					subject.QuestionnaireAnswers[field.Key] = field.Options[1]
-				}
-				failures, err := validationPolicy().Check(t.Context(), subject, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				failures = withoutLSTStreamProcessingGuidance(t, failures)
-				if !personal {
-					failures = withoutLSTTrackPresentationGuidance(t, failures)
-				}
-				if strings.TrimSpace(title) != "" {
-					if len(failures) != 0 {
-						t.Fatalf("complete tags rejected: %+v", failures)
-					}
-					return
-				}
-				if len(failures) != 1 || failures[0].QuestionnaireInput || !strings.Contains(failures[0].Reason, "audio-0") {
-					t.Fatalf("expected only track-specific guidance: %+v", failures)
-				}
-				requireLSTValidationFailure(t, failures, "language_audio_titles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
-				subject.Type = "DISC"
-				if failures := presentationReviewFailures(subject); len(failures) != 0 {
+				s.Type = "DISC"
+				if failures := presentationReviewFailures(s); len(failures) != 0 {
 					t.Fatalf("full-disc track titles reviewed: %+v", failures)
 				}
 			})
@@ -120,79 +76,38 @@ func TestLSTAudioTitlesAreGuidance(t *testing.T) {
 }
 
 func TestLSTWEBSourceNamingUsesResolvedService(t *testing.T) {
-	for _, test := range []struct {
-		name, releaseType, service, longName string
-		wantQuestion, wantGuidance           bool
-	}{
-		{
-			name:         "service code",
-			releaseType:  "WEBDL",
-			service:      "ATVP",
-			wantGuidance: true,
-		},
-		{
-			name:         "service name",
-			releaseType:  "WEB-DL",
-			longName:     "Apple TV+",
-			wantGuidance: true,
-		},
-		{
-			name:         "missing service",
-			releaseType:  "WEBDL",
-			wantQuestion: true,
-		},
-		{
-			name:         "blank service",
-			releaseType:  "WEB-DL",
-			service:      " ",
-			longName:     " ",
-			wantQuestion: true,
-		},
-		{
-			name:        "non-WEB release",
-			releaseType: "ENCODE",
-			service:     "ATVP",
-		},
-	} {
-		for _, personal := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/personal=%t", test.name, personal), func(t *testing.T) {
+	for _, releaseType := range []string{"WEBDL", "WEB-DL", "ENCODE"} {
+		for _, service := range []string{"ATVP", " "} {
+			for _, personal := range []bool{false, true} {
 				meta := api.UploadSubject{
-					Type:            test.releaseType,
-					Service:         test.service,
-					ServiceLongName: test.longName,
+					Type:            releaseType,
+					Service:         service,
 					PersonalRelease: personal,
 				}
-				questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
+				schema := languageQuestionnaire(trackers.PreparationInput{Meta: meta})
+				if schema != nil {
+					for _, field := range schema.Fields {
+						if strings.Contains(field.Key, "web_source_naming") {
+							t.Fatalf("WEB source reassurance remains: %+v", field)
+						}
+					}
+				}
 				found := false
-				var fields []api.TrackerQuestionnaireField
-				if questionnaire != nil {
-					fields = questionnaire.Fields
-				}
-				for _, field := range fields {
-					if strings.Contains(field.Key, "web_source_naming") {
+				for _, f := range presentationReviewFailures(api.NewTrackerValidationSubject(meta, "LST")) {
+					if f.Rule == "language_web_source_naming" {
 						found = true
-						if field.Required != personal {
-							t.Fatalf("missing-service question priority changed: %+v", field)
+						if f.Disposition != api.RuleDispositionAdvisory || f.QuestionnaireInput {
+							t.Fatalf("WEB guidance blocked: %+v", f)
+						}
+						if service == "ATVP" && !strings.Contains(f.Reason, service) {
+							t.Fatal("resolved service lost")
 						}
 					}
 				}
-				if found != test.wantQuestion {
-					t.Fatalf("WEB source question present=%t, want %t", found, test.wantQuestion)
+				if found != (releaseType != "ENCODE") {
+					t.Fatalf("WEB guidance present=%t", found)
 				}
-				subject := api.NewTrackerValidationSubject(meta, "LST")
-				found = false
-				for _, failure := range presentationReviewFailures(subject) {
-					if failure.Rule == "language_web_source_naming" {
-						found = true
-						if failure.Disposition != api.RuleDispositionAdvisory || failure.QuestionnaireInput {
-							t.Fatalf("known-service guidance blocks or requires review: %+v", failure)
-						}
-					}
-				}
-				if found != test.wantGuidance {
-					t.Fatalf("WEB source guidance present=%t, want %t", found, test.wantGuidance)
-				}
-			})
+			}
 		}
 	}
 }

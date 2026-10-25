@@ -122,15 +122,15 @@ func (a workflowMediaPrivateArtifacts) MarshalPrivateResource() (string, []byte,
 	return workflowPrivateResourceKindMedia, payload, nil
 }
 
-func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload []byte) (any, error) {
+func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload []byte) (workflowMediaPrivateArtifacts, error) {
 	var persisted persistedWorkflowMediaArtifacts
 	if err := json.Unmarshal(payload, &persisted); err != nil {
-		return nil, fmt.Errorf("decode workflow media artifacts: %w", err)
+		return workflowMediaPrivateArtifacts{}, fmt.Errorf("decode workflow media artifacts: %w", err)
 	}
 	pending := make([]workflowMediaPendingDelete, 0, len(persisted.PendingDeletes))
 	for _, deletion := range persisted.PendingDeletes {
 		if deletion.Kind == "" || deletion.Path == "" {
-			return nil, errors.New("workflow private media contains invalid pending deletion")
+			return workflowMediaPrivateArtifacts{}, errors.New("workflow private media contains invalid pending deletion")
 		}
 		binding := api.PreparedMediaBinding{
 			SourcePath:               deletion.SourcePath,
@@ -191,6 +191,35 @@ func workflowPrivateResourceCodecs(builder workflowMediaBuilder, audioBuilder wo
 		{
 			Kind: workflowPrivateResourceKindMedia,
 			Decode: func(payload []byte) (any, error) {
+				artifacts, err := decodeWorkflowMediaPrivateArtifacts(builder, payload)
+				if err != nil {
+					return nil, err
+				}
+				// The vault caches this readmission; polls do not repeat full image decoding.
+				formats := make(map[string]string)
+				inspect := func(image *api.ScreenshotImage) {
+					recordLegacyImageFormat(&artifacts, image.Path, image.Format)
+					format, found := formats[image.Path]
+					if !found {
+						format = reusableMediaImageFormat(image.Path)
+						formats[image.Path] = format
+					}
+					image.Format = format
+				}
+				for index := range artifacts.Screenshots {
+					inspect(&artifacts.Screenshots[index])
+				}
+				for index := range artifacts.DVDMenus {
+					inspect(&artifacts.DVDMenus[index].ScreenshotImage)
+				}
+				for id, image := range artifacts.ArtifactImages {
+					inspect(&image)
+					artifacts.ArtifactImages[id] = image
+				}
+				return artifacts, nil
+			},
+			DecodeForRelease: func(payload []byte) (any, error) {
+				// Expiry/deletion needs resource ownership, not image inspection.
 				return decodeWorkflowMediaPrivateArtifacts(builder, payload)
 			},
 		},
