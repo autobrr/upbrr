@@ -6,6 +6,7 @@ package aither
 import (
 	"github.com/autobrr/upbrr/pkg/api"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -47,10 +48,10 @@ func TestThreeDDVDNameKeepsResolutionBeforeSubtype(t *testing.T) {
 	for _, test := range []struct {
 		name, kind, disc, source, size, region, threeD, want string
 	}{
-		{"rip", "DVDRIP", "", "DVD", "", "", "3D", "Example Film 2026 480p 3D DVDRip-GRP"},
-		{"DVD5", "DISC", "DVD", "DVD", "DVD5", "", "3D Full SBS", "Example Film 2026 480p 3D Full SBS DVD5-GRP"},
-		{"DVD9", "DISC", "DVD", "DVD", "DVD9", "", "3D Half OU", "Example Film 2026 480p 3D Half OU DVD9-GRP"},
-		{"system and region", "DISC", "DVD", "PAL DVD", "DVD9", "R2", "3D", "Example Film 2026 480p R2 PAL 3D DVD9-GRP"},
+		{"rip", "DVDRIP", "", "DVD", "", "", "3D Half SBS", "Example Film 2026 480p 3D DVDRip-GRP"},
+		{"DVD5", "DISC", "DVD", "DVD", "DVD5", "", "3D Half SBS", "Example Film 2026 480p 3D DVD5-GRP"},
+		{"DVD9", "DISC", "DVD", "DVD", "DVD9", "", "3D Half SBS", "Example Film 2026 480p 3D DVD9-GRP"},
+		{"system and region", "DISC", "DVD", "PAL DVD", "DVD9", "R2", "3D Half SBS", "Example Film 2026 480p R2 PAL 3D DVD9-GRP"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
@@ -97,5 +98,31 @@ func TestThreeDISORejectsOtherMediaWithDerivedFacts(t *testing.T) {
 				t.Fatalf("ISO gate = %t, want %t: %+v", blocked, test.blocked, failures)
 			}
 		})
+	}
+}
+
+func TestThreeDGenericNamePreservesManualOmissionAndCompleteOverride(t *testing.T) {
+	subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "DVDRIP",
+		Title:      "Example Film",
+		Year:       2026,
+		Resolution: "480p",
+		Source:     "DVD",
+		ThreeD:     "3D Half SBS",
+	}, []string{"English"})
+	for index := range subject.GeneratedName.Components {
+		component := &subject.GeneratedName.Components[index]
+		if component.Role == api.NameRoleThreeD {
+			component.Manual, component.Present = true, false
+		}
+	}
+	subject.ReleaseName = subject.GeneratedName.Render().Name
+	if got := aitherReviewedName(t, subject, nil); strings.Contains(got, "3D") || strings.Contains(got, "SBS") {
+		t.Fatalf("manual 3D omission was lost: %q", got)
+	}
+	override := "Exact Manual 3D Half SBS Name"
+	if got := aitherReviewedName(t, subject, &override); got != override {
+		t.Fatalf("complete override changed: %q", got)
 	}
 }

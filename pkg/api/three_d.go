@@ -21,22 +21,13 @@ func IsThreeDSubtype(feature ReleaseFeature) bool {
 	}
 }
 
-// ThreeDName preserves recognized subtype wording in the dedicated 3D naming position.
-// A subtype replaces the generic marker, without changing payload feature facts.
+// ThreeDName returns a single generic marker for measured 3D or a recognized subtype.
+// Naming preserves subtype facts and does not establish measured 3D evidence.
 func ThreeDName(detected string, features []ReleaseFeature) string {
-	var labels []string
-	for _, feature := range features {
-		if IsThreeDSubtype(feature) {
-			label := ReleaseFeatureLabel(feature)
-			if !slices.Contains(labels, label) {
-				labels = append(labels, label)
-			}
-		}
+	if strings.TrimSpace(detected) != "" || slices.ContainsFunc(features, IsThreeDSubtype) {
+		return "3D"
 	}
-	if len(labels) > 0 {
-		return strings.Join(labels, " / ")
-	}
-	return strings.TrimSpace(detected)
+	return ""
 }
 
 // EditionNamingText omits subtype fragments rendered by the independent 3D role.

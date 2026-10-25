@@ -6,6 +6,7 @@ package metadata
 import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
+	"slices"
 	"testing"
 )
 
@@ -90,10 +91,7 @@ func TestThreeDSetPreservesDetectedSubtypeWithNoEdition(t *testing.T) {
 			meta.ReleaseNameOverrides.ReleaseFeatures = &empty
 		}
 		applyReleaseNameValueOverrides(&meta)
-		want := "3D Full SBS"
-		if clearFeatures {
-			want = "3D"
-		}
+		want := "3D"
 		if got := api.ThreeDName(meta.Is3D, meta.ReleaseFeatures); got != want {
 			t.Fatalf("clear features %t: name = %q, want %q", clearFeatures, got, want)
 		}
@@ -115,5 +113,60 @@ func TestThreeDSetPreservesDetectedSubtypeWithNoEdition(t *testing.T) {
 		if len(features) != 2 || features[0] != api.ReleaseFeature3DFullSBS || api.EditionDisplayText(display) != "Extended 3D Full SBS" {
 			t.Fatal("3D Set mutated saved evidence")
 		}
+	}
+}
+
+func TestThreeDAutoPreservesSubtypeIndependentlyOfMeasuredFact(t *testing.T) {
+	for _, test := range []struct {
+		name                             string
+		manual, noEdition, clearFeatures bool
+		correction                       *bool
+		wantFact, wantName               string
+	}{
+		{"detected Auto", false, false, false, nil, "", "3D"},
+		{"manual Auto", true, false, false, nil, "", "3D"},
+		{"detected Auto without edition", false, true, false, nil, "", "3D"},
+		{"manual Auto without edition", true, true, false, nil, "", "3D"},
+		{"detected No", false, true, false, new(false), "", ""},
+		{"manual No", true, false, false, new(false), "", ""},
+		{"explicit features None", false, true, true, nil, "", ""},
+		{"explicit Yes", false, true, false, new(true), "3D", "3D"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			features := []api.ReleaseFeature{api.ReleaseFeature3DFullSBS}
+			display := []api.EditionDisplayPart{{Text: "3D Full SBS", Feature: api.ReleaseFeature3DFullSBS}}
+			meta := preparationstate.State{
+				Edition:         "Extended",
+				ReleaseFeatures: features,
+				EditionDisplay:  display,
+				ReleaseNameOverrides: api.ReleaseNameOverrides{
+					ThreeD:    test.correction,
+					NoEdition: &test.noEdition,
+				},
+			}
+			if test.manual {
+				meta.ReleaseFeatures = nil
+				meta.EditionDisplay = nil
+				meta.ReleaseNameOverrides.ReleaseFeatures = &features
+			}
+			if test.clearFeatures {
+				empty := []api.ReleaseFeature{}
+				meta.ReleaseNameOverrides.ReleaseFeatures = &empty
+			}
+			applyReleaseNameValueOverrides(&meta)
+			if meta.Is3D != test.wantFact || api.ThreeDName(meta.Is3D, meta.ReleaseFeatures) != test.wantName {
+				t.Fatalf("effective measured fact = %q, annotation = %q; want %q, %q", meta.Is3D, api.ThreeDName(meta.Is3D, meta.ReleaseFeatures), test.wantFact, test.wantName)
+			}
+			wantSubtype := test.wantName != ""
+			if got := slices.Contains(meta.ReleaseFeatures, api.ReleaseFeature3DFullSBS); got != wantSubtype {
+				t.Fatalf("effective subtype retained = %t, want %t", got, wantSubtype)
+			}
+			if test.noEdition && meta.Edition != "" {
+				t.Fatal("subtype restored suppressed edition")
+			}
+			if len(features) != 1 || features[0] != api.ReleaseFeature3DFullSBS || api.EditionDisplayText(display) != "3D Full SBS" {
+				t.Fatal("correction mutated saved subtype evidence")
+			}
+		})
 	}
 }

@@ -22,17 +22,17 @@ func TestGeneratedHDBThreeDPlacement(t *testing.T) {
 		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature3DHalfSBS},
 	}
 	name := buildGeneratedHDBName(subject, "Example Movie")
-	if !strings.Contains(name, "1080p 3D Half SBS") || strings.Count(name, "3D") != 1 {
+	if !strings.Contains(name, "1080p 3D") || strings.Count(name, "3D") != 1 {
 		t.Fatal(name)
 	}
 }
 
 func TestGeneratedHDBThreeDPlacementAfterRegion(t *testing.T) {
 	for _, test := range []struct{ kind, disc, region, want string }{
-		{"DISC", "BDMV", "CEE", "1080p CEE 3D Half SBS Blu-ray"},
-		{"REMUX", "", "USA", "1080p USA 3D Half SBS Remux"},
-		{"ENCODE", "", "USA", "1080p 3D Half SBS BluRay USA"},
-		{"ENCODE", "", "", "1080p 3D Half SBS BluRay"},
+		{"DISC", "BDMV", "CEE", "1080p CEE 3D Blu-ray"},
+		{"REMUX", "", "USA", "1080p USA 3D Remux"},
+		{"ENCODE", "", "USA", "1080p USA 3D BluRay"},
+		{"ENCODE", "", "", "1080p 3D BluRay"},
 	} {
 		subject := api.UploadSubject{
 			Is3D:     "3D",
@@ -50,5 +50,35 @@ func TestGeneratedHDBThreeDPlacementAfterRegion(t *testing.T) {
 		if got := buildGeneratedHDBName(subject, "Example Movie"); got != "Example Movie 2026 "+test.want {
 			t.Fatalf("%s name = %q, want tail %q", test.kind, got, test.want)
 		}
+	}
+}
+
+func TestHDBSourceElementPreservesNonThreeDRegionOrder(t *testing.T) {
+	for _, test := range []struct{ kind, source, want string }{
+		{"ENCODE", "BluRay", "BluRay"},
+		{"WEBDL", "WEB", "WEB-DL"},
+		{"WEBRIP", "WEB", "WEBRip"},
+		{"DVDRIP", "DVD", "DVDRip"},
+		{"HDTV", "", "HDTV"},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			subject := api.UploadSubject{
+				Type:   test.kind,
+				Source: test.source,
+				Region: "USA",
+			}
+			if got := hdbSourceElement(subject); got != test.want+" USA" {
+				t.Fatalf("non-3D source = %q", got)
+			}
+			subject.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeature3DHalfSBS}
+			if got := hdbSourceElement(subject); got != "USA 3D "+test.want {
+				t.Fatalf("subtype source = %q", got)
+			}
+			subject.ReleaseFeatures = nil
+			subject.Is3D = "3D"
+			if got := hdbSourceElement(subject); got != "USA 3D "+test.want {
+				t.Fatalf("generic 3D source = %q", got)
+			}
+		})
 	}
 }

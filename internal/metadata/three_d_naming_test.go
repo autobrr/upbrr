@@ -27,7 +27,7 @@ func TestThreeDAutomaticNamingPlacement(t *testing.T) {
 				Title:       "Example Movie",
 				Year:        2026,
 				Resolution:  "1080p",
-				ThreeD:      "3D",
+				ThreeD:      "3D Half OU",
 				VideoCodec:  "AVC",
 				VideoEncode: "x264",
 				Audio:       "DTS-HD MA 5.1",
@@ -41,7 +41,7 @@ func TestThreeDAutomaticNamingPlacement(t *testing.T) {
 			threeD := releaseNameComponentSliceIndex(components, api.NameRoleThreeD)
 			source := releaseNameComponentSliceIndex(components, api.NameRoleSource)
 			resolution := releaseNameComponentSliceIndex(components, api.NameRoleResolution)
-			if threeD <= resolution || source != threeD+1 || strings.Count(result.Name, "3D") != 1 {
+			if threeD <= resolution || source != threeD+1 || strings.Count(result.Name, "3D") != 1 || components[threeD].AvailableValue != "3D" {
 				t.Fatalf("placement = %q", result.Name)
 			}
 			if test.country != "" && !strings.Contains(result.Name, "1080p CEE 3D Blu-ray") {
@@ -59,7 +59,7 @@ func TestThreeDSubtypeNamingPreservesFactsAndEdition(t *testing.T) {
 		EditionDisplay:  []api.EditionDisplayPart{{Text: "Director's Cut"}, {Text: "3D Full SBS", Feature: api.ReleaseFeature3DFullSBS}},
 	}
 	request := releaseNameRequestFromMeta(meta, api.NopLogger{})
-	if request.ThreeD != "3D Full SBS" || request.EditionDisplay != "Director's Cut" {
+	if request.ThreeD != "3D" || request.EditionDisplay != "Director's Cut" {
 		t.Fatalf("naming = %+v", request)
 	}
 	if meta.Is3D != "3D" || len(meta.ReleaseFeatures) != 1 || len(meta.EditionDisplay) != 2 {

@@ -892,7 +892,7 @@
     "sha256": "0063e9bc54c2bc4cf92a8b171291e969297a9e450b7f33c67dd329221c9e306a"
   },
   "internal/trackers/impl/standalone/hdb/name.go:buildGeneratedHDBName": {
-    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for discs/remux and ordinary non-disc region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together.",
+    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for regional formats and ordinary non-3D region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together.",
     "sha256": "63299471d31a65e9a9d5c0695f060c103d06e9151e805d9829155d7a87c0a8d8"
   },
   "internal/trackers/impl/standalone/hdb/name.go:hdbIMDbYear": {
@@ -1464,8 +1464,8 @@
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
-    "reason": "Advances automatic naming policy for dedicated effective 3D placement. Existing complete upload-name overrides and independent automatic search names remain unchanged.",
-    "sha256": "e21ac23cd703339c83f46fe3b88b79bea61dc64c6fe8c794d7c31fe842616b65"
+    "reason": "Advances automatic naming policy for dedicated generic 3D placement while retaining typed subtype facts. Existing complete upload-name overrides and independent automatic search names remain unchanged.",
+    "sha256": "36c806b9900dac058edba01e6dfd342c72c9fac67a98b0da8a47c720c215db3a"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
     "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",
@@ -1501,7 +1501,7 @@
   },
   "internal/trackers/impl/unit3d/sites/rhd/profile.go:Profile": {
     "reason": "3D correction naming review: only the naming policy version advances to invalidate old projections. Provider selectors, callback bindings, metadata requirements, validation and duplicate policy remain unchanged.",
-    "sha256": "59db5890c29aae78736c4be7bdfba478cbb27bfb332116d11d1cd6452954e9c5"
+    "sha256": "bdb80a0ba4df2d13a3df13271cfc1bcf79163ac581a41ff89382ae1726cb896c"
   },
   "internal/trackers/impl/unit3d/sites/rmc/name.go:applyRMCNameDefaults": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",

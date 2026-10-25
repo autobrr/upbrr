@@ -23,7 +23,7 @@ func TestOTWThreeDSubtypePlacement(t *testing.T) {
 		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature3DHalfOU},
 	}
 	got := buildName(subject, config.TrackerConfig{})
-	if !strings.Contains(got, "1080p 3D Half OU") || strings.Count(got, "3D") != 1 {
+	if !strings.Contains(got, "1080p 3D") || strings.Count(got, "3D") != 1 || strings.Contains(got, "Half OU") {
 		t.Fatal(got)
 	}
 }

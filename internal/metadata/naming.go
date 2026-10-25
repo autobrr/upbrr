@@ -76,7 +76,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	episode := strings.TrimSpace(req.Episode)
 	part := strings.TrimSpace(req.Part)
 	repack := strings.TrimSpace(req.Repack)
-	threeD := strings.TrimSpace(req.ThreeD)
+	threeD := api.ThreeDName(req.ThreeD, nil)
 	tag := strings.TrimSpace(req.Tag)
 	source := strings.TrimSpace(req.Source)
 	if matchType == "ENCODE" && sourceIn(source, "DVD", "PAL DVD", "NTSC DVD") {

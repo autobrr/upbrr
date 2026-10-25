@@ -19,7 +19,7 @@ func TestRHDThreeDSourcePlacement(t *testing.T) {
 		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature3DFullSBS},
 	}
 	got := strings.Join(typeAndSource(subject), " ")
-	if !strings.Contains(got, "CEE 3D Full SBS Blu-ray") || strings.Count(got, "3D") != 1 {
+	if !strings.Contains(got, "CEE 3D Blu-ray") || strings.Count(got, "3D") != 1 {
 		t.Fatal(got)
 	}
 }
