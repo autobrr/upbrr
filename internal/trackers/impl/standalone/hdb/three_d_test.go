@@ -154,36 +154,41 @@ func TestHDBThreeDSourceAliasProjection(t *testing.T) {
 		control  *bool
 		omitted  bool
 		source   *string
-		count    int
+		want     string
 	}{
-		{name: "source-only Auto", count: 1},
+		{name: "source-only Auto", want: "Blu-ray 3D"},
 		{
 			name:     "measured",
 			detected: "3D",
-			count:    1,
+			want:     "3D BluRay",
 		},
 		{
 			name:     "subtype Auto",
 			features: []api.ReleaseFeature{api.ReleaseFeature3DHalfOU},
-			count:    1,
+			want:     "3D BluRay",
 		},
-		{name: "explicit No without component", control: new(false)},
+		{
+			name:    "explicit No without component",
+			control: new(false),
+			want:    "BluRay",
+		},
 		{
 			name:     "manual 3D omission",
 			detected: "3D",
 			omitted:  true,
+			want:     "BluRay",
 		},
 		{
 			name:     "unprojected manual Source",
 			detected: "3D",
 			source:   new("Handwritten Source"),
-			count:    1,
+			want:     "3D BluRay",
 		},
 		{
 			name:     "unprojected manual Source omission",
 			detected: "3D",
 			source:   new(""),
-			count:    1,
+			want:     "3D BluRay",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -243,6 +248,7 @@ func TestHDBThreeDSourceAliasProjection(t *testing.T) {
 				IncludeEpisodeTitle: rendered,
 				OmitEpisodeTitle:    rendered,
 			}
+			wantName := "Example Movie 2026 1080p " + test.want
 			for _, requested := range []*string{nil, new("Exact Manual Name")} {
 				prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
 					Tracker:             "HDB",
@@ -260,18 +266,11 @@ func TestHDBThreeDSourceAliasProjection(t *testing.T) {
 					if name != *requested {
 						t.Fatalf("complete name changed: %q", name)
 					}
-				} else if strings.Count(name, "3D") != test.count {
-					t.Fatalf("upload=%q, want %d markers", name, test.count)
+				} else if name != wantName {
+					t.Fatalf("upload=%q, want %q", name, wantName)
 				}
-				if requested == nil && (!strings.Contains(name, "Blu-ray") || strings.Contains(name, "Handwritten Source")) {
-					t.Fatalf("legacy upload changed source-component handling: %q", name)
-				}
-				search := prepared.Projection.DuplicateCriteria.Name
-				if strings.Count(search, "3D") != test.count {
-					t.Fatalf("search=%q, want %d markers", search, test.count)
-				}
-				if !strings.Contains(search, "Blu-ray") || strings.Contains(search, "Handwritten Source") {
-					t.Fatalf("legacy search changed source-component handling: %q", search)
+				if search := prepared.Projection.DuplicateCriteria.Name; search != wantName {
+					t.Fatalf("search=%q, want %q", search, wantName)
 				}
 			}
 			if subject.Source != "Blu-ray 3D" || subject.Release.Source != "Blu-ray 3D" || subject.Is3D != test.detected ||
