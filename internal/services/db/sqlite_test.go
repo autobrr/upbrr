@@ -465,13 +465,68 @@ func TestOpenWithLoggerConfiguresConcurrentSQLiteSettings(t *testing.T) {
 	}
 }
 
+// sqliteMigrationTraceLogger records only the repository's existing retry messages.
+// Other lifecycle logs remain disabled so diagnostics cannot disclose database paths.
+type sqliteMigrationTraceLogger struct {
+	nopLogger
+	record func(string)
+}
+
+func (l sqliteMigrationTraceLogger) Infof(format string, args ...any) {
+	switch format {
+	case "db: %s busy, retrying (%d/%d)", "db: %s busy lock persisted after %d attempts; returning retry exhaustion":
+		l.record(fmt.Sprintf(format, args...))
+	}
+}
+
+func (l sqliteMigrationTraceLogger) Warnf(format string, args ...any) {
+	l.Infof(format, args...)
+}
+
+func TestSQLiteMigrationTraceLoggerFiltersLifecycleMessages(t *testing.T) {
+	t.Parallel()
+	var events []string
+	logger := sqliteMigrationTraceLogger{record: func(event string) { events = append(events, event) }}
+	logger.Debugf("db: opening sqlite at %s", "synthetic-db")
+	logger.Infof("db: closing sqlite")
+	logger.Warnf("unrelated warning %s", "synthetic-value")
+	logger.Infof("db: %s busy, retrying (%d/%d)", "migration", 1, 3)
+	logger.Warnf("db: %s busy lock persisted after %d attempts; returning retry exhaustion", "migration", 3)
+	want := []string{
+		"db: migration busy, retrying (1/3)",
+		"db: migration busy lock persisted after 3 attempts; returning retry exhaustion",
+	}
+	if !slices.Equal(events, want) {
+		t.Fatalf("retry events = %v, want %v", events, want)
+	}
+}
+
 func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 	t.Parallel()
+
+	// Failure-only operation timings show overlap, not ownership of SQLite's lock.
+	started := time.Now()
+	var traceMu sync.Mutex
+	trace := make([]string, 0, 256)
+	record := func(repo int, event string) {
+		traceMu.Lock()
+		defer traceMu.Unlock()
+		if len(trace) < cap(trace) {
+			trace = append(trace, fmt.Sprintf("elapsed=%s repo=%d %s", time.Since(started), repo, event))
+		}
+	}
+	defer func() {
+		if t.Failed() {
+			for _, event := range trace {
+				t.Log(event)
+			}
+		}
+	}()
 
 	repoPath := filepath.Join(t.TempDir(), "shared.db")
 	repos := make([]*SQLiteRepository, 0, 3)
 	for i := range 3 {
-		repo, err := OpenWithLogger(repoPath, nopLogger{})
+		repo, err := OpenWithLogger(repoPath, sqliteMigrationTraceLogger{record: func(event string) { record(i, event) }})
 		if err != nil {
 			t.Fatalf("open repo %d: %v", i, err)
 		}
@@ -492,7 +547,10 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for attempt := range 3 {
-				if err := repo.Migrate(); err != nil {
+				record(idx, fmt.Sprintf("operation=migrate iteration=%d state=start", attempt))
+				err := repo.Migrate()
+				record(idx, fmt.Sprintf("operation=migrate iteration=%d state=finish success=%t busy=%t", attempt, err == nil, IsBusyError(err)))
+				if err != nil {
 					errCh <- fmt.Errorf("repo %d migrate attempt %d: %w", idx, attempt, err)
 					return
 				}
@@ -500,11 +558,14 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 			ctx := context.Background()
 			for item := range 10 {
 				sourcePath := testStoredPath("shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
-				if err := repo.Save(ctx, FileMetadata{
+				record(idx, fmt.Sprintf("operation=save iteration=%d state=start", item))
+				err := repo.Save(ctx, FileMetadata{
 					Path:      sourcePath,
 					Title:     fmt.Sprintf("Title %d-%d", idx, item),
 					UpdatedAt: time.Now().UTC().Truncate(time.Second),
-				}); err != nil {
+				})
+				record(idx, fmt.Sprintf("operation=save iteration=%d state=finish success=%t busy=%t", item, err == nil, IsBusyError(err)))
+				if err != nil {
 					errCh <- fmt.Errorf("repo %d save %d: %w", idx, item, err)
 					return
 				}
