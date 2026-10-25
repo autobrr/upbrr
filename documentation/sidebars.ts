@@ -56,7 +56,12 @@ const sidebars: SidebarsConfig = {
       link: { type: "doc", id: "workflow/index" },
       items: ["workflow/audio-analysis", "workflow/hdr-analysis"],
     },
-    "trackers/index",
+    {
+      type: "category",
+      label: "Trackers",
+      link: { type: "doc", id: "trackers/index" },
+      items: ["trackers/supported"],
+    },
     "troubleshooting/index",
     "api/index",
     "contributing",

@@ -7,6 +7,8 @@ description: Configure tracker credentials, authentication, default selection, d
 
 upbrr's tracker catalog is built from registered tracker implementations. The Web UI renders each tracker's supported settings and capabilities from that catalog.
 
+See [Supported trackers](supported.md) to find a tracker by its public name.
+
 ## Configure a tracker
 
 1. Open **Settings**.
