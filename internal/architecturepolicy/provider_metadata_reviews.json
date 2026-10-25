@@ -892,7 +892,7 @@
     "sha256": "0063e9bc54c2bc4cf92a8b171291e969297a9e450b7f33c67dd329221c9e306a"
   },
   "internal/trackers/impl/standalone/hdb/name.go:buildGeneratedHDBName": {
-    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for regional formats and ordinary non-3D region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together.",
+    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for regional formats and ordinary non-3D region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
     "sha256": "63299471d31a65e9a9d5c0695f060c103d06e9151e805d9829155d7a87c0a8d8"
   },
   "internal/trackers/impl/standalone/hdb/name.go:hdbIMDbYear": {
@@ -1452,8 +1452,8 @@
     "sha256": "1d2e6c4777073ecc7d623f65cffda22c444db8a48442dd84a1282d2e5664d3e0"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
-    "reason": "Preserves current TMDB identity/source/generation guards, explicit manual title/year and complete-name authority, and finalized modifier omissions. Effective generic/subtype 3D wording occupies the dedicated position before source, without changing language or technical evidence.",
-    "sha256": "e9bc4f2dfa2f2e9c2e597782f1434a74169019dbb229d627ed4e8a63cca34165"
+    "reason": "Preserves current TMDB identity/source/generation guards, explicit manual title/year and complete-name authority, and finalized modifier omissions. Effective generic/subtype 3D wording occupies the dedicated position before source, without changing language or technical evidence. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
+    "sha256": "0c430630ee42487fc5fda6f80669559eb660afac9c1765dc9e25145f69b1fe75"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:currentOTWTMDBTitleYear": {
     "reason": "OTW buildName applies PreferredTitle and PreferredYear; snapshot currentness remains an identity prerequisite.",
@@ -1465,7 +1465,7 @@
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
     "reason": "Advances automatic naming policy for dedicated generic 3D placement while retaining typed subtype facts. Existing complete upload-name overrides and independent automatic search names remain unchanged.",
-    "sha256": "36c806b9900dac058edba01e6dfd342c72c9fac67a98b0da8a47c720c215db3a"
+    "sha256": "3e911b9b394d27606d826e51fed55ff0d2b2ed58bfc902a2b74cd6041faf576f"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
     "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",
@@ -1496,12 +1496,12 @@
     "sha256": "776d1d6fcd4fc8c61202322f9b4388220565bfbb8bb64d8343df6a7b87c0db87"
   },
   "internal/trackers/impl/unit3d/sites/rhd/name.go:buildName": {
-    "reason": "3D correction naming review: stereo subtype display fragments move to the dedicated source-adjacent position without changing canonical facts. Current provider identity/source guards, localized title fallback, manual title/year precedence and independent search names remain unchanged; other edition display parts are preserved.",
+    "reason": "3D correction naming review: stereo subtype display fragments move to the dedicated source-adjacent position without changing canonical facts. Current provider identity/source guards, localized title fallback, manual title/year precedence and independent search names remain unchanged; other edition display parts are preserved. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
     "sha256": "492ab6303e6972a0521eac7031d6ff23a419ddfa6ba977bf87142a2ae45aaab2"
   },
   "internal/trackers/impl/unit3d/sites/rhd/profile.go:Profile": {
     "reason": "3D correction naming review: only the naming policy version advances to invalidate old projections. Provider selectors, callback bindings, metadata requirements, validation and duplicate policy remain unchanged.",
-    "sha256": "bdb80a0ba4df2d13a3df13271cfc1bcf79163ac581a41ff89382ae1726cb896c"
+    "sha256": "512678688d93ff056c85641d9fd436a647c7a0b42b40a4ada992e2df7e76565a"
   },
   "internal/trackers/impl/unit3d/sites/rmc/name.go:applyRMCNameDefaults": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",

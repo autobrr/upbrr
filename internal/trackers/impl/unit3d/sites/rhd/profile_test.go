@@ -14,7 +14,7 @@ import (
 
 func TestProfileNameParity(t *testing.T) {
 	profile := Profile().Site
-	if profile.BuildNameVersion != "v8" {
+	if profile.BuildNameVersion != "v9" {
 		t.Fatalf("RHD build-name version = %q", profile.BuildNameVersion)
 	}
 	build := profile.BuildName

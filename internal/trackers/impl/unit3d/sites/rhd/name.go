@@ -138,7 +138,7 @@ func typeAndSource(meta api.UploadSubject) []string {
 	if name == "" && unit3d.IsDiscType(meta.DiscType) {
 		name = "DISC"
 	}
-	if threeD := api.ThreeDName(meta.Is3D, meta.ReleaseFeatures); threeD != "" && !strings.EqualFold(name, "DISC") {
+	if threeD := meta.ThreeDName(); threeD != "" && !strings.EqualFold(name, "DISC") {
 		parts = append(parts, threeD)
 	}
 	switch strings.ToUpper(name) {
@@ -160,7 +160,7 @@ func typeAndSource(meta api.UploadSubject) []string {
 		if meta.Region != "" {
 			parts = append(parts, meta.Region)
 		}
-		if threeD := api.ThreeDName(meta.Is3D, meta.ReleaseFeatures); threeD != "" {
+		if threeD := meta.ThreeDName(); threeD != "" {
 			parts = append(parts, threeD)
 		}
 		source := strings.TrimSpace(meta.Release.Source)

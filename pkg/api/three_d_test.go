@@ -81,3 +81,33 @@ func TestThreeDNameUsesGenericMarkerWithoutChangingSubtypeFacts(t *testing.T) {
 		t.Fatalf("measured subtype leaked into name: %q", got)
 	}
 }
+
+func TestSubjectThreeDNameHonorsOnlyExplicitComponentOmission(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		component *ReleaseNameComponent
+		want      string
+	}{
+		{"missing document", nil, "3D"},
+		{"automatic absent", &ReleaseNameComponent{Role: NameRoleThreeD}, "3D"},
+		{"manual absent", &ReleaseNameComponent{Role: NameRoleThreeD, Manual: true}, ""},
+		{"manual present", &ReleaseNameComponent{
+			Role:    NameRoleThreeD,
+			Manual:  true,
+			Present: true,
+		}, "3D"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := UploadSubject{ReleaseFeatures: []ReleaseFeature{ReleaseFeature3DFullSBS}}
+			if test.component != nil {
+				subject.GeneratedName = &ReleaseNameDocument{Components: []ReleaseNameComponent{*test.component}}
+			}
+			if got := subject.ThreeDName(); got != test.want {
+				t.Fatalf("marker=%q, want %q", got, test.want)
+			}
+			if subject.Is3D != "" || len(subject.ReleaseFeatures) != 1 || subject.ReleaseFeatures[0] != ReleaseFeature3DFullSBS {
+				t.Fatal("naming changed retained evidence")
+			}
+		})
+	}
+}

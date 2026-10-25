@@ -30,6 +30,15 @@ func ThreeDName(detected string, features []ReleaseFeature) string {
 	return ""
 }
 
+// ThreeDName returns the subject's generic naming marker, honoring an explicit
+// component omission without changing retained measured or subtype facts.
+func (s UploadSubject) ThreeDName() string {
+	if component, ok := s.GeneratedName.Component(NameRoleThreeD); ok && component.Manual && !component.Present {
+		return ""
+	}
+	return ThreeDName(s.Is3D, s.ReleaseFeatures)
+}
+
 // EditionNamingText omits subtype fragments rendered by the independent 3D role.
 // Other display consumers can still use the complete EditionDisplayText.
 func EditionNamingText(parts []EditionDisplayPart) string {
