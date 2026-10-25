@@ -58,6 +58,13 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 	other := append([]string{}, release.Other...)
 	other = append(other, parsedReleaseMarkers(base)...)
 	other = append(other, parsedReleaseFeatures(release)...)
+	subtitle := release.Subtitle
+	if marker, technicalOnly := parsedDownscaleMarker(release); marker != "" {
+		other = append(other, marker)
+		if technicalOnly && strings.EqualFold(strings.TrimSpace(subtitle), marker) {
+			subtitle = ""
+		}
+	}
 	typeValue := parsedReleaseType(base, release.Source, release.Other, release.Codec)
 	sourceValue := parsedReleaseSource(base, release.Source, typeValue)
 	groupValue := parsedReleaseGroup(base, release.Group, release.Site)
@@ -81,7 +88,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 		Type:       typeValue,
 		Artist:     release.Artist,
 		Title:      release.Title,
-		Subtitle:   release.Subtitle,
+		Subtitle:   subtitle,
 		Alt:        release.Alt,
 		Year:       release.Year,
 		Month:      release.Month,
