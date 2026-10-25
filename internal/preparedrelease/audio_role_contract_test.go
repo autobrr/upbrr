@@ -11,8 +11,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestPrepareRecollectsPreProgrammeRoleFactsAfterRestart(t *testing.T) {
-	for _, version := range []string{"prepared-release-v34", "prepared-release-v35", "prepared-release-v36"} {
+func TestPrepareRecollectsIncompatibleProgrammeFactsAfterRestart(t *testing.T) {
+	for _, version := range []string{"prepared-release-v34", "prepared-release-v35", "prepared-release-v36", "prepared-release-v52"} {
 		t.Run(version, func(t *testing.T) {
 			path := writePreparedTestFile(t, "Example.Movie.2026.mkv", "synthetic media")
 			store := newMemoryStore()

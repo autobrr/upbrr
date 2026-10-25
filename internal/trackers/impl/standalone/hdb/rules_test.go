@@ -285,3 +285,34 @@ func TestHDBEnglishDubReviewRequiresRelevantOriginEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestHDBInferredEnglishDubDoesNotRequestOriginCorrection(t *testing.T) {
+	subject := hdbLanguageSubject()
+	subject.Type = "WEBDL"
+	subject.EffectiveMetadata.Genres = []string{"Drama"}
+	subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+		OriginalLanguage:      "Japanese",
+		TrackCoverageComplete: true,
+		Tracks: []api.MediaTrackFacts{
+			{
+				ID:         "english",
+				ResourceID: "file",
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"English"},
+			},
+			{
+				ID:         "original",
+				ResourceID: "file",
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"Japanese"},
+			},
+		},
+	})
+	failures := languageAssessment(subject)
+	requireHDBValidationFailure(t, failures, "language_english_dub", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	if slices.ContainsFunc(failures, func(failure api.RuleFailure) bool { return failure.Rule == "language_origin" }) {
+		t.Fatalf("inferred dub requested redundant origin correction: %+v", failures)
+	}
+}

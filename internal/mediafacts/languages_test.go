@@ -60,6 +60,46 @@ func TestResolveLanguagesSeparatesProgrammeAndSecondaryAudio(t *testing.T) {
 	}
 }
 
+func TestResolveLanguagesInfersEnglishDubFromReviewedOriginalInPartialPack(t *testing.T) {
+	media := api.MediaFacts{
+		OriginalLanguage:      "Japanese",
+		TrackCoverageComplete: false,
+		Tracks: []api.MediaTrackFacts{
+			{
+				ID:                    "original",
+				ResourceID:            "file",
+				Kind:                  api.MediaTrackAudio,
+				Role:                  api.AudioRoleProgramme,
+				Languages:             []string{"German"},
+				AudioOrigin:           api.TrackAudioOriginal,
+				AudioOriginProvenance: api.FactProvenanceManual,
+			},
+			{
+				ID:         "english",
+				ResourceID: "file",
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"English"},
+			},
+		},
+	}
+	facts := ResolveLanguages(media)
+	if facts.TrackCoverageComplete || facts.ProgrammeStatus != api.MetadataEvidenceStatusPartial || !facts.HasOriginalAudio() || !facts.HasEnglishDub() {
+		t.Fatalf("reviewed local pair lost in partial pack: %+v", facts)
+	}
+	media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+		ID:         "unknown",
+		ResourceID: "other-file",
+		Kind:       api.MediaTrackAudio,
+		Role:       api.AudioRoleProgramme,
+		Languages:  []string{"und"},
+	})
+	facts = ResolveLanguages(media)
+	if facts.ProgrammeStatus != api.MetadataEvidenceStatusPartial || !facts.HasOriginalAudio() || !facts.HasEnglishDub() {
+		t.Fatalf("unrelated unknown audio changed local pair: %+v", facts)
+	}
+}
+
 func TestResolveLanguagesRetainsClearsAndUnresolvedEvidence(t *testing.T) {
 	media := api.MediaFacts{
 		OriginalLanguage:      "Japanese",

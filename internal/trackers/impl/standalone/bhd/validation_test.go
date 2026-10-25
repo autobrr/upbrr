@@ -72,10 +72,11 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 				t.Fatalf("validate BHD subject: %v", err)
 			}
 			if test.wantRule == "" {
-				if len(failures) != 1 {
+				if len(failures) != 2 {
 					t.Fatalf("unexpected failures: %#v", failures)
 				}
 				requireBHDValidationFailure(t, failures, "language_existing_release", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+				requireBHDValidationFailure(t, failures, "language_foreign_dialogue_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 				return
 			}
 			requireBHDValidationFailure(t, failures, test.wantRule, test.wantDisposition, test.wantStatus)
@@ -177,7 +178,7 @@ func TestBHDLanguageRoleAndDiscBoundaries(t *testing.T) {
 	t.Parallel()
 	subject := bhdValidationSubject()
 	subject.LanguageFacts = bhdTestLanguageFacts("Japanese", []string{"Japanese", "English"}, nil)
-	requireBHDSourceWarnings(t, subject, "language_existing_release")
+	requireBHDSourceWarnings(t, subject, "language_existing_release", "language_foreign_dialogue_subtitles")
 	subject.LanguageFacts.Tracks[0].Codec = "TrueHD"
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
 		ID:        "wrong-core",
@@ -188,7 +189,5 @@ func TestBHDLanguageRoleAndDiscBoundaries(t *testing.T) {
 	})
 	requireBHDValidationFailure(t, languageAssessment(subject), "language_compatibility_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	subject.Type, subject.DiscType = "DISC", ""
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("canonical full disc acquired language restrictions: %+v", failures)
-	}
+	requireBHDSourceWarnings(t, subject, "language_foreign_dialogue_subtitles")
 }

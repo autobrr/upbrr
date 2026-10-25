@@ -143,6 +143,24 @@ func TestBHDStructuredNamePolicyUsesComponentAudio(t *testing.T) {
 	}
 }
 
+func TestBHDNameInfersDualAudioFromOriginalAndEnglishTracks(t *testing.T) {
+	subject := bhdGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "WEBDL",
+		Title:      "Example Release",
+		Year:       2026,
+		Resolution: "1080p",
+		Source:     "Web",
+		Audio:      "DD 2.0",
+		Tag:        "-GRP",
+	})
+	subject.LanguageFacts = bhdTestLanguageFacts("Japanese", []string{"Japanese", "English"}, nil)
+	subject.LanguageFacts.Tracks[1].AudioOrigin = ""
+	if got, want := bhdReviewedName(t, subject, nil), "Example Release 2026 1080p WEB-DL DD2.0 Dual-Audio-GRP"; got != want {
+		t.Fatalf("inferred dual-audio name = %q, want %q", got, want)
+	}
+}
+
 func TestBHDStructuredNamePolicyKeepsTVYearWithoutDisambiguationEvidence(t *testing.T) {
 	t.Parallel()
 	subject := bhdGeneratedSubject(t, api.ReleaseNameRequest{

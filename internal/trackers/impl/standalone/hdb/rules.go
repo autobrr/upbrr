@@ -24,8 +24,9 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	animated := subject.Anime ||
 		slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
 	facts := subject.LanguageFacts
-	if !animated && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") &&
-		!slices.Contains(facts.OriginalLanguages, "ZXX") &&
+	englishDub := facts.HasEnglishDub()
+	if !animated && !englishDub && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown &&
+		!slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX") &&
 		slices.Contains(facts.ProgrammeLanguages, "English") {
 		englishSubject := subject
 		englishSubject.LanguageFacts.Tracks = slices.DeleteFunc(slices.Clone(facts.Tracks), func(track api.MediaTrackFacts) bool {
@@ -35,7 +36,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			failures = append(failures, trackers.ProgrammeAudioOriginFailures(englishSubject)...)
 		}
 	}
-	if facts.HasEnglishDub() && !animated {
+	if englishDub && !animated {
 		outcome := trackers.LanguageProhibited
 		if len(subject.EffectiveMetadata.Genres) == 0 {
 			outcome = trackers.LanguageUnresolved

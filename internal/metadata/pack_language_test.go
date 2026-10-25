@@ -97,9 +97,6 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Review only the selected English programme stream, not uninspected pack files.
-			derived.MediaTracks[0].AudioOrigin = api.TrackAudioDubbed
-			derived.MediaTracks[0].AudioOriginProvenance = api.FactProvenanceManual
 			facts := mediafacts.ResolveLanguages(api.MediaFacts{
 				OriginalLanguage:      "Japanese",
 				AudioLanguages:        derived.AudioLanguages,
@@ -109,7 +106,7 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 				TrackCoverageComplete: derived.TrackCoverageComplete,
 			})
 			if derived.TrackCoverageComplete || facts.TrackCoverageComplete || facts.ProgrammeStatus != api.MetadataEvidenceStatusPartial ||
-				!slices.Equal(facts.ProgrammeLanguages, []string{"English", "Japanese"}) {
+				!slices.Equal(facts.ProgrammeLanguages, []string{"English", "Japanese"}) || !facts.HasEnglishDub() {
 				t.Fatalf("selected report invented complete pack coverage or commentary programme audio: %+v", facts)
 			}
 			before := facts.Clone()

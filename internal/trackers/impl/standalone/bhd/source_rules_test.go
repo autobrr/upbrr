@@ -39,9 +39,9 @@ func TestBHDSourceHistoryWarningIgnoresSavedAnswers(t *testing.T) {
 		t.Run(answer, func(t *testing.T) {
 			subject := bhdValidationSubject()
 			bhdSourceAnswer(&subject, "existing_release", answer)
-			requireBHDSourceWarnings(t, subject, "language_existing_release")
+			requireBHDSourceWarnings(t, subject, "language_existing_release", "language_foreign_dialogue_subtitles")
 			subject.Identity.Generation++
-			requireBHDSourceWarnings(t, subject, "language_existing_release")
+			requireBHDSourceWarnings(t, subject, "language_existing_release", "language_foreign_dialogue_subtitles")
 		})
 	}
 	if Profile().ProjectionQuestionnaire != nil {
@@ -62,7 +62,7 @@ func TestBHDAlternateMixNeedsContentEvidence(t *testing.T) {
 				Codec:     "FLAC",
 			})
 			bhdSourceAnswer(&subject, "programme_mixes", answer)
-			requireBHDSourceWarnings(t, subject, "language_existing_release", "language_redundant_original")
+			requireBHDSourceWarnings(t, subject, "language_existing_release", "language_redundant_original", "language_foreign_dialogue_subtitles")
 		}
 	}
 	// Separate pack resources do not require within-resource mix comparison.
@@ -71,7 +71,7 @@ func TestBHDAlternateMixNeedsContentEvidence(t *testing.T) {
 	second.ResourceID = "episode-2"
 	subject.LanguageFacts.Tracks[0].ResourceID = "episode-1"
 	subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, second)
-	requireBHDSourceWarnings(t, subject, "language_existing_release")
+	requireBHDSourceWarnings(t, subject, "language_existing_release", "language_foreign_dialogue_subtitles")
 }
 
 func TestBHDRemuxRecommendationsStayAdvisory(t *testing.T) {
@@ -95,7 +95,7 @@ func TestBHDRemuxRecommendationsStayAdvisory(t *testing.T) {
 		})
 		requireBHDSourceWarnings(t, subject, "language_existing_release", "language_source_extras", "language_foreign_dialogue_subtitles")
 		subject.Type = "DISC"
-		requireBHDSourceWarnings(t, subject)
+		requireBHDSourceWarnings(t, subject, "language_foreign_dialogue_subtitles")
 	}
 	subject := bhdValidationSubject()
 	subject.Type = "REMUX"
@@ -107,6 +107,34 @@ func TestBHDRemuxRecommendationsStayAdvisory(t *testing.T) {
 		t.Fatal("absent audio acquired hypothetical subtitle guidance")
 	}
 	requireBHDValidationFailure(t, languageAssessment(subject), "language_evidence", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+}
+
+func TestBHDForeignDialogueGuidanceAcrossReleaseTypes(t *testing.T) {
+	for _, releaseType := range []string{"ENCODE", "REMUX", "WEBDL", "WEBRIP", "DISC"} {
+		t.Run(releaseType, func(t *testing.T) {
+			subject := bhdValidationSubject()
+			subject.Type = releaseType
+			failures := languageAssessment(subject)
+			requireBHDValidationFailure(t, failures, "language_foreign_dialogue_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+			for _, failure := range failures {
+				if failure.Rule == "language_foreign_dialogue_subtitles" && trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+					t.Fatalf("subtitle guidance blocked %s: %+v", releaseType, failure)
+				}
+			}
+			for _, silent := range []bool{false, true} {
+				subject.LanguageFacts = bhdTestLanguageFacts("ZXX", []string{"ZXX"}, nil)
+				if silent {
+					subject.LanguageFacts = bhdTestLanguageFacts("English", nil, nil)
+					subject.LanguageFacts.AudioAbsent = true
+				}
+				if slices.ContainsFunc(languageAssessment(subject), func(failure api.RuleFailure) bool {
+					return failure.Rule == "language_foreign_dialogue_subtitles"
+				}) {
+					t.Fatalf("non-spoken or absent audio acquired subtitle guidance: absent=%t", silent)
+				}
+			}
+		})
+	}
 }
 
 func TestBHDAnimationPreferenceAndMeasuredRestrictions(t *testing.T) {
@@ -127,7 +155,7 @@ func TestBHDAnimationPreferenceAndMeasuredRestrictions(t *testing.T) {
 		Languages: []string{"English"},
 		Codec:     "AC-3",
 	})
-	requireBHDSourceWarnings(t, subject, "language_existing_release")
+	requireBHDSourceWarnings(t, subject, "language_existing_release", "language_foreign_dialogue_subtitles")
 	subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].Codec = "DTS"
 	bhdSourceAnswer(&subject, "programme_mixes", "distinct_mixes")
 	requireBHDValidationFailure(t, languageAssessment(subject), "language_compatibility_format", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
@@ -191,7 +219,7 @@ func TestBHDOrdinaryCompatibilityIsNotARedundantProgrammeMix(t *testing.T) {
 		Codec:     "DD",
 		Languages: []string{"English"},
 	})
-	requireBHDSourceWarnings(t, subject, "language_existing_release")
+	requireBHDSourceWarnings(t, subject, "language_existing_release", "language_foreign_dialogue_subtitles")
 	subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].Codec = "DD+"
 	if failures := languageAssessment(subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 		return f.Rule == "language_compatibility_format" && f.Disposition == api.RuleDispositionStrict
