@@ -316,3 +316,107 @@ func TestHDBInferredEnglishDubDoesNotRequestOriginCorrection(t *testing.T) {
 		t.Fatalf("inferred dub requested redundant origin correction: %+v", failures)
 	}
 }
+
+func TestHDBEnglishDubDoesNotHideOtherResourceOriginReview(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		origin api.TrackAudioOrigin
+	}{
+		{"inferred dub", ""},
+		{"confirmed dub", api.TrackAudioDubbed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := hdbLanguageSubject()
+			subject.Type = "WEBDL"
+			subject.EffectiveMetadata.Genres = []string{"Drama"}
+			subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+				OriginalLanguage:      "Japanese",
+				TrackCoverageComplete: true,
+				Tracks: []api.MediaTrackFacts{
+					{
+						ID:                  "english-dub",
+						ResourceID:          "paired-file",
+						ManifestFingerprint: "paired-report",
+						Kind:                api.MediaTrackAudio,
+						Role:                api.AudioRoleProgramme,
+						Languages:           []string{"English"},
+						AudioOrigin:         test.origin,
+					},
+					{
+						ID:         "original",
+						ResourceID: "paired-file",
+						Kind:       api.MediaTrackAudio,
+						Role:       api.AudioRoleProgramme,
+						Languages:  []string{"Japanese"},
+					},
+					{
+						ID:                  "unresolved-english",
+						ResourceID:          "other-file",
+						ManifestFingerprint: "other-report",
+						Kind:                api.MediaTrackAudio,
+						Role:                api.AudioRoleProgramme,
+						Languages:           []string{"English"},
+					},
+				},
+			})
+			failures := languageAssessment(subject)
+			requireHDBValidationFailure(t, failures, "language_english_dub", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+			requireHDBValidationFailure(t, failures, "language_origin", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+			originFailures := 0
+			for _, failure := range failures {
+				if failure.Rule != "language_origin" {
+					continue
+				}
+				originFailures++
+				if !slices.Equal(failure.AudioOriginCorrectionTrackIDs, []string{"unresolved-english"}) {
+					t.Fatalf("origin correction escaped its unresolved resource: %+v", failure)
+				}
+			}
+			if originFailures != 1 {
+				t.Fatalf("got %d origin failures, want 1: %+v", originFailures, failures)
+			}
+			if subject.LanguageFacts.Tracks[0].AudioOrigin != test.origin {
+				t.Fatal("origin review changed the prepared track evidence")
+			}
+		})
+	}
+}
+
+func TestHDBExplicitUnresolvedOriginSurvivesEnglishOriginalWitness(t *testing.T) {
+	subject := hdbLanguageSubject()
+	subject.Type = "WEBDL"
+	subject.EffectiveMetadata.Genres = []string{"Drama"}
+	subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+		OriginalLanguage:      "Japanese",
+		TrackCoverageComplete: true,
+		Tracks: []api.MediaTrackFacts{
+			{
+				ID:                  "english",
+				ResourceID:          "file",
+				ManifestFingerprint: "current-report",
+				Kind:                api.MediaTrackAudio,
+				Role:                api.AudioRoleProgramme,
+				Languages:           []string{"English"},
+				AudioOrigin:         api.TrackAudioUnresolved,
+			},
+			{
+				ID:          "original",
+				ResourceID:  "file",
+				Kind:        api.MediaTrackAudio,
+				Role:        api.AudioRoleProgramme,
+				Languages:   []string{"German", "English"},
+				AudioOrigin: api.TrackAudioOriginal,
+			},
+		},
+	})
+	failures := languageAssessment(subject)
+	requireHDBValidationFailure(t, failures, "language_origin", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	for _, failure := range failures {
+		if failure.Rule == "language_origin" && !slices.Equal(failure.AudioOriginCorrectionTrackIDs, []string{"english"}) {
+			t.Fatalf("explicit unresolved origin lost its correction target: %+v", failure)
+		}
+		if failure.Rule == "language_english_dub" {
+			t.Fatalf("explicit unresolved origin became a confirmed dub: %+v", failure)
+		}
+	}
+}
