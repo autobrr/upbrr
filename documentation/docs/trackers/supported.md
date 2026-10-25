@@ -40,7 +40,6 @@ upbrr supports the trackers listed below. For configuration and authentication, 
 - InfinityHD
 - ItaTorrents
 - Lat-Team
-- LDU
 - LOCADORA
 - LST
 - Luminarr
@@ -52,6 +51,7 @@ upbrr supports the trackers listed below. For configuration and authentication, 
 - Polish Torrent
 - Portugas
 - PrivateHD
+- PTSKIT (拾刻)
 - Racing4Everyone
 - Rastastugan
 - ReelFliX
@@ -64,6 +64,7 @@ upbrr supports the trackers listed below. For configuration and authentication, 
 - ShareIsland
 - SkipTheCommercials
 - SpeedApp
+- The Last Digital Underground
 - The Leach Zone
 - The Old School
 - Torrenteros
@@ -73,4 +74,3 @@ upbrr supports the trackers listed below. For configuration and authentication, 
 - UTOPIA
 - YUSCENE
 - Zenith
-- 拾刻
