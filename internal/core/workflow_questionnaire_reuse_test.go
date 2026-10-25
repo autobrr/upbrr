@@ -146,7 +146,9 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 			return api.PrepareResult{Release: api.PreparedRelease{
 				Generation: 1,
 				Source:     api.SourceManifest{SourcePath: input.SourcePath},
-				Naming:     api.NamingFacts{ReleaseName: releaseName},
+				Naming:     api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Media:      api.MediaFacts{Type: "ENCODE", Source: "BluRay"},
 			}}, nil
 		},
 		DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {

@@ -11,16 +11,33 @@ type Props = Readonly<{
   label: string;
   value: string;
   options: readonly Choice[];
+  invalid?: boolean;
+  describedBy?: string;
   onChange: (value: string) => void;
 }>;
 
 /** Only supported choices are selectable; unavailable current values stay visible until selection or Auto. */
-export function CorrectionSelect({ id, label, value, options, onChange }: Props) {
+export function CorrectionSelect({
+  id,
+  label,
+  value,
+  options,
+  invalid,
+  describedBy,
+  onChange,
+}: Props) {
   const selected = options.find((option) => option.value.toLowerCase() === value.toLowerCase());
   return (
     <Select
       id={id}
       aria-label={label}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
+      className={
+        invalid
+          ? "border-destructive ring-1 ring-destructive focus-visible:border-destructive focus-visible:ring-destructive/30"
+          : undefined
+      }
       value={selected?.value ?? value}
       onChange={(event) => {
         if (options.some((option) => option.value === event.target.value)) {
