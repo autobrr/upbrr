@@ -25,13 +25,17 @@ func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	if d.site.Name == "CZ" {
 		version = "policy-v7"
 	}
-	return trackers.ValidationPolicyBinding{
+	binding := trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,
 		Check: d.evaluateRules,
 		LanguageAssessment: func(subject api.TrackerValidationSubject) []api.RuleFailure {
 			return evaluateAZLanguageRules(d.site, subject)
 		},
 	}
+	if d.site.Name == "PHD" {
+		return trackers.WithEnglishLanguageFallback(binding)
+	}
+	return binding
 }
 
 func (d *Definition) evaluateRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {

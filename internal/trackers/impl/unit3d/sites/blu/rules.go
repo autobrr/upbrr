@@ -14,9 +14,10 @@ import (
 )
 
 // ValidationPolicy strictly limits non-disc uploads to MKV, with TS allowed
-// for HDTV and MP4 allowed for Dolby Vision-only WEBDL or HDTV releases.
+// for HDTV and MP4 allowed for Dolby Vision-only WEBDL or HDTV releases. It also
+// applies the maintainer-selected English-language fallback, not verified BLU rules.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-blu-container-v1", Check: checkContainer}
+	return trackers.WithEnglishLanguageFallback(trackers.ValidationPolicyBinding{ID: "unit3d-blu-container-v1", Check: checkContainer})
 }
 
 func checkContainer(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {

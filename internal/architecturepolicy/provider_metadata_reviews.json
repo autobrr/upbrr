@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "Adds the pure existing language assessment to input readiness and advances AZ/CZ validation versions. Per-track source review distinguishes original soundtracks from confirmed dubs while preserving the established dialect exception, exact-source evidence, manual metadata precedence and independent eligibility checks.",
-    "sha256": "9b706cdf581e6ba7913e27d04d570896fb5a6bca796ab35111e9d3322847fc8e"
+    "reason": "PHD explicitly opts into the maintainer-selected English-language fallback over finalized LanguageFacts; this is not a verified PHD policy. The existing evaluator, provider consumers, manual metadata precedence, country and age routing, constructibility, and AZ/CZ language policies are unchanged. The shared callback exposes canonical source corrections and the versioned binding invalidates prior projections.",
+    "sha256": "0ff41a22d1c0fff8225ecc82971a57a06704f876c188aff31a08feff0c6834cd"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
