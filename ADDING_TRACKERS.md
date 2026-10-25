@@ -10,6 +10,12 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 ## Ownership rules
 
 - `internal/trackers/impl/registry.go` is the only complete supported-tracker manifest.
+- When support is added, renamed, or removed, update the public
+  [Supported trackers catalog](documentation/docs/trackers/supported.md) in the same PR.
+  Reconcile every registered entry with that manifest, verify full public names and
+  capitalization against public branding or proven project metadata, preserve official
+  acronym-only brands without inventing expansions, and sort by public name. Keep the
+  catalog names-only; tracker behavior and rules remain outside its scope.
 - A Unit3D or standalone profile owns the tracker's default endpoint and typed
   policies.
 - Every tracker declares one semantic shared upload-content mode. Unit3D inherits

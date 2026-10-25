@@ -1,0 +1,76 @@
+---
+title: Supported trackers
+description: Find supported trackers by their public names.
+---
+
+# Supported trackers
+
+upbrr supports the trackers listed below. For configuration and authentication, see the [Trackers guide](index.md).
+
+- 0DayFiles
+- Aither
+- AlphaRatio
+- Amigos Share Club
+- Anthelion
+- AsianCinema
+- AvistaZ
+- BeyondHD
+- BIT-HDTV
+- BJ-Share
+- Blutopia
+- BrasilTracker
+- BroadcasTheNet
+- CapybaraBR
+- Cinematik
+- CinemaZ
+- CZTeam
+- DarkPeers
+- DigitalCore
+- DreadVault
+- eMuwarez
+- FileList
+- Friki
+- FunFile
+- Great Poster Wall
+- HDBits
+- HD-Space
+- HD-Torrents
+- HomieHelpDesk
+- ImmortalSeed
+- InfinityHD
+- ItaTorrents
+- Lat-Team
+- LDU
+- LOCADORA
+- LST
+- Luminarr
+- MidnightScene
+- Nebulance
+- Oldtoons
+- OnlyEncodes+
+- PassThePopcorn
+- Polish Torrent
+- Portugas
+- PrivateHD
+- Racing4Everyone
+- Rastastugan
+- ReelFliX
+- Retroflix
+- Retro Movies Club
+- RocketHD
+- SAMARITANO
+- SeedCore
+- seedpool
+- ShareIsland
+- SkipTheCommercials
+- SpeedApp
+- The Leach Zone
+- The Old School
+- Torrenteros
+- TorrentLeech
+- TV Chaos UK
+- ULCX
+- UTOPIA
+- YUSCENE
+- Zenith
+- 拾刻
