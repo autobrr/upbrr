@@ -28,8 +28,12 @@ func TestThreeDFullDiscRequiresISOPackage(t *testing.T) {
 			subject.DiscType = "BDMV"
 			subject.Type = test.kind
 			subject.Is3D = test.threeD
+			files := make([]string, 0, len(test.extensions))
+			for _, extension := range test.extensions {
+				files = append(files, "synthetic"+extension)
+			}
+			subject.PackageFacts = api.NewTrackerValidationSubject(api.UploadSubject{FileList: files}, "AITHER").PackageFacts
 			subject.PackageFacts.Status = test.status
-			subject.PackageFacts.Extensions = test.extensions
 			failures := evaluateAitherEvidence(t, subject)
 			found := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "aither_3d_iso" })
 			if found != test.blocked {
@@ -64,6 +68,33 @@ func TestThreeDDVDNameKeepsResolutionBeforeSubtype(t *testing.T) {
 			}, []string{"English"})
 			if got := aitherReviewedName(t, subject, nil); got != test.want {
 				t.Fatalf("name = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestThreeDISORejectsOtherMediaWithDerivedFacts(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		files   []string
+		blocked bool
+	}{
+		{"ISO only", []string{"disc.iso"}, false},
+		{"ISO plus MKV", []string{"disc.iso", "extra.mkv"}, true},
+		{"ISO plus MP4", []string{"disc.iso", "extra.mp4"}, true},
+		{"ISO plus EVO", []string{"disc.iso", "extra.evo"}, true},
+		{"ISO plus extras", []string{"disc.iso", "release.nfo", "proof.jpg"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			facts := api.NewTrackerValidationSubject(api.UploadSubject{FileList: test.files}, "AITHER").PackageFacts
+			facts.Status = api.MetadataEvidenceStatusComplete
+			subject := aitherPassingSubject()
+			subject.Type, subject.DiscType, subject.Is3D = "DISC", "BDMV", "3D"
+			subject.PackageFacts = facts
+			failures := evaluateAitherEvidence(t, subject)
+			blocked := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "aither_3d_iso" })
+			if blocked != test.blocked {
+				t.Fatalf("ISO gate = %t, want %t: %+v", blocked, test.blocked, failures)
 			}
 		})
 	}

@@ -892,8 +892,8 @@
     "sha256": "0063e9bc54c2bc4cf92a8b171291e969297a9e450b7f33c67dd329221c9e306a"
   },
   "internal/trackers/impl/standalone/hdb/name.go:buildGeneratedHDBName": {
-    "reason": "3D correction naming review: inserts finalized generic/subtype wording only before source in generated names. Explicit complete names and P2P names remain earlier exits; authoritative original-title currentness and PreferredYear manual precedence are unchanged.",
-    "sha256": "371dca1b9b4c5b679e8395a607bf45466bb0e2585d173e57b334502aa10afbec"
+    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for discs/remux and ordinary non-disc region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together.",
+    "sha256": "63299471d31a65e9a9d5c0695f060c103d06e9151e805d9829155d7a87c0a8d8"
   },
   "internal/trackers/impl/standalone/hdb/name.go:hdbIMDbYear": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",

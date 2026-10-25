@@ -167,8 +167,17 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 		applyManualEdition(meta, *overrides.Edition)
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
-		meta.ReleaseFeatures = nil
-		meta.EditionDisplay = nil
+		if overrides.ThreeD != nil && *overrides.ThreeD {
+			meta.ReleaseFeatures = slices.DeleteFunc(slices.Clone(meta.ReleaseFeatures), func(feature api.ReleaseFeature) bool {
+				return !api.IsThreeDSubtype(feature)
+			})
+			meta.EditionDisplay = slices.DeleteFunc(slices.Clone(meta.EditionDisplay), func(part api.EditionDisplayPart) bool {
+				return !api.IsThreeDSubtype(part.Feature)
+			})
+		} else {
+			meta.ReleaseFeatures = nil
+			meta.EditionDisplay = nil
+		}
 		meta.Edition = ""
 		meta.EditionSet = ""
 		meta.Cut = ""

@@ -38,7 +38,7 @@ func uploadTorrentFilename(name string) string {
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v8", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v9", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -140,7 +140,7 @@ func buildGeneratedHDBName(meta api.UploadSubject, originalTitle string) string 
 	} else {
 		parts = append(parts, hdbIMDbYear(meta))
 	}
-	parts = append(parts, meta.Repack, normalizedHDBElement(meta.Release.Resolution), api.ThreeDName(meta.Is3D, meta.ReleaseFeatures), hdbSourceElement(meta))
+	parts = append(parts, meta.Repack, normalizedHDBElement(meta.Release.Resolution), hdbSourceElement(meta))
 	video := hdbVideoCodecElement(meta)
 	audio := hdbAudioElement(meta)
 	if hdbAudioBeforeVideo(meta) {
@@ -237,13 +237,15 @@ func hdbSourceElement(meta api.UploadSubject) string {
 		}
 	}
 	region := normalizedHDBElement(meta.Region)
+	parts := []string{api.ThreeDName(meta.Is3D, meta.ReleaseFeatures), source}
 	if source != "" && region != "" {
 		if disc || typeValue == "REMUX" {
-			return region + " " + source
+			parts = append([]string{region}, parts...)
+		} else {
+			parts = append(parts, region)
 		}
-		return source + " " + region
 	}
-	return source
+	return strings.Join(nonEmptyHDBElements(parts), " ")
 }
 
 func hdbAudioBeforeVideo(meta api.UploadSubject) bool {

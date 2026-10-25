@@ -17,7 +17,7 @@ import (
 // ValidationPolicy returns AITHER's source-backed package, language, and
 // prepared-asset policy.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{ID: "unit3d-aither-policy-v10", Check: checkEvidenceRules}, languageAssessment)
+	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{ID: "unit3d-aither-policy-v11", Check: checkEvidenceRules}, languageAssessment)
 }
 
 func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -27,7 +27,7 @@ func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubjec
 
 	failures := make([]api.RuleFailure, 0, 8)
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) && strings.TrimSpace(subject.Is3D) != "" &&
-		(subject.PackageFacts.Status != api.MetadataEvidenceStatusComplete || !slices.Contains(subject.PackageFacts.Extensions, ".iso") ||
+		(subject.PackageFacts.Status != api.MetadataEvidenceStatusComplete || !slices.Contains(subject.PackageFacts.Extensions, ".iso") || subject.PackageFacts.MediaFileCount > 0 ||
 			slices.ContainsFunc(subject.PackageFacts.Extensions, func(extension string) bool {
 				return extension == ".m2ts" || extension == ".vob" || extension == ".evo"
 			})) {

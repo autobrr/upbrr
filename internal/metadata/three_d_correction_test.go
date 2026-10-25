@@ -72,3 +72,48 @@ func TestThreeDClearRemovesOrphanedDisplaySeparators(t *testing.T) {
 		t.Fatalf("retained evidence changed: %q", got)
 	}
 }
+
+func TestThreeDSetPreservesDetectedSubtypeWithNoEdition(t *testing.T) {
+	for _, clearFeatures := range []bool{false, true} {
+		features := []api.ReleaseFeature{api.ReleaseFeature3DFullSBS, api.ReleaseFeatureHybrid}
+		display := []api.EditionDisplayPart{{Text: "Extended"}, {Text: "3D Full SBS", Feature: api.ReleaseFeature3DFullSBS}}
+		meta := preparationstate.State{
+			Is3D:                 "3D",
+			Edition:              "Extended",
+			Cut:                  "Director's Cut",
+			ReleaseFeatures:      features,
+			EditionDisplay:       display,
+			ReleaseNameOverrides: api.ReleaseNameOverrides{NoEdition: new(true), ThreeD: new(true)},
+		}
+		if clearFeatures {
+			empty := []api.ReleaseFeature{}
+			meta.ReleaseNameOverrides.ReleaseFeatures = &empty
+		}
+		applyReleaseNameValueOverrides(&meta)
+		want := "3D Full SBS"
+		if clearFeatures {
+			want = "3D"
+		}
+		if got := api.ThreeDName(meta.Is3D, meta.ReleaseFeatures); got != want {
+			t.Fatalf("clear features %t: name = %q, want %q", clearFeatures, got, want)
+		}
+		wantDisplay := "3D Full SBS"
+		if clearFeatures {
+			wantDisplay = ""
+		}
+		if got := api.EditionDisplayText(meta.EditionDisplay); got != wantDisplay {
+			t.Fatalf("clear features %t: display = %q, want %q", clearFeatures, got, wantDisplay)
+		}
+		if meta.Edition != "" || meta.Cut != "" {
+			t.Fatal("3D restored suppressed edition identity")
+		}
+		for _, feature := range meta.ReleaseFeatures {
+			if !api.IsThreeDSubtype(feature) {
+				t.Fatal("3D restored an unrelated suppressed feature")
+			}
+		}
+		if len(features) != 2 || features[0] != api.ReleaseFeature3DFullSBS || api.EditionDisplayText(display) != "Extended 3D Full SBS" {
+			t.Fatal("3D Set mutated saved evidence")
+		}
+	}
+}
