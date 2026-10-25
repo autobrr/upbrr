@@ -391,6 +391,7 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	metadata.HasEnglish = strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.OverviewEnglish) != ""
 	metadata.NameDisambiguation = c.seriesNameDisambiguation(ctx, metadata)
 
+	logger.Debugf("tvdb: series metadata loaded series_id=%d name=%q selected_year=%d", metadata.TVDBID, metadata.Name, metadata.Year)
 	logger.Tracef(
 		"tvdb: series metadata loaded series_id=%d language=%q name=%q first_aired=%q api_year=%d selected_year=%d series_year=%d series_year_source=%q series_year_confidence=%q name_english=%q slug=%q",
 		seriesID,
