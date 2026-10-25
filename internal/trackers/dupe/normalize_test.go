@@ -693,3 +693,20 @@ func TestCandidateEvidenceFingerprintBindsSourceFactsNotDownloadLinks(t *testing
 		t.Fatal("changed inspected source retained comparison proof")
 	}
 }
+
+func TestCanonicalAudioChannelsNormalizesCountAndLayout(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ value, want string }{
+		{"6 channels", "5.1"},
+		{"8 channels", "7.1"},
+		{"2 channels", "2.0"},
+		{"1 channel", "1.0"},
+		{"5.1", "5.1"},
+		{"7.1", "7.1"},
+	} {
+		if got := canonicalAudioChannels(test.value); got != test.want {
+			t.Fatalf("canonicalAudioChannels(%q) = %q, want %q", test.value, got, test.want)
+		}
+	}
+}

@@ -27,38 +27,44 @@ type TrackerCandidate struct {
 	SourceFingerprint api.WorkflowFingerprint
 
 	// TrackerSlot preserves the adapter's opaque native evidence, including unknown components.
-	TrackerSlot      string
-	ID               string
-	Name             string
-	Files            []string
-	FileCount        int
-	SizeBytes        int64
-	SizeKnown        bool
-	Category         string
-	Type             string
-	CanonicalType    string
-	Source           string
-	Resolution       string
-	Codec            string
-	Container        string
-	Provider         string
-	Group            string
-	ReleaseOrigin    string
-	Edition          string
-	Region           string
-	ThreeD           string
-	Repack           string
-	Season           int
-	Episode          int
-	Date             string
-	Pack             bool
-	Internal         bool
-	Trumpable        bool
-	Flags            []string
-	HDR              api.HDRFacts
-	DetailsLink      string
-	privateDownload  string
-	contentFromTitle bool
+	TrackerSlot            string
+	ID                     string
+	Name                   string
+	Files                  []string
+	FileCount              int
+	SizeBytes              int64
+	SizeKnown              bool
+	Category               string
+	Type                   string
+	CanonicalType          string
+	Source                 string
+	Resolution             string
+	Codec                  string
+	Container              string
+	Provider               string
+	Group                  string
+	ReleaseOrigin          string
+	Edition                string
+	Region                 string
+	ThreeD                 string
+	Repack                 string
+	Season                 int
+	Episode                int
+	Date                   string
+	Pack                   bool
+	Internal               bool
+	Trumpable              bool
+	Flags                  []string
+	HDR                    api.HDRFacts
+	AudioCodecs            []string
+	AudioChannels          []string
+	AudioLanguages         []string
+	AudioCodecsComplete    bool
+	AudioChannelsComplete  bool
+	AudioLanguagesComplete bool
+	DetailsLink            string
+	privateDownload        string
+	contentFromTitle       bool
 }
 
 // NormalizeCandidate converts one adapter entry without exposing private
@@ -68,38 +74,44 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 	source.Download, source.Link = "", ""
 	sourceFingerprint, _ := api.CanonicalWorkflowFingerprint(source)
 	candidate := TrackerCandidate{
-		SourceFingerprint: sourceFingerprint,
-		Evidence:          entry.Evidence,
-		TrackerSlot:       entry.TrackerSlot,
-		ID:                strings.TrimSpace(entry.ID),
-		Name:              strings.TrimSpace(entry.Name),
-		Files:             append([]string(nil), entry.Files...),
-		FileCount:         entry.FileCount,
-		SizeBytes:         entry.SizeBytes,
-		SizeKnown:         entry.SizeKnown,
-		Category:          strings.TrimSpace(entry.Category),
-		Type:              strings.TrimSpace(entry.Type),
-		CanonicalType:     strings.TrimSpace(entry.CanonicalType),
-		Source:            strings.TrimSpace(entry.Source),
-		Resolution:        strings.TrimSpace(entry.Res),
-		Codec:             strings.TrimSpace(entry.Codec),
-		Container:         strings.TrimSpace(entry.Container),
-		Provider:          strings.TrimSpace(entry.Provider),
-		Group:             strings.TrimSpace(entry.Group),
-		ReleaseOrigin:     strings.TrimSpace(entry.ReleaseOrigin),
-		Edition:           strings.TrimSpace(entry.Edition),
-		Region:            strings.TrimSpace(entry.Region),
-		ThreeD:            strings.TrimSpace(entry.ThreeD),
-		Repack:            strings.TrimSpace(entry.Repack),
-		Season:            entry.Season,
-		Episode:           entry.Episode,
-		Pack:              entry.Pack,
-		Internal:          entry.Internal,
-		Trumpable:         entry.Trumpable,
-		Flags:             append([]string(nil), entry.Flags...),
-		HDR:               cloneHDRFacts(entry.HDR),
-		DetailsLink:       strings.TrimSpace(entry.Link),
-		privateDownload:   strings.TrimSpace(entry.Download),
+		SourceFingerprint:      sourceFingerprint,
+		Evidence:               entry.Evidence,
+		TrackerSlot:            entry.TrackerSlot,
+		ID:                     strings.TrimSpace(entry.ID),
+		Name:                   strings.TrimSpace(entry.Name),
+		Files:                  append([]string(nil), entry.Files...),
+		FileCount:              entry.FileCount,
+		SizeBytes:              entry.SizeBytes,
+		SizeKnown:              entry.SizeKnown,
+		Category:               strings.TrimSpace(entry.Category),
+		Type:                   strings.TrimSpace(entry.Type),
+		CanonicalType:          strings.TrimSpace(entry.CanonicalType),
+		Source:                 strings.TrimSpace(entry.Source),
+		Resolution:             strings.TrimSpace(entry.Res),
+		Codec:                  strings.TrimSpace(entry.Codec),
+		Container:              strings.TrimSpace(entry.Container),
+		Provider:               strings.TrimSpace(entry.Provider),
+		Group:                  strings.TrimSpace(entry.Group),
+		ReleaseOrigin:          strings.TrimSpace(entry.ReleaseOrigin),
+		Edition:                strings.TrimSpace(entry.Edition),
+		Region:                 strings.TrimSpace(entry.Region),
+		ThreeD:                 strings.TrimSpace(entry.ThreeD),
+		Repack:                 strings.TrimSpace(entry.Repack),
+		Season:                 entry.Season,
+		Episode:                entry.Episode,
+		Pack:                   entry.Pack,
+		Internal:               entry.Internal,
+		Trumpable:              entry.Trumpable,
+		Flags:                  append([]string(nil), entry.Flags...),
+		HDR:                    cloneHDRFacts(entry.HDR),
+		AudioCodecs:            append([]string(nil), entry.AudioCodecs...),
+		AudioChannels:          append([]string(nil), entry.AudioChannels...),
+		AudioLanguages:         append([]string(nil), entry.AudioLanguages...),
+		AudioCodecsComplete:    entry.AudioCodecsComplete,
+		AudioChannelsComplete:  entry.AudioChannelsComplete,
+		AudioLanguagesComplete: entry.AudioLanguagesComplete,
+		DetailsLink:            strings.TrimSpace(entry.Link),
+		privateDownload:        strings.TrimSpace(entry.Download),
 	}
 	if candidate.FileCount == 0 {
 		candidate.FileCount = len(candidate.Files)
