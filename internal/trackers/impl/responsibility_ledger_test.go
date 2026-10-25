@@ -77,7 +77,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("AITHER", "aither", "", "v10"),
 	unit3DResponsibility("BLU"),
 	unit3DResponsibilityVersion("CBR", "cbr", "", "v2"),
-	unit3DResponsibilityVersion("DP", "dp", "", "v11"),
+	unit3DResponsibilityVersion("DP", "dp", "", "v12"),
 	unit3DResponsibilityVersion("DVL", "dvl", "", "v3"),
 	unit3DResponsibility("EMUW"),
 	unit3DResponsibility("FRIKI"),

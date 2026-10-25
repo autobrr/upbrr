@@ -146,7 +146,7 @@ remain unchanged. Reuse these components instead of inserting tokens into a rend
 Exact-name and display-title policies retain their own contracts; an unknown resolution must
 not be inferred from the source label.
 
-Explicit source downscale evidence is retained as a hidden naming component. Tracker policies may project it without inferring source dimensions from output resolution or reparsing rendered names.
+Explicit source downscale evidence is retained as a hidden naming component. Tracker policies may project it without inferring source dimensions from output resolution or reparsing rendered names. Preserve independent cuts and presentation facts when ordering a destination’s source block. Optional ordering must not discard an available component merely because another component is absent or manually omitted.
 
 Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete supported role set is:
 
@@ -168,7 +168,7 @@ Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete suppo
 | Hybrid marker                                    | `api.NameRoleHybrid`         |
 | Repack marker                                    | `api.NameRoleRepack`         |
 | Resolution                                       | `api.NameRoleResolution`     |
-| Source downscale marker                           | `api.NameRoleDownscale`      |
+| Source downscale marker                          | `api.NameRoleDownscale`      |
 | Region                                           | `api.NameRoleRegion`         |
 | UHD marker                                       | `api.NameRoleUHD`            |
 | Source                                           | `api.NameRoleSource`         |

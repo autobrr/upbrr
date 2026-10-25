@@ -16,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v11", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v12", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -26,6 +26,9 @@ func applyDPNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ 
 		return fmt.Errorf("apply DP DVD naming: %w", err)
 	}
 	if err := applyDPDownscaleMarker(editor, meta); err != nil {
+		return err
+	}
+	if err := applyDPSourceBlockOrder(editor, meta); err != nil {
 		return err
 	}
 	if err := applyDPTVDBDisambiguation(editor, meta); err != nil {
@@ -294,8 +297,50 @@ func applyDPDownscaleMarker(editor *trackers.NameEditor, meta api.UploadSubject)
 		strings.EqualFold(meta.Source, "UHD BluRay") || (!web && !television) || marker.AvailableValue != "DS4K" {
 		return nil
 	}
-	if err := editor.InsertAfter(api.NameRoleDownscale, "DS4K", api.NameRoleResolution); err != nil {
-		return fmt.Errorf("insert DP downscale marker: %w", err)
+	if err := editor.Include(api.NameRoleDownscale); err != nil {
+		return fmt.Errorf("include DP downscale marker: %w", err)
+	}
+	if err := editor.MoveAfter(api.NameRoleDownscale, api.NameRoleResolution); err != nil {
+		return fmt.Errorf("position DP downscale marker: %w", err)
+	}
+	return nil
+}
+
+// applyDPSourceBlockOrder formats retained components without inventing missing
+// anchors or overriding manual components. Cuts and presentation facts stay separate.
+func applyDPSourceBlockOrder(editor *trackers.NameEditor, meta api.UploadSubject) error {
+	if err := editor.Include(api.NameRoleThreeD); err != nil {
+		return fmt.Errorf("include DP 3D component: %w", err)
+	}
+	var anchor api.ReleaseNameRole
+	for _, role := range editor.PresentRoles() {
+		if role == api.NameRoleUHD || role == api.NameRoleSource || role == api.NameRoleService ||
+			role == api.NameRoleVideoFormat || role == api.NameRoleDVDSystem {
+			anchor = role
+			break
+		}
+	}
+	if anchor == "" {
+		return nil
+	}
+	roles := []api.ReleaseNameRole{api.NameRoleResolution, api.NameRoleDownscale, api.NameRoleEdition, api.NameRoleEditionDisplay}
+	if trackers.IsFullDiscUpload(meta.DiscType, meta.Type) || strings.EqualFold(meta.Type, "REMUX") {
+		if err := editor.Include(api.NameRoleRegion); err != nil {
+			return fmt.Errorf("include DP disc region: %w", err)
+		}
+		roles = append(roles, api.NameRoleRegion)
+	}
+	roles = append(roles, api.NameRoleThreeD)
+	for index := len(roles) - 1; index >= 0; index-- {
+		role := roles[index]
+		component, exists := editor.Component(role)
+		if !exists || !component.Present || component.Manual {
+			continue
+		}
+		if err := editor.MoveBefore(role, anchor); err != nil {
+			return fmt.Errorf("order DP source block: %w", err)
+		}
+		anchor = role
 	}
 	return nil
 }
