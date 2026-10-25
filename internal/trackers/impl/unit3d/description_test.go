@@ -423,13 +423,17 @@ func TestBuildUnit3DDescriptionStripsKnownBotSignatures(t *testing.T) {
 		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
 		"[center]   [/center]",
 		"[right]Created by Upload Assistant[/right]",
+		"[right][url=https://github.com/Audionut/Upload-Assistant][size=4]Created by Upload Assistant v7.0.2[/size][/url][/right]",
+		"[center][url=https://github.com/Audionut/Upload-Assistant][size=4]Created by Upload Assistant 7.0.2[/size][/url][/center]",
+		"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Shared with Upload-Assistant v3.7 (fork)[/size][/url][/right]",
+		"[right][url=https://github.com/wastaken7/Upload-Assistant][size=4]Shared with Upload-Assistant v10.12.345 (fork)[/size][/url][/right]",
 	}, "\n")
 
 	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.UploadSubject{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	for _, unexpected := range []string{"Uploaded Using", "uploadrr", "Only-Uploader", "/torrents?perPage", "Aither users", "[center]   [/center]", "Upload Assistant"} {
+	for _, unexpected := range []string{"Uploaded Using", "uploadrr", "Only-Uploader", "/torrents?perPage", "Aither users", "[center]   [/center]", "Upload Assistant", "Upload-Assistant"} {
 		if strings.Contains(result, unexpected) {
 			t.Fatalf("expected %q to be stripped, got %q", unexpected, result)
 		}

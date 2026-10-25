@@ -82,6 +82,39 @@ func TestDataLookupReturnsExactTorrentPage(t *testing.T) {
 	}
 }
 
+func TestDataLookupRemovesVersionedUploadAssistantSignature(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"v7.0.2", "7.0.2"} {
+		t.Run(version, func(t *testing.T) {
+			t.Parallel()
+			const notes = "Body: Created by Upload Assistant for testing."
+			const imageURL = "https://images.example.invalid/screen.png"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("action") == "get_description" {
+					_, _ = w.Write([]byte(notes + "\n\n" +
+						"[right][url=https://github.com/Audionut/Upload-Assistant][size=4]Created by Upload Assistant " + version + "[/size][/url][/right]\n" +
+						"[img]" + imageURL + "[/img]"))
+					return
+				}
+				_, _ = w.Write([]byte(`{"GroupId":"700","ImdbId":"1234567","Torrents":[{"Id":"42"}]}`))
+			}))
+			defer server.Close()
+
+			lookup := newDataTestLookup(server)
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{TrackerID: "42", KeepImages: true})
+			if err != nil {
+				t.Fatalf("lookup: %v", err)
+			}
+			if result.Description != notes {
+				t.Fatalf("cleaned description = %q, want %q", result.Description, notes)
+			}
+			if len(result.Images) != 1 || result.Images[0].ImgURL != imageURL {
+				t.Fatalf("expected screenshot preserved, got %+v", result.Images)
+			}
+		})
+	}
+}
+
 func TestDataLookupSearchesPastUnmatchedGroup(t *testing.T) {
 	t.Parallel()
 
